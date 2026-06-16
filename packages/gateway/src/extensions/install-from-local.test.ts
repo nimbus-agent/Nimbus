@@ -2358,3 +2358,124 @@ describe("checkExtractedEntry — escape and symlink in extracted archive (Tier 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// verifyAndRecordSignature — signed manifest but vault/fetcher unwired (Tier C-22)
+// Lines 100-104: a manifest with a `publisher` block requires BOTH a vault and a
+// publisher-key fetcher to be wired; otherwise the install fails closed (I16).
+// ---------------------------------------------------------------------------
+describe("verifyAndRecordSignature — signed manifest without vault/fetcher fails closed (Tier C-22)", () => {
+  test("signed manifest with NO vault and NO fetcher throws the wiring error", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-signed-nowiring-",
+      "src-nw",
+    );
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "signed.nowiring.ext", privkey, pubkey });
+
+    await expect(
+      // Neither vault nor fetcher provided — the publisher block makes this a signed install.
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+    ).rejects.toThrow(/requires vault and publisher key fetcher/i);
+
+    // Fail-closed: nothing recorded.
+    expect(listExtensions(db).length).toBe(0);
+  });
+
+  test("signed manifest with a vault but NO fetcher throws the wiring error", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-signed-vaultonly-",
+      "src-vo",
+    );
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "signed.vaultonly.ext", privkey, pubkey });
+
+    await expect(
+      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src, vault }),
+    ).rejects.toThrow(/requires vault and publisher key fetcher/i);
+
+    expect(listExtensions(db).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyAndRecordSignature — enforceAirGap omitted → "?? false" default arm (Tier C-23)
+// Line 114: when the caller omits `enforceAirGap` entirely on a signed install, the
+// default-false arm of `options.enforceAirGap ?? false` is exercised.
+// ---------------------------------------------------------------------------
+describe("verifyAndRecordSignature — enforceAirGap omitted defaults to false (Tier C-23)", () => {
+  test("signed install with enforceAirGap omitted succeeds (default-false arm)", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-airgap-default-",
+      "src-agd",
+    );
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "airgap.default.ext", privkey, pubkey });
+
+    const keyDir = mkdtempSync(join(tmpdir(), "nimbus-airgap-default-key-"));
+    const keyFile = join(keyDir, "pub.key");
+    writeFileSync(keyFile, `${encodeBase64(pubkey)}\n`);
+    try {
+      const result = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        vault,
+        fetcher: { fetch: async () => ({ kind: "not_found" }) },
+        // enforceAirGap intentionally omitted → "?? false" default arm.
+        publisherKeyPath: keyFile,
+      });
+      expect(result.id).toBe("airgap.default.ext");
+      const verifiedRows = getAuditRows(db, "extension.signature_verified");
+      expect(verifiedRows.length).toBe(1);
+    } finally {
+      try {
+        rmSync(keyDir, { recursive: true, force: true });
+      } catch {
+        /* Windows EBUSY */
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSystemTarCommand — win32 SystemRoot + fallback branches (Tier C-24)
+// Lines 24-28 are only reachable on win32 (Linux CI returns "tar" at line 22).
+// On win32 we deterministically exercise BOTH sub-branches by toggling the
+// SystemRoot / windir env vars the source reads. On non-win32 the existing C-5
+// test owns the "tar" branch; we skip here so the suite stays cross-platform.
+// ---------------------------------------------------------------------------
+describe("resolveSystemTarCommand — win32 SystemRoot + fallback (Tier C-24)", () => {
+  test("uses SystemRoot/System32/tar.exe when SystemRoot is set; falls back to C:\\Windows", () => {
+    if (process.platform !== "win32") {
+      // Linux/macOS: the win32 branches are unreachable without mutating process.platform.
+      // The Linux-authoritative coverage of these lines is therefore not possible here.
+      return;
+    }
+    const savedRoot = process.env["SystemRoot"];
+    const savedWindir = process.env["windir"];
+    try {
+      process.env["SystemRoot"] = "C:\\WinTest";
+      delete process.env["windir"];
+      expect(resolveSystemTarCommand()).toBe(join("C:\\WinTest", "System32", "tar.exe"));
+
+      // Both cleared → hard-coded C:\Windows\System32 fallback.
+      delete process.env["SystemRoot"];
+      delete process.env["windir"];
+      expect(resolveSystemTarCommand()).toBe(join("C:", "Windows", "System32", "tar.exe"));
+
+      // windir alone (SystemRoot absent) resolves via the env branch — SystemRoot must be
+      // deleted (not empty) so the `?? process.env["windir"]` coalescing falls through.
+      delete process.env["SystemRoot"];
+      process.env["windir"] = "C:\\WinDirTest";
+      expect(resolveSystemTarCommand()).toBe(join("C:\\WinDirTest", "System32", "tar.exe"));
+    } finally {
+      if (savedRoot === undefined) delete process.env["SystemRoot"];
+      else process.env["SystemRoot"] = savedRoot;
+      if (savedWindir === undefined) delete process.env["windir"];
+      else process.env["windir"] = savedWindir;
+    }
+  });
+});

@@ -203,6 +203,27 @@ function parseSalesforceTokenResponse(json: unknown, requested: string[]): PKCER
   };
 }
 
+/** Common `response_type=code` authorize params shared by every standard OAuth provider. */
+function standardAuthorizeParams(a: AuthorizeArgs): Record<string, string> {
+  return {
+    client_id: a.clientId,
+    redirect_uri: a.redirectUri,
+    response_type: "code",
+    scope: a.scopes.join(" "),
+    state: a.state,
+  };
+}
+
+/** {@link standardAuthorizeParams} plus the PKCE S256 challenge when one was generated. */
+function pkceAuthorizeParams(a: AuthorizeArgs): Record<string, string> {
+  return {
+    ...standardAuthorizeParams(a),
+    ...(a.codeChallenge === undefined
+      ? {}
+      : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
+  };
+}
+
 export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
   google: {
     id: "google",
@@ -215,14 +236,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     bodyFormat: "form",
     mirrorPerService: true,
     buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-      ...(a.codeChallenge === undefined
-        ? {}
-        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
+      ...pkceAuthorizeParams(a),
       access_type: "offline",
       prompt: "consent",
     }),
@@ -238,16 +252,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: true,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-      ...(a.codeChallenge === undefined
-        ? {}
-        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
-    }),
+    buildAuthorizeParams: pkceAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   slack: {
@@ -304,16 +309,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "basic_header",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-      ...(a.codeChallenge === undefined
-        ? {}
-        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
-    }),
+    buildAuthorizeParams: pkceAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   hubspot: {
@@ -328,13 +324,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-    }),
+    buildAuthorizeParams: standardAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   miro: {
@@ -349,13 +339,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-    }),
+    buildAuthorizeParams: standardAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   canva: {
@@ -371,16 +355,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "basic_header",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-      ...(a.codeChallenge === undefined
-        ? {}
-        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
-    }),
+    buildAuthorizeParams: pkceAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   figma: {
@@ -396,13 +371,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-    }),
+    buildAuthorizeParams: standardAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
   salesforce: {
@@ -419,16 +388,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-      ...(a.codeChallenge === undefined
-        ? {}
-        : { code_challenge: a.codeChallenge, code_challenge_method: "S256" }),
-    }),
+    buildAuthorizeParams: pkceAuthorizeParams,
     parseTokenResponse: parseSalesforceTokenResponse,
   },
   mendeley: {
@@ -441,13 +401,7 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     secretPlacement: "basic_header",
     bodyFormat: "form",
     mirrorPerService: false,
-    buildAuthorizeParams: (a) => ({
-      client_id: a.clientId,
-      redirect_uri: a.redirectUri,
-      response_type: "code",
-      scope: a.scopes.join(" "),
-      state: a.state,
-    }),
+    buildAuthorizeParams: standardAuthorizeParams,
     parseTokenResponse: parseStandardTokenResponse,
   },
 };

@@ -433,6 +433,80 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     expect(Array.isArray(body.data)).toBe(true);
     expect(body.meta.limit).toBe(10);
   });
+
+  it("GET /v1/openapi.json serves the OpenAPI document as JSON", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/openapi.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    const body = (await res.json()) as { openapi?: string };
+    expect(typeof body.openapi).toBe("string");
+  });
+
+  it("GET /v1/metrics/dora returns 400 when the service param is missing", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/metrics/dora`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain("service");
+  });
+
+  it("GET /v1/metrics/dora returns a 200 unconfigured envelope for an unknown service", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/metrics/dora?service=github`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { service: string; metrics: Record<string, unknown> };
+    expect(body.service).toBe("github");
+    expect(body.metrics).toBeDefined();
+  });
+
+  it("GET /v1/metrics/dora returns 400 on a malformed since (MetricsRpcError → 400)", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${handle!.port}/v1/metrics/dora?service=github&since=bogus`,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(typeof body.error).toBe("string");
+  });
+
+  it("GET /v1/preflight/deploy returns 400 when service is missing", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/preflight/deploy`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain("service");
+  });
+
+  it("GET /v1/preflight/deploy returns 400 when target_ref is missing", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/preflight/deploy?service=github`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain("target_ref");
+  });
+
+  it("GET /v1/preflight/deploy returns 400 when max_findings is not an integer", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${handle!.port}/v1/preflight/deploy?service=github&target_ref=main&max_findings=abc`,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toContain("max_findings");
+  });
+
+  it("GET /v1/preflight/deploy returns 400 when max_findings is out of range (RpcError → 400)", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${handle!.port}/v1/preflight/deploy?service=github&target_ref=main&max_findings=999`,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(typeof body.error).toBe("string");
+  });
+
+  it("GET /v1/preflight/deploy returns a 200 unconfigured envelope for an unknown service", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${handle!.port}/v1/preflight/deploy?service=github&target_ref=main&max_findings=5`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { service: string; verdict: string };
+    expect(body.service).toBe("github");
+    expect(body.verdict).toBe("ok");
+  });
 });
 
 describe("startReadOnlyHttpServer — observability surface (admin.status + /metrics)", () => {
@@ -658,5 +732,98 @@ describe("startReadOnlyHttpServer — cleanup", () => {
     });
     expect(() => handle.stop()).not.toThrow();
     expect(() => handle.stop()).not.toThrow();
+  });
+});
+
+describe("startReadOnlyHttpServer — unsupported HTTP method", () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let handle: ReturnType<typeof startReadOnlyHttpServer> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-method-"));
+    dbPath = join(tmpDir, "nimbus.db");
+    makeEmptyDb(dbPath);
+  });
+
+  afterEach(() => {
+    handle?.stop();
+    handle = undefined;
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
+  });
+
+  it("OPTIONS returns 405 with Allow: GET when no write surface is mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/health`, { method: "OPTIONS" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+    await res.text();
+  });
+
+  it("OPTIONS returns 405 with Allow: GET, POST when a write surface is mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveDeploymentToken: async () => "test-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/health`, { method: "OPTIONS" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET, POST");
+    await res.text();
+  });
+});
+
+describe("startReadOnlyHttpServer — SCIM roster read surface", () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let handle: ReturnType<typeof startReadOnlyHttpServer> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-scim-"));
+    dbPath = join(tmpDir, "nimbus.db");
+    // SCIM (scim_user table) lands at V34.
+    makeEmptyDb(dbPath, 34);
+  });
+
+  afterEach(() => {
+    handle?.stop();
+    handle = undefined;
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
+  });
+
+  it("GET /scim/v2/Users returns 401 without a bearer when the SCIM surface is mounted", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveScimToken: async () => "scim-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/scim/v2/Users`);
+    expect(res.status).toBe(401);
+    await res.text();
+  });
+
+  it("GET /scim/v2/Users returns 200 with a valid bearer (empty roster)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0, {
+      resolveScimToken: async () => "scim-token",
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/scim/v2/Users`, {
+      headers: { authorization: "Bearer scim-token" },
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+  });
+
+  it("GET /scim/v2/Users 405s when the SCIM surface is not mounted (write-only path)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const res = await fetch(`http://127.0.0.1:${handle.port}/scim/v2/Users`);
+    // No resolveScimToken → writeDb is null → the SCIM read branch is skipped; /scim/v2/Users is
+    // a POST-only write route in the allowlist, so the GET resolves to a 405 (Allow: POST).
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+    await res.text();
   });
 });

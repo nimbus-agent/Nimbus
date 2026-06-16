@@ -45,6 +45,32 @@ export function buildFrame(payload: Uint8Array): Uint8Array {
   return out;
 }
 
+/**
+ * One-shot settle guard shared by the single-frame and two-frame exchanges: starts the timeout
+ * timer and returns a `finish(body?, err?)` that resolves/rejects exactly once (clearing the timer),
+ * mapping a missing body to `closedMsg` and a timeout to `timeoutMsg`.
+ */
+function makeSettler(
+  resolve: (body: Uint8Array) => void,
+  reject: (err: Error) => void,
+  timeoutMs: number,
+  timeoutMsg: string,
+  closedMsg: string,
+): (body: Uint8Array | undefined, err?: Error) => void {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const finish = (body: Uint8Array | undefined, err?: Error): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (err) reject(err);
+    else if (body) resolve(body);
+    else reject(new Error(closedMsg));
+  };
+  timer = setTimeout(() => finish(undefined, new Error(timeoutMsg)), timeoutMs);
+  return finish;
+}
+
 /** Connect, send one request frame, resolve with the first reply frame body (or reject on timeout/close).
  * maxFrameBytes bounds the advertised length before buffering; use MAX_HANDSHAKE_FRAME for pairing,
  * MAX_ENCRYPTED_FRAME for Task 4 encrypted exchanges. */
@@ -57,19 +83,13 @@ export function exchangeOneFrame(
 ): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
     const reader = makeFrameReader(maxFrameBytes);
-    let settled = false;
-    const timer = setTimeout(
-      () => finish(undefined, new Error("lan-client: handshake timeout")),
+    const finish = makeSettler(
+      resolve,
+      reject,
       timeoutMs,
+      "lan-client: handshake timeout",
+      "lan-client: connection closed without reply",
     );
-    function finish(body: Uint8Array | undefined, err?: Error) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (err) reject(err);
-      else if (body) resolve(body);
-      else reject(new Error("lan-client: connection closed without reply"));
-    }
     Bun.connect<undefined>({
       hostname: host,
       port,
@@ -125,19 +145,13 @@ function exchangeHelloThenRpc(
   return new Promise<Uint8Array>((resolve, reject) => {
     const reader = makeFrameReader(MAX_ENCRYPTED_FRAME);
     let phase: "hello" | "rpc" = "hello";
-    let settled = false;
-    const timer = setTimeout(
-      () => finish(undefined, new Error("lan-client: rpc timeout")),
+    const finish = makeSettler(
+      resolve,
+      reject,
       timeoutMs,
+      "lan-client: rpc timeout",
+      "lan-client: connection closed mid-exchange",
     );
-    function finish(body: Uint8Array | undefined, err?: Error) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (err) reject(err);
-      else if (body) resolve(body);
-      else reject(new Error("lan-client: connection closed mid-exchange"));
-    }
     Bun.connect<undefined>({
       hostname: host,
       port,

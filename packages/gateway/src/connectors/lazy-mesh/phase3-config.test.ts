@@ -9,9 +9,14 @@ import {
   buildPhase3Servers,
   phase3AddAirflowMcp,
   phase3AddArgocdMcp,
+  phase3AddAthenaMcp,
   phase3AddAwsMcp,
   phase3AddAzureMcp,
   phase3AddBigeyeMcp,
+  phase3AddBigqueryMcp,
+  phase3AddCloudLoggingMcp,
+  phase3AddCloudwatchMcp,
+  phase3AddCodemagicMcp,
   phase3AddDagsterMcp,
   phase3AddDatabricksMcp,
   phase3AddDatadogMcp,
@@ -19,6 +24,8 @@ import {
   phase3AddDbtMcp,
   phase3AddDependencytrackMcp,
   phase3AddElasticsearchMcp,
+  phase3AddFastmailMcp,
+  phase3AddFirebaseMcp,
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
@@ -26,6 +33,7 @@ import {
   phase3AddGreatExpectationsMcp,
   phase3AddGreenhouseMcp,
   phase3AddIacMcp,
+  phase3AddImapMcp,
   phase3AddIntercomMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLeverMcp,
@@ -40,9 +48,11 @@ import {
   phase3AddPipedriveMcp,
   phase3AddPowerBiMcp,
   phase3AddPrefectMcp,
+  phase3AddProtonmailMcp,
   phase3AddRaindropMcp,
   phase3AddRampMcp,
   phase3AddReadwiseMcp,
+  phase3AddSagemakerMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
   phase3AddSnowflakeMcp,
@@ -53,7 +63,9 @@ import {
   phase3AddStripeMcp,
   phase3AddSupersetMcp,
   phase3AddTableauMcp,
+  phase3AddTestflightMcp,
   phase3AddVercelMcp,
+  phase3AddVertexAiMcp,
   phase3AddWizMcp,
   phase3AddZendeskMcp,
   phase3AddZoteroMcp,
@@ -2419,5 +2431,535 @@ describe("phase3AddBigeyeMcp", () => {
     if (spec === undefined) return;
     expectSandboxed(spec);
     expect(spec.env?.["BIGEYE_BASE_URL"]).toBe("not a url");
+  });
+});
+
+describe("phase3AddCodemagicMcp", () => {
+  test("no-op without codemagic.token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddCodemagicMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["codemagic"]).toBeUndefined();
+  });
+
+  test("no-op when codemagic.token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("codemagic.token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddCodemagicMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["codemagic"]).toBeUndefined();
+  });
+
+  test("spawns with CODEMAGIC_TOKEN set", async () => {
+    const vault = createMockVault();
+    await vault.set("codemagic.token", "cm-test-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddCodemagicMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["codemagic"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["CODEMAGIC_TOKEN"]).toBe("cm-test-token");
+  });
+});
+
+describe("phase3AddTestflightMcp", () => {
+  test("no-op without any credentials", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTestflightMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["testflight"]).toBeUndefined();
+  });
+
+  test("no-op when issuer_id + key_id present but private_key missing", async () => {
+    const vault = createMockVault();
+    await vault.set("testflight.issuer_id", "issuer");
+    await vault.set("testflight.key_id", "key");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTestflightMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["testflight"]).toBeUndefined();
+  });
+
+  test("no-op when private_key is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("testflight.issuer_id", "issuer");
+    await vault.set("testflight.key_id", "key");
+    await vault.set("testflight.private_key", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTestflightMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["testflight"]).toBeUndefined();
+  });
+
+  test("spawns with all three credentials set", async () => {
+    const vault = createMockVault();
+    await vault.set("testflight.issuer_id", "issuer-1");
+    await vault.set("testflight.key_id", "key-1");
+    await vault.set("testflight.private_key", "-----BEGIN PRIVATE KEY-----\nabc\n");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddTestflightMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["testflight"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["TESTFLIGHT_ISSUER_ID"]).toBe("issuer-1");
+    expect(spec.env?.["TESTFLIGHT_KEY_ID"]).toBe("key-1");
+    // The private key is passed through verbatim (not trimmed).
+    expect(spec.env?.["TESTFLIGHT_PRIVATE_KEY"]).toBe("-----BEGIN PRIVATE KEY-----\nabc\n");
+  });
+});
+
+describe("phase3AddFirebaseMcp", () => {
+  test("no-op without any credentials", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFirebaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["firebase"]).toBeUndefined();
+  });
+
+  test("no-op when service_account_json is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("firebase.service_account_json", "   ");
+    await vault.set("firebase.app_ids", "app-1");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFirebaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["firebase"]).toBeUndefined();
+  });
+
+  test("no-op when app_ids missing (service_account_json only)", async () => {
+    const vault = createMockVault();
+    await vault.set("firebase.service_account_json", '{"type":"service_account"}');
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFirebaseMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["firebase"]).toBeUndefined();
+  });
+
+  test("spawns with both credentials set", async () => {
+    const vault = createMockVault();
+    await vault.set("firebase.service_account_json", '{"type":"service_account"}');
+    await vault.set("firebase.app_ids", "app-1,app-2");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFirebaseMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["firebase"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["FIREBASE_SERVICE_ACCOUNT_JSON"]).toBe('{"type":"service_account"}');
+    expect(spec.env?.["FIREBASE_APP_IDS"]).toBe("app-1,app-2");
+  });
+});
+
+describe("phase3AddVertexAiMcp", () => {
+  test("no-op without gcp.credentials_json_path", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["vertex_ai"]).toBeUndefined();
+  });
+
+  test("spawns with default region when gcp.region is unset", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vertex_ai"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "us-central1-aiplatform.googleapis.com");
+    expect(spec.env?.["VERTEX_AI_REGION"]).toBe("us-central1");
+    expect(spec.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBe("/etc/gcp.json");
+    expect(spec.env?.["GOOGLE_CLOUD_PROJECT"]).toBeUndefined();
+  });
+
+  test("uses a safe custom region + propagates GOOGLE_CLOUD_PROJECT when project_id is set", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.project_id", "my-project");
+    await vault.set("gcp.region", "europe-west4");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vertex_ai"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "europe-west4-aiplatform.googleapis.com");
+    expect(spec.env?.["VERTEX_AI_REGION"]).toBe("europe-west4");
+    expect(spec.env?.["GOOGLE_CLOUD_PROJECT"]).toBe("my-project");
+  });
+
+  test("falls back to default region when configured region has a leading dash (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "-bad-region");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vertex_ai"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["VERTEX_AI_REGION"]).toBe("us-central1");
+  });
+
+  test("falls back to default region when configured region carries a control char (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "us\x01central1");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vertex_ai"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["VERTEX_AI_REGION"]).toBe("us-central1");
+  });
+
+  test("falls back to default region when configured region is over-long (unsafe)", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "a".repeat(1025));
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["vertex_ai"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["VERTEX_AI_REGION"]).toBe("us-central1");
+  });
+});
+
+describe("phase3AddImapMcp", () => {
+  test("no-op without host/username/password", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["imap"]).toBeUndefined();
+  });
+
+  test("no-op when password missing (host + username only)", async () => {
+    const vault = createMockVault();
+    await vault.set("imap.host", "imap.example.com");
+    await vault.set("imap.username", "me@example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["imap"]).toBeUndefined();
+  });
+
+  test("spawns with IMAP creds + default port 993 in host:port network entry", async () => {
+    const vault = createMockVault();
+    await vault.set("imap.host", "imap.example.com");
+    await vault.set("imap.username", "me@example.com");
+    await vault.set("imap.password", "pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["imap"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "imap.example.com:993");
+    expect(spec.env?.["IMAP_HOST"]).toBe("imap.example.com");
+    expect(spec.env?.["IMAP_PORT"]).toBe("993");
+    expect(spec.env?.["IMAP_USERNAME"]).toBe("me@example.com");
+    expect(spec.env?.["IMAP_PASSWORD"]).toBe("pw");
+    expect(spec.env?.["IMAP_MAILBOX"]).toBeUndefined();
+    expect(spec.env?.["IMAP_SMTP_HOST"]).toBeUndefined();
+    expect(spec.env?.["IMAP_SMTP_USERNAME"]).toBeUndefined();
+    expect(spec.env?.["IMAP_SMTP_PASSWORD"]).toBeUndefined();
+  });
+
+  test("custom port + mailbox + full SMTP config sets every optional env + smtp host:port", async () => {
+    const vault = createMockVault();
+    await vault.set("imap.host", "imap.example.com");
+    await vault.set("imap.username", "me@example.com");
+    await vault.set("imap.password", "pw");
+    await vault.set("imap.port", "143");
+    await vault.set("imap.mailbox", "INBOX/Work");
+    await vault.set("imap.smtp_host", "smtp.example.com");
+    await vault.set("imap.smtp_port", "587");
+    await vault.set("imap.smtp_username", "smtp-me@example.com");
+    await vault.set("imap.smtp_password", "smtp-pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["imap"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network).toContain("imap.example.com:143");
+    expect(manifest.permissions.network).toContain("smtp.example.com:587");
+    expect(spec.env?.["IMAP_PORT"]).toBe("143");
+    expect(spec.env?.["IMAP_MAILBOX"]).toBe("INBOX/Work");
+    expect(spec.env?.["IMAP_SMTP_HOST"]).toBe("smtp.example.com");
+    expect(spec.env?.["IMAP_SMTP_PORT"]).toBe("587");
+    expect(spec.env?.["IMAP_SMTP_USERNAME"]).toBe("smtp-me@example.com");
+    expect(spec.env?.["IMAP_SMTP_PASSWORD"]).toBe("smtp-pw");
+  });
+
+  test("out-of-range port falls back to default 993", async () => {
+    const vault = createMockVault();
+    await vault.set("imap.host", "imap.example.com");
+    await vault.set("imap.username", "me@example.com");
+    await vault.set("imap.password", "pw");
+    await vault.set("imap.port", "70000");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["imap"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["IMAP_PORT"]).toBe("993");
+  });
+
+  test("non-numeric port falls back to default 993", async () => {
+    const vault = createMockVault();
+    await vault.set("imap.host", "imap.example.com");
+    await vault.set("imap.username", "me@example.com");
+    await vault.set("imap.password", "pw");
+    await vault.set("imap.port", "not-a-port");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddImapMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["imap"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["IMAP_PORT"]).toBe("993");
+  });
+});
+
+describe("phase3AddProtonmailMcp", () => {
+  test("no-op without username/password", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["protonmail"]).toBeUndefined();
+  });
+
+  test("no-op when password missing (username only)", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["protonmail"]).toBeUndefined();
+  });
+
+  test("spawns with Bridge loopback defaults (no smtp creds → no smtp host)", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    await vault.set("protonmail.password", "bridge-pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["protonmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "127.0.0.1:1143");
+    expect(spec.env?.["PROTONMAIL_HOST"]).toBe("127.0.0.1");
+    expect(spec.env?.["PROTONMAIL_PORT"]).toBe("1143");
+    expect(spec.env?.["PROTONMAIL_USERNAME"]).toBe("me@proton.me");
+    expect(spec.env?.["PROTONMAIL_PASSWORD"]).toBe("bridge-pw");
+    expect(spec.env?.["PROTONMAIL_MAILBOX"]).toBeUndefined();
+    expect(spec.env?.["PROTONMAIL_SMTP_HOST"]).toBeUndefined();
+  });
+
+  test("custom host/port + mailbox + full SMTP creds set every optional env + smtp host:port", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    await vault.set("protonmail.password", "bridge-pw");
+    await vault.set("protonmail.imap_host", "127.0.0.2");
+    await vault.set("protonmail.imap_port", "2143");
+    await vault.set("protonmail.mailbox", "Folders/Work");
+    await vault.set("protonmail.smtp_host", "127.0.0.3");
+    await vault.set("protonmail.smtp_port", "2025");
+    await vault.set("protonmail.smtp_username", "smtp@proton.me");
+    await vault.set("protonmail.smtp_password", "smtp-pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["protonmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network).toContain("127.0.0.2:2143");
+    expect(manifest.permissions.network).toContain("127.0.0.3:2025");
+    expect(spec.env?.["PROTONMAIL_HOST"]).toBe("127.0.0.2");
+    expect(spec.env?.["PROTONMAIL_PORT"]).toBe("2143");
+    expect(spec.env?.["PROTONMAIL_MAILBOX"]).toBe("Folders/Work");
+    expect(spec.env?.["PROTONMAIL_SMTP_HOST"]).toBe("127.0.0.3");
+    expect(spec.env?.["PROTONMAIL_SMTP_PORT"]).toBe("2025");
+    expect(spec.env?.["PROTONMAIL_SMTP_USERNAME"]).toBe("smtp@proton.me");
+    expect(spec.env?.["PROTONMAIL_SMTP_PASSWORD"]).toBe("smtp-pw");
+  });
+
+  test("smtp host omitted when only one of smtp_username/smtp_password is set", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    await vault.set("protonmail.password", "bridge-pw");
+    await vault.set("protonmail.smtp_username", "smtp@proton.me");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["protonmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["PROTONMAIL_SMTP_HOST"]).toBeUndefined();
+    expect(spec.env?.["PROTONMAIL_SMTP_USERNAME"]).toBeUndefined();
+  });
+});
+
+describe("phase3AddFastmailMcp", () => {
+  test("no-op without fastmail.api_token", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFastmailMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["fastmail"]).toBeUndefined();
+  });
+
+  test("no-op when api_token is whitespace-only", async () => {
+    const vault = createMockVault();
+    await vault.set("fastmail.api_token", "   ");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFastmailMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["fastmail"]).toBeUndefined();
+  });
+
+  test("spawns with FASTMAIL_API_TOKEN set (no base_url override)", async () => {
+    const vault = createMockVault();
+    await vault.set("fastmail.api_token", "fm-token");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFastmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["fastmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec);
+    expect(spec.env?.["FASTMAIL_API_TOKEN"]).toBe("fm-token");
+    expect(spec.env?.["FASTMAIL_BASE_URL"]).toBeUndefined();
+  });
+
+  test("base_url override propagates as FASTMAIL_BASE_URL env when present", async () => {
+    const vault = createMockVault();
+    await vault.set("fastmail.api_token", "fm-token");
+    await vault.set("fastmail.base_url", "https://api.fastmail.example.com");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddFastmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["fastmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["FASTMAIL_BASE_URL"]).toBe("https://api.fastmail.example.com");
+  });
+});
+
+describe("phase3AddBigqueryMcp", () => {
+  test("no-op without gcp.credentials_json_path", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigqueryMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["bigquery"]).toBeUndefined();
+  });
+
+  test("spawns without BIGQUERY_PROJECT when project_id unset", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigqueryMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["bigquery"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["BIGQUERY_PROJECT"]).toBeUndefined();
+  });
+
+  test("propagates BIGQUERY_PROJECT when project_id is set", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.project_id", "my-project");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddBigqueryMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["bigquery"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["BIGQUERY_PROJECT"]).toBe("my-project");
+  });
+});
+
+describe("phase3AddCloudLoggingMcp", () => {
+  test("no-op without gcp.credentials_json_path", async () => {
+    const vault = createMockVault();
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddCloudLoggingMcp(vault, servers, SANDBOX_CWD);
+    expect(servers["cloud_logging"]).toBeUndefined();
+  });
+
+  test("propagates GOOGLE_CLOUD_PROJECT when project_id is set", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.project_id", "my-project");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddCloudLoggingMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["cloud_logging"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expect(spec.env?.["GOOGLE_CLOUD_PROJECT"]).toBe("my-project");
+  });
+});
+
+describe("AWS-family regional connectors (athena / cloudwatch / sagemaker)", () => {
+  // Profile-only creds have an empty region → the per-region host arm is `[]`.
+  test("athena: no regional host added when region is empty (profile-only creds)", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.profile", "dev");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAthenaMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["athena"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    const manifest = readManifest(spec);
+    expect(manifest.permissions.network.some((h) => h.startsWith("athena."))).toBe(false);
+  });
+
+  test("athena: regional host added when region is configured", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA1");
+    await vault.set("aws.secret_access_key", "SK1");
+    await vault.set("aws.default_region", "eu-west-1");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddAthenaMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["athena"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    expectSandboxed(spec, "athena.eu-west-1.amazonaws.com");
+  });
+
+  test("cloudwatch: no regional host when region empty; added when configured", async () => {
+    const vaultNoRegion = createMockVault();
+    await vaultNoRegion.set("aws.profile", "dev");
+    const s1: Record<string, ServerSpec> = {};
+    await phase3AddCloudwatchMcp(vaultNoRegion, s1, SANDBOX_CWD);
+    const spec1 = s1["cloudwatch"];
+    expect(spec1).toBeDefined();
+    if (spec1 !== undefined) {
+      const m1 = readManifest(spec1);
+      expect(m1.permissions.network.some((h) => h.startsWith("logs."))).toBe(false);
+    }
+
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA1");
+    await vault.set("aws.secret_access_key", "SK1");
+    await vault.set("aws.default_region", "us-east-2");
+    const s2: Record<string, ServerSpec> = {};
+    await phase3AddCloudwatchMcp(vault, s2, SANDBOX_CWD);
+    const spec2 = s2["cloudwatch"];
+    expect(spec2).toBeDefined();
+    if (spec2 === undefined) return;
+    expectSandboxed(spec2, "logs.us-east-2.amazonaws.com");
+  });
+
+  test("sagemaker: no regional host when region empty; added when configured", async () => {
+    const vaultNoRegion = createMockVault();
+    await vaultNoRegion.set("aws.profile", "dev");
+    const s1: Record<string, ServerSpec> = {};
+    await phase3AddSagemakerMcp(vaultNoRegion, s1, SANDBOX_CWD);
+    const spec1 = s1["sagemaker"];
+    expect(spec1).toBeDefined();
+    if (spec1 !== undefined) {
+      const m1 = readManifest(spec1);
+      expect(m1.permissions.network.some((h) => h.startsWith("api.sagemaker."))).toBe(false);
+    }
+
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA1");
+    await vault.set("aws.secret_access_key", "SK1");
+    await vault.set("aws.default_region", "ap-south-1");
+    const s2: Record<string, ServerSpec> = {};
+    await phase3AddSagemakerMcp(vault, s2, SANDBOX_CWD);
+    const spec2 = s2["sagemaker"];
+    expect(spec2).toBeDefined();
+    if (spec2 === undefined) return;
+    expectSandboxed(spec2, "api.sagemaker.ap-south-1.amazonaws.com");
   });
 });

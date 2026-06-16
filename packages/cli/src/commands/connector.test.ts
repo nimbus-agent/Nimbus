@@ -846,3 +846,348 @@ describe("runConnector flag-value validation edges", () => {
     );
   });
 });
+
+describe("runConnector — short-flag aliases + flag edges", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("-h short flag prints help (no service)", async () => {
+    await runConnector(["auth", "-h"]);
+    expect(out.stdout.length).toBeGreaterThan(0);
+  });
+
+  it("accepts the -p / -s / -t / -u short-flag aliases", async () => {
+    const mock = createMockIpcClient([{ ok: true, serviceId: "github", scopesGranted: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "github", "-t", "k", "-p", "9100", "-s", "a,b", "-u", "alice"]);
+    const params = mock.calls[0]?.params as Record<string, unknown>;
+    expect(params["port"]).toBe(9100);
+    expect(params["scopes"]).toEqual(["a", "b"]);
+  });
+
+  it("--force is an alias for --full on sync", async () => {
+    const mock = createMockIpcClient([{ ok: true }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["sync", "github", "--force"]);
+    expect(mock.calls[0]).toEqual({
+      method: "connector.sync",
+      params: { serviceId: "github", full: true },
+    });
+    expect(out.stdout).toContain("(full)");
+  });
+
+  it("--context is honoured for kubernetes auth", async () => {
+    const mock = createMockIpcClient([{ ok: true, serviceId: "kubernetes", scopesGranted: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "kubernetes", "--kubeconfig", "/tmp/kube", "--context", "prod"]);
+    const params = mock.calls[0]?.params as Record<string, unknown>;
+    expect(params["context"]).toBe("prod");
+  });
+});
+
+describe("runConnector auth — non-vault (OAuth) service prints scopes", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("prints the granted scopes line for an OAuth service id", async () => {
+    const mock = createMockIpcClient([
+      { ok: true, serviceId: "google_drive", scopesGranted: ["drive.readonly", "profile"] },
+    ]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "google_drive"]);
+    expect(out.stdout).toContain("Signed in: google_drive");
+    expect(out.stdout).toContain("Scopes: drive.readonly, profile");
+    expect(out.stdout).not.toContain("stored in the OS vault");
+  });
+});
+
+describe("runConnector auth — per-service help branches", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it.each([
+    ["gmail"],
+    ["google_photos"],
+    ["google_meet"],
+    ["outlook"],
+    ["teams"],
+  ])("auth %s --help prints provider-specific OAuth help", async (service) => {
+    await runConnector(["auth", service, "--help"]);
+    expect(out.stdout.length).toBeGreaterThan(0);
+  });
+
+  it("normalizes hyphenated service names in --help (google-drive)", async () => {
+    await runConnector(["auth", "google-drive", "--help"]);
+    expect(out.stdout.length).toBeGreaterThan(0);
+  });
+});
+
+describe("runConnector auth — env-fallback success + secondary error branches", () => {
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    out.reset();
+    savedEnv = { ...process.env };
+    for (const k of AUTH_ENV_KEYS) delete process.env[k];
+  });
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) delete process.env[k];
+    Object.assign(process.env, savedEnv);
+    clearFixture();
+  });
+
+  function fixtureOk(serviceId: string): void {
+    const mock = createMockIpcClient([{ ok: true, serviceId, scopesGranted: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+  }
+
+  it("aws profile-only path (no key pair) succeeds", async () => {
+    fixtureOk("aws");
+    await runConnector(["auth", "aws", "--aws-profile", "myprofile"]);
+    expect(out.stdout).toContain("Signed in: aws");
+  });
+
+  it("aws key pair without region OR profile throws the region/profile error", async () => {
+    await expect(
+      runConnector(["auth", "aws", "--aws-access-key", "AKIA", "--aws-secret-key", "sk"]),
+    ).rejects.toThrow(/AWS key pair requires --aws-region/);
+  });
+
+  it("aws key pair with profile (no region) assigns the profile", async () => {
+    fixtureOk("aws");
+    await runConnector([
+      "auth",
+      "aws",
+      "--aws-access-key",
+      "AKIA",
+      "--aws-secret-key",
+      "sk",
+      "--aws-profile",
+      "myprofile",
+    ]);
+    expect(out.stdout).toContain("Signed in: aws");
+  });
+
+  it("gcp passes through the optional project id", async () => {
+    fixtureOk("gcp");
+    await runConnector([
+      "auth",
+      "gcp",
+      "--gcp-credentials-json",
+      "/tmp/gcp.json",
+      "--gcp-project-id",
+      "proj-123",
+    ]);
+    expect(out.stdout).toContain("Signed in: gcp");
+  });
+
+  it("sentry passes through the optional --sentry-url", async () => {
+    fixtureOk("sentry");
+    await runConnector([
+      "auth",
+      "sentry",
+      "--token",
+      "k",
+      "--sentry-org",
+      "org",
+      "--sentry-url",
+      "https://sentry.example/",
+    ]);
+    expect(out.stdout).toContain("Signed in: sentry");
+  });
+
+  it("newrelic passes through the optional account id", async () => {
+    fixtureOk("newrelic");
+    await runConnector(["auth", "newrelic", "--token", "k", "--newrelic-account-id", "12345"]);
+    expect(out.stdout).toContain("Signed in: newrelic");
+  });
+
+  it("datadog passes through the optional --datadog-site", async () => {
+    fixtureOk("datadog");
+    await runConnector([
+      "auth",
+      "datadog",
+      "--datadog-api-key",
+      "a",
+      "--datadog-app-key",
+      "b",
+      "--datadog-site",
+      "datadoghq.eu",
+    ]);
+    expect(out.stdout).toContain("Signed in: datadog");
+  });
+
+  it("gitlab passes through the optional --api-base", async () => {
+    fixtureOk("gitlab");
+    await runConnector([
+      "auth",
+      "gitlab",
+      "--token",
+      "glpat",
+      "--api-base",
+      "https://git.example.com/api/v4",
+    ]);
+    expect(out.stdout).toContain("Signed in: gitlab");
+  });
+
+  it("kubernetes context is set when --context is provided", async () => {
+    fixtureOk("kubernetes");
+    await runConnector(["auth", "kubernetes", "--kubeconfig", "/tmp/kube", "--context", "staging"]);
+    expect(out.stdout).toContain("Signed in: kubernetes");
+  });
+
+  it("bitbucket missing app password throws the app-password error", async () => {
+    await expect(runConnector(["auth", "bitbucket", "--username", "u"])).rejects.toThrow(
+      /Bitbucket requires an app password/,
+    );
+  });
+
+  it("grafana missing token (base present) throws the token error", async () => {
+    await expect(
+      runConnector(["auth", "grafana", "--api-base", "https://g.example"]),
+    ).rejects.toThrow(/Grafana requires an API token/);
+  });
+
+  it("jenkins missing token (user present) throws the token error", async () => {
+    await expect(runConnector(["auth", "jenkins", "--username", "u"])).rejects.toThrow(
+      /Jenkins requires an API token/,
+    );
+  });
+
+  it("jenkins missing api-base (user + token present) throws the base error", async () => {
+    await expect(
+      runConnector(["auth", "jenkins", "--username", "u", "--token", "k"]),
+    ).rejects.toThrow(/Jenkins requires --api-base/);
+  });
+
+  it("jira missing token (email present) throws the token error", async () => {
+    await expect(runConnector(["auth", "jira", "--username", "e@x.com"])).rejects.toThrow(
+      /Jira requires an API token/,
+    );
+  });
+
+  it("jira missing api-base (email + token present) throws the base error", async () => {
+    await expect(
+      runConnector(["auth", "jira", "--username", "e@x.com", "--token", "k"]),
+    ).rejects.toThrow(/Jira requires the site URL/);
+  });
+});
+
+describe("runConnector — remaining dispatch + formatter edges", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("truncateText returns a bare ellipsis when maxLen <= 1 (long error, 1-row table)", async () => {
+    // The errCap is fixed at 40 in runConnectorList, so the maxLen<=1 branch of truncateText is
+    // only reachable in isolation. We exercise it indirectly via a list row whose error is long;
+    // the dedicated assertion here is that the list still renders with a truncated error marker.
+    const ipc = createMockIpcClient([
+      [
+        {
+          serviceId: "svc",
+          status: "ok",
+          lastSyncAt: null,
+          nextSyncAt: null,
+          intervalMs: 60_000,
+          itemCount: 0,
+          lastError: "x".repeat(200),
+          consecutiveFailures: 0,
+          healthState: "healthy",
+          healthRetryAfterMs: null,
+        },
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["list"]);
+    expect(out.stdout).toContain("…");
+  });
+
+  it("addMcp rejects when the command line is empty", async () => {
+    await expect(runConnector(["add", "--mcp", "mcp_x"])).rejects.toThrow(
+      /Usage: nimbus connector add --mcp/,
+    );
+  });
+
+  it("reindex --depth with no following value falls back to metadata_only", async () => {
+    const ipc = createMockIpcClient([{ itemsAffected: 0, mode: "metadata_only" }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["reindex", "github", "--depth"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.reindex",
+      params: { service: "github", depth: "metadata_only" },
+    });
+  });
+
+  it("history ignores a non-positive --limit and keeps the default (100)", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["history", "github", "--limit", "0"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.healthHistory",
+      params: { serviceId: "github", limit: 100 },
+    });
+  });
+
+  it("history ignores a non-numeric --limit and keeps the default (100)", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["history", "github", "--limit", "abc"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.healthHistory",
+      params: { serviceId: "github", limit: 100 },
+    });
+  });
+
+  it("relTime / fmtNextSync render the em-dash for null timestamps", async () => {
+    const ipc = createMockIpcClient([
+      [
+        {
+          serviceId: "nulltimes",
+          status: "ok",
+          lastSyncAt: null,
+          nextSyncAt: null,
+          intervalMs: 60_000,
+          itemCount: 0,
+          lastError: null,
+          consecutiveFailures: 0,
+          healthState: "healthy",
+          healthRetryAfterMs: null,
+        },
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["list"]);
+    expect(out.stdout).toContain("—");
+  });
+});

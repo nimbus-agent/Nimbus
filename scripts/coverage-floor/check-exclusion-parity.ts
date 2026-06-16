@@ -32,6 +32,24 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push("packages/gateway/src-native/sandbox-helper/main.c");
     return samples;
   }
+  if (pattern === "**/packages/github-actions/*/src/main.ts") {
+    samples.push(
+      "packages/github-actions/annotate-action/src/main.ts",
+      "packages/github-actions/preflight-query/src/main.ts",
+    );
+    return samples;
+  }
+  if (pattern === "**/packages/vscode-extension/src/**") {
+    samples.push(
+      "packages/vscode-extension/src/extension.ts",
+      "packages/vscode-extension/src/chat/webview/main.ts",
+    );
+    return samples;
+  }
+  if (pattern === "**/packages/admin-console/src/**") {
+    samples.push("packages/admin-console/src/main.ts", "packages/admin-console/src/views.ts");
+    return samples;
+  }
   if (pattern === "**/packages/mcp-connectors/*/src/server.ts") {
     samples.push(
       "packages/mcp-connectors/snyk/src/server.ts",

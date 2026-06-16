@@ -3,11 +3,42 @@ import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
 
+import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import { loadSchedulerState } from "./scheduler-store.ts";
-import type { Syncable, SyncContext, SyncResult } from "./types.ts";
+import {
+  RateLimitError,
+  type Syncable,
+  type SyncContext,
+  type SyncResult,
+  UnauthenticatedError,
+} from "./types.ts";
+
+/** A trivial always-succeeding syncable used as a fixture. */
+function okSyncable(serviceId: string, intervalMs = 60_000): Syncable {
+  return {
+    serviceId,
+    defaultIntervalMs: intervalMs,
+    initialSyncDepthDays: 30,
+    async sync(): Promise<SyncResult> {
+      return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+    },
+  };
+}
+
+/** A syncable that throws a caller-supplied value. */
+function throwingSyncable(serviceId: string, thrown: unknown): Syncable {
+  return {
+    serviceId,
+    defaultIntervalMs: 60_000,
+    initialSyncDepthDays: 30,
+    async sync(): Promise<SyncResult> {
+      throw thrown;
+    },
+  };
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -283,6 +314,8 @@ describe("SyncScheduler", () => {
       { id: "objerr", thrown: {}, expected: "Sync failed" },
       // string rejection
       { id: "strerr", thrown: "string failure", expected: "string failure" },
+      // whitespace-only string rejection -> trims to empty -> generic message
+      { id: "wsstrerr", thrown: "   ", expected: "Sync failed" },
       // long message -> truncated with ellipsis suffix
       {
         id: "longerr",
@@ -425,5 +458,291 @@ describe("SyncScheduler", () => {
     const row = loadSchedulerState(db, "die");
     expect(row?.status).toBe("error");
     expect(row?.consecutive_failures).toBe(5);
+  });
+});
+
+describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
+  test("forceSync on a RateLimitError aborts: transitions health to rate_limited and rejects", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const retryAfter = new Date(Date.now() + 60_000);
+    const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+    sched.register(throwingSyncable("rl", new RateLimitError(retryAfter, "slow down")));
+    await expect(sched.forceSync("rl")).rejects.toThrow(/slow down/);
+    await sched.stop();
+    expect(getConnectorHealth(db, "rl").state).toBe("rate_limited");
+    // The state row is NOT marked backoff/error — the abort path only records telemetry.
+    const row = loadSchedulerState(db, "rl");
+    expect(row?.status).not.toBe("error");
+  });
+
+  test("forceSync on an UnauthenticatedError aborts: transitions health + notifies + rejects", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let notifications = 0;
+    const sched = new SyncScheduler(
+      ctx,
+      {},
+      {
+        random: () => 0,
+        notify: async () => {
+          notifications += 1;
+        },
+      },
+    );
+    sched.register(throwingSyncable("auth", new UnauthenticatedError("token revoked")));
+    await expect(sched.forceSync("auth")).rejects.toThrow(/token revoked/);
+    await sched.stop();
+    expect(getConnectorHealth(db, "auth").state).toBe("unauthenticated");
+    expect(notifications).toBe(1);
+  });
+
+  test("scheduled (non-force) RateLimitError aborts silently (no force waiter)", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+    // A short interval means the connector is due shortly after start; the scheduled
+    // (non-force) job hits the RateLimitError abort arm → health rate_limited.
+    sched.register({
+      ...throwingSyncable("rl2", new RateLimitError(new Date(Date.now() + 60_000))),
+      defaultIntervalMs: 10,
+    });
+    sched.start();
+    await sleep(150);
+    await sched.stop();
+    expect(getConnectorHealth(db, "rl2").state).toBe("rate_limited");
+  });
+
+  test("unregister removes the connector and rejects any pending force waiter", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    sched.register(okSyncable("temp"));
+    expect(sched.getStatus("temp").length).toBe(1);
+    sched.unregister("temp");
+    expect(sched.getStatus("temp")).toEqual([]);
+    await sched.stop();
+  });
+
+  test("register after start triggers an immediate tick", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "afterstart",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.start();
+    sched.register(c);
+    // The newly-registered connector is due immediately (next_sync_at == now-ish).
+    await sleep(120);
+    await sched.stop();
+    expect(runs).toBeGreaterThanOrEqual(1);
+  });
+
+  test("resume() while started triggers a tick", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "res",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    sched.pause("res");
+    sched.start();
+    await sleep(40);
+    expect(runs).toBe(0); // paused → no run
+    sched.resume("res"); // started → resume tick → due → runs
+    await sleep(120);
+    await sched.stop();
+    expect(runs).toBeGreaterThanOrEqual(1);
+  });
+
+  test("offline scheduler skips connectors and marks them skipped_offline", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "off",
+      defaultIntervalMs: 10,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx, {}, { isOnline: async () => false, initialOnline: false });
+    sched.register(c);
+    sched.start();
+    await sleep(120);
+    await sched.stop();
+    // Offline → the tick early-returns; the connector never runs. (skipped_offline is a
+    // history-only health event, so the state itself stays healthy.)
+    expect(runs).toBe(0);
+    expect(getConnectorHealth(db, "off").state).toBe("healthy");
+  });
+
+  test("rate_limited connector within its retry window is skipped by the tick health gate", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "rlskip",
+      defaultIntervalMs: 10,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    transitionHealth(db, "rlskip", {
+      type: "rate_limited",
+      retryAfter: new Date(Date.now() + 60_000),
+    });
+    sched.start();
+    await sleep(80);
+    await sched.stop();
+    expect(runs).toBe(0);
+  });
+
+  test("scheduled (non-force) failure records backoff and resolves waiters (non-force arm)", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+    sched.register({ ...throwingSyncable("schedfail", new Error("nope")), defaultIntervalMs: 10 });
+    sched.start();
+    await sleep(150);
+    await sched.stop();
+    const row = loadSchedulerState(db, "schedfail");
+    expect(row?.status).toBe("backoff");
+    expect(row?.consecutive_failures).toBeGreaterThanOrEqual(1);
+  });
+
+  test("forceSync on a paused connector still runs (paused gate is bypassed for force)", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "pausedforce",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    sched.pause("pausedforce");
+    await sched.forceSync("pausedforce");
+    await sched.stop();
+    expect(runs).toBe(1);
+  });
+
+  test("forceSync on an error-status connector still runs (error gate bypassed for force)", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "errforce",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    db.run(`UPDATE scheduler_state SET status = 'error' WHERE service_id = ?`, ["errforce"]);
+    await sched.forceSync("errforce");
+    await sched.stop();
+    expect(runs).toBe(1);
+  });
+
+  test("getStatus skips a connector whose scheduler_state row is missing", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    sched.register(okSyncable("present"));
+    sched.register(okSyncable("ghostrow"));
+    // Delete one connector's state row; getStatus(all) must skip it (loadState null → continue).
+    db.run(`DELETE FROM scheduler_state WHERE service_id = ?`, ["ghostrow"]);
+    const all = sched.getStatus();
+    expect(all.some((s) => s.serviceId === "present")).toBe(true);
+    expect(all.some((s) => s.serviceId === "ghostrow")).toBe(false);
+    await sched.stop();
+  });
+
+  test("rate_limited connector whose retry window has passed is allowed to dispatch", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let runs = 0;
+    const c: Syncable = {
+      serviceId: "rlexpired",
+      defaultIntervalMs: 10,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        runs += 1;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    // retryAfter already in the past → healthGate returns false (not skipped).
+    transitionHealth(db, "rlexpired", {
+      type: "rate_limited",
+      retryAfter: new Date(Date.now() - 1000),
+    });
+    sched.start();
+    await sleep(120);
+    await sched.stop();
+    expect(runs).toBeGreaterThanOrEqual(1);
+  });
+
+  test("getStatus syncing branch reflects an in-flight connector", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const c: Syncable = {
+      serviceId: "slow",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        await gate;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(ctx);
+    sched.register(c);
+    const p = sched.forceSync("slow");
+    // Spin until the job is in flight, then assert the syncing status.
+    let status = sched.getStatus("slow")[0]?.status;
+    for (let i = 0; i < 50 && status !== "syncing"; i += 1) {
+      await sleep(5);
+      status = sched.getStatus("slow")[0]?.status;
+    }
+    expect(status).toBe("syncing");
+    release?.();
+    await p;
+    await sched.stop();
   });
 });

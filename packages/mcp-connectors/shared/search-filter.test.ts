@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { asObjectish, asRecord, filterByQuery, stringField, tagText } from "./search-filter.ts";
+import {
+  asObjectish,
+  asRecord,
+  fieldsFromKeys,
+  filterByQuery,
+  makeQueryFilter,
+  nestedString,
+  stringField,
+  tagNamesFromObjects,
+  tagText,
+} from "./search-filter.ts";
 
 describe("filterByQuery", () => {
   const rows = [
@@ -116,5 +126,125 @@ describe("tagText", () => {
 
   test("returns empty string for an array of only non-string entries", () => {
     expect(tagText({ tags: [1, 2, { a: 1 }] })).toBe("");
+  });
+});
+
+describe("tagNamesFromObjects", () => {
+  test("joins the string `name` of each tag object with spaces", () => {
+    expect(tagNamesFromObjects({ tags: [{ name: "finance" }, { name: "ops" }] })).toBe(
+      "finance ops",
+    );
+  });
+
+  test("returns empty string when `tags` is missing", () => {
+    expect(tagNamesFromObjects({ other: 1 })).toBe("");
+  });
+
+  test("returns empty string when `tags` is not an array", () => {
+    expect(tagNamesFromObjects({ tags: "finance" })).toBe("");
+    expect(tagNamesFromObjects({ tags: { name: "x" } })).toBe("");
+    expect(tagNamesFromObjects({ tags: null })).toBe("");
+  });
+
+  test("skips non-object entries (asObjectish undefined)", () => {
+    expect(tagNamesFromObjects({ tags: ["plain", 42, null, { name: "kept" }] })).toBe("kept");
+  });
+
+  test("skips object entries whose `name` is missing, non-string, or empty", () => {
+    expect(
+      tagNamesFromObjects({
+        tags: [{ name: 5 }, { other: "x" }, { name: "" }, { name: "good" }],
+      }),
+    ).toBe("good");
+  });
+
+  test("returns empty string for an array of only skippable entries", () => {
+    expect(tagNamesFromObjects({ tags: [{ name: "" }, { name: 1 }, "x"] })).toBe("");
+  });
+});
+
+describe("fieldsFromKeys", () => {
+  test("reads the requested string keys off an objectish row", () => {
+    const extract = fieldsFromKeys(["name", "owner"]);
+    expect(extract({ name: "Revenue", owner: "fin", extra: "ignored" })).toEqual([
+      "Revenue",
+      "fin",
+    ]);
+  });
+
+  test("missing/non-string keys collapse to empty strings", () => {
+    const extract = fieldsFromKeys(["name", "missing"]);
+    expect(extract({ name: "x", missing: 42 })).toEqual(["x", ""]);
+  });
+
+  test("appends tag text when opts.tags is true", () => {
+    const extract = fieldsFromKeys(["name"], { tags: true });
+    expect(extract({ name: "x", tags: ["a", "b"] })).toEqual(["x", "a b"]);
+  });
+
+  test("does not append tags when opts.tags is false or omitted", () => {
+    expect(fieldsFromKeys(["name"], { tags: false })({ name: "x", tags: ["a"] })).toEqual(["x"]);
+    expect(fieldsFromKeys(["name"])({ name: "x", tags: ["a"] })).toEqual(["x"]);
+  });
+
+  test("returns null for a non-objectish item", () => {
+    const extract = fieldsFromKeys(["name"]);
+    expect(extract(null)).toBeNull();
+    expect(extract(42)).toBeNull();
+    expect(extract("str")).toBeNull();
+  });
+
+  test("treats an array item as objectish (asObjectish accepts arrays)", () => {
+    // asObjectish accepts arrays, so string-indexed keys resolve to "".
+    const extract = fieldsFromKeys(["0"]);
+    expect(extract(["first", "second"])).toEqual(["first"]);
+  });
+});
+
+describe("nestedString", () => {
+  test("reads a leaf string down a multi-segment path", () => {
+    const root = { metadata: { labels: { app: "web" } } };
+    expect(nestedString(root, ["metadata", "labels", "app"])).toBe("web");
+  });
+
+  test("returns the value for a single-segment path", () => {
+    expect(nestedString({ kind: "Deployment" }, ["kind"])).toBe("Deployment");
+  });
+
+  test("returns empty string when an intermediate segment is missing", () => {
+    expect(nestedString({ metadata: {} }, ["metadata", "labels", "app"])).toBe("");
+  });
+
+  test("returns empty string when an intermediate segment is not a record", () => {
+    expect(nestedString({ metadata: "scalar" }, ["metadata", "name"])).toBe("");
+  });
+
+  test("returns empty string when the leaf is not a string", () => {
+    expect(nestedString({ spec: { replicas: 3 } }, ["spec", "replicas"])).toBe("");
+  });
+
+  test("returns empty string for a missing leaf", () => {
+    expect(nestedString({ spec: {} }, ["spec", "absent"])).toBe("");
+  });
+
+  test("handles an empty path via the at(-1) fallback", () => {
+    // path.at(-1) is undefined → keyed by "" → missing leaf → "".
+    expect(nestedString({ "": "weird" }, [])).toBe("weird");
+    expect(nestedString({ a: 1 }, [])).toBe("");
+  });
+});
+
+describe("makeQueryFilter", () => {
+  test("builds a filter that delegates to filterByQuery with the extractor", () => {
+    const filter = makeQueryFilter(fieldsFromKeys(["name"]));
+    const items = [{ name: "Revenue" }, { name: "Latency" }, "non-object"];
+    const out = filter(items, { query: "rev" });
+    expect(out).toEqual([{ name: "Revenue" }]);
+  });
+
+  test("honors the limit option passed through to filterByQuery", () => {
+    const filter = makeQueryFilter(fieldsFromKeys(["name"]));
+    const items = [{ name: "a-1" }, { name: "a-2" }, { name: "a-3" }];
+    expect(filter(items, { query: "a-", limit: 2 })).toHaveLength(2);
   });
 });

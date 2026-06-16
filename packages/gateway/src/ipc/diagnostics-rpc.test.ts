@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalIndex } from "../index/local-index.ts";
@@ -902,6 +902,150 @@ describe("index.querySql", () => {
         }
         expect(caught).toBeInstanceOf(DiagnosticsRpcError);
         expect((caught as DiagnosticsRpcError).rpcCode).toBe(-32602);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+describe("serializeHealthSnapshot via diag.snapshot (all optional fields populated)", () => {
+  test("serializes a connector with retry/backoff/error/last-sync fields set", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-health-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        // A sync_state row whose retry_after / backoff_until / last_error / last_sync_at are all
+        // non-null drives every conditional arm of serializeHealthSnapshot (and the non-null
+        // lastSuccessfulSyncByConnector branch of serializeMetrics).
+        db.run(
+          `INSERT INTO sync_state
+             (connector_id, last_sync_at, next_sync_token, health_state, retry_after, backoff_until, backoff_attempt, last_error)
+           VALUES ('github', 1000, NULL, 'degraded', 2000, 3000, 2, 'boom')`,
+        );
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        expect(r.kind).toBe("hit");
+        const v = (
+          r as {
+            value: {
+              connectorHealth: Array<{
+                connectorId: string;
+                retryAfterMs?: number;
+                backoffUntilMs?: number;
+                lastError?: string;
+                lastSuccessfulSyncMs?: number;
+              }>;
+            };
+          }
+        ).value;
+        const gh = v.connectorHealth.find((h) => h.connectorId === "github");
+        expect(gh).toBeDefined();
+        expect(gh?.retryAfterMs).toBe(2000);
+        expect(gh?.backoffUntilMs).toBe(3000);
+        expect(gh?.lastError).toBe("boom");
+        expect(gh?.lastSuccessfulSyncMs).toBe(1000);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+describe("telemetry marker path safety (symlink + non-temp dataDir)", () => {
+  test("setEnabled(false) refuses to write through a symlinked marker path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sym-"));
+    try {
+      const marker = join(dir, ".nimbus-telemetry-disabled");
+      const target = join(dir, "real-target.txt");
+      writeFileSync(target, "x");
+      try {
+        symlinkSync(target, marker);
+      } catch {
+        // Some Windows CI runners forbid symlink creation without privilege; skip in that case.
+        return;
+      }
+      expect(() =>
+        dispatchDiagnosticsRpc("telemetry.setEnabled", { enabled: false }, makeCtx(dir)),
+      ).toThrow(/symlink/i);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("disableMark writes the marker when dataDir is NOT under the OS temp dir", () => {
+    // A repo-local directory is not under os.tmpdir(), so rpcTelemetryDisableMark's body runs.
+    const dir = mkdtempSync(join(process.cwd(), "nimbus-diag-nontmp-"));
+    try {
+      const r = dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(dir));
+      expect((r as { kind: "hit"; value: { ok: boolean } }).value.ok).toBe(true);
+      expect(existsSync(join(dir, ".nimbus-telemetry-disabled"))).toBe(true);
+    } finally {
+      rmTmp(dir);
+    }
+  });
+
+  test("disableMark resolves a non-existent dataDir to its logical path (realpath catch arm)", () => {
+    // The dir does not exist on disk → resolvedPathOrLogical's realpathSync throws → falls back to
+    // the logical path (the catch arm). Being not-under-temp, the under-temp guard passes; the marker
+    // write then fails with ENOENT (no parent dir) — but the realpath catch + under-temp-false arms
+    // have already executed by then.
+    const dir = join(process.cwd(), `nimbus-diag-missing-${Date.now()}`);
+    expect(() => dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(dir))).toThrow(
+      /ENOENT/,
+    );
+  });
+
+  test("disableMark refuses when dataDir resolves exactly to the OS temp root", () => {
+    // dir === tmpRoot → isResolvedDirUnderOsTemp returns true on the equality arm.
+    expect(() => dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(tmpdir()))).toThrow(
+      /temporary directory/i,
+    );
+  });
+});
+
+describe("index.querySql — non-guard error rethrow", () => {
+  test("a non-SqlGuardError from the underlying read propagates unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-sqlerr-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        // A syntactically-valid-but-failing SELECT (unknown table) surfaces a raw SQLite error,
+        // not a SqlGuardError → the dispatcher rethrows it without remapping to -32602.
+        let caught: unknown;
+        try {
+          await dispatchDiagnosticsRpc(
+            "index.querySql",
+            { sql: "SELECT * FROM a_table_that_does_not_exist" },
+            ctx,
+          );
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeDefined();
+        expect(caught).not.toBeInstanceOf(DiagnosticsRpcError);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmTmp(dir);
+    }
+  });
+});
+
+describe("db.restore.preview — valid path", () => {
+  test("previews a real snapshot taken from the same index", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-restore-ok-"));
+    try {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const take = await dispatchDiagnosticsRpc("db.snapshot.take", null, ctx);
+        const path = (take as { value: { path: string } }).value.path;
+        const r = await dispatchDiagnosticsRpc("db.restore.preview", { path }, ctx);
+        expect(r.kind).toBe("hit");
       } finally {
         db.close();
       }

@@ -67,6 +67,18 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "dirPrefix", prefix: "packages/gateway/src/perf/" },
   { kind: "dirPrefix", prefix: "packages/gateway/src-native/" },
 
+  // ── Editor / desktop / admin UIs — DOM + VS Code/Electron host APIs, no in-process seam ──
+  // The VS Code extension (activation lifecycle, webview message bridge, status-bar, HITL router)
+  // and the admin-console renderer run against editor/Electron host APIs and a DOM that the
+  // in-process bun:test layer cannot drive — same untestable-UI-shell class as `cli/src/commands/
+  // tui.tsx`. Their pure helpers live in sibling modules that ARE covered.
+  { kind: "dirPrefix", prefix: "packages/vscode-extension/src/" },
+  { kind: "dirPrefix", prefix: "packages/admin-console/src/" },
+
+  // ── Build / release entry scripts (top-level await; run by `bun run`, not importable cleanly) ──
+  { kind: "exact", path: "packages/gateway/compile-gateway.ts" },
+  { kind: "exact", path: "packages/gateway/terminate-gateway-binary.ts" },
+
   // ── UI / React-Ink entry ──
   { kind: "exact", path: "packages/cli/src/commands/tui.tsx" },
 
