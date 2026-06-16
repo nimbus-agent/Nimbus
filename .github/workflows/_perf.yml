@@ -86,6 +86,11 @@ jobs:
     concurrency:
       group: bench-${{ github.workflow }}-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: false
+    env:
+      # Copied to a job-level env so step-level `if:` can gate on the secret's
+      # presence (secrets cannot be referenced directly in `if:`). Absent secret
+      # => Bencher steps skip cleanly (forks, repo copies, pre-ops-setup window).
+      BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -173,6 +178,74 @@ jobs:
           name: perf-${{ steps.runner-id.outputs.id }}-${{ github.sha }}
           path: ${{ runner.temp }}/run-history.jsonl
           retention-days: 90
+
+      # ── Bencher Cloud advisory trend ingest (perf strategy Phase 2) ──────────
+      # Runs alongside github-action-benchmark during the soak window. Advisory
+      # only: the in-code gateClass comparator stays the sole gate. Skips when
+      # BENCHER_API_KEY is unset (forks / pre-ops-setup) and on fork PRs.
+      - name: Install Bencher CLI
+        if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
+        uses: bencherdev/bencher@ec56bb69a7f34096002ca3384d10e2f6676b063e # v0.6.7
+
+      - name: Emit Bencher BMF
+        id: bencher-emit
+        if: |
+          env.BENCHER_API_KEY != '' && (
+            matrix.os == 'ubuntu-24.04' ||
+            github.event_name != 'schedule' ||
+            github.event.schedule == '0 4 * * 0'
+          )
+        continue-on-error: true # advisory: a BMF-emit failure must never red the perf job (publish then skips on the empty `surfaces` output)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/perf/emit-bencher-bmf.ts \
+            --in "${RUNNER_TEMP}/run-history.jsonl" \
+            --out "${RUNNER_TEMP}/bencher.json"
+          # Expose the surface count so the publish step can skip an empty BMF.
+          surfaces="$(jq 'length' "${RUNNER_TEMP}/bencher.json")"
+          echo "surfaces=${surfaces}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Bencher
+        # Skip empty BMF (all-stub run) and fork PRs (secrets unavailable). On
+        # push -> branch main; on a same-repo PR -> the head ref with main as the
+        # start point. Advisory: no thresholds configured => never fails; the
+        # `continue-on-error` makes a transient API error non-blocking too.
+        if: |
+          steps.bencher-emit.outputs.surfaces != '' &&
+          steps.bencher-emit.outputs.surfaces != '0' && (
+            github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+          )
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RUNNER_ID: ${{ steps.runner-id.outputs.id }}
+        run: |
+          set -euo pipefail
+          common=(
+            --project nimbus
+            --key "${BENCHER_API_KEY}"
+            --adapter json
+            --file "${RUNNER_TEMP}/bencher.json"
+            --testbed "${RUNNER_ID}"
+            --github-actions "${GITHUB_TOKEN}"
+          )
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            bencher run \
+              "${common[@]}" \
+              --branch "${GITHUB_HEAD_REF}" \
+              --start-point main \
+              --start-point-hash "${BASE_SHA}" \
+              --start-point-clone-thresholds \
+              --start-point-reset \
+              --ci-only-thresholds
+          else
+            bencher run "${common[@]}" --branch main
+          fi
 
       # Push-to-main, UBUNTU LEG ONLY: feed the trend-class p95/RSS surfaces to
       # the github-action-benchmark dashboard on the orphan `perf-data` branch.
