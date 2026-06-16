@@ -22,26 +22,39 @@ export type ConnectorsConfig = ReadonlyMap<TeamCredentialConnector, ConnectorCre
 
 const TABLE_PREFIX = "[connectors.";
 
+function processConnectorLine(
+  trimmed: string,
+  state: { current: string | undefined },
+  accum: Map<string, Record<string, string>>,
+): void {
+  if (isTableHeader(trimmed)) {
+    state.current =
+      trimmed.startsWith(TABLE_PREFIX) && trimmed.endsWith("]")
+        ? trimmed.slice(TABLE_PREFIX.length, -1)
+        : undefined;
+    if (state.current !== undefined && !accum.has(state.current)) {
+      accum.set(state.current, {});
+    }
+    return;
+  }
+  if (state.current === undefined) return;
+  const kv = splitKeyValue(trimmed);
+  if (kv === undefined) return;
+  const bag = accum.get(state.current);
+  if (bag !== undefined) {
+    bag[kv.key] = parseString(kv.valRaw);
+  }
+}
+
 /** Phase 1: accumulate `[connectors.<name>]` tables into a name → key/value bag map. */
 function accumulateConnectorTables(source: string): Map<string, Record<string, string>> {
   const accum = new Map<string, Record<string, string>>();
-  let current: string | undefined;
+  const state = { current: undefined as string | undefined };
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      current =
-        trimmed.startsWith(TABLE_PREFIX) && trimmed.endsWith("]")
-          ? trimmed.slice(TABLE_PREFIX.length, -1)
-          : undefined;
-      if (current !== undefined && !accum.has(current)) accum.set(current, {});
-      continue;
+    if (trimmed !== "") {
+      processConnectorLine(trimmed, state, accum);
     }
-    if (current === undefined) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    const bag = accum.get(current);
-    if (bag !== undefined) bag[kv.key] = parseString(kv.valRaw);
   }
   return accum;
 }
