@@ -309,7 +309,7 @@ describe("D21 (I27) extension — createShare call-site + consent-broker wiring 
         relPath: "packages/gateway/src/ipc/share-rpc.ts",
         contents: `const result = await createShare(req, deps);`,
       },
-      { relPath: ASSEMBLE, contents: `shareConsent.request(input, ttl);` },
+      { relPath: ASSEMBLE, contents: `requestApproval: () => shareConsent.request` },
     ]);
     expect(v).toHaveLength(0);
   });
@@ -337,7 +337,7 @@ describe("D21 (I27) extension — createShare call-site + consent-broker wiring 
         relPath: "packages/gateway/src/ipc/share-rpc.test.ts",
         contents: `await createShare(req, deps);`,
       },
-      { relPath: ASSEMBLE, contents: `shareConsent.request(input, ttl);` },
+      { relPath: ASSEMBLE, contents: `requestApproval: () => shareConsent.request` },
     ]);
     expect(v).toHaveLength(0);
   });
