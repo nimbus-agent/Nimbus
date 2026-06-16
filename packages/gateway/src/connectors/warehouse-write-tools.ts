@@ -9,56 +9,27 @@ export interface WarehouseWrite {
   readonly service: string;
 }
 
+/** Compact single-line builder so each entry below is one row, not a cloned multi-line literal. */
+const w = (actionType: string, toolId: string, service: string): WarehouseWrite => ({
+  actionType,
+  toolId,
+  service,
+});
+
 export const WAREHOUSE_BI_WRITES: readonly WarehouseWrite[] = [
-  { actionType: "snowflake.tag.set", toolId: "snowflake_tag_set", service: "snowflake" },
-  { actionType: "snowflake.comment.set", toolId: "snowflake_comment_set", service: "snowflake" },
-  {
-    actionType: "tableau.datasource.refresh",
-    toolId: "tableau_datasource_refresh",
-    service: "tableau",
-  },
-  {
-    actionType: "tableau.workbook.refresh",
-    toolId: "tableau_workbook_refresh",
-    service: "tableau",
-  },
-  {
-    actionType: "looker.datagroup.trigger",
-    toolId: "looker_datagroup_trigger",
-    service: "looker",
-  },
-  {
-    actionType: "looker.schedule.run_once",
-    toolId: "looker_schedule_run_once",
-    service: "looker",
-  },
-  {
-    actionType: "powerbi.dataset.refresh",
-    toolId: "powerbi_dataset_refresh",
-    service: "powerbi",
-  },
-  {
-    actionType: "powerbi.dataflow.refresh",
-    toolId: "powerbi_dataflow_refresh",
-    service: "powerbi",
-  },
-  {
-    actionType: "montecarlo.incident.acknowledge",
-    toolId: "montecarlo_incident_acknowledge",
-    service: "montecarlo",
-  },
-  {
-    actionType: "montecarlo.incident.resolve",
-    toolId: "montecarlo_incident_resolve",
-    service: "montecarlo",
-  },
-  {
-    actionType: "bigeye.issue.acknowledge",
-    toolId: "bigeye_issue_acknowledge",
-    service: "bigeye",
-  },
-  { actionType: "bigeye.issue.resolve", toolId: "bigeye_issue_resolve", service: "bigeye" },
-] as const;
+  w("snowflake.tag.set", "snowflake_tag_set", "snowflake"),
+  w("snowflake.comment.set", "snowflake_comment_set", "snowflake"),
+  w("tableau.datasource.refresh", "tableau_datasource_refresh", "tableau"),
+  w("tableau.workbook.refresh", "tableau_workbook_refresh", "tableau"),
+  w("looker.datagroup.trigger", "looker_datagroup_trigger", "looker"),
+  w("looker.schedule.run_once", "looker_schedule_run_once", "looker"),
+  w("powerbi.dataset.refresh", "powerbi_dataset_refresh", "powerbi"),
+  w("powerbi.dataflow.refresh", "powerbi_dataflow_refresh", "powerbi"),
+  w("montecarlo.incident.acknowledge", "montecarlo_incident_acknowledge", "montecarlo"),
+  w("montecarlo.incident.resolve", "montecarlo_incident_resolve", "montecarlo"),
+  w("bigeye.issue.acknowledge", "bigeye_issue_acknowledge", "bigeye"),
+  w("bigeye.issue.resolve", "bigeye_issue_resolve", "bigeye"),
+];
 
 export const WAREHOUSE_BI_WRITE_TOOL_IDS: ReadonlySet<string> = new Set(
   WAREHOUSE_BI_WRITES.map((w) => w.toolId),

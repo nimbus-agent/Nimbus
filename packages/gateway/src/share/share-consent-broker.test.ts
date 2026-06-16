@@ -1,5 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { ShareConsentBroker } from "./share-consent-broker.ts";
+
+// Track every broker so afterEach can clear its TTL timers. A fire-and-forget request() (result
+// ignored) otherwise leaves a dangling unref'd setTimeout that hangs `bun test` teardown on Windows.
+const liveBrokers: ShareConsentBroker[] = [];
+function makeBroker(): ShareConsentBroker {
+  const b = new ShareConsentBroker();
+  liveBrokers.push(b);
+  return b;
+}
+afterEach(() => {
+  for (const b of liveBrokers.splice(0)) b.clear();
+});
 
 function input(over: Record<string, unknown> = {}) {
   return {
@@ -14,7 +26,7 @@ function input(over: Record<string, unknown> = {}) {
 
 describe("ShareConsentBroker", () => {
   test("broadcasts the approval request with a requestId and the input", () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     const seen: Array<{ method: string; params: unknown }> = [];
     broker.setBroadcast((method, params) => seen.push({ method, params }));
     void broker.request(input(), 10_000);
@@ -27,7 +39,7 @@ describe("ShareConsentBroker", () => {
   });
 
   test("respond(true) resolves the pending request and clears it", async () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     let requestId = "";
     broker.setBroadcast((_m, params) => {
       requestId = (params as { requestId: string }).requestId;
@@ -39,7 +51,7 @@ describe("ShareConsentBroker", () => {
   });
 
   test("respond(false) resolves the pending request with a deny", async () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     let requestId = "";
     broker.setBroadcast((_m, params) => {
       requestId = (params as { requestId: string }).requestId;
@@ -50,13 +62,13 @@ describe("ShareConsentBroker", () => {
   });
 
   test("respond to an unknown id returns false", () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     broker.setBroadcast(() => {});
     expect(broker.respond("does-not-exist", true)).toBe(false);
   });
 
   test("the TTL safety-net resolves false (fail-closed) when the owner never answers", async () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     broker.setBroadcast(() => {});
     const pending = broker.request(input(), 5);
     expect(await pending).toBe(false);
@@ -64,8 +76,18 @@ describe("ShareConsentBroker", () => {
   });
 
   test("a fresh broker with no broadcast bound does not throw on request", async () => {
-    const broker = new ShareConsentBroker();
+    const broker = makeBroker();
     const pending = broker.request(input(), 5);
     expect(await pending).toBe(false);
+  });
+
+  test("clear() cancels pending requests and their TTL timers", () => {
+    const broker = makeBroker();
+    broker.setBroadcast(() => {});
+    void broker.request(input(), 10_000);
+    void broker.request(input(), 10_000);
+    expect(broker.pendingIds()).toHaveLength(2);
+    broker.clear();
+    expect(broker.pendingIds()).toHaveLength(0);
   });
 });
