@@ -395,6 +395,7 @@ Immediately AFTER the existing `- name: Upload run history artifact` step, add:
       # BENCHER_API_KEY is unset (forks / pre-ops-setup) and on fork PRs.
       - name: Install Bencher CLI
         if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
         uses: bencherdev/bencher@<sha> # <tag>
 ```
 
@@ -411,6 +412,7 @@ After the install step:
             github.event_name != 'schedule' ||
             github.event.schedule == '0 4 * * 0'
           )
+        continue-on-error: true # advisory: a BMF-emit failure must never red the perf job (publish then skips on the empty `surfaces` output)
         shell: bash
         run: |
           set -euo pipefail
@@ -513,11 +515,13 @@ Immediately AFTER the existing `- name: Run reference benchmark (3 runs, all sur
       # workflow only runs then). Advisory; skips when BENCHER_API_KEY is unset.
       - name: Install Bencher CLI
         if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
         uses: bencherdev/bencher@<sha> # <tag>
 
       - name: Emit Bencher BMF (reference)
         id: bencher-emit
         if: ${{ env.BENCHER_API_KEY != '' }}
+        continue-on-error: true # advisory: a BMF-emit failure must never red the reference run
         shell: bash
         run: |
           set -euo pipefail
@@ -653,7 +657,7 @@ A separate plan/PR after ~2 weeks / ~10 main pushes confirm Bencher's dashboard 
 
 ## Self-review
 
-**Spec coverage:** §4 mapper → Task 1; §4.2 BMF shape → Task 1; §5.1 floor-gated placement → Task 1 + Task 6 Step 5; §5.2 CLI → Task 2; §5.3 install + secret-presence guard → Task 3 Steps 1-2; §5.4 branch/event + testbed-from-runner-id + fork guard → Task 3 Steps 3-4; §5.5 advisory `--ci-only-thresholds` → Task 3 Step 4; §5.6 `continue-on-error` + skip-empty → Task 3 Steps 3-4; §6 ops prereqs → Manual checklist; §7 dormant reference ingest → Task 4; §9 testing → Tasks 1-2 + Task 6; §10 rollout/relaxed ordering → secret guard (Task 3) + Task 6; CHANGELOG convention → Task 5. PR-2 (§7 retirement) intentionally deferred. No gaps.
+**Spec coverage:** §4 mapper → Task 1; §4.2 BMF shape → Task 1; §5.1 floor-gated placement → Task 1 + Task 6 Step 5; §5.2 CLI → Task 2; §5.3 install + secret-presence guard → Task 3 Steps 1-2; §5.4 branch/event + testbed-from-runner-id + fork guard → Task 3 Steps 3-4; §5.5 advisory `--ci-only-thresholds` → Task 3 Step 4; §5.6 `continue-on-error` (ALL Bencher steps — install/emit/publish — are fail-soft) + skip-empty → Task 3 Steps 2-4, Task 4 Step 2; §6 ops prereqs → Manual checklist; §7 dormant reference ingest → Task 4; §9 testing → Tasks 1-2 + Task 6; §10 rollout/relaxed ordering → secret guard (Task 3) + Task 6; CHANGELOG convention → Task 5. PR-2 (§7 retirement) intentionally deferred. No gaps.
 
 **Placeholder scan:** The only `<sha> # <tag>` tokens are the GitHub Action pin, with the exact resolve commands given in Task 3 — a release SHA genuinely not knowable until impl time, not a content placeholder. No TBD/TODO in code.
 
