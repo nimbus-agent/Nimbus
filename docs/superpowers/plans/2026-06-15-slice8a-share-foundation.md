@@ -49,6 +49,7 @@
 ## Task 1: Share redaction (`share-redaction.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/share-redaction.ts`
 - Test: `packages/gateway/src/share/share-redaction.test.ts`
 
@@ -191,6 +192,7 @@ git commit -m "feat(share): share-redaction — secrets + PII families + caller 
 ## Task 2: SSRF-safe fetch (`safe-fetch.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/safe-fetch.ts`
 - Test: `packages/gateway/src/share/safe-fetch.test.ts`
 
@@ -323,6 +325,7 @@ git commit -m "feat(share): safe-fetch SSRF guard (block loopback/private, resol
 ## Task 3: Vault-only signing keypair (`share-keypair.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/share-keypair.ts`
 - Test: `packages/gateway/src/share/share-keypair.test.ts`
 
@@ -426,6 +429,7 @@ git commit -m "feat(share): Vault-only share.signing keypair (mirrors anchor-key
 ## Task 4: Share format codec (`share-format.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/share-format.ts`
 - Test: `packages/gateway/src/share/share-format.test.ts`
 
@@ -640,6 +644,7 @@ git commit -m "feat(share): nimbus-share/v1 codec — canonical body, content ha
 ## Task 5: Migration V41 — `share_records`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/share-records-v41-sql.ts`
 - Modify: `packages/gateway/src/index/local-index.ts` (bump `CURRENT_SCHEMA_VERSION` 40 → 41)
 - Modify: `packages/gateway/src/index/migrations/runner.ts` (register V41 step)
@@ -704,15 +709,19 @@ CREATE INDEX IF NOT EXISTS idx_share_records_created ON share_records(created_at
 - [ ] **Step 4: Register the migration + bump the version**
 
 In `packages/gateway/src/index/local-index.ts`, change the version constant:
+
 ```typescript
 export const CURRENT_SCHEMA_VERSION = 41;
 ```
 
 In `packages/gateway/src/index/migrations/runner.ts`: add the import at the top alongside the other `*-vNN-sql` imports:
+
 ```typescript
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 ```
+
 and append to the `INDEXED_SCHEMA_STEPS` array, after the V40 step:
+
 ```typescript
   simpleStep(40, 41, "share_records (share & virality ledger v41)", SHARE_RECORDS_V41_SQL),
 ```
@@ -736,6 +745,7 @@ git commit -m "feat(share): V41 share_records ledger"
 ## Task 6: Share store (`share-store.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/share-store.ts`
 - Test: `packages/gateway/src/share/share-store.test.ts`
 
@@ -885,6 +895,7 @@ git commit -m "feat(share): share_records store (insert/list/get/prune, expired-
 ## Task 7: HITL action type `share.publish` + I27 runtime test
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/executor.ts` (add `"share.publish"` to `HITL_REQUIRED_BACKING`)
 - Modify: `packages/gateway/src/security-invariants.test.ts` (add I27 block)
 
@@ -905,6 +916,7 @@ Run: `bun test packages/gateway/src/security-invariants.test.ts -t "I27"`
 Expected: FAIL — `share.publish` not in the set.
 
 - [ ] **Step 3: Add the action type.** In `packages/gateway/src/engine/executor.ts`, add to the `HITL_REQUIRED_BACKING` Set literal (alphabetical-ish, near other namespaced entries):
+
 ```typescript
   "share.publish",
 ```
@@ -926,6 +938,7 @@ git commit -m "feat(share): add share.publish to HITL frozen set (I27, runtime t
 ## Task 8: Consent broker + share gate (`share-consent-broker.ts`, `share-gate.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/share-consent-broker.ts`
 - Create: `packages/gateway/src/share/share-gate.ts`
 - Test: `packages/gateway/src/share/share-gate.test.ts`
@@ -1126,6 +1139,7 @@ git commit -m "feat(share): I27 share-gate (redact -> owner HITL -> sign -> pers
 ## Task 9: verify-share logic (`verify-share.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/verify-share.ts`
 - Test: `packages/gateway/src/share/verify-share.test.ts`
 
@@ -1207,6 +1221,7 @@ git commit -m "feat(share): verify-share (bytes + file/url via SSRF-safe fetch)"
 ## Task 10: IPC surface (`share-rpc.ts`) + dispatcher wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/share-rpc.ts`
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (wire `share.*`)
 - Modify: the LAN-forbidden registry so `share.create` is LAN-forbidden (verify the real mechanism — see Step 4)
@@ -1322,6 +1337,7 @@ git commit -m "feat(share): share.* IPC (create/verify/list/get/pubkey/prune) + 
 ## Task 11: CLI commands (`share`, `verify-share`)
 
 **Files:**
+
 - Create: `packages/cli/src/commands/share.ts`
 - Modify: `packages/cli/src/commands/index.ts` (export `runShare`, `runVerifyShare`)
 - Modify: `packages/cli/src/index.ts` (register in `COMMAND_HANDLERS`)
@@ -1458,10 +1474,12 @@ export async function runVerifyShare(args: string[]): Promise<void> {
 > Confirm the real import paths for `IPCClient`, `getCliPlatformPaths`, `readGatewayState` by reading `commands/audit.ts` — match them exactly. `share.verify` accepts either `bytesB64` (local file, read CLI-side) or `url` (gateway-side SSRF-safe fetch).
 
 - [ ] **Step 4: Register the commands.** In `packages/cli/src/commands/index.ts` add exports for `runShare`, `runVerifyShare`. In `packages/cli/src/index.ts` add to `COMMAND_HANDLERS`:
+
 ```typescript
   share: runShare,
   "verify-share": runVerifyShare,
 ```
+
 and add `runShare, runVerifyShare` to the import from `./commands/index.ts`.
 
 - [ ] **Step 5: Run to verify it passes**
@@ -1481,17 +1499,20 @@ git commit -m "feat(cli): nimbus share (create/list/prune/pubkey) + verify-share
 ## Task 12: Tauri allowlist — 4 read-only methods
 
 **Files:**
+
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs`
 
 - [ ] **Step 1: Read the current `ALLOWED_METHODS` array + the `allowlist_exact_size` test** to get the exact current count and confirm alphabetical ordering is enforced.
 
 - [ ] **Step 2: Add the four read-only methods** in alphabetical position (after `scim.*`, before `team.*`):
+
 ```rust
     "share.get",
     "share.list",
     "share.pubkey",
     "share.verify",
 ```
+
 **Do NOT add `share.create` or `share.prune`** (outbound/mutating — CLI-only, I7).
 
 - [ ] **Step 3: Update the size assertion** in `allowlist_exact_size` by +4 (read the current value first; do not guess).
@@ -1513,6 +1534,7 @@ git commit -m "feat(share): expose read-only share.{get,list,pubkey,verify} to r
 ## Task 13: Static D21 confinement
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts`
 - Test: the structure-audit has its own test harness — add a case if one exists; otherwise the `bun run` invocation is the check.
 
@@ -1548,6 +1570,7 @@ function checkD21(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 ```
+
 Wire `checkD21(files)` into the aggregation in `run()` exactly like the D20 call (push its violations into the same list; match the existing `Violation` shape — adjust field names to the real type).
 
 - [ ] **Step 3: Run the audit**
@@ -1567,6 +1590,7 @@ git commit -m "feat(share): static D21 — confine share.publish + share.signing
 ## Task 14: Docs — SECURITY-INVARIANTS, CLAUDE.md, skill
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (add I27 + D21 rationale/anti-patterns)
 - Modify: `CLAUDE.md` (add the I27 bullet to the invariant list; update the static-complement line to include D21; bump "invariants through I27" / schema V41 in the status line per the connector-docs-changelog convention — note: status-line edits go in CHANGELOG/doc-refs, not the merge-conflict-prone CLAUDE status line; follow the doc-status-drift memory)
 - Modify: `docs/CHANGELOG.md` (Slice 8a entry)
@@ -1594,6 +1618,7 @@ git commit -m "docs(share): I27 + D21 rationale, CHANGELOG 8a entry"
 ## Task 15: E2E CLI test (real gateway + file sink)
 
 **Files:**
+
 - Create: `packages/cli/test/e2e/share.e2e.test.ts` (match the existing e2e dir/naming — read a sibling e2e test first)
 
 - [ ] **Step 1: Write the e2e test** — spin a real gateway subprocess, seed a session (insert `audit_log` rows with a `session_id` + a `tool_call_log` row), auto-approve the HITL via the e2e consent seam (read how preflight/tribal e2e tests approve owner HITL — likely an env seam or a `share.approvalRespond` call), run `nimbus share create <session> --out <tmp>.json`, then `nimbus verify-share <tmp>.json`, and assert the output reports a VALID signature and that the file contains no raw email/secret.
