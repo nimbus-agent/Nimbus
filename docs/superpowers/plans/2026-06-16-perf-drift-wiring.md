@@ -559,7 +559,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { parseLastHistoryLine } from "./history-jsonl.ts";
 ```
 
-(c) Delete the local `ghSpawn` function and the local `ghIssueList` function entirely (both are replaced by `GhCli` methods).
+(c) Delete the local `ghSpawn` function and the local `ghIssueList` function entirely (both are replaced by `GhCli` methods). **Keep the `GhIssue` interface** (`interface GhIssue { number: number; title: string }`) — it sits right above those functions but is still used by `upsertDriftIssue` and `runDriftCheckMain`, so deleting it would break the compile.
 
 (d) Replace the exported `parseHistoryLines` function:
 
