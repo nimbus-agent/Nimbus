@@ -205,14 +205,16 @@ jobs:
             --in "${RUNNER_TEMP}/run-history.jsonl" \
             --out "${RUNNER_TEMP}/bencher.json"
           # Expose the surface count so the publish step can skip an empty BMF.
-          surfaces="$(jq 'length' "${RUNNER_TEMP}/bencher.json")"
+          # `|| echo 0` keeps a malformed/garbage BMF from tripping pipefail.
+          surfaces="$(jq 'length' "${RUNNER_TEMP}/bencher.json" 2>/dev/null || echo 0)"
           echo "surfaces=${surfaces}" >> "$GITHUB_OUTPUT"
 
       - name: Publish to Bencher
-        # Skip empty BMF (all-stub run) and fork PRs (secrets unavailable). On
-        # push -> branch main; on a same-repo PR -> the head ref with main as the
-        # start point. Advisory: no thresholds configured => never fails; the
-        # `continue-on-error` makes a transient API error non-blocking too.
+        # Skip empty BMF (all-stub run) and fork PRs (secrets unavailable). On a
+        # same-repo PR -> the head ref with main as the start point; on any other
+        # event (push / schedule / dispatch) -> branch main. Advisory: no
+        # thresholds configured => never fails; the `continue-on-error` makes a
+        # transient API error non-blocking too.
         if: |
           steps.bencher-emit.outputs.surfaces != '' &&
           steps.bencher-emit.outputs.surfaces != '0' && (
