@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { medianOf } from "../../packages/gateway/src/perf/baseline-median.ts";
@@ -13,6 +13,7 @@ import type { SloThreshold } from "../../packages/gateway/src/perf/slo-threshold
 import { SLO_THRESHOLDS } from "../../packages/gateway/src/perf/slo-thresholds.ts";
 import { isFloorMetric } from "../../packages/gateway/src/perf/threshold-comparator.ts";
 import type { BenchSurfaceId, RunnerKind } from "../../packages/gateway/src/perf/types.ts";
+import { parseLastHistoryLine } from "./history-jsonl.ts";
 
 // ─── Pure core ───────────────────────────────────────────────────────────────
 
@@ -89,91 +90,6 @@ interface GhIssue {
   title: string;
 }
 
-async function ghSpawn(
-  args: readonly string[],
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
-  const exitCode = await proc.exited;
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  return { exitCode, stdout, stderr };
-}
-
-async function ghIssueList(label: string): Promise<GhIssue[]> {
-  const r = await ghSpawn([
-    "issue",
-    "list",
-    "--label",
-    label,
-    "--state",
-    "open",
-    "--json",
-    "number,title",
-  ]);
-  if (r.exitCode !== 0) return [];
-  const text = r.stdout.trim();
-  if (text === "") return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  const result: GhIssue[] = [];
-  for (const x of parsed) {
-    if (
-      typeof x === "object" &&
-      x !== null &&
-      typeof (x as Record<string, unknown>)["number"] === "number" &&
-      typeof (x as Record<string, unknown>)["title"] === "string"
-    ) {
-      result.push({
-        number: (x as Record<string, unknown>)["number"] as number,
-        title: (x as Record<string, unknown>)["title"] as string,
-      });
-    }
-  }
-  return result;
-}
-
-async function upsertDriftIssue(
-  surfaceId: BenchSurfaceId,
-  runner: RunnerKind,
-  existingIssues: GhIssue[],
-  stderr: (s: string) => void,
-): Promise<void> {
-  const issueTitle = `perf: sustained drift detected on ${surfaceId} (${runner})`;
-  const existing = existingIssues.find((i) => i.title === issueTitle);
-
-  if (existing !== undefined) {
-    const r = await ghSpawn([
-      "issue",
-      "comment",
-      String(existing.number),
-      "--body",
-      `Drift re-detected on \`${surfaceId}\` for runner \`${runner}\`. The rolling-median detector has flagged a sustained regression again.`,
-    ]);
-    if (r.exitCode !== 0) {
-      stderr(`drift-check: gh issue comment failed for #${String(existing.number)}: ${r.stderr}`);
-    }
-  } else {
-    const r = await ghSpawn([
-      "issue",
-      "create",
-      "--title",
-      issueTitle,
-      "--label",
-      DRIFT_ISSUE_LABEL,
-      "--body",
-      `The rolling-median drift detector has flagged surface \`${surfaceId}\` on runner \`${runner}\`.\n\nThe last 3+ consecutive samples are each more than ${String(DRIFT_NOISE_FLOOR_PCT)}% worse than the rolling median of the preceding 7 samples. This indicates a sustained regression rather than a one-off spike.\n\nPlease investigate recent commits for performance regressions on this surface.`,
-    ]);
-    if (r.exitCode !== 0) {
-      stderr(`drift-check: gh issue create failed for ${surfaceId}: ${r.stderr}`);
-    }
-  }
-}
-
 /**
  * A v2 HistoryLine carries a `surfaces` map and `schema_version: 2`. v1 history
  * (median-of-per-run-p95 aggregation) is non-comparable, so it is skipped rather
@@ -189,30 +105,57 @@ function isHistoryLineV2(parsed: unknown): parsed is HistoryLine {
   );
 }
 
-export function parseHistoryLines(path: string): HistoryLine[] {
+/**
+ * Read the LAST line of a per-run `run-history.jsonl` artifact and return it only
+ * if it is a comparable v2 HistoryLine. Each perf run writes a fresh single-run
+ * file, so the last line is that run's result — one sample per run. A missing /
+ * unreadable / malformed / non-v2 artifact yields null (skipped by the caller).
+ */
+export function parseLatestV2Line(path: string): HistoryLine | null {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch {
-    return [];
+    return null;
   }
-  const lines: HistoryLine[] = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (isHistoryLineV2(parsed)) lines.push(parsed);
-      // skip schema_version 1 (non-comparable) or otherwise malformed lines
-    } catch {
-      // skip malformed lines
-    }
+  let line: HistoryLine;
+  try {
+    line = parseLastHistoryLine(raw);
+  } catch {
+    return null;
   }
-  return lines;
+  return isHistoryLineV2(line) ? line : null;
 }
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+async function upsertDriftIssue(
+  gh: GhCli,
+  surfaceId: BenchSurfaceId,
+  runner: RunnerKind,
+  existingIssues: GhIssue[],
+  tmpRoot: string,
+  stderr: (s: string) => void,
+): Promise<void> {
+  const issueTitle = `perf: sustained drift detected on ${surfaceId} (${runner})`;
+  if (existingIssues.some((i) => i.title === issueTitle)) {
+    // Create-only: a standing open issue already represents this drift. Posting a
+    // fresh comment every daily run would just be noise, so leave it untouched.
+    stderr(`drift-check: open issue already tracks ${surfaceId} (${runner}); leaving it`);
+    return;
+  }
+  const bodyDir = mkdtempSync(join(tmpRoot, "drift-issue-"));
+  const bodyFile = join(bodyDir, "body.md");
+  writeFileSync(
+    bodyFile,
+    `The rolling-median drift detector has flagged surface \`${surfaceId}\` on runner \`${runner}\`.\n\n` +
+      `The last 3+ consecutive \`main\` samples are each more than ${String(DRIFT_NOISE_FLOOR_PCT)}% worse than the rolling median of the preceding 7. This is a sustained regression, not a one-off spike.\n\n` +
+      `See the [/dev/bench dashboard](https://github.com/nimbus-agent/Nimbus/tree/perf-data/dev/bench) and investigate recent commits for a regression on this surface.\n`,
+    "utf8",
+  );
+  await gh.issueCreate({ title: issueTitle, label: DRIFT_ISSUE_LABEL, bodyFile });
 }
 
 export interface RunDriftCheckDeps {
@@ -227,7 +170,6 @@ export async function runDriftCheckMain(deps: RunDriftCheckDeps): Promise<void> 
   const tmpRoot = deps.tmpDir ?? tmpdir();
   const stderr = deps.stderr ?? ((s: string) => process.stderr.write(`${s}\n`));
 
-  // Fetch recent successful main runs
   let runs: { databaseId: number; headSha: string }[];
   try {
     runs = await deps.gh.runListRecentSuccesses({
@@ -239,28 +181,25 @@ export async function runDriftCheckMain(deps: RunDriftCheckDeps): Promise<void> 
     stderr(`drift-check: gh run list failed: ${errMsg(err)}; aborting`);
     return;
   }
-
   if (runs.length === 0) {
     stderr("drift-check: no successful main runs found; nothing to check");
     return;
   }
 
-  // `gh run list` returns runs newest-first; detectDrift walks the series as a
-  // time axis (index 0 = oldest), so reverse to oldest-first before collecting.
+  // `gh run list` is newest-first; detectDrift walks the series as a time axis
+  // (index 0 = oldest), so reverse to oldest-first before collecting.
   runs.reverse();
 
-  // Download artifacts and collect HistoryLines, oldest-first
   const scratchDir = mkdtempSync(join(tmpRoot, "drift-check-"));
   const historyLines: HistoryLine[] = [];
   for (const { databaseId, headSha } of runs) {
-    const artifactName = `perf-${runner}-${headSha}`;
     const dir = join(scratchDir, headSha);
     mkdirSync(dir, { recursive: true });
     let downloaded = false;
     try {
       downloaded = await deps.gh.runDownloadArtifact({
         runId: databaseId,
-        name: artifactName,
+        name: `perf-${runner}-${headSha}`,
         dir,
       });
     } catch (err) {
@@ -268,35 +207,42 @@ export async function runDriftCheckMain(deps: RunDriftCheckDeps): Promise<void> 
       continue;
     }
     if (!downloaded) continue;
-    const lines = parseHistoryLines(join(dir, "run-history.jsonl"));
-    historyLines.push(...lines);
+    const line = parseLatestV2Line(join(dir, "run-history.jsonl"));
+    if (line !== null) historyLines.push(line);
   }
-
   if (historyLines.length === 0) {
     stderr("drift-check: no history lines collected; nothing to check");
     return;
   }
 
-  // Load existing open drift issues once (to avoid N issue-list calls)
-  const existingIssues = await ghIssueList(DRIFT_ISSUE_LABEL);
-
-  // Check each trend (smaller-is-better) surface for drift
+  // First pass: which trend (smaller-is-better) surfaces are drifting?
+  const drifting: BenchSurfaceId[] = [];
   for (const [surfaceId, field] of TREND_METRIC_BY_SURFACE) {
     const series: DriftSample[] = historyLines
       .map((line) => {
         const surface: HistoryLineSurface | undefined = line.surfaces[surfaceId];
         if (surface === undefined) return null;
         const val = surface[field];
-        if (typeof val !== "number") return null;
-        return { value: val };
+        return typeof val === "number" ? { value: val } : null;
       })
       .filter((s): s is DriftSample => s !== null);
+    if (detectDrift(series, DRIFT_NOISE_FLOOR_PCT)) drifting.push(surfaceId);
+  }
+  if (drifting.length === 0) return; // no drift → no issue API calls at all
 
-    if (!detectDrift(series, DRIFT_NOISE_FLOOR_PCT)) continue;
+  // Fetch open drift issues once (best-effort: a list failure must not abort the
+  // create path — worst case is a duplicate issue a human dedups).
+  let existingIssues: GhIssue[] = [];
+  try {
+    existingIssues = await deps.gh.issueList({ label: DRIFT_ISSUE_LABEL });
+  } catch (err) {
+    stderr(`drift-check: gh issue list failed: ${errMsg(err)}; proceeding with none known`);
+  }
 
+  for (const surfaceId of drifting) {
     stderr(`drift-check: drift detected on ${surfaceId} (${runner}); upserting gh issue`);
     try {
-      await upsertDriftIssue(surfaceId, runner, existingIssues, stderr);
+      await upsertDriftIssue(deps.gh, surfaceId, runner, existingIssues, tmpRoot, stderr);
     } catch (err) {
       stderr(`drift-check: upsert failed for ${surfaceId}: ${errMsg(err)}`);
     }
