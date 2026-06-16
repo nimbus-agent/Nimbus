@@ -20,7 +20,11 @@ duplication, so `bun run audit:duplication` and `bun run audit:structure` are re
 
 Drive the **strict** duplication (`min-lines 5 / min-tokens 50 / threshold 3`, measured by
 `bunx jscpd packages`) from **5.51% to under 3% with margin (target ≈ ≤2.3%)** by
-**extracting shared scaffolding into helpers — never by adding jscpd ignores**. Then
+**extracting shared scaffolding into helpers — never by adding a jscpd ignore to dodge the
+threshold on handwritten source**. (The "never ignore" rule is scoped to handwritten
+source. Genuinely auto-generated artifacts *may* be ignored — but none currently
+contribute: SQL is already ignored via `**/*-sql.ts`, and the hotspots are all hand-written
+connector/auth/CLI scaffolding.) Then
 tighten the CI gate and align `.jscpd.json` so local == CI at `min-lines 5 / threshold 3`,
 and confirm the gate is green at the new threshold.
 
@@ -71,6 +75,17 @@ safe margin.
   builder, fetch (headers/auth), `extract` (response → items [+ optional `next`]), the
   break/continuation condition, and the `mapXToItem` mapping function. It reuses the
   existing `_lib/fetch-outcome.ts`, `sync/pass-cursor-sync-result.ts`, `sync/types.ts`.
+- **Behavioral scope (pure dedup):** the helper is **single-attempt-per-page,
+  break-on-error**, exactly like the current bodies. Rate-limiting stays where it already
+  is — `connectorFetch` calls `ctx.rateLimiter.acquire(serviceId)` and logs failures via
+  `ctx.logger.warn`. The helper adds **no** new retry/back-off, logging, or telemetry (that
+  would be behavior change + YAGNI). The caller passes a fetch closure delegating to
+  `connectorFetch`.
+- **Typing (Non-Negotiable #7 — no `any`):** the helper is strongly typed via generics on
+  the cursor type and the typed options object. External API payloads remain `unknown` at
+  the boundary — the existing `extract*(parsed: unknown)` / `mapXToItem(it: unknown)`
+  convention — and flow `unknown → mapped IndexedItem`. No `any`; `unknown` only at the
+  external-data boundary, as the codebase already does.
 - **Migrate** only the **single-pass paginated family** — the zotero centroid plus the
   ~45 partners the jscpd pairs identify. Multi-pass / cursor-continuation syncs that do
   *not* match the shape are left untouched (no force-fit).
@@ -87,6 +102,11 @@ safe margin.
   *and* cross-connector clones (imap↔protonmail, onedrive↔outlook, github-actions↔github).
 - The exact helper API is a planning detail — derived from reading the imap/protonmail and
   github/github-actions `server.ts` pairs.
+- **Packaging:** expose the helpers under a new sdk subpath export (e.g.
+  `@nimbus-dev/sdk/mcp`), mirroring the existing `./testing` / `./ipc` subpaths — pure
+  functions, tree-shakeable, no core-runtime bloat. No circular-dependency risk by
+  construction (connectors → sdk; sdk imports nothing from gateway/cli/ui), guarded by
+  dependency-cruiser + the structure audit.
 
 ### Stage C — Email-connector `tools.ts` + gateway email-mapping
 
@@ -94,10 +114,16 @@ safe margin.
 - `fastmail-email-mapping.ts` ↔ `protonmail-email-mapping.ts` shared logic → gateway
   `_lib`.
 
-### Stage D — Gateway auth scaffolding
+### Stage D — Gateway auth scaffolding (conditional — may be skipped under stop-at-margin)
 
-- `auth/oauth-registry.ts` internal per-provider repetition + `ipc/connector-rpc-handlers/
-  auth.ts` → a gateway-internal helper. Self-contained.
+- `auth/oauth-registry.ts` is **already** declaratively modeled (`OAuthProviderDescriptor` +
+  `OAUTH_PROVIDERS` record). The residual jscpd dup is the inline `buildAuthorizeParams`
+  closures sharing identical spreads — the PKCE group (google/microsoft/zoom/canva/
+  salesforce) and the non-PKCE group (miro/hubspot/figma). The fix is to extract a small
+  shared param-builder (e.g. `standardAuthorizeParams(a, { pkce })`), **not** a
+  re-architecture.
+- `ipc/connector-rpc-handlers/auth.ts` internal repetition → a gateway-internal helper.
+- Self-contained; only done if A–C don't already clear the margin.
 
 ### Stage E — CLI agent-brief + cross-package types
 
@@ -151,3 +177,22 @@ safe margin.
 3. `bun run audit:duplication` and `bun run audit:structure` pass locally.
 4. No behavior change; no new jscpd ignores added to dodge the threshold; perf surfaces
    untouched.
+
+## Review resolutions (2026-06-17)
+
+Dispositions of `…-design-review.md`, each verified against the code:
+
+- **Q1.1 (rate-limit/retry in the sync helper) — clarified, not added.** Rate-limiting is
+  already centralized in `connectorFetch` (`ctx.rateLimiter.acquire`); sync bodies are
+  single-attempt/break-on-error. Helper preserves this; adds no retry/back-off (pure dedup).
+- **Q1.2 (sdk exports / circular / bloat) — accepted, deferred to Stage B.** Reuse the
+  existing sdk subpath-export pattern; no circular risk by construction. Folded into Stage B.
+- **Q1.3 (auto-generated code vs "never ignore") — accepted.** Rule wording scoped to
+  handwritten source; no generated source is in scope (SQL already ignored).
+- **2.1 (declarative OAuth) — already implemented.** `OAuthProviderDescriptor` +
+  `OAUTH_PROVIDERS` exist; residual dup is the inline param closures. Stage D extracts a
+  small param-builder, not a re-architecture.
+- **2.2 (strong generics, no `any`) — accepted with nuance.** Helper strongly typed;
+  external payloads stay `unknown` at the boundary per Non-Negotiable #7. Folded into Stage A.
+- **2.3 (telemetry/logging hook) — declined.** Sync bodies don't log; logging lives in
+  `connectorFetch`. Adding lifecycle telemetry = new behavior + YAGNI.
