@@ -10,6 +10,7 @@ import {
   SLO_THRESHOLDS,
   thresholdsBySurface,
 } from "../../packages/gateway/src/perf/slo-thresholds.ts";
+import { parseLastHistoryLine } from "./history-jsonl.ts";
 
 /** A github-action-benchmark `customSmallerIsBetter` data point. */
 export interface BenchmarkPoint {
@@ -53,15 +54,6 @@ export function toBenchmarkPoints(line: HistoryLine): BenchmarkPoint[] {
     }
   }
   return out;
-}
-
-function parseLastHistoryLine(text: string): HistoryLine {
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
-  const last = lines.at(-1);
-  if (last === undefined) {
-    throw new Error("run-history.jsonl is empty");
-  }
-  return JSON.parse(last) as HistoryLine;
 }
 
 function takeFlag(args: string[], flag: string): string | undefined {
