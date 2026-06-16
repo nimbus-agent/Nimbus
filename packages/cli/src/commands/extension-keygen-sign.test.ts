@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import "../../test/helpers/cli-mocks.ts";
+
 const mod = await import("./extension.ts");
 const { runExtensionKeygen, runExtensionSign } = mod;
 

@@ -64,7 +64,7 @@ Each override must:
 - `@vscode/vsce-sign@2.0.9`, `@vscode/vsce-sign-{linux,win32}-x64@2.0.6` — Microsoft VSCE signing tooling; redistribution permitted by the LICENSE.txt for vsce-driven extension publishing; not bundled into the gateway binary. Bun installs only the platform-matching variant per runner.
 - `@img/sharp-libvips-{linux-x64,linuxmusl-x64}@1.2.4` — libvips C library shipped as native binary; LGPL-3.0-or-later. Accepted alongside `sharp` itself (dual-licensed Apache-2.0 OR LGPL, passes via Apache). The exception is intentionally narrow — LGPL-3.0-or-later is **not** in the global allowlist, so a stray pure-LGPL dep elsewhere still trips the gate. LGPL §4d compliance is satisfied by sharp's runtime FFI loading of libvips (dynamic-linking model).
 - `flatbuffers@1.12.0` — Apache-2.0 per LICENSE.txt; non-SPDX `license` field is the only reason for the override.
-- `ovsx@0.10.11` — EPL-2.0; build-tool only (`publish-vscode.yml`), not redistributed.
+- `ovsx@1.0.1` — EPL-2.0; build-tool only (`publish-vscode.yml`), not redistributed.
 
 When `PACKAGE_OVERRIDES` and this list disagree, the source wins. PRs that add an override should still update the navigation aid above.
 
