@@ -3,7 +3,7 @@
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { medianOf } from "../../packages/gateway/src/perf/baseline-median.ts";
 import { GhCli } from "../../packages/gateway/src/perf/bench-ci-gh.ts";
 import type {
   HistoryLine,
@@ -37,7 +37,7 @@ export function detectDrift(
   let consecutive = 0;
   for (let i = k; i < history.length; i += 1) {
     const window = history.slice(i - k, i).map((s) => s.value);
-    const med = rollingMedian(window);
+    const med = window.length === 0 ? 0 : medianOf(window);
     const current = history[i]?.value;
     if (current === undefined || med <= 0) {
       consecutive = 0;
@@ -52,16 +52,6 @@ export function detectDrift(
     }
   }
   return false;
-}
-
-function rollingMedian(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length === 0) return 0;
-  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
-  const lo = sorted[mid - 1] ?? 0;
-  const hi = sorted[mid] ?? 0;
-  return (lo + hi) / 2;
 }
 
 // ─── I/O wrapper ─────────────────────────────────────────────────────────────
