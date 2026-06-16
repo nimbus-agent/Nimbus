@@ -42,7 +42,7 @@ Two consequences:
 
 - The M1 Air `reference-m1air` self-hosted runner (separate ops task).
 - Phase 2 (Bencher).
-- Any change to detection thresholds — `k=7`, `n=3`, `DRIFT_NOISE_FLOOR_PCT=20`,
+- Any change to detection thresholds — `k=7`, `n=3`, `DRIFT_NOISE_FLOOR_PCT=10`,
   `DRIFT_RUN_COUNT=14` stay exactly as shipped.
 - Per-OS drift (drift-check reads one runner's history; this phase uses
   `gha-ubuntu`, the trend-baseline runner that runs daily Mon–Sat).
@@ -82,8 +82,10 @@ Add two methods mirroring the existing body-file-based, retry-wrapped
 
 - `issueList({ label }): Promise<{ number: number; title: string }[]>` —
   `gh issue list --state open --label <label> --json number,title`, parsed via
-  the existing tolerant JSON-array reader (degrades to `[]` on non-JSON/notice
-  output, matching `prCommentList`).
+  the existing `parseJsonObjectArray` helper (empty stdout → `[]`), exactly like
+  `prCommentList`. `runDriftCheckMain` wraps the call in a `try/catch` and falls
+  back to `[]` on any failure (best-effort dedup), preserving the shipped
+  `ghIssueList` tolerance at the call site rather than inside `GhCli`.
 - `issueCreate({ title, label, bodyFile }): Promise<void>` —
   `gh issue create --title <title> --label <label> --body-file <bodyFile>`.
 
@@ -139,7 +141,7 @@ call site. `parseHistoryLines` (the all-lines reader) is removed.
        └─ drift-check.ts → runDriftCheckMain({ gh, runner: "gha-ubuntu" })
             ├─ GhCli.runListRecentSuccesses(_perf.yml, branch=main, limit=14)
             ├─ for each run (oldest-first): GhCli.runDownloadArtifact → parseLastHistoryLine (one/run)
-            ├─ per trend, smaller-is-better surface: build DriftSample[] → detectDrift(series, 20)
+            ├─ per trend, smaller-is-better surface: build DriftSample[] → detectDrift(series, 10)
             └─ if drifting: GhCli.issueList(label=perf-drift)
                  ├─ no matching open issue → GhCli.issueCreate(title, label, bodyFile)
                  └─ matching open issue    → no-op (create-only; no daily re-comment)
