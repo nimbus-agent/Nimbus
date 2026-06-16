@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.9.1](https://github.com/nimbus-agent/Nimbus/compare/v0.9.0...v0.9.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **ci:** restore lint + license gates after Biome 2.5.0 / ovsx 1.0.1 bumps ([#656](https://github.com/nimbus-agent/Nimbus/issues/656)) ([76e4a88](https://github.com/nimbus-agent/Nimbus/commit/76e4a88999ddef1915b6e6c74b3c705281edf891))
+
 ## [0.9.0](https://github.com/nimbus-agent/Nimbus/compare/v0.8.0...v0.9.0) (2026-06-15)
 
 
