@@ -40,6 +40,7 @@ import {
   runSecurity,
   runServe,
   runSession,
+  runShare,
   runStart,
   runStatus,
   runStop,
@@ -50,6 +51,7 @@ import {
   runTui,
   runUpdate,
   runVault,
+  runVerifyShare,
   runWatch,
   runWorkflowCli,
   runWorkflowFromFile,
@@ -118,6 +120,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   chatops: runChatops,
   tribal: runTribal,
   admin: runAdmin,
+  share: runShare,
+  "verify-share": runVerifyShare,
   "mcp-server": runMcpServer,
 };
 
