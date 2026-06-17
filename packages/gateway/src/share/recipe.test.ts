@@ -85,3 +85,62 @@ describe("buildRecipeFromSession — ordered steps", () => {
     expect(buildRecipeFromSession(db(), "nope", () => 1).steps).toEqual([]);
   });
 });
+
+describe("buildRecipeFromSession — advisory dependsOn", () => {
+  function chain(d: Database, aResult: string, bParams: unknown): void {
+    writeToolCallLog(d, {
+      sessionId: "s1",
+      toolId: "a_get",
+      service: "a",
+      calledAt: 1,
+      durationMs: 1,
+      resultEnvelope: aResult,
+      status: "ok",
+      params: {},
+    });
+    writeToolCallLog(d, {
+      sessionId: "s1",
+      toolId: "b_get",
+      service: "b",
+      calledAt: 2,
+      durationMs: 1,
+      resultEnvelope: "{}",
+      status: "ok",
+      params: bParams,
+    });
+  }
+
+  test("identifier value in B.params found in A.result → edge B→A", () => {
+    const d = db();
+    chain(d, JSON.stringify({ id: "issue-9f2a8c71" }), { ref: "issue-9f2a8c71" });
+    const recipe = buildRecipeFromSession(d, "s1", () => 1);
+    expect(recipe.steps[1]?.dependsOn).toEqual(["step-1"]);
+  });
+
+  test("trivial scalar collisions create NO edge", () => {
+    const d = db();
+    chain(d, JSON.stringify({ ok: true, count: 10, tag: "ab" }), {
+      ok: true,
+      count: 10,
+      tag: "ab",
+    });
+    expect(buildRecipeFromSession(d, "s1", () => 1).steps[1]?.dependsOn).toEqual([]);
+  });
+
+  test("nested leaf identifier matches; whole-subtree does not", () => {
+    const d = db();
+    // Use "ref" (not "key") — "key" matches SENSITIVE_KEY and would be redacted to
+    // "[REDACTED]", defeating the value-match. The test exercises nesting depth, not
+    // the param-key name.
+    chain(d, JSON.stringify({ items: [{ ref: "abcd1234efgh" }] }), {
+      filter: { nested: { ref: "abcd1234efgh" } },
+    });
+    expect(buildRecipeFromSession(d, "s1", () => 1).steps[1]?.dependsOn).toEqual(["step-1"]);
+  });
+
+  test("no false edge when values differ", () => {
+    const d = db();
+    chain(d, JSON.stringify({ id: "issue-aaaaaaaa" }), { ref: "issue-bbbbbbbb" });
+    expect(buildRecipeFromSession(d, "s1", () => 1).steps[1]?.dependsOn).toEqual([]);
+  });
+});

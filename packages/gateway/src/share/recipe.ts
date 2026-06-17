@@ -27,16 +27,52 @@ export interface Recipe {
   readonly graphTraversals: readonly unknown[];
 }
 
+const LOW_ENTROPY = new Set(["true", "false", "null", ""]);
+
+/** Identifier-shaped scalar test (spec §7.1): entity IDs / paths / URLs/URNs / mixed-alnum ≥ 8. */
+function isIdentifierValue(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  if (v.length < 4 || LOW_ENTROPY.has(v)) return false;
+  if (/[/\\]/.test(v) || /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^urn:/i.test(v)) return true; // path / URL / URN
+  if (/^[A-Za-z]+[-_][A-Za-z0-9]{4,}$/.test(v)) return true; // prefixed entity id, e.g. issue-9f2a8c71
+  return v.length >= 8 && /[A-Za-z]/.test(v) && /\d/.test(v); // mixed alphanumeric ≥ 8
+}
+
+/** Collect identifier-shaped leaf scalars from an arbitrary value tree. */
+function collectIdentifierLeaves(value: unknown, out: Set<string>): void {
+  if (isIdentifierValue(value)) {
+    out.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectIdentifierLeaves(v, out);
+  } else if (value !== null && typeof value === "object") {
+    for (const v of Object.values(value as Record<string, unknown>))
+      collectIdentifierLeaves(v, out);
+  }
+}
+
 export function buildRecipeFromSession(db: Database, sessionId: string, now: () => number): Recipe {
   const { toolCalls } = readToolCallLog(db, { sessionId, limit: 1000 });
-  const steps: RecipeStep[] = toolCalls.map((tc, i) => ({
-    stepId: `step-${i + 1}`,
-    tool: tc.toolId,
-    service: tc.service,
-    params: tc.params ?? {},
-    status: tc.status,
-    dependsOn: [],
-  }));
+  // For each prior step, the identifier set produced by its (string) result envelope.
+  const priorResults: Array<{ stepId: string; envelope: string }> = [];
+  const steps: RecipeStep[] = toolCalls.map((tc, i) => {
+    const stepId = `step-${i + 1}`;
+    const params = tc.params ?? {};
+    const ids = new Set<string>();
+    collectIdentifierLeaves(params, ids);
+    const dependsOn: string[] = [];
+    // Substring match against the prior result envelope. A coincidental substring collision (an
+    // identifier appearing inside an unrelated longer value) can yield a spurious edge — ACCEPTABLE:
+    // `dependsOn` is explicitly advisory (spec §7.1) and never load-bearing (replay runs steps in
+    // recorded order, not by dependency). Word-boundary / structured-JSON-value matching is a
+    // deferred enrichment, not built here.
+    for (const prior of priorResults) {
+      if ([...ids].some((id) => prior.envelope.includes(id))) dependsOn.push(prior.stepId);
+    }
+    priorResults.push({ stepId, envelope: tc.resultEnvelope });
+    return { stepId, tool: tc.toolId, service: tc.service, params, status: tc.status, dependsOn };
+  });
   return {
     recipeVersion: 1,
     sourceSessionId: sessionId,
