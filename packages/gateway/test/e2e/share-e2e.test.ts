@@ -156,6 +156,7 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
   const outPath = join(tmp, "out", "share.json");
   const rejectedPath = join(tmp, "out", "rejected.json");
   const recipePath = join(tmp, "out", "recipe.yaml");
+  const replayRecipePath = join(tmp, "out", "replay-recipe.yaml");
   const socketPath = process.platform === "win32" ? pipePath("a") : join(tmp, "gateway.sock");
   let gateway: ReturnType<typeof Bun.spawn> | undefined;
   let gatewayLog = "";
@@ -176,6 +177,8 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
 
     const toolCallSeeds: ToolCallSeed[] = [
       { sessionId: SESSION_ID, toolId: "gmail_search", service: "gmail", params: { q: "hi" } },
+      // Write-shaped tool: trailing segment "delete" is not in READ_VERBS → replays as skipped-non-read.
+      { sessionId: SESSION_ID, toolId: "file_delete", service: "fs", params: { path: "/tmp/x" } },
     ];
     gateway = Bun.spawn(["bun", RUNNER], {
       stdin: "ignore",
@@ -311,4 +314,62 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
     expect(body.recipe.steps.length).toBeGreaterThan(0);
     expect(body.turns).toBeUndefined();
   });
+
+  test("recipe replay round-trip: create recipe → approve → share.replay reports verify.ok + correct step classifications", async () => {
+    interface ReplayResult {
+      verify: {
+        ok: boolean;
+        signatureValid: boolean;
+        contentHashValid: boolean;
+        expired: boolean;
+        errors: string[];
+      };
+      report: {
+        sourceSessionId: string;
+        steps: readonly { stepId: string; tool: string; service: string; status: string }[];
+        summary: {
+          total: number;
+          match: number;
+          diverged: number;
+          missingConnector: number;
+          skippedNonRead: number;
+          error: number;
+        };
+      };
+    }
+
+    // Auto-approve the recipe creation.
+    ipc.onNotification("share.approvalRequest", (params) => {
+      const requestId = params["requestId"];
+      if (typeof requestId === "string") {
+        void ipc.call("share.approvalRespond", { requestId, approved: true });
+      }
+    });
+
+    // Create a recipe share to a file (the seeded tool calls: gmail_search + file_delete).
+    const created = await ipc.call<CreateResult>("share.create", {
+      sessionId: SESSION_ID,
+      kind: "recipe",
+      sink: { type: "file", path: replayRecipePath },
+    });
+    expect(created.status).toBe("ok");
+
+    // Replay the share file against the bare e2e gateway (no real connectors installed).
+    const replay = await ipc.call<ReplayResult>("share.replay", { input: replayRecipePath });
+
+    // Signature + content integrity must pass.
+    expect(replay.verify.ok).toBe(true);
+
+    // Total must cover both seeded tool calls (gmail_search + file_delete).
+    expect(replay.report.summary.total).toBeGreaterThan(0);
+
+    // gmail_search ends in "_search" → read-only → no connector installed in bare gateway → missing-connector.
+    expect(replay.report.summary.missingConnector).toBeGreaterThanOrEqual(1);
+
+    // file_delete ends in "_delete" → not in READ_VERBS → skipped-non-read.
+    expect(replay.report.summary.skippedNonRead).toBeGreaterThanOrEqual(1);
+
+    // sourceSessionId must match the seeded session.
+    expect(replay.report.sourceSessionId).toBe(SESSION_ID);
+  }, 60_000);
 });
