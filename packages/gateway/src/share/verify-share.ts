@@ -114,7 +114,8 @@ export function parseShareFile(bytes: Uint8Array): ShareFile | null {
       typeof obj !== "object" ||
       typeof (obj as { body?: unknown }).body !== "object" ||
       (obj as { body?: unknown }).body === null ||
-      typeof (obj as { sig?: unknown }).sig !== "object"
+      typeof (obj as { sig?: unknown }).sig !== "object" ||
+      (obj as { sig?: unknown }).sig === null
     ) {
       return null;
     }

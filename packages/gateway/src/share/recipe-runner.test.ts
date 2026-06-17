@@ -136,6 +136,12 @@ describe("replayRecipe — per-step classification", () => {
       run: async () => ran,
     });
     expect(r2.steps[0]?.status).toBe("diverged");
+    // Reverse divergence: original ok but replay returns error → diverged
+    const r3 = await replayRecipe("s1", [step("gmail_get", "ok")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "ran", ok: false }),
+    });
+    expect(r3.steps[0]?.status).toBe("diverged");
   });
 
   test("summary tallies each category and total", async () => {

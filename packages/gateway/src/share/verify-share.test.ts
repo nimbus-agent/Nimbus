@@ -191,6 +191,11 @@ describe("parseShareFile", () => {
     expect(parseShareFile(new TextEncoder().encode("not a share"))).toBeNull();
     expect(parseShareFile(new TextEncoder().encode(JSON.stringify({ hi: 1 })))).toBeNull();
   });
+
+  test("parseShareFile returns null when sig is null (typeof null === 'object' trap)", () => {
+    const withNullSig = { body: { kind: "recipe", sessionId: "s" }, sig: null };
+    expect(parseShareFile(new TextEncoder().encode(JSON.stringify(withNullSig)))).toBeNull();
+  });
 });
 
 describe("loadShareBytes", () => {

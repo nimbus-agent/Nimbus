@@ -7,7 +7,7 @@
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); the session_memory store still serves
 // getRecentTurns from the no-vec rows the runner seeds, so redaction has real PII to strip.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -94,6 +94,11 @@ class TestIpcClient {
       });
       this.sock?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
+  }
+
+  /** Remove all registered notification handlers (call in afterEach to prevent cross-test leakage). */
+  clearNotificationHandlers(): void {
+    this.notifyHandlers.clear();
   }
 
   close(): void {
@@ -225,6 +230,11 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
     } catch {
       /* Windows handle race; harmless */
     }
+  });
+
+  afterEach(() => {
+    // Prevent auto-approve handlers registered in one test from persisting into the next.
+    ipc.clearNotificationHandlers();
   });
 
   test("approved create redacts PII, signs, writes the file; verify reports a VALID signature", async () => {
