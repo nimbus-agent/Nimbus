@@ -152,6 +152,8 @@ Routes through the **same** `share-gate` (redaction + HITL preview + sign), `bod
 
 ## 8. Wave 8c — Replay (PR3, depends on 8b)
 
+> Implemented 2026-06-17 via `share/recipe-runner.ts` + `share/read-tool-registry.ts` + `share.replay` IPC.
+
 ### 8.1 `share/recipe-runner.ts`
 
 Deterministic, **LLM-free** executor. Read-only is enforced by a **positive allowlist, not a denylist** (design-review point 3 — a write tool absent from the frozen HITL set would otherwise execute). A step runs only when its `toolId` is positively classified read-only via `share/read-tool-registry.ts`, which sources its set from the connector tool declarations (the read tools — `*_list`/`*_get`/`*_query`/`*_search` and the curated read surface), **never** from "absent from `HITL_REQUIRED_BACKING`." For each step:
@@ -220,5 +222,5 @@ A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a f
 |------|----------|------------------------|------|
 | 8a | share + verify-share + redaction + gate | I27 / D21, V41 | plan-8a |
 | 8b | `--as-recipe` + declarative DAG | V42 | plan-8b |
-| 8c | replay + recipe-runner | — | plan-8c |
+| 8c | replay + recipe-runner | — | plan-8c ✅ shipped 2026-06-17 |
 | 8d | sovereign-mesh referral | V43 | plan-8d |
