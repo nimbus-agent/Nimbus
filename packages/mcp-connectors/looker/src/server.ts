@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -156,10 +157,7 @@ export function registerLookerTools(reg: ZodToolRegistrar): void {
   reg(
     "looker_search",
     "Substring search across Looker dashboards. Matches the query (case-insensitive) against dashboard title and id. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const token = await lookerLogin();
       const dashboards = await listDashboards(token);

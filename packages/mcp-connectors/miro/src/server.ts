@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMiroBoards } from "./search-filter.ts";
@@ -62,10 +63,7 @@ await runReadOnlyMcpConnector("nimbus-miro", (reg) => {
   reg(
     "miro_search",
     "**Substring search over the FIRST PAGE only** (up to 50 most-recently-listed boards) of the authenticated user's Miro boards. This tool fetches GET /v2/boards?limit=50 once and matches the query locally (case-insensitive) against the board name, description, and owner name. **Boards beyond the first page are not searchable here — query the local Nimbus index instead for full coverage.** Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(50).optional(),
-    }),
+    searchToolInputSchema(50),
     async (p) => {
       const root = await miroGet("/v2/boards?limit=50");
       const matches = filterMiroBoards(boardsFrom(root), {

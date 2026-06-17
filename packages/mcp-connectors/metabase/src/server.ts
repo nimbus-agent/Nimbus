@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMetabaseDashboards } from "./search-filter.ts";
@@ -69,10 +70,7 @@ await runReadOnlyMcpConnector("nimbus-metabase", (reg) => {
   reg(
     "metabase_search",
     "Substring search across Metabase dashboards. Matches the query (case-insensitive) against dashboard name and description. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const root = await mbGet("/api/dashboard");
       const matches = filterMetabaseDashboards(dashboardsFrom(root), {
