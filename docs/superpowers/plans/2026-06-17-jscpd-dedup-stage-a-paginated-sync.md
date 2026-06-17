@@ -728,15 +728,33 @@ Each has a `*-sync-fake-server.test.ts` guardrail (do NOT edit any of them).
 1. Run the connector's guardrail test first — confirm green baseline:
    `bun test packages/gateway/test/integration/connectors/<name>-sync-fake-server.test.ts`
 2. Read the file. Confirm it matches the single-pass scaffold (one `for (let page …)` loop; a terminal `return syncPassCursorSuccess(...)`; the first-page `http_error`/`parse_error` degradation; an `upsert*` loop). **If it deviates** (extra resource types, a second loop, multi-pass cursor) → **skip it, leave a note in the PR description, and do NOT force it.**
-3. Identify the three per-connector variations:
+3. Identify the per-connector variations:
    - **startPage:** `0` if the loop is `for (let page = 0; page < MAX_PAGES; …)` with an offset path; else `1`.
+   - **loadCreds:** classify how the existing `sync()` loads credentials → the `loadCreds: () => Promise<C | null>` callback must reproduce it **exactly** (returning `null` wherever the original returns `syncNoopResult`):
+     - **separate `loadCreds(ctx)` returning creds-or-null** (e.g. greenhouse, readwise) → `loadCreds: () => loadCreds(ctx)`, function unchanged.
+     - **inline OAuth load with try/catch → noop** (canva, hubspot, miro, salesforce — they call `getValidXAccessToken(ctx.vault)` / `getValidSalesforceAuth(ctx.vault)` inside `sync()`, `catch { return syncNoopResult(...) }`, and also noop on empty token). Fold that block into the callback verbatim:
+
+       ```ts
+       loadCreds: async () => {
+         let token: string;
+         try {
+           token = await getValidCanvaAccessToken(ctx.vault);
+         } catch {
+           return null; // helper turns null into syncNoopResult(cursor, t0)
+         }
+         return token === "" ? null : { token };
+       },
+       ```
+
+       (Salesforce returns `{ accessToken, instanceUrl }`; preserve every field its `fetchPage`/path builder needs.)
    - **parsePage:** classify the existing `extract*` + the `break` condition into one of:
      - **bare-array + `length < PAGE_SIZE` break** → `parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE)`.
      - **envelope + `next`/`nextCursor`** → a local `parseXPage(parsed)` like Task 4.
      - **envelope + `totalPages`/`page < N`** → a local `parseXPage(parsed, page)` like Task 5.
      - **other envelope (e.g. `{ data: [...] }`)** → a local `parseXPage` returning `{ items, hasMore }` that reproduces the existing extraction + break **exactly**.
-   - **map:** `(raw, now) => mapXToItem(raw, { syncedAt: now })` using the file's existing mapping import.
-4. Rewrite `createXSyncable` to call `runSinglePassPaginatedSync(ctx, cursor, { ensureRunning, loadCreds: () => loadCreds(ctx), pass1Cursor, maxPages: MAX_PAGES, startPage, fetchPage: (creds, page) => xGet(ctx, creds, xPath(...)), parsePage, map })`. Keep constants, `pass1Cursor`, `loadCreds`, the path builder, and the `xGet` fetch wrapper unchanged. Delete the now-unused `extract*`/`upsert*` functions and their now-unused imports (`upsertIndexedItemForSync`, `syncPassCursor*`, `syncNoopResult`).
+   - **fetchPage:** usually `(creds, page) => xGet(ctx, creds, xPath(...))`, the `xGet` wrapper unchanged. **Note:** some connectors (e.g. pipedrive) build the `FetchOutcome` in their own local fetch wrapper with a `JSON.parse` try/catch → that wrapper stays as-is; `fetchPage` just calls it. The helper never parses — it only consumes the `FetchOutcome`.
+   - **map:** `(raw, now) => mapXToItem(raw, { syncedAt: now })` using the file's existing mapping import. The map runs inside `upsertMapped`, which (like the current `upsert*` loops) does **not** catch per-item errors — a throwing map propagates and fails the sync, exactly as today.
+4. Rewrite `createXSyncable` to call `runSinglePassPaginatedSync(ctx, cursor, { ensureRunning: options.ensureXMcpRunning, loadCreds, pass1Cursor, maxPages: MAX_PAGES, startPage, fetchPage, parsePage, map })`. Keep constants, `pass1Cursor`, the path builder, and the `xGet` fetch wrapper unchanged. Delete the now-unused `extract*`/`upsert*` functions and their now-unused imports (`upsertIndexedItemForSync`, `syncPassCursor*`, and — only when no longer referenced — `syncNoopResult`).
 5. Re-run the guardrail test — must pass unchanged. If it fails, the `parsePage`/`startPage` classification was wrong: diff the old vs new break condition and fix `parsePage` (do not edit the test).
 6. Move to the next file.
 
@@ -812,3 +830,12 @@ Open the PR titled `refactor(dedup): Stage A — gateway paginated-sync helper`.
 **Type consistency:** `SyncUpsertRow` defined in Task 1, reused in Task 2's `PaginatedSyncSpec.map`. `runSinglePassPaginatedSync` / `bareArrayPage` / `ParsedPage` / `PaginatedSyncSpec` names are consistent across Tasks 2–6. `parsePage(parsed, page)` signature is consistent (Task 2 defines it; Task 5 uses the `page` arg). ✓
 
 **Behavioral fidelity:** every migration is gated by re-running the connector's existing `*-sync-fake-server.test.ts` with no edits; `startPage`/`maxPages` loop math is proven equivalent in Task 2's tests (`startPage 0` case, `maxPages` cap). ✓
+
+## Review resolutions (2026-06-17)
+
+Dispositions of `…-stage-a-paginated-sync-review.md`, each verified against the connector code:
+
+- **Q1.1 (per-item map error handling) — declined the optional `onError` handler.** Verified no Tier-1 connector wraps per-item mapping in try/catch; mapping fns return `null` for bad input. `upsertMapped` preserves propagate-on-throw exactly (Task 6 recipe step 3, `map` bullet).
+- **Q2.1 (optional `ensureRunning`) — declined.** Verified all 21 connectors pass `options.ensureXMcpRunning` (no empty-fn boilerplate exists); required also guards wiring.
+- **Q2.2 (`Date.now()` once before the loop) — confirmed correct.** Verified all 21 compute `now` once before the loop; the helper matches.
+- **New finding while verifying Q1.1 — recipe gap fixed.** 4 OAuth connectors (canva/hubspot/miro/salesforce) load credentials **inline in `sync()` with a try/catch → noop**, not via a separate `loadCreds(ctx)`. Added a `loadCreds` classification to the Task 6 recipe (fold the try/catch into the callback, return `null` where the original returns `syncNoopResult`). Also noted pipedrive's own `JSON.parse` try/catch lives in its fetch wrapper, untouched by the helper.
