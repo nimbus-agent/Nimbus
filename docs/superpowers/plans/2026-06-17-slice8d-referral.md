@@ -1366,19 +1366,34 @@ In `initiatePair`, after `this.index.addLanPeer({...})` and before `return peerI
 await this.onPairComplete?.(peerId);
 ```
 
-In `approveInboundPair`, after `addLanPeer` and before `return peerId;` (note: `approveInboundPair` is currently sync — keep it sync by NOT awaiting; fire-and-forget OR make it async). **Decision:** keep `approveInboundPair` returning `string` (callers depend on it); call `void this.onPairComplete?.(peerId);` (fire-and-forget — the drain is best-effort, and a pairing must not fail because a later drain delivery failed). For `initiatePair` (already async) `await` is fine but wrap so a drain failure does not reject the pair:
+In `approveInboundPair`, after `addLanPeer` and before `return peerId;` (note: `approveInboundPair` is currently sync — keep it sync, callers depend on the `string` return). The drain is best-effort: a pairing must NEVER fail or crash because a queued-share delivery failed. So guard against BOTH a synchronous throw AND a rejected promise from the callback (an unguarded `void promise` leaks an unhandled rejection in Bun; an unguarded sync throw crashes the handshake):
 
 ```ts
-// approveInboundPair (stays sync):
-void this.onPairComplete?.(peerId);
+// approveInboundPair (stays sync): best-effort, fully guarded
+if (this.onPairComplete) {
+  try {
+    const res = this.onPairComplete(peerId);
+    if (res instanceof Promise) res.catch(() => {}); // swallow async rejection (best-effort drain)
+  } catch {
+    /* swallow sync throw — pairing must succeed even if the drain fails */
+  }
+}
 return peerId;
 ```
+
+For `initiatePair` (already async), `await` inside try/catch so a drain failure does not reject the pair:
 
 ```ts
 // initiatePair (async): a drain failure must not fail the pair
-try { await this.onPairComplete?.(peerId); } catch { /* best-effort drain */ }
+try {
+  await this.onPairComplete?.(peerId);
+} catch {
+  /* best-effort drain */
+}
 return peerId;
 ```
+
+A unit test should prove resilience: an `onPairComplete` that THROWS synchronously, and one that returns a REJECTING promise, must both leave `approveInboundPair`/`initiatePair` returning the `peerId` normally (no throw, no unhandled rejection).
 
 In `federation-runtime.ts`, add the param + pass it:
 
@@ -1661,7 +1676,7 @@ const federation = buildFederationRuntime(cfg.federation, index, identity, drain
 
 - [ ] **Step 5: Tauri allowlist — expose `share.inbox` read-only**
 
-In `packages/ui/src-tauri/src/gateway_bridge.rs`, add `"share.inbox"` to `ALLOWED_METHODS` (alphabetized, next to the other `share.*` read methods `share.get`/`share.list`/`share.pubkey`/`share.verify`). Do NOT add `federation.shareForward` (emit/RCE-class → CLI-only). Update the exact-size count test. If a JS mirror of the count exists (`nimbus-tauri-allowlist` skill notes one), bump it too.
+In `packages/ui/src-tauri/src/gateway_bridge.rs`, add `"share.inbox"` to `ALLOWED_METHODS` (alphabetized, next to the other `share.*` read methods `share.get`/`share.list`/`share.pubkey`/`share.verify`). Do NOT add `federation.shareForward` (emit/RCE-class → CLI-only). **`grep -rn "ALLOWED_METHODS" packages/ui/src-tauri/` to find EVERY hardcoded array-length assertion (the exact-size Rust test) and bump it by one.** If a JS mirror of the count exists (`nimbus-tauri-allowlist` skill notes one), bump it too.
 
 - [ ] **Step 6: Typecheck the gateway + commit**
 
