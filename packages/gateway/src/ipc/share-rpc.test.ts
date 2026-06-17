@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
-import { listShareRecords } from "../share/share-store.ts";
+import { getShareRecord, listShareRecords } from "../share/share-store.ts";
 import { dispatchShareRpc, type ShareHttpSinkConfig, type ShareRpcCtx } from "./share-rpc.ts";
 
 function fakeVault() {
@@ -178,6 +179,35 @@ describe("share.create", () => {
       ),
     ).rejects.toThrow(/ERR_INVALID_PARAMS: unknown sink\.type/);
     expect(listShareRecords(db, { now: 2000 }).length).toBe(0);
+  });
+
+  test("share.create kind=recipe builds body.recipe from tool_call_log and persists it", async () => {
+    const ctx = freshCtx(db, { approve: true });
+    writeToolCallLog(ctx.db, {
+      sessionId: "s1",
+      toolId: "gmail_search",
+      service: "gmail",
+      calledAt: 1,
+      durationMs: 1,
+      resultEnvelope: "{}",
+      status: "ok",
+      params: { q: "hi" },
+    });
+    const res = (await dispatchShareRpc(
+      "share.create",
+      { sessionId: "s1", kind: "recipe", sink: { type: "file" } },
+      ctx,
+    )) as { value: { status: string; contentHash: string } };
+    expect(res.value.status).toBe("ok");
+    const stored = getShareRecord(ctx.db, res.value.contentHash);
+    const body = JSON.parse(stored!.bodyJson) as {
+      kind: string;
+      recipe?: { steps: unknown[] };
+      turns?: unknown;
+    };
+    expect(body.kind).toBe("recipe");
+    expect(body.recipe?.steps).toHaveLength(1);
+    expect(body.turns).toBeUndefined();
   });
 
   test("expiresMs is converted to an absolute expiresAt on the persisted share", async () => {
