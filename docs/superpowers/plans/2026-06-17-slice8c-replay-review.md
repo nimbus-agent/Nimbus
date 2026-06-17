@@ -41,7 +41,7 @@ In **Task 7**, `runVerifyShare` reads local files via `await Bun.file(input).byt
 
 ### C. Test Helper Name Mismatch (Task 5, Step 1)
 
-The test draft in **Task 5, Step 1** calls a helper `signedShare()`. However, the helper defined on line 106 in [verify-share.test.ts](file:///C:/gitrep/Nimbus/.claude/worktrees/phase6-slice8c-replay/packages/gateway/src/share/verify-share.test.ts#L106) is named `signedRecipeShare()`.
+The test draft in **Task 5, Step 1** calls a helper `signedShare()`. However, the helper defined at `packages/gateway/src/share/verify-share.test.ts:106` is named `signedRecipeShare()`.
 
 * **Improvement**: Change the test invocation in Task 5 to use `signedRecipeShare()` to prevent test compilation failures.
 
