@@ -5,10 +5,12 @@ import { createNimbusEngineAgent } from "../../../src/engine/agent.ts";
 import { agentRequestContext } from "../../../src/engine/agent-request-context.ts";
 import type { LocalIndex } from "../../../src/index/local-index.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../../../src/index/tool-call-log-v29-sql.ts";
+import { TOOL_CALL_PARAMS_V42_SQL } from "../../../src/index/tool-call-params-v42-sql.ts";
 
 function freshAuditDb(): Database {
   const db = new Database(":memory:");
   db.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
+  db.exec(TOOL_CALL_PARAMS_V42_SQL);
   return db;
 }
 

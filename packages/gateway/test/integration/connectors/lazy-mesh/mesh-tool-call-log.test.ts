@@ -5,12 +5,14 @@ import { createLazyConnectorMesh } from "../../../../src/connectors/lazy-mesh/me
 import { readToolCallLog } from "../../../../src/db/tool-call-log.ts";
 import { agentRequestContext } from "../../../../src/engine/agent-request-context.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../../../../src/index/tool-call-log-v29-sql.ts";
+import { TOOL_CALL_PARAMS_V42_SQL } from "../../../../src/index/tool-call-params-v42-sql.ts";
 import type { PlatformPaths } from "../../../../src/platform/paths.ts";
 import { MockVault } from "../../../../src/vault/mock.ts";
 
 function freshAuditDb(): Database {
   const db = new Database(":memory:");
   db.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
+  db.exec(TOOL_CALL_PARAMS_V42_SQL);
   return db;
 }
 

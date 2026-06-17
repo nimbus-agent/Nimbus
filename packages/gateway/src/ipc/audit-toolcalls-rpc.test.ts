@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../index/tool-call-log-v29-sql.ts";
+import { TOOL_CALL_PARAMS_V42_SQL } from "../index/tool-call-params-v42-sql.ts";
 import { AuditRpcError, dispatchAuditRpc } from "./audit-rpc.ts";
 
 function indexCtxFromDb(db: Database): { index: LocalIndex } {
@@ -15,6 +16,7 @@ function indexCtxFromDb(db: Database): { index: LocalIndex } {
 function freshDb(): Database {
   const db = new Database(":memory:");
   db.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
+  db.exec(TOOL_CALL_PARAMS_V42_SQL);
   return db;
 }
 
