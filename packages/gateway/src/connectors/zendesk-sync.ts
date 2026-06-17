@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -69,38 +64,22 @@ function zendeskGet(ctx: SyncContext, creds: ZendeskCreds, path: string) {
   });
 }
 
-function extractTickets(parsed: unknown): unknown[] {
+function parseZendeskPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
   const root = asRecord(parsed);
-  if (root === undefined) {
-    return [];
-  }
-  const tickets = root["tickets"];
-  return Array.isArray(tickets) ? tickets : [];
-}
-
-function extractContinuation(parsed: unknown): { hasMore: boolean; afterCursor: string | null } {
-  const meta = asRecord(asRecord(parsed)?.["meta"]) ?? {};
+  const ticketsRaw = root?.["tickets"];
+  const tickets = Array.isArray(ticketsRaw) ? ticketsRaw : [];
+  const meta = asRecord(root?.["meta"]) ?? {};
   const hasMore = meta["has_more"] === true;
   const afterCursor = stringField(meta, "after_cursor") ?? null;
-  return { hasMore, afterCursor };
-}
-
-function upsertTickets(
-  ctx: SyncContext,
-  creds: ZendeskCreds,
-  tickets: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const t of tickets) {
-    const mapped = mapZendeskTicketToItem(t, { baseUrl: creds.url, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  return {
+    items: tickets,
+    hasMore: hasMore && afterCursor !== null && afterCursor !== "",
+    nextPageCursor: afterCursor ?? "",
+  };
 }
 
 export function createZendeskSyncable(options: ZendeskSyncableOptions): Syncable {
@@ -108,41 +87,18 @@ export function createZendeskSyncable(options: ZendeskSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureZendeskMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let afterCursor: string | null = null;
-
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await zendeskGet(ctx, creds, ticketsPath(afterCursor));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        totalUpserted += upsertTickets(ctx, creds, extractTickets(outcome.parsed), now);
-
-        const cont = extractContinuation(outcome.parsed);
-        if (!cont.hasMore || cont.afterCursor === null || cont.afterCursor === "") {
-          break;
-        }
-        afterCursor = cont.afterCursor;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureZendeskMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) =>
+          zendeskGet(ctx, creds, ticketsPath(pageCursor === "" ? null : pageCursor)),
+        parsePage: (parsed) => parseZendeskPage(parsed),
+        map: (raw, creds, now) =>
+          mapZendeskTicketToItem(raw, { baseUrl: creds.url, syncedAt: now }),
+      }),
   };
 }

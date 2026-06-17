@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapIntercomConversationToItem } from "./intercom-conversation-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -75,21 +70,17 @@ function extractConversations(parsed: unknown): {
   return { conversations, nextCursor };
 }
 
-function upsertConversations(
-  ctx: SyncContext,
-  conversations: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const conv of conversations) {
-    const mapped = mapIntercomConversationToItem(conv, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseIntercomPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const { conversations, nextCursor } = extractConversations(parsed);
+  return {
+    items: conversations,
+    hasMore: nextCursor !== null,
+    nextPageCursor: nextCursor ?? "",
+  };
 }
 
 export function createIntercomSyncable(options: IntercomSyncableOptions): Syncable {
@@ -97,41 +88,17 @@ export function createIntercomSyncable(options: IntercomSyncableOptions): Syncab
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureIntercomMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let startingAfter: string | null = null;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await intercomGet(ctx, creds, conversationsPath(startingAfter));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { conversations, nextCursor } = extractConversations(outcome.parsed);
-        totalUpserted += upsertConversations(ctx, conversations, now);
-
-        if (nextCursor === null) {
-          break;
-        }
-        startingAfter = nextCursor;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureIntercomMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        // original loop: for (let page = 1; page <= MAX_PAGES; page += 1)
+        fetchPage: (creds, _page, pageCursor) =>
+          intercomGet(ctx, creds, conversationsPath(pageCursor === "" ? null : pageCursor)),
+        parsePage: (parsed) => parseIntercomPage(parsed),
+        map: (raw, _creds, now) => mapIntercomConversationToItem(raw, { syncedAt: now }),
+      }),
   };
 }

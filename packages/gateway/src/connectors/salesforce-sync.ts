@@ -1,12 +1,7 @@
 import { getValidSalesforceAuth } from "../auth/salesforce-access-token.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSalesforceOpportunityToItem } from "./salesforce-opportunity-mapping.ts";
@@ -31,6 +26,31 @@ function pass1Cursor(): string {
 export type SalesforceSyncableOptions = {
   ensureSalesforceMcpRunning: () => Promise<void>;
 };
+
+interface SalesforceCreds {
+  readonly accessToken: string;
+  readonly instanceUrl: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<SalesforceCreds | null> {
+  const raw = await readConnectorSecret(ctx.vault, "salesforce", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  let accessToken: string;
+  let instanceUrl: string;
+  try {
+    const auth = await getValidSalesforceAuth(ctx.vault);
+    accessToken = auth.accessToken;
+    instanceUrl = auth.instanceUrl;
+  } catch {
+    return null;
+  }
+  if (accessToken === "" || instanceUrl === "") {
+    return null;
+  }
+  return { accessToken, instanceUrl };
+}
 
 function firstQueryPath(): string {
   const soql = `SELECT ${OPPORTUNITY_FIELDS} FROM Opportunity ORDER BY LastModifiedDate DESC LIMIT ${String(PAGE_LIMIT)}`;
@@ -67,17 +87,14 @@ function nextRecordsPath(parsed: unknown): string {
   return next !== undefined && next !== "" ? next : "";
 }
 
-function upsertOpportunities(ctx: SyncContext, records: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const r of records) {
-    const mapped = mapSalesforceOpportunityToItem(r, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseSalesforcePage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const records = extractRecords(parsed);
+  const next = nextRecordsPath(parsed);
+  return { items: records, hasMore: records.length > 0 && next !== "", nextPageCursor: next };
 }
 
 export function createSalesforceSyncable(options: SalesforceSyncableOptions): Syncable {
@@ -85,55 +102,22 @@ export function createSalesforceSyncable(options: SalesforceSyncableOptions): Sy
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureSalesforceMcpRunning();
-
-      const raw = await readConnectorSecret(ctx.vault, "salesforce", "oauth");
-      if (raw === null || raw === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      let accessToken: string;
-      let instanceUrl: string;
-      try {
-        const auth = await getValidSalesforceAuth(ctx.vault);
-        accessToken = auth.accessToken;
-        instanceUrl = auth.instanceUrl;
-      } catch {
-        return syncNoopResult(cursor, t0);
-      }
-      if (accessToken === "" || instanceUrl === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      // SOQL query pagination: walk a single forward pass per cycle following
-      // `nextRecordsUrl`, page-capped.
-      let path = firstQueryPath();
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await salesforceGet(ctx, instanceUrl, accessToken, path);
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          // Mid-walk error: keep what we already upserted, stop without throwing.
-          break;
-        }
-        const records = extractRecords(outcome.parsed);
-        totalUpserted += upsertOpportunities(ctx, records, now);
-        const next = nextRecordsPath(outcome.parsed);
-        if (records.length === 0 || next === "") {
-          break;
-        }
-        path = next;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureSalesforceMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) =>
+          salesforceGet(
+            ctx,
+            creds.instanceUrl,
+            creds.accessToken,
+            pageCursor === "" ? firstQueryPath() : pageCursor,
+          ),
+        parsePage: (parsed) => parseSalesforcePage(parsed),
+        map: (raw, _creds, now) => mapSalesforceOpportunityToItem(raw, { syncedAt: now }),
+      }),
   };
 }

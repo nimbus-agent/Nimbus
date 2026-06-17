@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { type ParsedPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapStripeInvoiceToItem } from "./stripe-invoice-mapping.ts";
@@ -53,37 +48,20 @@ function stripeGet(ctx: SyncContext, creds: StripeCreds, path: string) {
   });
 }
 
-function extractInvoices(parsed: unknown): { invoices: unknown[]; hasMore: boolean } {
+function parseStripePage(parsed: unknown): ParsedPage {
   const root = asRecord(parsed);
   if (root === undefined) {
-    return { invoices: [], hasMore: false };
+    return { items: [], hasMore: false };
   }
   const data = root["data"];
-  const invoices = Array.isArray(data) ? data : [];
-  return { invoices, hasMore: root["has_more"] === true };
-}
-
-function upsertInvoices(ctx: SyncContext, invoices: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const inv of invoices) {
-    const mapped = mapStripeInvoiceToItem(inv, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
+  const items: unknown[] = Array.isArray(data) ? data : [];
+  const hasMore = root["has_more"] === true;
+  if (!hasMore || items.length === 0) {
+    return { items, hasMore: false };
   }
-  return upserted;
-}
-
-function lastInvoiceId(invoices: readonly unknown[]): string | null {
-  const last = invoices.at(-1);
-  const row = asRecord(last);
-  if (row === undefined) {
-    return null;
-  }
-  const id = stringField(row, "id");
-  return id === undefined || id === "" ? null : id;
+  const last = asRecord(items.at(-1));
+  const nextId = last !== undefined ? (stringField(last, "id") ?? "") : "";
+  return { items, hasMore: nextId !== "", nextPageCursor: nextId };
 }
 
 export function createStripeSyncable(options: StripeSyncableOptions): Syncable {
@@ -91,42 +69,17 @@ export function createStripeSyncable(options: StripeSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureStripeMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let startingAfter: string | null = null;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await stripeGet(ctx, creds, invoicesPath(startingAfter));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { invoices, hasMore } = extractInvoices(outcome.parsed);
-        totalUpserted += upsertInvoices(ctx, invoices, now);
-
-        const next = lastInvoiceId(invoices);
-        if (!hasMore || next === null) {
-          break;
-        }
-        startingAfter = next;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureStripeMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, _page, pageCursor) =>
+          stripeGet(ctx, creds, invoicesPath(pageCursor === "" ? null : pageCursor)),
+        parsePage: (parsed) => parseStripePage(parsed),
+        map: (raw, _creds, now) => mapStripeInvoiceToItem(raw, { syncedAt: now }),
+      }),
   };
 }

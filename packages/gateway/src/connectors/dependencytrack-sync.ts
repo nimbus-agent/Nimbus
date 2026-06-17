@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapDependencyTrackProjectToItem } from "./dependencytrack-project-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -59,68 +54,22 @@ function dtGet(ctx: SyncContext, creds: DependencyTrackCreds, path: string) {
   });
 }
 
-function extractProjects(parsed: unknown): unknown[] {
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function upsertProjects(
-  ctx: SyncContext,
-  creds: DependencyTrackCreds,
-  projects: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const p of projects) {
-    const mapped = mapDependencyTrackProjectToItem(p, { baseUrl: creds.baseUrl, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 export function createDependencytrackSyncable(options: DependencyTrackSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureDependencytrackMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      // Dependency-Track paginates by pageNumber (1-based); walk a single
-      // forward pass per cycle, stopping on a short/empty page or the page cap.
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await dtGet(ctx, creds, projectsPath(page));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const projects = extractProjects(outcome.parsed);
-        totalUpserted += upsertProjects(ctx, creds, projects, now);
-
-        if (projects.length < PAGE_SIZE) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureDependencytrackMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, page) => dtGet(ctx, creds, projectsPath(page)),
+        parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
+        map: (raw, creds, now) =>
+          mapDependencyTrackProjectToItem(raw, { baseUrl: creds.baseUrl, syncedAt: now }),
+      }),
   };
 }

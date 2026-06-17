@@ -1,12 +1,7 @@
 import { getValidCanvaAccessToken } from "../auth/canva-access-token.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapCanvaDesignToItem } from "./canva-design-mapping.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -26,6 +21,24 @@ function pass1Cursor(): string {
 export type CanvaSyncableOptions = {
   ensureCanvaMcpRunning: () => Promise<void>;
 };
+
+interface CanvaCreds {
+  readonly token: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<CanvaCreds | null> {
+  const raw = await readConnectorSecret(ctx.vault, "canva", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  let token: string;
+  try {
+    token = await getValidCanvaAccessToken(ctx.vault);
+  } catch {
+    return null;
+  }
+  return token === "" ? null : { token };
+}
 
 function designsPath(continuation: string): string {
   const params = new URLSearchParams();
@@ -54,17 +67,18 @@ function nextContinuation(parsed: unknown): string {
   return typeof c === "string" && c !== "" ? c : "";
 }
 
-function upsertDesigns(ctx: SyncContext, designs: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const d of designs) {
-    const mapped = mapCanvaDesignToItem(d, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseCanvaPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const designs = extractDesigns(parsed);
+  const continuation = nextContinuation(parsed);
+  return {
+    items: designs,
+    hasMore: designs.length > 0 && continuation !== "",
+    nextPageCursor: continuation,
+  };
 }
 
 export function createCanvaSyncable(options: CanvaSyncableOptions): Syncable {
@@ -72,52 +86,17 @@ export function createCanvaSyncable(options: CanvaSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureCanvaMcpRunning();
-
-      const raw = await readConnectorSecret(ctx.vault, "canva", "oauth");
-      if (raw === null || raw === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      let token: string;
-      try {
-        token = await getValidCanvaAccessToken(ctx.vault);
-      } catch {
-        return syncNoopResult(cursor, t0);
-      }
-      if (token === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      // Continuation pagination: the top-level `continuation` field is the
-      // opaque token to the next page (or absent at the end). Walk a single
-      // forward pass per cycle, page-capped.
-      let continuation = "";
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await canvaGet(ctx, token, designsPath(continuation));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          // Mid-walk error: keep what we already upserted, stop without throwing.
-          break;
-        }
-        const designs = extractDesigns(outcome.parsed);
-        totalUpserted += upsertDesigns(ctx, designs, now);
-        continuation = nextContinuation(outcome.parsed);
-        if (designs.length === 0 || continuation === "") {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureCanvaMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) =>
+          canvaGet(ctx, creds.token, designsPath(pageCursor)),
+        parsePage: (parsed) => parseCanvaPage(parsed),
+        map: (raw, _creds, now) => mapCanvaDesignToItem(raw, { syncedAt: now }),
+      }),
   };
 }

@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField } from "./unknown-record.ts";
@@ -58,30 +53,22 @@ function vercelGet(ctx: SyncContext, creds: VercelCreds, path: string) {
   });
 }
 
-function extractDeployments(parsed: unknown): unknown[] {
-  const v = asRecord(parsed)?.["deployments"];
-  return Array.isArray(v) ? v : [];
-}
-
-function nextUntil(parsed: unknown): number | null {
+function parseVercelPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const deployments = (() => {
+    const v = asRecord(parsed)?.["deployments"];
+    return Array.isArray(v) ? v : [];
+  })();
   const pagination = asRecord(asRecord(parsed)?.["pagination"]);
-  if (pagination === undefined) {
-    return null;
-  }
-  return numberField(pagination, "next") ?? null;
-}
-
-function upsertDeployments(ctx: SyncContext, deployments: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const d of deployments) {
-    const mapped = mapVercelDeploymentToItem(d, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  const next = pagination === undefined ? null : (numberField(pagination, "next") ?? null);
+  return {
+    items: deployments,
+    hasMore: next !== null && deployments.length > 0,
+    nextPageCursor: next !== null ? String(next) : "",
+  };
 }
 
 export function createVercelSyncable(options: VercelSyncableOptions): Syncable {
@@ -89,42 +76,21 @@ export function createVercelSyncable(options: VercelSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureVercelMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let until: number | null = null;
-
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await vercelGet(ctx, creds, deploymentsPath(creds, until));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const deployments = extractDeployments(outcome.parsed);
-        totalUpserted += upsertDeployments(ctx, deployments, now);
-
-        const next = nextUntil(outcome.parsed);
-        if (next === null || deployments.length === 0) {
-          break;
-        }
-        until = next;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureVercelMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) =>
+          vercelGet(
+            ctx,
+            creds,
+            deploymentsPath(creds, pageCursor === "" ? null : Number(pageCursor)),
+          ),
+        parsePage: (parsed) => parseVercelPage(parsed),
+        map: (raw, _creds, now) => mapVercelDeploymentToItem(raw, { syncedAt: now }),
+      }),
   };
 }

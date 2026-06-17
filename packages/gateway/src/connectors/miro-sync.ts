@@ -1,12 +1,7 @@
 import { getValidMiroAccessToken } from "../auth/miro-access-token.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapMiroBoardToItem } from "./miro-board-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -27,6 +22,24 @@ function pass1Cursor(): string {
 export type MiroSyncableOptions = {
   ensureMiroMcpRunning: () => Promise<void>;
 };
+
+interface MiroCreds {
+  readonly token: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<MiroCreds | null> {
+  const raw = await readConnectorSecret(ctx.vault, "miro", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  let token: string;
+  try {
+    token = await getValidMiroAccessToken(ctx.vault);
+  } catch {
+    return null;
+  }
+  return token === "" ? null : { token };
+}
 
 function boardsPath(cursor: string): string {
   const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
@@ -53,17 +66,14 @@ function nextCursor(parsed: unknown): string {
   return typeof cursor === "string" && cursor !== "" ? cursor : "";
 }
 
-function upsertBoards(ctx: SyncContext, boards: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const b of boards) {
-    const mapped = mapMiroBoardToItem(b, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseMiroPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const boards = extractBoards(parsed);
+  const cursor = nextCursor(parsed);
+  return { items: boards, hasMore: boards.length > 0 && cursor !== "", nextPageCursor: cursor };
 }
 
 export function createMiroSyncable(options: MiroSyncableOptions): Syncable {
@@ -71,52 +81,16 @@ export function createMiroSyncable(options: MiroSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureMiroMcpRunning();
-
-      const raw = await readConnectorSecret(ctx.vault, "miro", "oauth");
-      if (raw === null || raw === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      let token: string;
-      try {
-        token = await getValidMiroAccessToken(ctx.vault);
-      } catch {
-        return syncNoopResult(cursor, t0);
-      }
-      if (token === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      // Cursor pagination: the top-level `cursor` field is the opaque token to
-      // the next page (or absent at the end). Walk a single forward pass per
-      // cycle, page-capped.
-      let pageCursor = "";
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await miroGet(ctx, token, boardsPath(pageCursor));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          // Mid-walk error: keep what we already upserted, stop without throwing.
-          break;
-        }
-        const boards = extractBoards(outcome.parsed);
-        totalUpserted += upsertBoards(ctx, boards, now);
-        pageCursor = nextCursor(outcome.parsed);
-        if (boards.length === 0 || pageCursor === "") {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureMiroMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) => miroGet(ctx, creds.token, boardsPath(pageCursor)),
+        parsePage: (parsed) => parseMiroPage(parsed),
+        map: (raw, _creds, now) => mapMiroBoardToItem(raw, { syncedAt: now }),
+      }),
   };
 }

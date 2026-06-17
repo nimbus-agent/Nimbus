@@ -1,10 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
+import type { FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPipedriveDealToItem } from "./pipedrive-deal-mapping.ts";
@@ -41,11 +37,6 @@ async function loadCreds(ctx: SyncContext): Promise<PipedriveCreds | null> {
   return { token };
 }
 
-type FetchOutcome =
-  | { kind: "ok"; parsed: unknown; bytes: number }
-  | { kind: "http_error"; bytes: number }
-  | { kind: "parse_error"; bytes: number };
-
 function dealsUrl(token: string, start: number): string {
   const params = new URLSearchParams({
     api_token: token,
@@ -67,7 +58,7 @@ async function pipedriveGetDeals(
   const text = await res.text();
   if (!res.ok) {
     ctx.logger.warn({ serviceId: SERVICE_ID, status: res.status, start }, "pipedrive GET failed");
-    return { kind: "http_error", bytes: text.length };
+    return { kind: "http_error", bytes: text.length, status: res.status };
   }
   try {
     return { kind: "ok", parsed: JSON.parse(text) as unknown, bytes: text.length };
@@ -76,14 +67,14 @@ async function pipedriveGetDeals(
   }
 }
 
-function extractDeals(parsed: unknown): {
-  deals: unknown[];
-  moreItems: boolean;
-  nextStart: number | null;
+function parsePipedrivePage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
 } {
   const root = asRecord(parsed);
   if (root === undefined) {
-    return { deals: [], moreItems: false, nextStart: null };
+    return { items: [], hasMore: false, nextPageCursor: "" };
   }
   const data = root["data"];
   const deals = Array.isArray(data) ? data : [];
@@ -92,20 +83,8 @@ function extractDeals(parsed: unknown): {
   const moreItems = pagination?.["more_items_in_collection"] === true;
   const nextRaw = pagination?.["next_start"];
   const nextStart = typeof nextRaw === "number" && Number.isFinite(nextRaw) ? nextRaw : null;
-  return { deals, moreItems, nextStart };
-}
-
-function upsertDeals(ctx: SyncContext, deals: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const d of deals) {
-    const mapped = mapPipedriveDealToItem(d, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  const hasMore = deals.length > 0 && moreItems && nextStart !== null;
+  return { items: deals, hasMore, nextPageCursor: hasMore ? String(nextStart) : "" };
 }
 
 export function createPipedriveSyncable(options: PipedriveSyncableOptions): Syncable {
@@ -113,41 +92,17 @@ export function createPipedriveSyncable(options: PipedriveSyncableOptions): Sync
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensurePipedriveMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let start = 0;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await pipedriveGetDeals(ctx, creds, start);
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { deals, moreItems, nextStart } = extractDeals(outcome.parsed);
-        totalUpserted += upsertDeals(ctx, deals, now);
-
-        if (deals.length === 0 || !moreItems || nextStart === null) {
-          break;
-        }
-        start = nextStart;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensurePipedriveMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, _page, pageCursor) =>
+          pipedriveGetDeals(ctx, creds, pageCursor === "" ? 0 : Number(pageCursor)),
+        parsePage: (parsed) => parsePipedrivePage(parsed),
+        map: (raw, _creds, now) => mapPipedriveDealToItem(raw, { syncedAt: now }),
+      }),
   };
 }

@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { type ParsedPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapRaindropBookmarkToItem } from "./raindrop-bookmark-mapping.ts";
@@ -50,26 +45,11 @@ function raindropGet(ctx: SyncContext, creds: RaindropCreds, path: string) {
   });
 }
 
-function extractBookmarks(parsed: unknown): unknown[] {
+function parseRaindropPage(parsed: unknown): ParsedPage {
   const root = asRecord(parsed);
-  if (root === undefined) {
-    return [];
-  }
-  const items = root["items"];
-  return Array.isArray(items) ? items : [];
-}
-
-function upsertBookmarks(ctx: SyncContext, bookmarks: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const b of bookmarks) {
-    const mapped = mapRaindropBookmarkToItem(b, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  const items =
+    root !== undefined && Array.isArray(root["items"]) ? (root["items"] as unknown[]) : [];
+  return { items, hasMore: items.length >= PER_PAGE };
 }
 
 export function createRaindropSyncable(options: RaindropSyncableOptions): Syncable {
@@ -77,39 +57,16 @@ export function createRaindropSyncable(options: RaindropSyncableOptions): Syncab
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureRaindropMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await raindropGet(ctx, creds, raindropsPath(page));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const bookmarks = extractBookmarks(outcome.parsed);
-        totalUpserted += upsertBookmarks(ctx, bookmarks, now);
-
-        if (bookmarks.length === 0 || bookmarks.length < PER_PAGE) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureRaindropMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, page) => raindropGet(ctx, creds, raindropsPath(page)),
+        parsePage: (parsed) => parseRaindropPage(parsed),
+        map: (raw, _creds, now) => mapRaindropBookmarkToItem(raw, { syncedAt: now }),
+      }),
   };
 }

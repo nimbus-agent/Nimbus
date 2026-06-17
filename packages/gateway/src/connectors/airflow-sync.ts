@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { mapAirflowDagToItem } from "./airflow-dag-mapping.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -70,32 +65,13 @@ function airflowGet(ctx: SyncContext, creds: AirflowCreds, path: string) {
   });
 }
 
-function extractDags(parsed: unknown): unknown[] {
-  const dags = (parsed as { dags?: unknown } | null)?.dags;
-  return Array.isArray(dags) ? dags : [];
-}
-
-function extractTotalEntries(parsed: unknown): number {
-  const total = (parsed as { total_entries?: unknown } | null)?.total_entries;
-  return typeof total === "number" && Number.isFinite(total) ? total : 0;
-}
-
-function upsertDags(
-  ctx: SyncContext,
-  creds: AirflowCreds,
-  dags: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const d of dags) {
-    const mapped = mapAirflowDagToItem(d, { baseUrl: creds.baseUrl, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseAirflowPage(parsed: unknown, page: number): { items: unknown[]; hasMore: boolean } {
+  const dagsRaw = (parsed as { dags?: unknown } | null)?.dags;
+  const dags = Array.isArray(dagsRaw) ? dagsRaw : [];
+  const totalRaw = (parsed as { total_entries?: unknown } | null)?.total_entries;
+  const total = typeof totalRaw === "number" && Number.isFinite(totalRaw) ? totalRaw : 0;
+  const offset = page * PAGE_SIZE;
+  return { items: dags, hasMore: dags.length >= PAGE_SIZE && offset + dags.length < total };
 }
 
 export function createAirflowSyncable(options: AirflowSyncableOptions): Syncable {
@@ -103,44 +79,17 @@ export function createAirflowSyncable(options: AirflowSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureAirflowMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      // Airflow's /api/v1/dags paginates by limit/offset with a total_entries
-      // count in the body; walk a single forward offset pass per cycle,
-      // stopping when offset >= total_entries, a short page, or the page cap.
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const offset = page * PAGE_SIZE;
-        const outcome = await airflowGet(ctx, creds, dagsPath(offset));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const dags = extractDags(outcome.parsed);
-        totalUpserted += upsertDags(ctx, creds, dags, now);
-
-        const total = extractTotalEntries(outcome.parsed);
-        if (dags.length < PAGE_SIZE || offset + dags.length >= total) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureAirflowMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, page) => airflowGet(ctx, creds, dagsPath(page * PAGE_SIZE)),
+        parsePage: (parsed, page) => parseAirflowPage(parsed, page),
+        map: (raw, creds, now) =>
+          mapAirflowDagToItem(raw, { baseUrl: creds.baseUrl, syncedAt: now }),
+      }),
   };
 }

@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapLeverPostingToItem } from "./lever-posting-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -58,32 +53,25 @@ function leverGet(ctx: SyncContext, creds: LeverCreds, path: string) {
   });
 }
 
-function extractPostings(parsed: unknown): {
-  postings: unknown[];
-  hasNext: boolean;
-  next: string | null;
+function parseLeverPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
 } {
   const root = asRecord(parsed);
   if (root === undefined) {
-    return { postings: [], hasNext: false, next: null };
+    return { items: [], hasMore: false, nextPageCursor: "" };
   }
   const data = root["data"];
   const postings = Array.isArray(data) ? data : [];
-  const next = stringField(root, "next") ?? null;
-  return { postings, hasNext: root["hasNext"] === true, next: next === "" ? null : next };
-}
-
-function upsertPostings(ctx: SyncContext, postings: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const p of postings) {
-    const mapped = mapLeverPostingToItem(p, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  const nextRaw = stringField(root, "next") ?? null;
+  const next = nextRaw === "" ? null : nextRaw;
+  const hasNext = root["hasNext"] === true;
+  return {
+    items: postings,
+    hasMore: hasNext && next !== null,
+    nextPageCursor: next ?? "",
+  };
 }
 
 export function createLeverSyncable(options: LeverSyncableOptions): Syncable {
@@ -91,41 +79,17 @@ export function createLeverSyncable(options: LeverSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureLeverMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      let offset: string | null = null;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await leverGet(ctx, creds, postingsPath(offset));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { postings, hasNext, next } = extractPostings(outcome.parsed);
-        totalUpserted += upsertPostings(ctx, postings, now);
-
-        if (!hasNext || next === null) {
-          break;
-        }
-        offset = next;
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureLeverMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, _page, pageCursor) =>
+          leverGet(ctx, creds, postingsPath(pageCursor === "" ? null : pageCursor)),
+        parsePage: (parsed) => parseLeverPage(parsed),
+        map: (raw, _creds, now) => mapLeverPostingToItem(raw, { syncedAt: now }),
+      }),
   };
 }

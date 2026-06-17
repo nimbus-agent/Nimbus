@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapPrefectDeploymentToItem } from "./prefect-deployment-mapping.ts";
@@ -62,70 +57,25 @@ function deploymentsFilter(ctx: SyncContext, creds: PrefectCreds, offset: number
   });
 }
 
-function extractDeployments(parsed: unknown): unknown[] {
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function upsertDeployments(
-  ctx: SyncContext,
-  creds: PrefectCreds,
-  deployments: readonly unknown[],
-  now: number,
-): number {
-  let upserted = 0;
-  for (const d of deployments) {
-    const mapped = mapPrefectDeploymentToItem(d, { apiUrl: creds.apiUrl, syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 export function createPrefectSyncable(options: PrefectSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensurePrefectMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      // The POST /deployments/filter endpoint returns a bare array with no
-      // total count; walk a single forward offset pass per cycle, stopping on
-      // a short/empty page or the page cap.
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const offset = page * PAGE_SIZE;
-        const outcome = await deploymentsFilter(ctx, creds, offset);
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const deployments = extractDeployments(outcome.parsed);
-        totalUpserted += upsertDeployments(ctx, creds, deployments, now);
-
-        if (deployments.length < PAGE_SIZE) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    // The POST /deployments/filter endpoint returns a bare array with no
+    // total count; walk a single forward offset pass per cycle, stopping on
+    // a short/empty page or the page cap.
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensurePrefectMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, page) => deploymentsFilter(ctx, creds, page * PAGE_SIZE),
+        parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
+        map: (raw, creds, now) =>
+          mapPrefectDeploymentToItem(raw, { apiUrl: creds.apiUrl, syncedAt: now }),
+      }),
   };
 }
