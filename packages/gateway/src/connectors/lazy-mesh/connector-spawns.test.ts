@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,10 +33,12 @@ import {
 } from "./connector-spawns.ts";
 import type { MeshSpawnContext } from "./slot.ts";
 
-const SANDBOX_CWD = join(
-  mkdtempSync(join(tmpdir(), "nimbus-connector-spawns-test-")),
-  "sandbox-cwd",
-);
+const SANDBOX_ROOT = mkdtempSync(join(tmpdir(), "nimbus-connector-spawns-test-"));
+const SANDBOX_CWD = join(SANDBOX_ROOT, "sandbox-cwd");
+
+afterAll(() => {
+  rmSync(SANDBOX_ROOT, { recursive: true, force: true });
+});
 
 interface SpyContext {
   ctx: MeshSpawnContext;

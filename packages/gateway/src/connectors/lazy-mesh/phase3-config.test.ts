@@ -2494,7 +2494,7 @@ describe("phase3AddTestflightMcp", () => {
     const vault = createMockVault();
     await vault.set("testflight.issuer_id", "issuer-1");
     await vault.set("testflight.key_id", "key-1");
-    await vault.set("testflight.private_key", "-----BEGIN PRIVATE KEY-----\nabc\n");
+    await vault.set("testflight.private_key", "NOT-A-REAL-KEY\nabc\n");
     const servers: Record<string, ServerSpec> = {};
     await phase3AddTestflightMcp(vault, servers, SANDBOX_CWD);
     const spec = servers["testflight"];
@@ -2504,7 +2504,7 @@ describe("phase3AddTestflightMcp", () => {
     expect(spec.env?.["TESTFLIGHT_ISSUER_ID"]).toBe("issuer-1");
     expect(spec.env?.["TESTFLIGHT_KEY_ID"]).toBe("key-1");
     // The private key is passed through verbatim (not trimmed).
-    expect(spec.env?.["TESTFLIGHT_PRIVATE_KEY"]).toBe("-----BEGIN PRIVATE KEY-----\nabc\n");
+    expect(spec.env?.["TESTFLIGHT_PRIVATE_KEY"]).toBe("NOT-A-REAL-KEY\nabc\n");
   });
 });
 

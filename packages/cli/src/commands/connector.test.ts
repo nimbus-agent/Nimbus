@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import os from "node:os";
+import path from "node:path";
 
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
@@ -883,7 +885,14 @@ describe("runConnector — short-flag aliases + flag edges", () => {
   it("--context is honoured for kubernetes auth", async () => {
     const mock = createMockIpcClient([{ ok: true, serviceId: "kubernetes", scopesGranted: [] }]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runConnector(["auth", "kubernetes", "--kubeconfig", "/tmp/kube", "--context", "prod"]);
+    await runConnector([
+      "auth",
+      "kubernetes",
+      "--kubeconfig",
+      path.join(os.tmpdir(), "kube"),
+      "--context",
+      "prod",
+    ]);
     const params = mock.calls[0]?.params as Record<string, unknown>;
     expect(params["context"]).toBe("prod");
   });
@@ -986,7 +995,7 @@ describe("runConnector auth — env-fallback success + secondary error branches"
       "auth",
       "gcp",
       "--gcp-credentials-json",
-      "/tmp/gcp.json",
+      path.join(os.tmpdir(), "gcp.json"),
       "--gcp-project-id",
       "proj-123",
     ]);
@@ -1044,7 +1053,14 @@ describe("runConnector auth — env-fallback success + secondary error branches"
 
   it("kubernetes context is set when --context is provided", async () => {
     fixtureOk("kubernetes");
-    await runConnector(["auth", "kubernetes", "--kubeconfig", "/tmp/kube", "--context", "staging"]);
+    await runConnector([
+      "auth",
+      "kubernetes",
+      "--kubeconfig",
+      path.join(os.tmpdir(), "kube"),
+      "--context",
+      "staging",
+    ]);
     expect(out.stdout).toContain("Signed in: kubernetes");
   });
 

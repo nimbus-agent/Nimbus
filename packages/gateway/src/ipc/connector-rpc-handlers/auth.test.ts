@@ -21,12 +21,16 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 // Blank every OAuth client-id / secret env var BEFORE the dynamic imports below read them. This makes
-// the empty-client-id guard fire deterministically regardless of the developer's local env.
+// the empty-client-id guard fire deterministically regardless of the developer's local env. The
+// original values are captured so they can be restored after the suite — otherwise the mutation would
+// leak into unrelated tests sharing the worker and cause order-dependent failures.
+const oauthEnvBackup = new Map<string, string | undefined>();
 for (const k of Object.keys(process.env)) {
   if (k.startsWith("NIMBUS_OAUTH_") && (k.endsWith("_CLIENT_ID") || k.endsWith("_CLIENT_SECRET"))) {
+    oauthEnvBackup.set(k, process.env[k]);
     process.env[k] = "";
   }
 }
@@ -35,6 +39,13 @@ const { LocalIndex } = await import("../../index/local-index.ts");
 const { createMockVault } = await import("../../vault/mock.ts");
 const { ConnectorRpcError } = await import("../connector-rpc-shared.ts");
 const { handleConnectorAuth } = await import("./auth.ts");
+
+afterAll(() => {
+  for (const [k, v] of oauthEnvBackup) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
 
 type NimbusVault = import("../../vault/nimbus-vault.ts").NimbusVault;
 type LocalIndexT = import("../../index/local-index.ts").LocalIndex;

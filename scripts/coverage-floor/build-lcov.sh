@@ -20,6 +20,28 @@ mkdir -p coverage/.nyc-tmp
 REGISTER="${REPO_ROOT}/scripts/coverage/istanbul-register.ts"
 REPORT="${REPO_ROOT}/scripts/coverage/report-coverage.ts"
 
+# Ensure standard Bun installation directories are in PATH for non-interactive shells
+if [[ -z "${USERPROFILE}" ]] && command -v cmd.exe &> /dev/null; then
+  WIN_UP="$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r')"
+  if [[ -n "${WIN_UP}" ]] && command -v wslpath &> /dev/null; then
+    USERPROFILE="$(wslpath "${WIN_UP}")"
+  fi
+fi
+
+if [[ -n "${USERPROFILE}" ]]; then
+  if [[ "${USERPROFILE}" == /mnt/* || "${USERPROFILE}" == /home/* ]]; then
+    export PATH="${USERPROFILE}/.bun/bin:${PATH}"
+  else
+    UP_MSYS="$(echo "${USERPROFILE}" | sed -e 's/\\/\//g' -e 's/^\([A-Za-z]\):/\/\1/' | tr '[:upper:]' '[:lower:]')"
+    export PATH="${UP_MSYS}/.bun/bin:${PATH}"
+    if command -v wslpath &> /dev/null; then
+      UP_WSL="$(wslpath "${USERPROFILE}")"
+      export PATH="${UP_WSL}/.bun/bin:${PATH}"
+    fi
+  fi
+fi
+export PATH="${HOME}/.bun/bin:${PATH}"
+
 run_pkg () {
   local pkg="$1"
   if [[ -z "$(find "${pkg}" -path "${pkg}/node_modules" -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit)" ]]; then

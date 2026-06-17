@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { LocalIndex } from "../index/local-index.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
@@ -11,6 +11,20 @@ import {
   DiagnosticsRpcError,
   dispatchDiagnosticsRpc,
 } from "./diagnostics-rpc.ts";
+
+// Pick a directory guaranteed NOT to be under the OS temp root. On most runners process.cwd() works,
+// but some CI checkouts live under temp — there cwd would hit the wrong branch and the test would flake.
+// Fall back to homedir(), then fail loudly if neither is usable.
+function pickNonTempParent(): string {
+  const tmpRoot = realpathSync(tmpdir());
+  for (const candidate of [process.cwd(), homedir()]) {
+    const real = realpathSync(candidate);
+    const rel = relative(tmpRoot, real);
+    const isUnderTmp = rel === "" || (!rel.startsWith("..") && rel !== ".");
+    if (!isUnderTmp) return real;
+  }
+  throw new Error("No non-temp parent available for telemetry.disableMark tests");
+}
 
 function makeCtx(dataDir: string): DiagnosticsRpcContext {
   return {
@@ -978,7 +992,7 @@ describe("telemetry marker path safety (symlink + non-temp dataDir)", () => {
 
   test("disableMark writes the marker when dataDir is NOT under the OS temp dir", () => {
     // A repo-local directory is not under os.tmpdir(), so rpcTelemetryDisableMark's body runs.
-    const dir = mkdtempSync(join(process.cwd(), "nimbus-diag-nontmp-"));
+    const dir = mkdtempSync(join(pickNonTempParent(), "nimbus-diag-nontmp-"));
     try {
       const r = dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(dir));
       expect((r as { kind: "hit"; value: { ok: boolean } }).value.ok).toBe(true);
@@ -993,7 +1007,7 @@ describe("telemetry marker path safety (symlink + non-temp dataDir)", () => {
     // the logical path (the catch arm). Being not-under-temp, the under-temp guard passes; the marker
     // write then fails with ENOENT (no parent dir) — but the realpath catch + under-temp-false arms
     // have already executed by then.
-    const dir = join(process.cwd(), `nimbus-diag-missing-${Date.now()}`);
+    const dir = join(pickNonTempParent(), `nimbus-diag-missing-${Date.now()}`);
     expect(() => dispatchDiagnosticsRpc("telemetry.disableMark", null, makeCtx(dir))).toThrow(
       /ENOENT/,
     );
