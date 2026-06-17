@@ -1,3 +1,14 @@
+// This is the CANONICAL test for connector-spawns.ts. It mocks the per-provider
+// OAuth access-token resolvers via process-global `mock.module` and is therefore
+// safe under the combined `bun test packages/gateway` run (the push-matrix "Unit +
+// Coverage" job) — it never depends on the real resolver's return value.
+//
+// Do NOT add a sibling real-resolver test (e.g. a src-tree connector-spawns.test.ts
+// that drives ensure*Mcp through the REAL getValid*AccessToken). `mock.module` is
+// process-global, so this file's mocks (and slack-sync.test.ts's slack mock) leak
+// into any real-resolver twin in the same process and make ensureSlackMcp spawn
+// despite an absent/malformed token — green on the src-only PR gate, red on the
+// combined push run. One such twin was removed for exactly this reason.
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
