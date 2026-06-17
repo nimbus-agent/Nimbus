@@ -138,9 +138,12 @@ target < 2.3 %, drive lower while clusters remain extractable.
 
 - Fix `scripts/coverage/instrument-scope.ts` `CONNECTOR_SRC` (the verified
   one-liner above). Add/extend `scripts/coverage/instrument-scope.test.ts` to
-  assert a `…/packages/mcp-connectors/shared/foo.ts` path returns `true` from
-  `shouldInstrument` (TDD: the assertion fails pre-fix). No behavior change to any
-  product code; this only widens coverage instrumentation.
+  cover several `mcp-connectors/shared/` paths (a flat `…/shared/foo.ts`, a
+  nested `…/shared/sub/bar.ts`, and a `.tsx` extension) all returning `true` from
+  `shouldInstrument`, **plus regression guards** that a connector
+  `…/<conn>/src/server.ts` still instruments and a `…/shared/foo.test.ts` is
+  still excluded (TDD: the new shared assertions fail pre-fix). No behavior change
+  to any product code; this only widens coverage instrumentation.
 
 ### Wave 1 — Sonar-safe clean clusters (gateway / cli / sdk)
 
@@ -149,10 +152,14 @@ unit test (coverage-floor ≥ 80 %/file applies to gateway/cli/sdk/client).
 
 - **C1 — agent-brief shared TYPES** (`cli/src/types/agents.ts` ↔
   `gateway/src/agents/_lib/findings.ts`, 170 L, the largest pair). Hoist the
-  shared finding/brief **type** declarations into `@nimbus-dev/sdk` (a new
-  types-only module, e.g. `sdk/src/agents/brief-types.ts` exported via an sdk
-  subpath); each side imports rather than redeclares. Types-only → no executable
-  lines → no coverage obligation. Verify both `cli` and `gateway` typecheck.
+  shared finding/brief **type** declarations into `@nimbus-dev/sdk`. Since these
+  are types-only (erased at runtime — no tree-shaking concern), prefer a **root
+  re-export** from `sdk/src/index.ts` (`import { type AgentBrief } from
+  "@nimbus-dev/sdk"`) over a new package.json subpath, unless the sdk's existing
+  export convention clearly favors a subpath — decide by reading the sdk's current
+  `exports`/`index.ts` structure in planning. Each side imports rather than
+  redeclares. Types-only → no executable lines → no coverage obligation. Verify
+  both `cli` and `gateway` typecheck.
 - **C2 — gateway email-mappings** (`imap-email-mapping.ts` ↔
   `protonmail-email-mapping.ts` 78 L; `fastmail-` ↔ `protonmail-email-mapping.ts`
   46 L) → a gateway-internal `_lib` helper (e.g.
@@ -202,6 +209,17 @@ Each pair shares logic across the gateway↔connector boundary; they cannot impo
 each other, so the shared logic moves into `@nimbus-dev/sdk` and **both** sides
 import it. New sdk modules ship unit tests (coverage-floor applies to sdk).
 
+> **SDK purity constraint (hard).** `@nimbus-dev/sdk` is consumed by external
+> third-party plugins, so anything hoisted here must be **pure** — parsing /
+> validation / type-mapping only, side-effect-free, no DB writes, no Bun/Node PAL
+> filesystem/network/process access, no secrets. For each pair, only the **pure**
+> portion of the duplicated span hoists; all I/O (JMAP HTTP calls, SQLite
+> `sql-scan` queries, file reads in `profile.ts`) **stays in each caller**, which
+> passes already-fetched data into the sdk helper. If a pair's duplicated span is
+> I/O-bound rather than pure (so nothing pure remains to hoist), it is **not
+> safely hoistable — defer that pair** rather than force an impure sdk module.
+> Verify the pure/impure split per pair during planning by reading both files.
+
 - **C8 — dataprofile column/row parsing** (`data-profile-mapping.ts` 82 L +
   `data-profile-sync.ts` 79 L ↔ `mcp/dataprofile/profile.ts`) → an sdk
   data-profile parsing module both import.
@@ -213,10 +231,18 @@ import it. New sdk modules ship unit tests (coverage-floor applies to sdk).
   module), both sides import.
 
 > These pairs currently sit in `sonar.cpd.exclusions` as "split across the package
-> boundary by design." Hoisting to sdk genuinely removes the duplication.
-> Removing the now-obsolete Sonar CPD exclusion entries is **optional cleanup**,
-> not required for this PR's target (the strict local jscpd gate does not honor
-> Sonar CPD exclusions); leave them unless they cause an audit-parity failure.
+> boundary by design." Hoisting to sdk genuinely removes the duplication for the
+> pairs we touch. **Do NOT retire the `sonar.cpd.exclusions` entries in this PR.**
+> They are **blanket family patterns** (`mcp-connectors/*/src/server.ts`,
+> `tools.ts`, `gateway/connectors/*-sync.ts`, `*-mapping.ts`), not per-pair — and
+> this PR dedups only a subset of each family, leaving a residual long tail in the
+> files we don't touch. Removing the blanket patterns would re-expose that residual
+> duplication to Sonar's gated `new_duplicated_lines_density` on any of those files
+> we *do* edit. Retiring them is a **separate later cleanup**, safe only once a
+> family is fully deduped. This PR's target is the strict *local* jscpd gate, which
+> does not honor Sonar CPD exclusions anyway. (Coverage exclusions are parity-
+> checked by `audit:exclusion-parity`; CPD exclusions are not — leaving them is
+> clean.)
 
 ### Wave 4 — Measure + tighten the gate (only after strict < 2.3 % confirmed)
 
@@ -239,6 +265,11 @@ import it. New sdk modules ship unit tests (coverage-floor applies to sdk).
 - **Strict tsc:** run `bun run typecheck` (all packages) — and **grep the output
   for `error TS`**, since the `--filter` aggregate can mask a sub-package failure.
   Run the 5 email-connector tsconfigs explicitly whenever `shared/` changes.
+- **SDK rebuild (cross-package):** consumers resolve `@nimbus-dev/sdk` via its
+  built `dist/` + `.d.ts` (not src), so any wave touching sdk (C1, C8–C10) must
+  `cd packages/sdk && bun run build` **before** the gateway/cli/mcp typecheck or
+  tests — otherwise the new sdk exports appear missing (`Cannot find module
+  '@nimbus-dev/sdk/…'`). Same rule for `packages/client` if touched.
 - **Security:** run `packages/gateway/src/security-invariants.test.ts` after C5
   (the `query-gate.ts` extraction) and the static
   `check-nimbus-invariants.ts` audit.
