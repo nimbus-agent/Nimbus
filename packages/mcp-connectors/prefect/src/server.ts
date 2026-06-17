@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterPrefectDeployments } from "./search-filter.ts";
@@ -80,10 +81,7 @@ await runReadOnlyMcpConnector("nimbus-prefect", (reg) => {
   reg(
     "prefect_search",
     "Substring search across the first page of Prefect deployments. Matches the query (case-insensitive) against the deployment name, description, work pool, work queue, status, and tags. Returns a matches envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await prefectListDeployments(0, 100);
       const matches = filterPrefectDeployments(deploymentsFrom(root), {

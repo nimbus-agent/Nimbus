@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSupersetDashboards } from "./search-filter.ts";
@@ -105,10 +106,7 @@ await runReadOnlyMcpConnector("nimbus-superset", (reg) => {
   reg(
     "superset_search",
     "Substring search across Apache Superset dashboards. Matches the query (case-insensitive) against dashboard title and slug. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const root = await supersetGet(dashboardListPath(0, 500));
       const matches = filterSupersetDashboards(dashboardsFrom(root), {

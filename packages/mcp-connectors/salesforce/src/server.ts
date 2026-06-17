@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSalesforceOpportunities } from "./search-filter.ts";
@@ -80,10 +81,7 @@ await runReadOnlyMcpConnector("nimbus-salesforce", (reg) => {
   reg(
     "salesforce_search",
     "**Substring search over the FIRST PAGE only** (up to the queried limit of most-recently-modified Opportunities) of the authenticated org's Salesforce Opportunities. This tool runs the SOQL query once and matches the query locally (case-insensitive) against each opportunity's name, stage, and type. **Opportunities beyond the first page are not searchable here — query the local Nimbus index instead for full coverage.** Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(2000).optional(),
-    }),
+    searchToolInputSchema(2000),
     async (p) => {
       const root = await salesforceGet(listQueryPath(2000));
       const matches = filterSalesforceOpportunities(recordsFrom(root), {
