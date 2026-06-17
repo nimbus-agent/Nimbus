@@ -20,7 +20,7 @@ These are **load-bearing constraints**, not style preferences. Check every new f
 3. **No plaintext credentials** — Vault only. Never in logs, IPC responses, config files, or env vars persisted outside spawn context. The structured logger auto-redacts `*.token`, `*.secret`, `oauth.*`.
 4. **MCP as connector standard** — the Engine never calls cloud APIs directly. Every integration is an MCP server. Engine ↔ connector boundary is always MCP.
 5. **Platform equality** — Windows 10+, macOS 13+, Ubuntu 22.04+ are equally supported in every change.
-6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 6 (Team)** (🚧 in progress — Slices 1–5 shipped: 1 & 3 on 2026-06-05, 2 & 4 on 2026-06-07, 5 on 2026-06-09). Phase 5 (The Extended Surface) is ✅ complete.
+6. **No feature creep across phases** — do not implement Phase N+1 features while Phase N is active. Current active phase: **Phase 6 (Team)** (🚧 nearly complete — Slices 1–8 shipped: federation, team-vault/quorum, identity/SSO/SCIM, org policy, ChatOps, cross-colleague agents, data-warehouse/BI + lineage, and Share & Virality). Phase 5 (The Extended Surface) is ✅ complete. See [docs/CHANGELOG.md](../../docs/CHANGELOG.md) for the dated delivery log.
 
 ---
 
@@ -96,6 +96,14 @@ nimbus/
 | `status.*` | health, diagnostics — read-only |
 | `vault.*` | sensitive — NOT in the Tauri UI allowlist |
 | `db.*` | internal — NOT in the Tauri UI allowlist |
+| `federation.*` | federated query/invoke/quorum/approval — LAN-answerable, HITL-gated (`I17`/`I19`) |
+| `identity.*` | OIDC SSO login/status/bindings (`I18`) |
+| `scim.*` | SCIM v2 provisioning (on the `I13` HTTP write surface) |
+| `teamvault.*` | team-vault put/grant/delegate (`I19`) |
+| `policy.*` | org-policy distribution/enforcement (`I22`) |
+| `chatops.*` | ChatOps bot operational replies (`I23`) |
+| `agents.*` | `expert`, `impact`, cross-colleague briefs (`briefReady` notifications) |
+| `share.*` | outbound share create/list/prune/verify (`I27`) — NOT in the Tauri UI allowlist for emit methods |
 
 **Notifications vs responses:** Streaming/async events are **notifications** (no `id`, no response expected). Methods that return immediately with a handle and then stream progress (e.g. `engine.askStream` → `engine.streamToken` / `engine.streamDone`) follow this pattern:
 ```

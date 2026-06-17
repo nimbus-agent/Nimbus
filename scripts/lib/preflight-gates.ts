@@ -22,6 +22,8 @@ const FAST: readonly Gate[] = [
   { name: "audit:readme-cli", cmd: ["bun", "run", "audit:readme-cli"], tier: "fast" },
   { name: "audit:package-readmes", cmd: ["bun", "run", "audit:package-readmes"], tier: "fast" },
   { name: "audit:cross-platform", cmd: ["bun", "run", "audit:cross-platform"], tier: "fast" },
+  { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
+  { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
   {
     name: "duplication (jscpd)",

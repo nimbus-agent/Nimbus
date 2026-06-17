@@ -224,6 +224,10 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/cli/src/commands/impact.ts` | `nimbus impact` — calls `agents.impact`; `--json` / `--service` filter |
 | `packages/cli/src/commands/bench.ts` | `nimbus bench` — `Bun.spawn` wrapper around `bench-runner.ts` |
 | `packages/cli/src/commands/index-cmd.ts` | `nimbus index reembed` — IPC-driven with progress streaming |
+| `packages/cli/src/commands/team.ts` | `nimbus team` — discover/pair/namespace/query/who-knows/consent/listen (federation) |
+| `packages/cli/src/commands/identity.ts` | `nimbus identity` — OIDC login/status/logout/bind/unbind (`I18`) |
+| `packages/cli/src/commands/scim.ts` | `nimbus scim` — status/set-token (SCIM v2 provisioning) |
+| `packages/cli/src/commands/share.ts` | `nimbus share` — create/list/prune/pubkey/approve/reject (`I27`); `--as-recipe` |
 | `packages/cli/src/commands/tui.tsx` | `nimbus tui` entry — gateway check, fallback detection, Ink |
 | `packages/cli/src/tui/App.tsx` | TUI root — state machine + Option-1 layout |
 | `packages/cli/src/tui/state.ts` | Reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
@@ -267,7 +271,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `scripts/structure-audit/lib.ts` | Shared B3 helpers — `REPO_ROOT`, `stripComments`, `countAnyInSource`, `iterateSourceFiles` |
 | `scripts/structure-audit/check-doc-references.ts` | Doc-ref drift audit (broken `[text](path)` and backtick path refs) |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist) |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Static-time complement to `security-invariants.test.ts` (I1 + vault-key allowlist + static rules D10–D21) |
 | `scripts/structure-audit/check-openapi-drift.ts` | OpenAPI drift detector — `v1.yaml` vs `READ_ONLY_HTTP_ROUTES` |
 | `docs/structure-audit/baseline.md` | Phase 1 baseline reference; per-dimension state + Phase 2 thresholds |
 
@@ -281,13 +285,28 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/cli/src/commands/security.ts` | `nimbus security scan [--json]`; respects `NO_COLOR` + `isTTY` |
 | `packages/gateway/test/e2e/scenarios/security-scan.e2e.test.ts` | Acceptance — AWS public example key in a `summary`-depth filesystem item |
 
+## Phase 6 — Team, Federation & Share
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/federation/query-gate.ts` | `answerFederatedQuery` — invariant `I17`/`D13` leak-proof federated read gate |
+| `packages/gateway/src/federation/invoke-gate.ts` | `answerFederatedInvoke` — invariants `I19`/`I26` team-tool / warehouse-write peer gate |
+| `packages/gateway/src/federation/preflight-gate.ts` | `I24`/`D18` federated action-request preflight (LOCAL owner HITL, sandboxed) |
+| `packages/gateway/src/identity/verifier.ts` | `isOperatorValid` — invariant `I18`/`D14` sole IdP-token validation site |
+| `packages/gateway/src/teamvault/team-tool-invoke.ts` | `I19`/`D15` ephemeral team-credentialed connector |
+| `packages/gateway/src/policy/policy-gate.ts` | `EnforcedPolicy` resolution — invariant `I22`/`D16` (tighten-only, fail-closed) |
+| `packages/gateway/src/chatops/reply-dispatcher.ts` | Operational ChatOps posts — invariant `I23`/`D17` server-derived `ReplyTarget` |
+| `packages/gateway/src/engine/quorum/quorum-coordinator.ts` | Quorum HITL — invariant `I21` (DISTINCT authed peers, deny aborts) |
+| `packages/gateway/src/tribal/tribal-write-gate.ts` | Tribal-knowledge KB capture — invariant `I25`/`D19` config-pinned destination |
+| `packages/gateway/src/share/share-gate.ts` | `createShare` — invariant `I27`/`D21` sole outbound-share chokepoint (see `nimbus-share-virality` skill) |
+
 ## Top-level docs
 
 | File | Purpose |
 |---|---|
 | `docs/architecture.md` | Full subsystem design — read before modifying any subsystem |
 | `docs/roadmap.md` | Phases, acceptance criteria, delivered summary |
-| `docs/SECURITY-INVARIANTS.md` | I1–I23 rationale + anti-patterns + audit cross-references |
+| `docs/SECURITY-INVARIANTS.md` | I1–I27 rationale + anti-patterns + audit cross-references |
 | `docs/release/manual-smoke-headless.md` | Reusable manual smoke checklist; per-platform results matrix |
 | `docs/cli/use-in-ci.md` | CI integration examples (GitHub Actions, GitLab, Jenkins) using `nimbus query --json` |
 | `docs/templates/nimbus-pre-commit.sh` | Bash pre-commit template — `nimbus diag` reachability + incident/CI gates |

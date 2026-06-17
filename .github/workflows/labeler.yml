@@ -1,4 +1,8 @@
 name: Labeller
+# SECURITY: `pull_request_target` runs with repo secrets + a write token on fork PRs.
+# This workflow is the canonical SAFE use — it does NOT check out PR head code and only runs
+# the SHA-pinned actions/labeler. Do NOT add a `checkout` of the PR head ref or any `run:` step
+# that executes PR-controlled code here — that would turn this into an RCE / secret-exfil vector.
 on: [pull_request_target]
 
 permissions:
@@ -7,7 +11,7 @@ permissions:
 
 jobs:
   label:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

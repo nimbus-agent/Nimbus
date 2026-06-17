@@ -93,6 +93,12 @@ jobs:
       - name: Cross-platform audit (test path assertions)
         run: bun run audit:cross-platform
 
+      - name: Status-drift audit (docs invariant/schema vs code)
+        run: bun run audit:status-drift
+
+      - name: GitHub Actions SHA-pin audit (org policy)
+        run: bun run audit:action-sha-pins
+
       - name: regen-slo drift check
         run: bun run regen-slo:check
 
@@ -873,7 +879,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-24.04, macos-14, windows-latest]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
