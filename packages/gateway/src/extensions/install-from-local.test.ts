@@ -2457,6 +2457,7 @@ describe("resolveSystemTarCommand — win32 SystemRoot + fallback (Tier C-24)", 
     const savedRoot = process.env["SystemRoot"];
     const savedWindir = process.env["windir"];
     try {
+      // cross-platform-ok: win32 branch assertion path literal
       process.env["SystemRoot"] = "C:\\WinTest";
       delete process.env["windir"];
       expect(resolveSystemTarCommand()).toBe(join("C:\\WinTest", "System32", "tar.exe"));
@@ -2469,6 +2470,7 @@ describe("resolveSystemTarCommand — win32 SystemRoot + fallback (Tier C-24)", 
       // windir alone (SystemRoot absent) resolves via the env branch — SystemRoot must be
       // deleted (not empty) so the `?? process.env["windir"]` coalescing falls through.
       delete process.env["SystemRoot"];
+      // cross-platform-ok: win32 branch assertion path literal
       process.env["windir"] = "C:\\WinDirTest";
       expect(resolveSystemTarCommand()).toBe(join("C:\\WinDirTest", "System32", "tar.exe"));
     } finally {

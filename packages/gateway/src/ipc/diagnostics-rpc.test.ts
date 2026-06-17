@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { LocalIndex } from "../index/local-index.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
@@ -20,7 +20,9 @@ function pickNonTempParent(): string {
   for (const candidate of [process.cwd(), homedir()]) {
     const real = realpathSync(candidate);
     const rel = relative(tmpRoot, real);
-    const isUnderTmp = rel === "" || (!rel.startsWith("..") && rel !== ".");
+    // On Windows, relative() across drives returns an absolute path — exclude it
+    // (mirrors the production guard) so a cross-drive candidate isn't misread as under-tmp.
+    const isUnderTmp = rel === "" || (!rel.startsWith("..") && rel !== "." && !isAbsolute(rel));
     if (!isUnderTmp) return real;
   }
   throw new Error("No non-temp parent available for telemetry.disableMark tests");
