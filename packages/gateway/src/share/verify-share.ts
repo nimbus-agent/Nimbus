@@ -1,3 +1,4 @@
+import { load as yamlParse } from "js-yaml";
 import { safeFetch } from "./safe-fetch.ts";
 import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
 
@@ -9,6 +10,28 @@ import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
  */
 export interface VerifyShareReport extends VerifyResult {
   readonly origin?: { readonly label: string; readonly pubkey: string };
+}
+
+/**
+ * Accept either a JSON (`.nimbus-share.json`) or YAML (`.nimbus-recipe.yaml`) share. Parse to an
+ * object and re-encode as JSON bytes so the single JSON-only `verifyShareBytes` primitive can hash
+ * + verify. Verification re-canonicalizes the body, so the input serialization never affects the
+ * result. Returns the original bytes unchanged when they are already JSON.
+ */
+function toJsonShareBytes(bytes: Uint8Array): Uint8Array {
+  const text = new TextDecoder().decode(bytes);
+  try {
+    JSON.parse(text);
+    return bytes; // already JSON
+  } catch {
+    // fall through to YAML
+  }
+  try {
+    const obj: unknown = yamlParse(text);
+    return new TextEncoder().encode(JSON.stringify(obj));
+  } catch {
+    return bytes; // neither JSON nor YAML → let verifyShareBytes report "malformed json"
+  }
 }
 
 /** Fail-closed report for input the codec cannot interpret as a share file. */
@@ -32,14 +55,15 @@ export function verifyShareFromBytes(
   bytes: Uint8Array,
   opts?: { now?: number },
 ): VerifyShareReport {
+  const jsonBytes = toJsonShareBytes(bytes);
   let base: VerifyResult;
   try {
-    base = verifyShareBytes(bytes, opts);
+    base = verifyShareBytes(jsonBytes, opts);
   } catch {
     base = NOT_A_SHARE;
   }
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as {
+    const parsed = JSON.parse(new TextDecoder().decode(jsonBytes)) as {
       body?: { origin?: unknown };
     };
     const origin = parsed.body?.origin;

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { serializeShareFileToYaml } from "./recipe-yaml.ts";
 import { buildShareFile, type ShareBody } from "./share-format.ts";
 import { verifyShareFromBytes, verifyShareFromInput } from "./verify-share.ts";
 
@@ -99,6 +100,39 @@ describe("verifyShareFromBytes", () => {
     const r = verifyShareFromBytes(new TextEncoder().encode(JSON.stringify(file)), { now: 200 });
     expect(r.ok).toBe(true);
     expect(r.expired).toBe(true);
+  });
+});
+
+function signedRecipeShare() {
+  const kp = generateEd25519Keypair();
+  const body: ShareBody = {
+    kind: "recipe",
+    sessionId: "recipe-session-1",
+    createdAt: 1_000_000,
+    expiresAt: null,
+    redactionSet: [],
+    origin: { label: "RecipeOrigin", pubkey: encodeBase64(kp.pubkey) },
+    recipe: { steps: ["step1", "step2"] },
+  };
+  return buildShareFile(body, encodeBase64(kp.privkey), encodeBase64(kp.pubkey));
+}
+
+describe("verifyShareFromBytes — YAML input", () => {
+  test("verifies a YAML-serialized recipe share", () => {
+    const share = signedRecipeShare();
+    const yamlBytes = new TextEncoder().encode(serializeShareFileToYaml(share));
+    const result = verifyShareFromBytes(yamlBytes, { now: share.body.createdAt + 1 });
+    expect(result.ok).toBe(true);
+    expect(result.signatureValid).toBe(true);
+  });
+
+  test("a tampered YAML share fails verification", () => {
+    const share = signedRecipeShare();
+    const tampered = serializeShareFileToYaml(share).replace(share.body.sessionId, "evil-session");
+    const result = verifyShareFromBytes(new TextEncoder().encode(tampered), {
+      now: share.body.createdAt + 1,
+    });
+    expect(result.ok).toBe(false);
   });
 });
 
