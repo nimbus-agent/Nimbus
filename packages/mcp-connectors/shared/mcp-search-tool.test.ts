@@ -43,8 +43,9 @@ describe("matchesResult", () => {
     rows.filter((r) => String(r).includes(opts.query)).slice(0, opts.limit ?? rows.length);
 
   test("filters array rows into a { matches } envelope", () => {
-    const res = matchesResult(["apple", "banana", "grape"], filter, { query: "a" });
-    expect(JSON.parse(res.content[0].text)).toEqual({ matches: ["apple", "banana", "grape"] });
+    // query "an" matches only "banana" — proves the filter actually filters (not a no-op).
+    const res = matchesResult(["apple", "banana", "grape"], filter, { query: "an" });
+    expect(JSON.parse(res.content[0].text)).toEqual({ matches: ["banana"] });
   });
 
   test("non-array rows yield empty matches", () => {

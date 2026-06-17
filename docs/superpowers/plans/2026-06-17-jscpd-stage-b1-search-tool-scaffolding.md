@@ -333,7 +333,7 @@ Same as Task 2 — `extra=none` + guarded tail → apply **both**.
 | stripe | 100 | keyed | filterStripeInvoices | both |
 | vercel | 100 | keyed | filterVercelDeployments | both |
 | zendesk | 100 | keyed | filterZendeskTickets | both |
-| zoom | 100 | keyed | filterZoomMeetings | both |
+| ~~zoom~~ | — | — | — | **SKIPPED at execution** — `filterZoomMeetings` uses a custom `ZoomSearchOptions` type incompatible with the generic helper under `exactOptionalPropertyTypes` (no force-fit) |
 | semgrep | 200 | keyed | filterSemgrepFindings | both |
 
 - [ ] **Step 1: Apply both transforms** to each file per the Transformation Reference. Note `semgrep` cap is **200**. Update imports per the import rule.
