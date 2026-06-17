@@ -376,7 +376,7 @@ git commit -m "feat(share): recipe-runner types + share→steps normalization"
   - else `run(...)` → `{kind:"unavailable"}` → `missing-connector` (detail = service); `{kind:"threw"}` → `error` (detail = message); `{kind:"ran",ok}` → `match` if `(ok ? "ok" : "error") === step.status` else `diverged`.
 
 > Classification order is fixed and the branches are mutually exclusive. `replayStatus` after a `ran` outcome is `"ok"` when `ok` is true, else `"error"` — the same ok/error semantics `tool_call_log` records. `diverged` therefore fires when the local outcome's status differs from the shared step's recorded status.
-
+>
 > **Expected divergence is not a bug** (review open-questions A/B): the shared params are PII/secret-redacted (8a/8b), so a step whose redacted param was a required id/path/query will legitimately fail locally → `error` (the connector raised) or `diverged` (it ran but the original errored). Likewise a service the local operator hasn't connected → `missing-connector` (tool absent from the map) or `error` (execute throws on missing creds). These outcomes are the divergence report doing its job — surfacing "this step needs connector X / a real value you don't have" — not a runner defect. No special-casing in the runner.
 
 - [ ] **Step 1: Write the failing test**
