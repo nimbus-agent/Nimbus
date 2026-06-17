@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterDependencyTrackProjects } from "./search-filter.ts";
@@ -66,10 +67,7 @@ await runReadOnlyMcpConnector("nimbus-dependencytrack", (reg) => {
   reg(
     "dependencytrack_search",
     "Substring search across the first page of Dependency-Track projects. Matches the query (case-insensitive) against the project name, version, classifier, and tag names. Returns a matches envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await dtGet("/api/v1/project?pageSize=100&pageNumber=1&excludeInactive=false");
       const matches = filterDependencyTrackProjects(projectsFrom(root), {

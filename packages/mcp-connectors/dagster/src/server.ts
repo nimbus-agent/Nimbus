@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterDagsterJobs } from "./search-filter.ts";
@@ -207,10 +208,7 @@ await runReadOnlyMcpConnector("nimbus-dagster", (reg) => {
   reg(
     "dagster_search",
     "Substring search across Dagster jobs. Matches the query (case-insensitive) against the job name, repository, code location, description, and tag keys/values. Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(2000).optional(),
-    }),
+    searchToolInputSchema(2000),
     async (p) => {
       const jobs = await listJobs();
       const matches = filterDagsterJobs(jobs, { query: p.query, limit: p.limit });

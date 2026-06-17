@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { encodeBasicAuthHeader, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterAirflowDags } from "./search-filter.ts";
@@ -74,10 +75,7 @@ await runReadOnlyMcpConnector("nimbus-airflow", (reg) => {
   reg(
     "airflow_search",
     "Substring search across the first page of Airflow DAGs. Matches the query (case-insensitive) against the dag_id, description, owners, and tag names. Returns a matches envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await airflowGet("/api/v1/dags?limit=100&offset=0");
       const matches = filterAirflowDags(dagsFrom(root), {

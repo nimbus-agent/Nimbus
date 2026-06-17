@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterCanvaDesigns } from "./search-filter.ts";
@@ -63,10 +64,7 @@ await runReadOnlyMcpConnector("nimbus-canva", (reg) => {
   reg(
     "canva_search",
     "**Substring search over the FIRST PAGE only** of the authenticated user's Canva designs. This tool fetches GET /rest/v1/designs once and matches the query locally (case-insensitive) against the design title. **Designs beyond the first page are not searchable here — query the local Nimbus index instead for full coverage.** Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await canvaGet("/rest/v1/designs");
       const matches = filterCanvaDesigns(designsFrom(root), {

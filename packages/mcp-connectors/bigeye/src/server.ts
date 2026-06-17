@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -103,10 +104,7 @@ export function registerBigeyeTools(reg: ZodToolRegistrar): void {
   reg(
     "bigeye_search",
     "Substring search across Bigeye data-quality issues. Matches the query (case-insensitive) against issue summary, title, and description. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const issues = await fetchIssues(500, 0);
       const matches = filterBigeyeIssues(issues, { query: p.query, limit: p.limit });
