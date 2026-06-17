@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.12.0](https://github.com/nimbus-agent/Nimbus/compare/v0.11.2...v0.12.0) (2026-06-17)
+
+
+### Features
+
+* **share:** Phase 6 Slice 8b — recipe (--as-recipe declarative DAG, V42 params) ([#679](https://github.com/nimbus-agent/Nimbus/issues/679)) ([97573bd](https://github.com/nimbus-agent/Nimbus/commit/97573bdc2423d8687a974ccc08ad4d5f26da15df))
+
 ## [0.11.2](https://github.com/nimbus-agent/Nimbus/compare/v0.11.1...v0.11.2) (2026-06-17)
 
 
