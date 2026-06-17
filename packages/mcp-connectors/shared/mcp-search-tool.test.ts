@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { matchesResult, searchToolInputSchema } from "./mcp-search-tool.ts";
+import { matchesResult, type SearchFilter, searchToolInputSchema } from "./mcp-search-tool.ts";
+import type { McpListResult } from "./mcp-tool-kit.ts";
 
 describe("searchToolInputSchema", () => {
   test("accepts query alone and query+limit", () => {
@@ -39,25 +40,31 @@ describe("searchToolInputSchema", () => {
 });
 
 describe("matchesResult", () => {
-  const filter = (rows: readonly unknown[], opts: { query: string; limit?: number }) =>
+  // Typed as SearchFilter so opts matches the helper's SearchMatchOptions
+  // (limit is `number | undefined` under exactOptionalPropertyTypes).
+  const filter: SearchFilter = (rows, opts) =>
     rows.filter((r) => String(r).includes(opts.query)).slice(0, opts.limit ?? rows.length);
+
+  // Parse the JSON payload of the single text part (content[0] is optional under
+  // noUncheckedIndexedAccess; matchesResult always emits exactly one part).
+  const payloadOf = (res: McpListResult): unknown => JSON.parse(res.content[0]?.text ?? "{}");
 
   test("filters array rows into a { matches } envelope", () => {
     // query "an" matches only "banana" — proves the filter actually filters (not a no-op).
     const res = matchesResult(["apple", "banana", "grape"], filter, { query: "an" });
-    expect(JSON.parse(res.content[0].text)).toEqual({ matches: ["banana"] });
+    expect(payloadOf(res)).toEqual({ matches: ["banana"] });
   });
 
   test("non-array rows yield empty matches", () => {
     for (const bad of [null, undefined, {}, "str", 42] as unknown[]) {
       const res = matchesResult(bad, filter, { query: "a" });
-      expect(JSON.parse(res.content[0].text)).toEqual({ matches: [] });
+      expect(payloadOf(res)).toEqual({ matches: [] });
     }
   });
 
   test("passes query+limit through to the filter unchanged", () => {
     const seen: unknown[] = [];
-    const spy = (rows: readonly unknown[], opts: { query: string; limit?: number }) => {
+    const spy: SearchFilter = (rows, opts) => {
       seen.push(opts);
       return rows;
     };
@@ -68,6 +75,6 @@ describe("matchesResult", () => {
   test("returns a single text-part McpListResult", () => {
     const res = matchesResult([], filter, { query: "x" });
     expect(res.content).toHaveLength(1);
-    expect(res.content[0].type).toBe("text");
+    expect(res.content[0]?.type).toBe("text");
   });
 });
