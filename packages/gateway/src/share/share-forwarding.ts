@@ -12,14 +12,14 @@ import type { ShareFile, ShareForwardingHop } from "./share-format.ts";
 export function hopSigningMessage(
   contentHash: string,
   priorChain: readonly ShareForwardingHop[],
-  self?: { gatewayLabel: string; pubkey: string },
+  self: { gatewayLabel: string; pubkey: string },
 ): Uint8Array {
   const stablePrior = priorChain.map((h) => ({
     gatewayLabel: h.gatewayLabel,
     pubkey: h.pubkey,
     sig: h.sig,
   }));
-  const selfPart = self !== undefined ? `${self.gatewayLabel}\n${self.pubkey}\n` : "";
+  const selfPart = `${self.gatewayLabel}\n${self.pubkey}\n`;
   return new TextEncoder().encode(`${contentHash}\n${selfPart}${JSON.stringify(stablePrior)}`);
 }
 
@@ -75,6 +75,8 @@ export function verifyForwardingChain(share: ShareFile): ForwardingChainResult {
     try {
       const pub = new Uint8Array(Buffer.from(hop.pubkey, "base64"));
       const sig = new Uint8Array(Buffer.from(hop.sig, "base64"));
+      // Each hop binds its own pubkey into the signed message AND uses it as the verify key by design:
+      // this dual use means a pubkey swap invalidates the signature.
       const self = { gatewayLabel: hop.gatewayLabel, pubkey: hop.pubkey };
       const msg = hopSigningMessage(share.contentHash, chain.slice(0, i), self);
       if (pub.length === 32 && sig.length === 64 && nacl.sign.detached.verify(msg, sig, pub)) {

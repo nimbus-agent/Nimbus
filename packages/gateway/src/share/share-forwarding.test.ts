@@ -77,6 +77,7 @@ describe("verifyForwardingChain", () => {
     const r = verifyForwardingChain(tampered);
     expect(r.valid).toBe(false);
     expect(r.hopsValid).toBe(0);
+    expect(r.hopsTotal).toBe(1);
     expect(r.errors.length).toBeGreaterThan(0);
   });
 });
