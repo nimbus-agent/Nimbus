@@ -159,18 +159,85 @@ export async function runShare(args: string[]): Promise<void> {
   process.exitCode = 1;
 }
 
+interface ReplayStepShape {
+  readonly stepId: string;
+  readonly tool: string;
+  readonly service: string;
+  readonly status: string;
+  readonly originalStatus: string;
+  readonly detail?: string;
+}
+interface ReplayReportShape {
+  readonly sourceSessionId: string;
+  readonly steps: readonly ReplayStepShape[];
+  readonly summary: {
+    readonly total: number;
+    readonly match: number;
+    readonly diverged: number;
+    readonly missingConnector: number;
+    readonly skippedNonRead: number;
+    readonly error: number;
+  };
+}
+
+/** Pure renderer for the replay divergence report (one line per step + a summary). */
+export function formatReplayReport(report: ReplayReportShape): string {
+  const lines: string[] = [
+    `Replay of session ${report.sourceSessionId} (${report.summary.total} steps):`,
+  ];
+  if (report.steps.length === 0) {
+    lines.push("  (no replayable steps in this share)");
+  }
+  for (const s of report.steps) {
+    const suffix = s.detail === undefined ? "" : ` — ${s.detail}`;
+    lines.push(`  ${s.stepId}  ${s.status.padEnd(18)} ${s.tool}${suffix}`);
+  }
+  const m = report.summary;
+  lines.push(
+    `Summary: match ${m.match}, diverged ${m.diverged}, missing-connector ${m.missingConnector}, skipped-non-read ${m.skippedNonRead}, error ${m.error}`,
+  );
+  return lines.join("\n");
+}
+
 export async function runVerifyShare(args: string[]): Promise<void> {
-  const input = args[0];
+  const replay = args.includes("--replay");
+  const input = args.find((a) => !a.startsWith("--"));
   if (input === undefined) {
-    console.error("Usage: nimbus verify-share <file|url>");
+    console.error("Usage: nimbus verify-share <file|url> [--replay]");
     process.exitCode = 1;
     return;
   }
   const isUrl = input.startsWith("http://") || input.startsWith("https://");
+  // Read the local file up front with a friendly error (a missing/unreadable path otherwise crashes
+  // with an unhandled rejection). Applies to both the verify and replay paths.
+  let params: { input: string } | { bytesB64: string };
+  if (isUrl) {
+    params = { input };
+  } else {
+    try {
+      params = { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+    } catch {
+      console.error(`Cannot read share file: ${input}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   await withIpc(async (c) => {
-    const params = isUrl
-      ? { input }
-      : { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+    if (replay) {
+      const r = await c.call<{
+        verify: { ok: boolean; signatureValid: boolean; expired: boolean; errors: string[] };
+        report: ReplayReportShape;
+      }>("share.replay", params);
+      console.log(
+        `signature: ${r.verify.signatureValid ? "VALID" : "INVALID"}${r.verify.expired ? " (expired)" : ""}`,
+      );
+      console.log(formatReplayReport(r.report));
+      if (!r.verify.ok) {
+        console.error(r.verify.errors.join("; ")); // surface why the share is invalid (tamper/expiry)
+        process.exitCode = 1;
+      }
+      return;
+    }
     const r = await c.call<{
       ok: boolean;
       signatureValid: boolean;
