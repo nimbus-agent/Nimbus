@@ -55,6 +55,7 @@ function wrapToolForLlm<T>(
             durationMs: Date.now() - calledAt,
             resultEnvelope: envelope,
             status,
+            params: input,
           });
         }
         throw err;
@@ -68,6 +69,7 @@ function wrapToolForLlm<T>(
           durationMs: Date.now() - calledAt,
           resultEnvelope: envelope,
           status,
+          params: input,
         });
       }
       return envelope;

@@ -1643,7 +1643,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // bound UNCONDITIONALLY below (after the IPC server exists), so the owner is prompted even with
   // federation off. The sink config is the config-pinned [share.http_sink] (the only host --http may
   // target; the bearer token is Vault-only). collectSession pre-resolves turns from the
-  // session-memory store + tool calls from tool_call_log (input args are not stored → params: null).
+  // session-memory store + tool calls (with their SECRET-redacted input params, V42) from
+  // tool_call_log. The share-gate applies the full PII redaction set on top before any share leaves
+  // the machine.
   const shareHttpSink = loadNimbusShareHttpSink(paths.configDir);
   ipcOpts.shareRpcCtx = {
     db,
@@ -1665,7 +1667,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       const toolCalls = readToolCallLog(db, { sessionId, limit: 1000 }).toolCalls.map((tc) => ({
         toolId: tc.toolId,
         service: tc.service,
-        params: null,
+        params: tc.params,
         status: tc.status,
       }));
       return { turns, toolCalls };

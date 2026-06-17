@@ -252,4 +252,12 @@ describe("writeToolCallLog + readToolCallLog", () => {
     const { toolCalls } = readToolCallLog(db, {});
     expect(toolCalls[0]?.params).toBeNull();
   });
+
+  test("params survive a session-scoped read (collectSession shape)", () => {
+    const db = freshDb();
+    writeToolCallLog(db, entry({ sessionId: "sess-A", params: { channel: "#eng", limit: 10 } }));
+    const { toolCalls } = readToolCallLog(db, { sessionId: "sess-A", limit: 1000 });
+    expect(toolCalls).toHaveLength(1);
+    expect((toolCalls[0]?.params as { channel?: string }).channel).toBe("#eng");
+  });
 });

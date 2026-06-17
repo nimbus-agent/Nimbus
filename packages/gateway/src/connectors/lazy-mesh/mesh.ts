@@ -475,6 +475,7 @@ export class LazyConnectorMesh {
                 durationMs: Date.now() - calledAt,
                 resultEnvelope: envelope,
                 status,
+                params: input,
               });
             }
             throw err;
@@ -488,6 +489,7 @@ export class LazyConnectorMesh {
               durationMs: Date.now() - calledAt,
               resultEnvelope: envelope,
               status,
+              params: input,
             });
           }
           return envelope;
