@@ -48,6 +48,7 @@ import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
+import { TOOL_CALL_PARAMS_V42_SQL } from "../tool-call-params-v42-sql.ts";
 import { TRIBAL_CLUSTERS_V39_SQL } from "../tribal-clusters-v39-sql.ts";
 import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
@@ -399,6 +400,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     GRAPH_LINEAGE_TYPES_V40_SQL,
   ),
   simpleStep(40, 41, "share_records (share & virality ledger v41)", SHARE_RECORDS_V41_SQL),
+  simpleStep(41, 42, "tool_call_log.params_json (recipe params v42)", TOOL_CALL_PARAMS_V42_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

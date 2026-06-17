@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../local-index.ts";
 
 describe("V41 share_records", () => {
-  test("CURRENT_SCHEMA_VERSION is 41", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(41);
+  test("CURRENT_SCHEMA_VERSION is at least 41", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(41);
   });
   test("ensureSchema creates share_records with expected columns", () => {
     const db = new Database(":memory:");
