@@ -62,6 +62,8 @@ Root category (X = `root`):
     },
 ```
 
+**Pass `p` directly — do not destructure or rebuild it.** For the extra-field connectors (Task 7, e.g. `p` also carries `appId`/`orgId`/`projectKey`), write `matchesResult(X, filterFn, p)`. Passing the `p` *variable* is correct and typechecks: TS excess-property checks fire only on fresh object literals, not on a variable with extra fields (verified 2026-06-17). Do **not** "helpfully" rewrite it to `matchesResult(X, filterFn, { query: p.query, limit: p.limit })` — that adds noise and is unnecessary.
+
 Keyed category (X = the extracted variable; **keep that extract line unchanged**):
 
 ```ts
@@ -85,9 +87,8 @@ Keyed category (X = the extracted variable; **keep that extract line unchanged**
 ### Import rule
 
 - Add to the top imports: `import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";` — include only the name(s) actually used by that file's transforms.
-- After editing, remove `import { z } from "zod";` **only if** `z` is no longer referenced anywhere in the file (grep `\bz\.` — many files keep other zod schemas for list/get tools).
-- Remove the `mcpJsonResult as jsonResult` (or `mcpJsonResult`) import **only if** `jsonResult`/`mcpJsonResult` is no longer referenced (grep the file).
-- tsc + Biome `noUnusedImports` (run in the per-task verify step) catch a missed/over-eager removal.
+- **Do NOT remove `import { z }` or the `mcpJsonResult as jsonResult` import by hand.** After the code edits, let Biome do it deterministically: `bunx biome check --write <edited server.ts files>`. Biome's `noUnusedImports` removes a now-unused import (and leaves `z`/`jsonResult` in place when another tool in the file still uses them) — far safer than manual grep-and-delete. `--write` also normalizes formatting on the touched lines, which is expected.
+- The per-task verify step then re-runs `bunx biome check` (read-only) + tsc to confirm nothing is unused or broken.
 
 ### Verify (each sweep task)
 
@@ -97,13 +98,13 @@ Run the edited connectors' tests (replace the names):
 bun test packages/mcp-connectors/<conn1>/ packages/mcp-connectors/<conn2>/ …
 ```
 
-Expected: all pass (skips OK), **0 fail**, with no test file modified. Then typecheck the connectors package:
+Expected: all pass (skips OK), **0 fail**, with no test file modified. Then typecheck each edited connector. Each connector has its own `tsconfig.json` (`include: ["src/**/*"]`) and tsc follows the `../../shared/mcp-search-tool.ts` import, so the shared helper is checked transitively here:
 
 ```bash
-bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json
+for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done
 ```
 
-Expected: no errors. (If the connectors package has no own tsconfig, the root `bun run typecheck` covers it — the final task runs full preflight regardless.)
+Expected: no errors. (The authoritative full check is `bun run typecheck`, run in Task 8's preflight; the per-connector loop is the fast inner-loop equivalent.)
 
 ---
 
@@ -230,7 +231,7 @@ export function searchToolInputSchema(maxLimit = 100): ZodObjectSchema<SearchMat
   return z.object({
     query: z.string().min(1),
     limit: z.number().int().min(1).max(maxLimit).optional(),
-  }) as unknown as ZodObjectSchema<SearchMatchOptions>;
+  });
 }
 
 /**
@@ -250,7 +251,7 @@ export function matchesResult(
 }
 ```
 
-> Note on the cast: the existing tool-kit already accepts `z.object(...)` where `ZodObjectSchema<T>` is expected. If tsc accepts `as ZodObjectSchema<SearchMatchOptions>` (single cast) or no cast at all, prefer the simpler form; `as unknown as` is the fallback if zod's inferred type does not structurally match. Verify with the typecheck in Step 5 and use the least-cast form that compiles.
+> Note on the cast (empirically verified 2026-06-17 via a scoped tsc probe in this worktree): **no cast is needed.** `return z.object({...})` assigns directly to the declared `ZodObjectSchema<SearchMatchOptions>` return type. This is consistent with the existing connectors, which pass `z.object(...)` straight into `reg` (a `ZodObjectSchema<T>` parameter) with no cast — proving zod's `ZodError` is already assignable to the structural `{ error: { message: string } }`. Do NOT add `as unknown as ...` (it would erase type checking for no benefit, against Non-Negotiable #7). If a future zod bump ever breaks the direct assignment, escalate minimally: try a single `as ZodObjectSchema<SearchMatchOptions>` first, and only then `as unknown as`. Step 5's typecheck is the gate.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -260,8 +261,13 @@ Expected: PASS — all tests green.
 - [ ] **Step 5: Typecheck + lint the new files**
 
 Run: `bunx biome check packages/mcp-connectors/shared/mcp-search-tool.ts packages/mcp-connectors/shared/mcp-search-tool.test.ts`
-Then: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` (or root `bun run typecheck` if no package tsconfig).
-Expected: no errors. Tighten the cast to the least form that compiles.
+Then typecheck. The `shared/` directory has **no tsconfig of its own** and is not under any connector's `include`, so at this point the helper is only type-checked transitively once a connector imports it (Task 2). For a fast standalone check now, run the scoped form (matches `tsconfig.base.json`'s settings, with node globals for the transitive `mcp-tool-kit.ts`):
+
+```bash
+bunx tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --allowImportingTsExtensions --types node packages/mcp-connectors/shared/mcp-search-tool.ts
+```
+
+Expected: no errors (no cast on the schema — see the note above). The authoritative full check is `bun run typecheck` in Task 8's preflight; Task 2's per-connector typecheck is the first place the helper is checked in-project.
 
 - [ ] **Step 6: Commit**
 
@@ -302,7 +308,7 @@ Expected: all pass (skips OK), 0 fail. Confirm `git status` shows no `*.test.ts`
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{zotero,greenhouse,netlify,intercom,lever,mercury,pipedrive,raindrop}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{zotero,greenhouse,netlify,intercom,lever,mercury,pipedrive,raindrop}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -339,7 +345,7 @@ Expected: all pass, 0 fail; no `*.test.ts` modified.
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{readwise,stackoverflow,stripe,vercel,zendesk,zoom,semgrep}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{readwise,stackoverflow,stripe,vercel,zendesk,zoom,semgrep}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -377,7 +383,7 @@ Expected: all pass, 0 fail; no `*.test.ts` modified.
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{airflow,argocd,bigeye,canva,dagster,databricks,dependencytrack,figma}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{airflow,argocd,bigeye,canva,dagster,databricks,dependencytrack,figma}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -414,7 +420,7 @@ Expected: all pass, 0 fail; no `*.test.ts` modified.
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{hubspot,looker,metabase,miro,mlflow,monte-carlo,powerbi}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{hubspot,looker,metabase,miro,mlflow,monte-carlo,powerbi}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -451,7 +457,7 @@ Expected: all pass, 0 fail; no `*.test.ts` modified.
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{prefect,ramp,salesforce,snowflake,superset,tableau,wiz}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{prefect,ramp,salesforce,snowflake,superset,tableau,wiz}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
@@ -489,7 +495,7 @@ Expected: all pass, 0 fail; no `*.test.ts` modified.
 
 - [ ] **Step 3: Typecheck + lint**
 
-Run: `bunx tsc --noEmit -p packages/mcp-connectors/tsconfig.json` and `bunx biome check packages/mcp-connectors/{mendeley,bitrise,codemagic,firebase,launchdarkly,testflight,snyk,sonarqube}/src/server.ts`
+Run: `for c in <this batch's connectors, space-separated>; do bunx tsc --noEmit -p packages/mcp-connectors/$c/tsconfig.json || break; done` and `bunx biome check packages/mcp-connectors/{mendeley,bitrise,codemagic,firebase,launchdarkly,testflight,snyk,sonarqube}/src/server.ts`
 Expected: no errors.
 
 - [ ] **Step 4: Commit**
