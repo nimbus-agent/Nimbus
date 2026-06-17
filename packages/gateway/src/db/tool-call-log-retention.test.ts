@@ -22,7 +22,8 @@ function freshDb(): Database {
       called_at INTEGER NOT NULL,
       duration_ms INTEGER,
       result_envelope TEXT,
-      status TEXT
+      status TEXT,
+      params_json TEXT
     );
     CREATE TABLE audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
