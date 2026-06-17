@@ -134,3 +134,9 @@ export async function replayRecipe(
   };
   return { sourceSessionId, steps: results, summary };
 }
+
+/** Replay a whole share (recipe or transcript). The single entry point for the `share.replay` RPC. */
+export async function replayShare(share: ShareFile, deps: RecipeRunnerDeps): Promise<ReplayReport> {
+  const { sourceSessionId, steps } = stepsFromShare(share);
+  return replayRecipe(sourceSessionId, steps, deps);
+}

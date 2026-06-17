@@ -1,7 +1,8 @@
 // packages/gateway/src/share/recipe-runner.test.ts
 import { describe, expect, test } from "bun:test";
+import { isReadOnlyToolId } from "./read-tool-registry.ts";
 import type { RecipeStep } from "./recipe.ts";
-import { replayRecipe, stepsFromShare, type ToolRunOutcome } from "./recipe-runner.ts";
+import { replayRecipe, replayShare, stepsFromShare, type ToolRunOutcome } from "./recipe-runner.ts";
 import type { ShareFile } from "./share-format.ts";
 
 function shareWith(
@@ -152,5 +153,60 @@ describe("replayRecipe — per-step classification", () => {
       skippedNonRead: 1,
       error: 0,
     });
+  });
+});
+
+describe("replayShare", () => {
+  test("recipe share → report over its steps", async () => {
+    const share = shareWith({
+      kind: "recipe",
+      recipe: {
+        recipeVersion: 1,
+        sourceSessionId: "s1",
+        generatedAt: 1,
+        graphTraversals: [],
+        steps: [
+          {
+            stepId: "step-1",
+            tool: "gmail_list",
+            service: "gmail",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+        ],
+      },
+    });
+    const report = await replayShare(share, {
+      isReadOnly: () => true,
+      run: async () => ({ kind: "ran", ok: true }),
+    });
+    expect(report.summary.total).toBe(1);
+    expect(report.steps[0]?.status).toBe("match");
+  });
+
+  // SECURITY-LOAD-BEARING (spec §8.1 / §11): a write tool absent from HITL_REQUIRED_BACKING must be
+  // skipped-non-read and NEVER handed to the executor, under the REAL classifier.
+  test("a write tool absent from HITL is skipped-non-read and never executed", async () => {
+    const executed: string[] = [];
+    const share = shareWith({
+      kind: "transcript",
+      toolCalls: [
+        { toolId: "acme_destroy", service: "acme", params: { all: true }, status: "ok" }, // write, not in HITL
+        { toolId: "snowflake_tag_set", service: "snowflake", params: {}, status: "ok" }, // write, IS in HITL
+        { toolId: "gmail_get", service: "gmail", params: {}, status: "ok" }, // genuine read
+      ],
+    });
+    const report = await replayShare(share, {
+      isReadOnly: isReadOnlyToolId, // the REAL positive allowlist
+      run: async (toolId) => {
+        executed.push(toolId);
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(executed).toEqual(["gmail_get"]); // ONLY the read tool was executed
+    expect(report.steps[0]?.status).toBe("skipped-non-read"); // acme_destroy (HITL-absent write)
+    expect(report.steps[1]?.status).toBe("skipped-non-read"); // snowflake_tag_set (HITL-present write)
+    expect(report.steps[2]?.status).toBe("match"); // gmail_get
   });
 });
