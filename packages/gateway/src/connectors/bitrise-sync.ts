@@ -1,16 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { connectorFetch } from "./_lib/fetch-outcome.ts";
-import {
-  type BitriseMappedRow,
-  mapBitriseAppToItem,
-  mapBitriseBuildToItem,
-} from "./bitrise-build-mapping.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import { runPerAppPollSync } from "./_lib/per-app-poll-sync.ts";
+import { mapBitriseAppToItem, mapBitriseBuildToItem } from "./bitrise-build-mapping.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
@@ -34,7 +24,7 @@ export type BitriseSyncableOptions = {
   ensureBitriseMcpRunning: () => Promise<void>;
 };
 
-function extractAppRows(parsed: unknown): Record<string, unknown>[] {
+function extractDataRows(parsed: unknown): Record<string, unknown>[] {
   const root = asRecord(parsed) ?? {};
   const data = root["data"];
   if (!Array.isArray(data)) {
@@ -60,69 +50,26 @@ export function createBitriseSyncable(options: BitriseSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureBitriseMcpRunning();
-      const token = (await readConnectorSecret(ctx.vault, "bitrise", "token"))?.trim() ?? "";
-      if (token === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const appsOutcome = await connectorFetch(
-        ctx,
-        SERVICE_ID,
-        `${BITRISE_API}/v0.1/me/apps?limit=50`,
-        {
-          headers: { Authorization: token, Accept: "application/json" },
+    sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      return runPerAppPollSync(ctx, cursor, {
+        serviceId: SERVICE_ID,
+        ensureRunning: options.ensureBitriseMcpRunning,
+        async loadCreds(c: SyncContext) {
+          const token = (await readConnectorSecret(c.vault, "bitrise", "token"))?.trim() ?? "";
+          return token === "" ? null : token;
         },
-      );
-      if (appsOutcome.kind === "http_error") {
-        return syncPassCursorHttpEmpty(t0, appsOutcome.bytes, cursor, pass1Cursor());
-      }
-      if (appsOutcome.kind === "parse_error") {
-        return syncPassCursorParseEmpty(t0, appsOutcome.bytes, pass1Cursor());
-      }
-
-      const apps = extractAppRows(appsOutcome.parsed);
-      const now = Date.now();
-      let upserted = 0;
-      let totalBytes = appsOutcome.bytes;
-
-      for (const appRow of apps) {
-        const mappedApp = mapBitriseAppToItem(appRow, now);
-        if (mappedApp !== null) {
-          upsertItem(ctx, mappedApp);
-          upserted += 1;
-        }
-        const slug = appSlug(appRow);
-        if (slug === undefined) {
-          continue;
-        }
-        const buildsOutcome = await connectorFetch(
-          ctx,
-          SERVICE_ID,
+        pass1Cursor,
+        appsUrl: () => `${BITRISE_API}/v0.1/me/apps?limit=50`,
+        makeHeaders: (token) => ({ Authorization: token, Accept: "application/json" }),
+        extractApps: extractDataRows,
+        getAppId: appSlug,
+        buildsUrl: (slug) =>
           `${BITRISE_API}/v0.1/apps/${encodeURIComponent(slug)}/builds?limit=${String(DEFAULT_BUILDS_PAGE_SIZE)}`,
-          { headers: { Authorization: token, Accept: "application/json" } },
-        );
-        totalBytes += buildsOutcome.bytes;
-        if (buildsOutcome.kind !== "ok") {
-          continue;
-        }
-        for (const build of extractAppRows(buildsOutcome.parsed)) {
-          const mapped = mapBitriseBuildToItem(build, { appSlug: slug, syncedAt: now });
-          if (mapped === null) {
-            continue;
-          }
-          upsertItem(ctx, mapped);
-          upserted += 1;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);
+        extractBuilds: extractDataRows,
+        mapApp: (row, now) => mapBitriseAppToItem(row, now),
+        mapBuild: (buildRow, _appRow, slug, now) =>
+          mapBitriseBuildToItem(buildRow, { appSlug: slug, syncedAt: now }),
+      });
     },
   };
-}
-
-function upsertItem(ctx: SyncContext, mapped: BitriseMappedRow): void {
-  upsertIndexedItemForSync(ctx, mapped);
 }
