@@ -35,6 +35,8 @@ export interface CreateShareDeps {
   readonly label: string;
   readonly now: () => number;
   readonly collectSession: (sessionId: string) => SessionContent;
+  /** Builds the declarative recipe DAG for `--as-recipe` (kind="recipe"). Redacted at the gate. */
+  readonly buildRecipe: (sessionId: string) => unknown;
   readonly requestApproval: (preview: unknown, redactionSet: readonly string[]) => Promise<boolean>;
   readonly recordAudit: (e: {
     actionType: string;
@@ -60,13 +62,32 @@ export async function createShare(
   deps: CreateShareDeps,
 ): Promise<CreateShareResult> {
   const now = deps.now();
-  const content = deps.collectSession(req.sessionId);
-  const { redacted, applied } = redactForShare(
-    { turns: content.turns, toolCalls: content.toolCalls },
-    req.callerPatterns ?? [],
-  );
 
-  const approved = await deps.requestApproval(redacted, applied);
+  let previewPayload: unknown;
+  let applied: readonly string[];
+  let bodyExtras: Pick<ShareBody, "turns" | "toolCalls" | "recipe">;
+  if (req.kind === "recipe") {
+    const recipe = deps.buildRecipe(req.sessionId);
+    const red = redactForShare(recipe, req.callerPatterns ?? []);
+    previewPayload = red.redacted;
+    applied = red.applied;
+    bodyExtras = { recipe: red.redacted }; // turns + toolCalls omitted entirely
+  } else {
+    const content = deps.collectSession(req.sessionId);
+    const red = redactForShare(
+      { turns: content.turns, toolCalls: content.toolCalls },
+      req.callerPatterns ?? [],
+    );
+    previewPayload = red.redacted;
+    applied = red.applied;
+    const r = red.redacted as {
+      turns?: readonly ShareTurn[];
+      toolCalls?: readonly ShareToolCall[];
+    };
+    bodyExtras = { turns: r.turns ?? [], toolCalls: r.toolCalls ?? [] };
+  }
+
+  const approved = await deps.requestApproval(previewPayload, applied);
   if (!approved) {
     deps.recordAudit({
       actionType: "share.publish",
@@ -84,7 +105,6 @@ export async function createShare(
   }
 
   const kp = await ensureShareKeypair(deps.vault);
-  const r = redacted as { turns?: readonly ShareTurn[]; toolCalls?: readonly ShareToolCall[] };
   const body: ShareBody = {
     kind: req.kind,
     sessionId: req.sessionId,
@@ -92,8 +112,7 @@ export async function createShare(
     expiresAt: req.expiresAt ?? null,
     redactionSet: applied,
     origin: { label: deps.label, pubkey: kp.pubkeyB64 },
-    ...(req.kind === "transcript" ? { turns: r.turns ?? [] } : {}),
-    toolCalls: r.toolCalls ?? [],
+    ...bodyExtras,
   };
   const share = buildShareFile(body, kp.privkeyB64, kp.pubkeyB64);
 

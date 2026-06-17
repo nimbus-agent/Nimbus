@@ -79,6 +79,12 @@ export interface ShareRpcCtx {
   /** Owner-side answer to a pending approval → `shareConsent.respond`. Returns true if it matched. */
   readonly respondApproval: (requestId: string, approved: boolean) => boolean;
   readonly httpSink: ShareHttpSinkConfig;
+  /**
+   * Builds the declarative recipe DAG for a `kind="recipe"` share. Wired by the recipe builder
+   * (Task 9+); optional here so callers that never issue recipe shares need not supply it.
+   * The gate calls this only on the recipe branch and redacts the result before preview/sign.
+   */
+  readonly buildRecipe?: (sessionId: string) => unknown;
 }
 
 function requireString(params: unknown, key: string): string {
@@ -163,6 +169,7 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
       label: ctx.label,
       now: ctx.now,
       collectSession: () => content,
+      buildRecipe: ctx.buildRecipe ?? (() => ({})),
       requestApproval: (preview, redactionSet) =>
         ctx.requestApproval(sessionId, kind, sink.type, preview, redactionSet),
       recordAudit: ctx.recordAudit,
