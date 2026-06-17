@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const IS_WIN = process.platform === "win32";
+const PROGRAM_FILES = process.env.ProgramFiles ?? "C:\\Program Files";
 
 function resolveBin(candidates: readonly string[]): string {
   for (const p of candidates) {
@@ -14,8 +16,8 @@ function resolveBin(candidates: readonly string[]): string {
 
 const BASH_BIN = IS_WIN
   ? resolveBin([
-      "C:\\Program Files\\Git\\bin\\bash.exe",
-      "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+      win32.join(PROGRAM_FILES, "Git", "bin", "bash.exe"),
+      win32.join(PROGRAM_FILES, "Git", "usr", "bin", "bash.exe"),
       "bash",
     ])
   : "bash";
@@ -28,7 +30,12 @@ const res = spawnSync(BASH_BIN, [scriptPath], {
     ...process.env,
     // Prepend standard Bun path and Git paths to PATH for Windows Git Bash compatibility
     PATH: IS_WIN
-      ? `${process.env.USERPROFILE || ""}\\.bun\\bin;C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\usr\\bin;${process.env.PATH}`
+      ? [
+          win32.join(process.env.USERPROFILE ?? "", ".bun", "bin"),
+          win32.join(PROGRAM_FILES, "Git", "bin"),
+          win32.join(PROGRAM_FILES, "Git", "usr", "bin"),
+          process.env.PATH ?? "",
+        ].join(delimiter)
       : process.env.PATH,
   },
 });
