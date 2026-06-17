@@ -1,5 +1,6 @@
 import { load as yamlParse } from "js-yaml";
 import { safeFetch } from "./safe-fetch.ts";
+import type { ShareFile } from "./share-format.ts";
 import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
 
 /**
@@ -80,6 +81,46 @@ export function verifyShareFromBytes(
     return base;
   } catch {
     return base;
+  }
+}
+
+/**
+ * Load raw share bytes from a URL (SSRF-safe {@link safeFetch}) or a local file path. The
+ * input-loading half of {@link verifyShareFromInput}, exported so `share.replay` can both verify and
+ * parse the same bytes without a second read.
+ */
+export async function loadShareBytes(
+  input: string,
+  deps?: { readonly safeFetchFn?: typeof safeFetch },
+): Promise<Uint8Array> {
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    const doFetch = deps?.safeFetchFn ?? safeFetch;
+    const res = await doFetch(input);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+  return await Bun.file(input).bytes();
+}
+
+/**
+ * Parse share bytes (JSON or YAML) into a {@link ShareFile} for replay, or `null` if the input is not
+ * a well-formed share envelope. Verification is the trust boundary ({@link verifyShareFromBytes}) —
+ * this only structurally validates enough to read `body`/`sig`/`forwarding`. Never throws.
+ */
+export function parseShareFile(bytes: Uint8Array): ShareFile | null {
+  try {
+    const obj = JSON.parse(new TextDecoder().decode(toJsonShareBytes(bytes))) as unknown;
+    if (
+      obj === null ||
+      typeof obj !== "object" ||
+      typeof (obj as { body?: unknown }).body !== "object" ||
+      (obj as { body?: unknown }).body === null ||
+      typeof (obj as { sig?: unknown }).sig !== "object"
+    ) {
+      return null;
+    }
+    return obj as ShareFile;
+  } catch {
+    return null;
   }
 }
 

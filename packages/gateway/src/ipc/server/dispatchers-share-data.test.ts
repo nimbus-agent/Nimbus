@@ -73,6 +73,7 @@ function makeShareRpcCtx(db: Database, overrides: Partial<ShareRpcCtx> = {}): Sh
     recordAudit: () => {},
     respondApproval: () => false,
     httpSink: { url: "" },
+    listReplayTools: async () => ({}),
     ...overrides,
   };
 }

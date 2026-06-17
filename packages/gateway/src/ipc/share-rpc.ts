@@ -1,14 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
+import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import { buildRecipeFromSession } from "../share/recipe.ts";
+import { replayShare, type ToolRunOutcome } from "../share/recipe-runner.ts";
 import { serializeShareFileToYaml } from "../share/recipe-yaml.ts";
 import { safeFetch } from "../share/safe-fetch.ts";
 import { type CreateShareRequest, createShare, type ShareSink } from "../share/share-gate.ts";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import { getShareRecord, listShareRecords, pruneExpiredShares } from "../share/share-store.ts";
-import { verifyShareFromBytes, verifyShareFromInput } from "../share/verify-share.ts";
+import {
+  loadShareBytes,
+  parseShareFile,
+  verifyShareFromBytes,
+  verifyShareFromInput,
+} from "../share/verify-share.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   dispatchByMethod,
@@ -81,6 +89,12 @@ export interface ShareRpcCtx {
   /** Owner-side answer to a pending approval → `shareConsent.respond`. Returns true if it matched. */
   readonly respondApproval: (requestId: string, approved: boolean) => boolean;
   readonly httpSink: ShareHttpSinkConfig;
+  /**
+   * The live connector tool map for recipe replay (Slice 8c). Mesh-backed in production
+   * (`platform/assemble.ts`). A tool absent from the map → `missing-connector`. Read-only by
+   * construction: the runner only ever invokes tools the positive allowlist classifies read-only.
+   */
+  readonly listReplayTools: () => Promise<LazyMeshToolMap>;
 }
 
 function requireString(params: unknown, key: string): string {
@@ -134,6 +148,24 @@ async function emitHttp(ctx: ShareRpcCtx, json: string): Promise<void> {
   }
   // SSRF-safe (private-IP blocked); the host is the config-pinned [share.http_sink].url.
   await safeFetch(url, { method: "POST", headers, body: json });
+}
+
+/** Run one mesh tool and normalize the outcome for the replay runner. Read-only: callers gate first. */
+async function runReplayTool(
+  tools: LazyMeshToolMap,
+  toolId: string,
+  params: unknown,
+): Promise<ToolRunOutcome> {
+  const tool = tools[toolId];
+  if (tool === undefined || typeof tool.execute !== "function") {
+    return { kind: "unavailable" };
+  }
+  try {
+    await tool.execute(params);
+    return { kind: "ran", ok: true };
+  } catch (e) {
+    return { kind: "threw", message: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
@@ -221,6 +253,32 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
   },
 
   "share.prune": (_params, ctx) => ({ removed: pruneExpiredShares(ctx.db, ctx.now()) }),
+
+  // REPLAY (Slice 8c) — load + verify a share, then re-run its read-only tool calls locally and diff
+  // each step against the shared original. Read-only + LLM-free: the runner executes a tool only when
+  // the POSITIVE allowlist (read-tool-registry) classifies it read-only — never by HITL absence.
+  "share.replay": async (params, ctx) => {
+    const rec = asRecord(params) ?? {};
+    let bytes: Uint8Array;
+    if (typeof rec["input"] === "string") {
+      bytes = await loadShareBytes(rec["input"]);
+    } else if (typeof rec["bytesB64"] === "string") {
+      bytes = Uint8Array.from(Buffer.from(rec["bytesB64"], "base64"));
+    } else {
+      throw new ShareRpcError(-32602, "ERR_INVALID_PARAMS: input (url/path) or bytesB64 required");
+    }
+    const verify = verifyShareFromBytes(bytes, { now: ctx.now() });
+    const share = parseShareFile(bytes);
+    if (share === null) {
+      throw new ShareRpcError(-32602, "ERR_INVALID_PARAMS: not a share file");
+    }
+    const tools = await ctx.listReplayTools();
+    const report = await replayShare(share, {
+      isReadOnly: isReadOnlyToolId,
+      run: (toolId, p) => runReplayTool(tools, toolId, p),
+    });
+    return { verify, report };
+  },
 
   // Owner answers a pending approval — mirrors federation.preflightRespond.
   "share.approvalRespond": (params, ctx) => {

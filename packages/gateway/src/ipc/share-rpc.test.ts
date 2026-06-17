@@ -1,10 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { encodeBase64 } from "@nimbus-dev/sdk";
+import nacl from "tweetnacl";
 import { writeToolCallLog } from "../db/tool-call-log.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { buildShareFile } from "../share/share-format.ts";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import { getShareRecord, listShareRecords } from "../share/share-store.ts";
 import { dispatchShareRpc, type ShareHttpSinkConfig, type ShareRpcCtx } from "./share-rpc.ts";
@@ -45,6 +49,7 @@ function freshCtx(db: Database, over: CtxOverrides = {}): ShareRpcCtx {
     recordAudit: (e) => audit.push({ actionType: e.actionType, hitlStatus: e.hitlStatus }),
     respondApproval: over.respondApproval ?? (() => true),
     httpSink: over.httpSink ?? { url: "" },
+    listReplayTools: async () => ({}),
     audit,
   };
   return ctx;
@@ -369,5 +374,79 @@ describe("share.approvalRespond", () => {
     await expect(
       dispatchShareRpc("share.approvalRespond", { approved: false }, freshCtx(db)),
     ).rejects.toThrow(/ERR_INVALID_PARAMS: requestId/);
+  });
+});
+
+describe("share.replay", () => {
+  test("verifies + replays a recipe share; report classifies each step", async () => {
+    const ctx = freshCtx(db);
+    // sign a recipe share with one read + one write step
+    const seed = nacl.randomBytes(32);
+    const kp = nacl.sign.keyPair.fromSeed(seed);
+    const body = {
+      kind: "recipe" as const,
+      sessionId: "s1",
+      createdAt: 1,
+      expiresAt: null,
+      redactionSet: [],
+      origin: { label: "h", pubkey: encodeBase64(kp.publicKey) },
+      recipe: {
+        recipeVersion: 1,
+        sourceSessionId: "s1",
+        generatedAt: 1,
+        graphTraversals: [],
+        steps: [
+          {
+            stepId: "step-1",
+            tool: "gmail_get",
+            service: "gmail",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+          {
+            stepId: "step-2",
+            tool: "file_delete",
+            service: "fs",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+        ],
+      },
+    };
+    const share = buildShareFile(body, encodeBase64(seed), encodeBase64(kp.publicKey));
+    const dir = mkdtempSync(join(tmpdir(), "share-replay-"));
+    const path = join(dir, "r.nimbus-share.json");
+    await Bun.write(path, JSON.stringify(share));
+
+    const res = (await dispatchShareRpc(
+      "share.replay",
+      { input: path },
+      {
+        ...ctx,
+        // gmail_get available (runs ok); file_delete is a write → never reached
+        listReplayTools: async () => ({ gmail_get: { execute: async () => ({}) } }),
+      },
+    )) as {
+      result?: unknown;
+      value?: {
+        verify: { ok: boolean };
+        report: { summary: { match: number; skippedNonRead: number } };
+      };
+    };
+
+    // dispatchByMethod wraps successful results in { kind: "hit", value: ... }
+    const hit = res as unknown as {
+      kind: string;
+      value: {
+        verify: { ok: boolean };
+        report: { summary: { match: number; skippedNonRead: number } };
+      };
+    };
+    expect(hit.kind).toBe("hit");
+    expect(hit.value.verify.ok).toBe(true);
+    expect(hit.value.report.summary.match).toBe(1); // gmail_get
+    expect(hit.value.report.summary.skippedNonRead).toBe(1); // file_delete
   });
 });
