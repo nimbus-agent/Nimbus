@@ -1,8 +1,9 @@
 import { IPCClient } from "../ipc-client/index.ts";
+import { awaitAgentBrief, renderAgentBrief } from "../lib/agent-brief-render.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { getCliPlatformPaths } from "../paths.ts";
-import { type ImpactBrief, isImpactBrief } from "../types/agents.ts";
+import { isImpactBrief } from "../types/agents.ts";
 
 export type ImpactCliArgs = {
   fileOrPrUrl: string;
@@ -57,41 +58,6 @@ export function parseImpactArgs(args: string[]): ImpactCliArgs {
   return out;
 }
 
-const TIMEOUT_MS = 30_000;
-
-function awaitImpactBrief(
-  client: IPCClient,
-  onTimer: (t: ReturnType<typeof setTimeout>) => void,
-): Promise<{ brief: string; findings: ImpactBrief }> {
-  return new Promise<{ brief: string; findings: ImpactBrief }>((resolve, reject) => {
-    onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
-    client.onNotification("impact.briefReady", (params: unknown) => {
-      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
-      if (typeof p.brief !== "string" || !isImpactBrief(p.findings)) {
-        reject(new Error("Malformed impact.briefReady payload"));
-        return;
-      }
-      resolve({ brief: p.brief, findings: p.findings });
-    });
-    client.onNotification("impact.briefError", (params: unknown) => {
-      const p = params as { error?: string };
-      reject(new Error(p.error ?? "Agent failed"));
-    });
-  });
-}
-
-function renderImpactBrief(brief: string, findings: ImpactBrief, json: boolean): void {
-  if (json) {
-    process.stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
-    return;
-  }
-  if (findings.gaps.some((g) => g.category === "empty_index")) {
-    process.stderr.write("No data indexed yet — run `nimbus connector sync <service>` first.\n");
-    process.exit(1);
-  }
-  process.stdout.write(`${brief}\n`);
-}
-
 export async function runImpactCli(args: string[]): Promise<void> {
   const parsed = parseImpactArgs(args);
 
@@ -107,7 +73,7 @@ export async function runImpactCli(args: string[]): Promise<void> {
   registerInteractiveCliIpcHandlers(client);
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const briefPromise = awaitImpactBrief(client, (t) => {
+  const briefPromise = awaitAgentBrief(client, "impact", isImpactBrief, (t) => {
     timeout = t;
   });
 
@@ -120,7 +86,7 @@ export async function runImpactCli(args: string[]): Promise<void> {
   try {
     await client.call<{ sessionId: string }>("agents.impact", callParams);
     const { brief, findings } = await briefPromise;
-    renderImpactBrief(brief, findings, parsed.json);
+    renderAgentBrief(brief, findings, parsed.json);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

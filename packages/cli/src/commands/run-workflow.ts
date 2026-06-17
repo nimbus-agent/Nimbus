@@ -1,29 +1,11 @@
 import { readFileSync } from "node:fs";
 
 import { IPCClient } from "../ipc-client/index.ts";
+import { hasFlag, shiftFlag } from "../lib/flag-parsing.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { parseWorkflowFileContent } from "../lib/workflow-parse.ts";
 import { getCliPlatformPaths } from "../paths.ts";
-
-function hasFlag(args: string[], flag: string): boolean {
-  const i = args.indexOf(flag);
-  if (i < 0) {
-    return false;
-  }
-  args.splice(i, 1);
-  return true;
-}
-
-function shiftFlag(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i < 0 || args[i + 1] === undefined) {
-    return undefined;
-  }
-  const v = args[i + 1];
-  args.splice(i, 2);
-  return v;
-}
 
 function buildWorkflowRunPayload(
   name: string,
