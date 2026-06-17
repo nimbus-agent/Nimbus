@@ -24,12 +24,14 @@
 ### Task 1: V42 migration — `tool_call_log.params_json`
 
 **Files:**
+
 - Create: `packages/gateway/src/index/tool-call-params-v42-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts` (register the step + import)
 - Modify: `packages/gateway/src/index/local-index.ts:269` (`CURRENT_SCHEMA_VERSION` 41 → 42)
 - Test: `packages/gateway/src/index/migrations/runner-v42.test.ts`
 
 **Interfaces:**
+
 - Produces: `TOOL_CALL_PARAMS_V42_SQL` (string) — the migration SQL; consumed by `runner.ts`.
 
 - [ ] **Step 1: Write the failing test**
@@ -129,10 +131,12 @@ git commit -m "feat(share): V42 — tool_call_log.params_json column for recipe 
 ### Task 2: Capture + read redacted params in `tool_call_log`
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/tool-call-log.ts`
 - Test: `packages/gateway/src/db/tool-call-log.test.ts`
 
 **Interfaces:**
+
 - Consumes: `redactAuditPayload` from `../audit/format-audit-payload.ts` (returns a redacted, length-bounded JSON string).
 - Produces:
   - `ToolCallLogEntry.params?: unknown` (write-side input).
@@ -301,12 +305,14 @@ git commit -m "feat(share): capture secret-redacted tool-call params in tool_cal
 ### Task 3: Wire the instrumentation write sites + `collectSession` to carry params
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/agent.ts` (2 `writeToolCallLog` calls, ~line 50 + ~line 63)
 - Modify: `packages/gateway/src/connectors/lazy-mesh/mesh.ts` (2 `writeToolCallLog` calls, ~line 470 + ~line 483)
 - Modify: `packages/gateway/src/platform/assemble.ts` (~line 1665 — `collectSession` maps `params: null`)
 - Test: `packages/gateway/src/db/tool-call-log.test.ts` already proves the read path; add a focused assemble-level check below.
 
 **Interfaces:**
+
 - Consumes: `ToolCallLogEntry.params` (Task 2).
 - Produces: real per-step params reaching `share/recipe.ts` (Task 4) via `readToolCallLog`.
 
@@ -398,10 +404,12 @@ git commit -m "feat(share): log tool-call params at the instrumentation sites + 
 ### Task 4: `share/recipe.ts` — recipe types + `buildRecipeFromSession` (ordered steps)
 
 **Files:**
+
 - Create: `packages/gateway/src/share/recipe.ts`
 - Test: `packages/gateway/src/share/recipe.test.ts`
 
 **Interfaces:**
+
 - Consumes: `readToolCallLog` from `../db/tool-call-log.ts` (returns ordered `toolCalls` with `toolId`, `service`, `status`, `params`, `resultEnvelope`).
 - Produces:
   - `interface RecipeStep { readonly stepId: string; readonly tool: string; readonly service: string; readonly params: unknown; readonly status: string; readonly dependsOn: readonly string[]; }`
@@ -542,13 +550,16 @@ git commit -m "feat(share): recipe.ts — deterministic ordered tool-call DAG fr
 ### Task 5: `share/recipe.ts` — advisory `dependsOn` value-matcher
 
 **Files:**
+
 - Modify: `packages/gateway/src/share/recipe.ts`
 - Test: `packages/gateway/src/share/recipe.test.ts`
 
 **Interfaces:**
+
 - Produces: populated `RecipeStep.dependsOn` — `B.dependsOn` includes `A.stepId` when a non-trivial identifier-shaped leaf value in B's `params` also appears in A's `resultEnvelope`. (Same signatures as Task 4 — no type changes.)
 
 Matcher rules (spec §7.1, copied verbatim into the implementation):
+
 - An edge B → A is inferred only when a **non-trivial** value in B's redacted params also appears in A's `result_envelope`.
 - "Non-trivial" excludes booleans, numbers, strings shorter than 4 chars, and `true`/`false`/`null`/`""`.
 - Only **identifier-shaped** values qualify: strings that look like entity IDs, file paths, URLs/URNs, or strings ≥ 8 chars with mixed alphanumerics. The matcher walks nested structures but matches on **leaf scalars**, not whole subtrees.
@@ -671,10 +682,12 @@ git commit -m "feat(share): advisory dependsOn value-matcher for the recipe DAG"
 ### Task 6: `share/recipe-yaml.ts` — deterministic YAML serializer
 
 **Files:**
+
 - Create: `packages/gateway/src/share/recipe-yaml.ts`
 - Test: `packages/gateway/src/share/recipe-yaml.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ShareFile` from `./share-format.ts`; `js-yaml` package (`dump`).
 - Produces:
   - `function serializeShareFileToYaml(share: ShareFile): string` — deterministic (stable-key-ordered) YAML of the full signed envelope. Used for the `.nimbus-recipe.yaml` file emit.
@@ -760,10 +773,12 @@ git commit -m "feat(share): deterministic YAML serializer for the recipe share v
 ### Task 7: `verify-share` accepts YAML or JSON
 
 **Files:**
+
 - Modify: `packages/gateway/src/share/verify-share.ts`
 - Test: `packages/gateway/src/share/verify-share.test.ts`
 
 **Interfaces:**
+
 - Consumes: `serializeShareFileToYaml` (Task 6) in the test; `load` from `js-yaml` in the impl.
 - Produces: `verifyShareFromBytes` / `verifyShareFromInput` transparently handle a YAML-serialized share — the parsed `body` is re-canonicalized to JSON bytes and handed to the existing `verifyShareBytes`, so a genuine YAML recipe verifies and a tampered one fails. `verifyShareBytes` in `share-format.ts` stays JSON-only (the dependency-light CI primitive — spec §6.4).
 
@@ -862,10 +877,12 @@ git commit -m "feat(share): verify-share accepts the YAML recipe variant (re-can
 ### Task 8: `share-gate.ts` — recipe branch
 
 **Files:**
+
 - Modify: `packages/gateway/src/share/share-gate.ts`
 - Test: `packages/gateway/src/share/share-gate.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new from earlier tasks at the gate (the recipe is built by the caller and handed in).
 - Produces: `CreateShareDeps.buildRecipe: (sessionId: string) => unknown` — a new REQUIRED dep. When `req.kind === "recipe"`, the gate builds → redacts the recipe (same `redactForShare`), previews + HITL-gates it, and emits `body.recipe` with `turns`/`toolCalls` OMITTED. Transcript path unchanged.
 
@@ -1023,11 +1040,13 @@ git commit -m "feat(share): share-gate recipe branch — redact + sign body.reci
 ### Task 9: RPC + assemble wiring — build the recipe, emit the YAML variant
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/share-rpc.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (the `createShare(...)` deps in `share.create` route through `share-rpc.ts`, so the `buildRecipe` dep is added in `share-rpc.ts`; assemble only changed if `collectSession` wasn't already updated in Task 3 — it was)
 - Test: `packages/gateway/src/ipc/share-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildRecipeFromSession` (Task 4/5), `serializeShareFileToYaml` (Task 6).
 - Produces: `share.create` with `kind:"recipe"` builds the recipe from `ctx.db` and emits the file sink as deterministic YAML when the target path ends in `.yaml`/`.yml` (default for recipe). JSON otherwise — verify-share handles both.
 
@@ -1128,6 +1147,7 @@ git commit -m "feat(share): wire recipe build + YAML emit into share.create"
 ### Task 10: Spec amendment + docs
 
 **Files:**
+
 - Modify: `docs/superpowers/specs/2026-06-15-slice8-share-virality-design.md`
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/architecture.md` (schema reference — add V42 row; bump "schema V<N>" prose if present)
@@ -1177,6 +1197,7 @@ git commit -m "docs(share): amend Slice 8 spec for V42 recipe params; CHANGELOG 
 ### Task 11: E2E — recipe share round-trip
 
 **Files:**
+
 - Modify: `packages/gateway/test/e2e/share-e2e.test.ts` (add a recipe case alongside the 8a transcript case)
 
 **Interfaces:** Consumes the real-gateway raw-IPC harness already established by 8a (`NIMBUS_E2E_SEED_SESSION_JSON` seam + the create→approve→verify flow).
