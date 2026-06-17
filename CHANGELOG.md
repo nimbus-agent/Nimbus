@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.11.2](https://github.com/nimbus-agent/Nimbus/compare/v0.11.1...v0.11.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **test:** remove real-resolver connector-spawns twin that reds the combined run ([#675](https://github.com/nimbus-agent/Nimbus/issues/675)) ([fde6718](https://github.com/nimbus-agent/Nimbus/commit/fde67189a6bca3e2289f522eb981d1560d5de768))
+
 ## [0.11.1](https://github.com/nimbus-agent/Nimbus/compare/v0.11.0...v0.11.1) (2026-06-17)
 
 
