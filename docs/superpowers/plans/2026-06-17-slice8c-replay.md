@@ -34,7 +34,7 @@
 - Consumes: `HITL_REQUIRED` from `../engine/executor.ts` (test only — to assert a write tool absent from the HITL set is still non-read); `WAREHOUSE_BI_WRITE_TOOL_IDS` from `../connectors/warehouse-write-tools.ts` (test only).
 - Produces: `function isReadOnlyToolId(toolId: string): boolean` — `true` iff the tool's trailing `_`-segment is a known read verb (the spec's `list`/`get`/`query`/`search` + a curated read surface grounded in connector tool ids); `false` for everything else (write verbs, unknown/unclassifiable, malformed input).
 
-> **Why positive, not "absent from HITL"** (spec §8.1, design-review point 3): a write tool that someone forgot to add to `HITL_REQUIRED_BACKING` would, under a denylist, be treated as safe and executed during replay. A positive allowlist fails safe — anything not recognized as read-only is skipped. The read-verb set below is grounded in a scan of `packages/mcp-connectors/*` tool ids (dominant read suffixes: `list` 138×, `get` 93×, `search` 68×, `query`; plus `history`/`read`/`fetch`/`download`/`describe`/`preview`/`export`/`view`/`show` on a long tail). Skipping a genuine read tool not in this set is a fail-safe false-negative (it shows `skipped-non-read`, no data is touched) — never a security hole.
+> **Why positive, not "absent from HITL"** (spec §8.1, design-review point 3): a write tool that someone forgot to add to `HITL_REQUIRED_BACKING` would, under a denylist, be treated as safe and executed during replay. A positive allowlist fails safe — anything not recognized as read-only is skipped. The read-verb set below is grounded in a scan of `packages/mcp-connectors/*` tool ids (dominant read suffixes: `list` 138×, `get` 93×, `search` 68×, `query`; plus `read`/`history`/`download`/`preview`/`info`/`metadata` confirmed on real tool ids, and `fetch`/`describe`/`export`/`view`/`show` as unambiguously-read forward-compat verbs). Skipping a genuine read tool not in this set is a fail-safe false-negative (it shows `skipped-non-read`, no data is touched) — never a security hole. **Deliberately NOT included:** write-ambiguous verbs like `status` (a `_status` tool could plausibly set state) and any verb no connector uses today (`exists`, `count`) — broadening a positive allowlist trades fail-safety for coverage, so additions must be unambiguously read AND worth the margin; a connector that needs one is a safe, additive follow-up.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -124,6 +124,8 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "export",
   "view",
   "show",
+  "info", // slack_user_info, teams_user_info
+  "metadata", // gdrive_file_metadata
 ]);
 
 /** Classify a tool id as read-only by its trailing `_`-segment verb. Pure; fail-safe on bad input. */
@@ -374,6 +376,8 @@ git commit -m "feat(share): recipe-runner types + share→steps normalization"
   - else `run(...)` → `{kind:"unavailable"}` → `missing-connector` (detail = service); `{kind:"threw"}` → `error` (detail = message); `{kind:"ran",ok}` → `match` if `(ok ? "ok" : "error") === step.status` else `diverged`.
 
 > Classification order is fixed and the branches are mutually exclusive. `replayStatus` after a `ran` outcome is `"ok"` when `ok` is true, else `"error"` — the same ok/error semantics `tool_call_log` records. `diverged` therefore fires when the local outcome's status differs from the shared step's recorded status.
+
+> **Expected divergence is not a bug** (review open-questions A/B): the shared params are PII/secret-redacted (8a/8b), so a step whose redacted param was a required id/path/query will legitimately fail locally → `error` (the connector raised) or `diverged` (it ran but the original errored). Likewise a service the local operator hasn't connected → `missing-connector` (tool absent from the map) or `error` (execute throws on missing creds). These outcomes are the divergence report doing its job — surfacing "this step needs connector X / a real value you don't have" — not a runner defect. No special-casing in the runner.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -629,20 +633,20 @@ git commit -m "feat(share): replayShare entry point + read-only-allowlist securi
 
 - [ ] **Step 1: Write the failing test (verify-share helpers)**
 
-Append to `packages/gateway/src/share/verify-share.test.ts` (reuse the file's existing signed-share helper — mirror its `buildShareFile` setup; if it has a `signedRecipeShare()`/`signedShare()` factory, reuse it):
+Append to `packages/gateway/src/share/verify-share.test.ts`. Reuse the file's existing `signedRecipeShare()` factory (defined at ~line 106 — builds a signed recipe `ShareFile`; that shape is fine for the loader/parse tests, which don't care whether it's a recipe or transcript):
 
 ```ts
 import { loadShareBytes, parseShareFile } from "./verify-share.ts";
 import { serializeShareFileToYaml } from "./recipe-yaml.ts";
 
 test("parseShareFile parses a JSON share", () => {
-  const share = signedShare(); // existing helper building a signed ShareFile
+  const share = signedRecipeShare(); // existing helper in this file (~line 106)
   const bytes = new TextEncoder().encode(JSON.stringify(share));
   expect(parseShareFile(bytes)?.body.sessionId).toBe(share.body.sessionId);
 });
 
 test("parseShareFile parses a YAML share (recipe variant)", () => {
-  const share = signedShare();
+  const share = signedRecipeShare();
   const bytes = new TextEncoder().encode(serializeShareFileToYaml(share));
   expect(parseShareFile(bytes)?.body.sessionId).toBe(share.body.sessionId);
 });
@@ -653,7 +657,7 @@ test("parseShareFile returns null for non-share input", () => {
 });
 
 test("loadShareBytes reads a local file", async () => {
-  const share = signedShare();
+  const share = signedRecipeShare();
   const path = `${import.meta.dir}/../../../../node_modules/.cache/share-${share.contentHash}.json`;
   await Bun.write(path, JSON.stringify(share));
   const bytes = await loadShareBytes(path);
@@ -661,7 +665,7 @@ test("loadShareBytes reads a local file", async () => {
 });
 ```
 
-> If `verify-share.test.ts` has no reusable signed-share factory, build one inline with `buildShareFile(body, privkeyB64, pubkeyB64)` from `share-format.ts` + a generated nacl key seed — mirror how the existing YAML tests in this file construct their share. For `loadShareBytes`, write to a tmp path via `mkdtempSync(join(tmpdir(), …))` (the S5443-safe pattern) rather than a node_modules cache path if that's cleaner in this file.
+> `signedRecipeShare()` already exists in this file (it uses `generateEd25519Keypair()` + `buildShareFile`); reuse it. For `loadShareBytes`, write to a tmp path via `mkdtempSync(join(tmpdir(), …))` (the S5443-safe pattern) rather than the node_modules cache path shown above — prefer the tmpdir form.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1019,9 +1023,20 @@ export async function runVerifyShare(args: string[]): Promise<void> {
     return;
   }
   const isUrl = input.startsWith("http://") || input.startsWith("https://");
-  const params = isUrl
-    ? { input }
-    : { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+  // Read the local file up front with a friendly error (a missing/unreadable path otherwise crashes
+  // with an unhandled rejection). Applies to both the verify and replay paths.
+  let params: { input: string } | { bytesB64: string };
+  if (isUrl) {
+    params = { input };
+  } else {
+    try {
+      params = { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+    } catch {
+      console.error(`Cannot read share file: ${input}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   await withIpc(async (c) => {
     if (replay) {
       const r = await c.call<{
@@ -1032,7 +1047,10 @@ export async function runVerifyShare(args: string[]): Promise<void> {
         `signature: ${r.verify.signatureValid ? "VALID" : "INVALID"}${r.verify.expired ? " (expired)" : ""}`,
       );
       console.log(formatReplayReport(r.report));
-      if (!r.verify.ok) process.exitCode = 1;
+      if (!r.verify.ok) {
+        console.error(r.verify.errors.join("; ")); // surface why the share is invalid (tamper/expiry)
+        process.exitCode = 1;
+      }
       return;
     }
     const r = await c.call<{
