@@ -1,6 +1,7 @@
 // packages/gateway/src/share/recipe-runner.test.ts
 import { describe, expect, test } from "bun:test";
-import { stepsFromShare } from "./recipe-runner.ts";
+import type { RecipeStep } from "./recipe.ts";
+import { replayRecipe, stepsFromShare, type ToolRunOutcome } from "./recipe-runner.ts";
 import type { ShareFile } from "./share-format.ts";
 
 function shareWith(
@@ -74,5 +75,82 @@ describe("stepsFromShare", () => {
     expect(stepsFromShare(shareWith({ kind: "recipe", recipe: undefined })).steps).toEqual([]);
     expect(stepsFromShare(shareWith({ kind: "recipe", recipe: { nope: true } })).steps).toEqual([]);
     expect(stepsFromShare(shareWith({ kind: "transcript" })).steps).toEqual([]);
+  });
+});
+
+function step(tool: string, status = "ok", params: unknown = {}): RecipeStep {
+  return {
+    stepId: `step-x`,
+    tool,
+    service: tool.split("_")[0] ?? "svc",
+    params,
+    status,
+    dependsOn: [],
+  };
+}
+
+describe("replayRecipe — per-step classification", () => {
+  const readOnly = (t: string) => t.endsWith("_get") || t.endsWith("_list");
+
+  test("non-read tool → skipped-non-read, executor NEVER called", async () => {
+    let calls = 0;
+    const report = await replayRecipe("s1", [step("file_delete")], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-non-read");
+    expect(calls).toBe(0);
+  });
+
+  test("unavailable → missing-connector (detail = service)", async () => {
+    const report = await replayRecipe("s1", [step("gmail_get")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "unavailable" }),
+    });
+    expect(report.steps[0]?.status).toBe("missing-connector");
+    expect(report.steps[0]?.detail).toBe("gmail");
+  });
+
+  test("threw → error (detail = message)", async () => {
+    const report = await replayRecipe("s1", [step("gmail_get")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "threw", message: "boom" }),
+    });
+    expect(report.steps[0]?.status).toBe("error");
+    expect(report.steps[0]?.detail).toBe("boom");
+  });
+
+  test("ran ok + original ok → match; ran ok + original error → diverged", async () => {
+    const ran: ToolRunOutcome = { kind: "ran", ok: true };
+    const r1 = await replayRecipe("s1", [step("gmail_get", "ok")], {
+      isReadOnly: readOnly,
+      run: async () => ran,
+    });
+    expect(r1.steps[0]?.status).toBe("match");
+    const r2 = await replayRecipe("s1", [step("gmail_get", "error")], {
+      isReadOnly: readOnly,
+      run: async () => ran,
+    });
+    expect(r2.steps[0]?.status).toBe("diverged");
+  });
+
+  test("summary tallies each category and total", async () => {
+    const steps = [step("file_delete"), step("gmail_get", "ok"), step("slack_list", "ok")];
+    const report = await replayRecipe("s1", steps, {
+      isReadOnly: readOnly,
+      run: async (tool) =>
+        tool === "gmail_get" ? { kind: "ran", ok: true } : { kind: "unavailable" },
+    });
+    expect(report.summary).toEqual({
+      total: 3,
+      match: 1,
+      diverged: 0,
+      missingConnector: 1,
+      skippedNonRead: 1,
+      error: 0,
+    });
   });
 });

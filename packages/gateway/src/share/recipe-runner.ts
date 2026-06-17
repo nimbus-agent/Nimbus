@@ -96,3 +96,41 @@ export function stepsFromShare(share: ShareFile): {
   }));
   return { sourceSessionId, steps };
 }
+
+/**
+ * Replay a recipe's steps locally, in recorded order, classifying each against the shared original.
+ * Deterministic and read-only: the executor is invoked ONLY for positively-classified read tools
+ * (spec §8.1). Never consults `dependsOn`; never re-invokes the LLM; never runs a write action.
+ */
+export async function replayRecipe(
+  sourceSessionId: string,
+  steps: readonly RecipeStep[],
+  deps: RecipeRunnerDeps,
+): Promise<ReplayReport> {
+  const results: ReplayStepResult[] = [];
+  for (const s of steps) {
+    const base = { stepId: s.stepId, tool: s.tool, service: s.service, originalStatus: s.status };
+    if (!deps.isReadOnly(s.tool)) {
+      results.push({ ...base, status: "skipped-non-read" });
+      continue;
+    }
+    const outcome = await deps.run(s.tool, s.params);
+    if (outcome.kind === "unavailable") {
+      results.push({ ...base, status: "missing-connector", detail: s.service });
+    } else if (outcome.kind === "threw") {
+      results.push({ ...base, status: "error", detail: outcome.message });
+    } else {
+      const replayStatus = outcome.ok ? "ok" : "error";
+      results.push({ ...base, status: replayStatus === s.status ? "match" : "diverged" });
+    }
+  }
+  const summary: ReplaySummary = {
+    total: results.length,
+    match: results.filter((r) => r.status === "match").length,
+    diverged: results.filter((r) => r.status === "diverged").length,
+    missingConnector: results.filter((r) => r.status === "missing-connector").length,
+    skippedNonRead: results.filter((r) => r.status === "skipped-non-read").length,
+    error: results.filter((r) => r.status === "error").length,
+  };
+  return { sourceSessionId, steps: results, summary };
+}
