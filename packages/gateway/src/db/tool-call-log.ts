@@ -82,9 +82,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `.trim();
 
 export function writeToolCallLog(db: Database, entry: ToolCallLogEntry): void {
-  const envelope = truncateEnvelope(entry.resultEnvelope);
-  const paramsJson = entry.params === undefined ? null : redactedParamsJson(entry.params);
   try {
+    // Compute envelope + redacted params INSIDE the try: audit logging is strictly best-effort,
+    // so redaction/serialization throwing on pathological input (e.g. a circular ref) must never
+    // break the caller's tool call.
+    const envelope = truncateEnvelope(entry.resultEnvelope);
+    const paramsJson = entry.params === undefined ? null : redactedParamsJson(entry.params);
     dbRun(db, INSERT_SQL, [
       entry.sessionId,
       entry.toolId,

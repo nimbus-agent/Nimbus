@@ -18,11 +18,12 @@ describe("V42 — tool_call_log.params_json", () => {
     LocalIndex.ensureSchema(db);
     db.run(
       `INSERT INTO tool_call_log (session_id, tool_id, service, called_at, duration_ms, result_envelope, status)
-       VALUES ('s1', 'gmail_search', 'gmail', 1, 5, '{}', 'ok')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ["s1", "gmail_search", "gmail", 1, 5, "{}", "ok"],
     );
     const row = db
-      .query("SELECT params_json FROM tool_call_log WHERE tool_id = 'gmail_search'")
-      .get() as {
+      .query("SELECT params_json FROM tool_call_log WHERE tool_id = ?")
+      .get("gmail_search") as {
       params_json: string | null;
     };
     expect(row.params_json).toBeNull();
