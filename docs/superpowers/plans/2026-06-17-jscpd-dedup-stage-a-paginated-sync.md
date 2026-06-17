@@ -4,7 +4,7 @@
 
 **Goal:** Extract the duplicated single-pass paginated connector-sync scaffolding into a shared `_lib/paginated-sync.ts` helper (`upsertMapped` + `runSinglePassPaginatedSync` + `bareArrayPage`) and migrate the 21 Tier-1 paginated-family connectors to delegate to it — pure dedup, zero behavior change — driving strict jscpd down.
 
-**Architecture:** A new gateway-internal helper owns the parts of every single-pass paginated `sync()` that are byte-identical across connectors: the `performance.now()` timing, the noop-on-unconfigured-creds, the `for`-page loop with first-page `http_error`/`parse_error` degradation, the per-item map+upsert loop, and the pass-1-cursor success return. Each connector keeps only what genuinely varies (constants, creds, per-page path/auth, response parsing, mapping fn) and calls the helper from a thin `createXSyncable`. Behavior is preserved exactly; each connector's existing `*-sync-fake-server.test.ts` integration test is the guardrail.
+**Architecture:** A new gateway-internal helper owns the parts of every single-pass paginated `sync()` that are byte-identical across connectors: the `performance.now()` timing, the noop-on-unconfigured-creds, the `for`-page loop with first-page `http_error`/`parse_error` degradation, the per-item map+upsert loop, and the pass-1-cursor success return. The loop threads an opaque `pageCursor` (`""` → the previous page's `nextPageCursor`) so it covers **both** page-number connectors (path from `page`) and continuation-token connectors (path/token from the previous response — canva/hubspot/miro/intercom/salesforce). Each connector keeps only what genuinely varies (constants, creds, per-page path/auth via `fetchPage`, response parsing via `parsePage`, the mapping fn via `map(raw, creds, now)`) and calls the helper from a thin `createXSyncable`. Behavior is preserved exactly; each connector's existing `*-sync-fake-server.test.ts` integration test is the guardrail.
 
 **Tech Stack:** Bun v1.2+, TypeScript 6 strict, `bun test`, jscpd, the existing `_lib/fetch-outcome.ts` / `sync/pass-cursor-sync-result.ts` / `sync/types.ts` / `index/item-store.ts`.
 
@@ -173,7 +173,7 @@ git commit -m "feat(dedup): add upsertMapped sync helper (Stage A)"
 
 - Consumes: `FetchOutcome` from `./fetch-outcome.ts`; `syncPassCursorHttpEmpty`, `syncPassCursorParseEmpty`, `syncPassCursorSuccess` from `../../sync/pass-cursor-sync-result.ts`; `SyncResult`, `syncNoopResult` from `../../sync/types.ts`; `upsertMapped` (Task 1).
 - Produces:
-  - `interface PaginatedSyncSpec<C>` with fields: `ensureRunning: () => Promise<void>`, `loadCreds: () => Promise<C | null>`, `pass1Cursor: () => string`, `maxPages: number`, `startPage?: number` (default 1), `fetchPage: (creds: C, page: number) => Promise<FetchOutcome>`, `parsePage: (parsed: unknown, page: number) => { items: readonly unknown[]; hasMore: boolean }`, `map: (raw: unknown, now: number) => SyncUpsertRow | null`.
+  - `interface PaginatedSyncSpec<C>` with fields: `ensureRunning: () => Promise<void>`, `loadCreds: () => Promise<C | null>`, `pass1Cursor: () => string`, `maxPages: number`, `startPage?: number` (default 1), `fetchPage: (creds: C, page: number, pageCursor: string) => Promise<FetchOutcome>`, `parsePage: (parsed: unknown, page: number) => { items: readonly unknown[]; hasMore: boolean; nextPageCursor?: string }`, `map: (raw: unknown, creds: C, now: number) => SyncUpsertRow | null`.
   - `runSinglePassPaginatedSync<C>(ctx: SyncContext, cursor: string | null, spec: PaginatedSyncSpec<C>): Promise<SyncResult>`.
   - `bareArrayPage(parsed: unknown, pageSize: number): { items: unknown[]; hasMore: boolean }`.
 
@@ -206,6 +206,10 @@ function baseSpec(over: Partial<PaginatedSyncSpec<{ ok: true }>>): PaginatedSync
     ...over,
   };
 }
+
+// Note: `map`'s full signature is `(raw, creds, now)`; tests that ignore creds/now
+// pass a 1-arg closure (assignable in TS). The creds-threading test below exercises
+// the 2nd arg, and the continuation-token test exercises `pageCursor` + `nextPageCursor`.
 
 describe("bareArrayPage", () => {
   test("non-array → empty, no more", () => {
@@ -339,6 +343,54 @@ describe("runSinglePassPaginatedSync", () => {
     );
     expect(seen).toEqual([0]);
   });
+
+  test("continuation-token: nextPageCursor threads into the next fetchPage call", async () => {
+    h = makeCtx();
+    const seenCursors: string[] = [];
+    // Page A returns token "t1"; page B returns "" (stop).
+    const byCursor: Record<string, FetchOutcome> = {
+      "": ok({ items: [{ id: "a" }], next: "t1" }, 20),
+      t1: ok({ items: [{ id: "b" }], next: "" }, 15),
+    };
+    const res = await runSinglePassPaginatedSync(
+      h.ctx,
+      null,
+      baseSpec({
+        fetchPage: async (_creds, _page, pageCursor) => {
+          seenCursors.push(pageCursor);
+          return byCursor[pageCursor] ?? ok({ items: [], next: "" });
+        },
+        parsePage: (parsed) => {
+          const p = parsed as { items: { id: string }[]; next: string };
+          return {
+            items: p.items,
+            hasMore: p.items.length > 0 && p.next !== "",
+            nextPageCursor: p.next,
+          };
+        },
+      }),
+    );
+    expect(seenCursors).toEqual(["", "t1"]);
+    expect(res.itemsUpserted).toBe(2);
+  });
+
+  test("map receives creds (for creds-derived mapping context)", async () => {
+    h = makeCtx();
+    const seenCreds: unknown[] = [];
+    await runSinglePassPaginatedSync(
+      h.ctx,
+      null,
+      baseSpec({
+        loadCreds: async () => ({ ok: true }),
+        fetchPage: async () => ok([{ id: "a" }]), // short page → one pass
+        map: (raw, creds) => {
+          seenCreds.push(creds);
+          return row((raw as { id: string }).id);
+        },
+      }),
+    );
+    expect(seenCreds).toEqual([{ ok: true }]);
+  });
 });
 ```
 
@@ -364,10 +416,13 @@ import { type SyncResult, syncNoopResult } from "../../sync/types.ts";
 (Merge the `../../sync/types.ts` import with the existing `SyncContext` import line so there is one import per module — final form: `import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";`.)
 
 ```ts
-/** A page's parsed items plus whether to fetch the next page. */
+/** A page's parsed items, whether to fetch the next page, and (for cursor/token
+ * pagination) the opaque token threaded into the NEXT `fetchPage` call. */
 export interface ParsedPage {
   readonly items: readonly unknown[];
   readonly hasMore: boolean;
+  /** Token/path for the next page (continuation-token connectors). Omit/"" for page-number connectors. */
+  readonly nextPageCursor?: string;
 }
 
 /** Bare-array page parser: items are the JSON array; another page exists iff the page was full. */
@@ -387,19 +442,25 @@ export interface PaginatedSyncSpec<C> {
   readonly maxPages: number;
   /** First page number (default 1). */
   readonly startPage?: number;
-  /** Fetch one page. */
-  readonly fetchPage: (creds: C, page: number) => Promise<FetchOutcome>;
-  /** Parse a successful page into items + whether more pages follow. */
+  /**
+   * Fetch one page. `pageCursor` is "" on the first page, then the previous
+   * page's `nextPageCursor`. Page-number connectors ignore it and use `page`;
+   * continuation-token connectors use it (as the token or the next path).
+   */
+  readonly fetchPage: (creds: C, page: number, pageCursor: string) => Promise<FetchOutcome>;
+  /** Parse a successful page into items + whether more pages follow (+ optional next cursor). */
   readonly parsePage: (parsed: unknown, page: number) => ParsedPage;
-  /** Map one raw item to an upsert row, or null to skip. */
-  readonly map: (raw: unknown, now: number) => SyncUpsertRow | null;
+  /** Map one raw item to an upsert row, or null to skip. Receives `creds` (some mappers need creds-derived context, e.g. a base URL) and `now`. */
+  readonly map: (raw: unknown, creds: C, now: number) => SyncUpsertRow | null;
 }
 
 /**
  * Run a single-pass paginated sync: ensure-running → load creds (noop if
  * unconfigured) → walk pages (first-page error degrades to an empty pass-cursor
- * result; later-page error breaks) → upsert mapped items → pass-1 success.
- * Behaviour-identical to the hand-written single-pass connector `sync()` bodies.
+ * result; later-page error breaks) → upsert mapped items → pass-1 success. The
+ * loop threads `pageCursor` (""→prev `nextPageCursor`) so both page-number and
+ * continuation-token connectors are covered. Behaviour-identical to the
+ * hand-written single-pass connector `sync()` bodies.
  */
 export async function runSinglePassPaginatedSync<C>(
   ctx: SyncContext,
@@ -417,10 +478,11 @@ export async function runSinglePassPaginatedSync<C>(
   const startPage = spec.startPage ?? 1;
   let totalBytes = 0;
   let totalUpserted = 0;
+  let pageCursor = "";
 
   for (let i = 0; i < spec.maxPages; i += 1) {
     const page = startPage + i;
-    const outcome = await spec.fetchPage(creds, page);
+    const outcome = await spec.fetchPage(creds, page, pageCursor);
     totalBytes += outcome.bytes;
     if (outcome.kind !== "ok") {
       if (i === 0) {
@@ -431,11 +493,12 @@ export async function runSinglePassPaginatedSync<C>(
       break;
     }
 
-    const { items, hasMore } = spec.parsePage(outcome.parsed, page);
-    totalUpserted += upsertMapped(ctx, items, (raw) => spec.map(raw, now));
-    if (!hasMore) {
+    const parsed = spec.parsePage(outcome.parsed, page);
+    totalUpserted += upsertMapped(ctx, parsed.items, (raw) => spec.map(raw, creds, now));
+    if (!parsed.hasMore) {
       break;
     }
+    pageCursor = parsed.nextPageCursor ?? "";
   }
 
   return syncPassCursorSuccess(t0, totalBytes, spec.pass1Cursor(), totalUpserted);
@@ -548,7 +611,7 @@ export function createGreenhouseSyncable(options: GreenhouseSyncableOptions): Sy
         startPage: 1,
         fetchPage: (creds, page) => greenhouseGet(ctx, creds, jobsPath(page)),
         parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
-        map: (raw, now) => mapGreenhouseJobToItem(raw, { syncedAt: now }),
+        map: (raw, _creds, now) => mapGreenhouseJobToItem(raw, { syncedAt: now }),
       }),
   };
 }
@@ -622,7 +685,7 @@ export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncab
         startPage: 1,
         fetchPage: (creds, page) => readwiseGet(ctx, creds, highlightsPath(page)),
         parsePage: (parsed) => parseReadwisePage(parsed),
-        map: (raw, now) => mapReadwiseHighlightToItem(raw, { syncedAt: now }),
+        map: (raw, _creds, now) => mapReadwiseHighlightToItem(raw, { syncedAt: now }),
       }),
   };
 }
@@ -694,7 +757,7 @@ export function createStackOverflowSyncable(options: StackOverflowSyncableOption
         startPage: 1,
         fetchPage: (creds, page) => stackOverflowGet(ctx, creds, questionsPath(creds.team, page)),
         parsePage: (parsed, page) => parseStackOverflowPage(parsed, page),
-        map: (raw, now) => mapStackOverflowQuestionToItem(raw, { syncedAt: now }),
+        map: (raw, _creds, now) => mapStackOverflowQuestionToItem(raw, { syncedAt: now }),
       }),
   };
 }
@@ -716,12 +779,100 @@ git commit -m "refactor(dedup): stackoverflow-sync via runSinglePassPaginatedSyn
 
 ---
 
+### Task 5B: Migrate `hubspot-sync.ts` — continuation-token + inline-OAuth-creds exemplar
+
+**Files:**
+
+- Modify: `packages/gateway/src/connectors/hubspot-sync.ts`
+- Guardrail (do NOT edit): `packages/gateway/test/integration/connectors/hubspot-sync-fake-server.test.ts`
+
+This exemplar covers the two patterns that the page-number exemplars (Tasks 3–5) do **not**:
+
+1. **Continuation-token pagination** — the next request's `after` query param comes from `paging.next.after` in the previous response. Handled via `pageCursor` (threaded by the helper) + `parsePage` returning `nextPageCursor`. The original loop is `for (let page = 0; …)` with `after` starting `""` → **`startPage: 0`**, and `fetchPage` ignores `page` and uses `pageCursor`.
+2. **Inline OAuth credential loading with try/catch → noop** — folded into `loadCreds` (returns `null` wherever the original returns `syncNoopResult`): the `oauth` secret presence check, the `getValidHubspotAccessToken` try/catch, and the empty-token check.
+
+(The same shape covers canva, miro, intercom, and salesforce in Task 6 — salesforce threads the next **path** instead of a token: `fetchPage` does `pageCursor === "" ? firstQueryPath() : pageCursor`.)
+
+- [ ] **Step 1: Run the guardrail test first**
+
+Run: `bun test packages/gateway/test/integration/connectors/hubspot-sync-fake-server.test.ts`
+Expected: PASS (baseline).
+
+- [ ] **Step 2: Replace the body**
+
+Edit `packages/gateway/src/connectors/hubspot-sync.ts`. Remove the `upsertIndexedItemForSync` / `syncPassCursor*` / `syncNoopResult` imports and `upsertDeals`; keep `extractDeals`, `nextAfter`, `dealsPath`, `hubspotGet`, `asRecord`, `getValidHubspotAccessToken`, `readConnectorSecret`. Add the helper import + a `loadCreds` + a `parseHubspotPage`:
+
+```ts
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
+// keep: getValidHubspotAccessToken, connectorFetch + type FetchOutcome,
+//       readConnectorSecret, mapHubspotDealToItem, encodeNimbusJsonCursor, asRecord,
+//       type Syncable/SyncContext. Constants, pass1Cursor, dealsPath, hubspotGet,
+//       extractDeals, nextAfter all unchanged.
+
+interface HubspotCreds {
+  readonly token: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<HubspotCreds | null> {
+  const raw = await readConnectorSecret(ctx.vault, "hubspot", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  let token: string;
+  try {
+    token = await getValidHubspotAccessToken(ctx.vault);
+  } catch {
+    return null;
+  }
+  return token === "" ? null : { token };
+}
+
+function parseHubspotPage(parsed: unknown): { items: unknown[]; hasMore: boolean; nextPageCursor: string } {
+  const deals = extractDeals(parsed);
+  const after = nextAfter(parsed);
+  return { items: deals, hasMore: deals.length > 0 && after !== "", nextPageCursor: after };
+}
+
+export function createHubspotSyncable(options: HubspotSyncableOptions): Syncable {
+  return {
+    serviceId: SERVICE_ID,
+    defaultIntervalMs: 10 * 60 * 1000,
+    initialSyncDepthDays: 30,
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureHubspotMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) => hubspotGet(ctx, creds.token, dealsPath(pageCursor)),
+        parsePage: (parsed) => parseHubspotPage(parsed),
+        map: (raw, _creds, now) => mapHubspotDealToItem(raw, { syncedAt: now }),
+      }),
+  };
+}
+```
+
+- [ ] **Step 3: Run the guardrail test**
+
+Run: `bun test packages/gateway/test/integration/connectors/hubspot-sync-fake-server.test.ts`
+Expected: PASS (unchanged). The fake server must walk `after=""` → token → end exactly as before.
+
+- [ ] **Step 4: Typecheck + commit**
+
+```bash
+git add packages/gateway/src/connectors/hubspot-sync.ts
+git commit -m "refactor(dedup): hubspot-sync via runSinglePassPaginatedSync (Stage A)"
+```
+
+---
+
 ### Task 6: Migrate the remaining Tier-1 paginated connectors (batched)
 
-**Files (Modify — 18 connectors):**
-`airflow-sync.ts`, `canva-sync.ts`, `dependencytrack-sync.ts`, `hubspot-sync.ts`, `intercom-sync.ts`, `lever-sync.ts`, `miro-sync.ts`, `mlflow-sync.ts`, `netlify-sync.ts`, `pipedrive-sync.ts`, `prefect-sync.ts`, `raindrop-sync.ts`, `salesforce-sync.ts`, `stripe-sync.ts`, `superset-sync.ts`, `vercel-sync.ts`, `zendesk-sync.ts`, `zotero-sync.ts`.
+**Files (Modify — 17 connectors):**
+`airflow-sync.ts`, `canva-sync.ts`, `dependencytrack-sync.ts`, `intercom-sync.ts`, `lever-sync.ts`, `miro-sync.ts`, `mlflow-sync.ts`, `netlify-sync.ts`, `pipedrive-sync.ts`, `prefect-sync.ts`, `raindrop-sync.ts`, `salesforce-sync.ts`, `stripe-sync.ts`, `superset-sync.ts`, `vercel-sync.ts`, `zendesk-sync.ts`, `zotero-sync.ts`.
 
-Each has a `*-sync-fake-server.test.ts` guardrail (do NOT edit any of them).
+(greenhouse, readwise, stackoverflow, hubspot are already migrated as exemplars in Tasks 3–5B.) Each has a `*-sync-fake-server.test.ts` guardrail (do NOT edit any of them).
 
 **The migration recipe (apply per file):**
 
@@ -747,36 +898,46 @@ Each has a `*-sync-fake-server.test.ts` guardrail (do NOT edit any of them).
        ```
 
        (Salesforce returns `{ accessToken, instanceUrl }`; preserve every field its `fetchPage`/path builder needs.)
-   - **parsePage:** classify the existing `extract*` + the `break` condition into one of:
+   - **Pagination mechanism — page-number vs continuation-token.** Read the loop: does the request path come from the `page` number, or from a token/path threaded out of the previous response (`let after = ""; … after = nextAfter(parsed); xPath(after)`)? This decides `fetchPage` + `parsePage`:
+     - **page-number** (zotero, greenhouse, readwise, stackoverflow, and most): `fetchPage: (creds, page) => xGet(ctx, creds, xPath(page))`; `parsePage` returns `{ items, hasMore }` (no `nextPageCursor`).
+     - **continuation-token** (canva, miro, intercom, salesforce — like the hubspot exemplar in Task 5B): `fetchPage: (creds, _page, pageCursor) => xGet(ctx, creds, xPath(pageCursor))`; `parsePage` returns `{ items, hasMore, nextPageCursor }` where `nextPageCursor` is the extracted token (`""` to stop). The original's `let token = ""` start matches the helper's `pageCursor = ""` first call. **Salesforce** threads the next *path*, so `fetchPage` does `xGet(ctx, creds, pageCursor === "" ? firstQueryPath() : pageCursor)` and `nextPageCursor` is `nextRecordsPath(parsed)`. **Intercom** uses `string | null` (`""` ↔ `null`): `fetchPage` does `xPath(pageCursor === "" ? null : pageCursor)` and `nextPageCursor` maps `null → ""`.
+   - **parsePage items/stop:** reproduce the existing `extract*` + `break` **exactly**, as one of:
      - **bare-array + `length < PAGE_SIZE` break** → `parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE)`.
-     - **envelope + `next`/`nextCursor`** → a local `parseXPage(parsed)` like Task 4.
+     - **envelope + `next`/`nextCursor`** (page-number stop) → a local `parseXPage(parsed)` like Task 4.
      - **envelope + `totalPages`/`page < N`** → a local `parseXPage(parsed, page)` like Task 5.
+     - **envelope + continuation-token** → a local `parseXPage(parsed)` returning `{ items, hasMore, nextPageCursor }` like the hubspot exemplar.
      - **other envelope (e.g. `{ data: [...] }`)** → a local `parseXPage` returning `{ items, hasMore }` that reproduces the existing extraction + break **exactly**.
-   - **fetchPage:** usually `(creds, page) => xGet(ctx, creds, xPath(...))`, the `xGet` wrapper unchanged. **Note:** some connectors (e.g. pipedrive) build the `FetchOutcome` in their own local fetch wrapper with a `JSON.parse` try/catch → that wrapper stays as-is; `fetchPage` just calls it. The helper never parses — it only consumes the `FetchOutcome`.
-   - **map:** `(raw, now) => mapXToItem(raw, { syncedAt: now })` using the file's existing mapping import. The map runs inside `upsertMapped`, which (like the current `upsert*` loops) does **not** catch per-item errors — a throwing map propagates and fails the sync, exactly as today.
+   - **fetchPage note:** some connectors (e.g. pipedrive) build the `FetchOutcome` in their own local fetch wrapper with a `JSON.parse` try/catch → that wrapper stays as-is; `fetchPage` just calls it. The helper never parses — it only consumes the `FetchOutcome`.
+   - **map:** `(raw, creds, now) => mapXToItem(raw, { syncedAt: now })`, or — when the mapper needs creds-derived context (airflow/dependencytrack/superset/zendesk use `baseUrl`, mlflow uses `host`, prefect uses `apiUrl`) — `(raw, creds, now) => mapXToItem(raw, { baseUrl: creds.baseUrl, syncedAt: now })`. Use `_creds` when unused. The map runs inside `upsertMapped`, which (like the current `upsert*` loops) does **not** catch per-item errors — a throwing map propagates and fails the sync, exactly as today.
 4. Rewrite `createXSyncable` to call `runSinglePassPaginatedSync(ctx, cursor, { ensureRunning: options.ensureXMcpRunning, loadCreds, pass1Cursor, maxPages: MAX_PAGES, startPage, fetchPage, parsePage, map })`. Keep constants, `pass1Cursor`, the path builder, and the `xGet` fetch wrapper unchanged. Delete the now-unused `extract*`/`upsert*` functions and their now-unused imports (`upsertIndexedItemForSync`, `syncPassCursor*`, and — only when no longer referenced — `syncNoopResult`).
 5. Re-run the guardrail test — must pass unchanged. If it fails, the `parsePage`/`startPage` classification was wrong: diff the old vs new break condition and fix `parsePage` (do not edit the test).
 6. Move to the next file.
 
-- [ ] **Step 1: Migrate the bare-array group**
+Migrate in three groups (these are classification **hints** — verify each file per the recipe before deciding; mappers needing `creds`-derived context are flagged with † ):
 
-Apply the recipe to the connectors whose `extract*` returns a bare array and whose break is `length < PAGE_SIZE`. Likely members (verify per file): `canva`, `dependencytrack`, `hubspot`, `lever`, `miro`, `netlify`, `prefect`, `raindrop`, `stripe`, `vercel`, `zendesk`, `zotero` (zotero uses `startPage: 0` with an offset path). Run each guardrail test green as you go.
+- [ ] **Step 1: Page-number, bare-array group** (`parsePage: bareArrayPage`)
 
-- [ ] **Step 2: Migrate the envelope group**
+Likely members (verify per file): `lever`, `netlify`, `prefect`†, `raindrop`, `stripe`, `vercel`, `zendesk`†, `zotero` (zotero uses `startPage: 0` with an offset path). Run each guardrail test green as you go.
 
-Apply the recipe to the connectors with an envelope response (`next` / `totalPages` / `{ data }`): likely `airflow`, `intercom`, `mlflow`, `pipedrive`, `salesforce`, `superset`. Write a local `parseXPage` per file that reproduces the existing extraction + break exactly. Run each guardrail test green.
+- [ ] **Step 2: Page-number, envelope group** (local `parseXPage`, no token threading)
 
-- [ ] **Step 3: Run the full connector integration suite**
+Likely members (verify per file): `airflow`†, `dependencytrack`†, `mlflow`†, `pipedrive`, `superset`†. Write a local `parseXPage` per file that reproduces the existing extraction + break exactly. Run each guardrail test green.
+
+- [ ] **Step 3: Continuation-token group** (`fetchPage` uses `pageCursor`; `parseXPage` returns `nextPageCursor` — like the hubspot exemplar)
+
+Members: `canva`, `miro`, `intercom`, `salesforce`. canva/miro/salesforce also use the **inline-OAuth `loadCreds`** fold; salesforce threads the next *path*; intercom maps `"" ↔ null`. Run each guardrail test green.
+
+- [ ] **Step 4: Run the full connector integration suite**
 
 Run: `bun test packages/gateway/test/integration/connectors/`
-Expected: PASS (all connector fake-server tests, including the 3 exemplars and 18 batch files).
+Expected: PASS (all connector fake-server tests, including the 4 exemplars and 17 batch files).
 
-- [ ] **Step 4: Typecheck the gateway package**
+- [ ] **Step 5: Typecheck the gateway package**
 
 Run: the gateway typecheck (as Task 2 Step 5).
 Expected: no errors; no unused imports (Biome `noUnusedImports` will also catch these in preflight).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/gateway/src/connectors/*-sync.ts
@@ -825,11 +986,11 @@ Open the PR titled `refactor(dedup): Stage A — gateway paginated-sync helper`.
 
 **Spec coverage:** This plan implements Stage A of the design spec (the highest-leverage cluster). Stages B–E and the final gate-tightening are explicitly out of scope here (each gets its own plan as we measure). The "stop at safe margin" and "measure after each" decisions are honored by Task 7 Steps 1–2. ✓
 
-**Placeholder scan:** Helper code, all three exemplar migrations, and the helper tests are fully written. Task 6 is a mechanical fan-out over a verified file list with a complete recipe and a per-file guardrail; the per-connector `parsePage` is classified by an explicit decision list, not left vague. The one deliberate deferral (Tier-2's 9 larger files) is named and scoped out, not a placeholder. ✓
+**Placeholder scan:** Helper code, all four exemplar migrations (greenhouse, readwise, stackoverflow, hubspot), and the helper tests are fully written. Task 6 is a mechanical fan-out over a verified file list with a complete recipe and a per-file guardrail; the per-connector `loadCreds`/`fetchPage`/`parsePage`/`map` are classified by explicit decision lists, not left vague. The one deliberate deferral (Tier-2's 9 larger files) is named and scoped out, not a placeholder. ✓
 
-**Type consistency:** `SyncUpsertRow` defined in Task 1, reused in Task 2's `PaginatedSyncSpec.map`. `runSinglePassPaginatedSync` / `bareArrayPage` / `ParsedPage` / `PaginatedSyncSpec` names are consistent across Tasks 2–6. `parsePage(parsed, page)` signature is consistent (Task 2 defines it; Task 5 uses the `page` arg). ✓
+**Type consistency:** `SyncUpsertRow` defined in Task 1, reused in Task 2's `PaginatedSyncSpec.map`. `runSinglePassPaginatedSync` / `bareArrayPage` / `ParsedPage` / `PaginatedSyncSpec` names are consistent across Tasks 2–6. The final signatures — `fetchPage(creds, page, pageCursor)`, `parsePage(parsed, page) → { items, hasMore, nextPageCursor? }`, `map(raw, creds, now)` — are used consistently in every exemplar and the recipe (the page-number exemplars pass shorter closures, assignable in TS). ✓
 
-**Behavioral fidelity:** every migration is gated by re-running the connector's existing `*-sync-fake-server.test.ts` with no edits; `startPage`/`maxPages` loop math is proven equivalent in Task 2's tests (`startPage 0` case, `maxPages` cap). ✓
+**Behavioral fidelity:** every migration is gated by re-running the connector's existing `*-sync-fake-server.test.ts` with no edits; `startPage`/`maxPages` loop math, `pageCursor` threading, and `creds`-in-`map` are each proven in Task 2's tests (`startPage 0`, `maxPages` cap, continuation-token threading, creds-in-map). Both pagination mechanisms (page-number and continuation-token) and both cred-loading shapes (separate `loadCreds` and inline-OAuth try/catch) have a worked exemplar. ✓
 
 ## Review resolutions (2026-06-17)
 
@@ -839,3 +1000,11 @@ Dispositions of `…-stage-a-paginated-sync-review.md`, each verified against th
 - **Q2.1 (optional `ensureRunning`) — declined.** Verified all 21 connectors pass `options.ensureXMcpRunning` (no empty-fn boilerplate exists); required also guards wiring.
 - **Q2.2 (`Date.now()` once before the loop) — confirmed correct.** Verified all 21 compute `now` once before the loop; the helper matches.
 - **New finding while verifying Q1.1 — recipe gap fixed.** 4 OAuth connectors (canva/hubspot/miro/salesforce) load credentials **inline in `sync()` with a try/catch → noop**, not via a separate `loadCreds(ctx)`. Added a `loadCreds` classification to the Task 6 recipe (fold the try/catch into the callback, return `null` where the original returns `syncNoopResult`). Also noted pipedrive's own `JSON.parse` try/catch lives in its fetch wrapper, untouched by the helper.
+
+### Second-round review (updated review file)
+
+- **Q1.2 (warn on `maxPages` cap) — declined for Stage A.** The current connectors silently `break` at `MAX_PAGES`; adding a `logger.warn` is a new production log line = behavior change, against the pure-dedup invariant. Now that the loop is centralized it becomes a trivial one-line follow-up (a deliberate observability change in a later PR), but not here.
+- **Q1.3 (continuation-token / cursor pagination) — ACCEPTED; design fixed.** Verified canva/hubspot/miro/intercom/salesforce thread a token (or next path) from the previous response into the next request — my original `fetchPage(creds, page)` could not express this and would have refetched page 0 forever. Fixed: the helper now threads `pageCursor` (`""` → previous `nextPageCursor`); `fetchPage` takes `(creds, page, pageCursor)`; `ParsedPage` gains optional `nextPageCursor`. Added the hubspot exemplar (Task 5B) and a continuation-token classification + group to Task 6. Covered by a new helper test.
+- **Q2.1 (optional `ensureRunning`) — re-declined.** Same as first round; all 21 pass `options.ensureXMcpRunning`.
+- **Q2.2 (`Date.now()` once) — re-confirmed.**
+- **Q2.3 (map second parameter) — ACCEPTED; design fixed.** Verified 6 connectors (airflow/dependencytrack/mlflow/prefect/superset/zendesk) pass **creds-derived** context to the mapper (`{ baseUrl: creds.baseUrl, … }` / `{ host }` / `{ apiUrl }`), which my `map(raw, now)` closure could not access (creds load inside the helper). Fixed: `map` is now `(raw, creds, now)`; the helper passes `creds`. Covered by a new helper test. The other 15 ignore creds via `_creds`.
