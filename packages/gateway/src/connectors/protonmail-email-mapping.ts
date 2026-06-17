@@ -1,3 +1,4 @@
+import { clamp, parseDateMs } from "./_lib/email-mapping.ts";
 import { type ImapMessageInput, imapExternalId } from "./imap-email-mapping.ts";
 import type { MappedRow } from "./mapped-row.ts";
 
@@ -19,21 +20,6 @@ const TITLE_MAX = 256;
 const PREVIEW_MAX = 2000;
 const SERVICE = "protonmail" as const;
 const TYPE = "email" as const;
-
-function clamp(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
-function parseDateMs(date: string | number | null): number | null {
-  if (typeof date === "number" && Number.isFinite(date)) {
-    return date;
-  }
-  if (typeof date === "string" && date.trim() !== "") {
-    const ms = Date.parse(date);
-    return Number.isFinite(ms) ? ms : null;
-  }
-  return null;
-}
 
 /**
  * Pure mapper: a ProtonMail-Bridge IMAP message view → a `protonmail:email`

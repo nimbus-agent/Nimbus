@@ -1,3 +1,4 @@
+import { clamp, parseDateMs } from "./_lib/email-mapping.ts";
 import type { MappedRow } from "./mapped-row.ts";
 
 /**
@@ -48,21 +49,6 @@ const PREVIEW_MAX = 2000;
 
 const SERVICE = "imap" as const;
 const TYPE = "email" as const;
-
-function clamp(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
-function parseDateMs(date: string | number | null): number | null {
-  if (typeof date === "number" && Number.isFinite(date)) {
-    return date;
-  }
-  if (typeof date === "string" && date.trim() !== "") {
-    const ms = Date.parse(date);
-    return Number.isFinite(ms) ? ms : null;
-  }
-  return null;
-}
 
 /**
  * Stable external id for a message. Prefers the RFC message-id (stable across
