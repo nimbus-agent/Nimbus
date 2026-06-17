@@ -6,7 +6,7 @@
 
 **Architecture:** A new migration (V42) adds a redacted `params_json` column to `tool_call_log`, and the two tool-instrumentation write sites capture the call input. `share/recipe.ts` reconstructs an ordered step DAG (`called_at ASC`) with an advisory `dependsOn` value-matcher. The share-gate gains a `recipe` branch that redacts the recipe (same `redactForShare` pass), sets `body.kind="recipe"` + `body.recipe`, and omits `turns`/`toolCalls`. The recipe variant is emitted as deterministic YAML; `verify-share` accepts YAML or JSON (re-canonicalizing the body, so verification is format-independent). No new invariant — recipe sharing inherits I27 with zero new emit path.
 
-**Tech Stack:** Bun + TypeScript 6 strict · `bun:sqlite` · `yaml@^2.9.0` (already in dep tree — no `bun add`) · `@noble/hashes/blake3` + `tweetnacl` (existing share-format) · Biome.
+**Tech Stack:** Bun + TypeScript 6 strict · `bun:sqlite` · `js-yaml@^4.2.0` (a **declared `packages/gateway` dependency**, already used by `connectors/obsidian-parsing.ts` / `openapi-loader.ts` — NOT the root-only `yaml` devDep, which would be an undeclared-dependency packaging hazard) · `@noble/hashes/blake3` + `tweetnacl` (existing share-format) · Biome.
 
 ## Global Constraints
 
@@ -639,6 +639,11 @@ export function buildRecipeFromSession(db: Database, sessionId: string, now: () 
     const ids = new Set<string>();
     collectIdentifierLeaves(params, ids);
     const dependsOn: string[] = [];
+    // Substring match against the prior result envelope. A coincidental substring collision (an
+    // identifier appearing inside an unrelated longer value) can yield a spurious edge — ACCEPTABLE:
+    // `dependsOn` is explicitly advisory (spec §7.1) and never load-bearing (replay runs steps in
+    // recorded order, not by dependency). Word-boundary / structured-JSON-value matching is a
+    // deferred enrichment, not built here.
     for (const prior of priorResults) {
       if ([...ids].some((id) => prior.envelope.includes(id))) dependsOn.push(prior.stepId);
     }
@@ -670,7 +675,7 @@ git commit -m "feat(share): advisory dependsOn value-matcher for the recipe DAG"
 - Test: `packages/gateway/src/share/recipe-yaml.test.ts`
 
 **Interfaces:**
-- Consumes: `ShareFile` from `./share-format.ts`; `yaml` package (`stringify`).
+- Consumes: `ShareFile` from `./share-format.ts`; `js-yaml` package (`dump`).
 - Produces:
   - `function serializeShareFileToYaml(share: ShareFile): string` — deterministic (stable-key-ordered) YAML of the full signed envelope. Used for the `.nimbus-recipe.yaml` file emit.
 
@@ -679,7 +684,7 @@ git commit -m "feat(share): advisory dependsOn value-matcher for the recipe DAG"
 ```ts
 // packages/gateway/src/share/recipe-yaml.test.ts
 import { describe, expect, test } from "bun:test";
-import { parse as yamlParse } from "yaml";
+import { load as yamlParse } from "js-yaml";
 import type { ShareFile } from "./share-format.ts";
 import { serializeShareFileToYaml } from "./recipe-yaml.ts";
 
@@ -720,18 +725,21 @@ Expected: FAIL — `Cannot find module './recipe-yaml.ts'`.
 
 ```ts
 // packages/gateway/src/share/recipe-yaml.ts
-import { stringify } from "yaml";
+import { dump } from "js-yaml";
 import type { ShareFile } from "./share-format.ts";
 
 /**
  * Deterministic YAML rendering of a signed share envelope (the `.nimbus-recipe.yaml` variant,
- * spec §5/§7.1). `sortMapEntries: true` gives stable key order so the YAML bytes are
- * content-addressable. Verification does NOT depend on YAML byte-order: verify-share re-canonicalizes
- * the parsed `body` to JSON before hashing/verifying (see verify-share.ts), so this is purely the
- * on-disk/human-readable form.
+ * spec §5/§7.1). `sortKeys: true` gives stable key order so the YAML bytes are content-addressable;
+ * `lineWidth: -1` disables line folding so long base64 hashes/signatures stay on one line.
+ * Verification does NOT depend on YAML byte-order: verify-share re-canonicalizes the parsed `body`
+ * to JSON before hashing/verifying (see verify-share.ts), so this is purely the on-disk/human form.
+ *
+ * Uses `js-yaml` (a declared `packages/gateway` dependency, already used by obsidian-parsing.ts /
+ * openapi-loader.ts) — NOT the root-only `yaml` devDep.
  */
 export function serializeShareFileToYaml(share: ShareFile): string {
-  return stringify(share, { sortMapEntries: true });
+  return dump(share, { sortKeys: true, lineWidth: -1 });
 }
 ```
 
@@ -756,7 +764,7 @@ git commit -m "feat(share): deterministic YAML serializer for the recipe share v
 - Test: `packages/gateway/src/share/verify-share.test.ts`
 
 **Interfaces:**
-- Consumes: `serializeShareFileToYaml` (Task 6) in the test; `parse` from `yaml` in the impl.
+- Consumes: `serializeShareFileToYaml` (Task 6) in the test; `load` from `js-yaml` in the impl.
 - Produces: `verifyShareFromBytes` / `verifyShareFromInput` transparently handle a YAML-serialized share — the parsed `body` is re-canonicalized to JSON bytes and handed to the existing `verifyShareBytes`, so a genuine YAML recipe verifies and a tampered one fails. `verifyShareBytes` in `share-format.ts` stays JSON-only (the dependency-light CI primitive — spec §6.4).
 
 > Read `verify-share.ts` first. The exact insertion point is wherever it currently decodes bytes → calls `verifyShareBytes`. Insert a "if it is not JSON, YAML-parse and re-encode as canonical JSON bytes" shim BEFORE that call. Do not change `verifyShareBytes`.
@@ -795,10 +803,10 @@ Expected: FAIL — YAML bytes are not valid JSON, so `verifyShareBytes` reports 
 
 - [ ] **Step 3: Implement the YAML shim**
 
-In `packages/gateway/src/share/verify-share.ts`, add the import:
+In `packages/gateway/src/share/verify-share.ts`, add the import (`js-yaml` — the declared gateway dep):
 
 ```ts
-import { parse as yamlParse } from "yaml";
+import { load as yamlParse } from "js-yaml";
 ```
 
 Add a normalizer that turns share bytes into canonical JSON bytes (JSON passthrough; YAML → JSON), and call it before `verifyShareBytes` in the bytes path:
@@ -1057,7 +1065,16 @@ import { buildRecipeFromSession } from "../share/recipe.ts";
 import { serializeShareFileToYaml } from "../share/recipe-yaml.ts";
 ```
 
-In the `share.create` handler, pass `buildRecipe` into the `createShare` deps:
+In the `share.create` handler, make the `collectSession` fetch conditional — the recipe path never reads `content`, so skip the DB read for `kind === "recipe"`. Replace the existing unconditional `const content = await ctx.collectSession(sessionId);` with:
+
+```ts
+    // Only the transcript path consumes `content`; the recipe path builds from tool_call_log via
+    // buildRecipe, so skip the session-memory read entirely for recipes (no wasted DB query).
+    const content =
+      kind === "transcript" ? await ctx.collectSession(sessionId) : { turns: [], toolCalls: [] };
+```
+
+Then pass `buildRecipe` into the `createShare` deps:
 
 ```ts
     const result = await createShare(req, {
@@ -1121,7 +1138,7 @@ git commit -m "feat(share): wire recipe build + YAML emit into share.create"
 
 In `docs/superpowers/specs/2026-06-15-slice8-share-virality-design.md`:
 
-- §7.1, the YAML paragraph: replace the "check whether a `yaml` package is already in the dep tree; if not, add it" sentence with a note that `yaml@^2.9.0` is already a dependency and that **8b adds migration V42 (`tool_call_log.params_json`)** so recipe steps carry real, secret-redacted params (the input-args-not-stored limitation is resolved).
+- §7.1, the YAML paragraph: replace the "check whether a `yaml` package is already in the dep tree; if not, add it" sentence with a note that serialization uses **`js-yaml`** (already a declared `packages/gateway` dependency — not the root-only `yaml` devDep) and that **8b adds migration V42 (`tool_call_log.params_json`)** so recipe steps carry real, secret-redacted params (the input-args-not-stored limitation is resolved).
 - §10 schema summary table: add a row `| V42 | 8b | tool_call_log.params_json (recipe step params) |` and change the existing `share_inbox` row from `V42` to **`V43`** (wave 8d). Update the parenthetical "(8b and 8c add no migrations …)" to "(8c adds no migration; 8b adds V42 for recipe params; 8d adds V43.)".
 - §9.4 and §13 (wave→PR→plan map): change `share_inbox` / 8d's migration reference from V42 → **V43**.
 
