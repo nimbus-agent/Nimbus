@@ -183,7 +183,12 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
     const toolCallSeeds: ToolCallSeed[] = [
       { sessionId: SESSION_ID, toolId: "gmail_search", service: "gmail", params: { q: "hi" } },
       // Write-shaped tool: trailing segment "delete" is not in READ_VERBS → replays as skipped-non-read.
-      { sessionId: SESSION_ID, toolId: "file_delete", service: "fs", params: { path: "/tmp/x" } },
+      {
+        sessionId: SESSION_ID,
+        toolId: "file_delete",
+        service: "fs",
+        params: { path: join(tmpdir(), "x") },
+      },
     ];
     gateway = Bun.spawn(["bun", RUNNER], {
       stdin: "ignore",

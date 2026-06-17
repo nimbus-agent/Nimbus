@@ -1,6 +1,6 @@
 // packages/gateway/src/share/recipe-runner.ts
 import type { RecipeStep } from "./recipe.ts";
-import type { ShareFile, ShareToolCall } from "./share-format.ts";
+import type { ShareFile } from "./share-format.ts";
 
 /** Outcome of attempting one tool locally during replay (produced by the executor, Task 6). */
 export type ToolRunOutcome =
@@ -85,15 +85,22 @@ export function stepsFromShare(share: ShareFile): {
       .filter((s): s is RecipeStep => s !== null);
     return { sourceSessionId, steps };
   }
-  const toolCalls: readonly ShareToolCall[] = share.body.toolCalls ?? [];
-  const steps: RecipeStep[] = toolCalls.map((tc, i) => ({
-    stepId: `step-${i + 1}`,
-    tool: tc.toolId,
-    service: tc.service,
-    params: tc.params,
-    status: tc.status,
-    dependsOn: [],
-  }));
+  const rawCalls: unknown[] = Array.isArray(share.body.toolCalls) ? share.body.toolCalls : [];
+  const steps: RecipeStep[] = [];
+  for (const el of rawCalls) {
+    if (!isRecord(el) || typeof el["toolId"] !== "string" || typeof el["service"] !== "string")
+      continue;
+    const toolId = el["toolId"];
+    const service = el["service"];
+    steps.push({
+      stepId: `step-${steps.length + 1}`,
+      tool: toolId,
+      service,
+      params: el["params"],
+      status: typeof el["status"] === "string" ? el["status"] : "ok",
+      dependsOn: [],
+    });
+  }
   return { sourceSessionId, steps };
 }
 

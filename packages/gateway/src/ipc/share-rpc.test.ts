@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -378,6 +378,17 @@ describe("share.approvalRespond", () => {
 });
 
 describe("share.replay", () => {
+  const replayTmpDirs: string[] = [];
+  afterAll(() => {
+    for (const dir of replayTmpDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
   test("verifies + replays a recipe share; report classifies each step", async () => {
     const ctx = freshCtx(db);
     // sign a recipe share with one read + one write step
@@ -417,6 +428,7 @@ describe("share.replay", () => {
     };
     const share = buildShareFile(body, encodeBase64(seed), encodeBase64(kp.publicKey));
     const dir = mkdtempSync(join(tmpdir(), "share-replay-"));
+    replayTmpDirs.push(dir);
     const path = join(dir, "r.nimbus-share.json");
     await Bun.write(path, JSON.stringify(share));
 

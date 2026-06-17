@@ -196,6 +196,26 @@ describe("parseShareFile", () => {
     const withNullSig = { body: { kind: "recipe", sessionId: "s" }, sig: null };
     expect(parseShareFile(new TextEncoder().encode(JSON.stringify(withNullSig)))).toBeNull();
   });
+
+  test("parseShareFile returns null when format or forwarding is missing", () => {
+    const withoutFormat = {
+      body: { kind: "recipe", sessionId: "s" },
+      sig: { alg: "ed25519", pubkey: "P", signature: "S" },
+      contentHash: "abc",
+      forwarding: { hops: 0, chain: [] },
+      // no format field
+    };
+    expect(parseShareFile(new TextEncoder().encode(JSON.stringify(withoutFormat)))).toBeNull();
+
+    const withoutForwarding = {
+      format: "nimbus-share/v1",
+      body: { kind: "recipe", sessionId: "s" },
+      sig: { alg: "ed25519", pubkey: "P", signature: "S" },
+      contentHash: "abc",
+      // no forwarding field
+    };
+    expect(parseShareFile(new TextEncoder().encode(JSON.stringify(withoutForwarding)))).toBeNull();
+  });
 });
 
 describe("loadShareBytes", () => {

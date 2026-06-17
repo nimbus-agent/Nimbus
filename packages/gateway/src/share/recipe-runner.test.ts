@@ -77,6 +77,35 @@ describe("stepsFromShare", () => {
     expect(stepsFromShare(shareWith({ kind: "recipe", recipe: { nope: true } })).steps).toEqual([]);
     expect(stepsFromShare(shareWith({ kind: "transcript" })).steps).toEqual([]);
   });
+
+  test("transcript share with non-array toolCalls → empty steps, no throw", () => {
+    const share = {
+      ...shareWith({ kind: "transcript" }),
+      body: { ...shareWith({ kind: "transcript" }).body, toolCalls: "not-an-array" },
+    } as unknown as ShareFile;
+    expect(() => stepsFromShare(share)).not.toThrow();
+    expect(stepsFromShare(share).steps).toEqual([]);
+  });
+
+  test("transcript share with mixed valid/malformed toolCalls → only valid elements, sequential ids", () => {
+    const share = {
+      ...shareWith({ kind: "transcript" }),
+      body: {
+        ...shareWith({ kind: "transcript" }).body,
+        toolCalls: [
+          { toolId: "gmail_get", service: "gmail", params: { id: "1" }, status: "ok" },
+          { service: "fs", params: {}, status: "ok" }, // missing toolId
+          { toolId: "slack_search", service: "slack", params: {}, status: "ok" },
+        ],
+      },
+    } as unknown as ShareFile;
+    const { steps } = stepsFromShare(share);
+    expect(steps.length).toBe(2);
+    expect(steps[0]?.stepId).toBe("step-1");
+    expect(steps[0]?.tool).toBe("gmail_get");
+    expect(steps[1]?.stepId).toBe("step-2");
+    expect(steps[1]?.tool).toBe("slack_search");
+  });
 });
 
 function step(tool: string, status = "ok", params: unknown = {}): RecipeStep {
