@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterBitriseBuilds } from "./search-filter.ts";
@@ -77,10 +77,7 @@ await runReadOnlyMcpConnector("nimbus-bitrise", (reg) => {
     async (p) => {
       const root = await bitriseGet(`/v0.1/apps/${encodeURIComponent(p.appSlug)}/builds?limit=50`);
       const data = (root as { data?: unknown[] } | null)?.data;
-      const matches = Array.isArray(data)
-        ? filterBitriseBuilds(data, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(data, filterBitriseBuilds, p);
     },
   );
 });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterCodemagicBuilds } from "./search-filter.ts";
@@ -68,10 +68,7 @@ await runReadOnlyMcpConnector("nimbus-codemagic", (reg) => {
     async (p) => {
       const root = await codemagicGet(`/builds?appId=${encodeURIComponent(p.appId)}&limit=50`);
       const builds = (root as { builds?: unknown[] } | null)?.builds;
-      const matches = Array.isArray(builds)
-        ? filterCodemagicBuilds(builds, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(builds, filterCodemagicBuilds, p);
     },
   );
 });

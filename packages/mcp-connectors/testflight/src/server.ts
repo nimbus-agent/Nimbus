@@ -1,6 +1,6 @@
 import { signAppStoreConnectJwt } from "@nimbus-dev/sdk";
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { jwtParamsFromEnv } from "./jwt.ts";
@@ -68,10 +68,7 @@ await runReadOnlyMcpConnector("nimbus-testflight", (reg) => {
     async (p) => {
       const root = await appstoreGet(buildsPath(p.appId, 200));
       const data = (root as { data?: unknown[] } | null)?.data;
-      const matches = Array.isArray(data)
-        ? filterTestflightBuilds(data, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(data, filterTestflightBuilds, p);
     },
   );
 });

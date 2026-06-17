@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSonarIssues } from "./search-filter.ts";
@@ -109,10 +109,7 @@ await runReadOnlyMcpConnector("nimbus-sonarqube", (reg) => {
       });
       const root = await sonarGet(`/api/issues/search?${search.toString()}`);
       const issues = (root as { issues?: unknown[] } | null)?.issues;
-      const matches = Array.isArray(issues)
-        ? filterSonarIssues(issues, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(issues, filterSonarIssues, p);
     },
   );
 });
