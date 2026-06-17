@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../index/tool-call-log-v29-sql.ts";
+import { TOOL_CALL_PARAMS_V42_SQL } from "../index/tool-call-params-v42-sql.ts";
 import {
   MAX_ENVELOPE_BYTES,
   readToolCallLog,
@@ -15,6 +16,7 @@ import {
 function freshDb(): Database {
   const db = new Database(":memory:");
   db.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
+  db.exec(TOOL_CALL_PARAMS_V42_SQL);
   return db;
 }
 
@@ -224,10 +226,30 @@ describe("writeToolCallLog + readToolCallLog", () => {
     const dbPath = join(tmpDir, "ro.sqlite");
     const seed = new Database(dbPath);
     seed.exec(TOOL_CALL_LOG_V29_SCHEMA_SQL);
+    seed.exec(TOOL_CALL_PARAMS_V42_SQL);
     seed.close();
     const ro = new Database(dbPath, { readonly: true });
     expect(() => writeToolCallLog(ro, entry())).not.toThrow();
     ro.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("persists params (secret-redacted) and reads them back", () => {
+    const db = freshDb();
+    writeToolCallLog(
+      db,
+      entry({ params: { query: "from:boss", token: "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } }),
+    );
+    const { toolCalls } = readToolCallLog(db, {});
+    const p = toolCalls[0]?.params as { query?: string; token?: string };
+    expect(p.query).toBe("from:boss");
+    expect(p.token).toBe("[REDACTED]"); // secret stripped at write time
+  });
+
+  test("params is null when not supplied", () => {
+    const db = freshDb();
+    writeToolCallLog(db, entry()); // entry() has no params
+    const { toolCalls } = readToolCallLog(db, {});
+    expect(toolCalls[0]?.params).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { dbRun } from "./write.ts";
 
 export const MAX_ENVELOPE_BYTES = 65_536;
@@ -12,10 +13,12 @@ export interface ToolCallLogEntry {
   durationMs: number;
   resultEnvelope: string;
   status: "ok" | "error";
+  params?: unknown;
 }
 
 export interface ToolCallLogReadEntry extends ToolCallLogEntry {
   id: number;
+  params: unknown;
 }
 
 export interface ToolCallLogFilter {
@@ -34,6 +37,15 @@ export interface ToolCallLogReadResult {
   nextCursor: { calledAt: number; id: number } | null;
 }
 
+function parseParamsJson(raw: string | null): unknown {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 function truncateEnvelope(envelope: string): string {
   const total = Buffer.byteLength(envelope, "utf8");
   if (total <= MAX_ENVELOPE_BYTES) return envelope;
@@ -46,12 +58,13 @@ function truncateEnvelope(envelope: string): string {
 
 const INSERT_SQL = `
 INSERT INTO tool_call_log
-  (session_id, tool_id, service, called_at, duration_ms, result_envelope, status)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+  (session_id, tool_id, service, called_at, duration_ms, result_envelope, status, params_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `.trim();
 
 export function writeToolCallLog(db: Database, entry: ToolCallLogEntry): void {
   const envelope = truncateEnvelope(entry.resultEnvelope);
+  const paramsJson = entry.params === undefined ? null : redactAuditPayload(entry.params);
   try {
     dbRun(db, INSERT_SQL, [
       entry.sessionId,
@@ -61,6 +74,7 @@ export function writeToolCallLog(db: Database, entry: ToolCallLogEntry): void {
       entry.durationMs,
       envelope,
       entry.status,
+      paramsJson,
     ]);
   } catch {
     // Best-effort. The two wiring sites are not allowed to throw because of
@@ -104,7 +118,7 @@ export function readToolCallLog(db: Database, filter: ToolCallLogFilter): ToolCa
 
   const whereClause = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
   const sql = `
-SELECT id, session_id, tool_id, service, called_at, duration_ms, result_envelope, status
+SELECT id, session_id, tool_id, service, called_at, duration_ms, result_envelope, status, params_json
 FROM tool_call_log
 ${whereClause}
 ORDER BY called_at ASC, id ASC
@@ -120,6 +134,7 @@ LIMIT ?
     duration_ms: number;
     result_envelope: string;
     status: "ok" | "error";
+    params_json: string | null;
   };
 
   const rows = db.query(sql).all(...args, limit + 1) as Row[];
@@ -135,6 +150,7 @@ LIMIT ?
     durationMs: r.duration_ms,
     resultEnvelope: r.result_envelope,
     status: r.status,
+    params: parseParamsJson(r.params_json),
   }));
 
   const last = toolCalls.at(-1);
