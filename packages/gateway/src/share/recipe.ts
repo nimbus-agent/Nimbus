@@ -27,6 +27,9 @@ export interface Recipe {
   readonly graphTraversals: readonly unknown[];
 }
 
+/** Max tool calls reconstructed into one recipe (deliberate cap; sessions beyond this are truncated). */
+const MAX_RECIPE_TOOL_CALLS = 1000;
+
 const LOW_ENTROPY = new Set(["true", "false", "null", ""]);
 
 /** Identifier-shaped scalar test (spec §7.1): entity IDs / paths / URLs/URNs / mixed-alnum ≥ 8. */
@@ -53,7 +56,7 @@ function collectIdentifierLeaves(value: unknown, out: Set<string>): void {
 }
 
 export function buildRecipeFromSession(db: Database, sessionId: string, now: () => number): Recipe {
-  const { toolCalls } = readToolCallLog(db, { sessionId, limit: 1000 });
+  const { toolCalls } = readToolCallLog(db, { sessionId, limit: MAX_RECIPE_TOOL_CALLS });
   // For each prior step, the identifier set produced by its (string) result envelope.
   const priorResults: Array<{ stepId: string; envelope: string }> = [];
   const steps: RecipeStep[] = toolCalls.map((tc, i) => {

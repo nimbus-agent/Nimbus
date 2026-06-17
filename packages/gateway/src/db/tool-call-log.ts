@@ -4,6 +4,8 @@ import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { dbRun } from "./write.ts";
 
 export const MAX_ENVELOPE_BYTES = 65_536;
+/** Byte budget for stored params JSON — larger than redactAuditPayload's 4096 default so typical params survive. */
+export const MAX_PARAMS_JSON_BYTES = 16_384;
 
 export interface ToolCallLogEntry {
   sessionId: string | null;
@@ -46,6 +48,23 @@ function parseParamsJson(raw: string | null): unknown {
   }
 }
 
+/**
+ * Redact params and guarantee the result is always valid JSON (or SQL NULL when params
+ * is undefined). If redactAuditPayload truncates mid-JSON (producing an invalid string),
+ * a visible sentinel `{"truncated":true}` is stored so the loss is explicit on read,
+ * never silently dropped to null.
+ */
+function redactedParamsJson(params: unknown): string {
+  const s = redactAuditPayload(params, MAX_PARAMS_JSON_BYTES);
+  try {
+    JSON.parse(s);
+    return s; // valid JSON within budget
+  } catch {
+    // redaction truncated mid-JSON → store a VALID sentinel so the loss is visible
+    return JSON.stringify({ truncated: true });
+  }
+}
+
 function truncateEnvelope(envelope: string): string {
   const total = Buffer.byteLength(envelope, "utf8");
   if (total <= MAX_ENVELOPE_BYTES) return envelope;
@@ -64,7 +83,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 
 export function writeToolCallLog(db: Database, entry: ToolCallLogEntry): void {
   const envelope = truncateEnvelope(entry.resultEnvelope);
-  const paramsJson = entry.params === undefined ? null : redactAuditPayload(entry.params);
+  const paramsJson = entry.params === undefined ? null : redactedParamsJson(entry.params);
   try {
     dbRun(db, INSERT_SQL, [
       entry.sessionId,

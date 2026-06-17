@@ -8,6 +8,7 @@ import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../index/tool-call-log-v29-sql.ts"
 import { TOOL_CALL_PARAMS_V42_SQL } from "../index/tool-call-params-v42-sql.ts";
 import {
   MAX_ENVELOPE_BYTES,
+  MAX_PARAMS_JSON_BYTES,
   readToolCallLog,
   type ToolCallLogEntry,
   writeToolCallLog,
@@ -259,5 +260,22 @@ describe("writeToolCallLog + readToolCallLog", () => {
     const { toolCalls } = readToolCallLog(db, { sessionId: "sess-A", limit: 1000 });
     expect(toolCalls).toHaveLength(1);
     expect((toolCalls[0]?.params as { channel?: string }).channel).toBe("#eng");
+  });
+
+  test("params over budget store VALID sentinel {truncated:true}, never null", () => {
+    // A blob large enough to guarantee redactAuditPayload exceeds MAX_PARAMS_JSON_BYTES
+    // and truncates mid-JSON (producing invalid JSON).
+    const db = freshDb();
+    writeToolCallLog(db, entry({ params: { blob: "x".repeat(40_000) } }));
+    const { toolCalls } = readToolCallLog(db, {});
+    const p = toolCalls[0]?.params;
+    // Must NOT be null — the sentinel must survive the round-trip.
+    expect(p).not.toBeNull();
+    // Must be the truncation sentinel, not the (invalid) truncated blob.
+    expect(p).toEqual({ truncated: true });
+  });
+
+  test("MAX_PARAMS_JSON_BYTES is exported and larger than the 4096 redactAuditPayload default", () => {
+    expect(MAX_PARAMS_JSON_BYTES).toBeGreaterThan(4096);
   });
 });
