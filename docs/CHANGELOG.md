@@ -13,6 +13,13 @@ Phase 6 ships as 9 sequenced delivery slices (see [`docs/roadmap.md` § Phase 6]
 ### 2026-06-17
 
 - **perf (Phase 2 — Bencher):** Advisory Bencher Cloud trend ingest now runs alongside `github-action-benchmark` during a soak window — a pure `HistoryLine` → Bencher Metric Format mapper (`packages/gateway/src/perf/bencher-bmf.ts`) + a thin `scripts/perf/emit-bencher-bmf.ts` CLI, wired into `_perf.yml` (all matrix legs as Bencher testbeds) and a dormant ingest in `_perf-reference.yml`. Adds per-runner testbeds and charts the throughput/tokens trend surfaces for the first time. The in-code `gateClass` comparator remains the **sole** gate (Bencher is advisory; every step is `continue-on-error`). `github-action-benchmark` retires in a follow-up PR after the soak.
+- **Share & Virality — Slice 8b (recipes):** `nimbus share <session> --as-recipe` now produces a
+  deterministic, LLM-free declarative tool-call DAG (`share/recipe.ts`) reconstructed from the
+  session's logged tool calls, redacted + signed through the existing I27 share-gate (no new
+  invariant). Migration **V42** adds `tool_call_log.params_json` (secret-redacted) so recipe steps
+  carry real params; an advisory `dependsOn` value-matcher links steps by identifier-shaped values.
+  The recipe variant serializes to deterministic YAML (`.nimbus-recipe.yaml`); `verify-share` accepts
+  either YAML or JSON.
 
 ### 2026-06-15
 

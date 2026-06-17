@@ -144,7 +144,7 @@ Step ordering is the **execution order** (`called_at` ascending) — always pres
 - Only **identifier-shaped** values qualify: entity IDs, file paths, URLs/URNs, or strings ≥ 8 chars with mixed alphanumerics. The matcher walks nested structures but matches on leaf scalars, not whole subtrees.
 - These limits are documented in `recipe.ts` and surfaced in the recipe (`dependsOn` is explicitly advisory; the ordered step list is the contract). Replay (§8) does not depend on `dependsOn` correctness — it executes steps in recorded order.
 
-Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). The serializer: at plan time check whether a `yaml` package is already in the dep tree; if not, add the well-established `yaml` package via the `bun add` dependency-safety pre-flight (`nimbus-commands` skill). Emit deterministic (stable-key-ordered) output so a recipe is content-addressable.
+Serialized to deterministic **YAML** (`.nimbus-recipe.yaml`). The serializer uses **`js-yaml`** (already a declared `packages/gateway` dependency — not the root-only `yaml` devDep; no additional `bun add` required). Emit deterministic (stable-key-ordered) output so a recipe is content-addressable. **Migration V42** adds `tool_call_log.params_json` (secret-redacted at write) so recipe steps carry real params — resolving the "input args not stored" limitation from earlier waves.
 
 ### 7.2 `nimbus share <session> --as-recipe`
 
@@ -166,7 +166,7 @@ Replay therefore never fires a write/HITL action, and never executes an un-class
 
 Load the shared recipe (or a transcript share's `toolCalls`), run the recipe-runner locally, **diff** each step's result against the shared original, and render a divergence report: per-step `match` / `diverged` / `missing-connector` / `skipped-non-read` / `error` + a summary. Read-only and deterministic — the "watch what ran on Asaf's data run on yours" demo, and the catch for "this only works because Asaf has connector X."
 
-## 9. Wave 8d — Sovereign-mesh referral (PR4) · migration V42
+## 9. Wave 8d — Sovereign-mesh referral (PR4) · migration V43
 
 ### 9.1 Forwarding
 
@@ -182,16 +182,17 @@ A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a f
 
 ### 9.4 Deferred-reveal install prompt
 
-`share_inbox` (V42) holds pending forwarded shares keyed by recipient pubkey. A freshly-initialized Gateway, on first successful pair, **drains** pending shares from that sender and surfaces attribution + content. Inbound shares are stored as **viewable/replayable artifacts — never auto-merged into the index, no auto-execution** — so receiving needs no HITL, and the "no plaintext bootstrap" promise holds (the envelope is meaningless without a paired Gateway).
+`share_inbox` (V43) holds pending forwarded shares keyed by recipient pubkey. A freshly-initialized Gateway, on first successful pair, **drains** pending shares from that sender and surfaces attribution + content. Inbound shares are stored as **viewable/replayable artifacts — never auto-merged into the index, no auto-execution** — so receiving needs no HITL, and the "no plaintext bootstrap" promise holds (the envelope is meaningless without a paired Gateway).
 
 ## 10. Schema summary
 
 | Version | Wave | Table(s) |
 |---------|------|----------|
 | V41 | 8a | `share_records` (sent shares) |
-| V42 | 8d | `share_inbox` (received / pending-forward, keyed by recipient pubkey) |
+| V42 | 8b | `tool_call_log.params_json` (recipe step params) |
+| V43 | 8d | `share_inbox` (received / pending-forward, keyed by recipient pubkey) |
 
-(8b and 8c add no migrations — recipe lives inside the existing share body; replay is read-only.)
+(8c adds no migration — replay is read-only; 8b adds V42 for recipe params; 8d adds V43.)
 
 **Retention / pruning** (design-review point 5b): both tables are append-only and user-initiated (shares are deliberate, low-volume actions — not a sync firehose), so automatic background pruning is **deferred**. `share.list` filters expired entries by default (`--all` to include them), and a manual `nimbus share prune [--expired] [--before <date>]` is provided in 8a for housekeeping. A background reaper can be added later if real-world volume warrants it; tracked as a follow-up, not built now.
 
@@ -218,6 +219,6 @@ A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a f
 | Wave | PR scope | New invariant / schema | Plan |
 |------|----------|------------------------|------|
 | 8a | share + verify-share + redaction + gate | I27 / D21, V41 | plan-8a |
-| 8b | `--as-recipe` + declarative DAG | — | plan-8b |
+| 8b | `--as-recipe` + declarative DAG | V42 | plan-8b |
 | 8c | replay + recipe-runner | — | plan-8c |
-| 8d | sovereign-mesh referral | V42 | plan-8d |
+| 8d | sovereign-mesh referral | V43 | plan-8d |
