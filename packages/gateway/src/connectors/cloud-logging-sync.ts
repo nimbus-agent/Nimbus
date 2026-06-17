@@ -1,10 +1,6 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import { runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { mapCloudLoggingSinkToItem } from "./cloud-logging-sink-mapping.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -81,15 +77,6 @@ async function loadCreds(ctx: SyncContext): Promise<CloudLoggingCreds | null> {
   return { credPath, project };
 }
 
-function parseJsonArray(text: string): unknown[] {
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 export function createCloudLoggingSyncable(options: CloudLoggingSyncableOptions): Syncable {
   const run = options.runGcloud ?? gcloudLoggingSinksList;
   return {
@@ -97,40 +84,35 @@ export function createCloudLoggingSyncable(options: CloudLoggingSyncableOptions)
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureCloudLoggingMcpRunning();
-
-      // Cloud Logging (Tier-3, metadata-only) reuses the existing GCP credentials.
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      await ctx.rateLimiter.acquire(SERVICE_ID);
-      const res = await run(creds.credPath, creds.project);
-      const totalBytes = res.text.length;
-      if (!res.ok) {
-        ctx.logger.warn({ serviceId: SERVICE_ID }, "cloud_logging sync: gcloud sinks list failed");
-        // Graceful empty pass — no throw past the Syncable boundary, cursor preserved.
-        return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-      }
-
-      const now = Date.now();
-      let totalUpserted = 0;
-      let seen = 0;
-      for (const entry of parseJsonArray(res.text)) {
-        if (seen >= MAX_SINKS) {
-          break;
-        }
-        seen += 1;
-        const mapped = mapCloudLoggingSinkToItem(entry, { project: creds.project, syncedAt: now });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          totalUpserted += 1;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      return runSinglePassCliShellSync(ctx, cursor, {
+        ensureRunning: () => options.ensureCloudLoggingMcpRunning(),
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: 1,
+        runCliPage: async (creds) => {
+          await ctx.rateLimiter.acquire(SERVICE_ID);
+          const res = await run(creds.credPath, creds.project);
+          if (!res.ok) {
+            ctx.logger.warn(
+              { serviceId: SERVICE_ID },
+              "cloud_logging sync: gcloud sinks list failed",
+            );
+          }
+          return { ok: res.ok, text: res.text };
+        },
+        parsePage: (text) => {
+          let items: unknown[] = [];
+          try {
+            const parsed = JSON.parse(text) as unknown;
+            items = Array.isArray(parsed) ? parsed.slice(0, MAX_SINKS) : [];
+          } catch {
+            // empty
+          }
+          return { items, hasMore: false };
+        },
+        map: (raw, creds, now) =>
+          mapCloudLoggingSinkToItem(raw, { project: creds.project, syncedAt: now }),
+      });
     },
   };
 }

@@ -1,10 +1,6 @@
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import { isSafeCliArg, runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapVertexAiModelToItem } from "./vertex-ai-model-mapping.ts";
@@ -23,26 +19,6 @@ type VertexAiCursorV1 = { pass: number };
 
 function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies VertexAiCursorV1);
-}
-
-/**
- * Inline argv flag-smuggling guard (the gateway package cannot import
- * `mcp-connectors/shared/safe-cli-arg.ts`). A region value beginning with `-`
- * would be parsed by gcloud as a FLAG; reject empty / over-long / `-`-prefixed /
- * control-char values before the value reaches a gcloud argv. Mirrors
- * sagemaker-sync's inline `isSafeCliArg`.
- */
-function isSafeCliArg(value: string): boolean {
-  if (value.length === 0 || value.length > 1024 || value.startsWith("-")) {
-    return false;
-  }
-  for (let i = 0; i < value.length; i += 1) {
-    const cp = value.codePointAt(i);
-    if (cp !== undefined && cp < 0x20) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /**
@@ -124,15 +100,6 @@ async function loadCreds(ctx: SyncContext): Promise<VertexAiCreds | null> {
   return { credPath, project, region };
 }
 
-function parseJsonArray(text: string): unknown[] {
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 export function createVertexAiSyncable(options: VertexAiSyncableOptions): Syncable {
   const run = options.runGcloud ?? gcloudAiModelsList;
   return {
@@ -140,44 +107,39 @@ export function createVertexAiSyncable(options: VertexAiSyncableOptions): Syncab
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureVertexAiMcpRunning();
-
-      // Vertex AI (Tier-3, metadata-only) reuses the existing GCP credentials.
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      await ctx.rateLimiter.acquire(SERVICE_ID);
-      const res = await run(creds.credPath, creds.project, creds.region);
-      const totalBytes = res.text.length;
-      if (!res.ok) {
-        ctx.logger.warn({ serviceId: SERVICE_ID }, "vertex_ai sync: gcloud ai models list failed");
-        // Graceful empty pass — no throw past the Syncable boundary, cursor preserved.
-        return syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-      }
-
-      const now = Date.now();
-      let totalUpserted = 0;
-      let seen = 0;
-      for (const entry of parseJsonArray(res.text)) {
-        if (seen >= MAX_MODELS) {
-          break;
-        }
-        seen += 1;
-        const mapped = mapVertexAiModelToItem(entry, {
-          project: creds.project,
-          region: creds.region,
-          syncedAt: now,
-        });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          totalUpserted += 1;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
+      return runSinglePassCliShellSync(ctx, cursor, {
+        ensureRunning: () => options.ensureVertexAiMcpRunning(),
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: 1,
+        runCliPage: async (creds) => {
+          await ctx.rateLimiter.acquire(SERVICE_ID);
+          const res = await run(creds.credPath, creds.project, creds.region);
+          if (!res.ok) {
+            ctx.logger.warn(
+              { serviceId: SERVICE_ID },
+              "vertex_ai sync: gcloud ai models list failed",
+            );
+          }
+          return { ok: res.ok, text: res.text };
+        },
+        parsePage: (text) => {
+          let items: unknown[] = [];
+          try {
+            const parsed = JSON.parse(text) as unknown;
+            items = Array.isArray(parsed) ? parsed.slice(0, MAX_MODELS) : [];
+          } catch {
+            // empty
+          }
+          return { items, hasMore: false };
+        },
+        map: (raw, creds, now) =>
+          mapVertexAiModelToItem(raw, {
+            project: creds.project,
+            region: creds.region,
+            syncedAt: now,
+          }),
+      });
     },
   };
 }
