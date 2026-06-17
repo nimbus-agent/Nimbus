@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract the duplicated single-pass paginated connector-sync scaffolding into a shared `_lib/paginated-sync.ts` helper (`upsertMapped` + `runSinglePassPaginatedSync` + `bareArrayPage`) and migrate the 21 Tier-1 paginated-family connectors to delegate to it — pure dedup, zero behavior change — driving strict jscpd down.
+**Goal:** Extract the duplicated single-pass paginated connector-sync scaffolding into a shared `_lib/paginated-sync.ts` helper (`upsertMapped` + `runSinglePassPaginatedSync` + `bareArrayPage`) and migrate the Tier-1 paginated-family connectors to delegate to it — pure dedup, zero behavior change — driving strict jscpd down. **Delivered:** 20 connectors migrated; `superset-sync.ts` deferred (its pre-loop login step accumulates bytes and returns a distinct http-empty result on auth failure, which the single-pass helper's byte-accounting does not model).
 
 **Architecture:** A new gateway-internal helper owns the parts of every single-pass paginated `sync()` that are byte-identical across connectors: the `performance.now()` timing, the noop-on-unconfigured-creds, the `for`-page loop with first-page `http_error`/`parse_error` degradation, the per-item map+upsert loop, and the pass-1-cursor success return. The loop threads an opaque `pageCursor` (`""` → the previous page's `nextPageCursor`) so it covers **both** page-number connectors (path from `page`) and continuation-token connectors (path/token from the previous response — canva/hubspot/miro/intercom/salesforce). Each connector keeps only what genuinely varies (constants, creds, per-page path/auth via `fetchPage`, response parsing via `parsePage`, the mapping fn via `map(raw, creds, now)`) and calls the helper from a thin `createXSyncable`. Behavior is preserved exactly; each connector's existing `*-sync-fake-server.test.ts` integration test is the guardrail.
 
@@ -869,8 +869,8 @@ git commit -m "refactor(dedup): hubspot-sync via runSinglePassPaginatedSync (Sta
 
 ### Task 6: Migrate the remaining Tier-1 paginated connectors (batched)
 
-**Files (Modify — 17 connectors):**
-`airflow-sync.ts`, `canva-sync.ts`, `dependencytrack-sync.ts`, `intercom-sync.ts`, `lever-sync.ts`, `miro-sync.ts`, `mlflow-sync.ts`, `netlify-sync.ts`, `pipedrive-sync.ts`, `prefect-sync.ts`, `raindrop-sync.ts`, `salesforce-sync.ts`, `stripe-sync.ts`, `superset-sync.ts`, `vercel-sync.ts`, `zendesk-sync.ts`, `zotero-sync.ts`.
+**Files (Modify — 16 connectors; `superset-sync.ts` was deferred during execution, see note below):**
+`airflow-sync.ts`, `canva-sync.ts`, `dependencytrack-sync.ts`, `intercom-sync.ts`, `lever-sync.ts`, `miro-sync.ts`, `mlflow-sync.ts`, `netlify-sync.ts`, `pipedrive-sync.ts`, `prefect-sync.ts`, `raindrop-sync.ts`, `salesforce-sync.ts`, `stripe-sync.ts`, `vercel-sync.ts`, `zendesk-sync.ts`, `zotero-sync.ts`. (`superset-sync.ts` was originally listed here but **deferred** — its pre-loop login step accumulates bytes and returns a distinct http-empty result on auth failure that the single-pass helper does not model.)
 
 (greenhouse, readwise, stackoverflow, hubspot are already migrated as exemplars in Tasks 3–5B.) Each has a `*-sync-fake-server.test.ts` guardrail (do NOT edit any of them).
 

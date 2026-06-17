@@ -52,10 +52,10 @@ describe("upsertMapped", () => {
     });
     expect(count).toBe(2);
     const ids = h.db
-      .query<{ external_id: string }, []>(
-        "SELECT external_id FROM item WHERE service = 'demo' ORDER BY external_id",
+      .query<{ external_id: string }, [string]>(
+        "SELECT external_id FROM item WHERE service = ? ORDER BY external_id",
       )
-      .all()
+      .all("demo")
       .map((x) => x.external_id);
     expect(ids).toEqual(["1", "2"]);
   });
