@@ -128,6 +128,34 @@ if (sessionSeeds.length > 0) {
   }
 }
 
+// Seed tool-call-log rows (Slice 8b recipe share e2e): the recipe builder reads tool_call_log
+// for the session to construct recipe steps. TEST-ONLY seam — not wired in production boot.
+interface ToolCallSeed {
+  sessionId: string;
+  toolId: string;
+  service: string;
+  params?: unknown;
+}
+const toolCallSeeds = envJson<ToolCallSeed[]>("NIMBUS_E2E_SEED_TOOLCALLS_JSON") ?? [];
+if (toolCallSeeds.length > 0) {
+  const { writeToolCallLog } = await import("../../../src/db/tool-call-log.ts");
+  const db = services.localIndex.getDatabase();
+  let now = Date.now();
+  for (const tc of toolCallSeeds) {
+    writeToolCallLog(db, {
+      sessionId: tc.sessionId,
+      toolId: tc.toolId,
+      service: tc.service,
+      calledAt: now,
+      durationMs: 0,
+      resultEnvelope: "{}",
+      status: "ok",
+      params: tc.params,
+    });
+    now += 1; // keep insertion order stable for readToolCallLog's called_at ordering
+  }
+}
+
 // Deterministic engine stub for the chatops read path (see header note). The connector tool
 // layer is the file-backed sink (NIMBUS_CHATOPS_E2E_SINK_DIR, set by the test) — assemble.ts
 // swaps the real bot-spawn + mesh dispatch for it, so this gateway exercises the full chatops

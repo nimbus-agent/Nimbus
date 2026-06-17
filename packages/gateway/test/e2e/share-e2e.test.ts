@@ -124,6 +124,13 @@ const SESSION_ID = "e2e-share-1";
 const SECRET_EMAIL = "alice@corp.com";
 const SECRET_IP = "10.1.2.3";
 
+interface ToolCallSeed {
+  sessionId: string;
+  toolId: string;
+  service: string;
+  params?: unknown;
+}
+
 interface CreateResult {
   status: string;
   contentHash?: string;
@@ -135,12 +142,20 @@ interface VerifyResult {
   expired: boolean;
   errors: string[];
 }
+interface ShareRecord {
+  contentHash: string;
+  bodyJson: string;
+}
+interface GetResult {
+  share: ShareRecord | null;
+}
 
 describe("share e2e (real gateway subprocess — I27 create → owner approve → verify round-trip)", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-share-e2e-"));
   const dataDir = join(tmp, "data");
   const outPath = join(tmp, "out", "share.json");
   const rejectedPath = join(tmp, "out", "rejected.json");
+  const recipePath = join(tmp, "out", "recipe.yaml");
   const socketPath = process.platform === "win32" ? pipePath("a") : join(tmp, "gateway.sock");
   let gateway: ReturnType<typeof Bun.spawn> | undefined;
   let gatewayLog = "";
@@ -159,6 +174,9 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(join(paths.configDir, "nimbus.toml"), "");
 
+    const toolCallSeeds: ToolCallSeed[] = [
+      { sessionId: SESSION_ID, toolId: "gmail_search", service: "gmail", params: { q: "hi" } },
+    ];
     gateway = Bun.spawn(["bun", RUNNER], {
       stdin: "ignore",
       stdout: "pipe",
@@ -171,6 +189,7 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
           { sessionId: SESSION_ID, role: "user", text: `ping ${SECRET_EMAIL} on ${SECRET_IP}` },
           { sessionId: SESSION_ID, role: "assistant", text: "ack, will reach out" },
         ]),
+        NIMBUS_E2E_SEED_TOOLCALLS_JSON: JSON.stringify(toolCallSeeds),
       },
     });
     const collect = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
@@ -259,5 +278,37 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
     expect(created.status).toBe("rejected");
     expect(created.contentHash).toBeUndefined();
     expect(() => readFileSync(rejectedPath, "utf8")).toThrow();
+  });
+
+  test("recipe share round-trip: approved create builds recipe from tool_call_log, verify confirms valid signature, get confirms recipe body shape", async () => {
+    // Auto-approve the recipe approval prompt.
+    ipc.onNotification("share.approvalRequest", (params) => {
+      const requestId = params["requestId"];
+      if (typeof requestId === "string") {
+        void ipc.call("share.approvalRespond", { requestId, approved: true });
+      }
+    });
+
+    const created = await ipc.call<CreateResult>("share.create", {
+      sessionId: SESSION_ID,
+      kind: "recipe",
+      sink: { type: "file", path: recipePath },
+    });
+    expect(created.status).toBe("ok");
+    expect(typeof created.contentHash).toBe("string");
+
+    const verified = await ipc.call<VerifyResult>("share.verify", { input: recipePath });
+    expect(verified.ok).toBe(true);
+
+    const got = await ipc.call<GetResult>("share.get", { contentHash: created.contentHash });
+    expect(got.share).not.toBeNull();
+    const body = JSON.parse((got.share as ShareRecord).bodyJson) as {
+      kind: string;
+      recipe: { steps: unknown[] };
+      turns?: unknown;
+    };
+    expect(body.kind).toBe("recipe");
+    expect(body.recipe.steps.length).toBeGreaterThan(0);
+    expect(body.turns).toBeUndefined();
   });
 });
