@@ -250,7 +250,9 @@ export async function enforceCommonGate<T>(ctx: CommonGateContext, req: Federati
 ```
 This extracts ONLY the shared **preamble**: I18 identity check → namespace-exists → active-grant → consent (cache/prompt/timeout). It returns `undefined` on pass-through; the caller then runs its OWN logic. **The I17 leak-proof scope compilation (declaredServices/declaredTypes/`computeEffectiveTypes`, the no-full-index-dump checks) MUST stay inside `query-gate.ts` — it is the single sanctioned federated-answer site (static D13).**
 
-- [ ] **Step 1: Read** `scripts/structure-audit/check-nimbus-invariants.ts` D13 rule to confirm it gates on *answer generation* in `query-gate.ts`, not on the consent preamble — so moving the preamble to `_lib/gate-commons.ts` does NOT violate D13. If D13 pattern-matches anything in the preamble, **keep the preamble in query-gate.ts and skip C5d** (note it). 
+> **D13 hard guard (verified against `checkFederationImportInvariant`, `check-nimbus-invariants.ts:178`):** the static rule flags **any** `from "…item-list-query…"` import in **any** file under `packages/gateway/src/federation/` **except** `query-gate.ts` and `*.test.ts`. Since `gate-commons.ts` lives under `federation/_lib/`, it is subject to the rule: **`gate-commons.ts` MUST NOT import `item-list-query` / `buildItemListSql` (directly or transitively).** The consent preamble does not need them, so this is safe by construction; the leak-proof scope (which *does* import `item-list-query`) is exactly what stays in `query-gate.ts`. The rule is self-enforcing — if you accidentally pull query-compilation into `gate-commons.ts`, the static audit fails. Do not "helpfully" move any item-list/SQL logic into the shared helper.
+
+- [ ] **Step 1: Read** the D13 rule (`checkFederationImportInvariant`, `scripts/structure-audit/check-nimbus-invariants.ts:178`) and confirm the consent preamble you intend to move imports only `store`/`consentCache`/`prompt`/audit helpers — **never** `item-list-query`/`buildItemListSql`. If the preamble cannot be separated from query-compilation without an `item-list-query` import in `gate-commons.ts`, **keep the preamble in query-gate.ts and skip C5d** (note it). 
 - [ ] **Step 2: Write `gate-commons.test.ts`** — identity_invalid → error; namespace_unknown; no_grant; standing-grant skips prompt; cached-false → consent_denied; prompt approved → undefined (pass-through); prompt timeout → timeout error. (Mirror `query-gate.test.ts` fixtures.)
 - [ ] **Step 3: Run — FAIL.**
 - [ ] **Step 4: Implement `gate-commons.ts`** (lift the preamble verbatim per the recon draft; share the `withTimeout` helper).
@@ -473,7 +475,7 @@ Expected: green (tsc all packages — grep for `error TS`; lint; lint:markdown; 
 
 Run: `bunx markdownlint-cli2 "docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md" "docs/superpowers/plans/2026-06-17-jscpd-big-dedup.md"`
 Then: `~/.cargo/bin/lychee --config lychee.toml --no-progress "docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md" "docs/superpowers/plans/2026-06-17-jscpd-big-dedup.md"`
-Expected: 0 errors each. **Delete any untracked `*-review.md` scratch first** (`rm docs/superpowers/specs/*-review.md`) — they break lychee/markdownlint and must never be committed.
+Expected: 0 errors each. **Delete any untracked `*-review.md` scratch first** (`rm -f docs/superpowers/specs/*-review.md docs/superpowers/plans/*-review.md`) — these companion files exist in BOTH `specs/` and `plans/`, are auto-generated with absolute `file:///` links + no blank-line formatting, break lychee/markdownlint, and must never be committed. Run this `rm` before `bun run preflight` too (markdownlint/lychee scan the filesystem, not git).
 
 - [ ] **Step 5: Whole-branch review + push**
 
