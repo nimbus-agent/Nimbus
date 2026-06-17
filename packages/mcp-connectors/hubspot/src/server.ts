@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterHubspotDeals } from "./search-filter.ts";
@@ -66,10 +67,7 @@ await runReadOnlyMcpConnector("nimbus-hubspot", (reg) => {
   reg(
     "hubspot_search",
     "**Substring search over the FIRST PAGE only** (up to 100 most-recently-listed deals) of the authenticated portal's HubSpot deals. This tool fetches GET /crm/v3/objects/deals?limit=100 once and matches the query locally (case-insensitive) against the deal name, deal stage, and pipeline. **Deals beyond the first page are not searchable here — query the local Nimbus index instead for full coverage.** Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const params = new URLSearchParams({ limit: "100", properties: DEAL_PROPERTIES });
       const root = await hubspotGet(`/crm/v3/objects/deals?${params.toString()}`);

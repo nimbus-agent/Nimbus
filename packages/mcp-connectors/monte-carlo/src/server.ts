@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -177,10 +178,7 @@ export function registerMonteCarloTools(reg: ZodToolRegistrar): void {
   reg(
     "montecarlo_search",
     "Substring search across Monte Carlo incidents. Matches the query (case-insensitive) against incidentId, status, severity, and monitoredTable. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const apiId = requireEnv("MONTECARLO_API_ID");
       const apiToken = requireEnv("MONTECARLO_API_TOKEN");

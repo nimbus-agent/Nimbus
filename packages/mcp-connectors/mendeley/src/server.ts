@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMendeleyDocuments } from "./search-filter.ts";
@@ -52,10 +53,7 @@ await runReadOnlyMcpConnector("nimbus-mendeley", (reg) => {
     z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(100).optional() }),
     async (p) => {
       const root = await mendeleyGet(`/documents?view=all&limit=100`);
-      const matches = Array.isArray(root)
-        ? filterMendeleyDocuments(root, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(root, filterMendeleyDocuments, p);
     },
   );
 });

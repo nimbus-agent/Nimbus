@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterArgocdApplications } from "./search-filter.ts";
@@ -76,10 +77,7 @@ await runReadOnlyMcpConnector("nimbus-argocd", (reg) => {
   reg(
     "argocd_search",
     "Substring search across ArgoCD applications. Matches the query (case-insensitive) against application name, project, source repo URL, sync status, and health status. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const root = await agGet("/applications");
       const matches = filterArgocdApplications(applicationsFrom(root), {

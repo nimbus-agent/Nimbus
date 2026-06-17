@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterLaunchDarklyFlags } from "./search-filter.ts";
@@ -72,10 +73,7 @@ await runReadOnlyMcpConnector("nimbus-launchdarkly", (reg) => {
       const search = new URLSearchParams({ summary: "true", limit: "500" });
       const root = await ldGet(`/flags/${encodeURIComponent(p.projectKey)}?${search.toString()}`);
       const flags = (root as { items?: unknown[] } | null)?.items;
-      const matches = Array.isArray(flags)
-        ? filterLaunchDarklyFlags(flags, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(flags, filterLaunchDarklyFlags, p);
     },
   );
 });

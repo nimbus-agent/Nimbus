@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMercuryAccounts } from "./search-filter.ts";
@@ -50,17 +51,11 @@ await runReadOnlyMcpConnector("nimbus-mercury", (reg) => {
   reg(
     "mercury_search",
     "Substring search across the user's Mercury accounts. Matches the query against id, name, status, type, kind, and the legal business name (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await mercuryGet(`/api/v1/accounts`);
       const accounts = (root as { accounts?: unknown[] } | null)?.accounts;
-      const matches = Array.isArray(accounts)
-        ? filterMercuryAccounts(accounts, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(accounts, filterMercuryAccounts, p);
     },
   );
 });

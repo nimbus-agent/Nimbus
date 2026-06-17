@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterWizIssues } from "./search-filter.ts";
@@ -177,10 +178,7 @@ await runReadOnlyMcpConnector("nimbus-wiz", (reg) => {
   reg(
     "wiz_search",
     "Substring search across open issues. Matches the query against `sourceRule.name`, `description`, `entity.name`, `entity.type`, and project names (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const data = await wizGraphql<IssuesPage>(ISSUES_QUERY, {
         first: 500,

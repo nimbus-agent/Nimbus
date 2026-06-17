@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterStackOverflowQuestions } from "./search-filter.ts";
@@ -68,19 +69,13 @@ await runReadOnlyMcpConnector("nimbus-stackoverflow", (reg) => {
   reg(
     "stackoverflow_search",
     "Substring search across the team's Stack Overflow for Teams questions (first page only). Matches the query against the question title, body, tags, and the asking user's name (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await stackOverflowGet(
         `${questionsBasePath()}?page=1&pagesize=100&sort=creation&order=desc`,
       );
       const items = (root as { items?: unknown[] } | null)?.items;
-      const matches = Array.isArray(items)
-        ? filterStackOverflowQuestions(items, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(items, filterStackOverflowQuestions, p);
     },
   );
 });

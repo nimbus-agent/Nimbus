@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFigmaFiles } from "./search-filter.ts";
@@ -106,10 +107,7 @@ await runReadOnlyMcpConnector("nimbus-figma", (reg) => {
   reg(
     "figma_search",
     "Substring search across the configured team's Figma files. Runs the same two-level fetch as figma_list (team projects, then files per project), flattens the result, and matches the query locally (case-insensitive) against each file name and its project name. Returns a { matches: [...] } envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const files = await listTeamFiles();
       const matches = filterFigmaFiles(files, { query: p.query, limit: p.limit });

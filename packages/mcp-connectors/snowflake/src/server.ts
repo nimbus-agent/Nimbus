@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -167,10 +168,7 @@ export function registerSnowflakeTools(reg: ZodToolRegistrar): void {
   reg(
     "snowflake_search",
     "Substring search across Snowflake tables. Matches the query (case-insensitive) against table name, schema name, and database name. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const tables = await fetchTables();
       const matches = filterSnowflakeTables(tables, { query: p.query, limit: p.limit });

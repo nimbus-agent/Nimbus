@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
@@ -153,10 +154,7 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
   reg(
     "powerbi_search",
     "Substring search across Power BI reports. Matches the query (case-insensitive) against report name and description. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const tenantId = requireEnv("POWERBI_TENANT_ID");
       const clientId = requireEnv("POWERBI_CLIENT_ID");

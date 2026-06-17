@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterRampTransactions } from "./search-filter.ts";
@@ -95,10 +96,7 @@ await runReadOnlyMcpConnector("nimbus-ramp", (reg) => {
   reg(
     "ramp_search",
     "Substring search across the first page of Ramp transactions. Matches the query (case-insensitive) against merchant name, category, state, currency, memo, and the card holder name/department. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await rampGet("/developer/v1/transactions?page_size=100");
       const matches = filterRampTransactions(transactionsFrom(root), {

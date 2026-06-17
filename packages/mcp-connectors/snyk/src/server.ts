@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSnykAggregatedIssues } from "./search-filter.ts";
@@ -138,10 +138,7 @@ await runReadOnlyMcpConnector("nimbus-snyk", (reg) => {
       const path = `/v1/org/${encodeURIComponent(p.orgId)}/project/${encodeURIComponent(p.projectId)}/aggregated-issues`;
       const root = await snykPost(path, body);
       const issues = (root as { issues?: unknown[] } | null)?.issues;
-      const matches = Array.isArray(issues)
-        ? filterSnykAggregatedIssues(issues, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(issues, filterSnykAggregatedIssues, p);
     },
   );
 });

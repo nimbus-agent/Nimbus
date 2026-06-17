@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMlflowModels } from "./search-filter.ts";
@@ -70,10 +71,7 @@ await runReadOnlyMcpConnector("nimbus-mlflow", (reg) => {
   reg(
     "mlflow_search",
     "Substring search across MLflow registered models. Matches the query (case-insensitive) against the model's `name`, `description`, and flattened `key=value` tags. Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const params = new URLSearchParams({ max_results: "100" });
       const root = await mlflowGet(`/api/2.0/mlflow/registered-models/search?${params.toString()}`);

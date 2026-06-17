@@ -4,7 +4,7 @@ This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 
-> **Last updated:** 2026-06-14 — **Phase 6 Slice 9 sub-project A (Mendeley connector, read-only) shipped** (#631; reuses the `reference` item type — no migration/HITL/invariant). 2026-06-13 — **Phase 6 Slice 7 (Wave 7a — Data Warehouse & BI connectors + cross-warehouse lineage, V40) shipped** (#595); the installer & distribution program (Homebrew/Scoop/winget + native `.msi`/`.pkg`/`.rpm` + hosted GPG-signed apt/yum repo) and the True Coverage per-file ≥80% floor also landed since the last update. 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) is now ✅ complete (2026-06-04); Phase 6 (Team) is the active phase — Slices 1 (Federation Core) and 3 (Identity/SSO/SCIM) shipped 2026-06-05. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
+> **Last updated:** 2026-06-17 — **Phase 7+ re-sequenced into a three-track Sequencing Spine overlay** (time-to-value × moat; cheap moat primitives harvested forward, no renumber) — see [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine) (#677). 2026-06-14 — **Phase 6 Slice 9 sub-project A (Mendeley connector, read-only) shipped** (#631; reuses the `reference` item type — no migration/HITL/invariant). 2026-06-13 — **Phase 6 Slice 7 (Wave 7a — Data Warehouse & BI connectors + cross-warehouse lineage, V40) shipped** (#595); the installer & distribution program (Homebrew/Scoop/winget + native `.msi`/`.pkg`/`.rpm` + hosted GPG-signed apt/yum repo) and the True Coverage per-file ≥80% floor also landed since the last update. 2026-06-04 — **renumbered the Marketplace Registry phase to Phase 9.5** and relocated it after Phase 9 (it previously sat as a `.5` between Phases 5 and 6; its hard blocker is Phase 9 Wave 5, the `nimbus eval` framework); **decomposed Phase 6 (Team) into 9 sequenced delivery slices** (Slice 1 = Federation Core; see `docs/superpowers/specs/2026-06-04-phase6-federation-core-design.md`); and **moved personal/family/friend federation out of Phase 6 into a new Phase 20 (Personal & Household Federation)** per guiding-principle #7. 2026-05-28 (second pass) — added **Phase 18 (Vertical Personas)** + **Phase 19 (Ambient Surfaces)** as new dedicated phases; extended **Phase 6** with personal CRM, family/couples/group mesh mode, `nimbus share`, and sovereign-mesh referral; extended **Phase 7** with the implicit-knowledge agent triad (`nimbus why` / `glossary` / `decisions`), `nimbus negotiate`, devil's-advocate mode, agent-persona configuration, and first-class negation + aggregation queries; extended **Phase 8** with the contextual dependency-update intelligence agent; extended **Phase 9** with **Wave 6 (Agent Honesty Surfaces)** — calibration audit, bias diagnostics, refusal log; extended **Phase 11** with the public dogfooding telemetry dashboard (vulnerability-as-marketing); extended **Phase 13.5** with the voice-only ambient stretch. 2026-05-28 (first pass) — added **Phase 9.5 (Marketplace Registry)**, **Phase 12.5 (Compliance Receipts)**, and **Phase 13.5 (Mobile Companion — iOS first)** as new dedicated phases; promoted **`nimbus eval` (author-facing eval framework + quality score)** into Phase 9 as a Phase 9.5 prerequisite; added **M8 — Time-Travel** as a north-star; added the **S — Standards (reference-impl-only)** cross-phase track anchored on the **Egress Attestation Format (EAF)** as RFC-001 with the verifier CLI. Rationale: a single adversarial stress-test pass over an "industry-standard" brainstorm killed standards-body LAIP/PAT/SCM plays, the vertical-starter-pack compliance plan, the multi-platform distribution scatter, and demoted personal fine-tune + cross-agent handoff to research bets; the surviving shape is the marketplace + compliance-as-receipts + mobile-on-call wedge and an in-place EAF reference impl. 2026-05-25 — added North-Star **M7 (Provable Locality)** (egress ledger threaded through Phase 8 + Phase 12), a **Concurrency & Scaling** documentation pass with a **B5 (high-priority) — WAL concurrency hardening** follow-up, a Phase 9 **model-weight integrity** item, and a proposed standing-approval **taint-barrier** invariant. 2026-05-24 — added **Phase 16 (The Platform Layer)** and **Phase 17 (The On-Call Copilot)**, plus a near-term **First-Run & Time-to-Wow** initiative (including `nimbus demo`), the cross-phase **North-Star Capabilities** (M1–M6 + connective tissue), and the **killer-demo** milestone. Phase 5 (The Extended Surface) is now ✅ complete (2026-06-04); Phase 6 (Team) is the active phase — Slices 1 (Federation Core) and 3 (Identity/SSO/SCIM) shipped 2026-06-05. The full dated delivery log (every PR, with dates) lives in [`docs/CHANGELOG.md`](./CHANGELOG.md); this document carries the forward-looking acceptance criteria and per-phase Shipped summaries. Phase 5 core sequencing (locked in the T1 sequencing spec): T1 → T3 → Wave A → T4 → T6 → T2 → Wave B. The 2026-05-10 reorganisation inserted Phases 7 (Engineering Excellence), 8 (Security Engineering), and 9 (AI Engineering Loop) before the Autonomous Agent and added Phase 14 (Agent Evolution / AI v2) and Phase 15 (Cross-Organizational Federation) — see [§ How to Update This Document](#how-to-update-this-document).
 
 ---
 
@@ -888,6 +888,56 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 ## Planned
 
+### Phase 7+ Sequencing Spine
+
+> **Status: planning overlay (added 2026-06-17).** This section re-sequences everything from Phase 7 onward for **time-to-value × differentiation (moat)** without renumbering. Phase *numbers* below stay stable (the doc cross-links them everywhere); this overlay defines the real **build order** as three tracks and pulls the cheap moat primitives forward. Design rationale: [`docs/superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md`](./superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md).
+
+**Why an overlay, not a renumber:** the deepest-moat work (Verifiable Negatives, the Unexfiltratable Agent, Provable Governance — things a cloud relay *structurally cannot* do) sat at Phases 22–26, behind ~14 phases of connector breadth, even though several of their *primitives* are cheap. The biggest 2026-model lever (computer-use, code execution, runtime tool-gen — Phase 14) sat mid-list. And one linear list conflated near-term product with a long-range research manifesto. The fix is to **harvest cheap primitives early** and split the list into three tracks.
+
+#### Track 1 — The Near-Term Spine (build order S1 → S5)
+
+Ordered for time-to-value × moat. Each increment cuts across today's phase numbers. `[↑P<N>]` = pulled forward · `[↓demote]` = pushed back · `[NEW]` = net-new idea.
+
+| Spine | Theme | Contents | Why here |
+|---|---|---|---|
+| **S1** | **Local Brain** | `nimbus why`/`glossary`/`decisions`/`pre-mortem`/`negotiate` [↑P7 W5]; devil's-advocate, agent personas, first-class negation + aggregation queries [↑P7 W6]; ownership graph from already-indexed GitHub/PagerDuty (IDP connectors deferred [↓demote]); **elevate the egress ledger (P8 M7 substrate) + `nimbus prove` (P7 W6) to an always-on S1 primitive** [↑P8 / P7 W6] | Highest stickiness, mostly cheap, **no new connectors**; anchors the provable-boundary moat early and co-locates the ledger with its `prove` surface (removing the pre-existing P7-reads-P8 ordering oddity). P22's portable per-answer receipts sit on top later. |
+| **S2** | **Local Compute Fleet** | Sandboxed code execution, local computer-use loop (HITL-gated, screenshots never leave), runtime tool generation, multimodal I/O [↑P14]; **[NEW] overnight sub-agent fleets on zero-marginal local compute** [↑P27]; **[NEW] bring-your-own-frontier-model routing with local fallback** | The biggest 2026-model lever; local computer-use + free local compute are both high-TTV *and* unfakeable by metered clouds |
+| **S3** | **Open Surface** | **[NEW] Nimbus as a local MCP *server*** — expose the private index as an MCP endpoint Claude Code / Cursor / other agents connect *to*. **Defaults to stdio transport (no network port);** any HTTP/SSE variant must honor I6 loopback bind + I5 `LanServer` method checks + I10 constant-time pairing-token auth (write surface stays I13-gated). Marketplace registry [↑P9.5] + extension maturity | Ecosystem whitespace: makes Nimbus the private-context backend for the user's whole agent stack |
+| **S4** | **Autonomous Agent** | Watch → learn → act loop, proactive SRE automation, `incident-brief` [≈P10]; fold in the On-Call Copilot (predict/mitigate/coordinate) [↑P17] | Natural capstone of the spine; the interactive + standing halves of one loop |
+| **S5** | **Engineering Excellence breadth** | DORA/metrics connectors, feature-flag connectors [↓P7 W2–3]; security tooling + agents [↓P8]; ML/AI tooling [↓P9]; the deferred IDP/ownership connectors from S1 | Commodity, API-fakeable → **not a moat**; community/marketplace-leaning, demoted behind the spine |
+
+**Shape:** S1–S3 are moat + 2026 levers (mostly cheap or model-driven); S4 is the capstone; S5 is fakeable commodity breadth that can lean on the community.
+
+**Phase 7 Wave 4 (capstone) splits across slots** (it is not a single unit): the private-context pieces — cross-team knowledge graph, automation-template library, pattern recognition, ADR auto-drafter, living-architecture map — ride with **S1/S4** (the learn-and-act substrate); `nimbus excellence` + the excellence dashboard *render* the S5 commodity metrics, so they land with **S5**; the team-policy library composes with the Phase 6 policy engine (Track 2).
+
+**Composes-with integrity:** because this is an overlay (numbers + prose unchanged), every existing "composes-with" cross-reference still resolves. Demotions only ever move a dependency *later relative to the spine*, never break a reference; the one promotion that touches cross-refs — the egress ledger — moves *earlier*, which only helps the P12.5 / P21 / P22 / P23 phases that build on it.
+
+#### Track 2 — Scale & Surface
+
+Productization/distribution; lands after the spine, much of it parallelizable, none of it research.
+
+- **Independent-slot** (not spine-gated): Desktop Distribution [P13] — depends only on already-shipped Phase 4; land when adoption needs it.
+- **Mobile Companion [P13.5]** — *not* freely independent: depends on Phase 11 (mesh addressing) + Phase 17's assembled-brief schema, so it slots after those.
+- **Commercial/scale band** (depend on Phase 6 federation): Enterprise [P12], Platform Layer / Team-OS [P16], Cross-Org Federation [P15].
+- **Compliance Receipts [P12.5]** — commercial-tier, but its prerequisites are Phase 8 (egress ledger) + Phase 9 + the EAF Standards track, **not** Phase 6 federation.
+- **Opportunistic expansion surfaces:** Sovereign Mesh / multi-device + physical [P11], Vertical Personas [P18], Ambient Surfaces [P19] (already flagged highest-risk), Personal & Household Federation [P20].
+
+#### Track 3 — Research Horizon
+
+The North-Star "M-number" manifesto. The full vision stays; each entry's cheap *primitive* is harvested into the spine when ready. **Principle: a research frontier whose primitives we mine early — not phases reached in a decade.**
+
+| Phase | Full form (stays Horizon) | Primitive → harvested |
+|---|---|---|
+| P22 — Proof Layer / Verifiable Negatives | Portable, offline-checkable **per-answer** EAF receipts | the always-on ledger + `nimbus prove` read-surface land early in **S1** (sourced from P8 / P7 W6, not P22 itself); only the per-answer receipts stay here |
+| P27 — The Agent Society | Standing safe agent-organization | overnight local sub-agent fleet → **S2 (done)** |
+| P23 — Inert to Injection (Unexfiltratable Agent) | Egress severed structurally on attacker-influenced turns + conformance bundle | candidate: egress-severing hook (pairs with S1 egress ledger) |
+| P21 — Sovereign Trust Substrate | — | candidate: extract when S1 boundary work matures |
+| P24 — Agent Archaeology / Causal Twin | Replay reasoning as-of any timestamp | candidate: signed derivation log (pairs with S1 ledger) |
+| P25 — Confidential Mesh Compute | Operator-free cross-org learning (M4) | gated on Cross-Org Federation [P15] |
+| P26 — Provable Governance | Policy compiled into the gate + boot attestation (M12) | candidate: compile a policy fragment into the `I2` gate |
+
+---
+
 ### Phase 7 — Engineering Excellence
 
 **Goal:** Give engineers a local, queryable view of how their team operates — service ownership, DORA / SPACE health, feature-flag state, and a shared knowledge graph that turns one engineer's hard-won pattern into the team's reusable automation. **Single-user-first;** Phase 6 federation amplifies the value but is not a precondition.
@@ -1008,6 +1058,8 @@ Cross-cutting UX improvements that apply to every agent surface the project ship
 
 ### Phase 8 — Security Engineering
 
+> **Sequencing (2026-06-17 overlay):** Build-order slot **S5** (Track 1) — demoted commodity. The connector surface is API-fakeable, so it is *not* a moat; lands behind the spine, community/marketplace-leaning. The built-in security *agents* may pull forward opportunistically. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
 **Goal:** Bring the security practitioner's tool surface into the local index and ship the four built-in security agents that turn that surface into actionable briefs. Read-first; every write tool gates on HITL with rich diff preview because security writes (acknowledging vulnerabilities, rotating secrets, suppressing findings) are decisions with downstream consequences.
 
 > **Composes with Phase 7 (Engineering Excellence):** Phase 7 scorecards consume security-posture metrics produced here (open-vuln count, secret-rotation overdue count); Phase 8 service-attribution joins back to the Phase 7 service catalog so a finding routes to its owner team without a live API call.
@@ -1112,6 +1164,8 @@ The workstation-side complement to the cloud-facing waves above: keep tainted da
 ---
 
 ### Phase 9 — AI Engineering Loop
+
+> **Sequencing (2026-06-17 overlay):** Build-order slot **S5** (Track 1) — demoted commodity (API-fakeable ML/AI connector breadth). The `nimbus model-health` / `rag-health` agents may pull forward; the connector ingestion lands behind the spine. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
 **Goal:** Bring the tool surface that ML engineers and AI-product teams already use into the local index, and ship `nimbus model-health` + `nimbus rag-health` to surface actionable status without a live API call. Read-first for ingestion; HITL on the few write tools (`prompt.deploy`, `model.promote-stage`, `feature.publish`) because pushing a prompt or promoting a model is a production change.
 
@@ -1568,6 +1622,8 @@ Connectors for the GRC tools enterprises already use to evidence SOC 2 / ISO 270
 
 ### Phase 13 — Desktop Distribution
 
+> **Sequencing (2026-06-17 overlay):** **Track 2 — independent-slot.** Not spine-gated; land whenever adoption demand justifies the release-vehicle work. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
 **Goal:** Publish the Tauri desktop UI as signed, OS-gatekeeper-clean release artifacts. The desktop UI itself was built in Phase 4 (WS5-A through WS5-D, all `[x]` in [§ Phase 4](#phase-4--presence-)); what slipped from `v0.1.0` was the release vehicle — signed installers, per-OS build matrix, Gatekeeper / SmartScreen handling, and the Tauri-specific security audit follow-ups. This phase delivers the `desktop-v0.1.0` tag, gated independently of the headless `v0.1.0` and `vscode-v0.1.0` tags.
 
 #### Dependencies
@@ -1615,6 +1671,8 @@ Native package-manager distribution; gated independently of the desktop tag, may
 ---
 
 ### Phase 13.5 — Mobile Companion
+
+> **Sequencing (2026-06-17 overlay):** **Track 2.** Depends on Phase 11 (mesh addressing) + Phase 17's assembled-brief schema, so it slots after those — *not* freely independent (unlike Phase 13). See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
 **Goal:** Solve the on-call engineer's "the agent is on the laptop in my bag" problem by shipping a **passive viewer** mobile app that pairs to the user's own desktop gateway over the existing Phase 11 sovereign-mesh primitive. The mobile app **does not execute the agent locally** — it receives push notifications for HITL consent and assembled briefs, and forwards the user's approve/reject decision back through the mesh. iOS first; Android follows in a v0.2 of the same phase. Discipline: this phase is one platform, one persona (the user already running on-call from their own desktop), one job (receive + decide). Resist scope creep into "agent on phone."
 
@@ -1666,6 +1724,8 @@ Native package-manager distribution; gated independently of the desktop tag, may
 ---
 
 ### Phase 14 — Agent Evolution / AI v2
+
+> **Sequencing (2026-06-17 overlay):** **Pulled forward to slot S2** (Track 1) — the biggest 2026-model lever. Local computer-use (screenshots never leave the machine), sandboxed code execution, and runtime tool-gen are high-time-to-value *and* unfakeable moat. Joined in S2 by the [NEW] overnight local sub-agent fleet (from Phase 27) + BYO-frontier-model routing. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
 **Goal:** Expand Nimbus's intrinsic agent capabilities along four dimensions — multimodal I/O, isolated code execution, computer use, and runtime tool generation. Highest risk-blast-radius phase; structured Core / Stretch so the phase remains shippable even if the most research-adjacent capabilities slip.
 
@@ -2011,6 +2071,8 @@ The federation primitive is intentionally general — once two Gateways can shar
 
 ### Phase 21 — Sovereign Trust Substrate
 
+> **Sequencing (2026-06-17 overlay):** **Track 3 — Research Horizon** (Phases 21–27). The North-Star "M-number" frontier; the full vision stays, but its cheap *primitives* are harvested into the spine early (egress ledger → S1; local sub-agent fleet → S2 — both done). Not a decade-out sequence: a frontier we mine. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
 **Goal:** Ship the root of trust every downstream proof silently assumes. `M7`'s egress ledger, the EAF verifier, the Phase 12.5 bundle, and the Phase 22–26 attestation surfaces all sign with a gateway key and stamp a timestamp — yet nothing today says how an auditor anchors that key offline, what the timestamp is worth against a same-UID attacker who can rewind the clock, or whether the local index a claim reasons over was complete. This phase supplies the missing halves: key transparency, verifiable time, index freshness, and proof ergonomics. **It ships before Phases 22–27 — their attestations are only as trustworthy as the key, clock, and index underneath them.**
 
 > **Composes with `M7` + S — Standards/EAF + Phase 12:** Phase 21 makes `M7`'s "proof this agent touched only these hosts" rest on a key an auditor anchored out-of-band and a clock they can trust; EAF v0.2 gains a key-transparency-inclusion field and a time-anchor field. Phase 12's external append-only sink remains the single public-anchoring path (KT heads ride it).
@@ -2059,6 +2121,8 @@ The federation primitive is intentionally general — once two Gateways can shar
 ---
 
 ### Phase 22 — The Proof Layer (Verifiable Negatives)
+
+> **Research Horizon — primitive harvested (2026-06-17 overlay):** the always-on egress ledger + `nimbus prove` read-surface land early in **Track 1 / S1** (sourced from Phase 8 + Phase 7 W6). What stays here: portable, offline-checkable **per-answer** EAF receipts. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
 **Goal:** Promote EAF from a Phase 12.5 bundle artifact to a **per-answer live primitive** — portable, offline-checkable receipts that prove *what did not happen*. Anchors North-Star **`M9` (Verifiable Negatives)**. A relay vendor *is* the egress and *is* the data sink, so it can only assert non-egress / non-disclosure in a PDF; only a local-first, no-relay, `I15`-sandboxed, HITL-gated gateway can mint a credible negative.
 
@@ -2230,6 +2294,8 @@ The federation primitive is intentionally general — once two Gateways can shar
 ---
 
 ### Phase 27 — The Agent Society
+
+> **Research Horizon — primitive harvested (2026-06-17 overlay):** the overnight local sub-agent **fleet** lands early in **Track 1 / S2**. What stays here: the full standing, safe agent-organization. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
 **Goal:** Exploit zero-marginal, rate-limit-free local compute to run what metered clouds can't — a tireless tier-0 on-call Captain and a standing agent organization — **made safe only by the structural irreversible boundary + a do-no-harm host scheduler**. Embodies **`M3` (Accountable Autonomy)** (not a new North-Star). The killer demo, productized.
 

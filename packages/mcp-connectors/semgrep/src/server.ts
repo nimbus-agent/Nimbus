@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterSemgrepFindings } from "./search-filter.ts";
@@ -92,10 +92,7 @@ await runReadOnlyMcpConnector("nimbus-semgrep", (reg) => {
   reg(
     "semgrep_search",
     "Substring search across the deployment's open findings. Matches the query against `rule_name`, `rule_message`, `location.file_path`, and `repository.name` (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(200).optional(),
-    }),
+    searchToolInputSchema(200),
     async (p) => {
       const slug = requireSlug();
       const search = new URLSearchParams({
@@ -105,10 +102,7 @@ await runReadOnlyMcpConnector("nimbus-semgrep", (reg) => {
       const path = `/deployments/${encodeURIComponent(slug)}/findings?${search.toString()}`;
       const root = await semgrepGet(path);
       const findings = (root as { findings?: unknown[] } | null)?.findings;
-      const matches = Array.isArray(findings)
-        ? filterSemgrepFindings(findings, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(findings, filterSemgrepFindings, p);
     },
   );
 });

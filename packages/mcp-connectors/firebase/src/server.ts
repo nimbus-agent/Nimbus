@@ -1,6 +1,6 @@
 import { mintGoogleAccessToken } from "@nimbus-dev/sdk";
 import { z } from "zod";
-
+import { matchesResult } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFirebaseReleases } from "./search-filter.ts";
@@ -88,10 +88,7 @@ await runReadOnlyMcpConnector("nimbus-firebase", (reg) => {
     async (p) => {
       const root = await appDistGet(releasesPath(p.appId, 100));
       const releases = (root as { releases?: unknown[] } | null)?.releases;
-      const matches = Array.isArray(releases)
-        ? filterFirebaseReleases(releases, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(releases, filterFirebaseReleases, p);
     },
   );
 });

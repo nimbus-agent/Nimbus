@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterVercelDeployments } from "./search-filter.ts";
@@ -67,18 +68,12 @@ await runReadOnlyMcpConnector("nimbus-vercel", (reg) => {
   reg(
     "vercel_search",
     "Substring search across recent Vercel deployments. Matches the query against uid, project name, state, target, the *.vercel.app host, and the git commit message (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const search = new URLSearchParams({ limit: "100" });
       const root = await vercelGet(`/v6/deployments?${search.toString()}`);
       const deployments = (root as { deployments?: unknown[] } | null)?.deployments;
-      const matches = Array.isArray(deployments)
-        ? filterVercelDeployments(deployments, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(deployments, filterVercelDeployments, p);
     },
   );
 });
