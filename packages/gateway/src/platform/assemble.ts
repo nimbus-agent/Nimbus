@@ -1680,6 +1680,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     recordAudit: (entry) => appendAuditEntry(db, entry),
     respondApproval: (requestId, approved) => shareConsent.respond(requestId, approved),
     httpSink: shareHttpSink,
+    // Slice 8c replay: the live connector tool map. share.replay re-runs only read-only-classified
+    // tools (read-tool-registry) against it; an uninstalled connector → missing-connector.
+    listReplayTools: () => connectorMesh.listToolsForDispatcher(),
   };
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
