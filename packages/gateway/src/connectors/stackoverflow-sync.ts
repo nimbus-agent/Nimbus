@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapStackOverflowQuestionToItem } from "./stackoverflow-question-mapping.ts";
@@ -57,30 +52,20 @@ function stackOverflowGet(ctx: SyncContext, creds: StackOverflowCreds, path: str
   });
 }
 
-function extractPage(parsed: unknown): { items: unknown[]; totalPages: number } {
+function parseStackOverflowPage(
+  parsed: unknown,
+  page: number,
+): { items: unknown[]; hasMore: boolean } {
   const root = asRecord(parsed);
   if (root === undefined) {
-    return { items: [], totalPages: 0 };
+    return { items: [], hasMore: false };
   }
-  const items = root["items"];
-  const totalPages = root["totalPages"];
-  return {
-    items: Array.isArray(items) ? items : [],
-    totalPages: typeof totalPages === "number" && Number.isFinite(totalPages) ? totalPages : 0,
-  };
-}
-
-function upsertQuestions(ctx: SyncContext, questions: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const q of questions) {
-    const mapped = mapStackOverflowQuestionToItem(q, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  const rawItems = root["items"];
+  const items = Array.isArray(rawItems) ? rawItems : [];
+  const totalPagesRaw = root["totalPages"];
+  const totalPages =
+    typeof totalPagesRaw === "number" && Number.isFinite(totalPagesRaw) ? totalPagesRaw : 0;
+  return { items, hasMore: items.length > 0 && page < totalPages };
 }
 
 export function createStackOverflowSyncable(options: StackOverflowSyncableOptions): Syncable {
@@ -88,39 +73,16 @@ export function createStackOverflowSyncable(options: StackOverflowSyncableOption
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureStackOverflowMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await stackOverflowGet(ctx, creds, questionsPath(creds.team, page));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { items, totalPages } = extractPage(outcome.parsed);
-        totalUpserted += upsertQuestions(ctx, items, now);
-
-        if (items.length === 0 || page >= totalPages) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureStackOverflowMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, page) => stackOverflowGet(ctx, creds, questionsPath(creds.team, page)),
+        parsePage: (parsed, page) => parseStackOverflowPage(parsed, page),
+        map: (raw, _creds, now) => mapStackOverflowQuestionToItem(raw, { syncedAt: now }),
+      }),
   };
 }

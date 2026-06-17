@@ -1,12 +1,7 @@
 import { getValidHubspotAccessToken } from "../auth/hubspot-access-token.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapHubspotDealToItem } from "./hubspot-deal-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -29,6 +24,24 @@ function pass1Cursor(): string {
 export type HubspotSyncableOptions = {
   ensureHubspotMcpRunning: () => Promise<void>;
 };
+
+interface HubspotCreds {
+  readonly token: string;
+}
+
+async function loadCreds(ctx: SyncContext): Promise<HubspotCreds | null> {
+  const raw = await readConnectorSecret(ctx.vault, "hubspot", "oauth");
+  if (raw === null || raw === "") {
+    return null;
+  }
+  let token: string;
+  try {
+    token = await getValidHubspotAccessToken(ctx.vault);
+  } catch {
+    return null;
+  }
+  return token === "" ? null : { token };
+}
 
 function dealsPath(after: string): string {
   const params = new URLSearchParams({
@@ -59,17 +72,14 @@ function nextAfter(parsed: unknown): string {
   return typeof after === "string" && after !== "" ? after : "";
 }
 
-function upsertDeals(ctx: SyncContext, deals: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const d of deals) {
-    const mapped = mapHubspotDealToItem(d, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+function parseHubspotPage(parsed: unknown): {
+  items: unknown[];
+  hasMore: boolean;
+  nextPageCursor: string;
+} {
+  const deals = extractDeals(parsed);
+  const after = nextAfter(parsed);
+  return { items: deals, hasMore: deals.length > 0 && after !== "", nextPageCursor: after };
 }
 
 export function createHubspotSyncable(options: HubspotSyncableOptions): Syncable {
@@ -77,52 +87,17 @@ export function createHubspotSyncable(options: HubspotSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureHubspotMcpRunning();
-
-      const raw = await readConnectorSecret(ctx.vault, "hubspot", "oauth");
-      if (raw === null || raw === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      let token: string;
-      try {
-        token = await getValidHubspotAccessToken(ctx.vault);
-      } catch {
-        return syncNoopResult(cursor, t0);
-      }
-      if (token === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-      // Cursor pagination: `paging.next.after` is the opaque token to the next
-      // page (or absent at the end). Walk a single forward pass per cycle,
-      // page-capped.
-      let after = "";
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        const outcome = await hubspotGet(ctx, token, dealsPath(after));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 0) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          // Mid-walk error: keep what we already upserted, stop without throwing.
-          break;
-        }
-        const deals = extractDeals(outcome.parsed);
-        totalUpserted += upsertDeals(ctx, deals, now);
-        after = nextAfter(outcome.parsed);
-        if (deals.length === 0 || after === "") {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureHubspotMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 0,
+        fetchPage: (creds, _page, pageCursor) =>
+          hubspotGet(ctx, creds.token, dealsPath(pageCursor)),
+        parsePage: (parsed) => parseHubspotPage(parsed),
+        map: (raw, _creds, now) => mapHubspotDealToItem(raw, { syncedAt: now }),
+      }),
   };
 }

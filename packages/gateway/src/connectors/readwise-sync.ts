@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapReadwiseHighlightToItem } from "./readwise-highlight-mapping.ts";
@@ -50,29 +45,16 @@ function readwiseGet(ctx: SyncContext, creds: ReadwiseCreds, path: string) {
   });
 }
 
-function extractHighlights(parsed: unknown): { highlights: unknown[]; next: string | null } {
+function parseReadwisePage(parsed: unknown): { items: unknown[]; hasMore: boolean } {
   const root = asRecord(parsed);
   if (root === undefined) {
-    return { highlights: [], next: null };
+    return { items: [], hasMore: false };
   }
   const results = root["results"];
-  const highlights = Array.isArray(results) ? results : [];
+  const items = Array.isArray(results) ? results : [];
   const nextRaw = root["next"];
   const next = typeof nextRaw === "string" && nextRaw !== "" ? nextRaw : null;
-  return { highlights, next };
-}
-
-function upsertHighlights(ctx: SyncContext, highlights: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const h of highlights) {
-    const mapped = mapReadwiseHighlightToItem(h, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
+  return { items, hasMore: items.length > 0 && next !== null };
 }
 
 export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncable {
@@ -80,39 +62,16 @@ export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncab
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureReadwiseMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await readwiseGet(ctx, creds, highlightsPath(page));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const { highlights, next } = extractHighlights(outcome.parsed);
-        totalUpserted += upsertHighlights(ctx, highlights, now);
-
-        if (highlights.length === 0 || next === null) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureReadwiseMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, page) => readwiseGet(ctx, creds, highlightsPath(page)),
+        parsePage: (parsed) => parseReadwisePage(parsed),
+        map: (raw, _creds, now) => mapReadwiseHighlightToItem(raw, { syncedAt: now }),
+      }),
   };
 }

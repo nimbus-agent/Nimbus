@@ -1,11 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import {
-  syncPassCursorHttpEmpty,
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext } from "../sync/types.ts";
 import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { bareArrayPage, runSinglePassPaginatedSync } from "./_lib/paginated-sync.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { mapGreenhouseJobToItem } from "./greenhouse-job-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -54,61 +49,21 @@ function greenhouseGet(ctx: SyncContext, creds: GreenhouseCreds, path: string) {
   });
 }
 
-function extractJobs(parsed: unknown): unknown[] {
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function upsertJobs(ctx: SyncContext, jobs: readonly unknown[], now: number): number {
-  let upserted = 0;
-  for (const j of jobs) {
-    const mapped = mapGreenhouseJobToItem(j, { syncedAt: now });
-    if (mapped === null) {
-      continue;
-    }
-    upsertIndexedItemForSync(ctx, mapped);
-    upserted += 1;
-  }
-  return upserted;
-}
-
 export function createGreenhouseSyncable(options: GreenhouseSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureGreenhouseMcpRunning();
-      const creds = await loadCreds(ctx);
-      if (creds === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      let totalBytes = 0;
-      let totalUpserted = 0;
-
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const outcome = await greenhouseGet(ctx, creds, jobsPath(page));
-        totalBytes += outcome.bytes;
-        if (outcome.kind !== "ok") {
-          if (page === 1) {
-            return outcome.kind === "http_error"
-              ? syncPassCursorHttpEmpty(t0, totalBytes, cursor, pass1Cursor())
-              : syncPassCursorParseEmpty(t0, totalBytes, pass1Cursor());
-          }
-          break;
-        }
-
-        const jobs = extractJobs(outcome.parsed);
-        totalUpserted += upsertJobs(ctx, jobs, now);
-
-        if (jobs.length < PAGE_SIZE) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), totalUpserted);
-    },
+    sync: (ctx, cursor) =>
+      runSinglePassPaginatedSync(ctx, cursor, {
+        ensureRunning: options.ensureGreenhouseMcpRunning,
+        loadCreds: () => loadCreds(ctx),
+        pass1Cursor,
+        maxPages: MAX_PAGES,
+        startPage: 1,
+        fetchPage: (creds, page) => greenhouseGet(ctx, creds, jobsPath(page)),
+        parsePage: (parsed) => bareArrayPage(parsed, PAGE_SIZE),
+        map: (raw, _creds, now) => mapGreenhouseJobToItem(raw, { syncedAt: now }),
+      }),
   };
 }
