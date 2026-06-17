@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { encodeBasicAuthHeader, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterLeverPostings } from "./search-filter.ts";
@@ -50,17 +51,11 @@ await runReadOnlyMcpConnector("nimbus-lever", (reg) => {
   reg(
     "lever_search",
     "Substring search across the company's Lever job postings (first page only). Matches the query against the posting text (title), state, and the team/department/location categories and tags (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await leverGet(`/v1/postings?limit=100`);
       const data = (root as { data?: unknown[] } | null)?.data;
-      const matches = Array.isArray(data)
-        ? filterLeverPostings(data, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(data, filterLeverPostings, p);
     },
   );
 });

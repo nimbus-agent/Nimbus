@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterZoteroItems } from "./search-filter.ts";
@@ -70,18 +71,12 @@ await runReadOnlyMcpConnector("nimbus-zotero", (reg) => {
   reg(
     "zotero_search",
     "Substring search across the library's top-level items (first page only). Matches the query against the title, item type, abstract, DOI, publication title, formatted creator names, and tag names (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await zoteroGet(
         `${itemsBasePath()}?format=json&limit=100&start=0&sort=dateModified&direction=desc`,
       );
-      const matches = Array.isArray(root)
-        ? filterZoteroItems(root, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(root, filterZoteroItems, p);
     },
   );
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterPipedriveDeals } from "./search-filter.ts";
@@ -51,17 +52,11 @@ await runReadOnlyMcpConnector("nimbus-pipedrive", (reg) => {
   reg(
     "pipedrive_search",
     "Substring search across the user's Pipedrive deals (first page only). Matches the query against the deal title, status, organization name, person name, owner name, and label (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await pipedriveGet(`/v1/deals?limit=100`, "deals");
       const data = (root as { data?: unknown } | null)?.data;
-      const matches = Array.isArray(data)
-        ? filterPipedriveDeals(data, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(data, filterPipedriveDeals, p);
     },
   );
 });

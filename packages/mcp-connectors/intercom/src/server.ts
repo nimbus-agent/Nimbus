@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { matchesResult, searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterIntercomConversations } from "./search-filter.ts";
@@ -54,17 +55,11 @@ await runReadOnlyMcpConnector("nimbus-intercom", (reg) => {
   reg(
     "intercom_search",
     "Substring search across the user's Intercom conversations (first page only). Matches the query against the conversation subject, the source message body, the state, the source author name + email, and the tags (case-insensitive). Returns a `{ matches: [...] }` envelope.",
-    z.object({
-      query: z.string().min(1),
-      limit: z.number().int().min(1).max(100).optional(),
-    }),
+    searchToolInputSchema(100),
     async (p) => {
       const root = await intercomGet(`/conversations?per_page=150`);
       const conversations = (root as { conversations?: unknown[] } | null)?.conversations;
-      const matches = Array.isArray(conversations)
-        ? filterIntercomConversations(conversations, { query: p.query, limit: p.limit })
-        : [];
-      return jsonResult({ matches });
+      return matchesResult(conversations, filterIntercomConversations, p);
     },
   );
 });
