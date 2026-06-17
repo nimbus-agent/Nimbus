@@ -1,40 +1,25 @@
-export type Evidence = {
-  itemId: string;
-  type:
-    | "pr_authored"
-    | "pr_reviewed"
-    | "issue_opened"
-    | "issue_resolved"
-    | "incident_resolved"
-    | "commit_authored"
-    | "chat_mention"
-    | "chat_post";
-  serviceId: string;
-  title: string;
-  modifiedAt: number;
-  weight: number;
-};
+export type {
+  CatchupItem,
+  CatchupSection,
+  ConflictType,
+  Evidence,
+  ExpertFinding,
+  GapCategory,
+  GapNote,
+  ImpactFinding,
+  JanitorPeerTouch,
+  PreflightDownstream,
+} from "@nimbus-dev/sdk";
 
-export type GapCategory =
-  | "missing_entity_type"
-  | "missing_relation_emit"
-  | "missing_connector"
-  | "missing_user_identity"
-  | "empty_index";
-
-export type GapNote = {
-  category: GapCategory;
-  detail: string;
-  remediation?: string;
-};
-
-export type ExpertFinding = {
-  personId: string;
-  displayName: string;
-  evidence: Evidence[];
-  score: number;
-  confidence: "high" | "medium" | "low";
-};
+import type {
+  CatchupSection,
+  ConflictType,
+  ExpertFinding,
+  GapNote,
+  ImpactFinding,
+  JanitorPeerTouch,
+  PreflightDownstream,
+} from "@nimbus-dev/sdk";
 
 export type ExpertBrief = {
   kind: "expert";
@@ -59,22 +44,6 @@ export function isExpertBrief(x: unknown): x is ExpertBrief {
   );
 }
 
-export type ImpactCategory =
-  | "service"
-  | "pipeline"
-  | "dashboard"
-  | "oncall_rotation"
-  | "downstream_repo";
-
-export type ImpactFinding = {
-  category: ImpactCategory;
-  affectedItemId: string;
-  affectedTitle: string;
-  serviceId: string;
-  hops: number;
-  pathSummary: string;
-};
-
 export type ImpactBrief = {
   kind: "impact";
   agentVersion: 1;
@@ -98,20 +67,6 @@ export function isImpactBrief(x: unknown): x is ImpactBrief {
     typeof b["latencyMs"] === "number"
   );
 }
-
-export type CatchupItem = {
-  itemId: string;
-  title: string;
-  modifiedAt: number;
-  relevanceScore: number;
-  relevanceReasons: string[];
-};
-
-export type CatchupSection = {
-  serviceId: string;
-  totalItemsInWindow: number;
-  items: CatchupItem[];
-};
 
 export type CatchupBrief = {
   kind: "catchup";
@@ -189,7 +144,7 @@ export type ConflictCollision = {
   peerId: string;
   who: string | null;
   service: string;
-  collisionType: "open_pr" | "assigned_ticket" | "recent_commit" | "open_branch";
+  collisionType: ConflictType;
   title: string;
   snippet: string;
   modifiedAt: number;
@@ -260,12 +215,6 @@ export function isHuddleBrief(x: unknown): x is HuddleBrief {
 }
 
 // CLI-side mirror of JanitorBrief in packages/gateway/src/agents/_lib/findings.ts
-export type JanitorPeerTouch = {
-  peerId: string;
-  who: string | null;
-  lastSeenDaysAgo: number | null;
-};
-
 export type JanitorBrief = {
   kind: "janitor";
   agentVersion: 1;
@@ -297,13 +246,6 @@ export function isJanitorBrief(x: unknown): x is JanitorBrief {
 }
 
 // CLI-side mirror of PreflightBrief in packages/gateway/src/agents/_lib/findings.ts
-export type PreflightDownstream = {
-  peerId: string;
-  who: string | null;
-  status: "pass" | "fail" | "declined" | "not_configured";
-  summary: string;
-};
-
 export type PreflightBrief = {
   kind: "preflight";
   agentVersion: 1;

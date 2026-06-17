@@ -6,6 +6,19 @@
  * See CHANGELOG.md for the stable surface guarantee.
  */
 
+export type {
+  AgentBriefBase,
+  CatchupItem,
+  CatchupSection,
+  ConflictType,
+  Evidence,
+  ExpertFinding,
+  GapCategory,
+  GapNote,
+  ImpactFinding,
+  JanitorPeerTouch,
+  PreflightDownstream,
+} from "./agents/brief-types.ts";
 export type { AuditEmit, AuditLogger } from "./audit-logger";
 export { createScopedAuditLogger } from "./audit-logger";
 export {

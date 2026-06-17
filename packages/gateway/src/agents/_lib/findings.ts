@@ -1,49 +1,28 @@
 import type { ExpertiseRank } from "../../federation/types.ts";
 
-export type Evidence = {
-  itemId: string;
-  type:
-    | "pr_authored"
-    | "pr_reviewed"
-    | "issue_opened"
-    | "issue_resolved"
-    | "incident_resolved"
-    | "commit_authored"
-    | "chat_mention"
-    | "chat_post";
-  serviceId: string;
-  title: string;
-  modifiedAt: number;
-  weight: number;
-};
+export type {
+  AgentBriefBase,
+  CatchupItem,
+  CatchupSection,
+  ConflictType,
+  Evidence,
+  ExpertFinding,
+  GapCategory,
+  GapNote,
+  ImpactFinding,
+  JanitorPeerTouch,
+  PreflightDownstream,
+} from "@nimbus-dev/sdk";
 
-export type GapCategory =
-  | "missing_entity_type"
-  | "missing_relation_emit"
-  | "missing_connector"
-  | "missing_user_identity"
-  | "empty_index";
-
-export type GapNote = {
-  category: GapCategory;
-  detail: string;
-  remediation?: string;
-};
-
-export type AgentBriefBase = {
-  agentVersion: 1;
-  generatedAt: number;
-  latencyMs: number;
-  gaps: GapNote[];
-};
-
-export type ExpertFinding = {
-  personId: string;
-  displayName: string;
-  evidence: Evidence[];
-  score: number;
-  confidence: "high" | "medium" | "low";
-};
+import type {
+  AgentBriefBase,
+  CatchupSection,
+  ConflictType,
+  ExpertFinding,
+  ImpactFinding,
+  JanitorPeerTouch,
+  PreflightDownstream,
+} from "@nimbus-dev/sdk";
 
 export type ExpertBrief = AgentBriefBase & {
   kind: "expert";
@@ -58,34 +37,11 @@ export type ImpactCategory =
   | "oncall_rotation"
   | "downstream_repo";
 
-export type ImpactFinding = {
-  category: ImpactCategory;
-  affectedItemId: string;
-  affectedTitle: string;
-  serviceId: string;
-  hops: number;
-  pathSummary: string;
-};
-
 export type ImpactBrief = AgentBriefBase & {
   kind: "impact";
   query: { fileOrPrUrl: string };
   startEntityId: string | null;
   affected: ImpactFinding[];
-};
-
-export type CatchupItem = {
-  itemId: string;
-  title: string;
-  modifiedAt: number;
-  relevanceScore: number;
-  relevanceReasons: string[];
-};
-
-export type CatchupSection = {
-  serviceId: string;
-  totalItemsInWindow: number;
-  items: CatchupItem[];
 };
 
 export type CatchupBrief = AgentBriefBase & {
@@ -124,8 +80,6 @@ export type GhostBrief = AgentBriefBase & {
   findings: GhostFinding[];
 };
 
-export type ConflictType = "open_pr" | "assigned_ticket" | "recent_commit" | "open_branch";
-
 export type ConflictFinding = {
   peerId: string;
   who: string | null;
@@ -157,12 +111,6 @@ export type HuddleBrief = AgentBriefBase & {
   contributions: HuddleContribution[];
 };
 
-export type JanitorPeerTouch = {
-  peerId: string;
-  who: string | null;
-  lastSeenDaysAgo: number | null;
-};
-
 export type JanitorBrief = AgentBriefBase & {
   kind: "janitor";
   query: { resourceRef: string; idleDays: number };
@@ -171,13 +119,6 @@ export type JanitorBrief = AgentBriefBase & {
   cleanupAction: string | null;
   peersClear: number;
   peersTouched: JanitorPeerTouch[];
-};
-
-export type PreflightDownstream = {
-  peerId: string;
-  who: string | null;
-  status: "pass" | "fail" | "declined" | "not_configured";
-  summary: string;
 };
 
 export type PreflightBrief = AgentBriefBase & {
