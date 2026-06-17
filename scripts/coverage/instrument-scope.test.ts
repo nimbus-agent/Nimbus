@@ -18,4 +18,13 @@ describe("shouldInstrument", () => {
   test("normalizes Windows backslashes", () => {
     expect(shouldInstrument(String.raw`C:\repo\packages\gateway\src\a.ts`)).toBe(true);
   });
+  test("instruments mcp-connectors/shared helpers (flat, nested, tsx)", () => {
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/mcp-search-tool.ts")).toBe(true);
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/sub/bar.ts")).toBe(true);
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/widget.tsx")).toBe(true);
+  });
+  test("still instruments connector src and still skips shared test files", () => {
+    expect(shouldInstrument("/repo/packages/mcp-connectors/zotero/src/server.ts")).toBe(true);
+    expect(shouldInstrument("/repo/packages/mcp-connectors/shared/mcp-search-tool.test.ts")).toBe(false);
+  });
 });

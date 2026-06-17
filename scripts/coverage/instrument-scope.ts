@@ -2,7 +2,7 @@
 // Scope-gate to FIRST-PARTY package src only — a broad filter lets Babel's own
 // node_modules re-enter the onLoad hook and crashes Babel internals.
 const FIRST_PARTY = /\/packages\/(?:gateway|cli|sdk|client)\/src\//;
-const CONNECTOR_SRC = /\/packages\/mcp-connectors\/[^/]+\/src\//;
+const CONNECTOR_SRC = /\/packages\/mcp-connectors\/(?:shared|[^/]+\/src)\//;
 const GHA_SRC = /\/packages\/github-actions\/(?:shared|[^/]+\/src)\//;
 
 export function shouldInstrument(absPath: string): boolean {
