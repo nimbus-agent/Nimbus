@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.11.1](https://github.com/nimbus-agent/Nimbus/compare/v0.11.0...v0.11.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **ci:** gitleaks allowlist synthetic TestFlight PEM fixture ([#670](https://github.com/nimbus-agent/Nimbus/issues/670)) ([3da4609](https://github.com/nimbus-agent/Nimbus/commit/3da460991b487b68fad2ea1febc9c32a148db807))
+
 ## [0.11.0](https://github.com/nimbus-agent/Nimbus/compare/v0.10.0...v0.11.0) (2026-06-16)
 
 
