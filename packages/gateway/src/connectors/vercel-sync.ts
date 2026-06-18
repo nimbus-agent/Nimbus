@@ -67,7 +67,7 @@ function parseVercelPage(parsed: unknown): {
   return {
     items: deployments,
     hasMore: next !== null && deployments.length > 0,
-    nextPageCursor: next !== null ? String(next) : "",
+    nextPageCursor: next === null ? "" : String(next),
   };
 }
 

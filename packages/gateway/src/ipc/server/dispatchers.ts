@@ -269,6 +269,14 @@ export async function tryDispatchFederationRpc(
               audit: (e) => appendPreflightAudit(index.getDatabase(), e),
             },
           }),
+      // Share forwarding (Slice 8d): asker-side deps for federation.shareForward (local-only, I5).
+      // Absent → ERR_SHARE_FORWARD_UNAVAILABLE (fail-closed).
+      ...(ctx.options.federationForwardShareDeps === undefined
+        ? {}
+        : { forwardShareDeps: ctx.options.federationForwardShareDeps }),
+      ...(ctx.options.federationResolvePeerPubkey === undefined
+        ? {}
+        : { resolvePeerPubkey: ctx.options.federationResolvePeerPubkey }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

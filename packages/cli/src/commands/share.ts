@@ -2,6 +2,16 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
+/**
+ * Render the provenance attribution chip for a received/forwarded share (spec §9.3).
+ * Inlined from packages/gateway/src/share/attribution.ts — CLI cannot import gateway source.
+ */
+function formatAttributionChipInline(p: { originLabel: string; hops: number }): string {
+  if (p.hops <= 0) return `from ${p.originLabel} (direct)`;
+  const unit = p.hops === 1 ? "hop" : "hops";
+  return `forwarded from ${p.originLabel}, ${p.hops} ${unit} away`;
+}
+
 export type ShareSinkArg =
   | { readonly type: "file"; readonly path?: string }
   | { readonly type: "http" }
@@ -155,22 +165,132 @@ export async function runShare(args: string[]): Promise<void> {
     });
     return;
   }
-  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject> ...");
+  if (sub === "forward") {
+    const contentHash = rest[0];
+    if (contentHash === undefined || contentHash.startsWith("--")) {
+      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+      process.exitCode = 1;
+      return;
+    }
+    const peerIdx = rest.indexOf("--to-peer");
+    const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
+    if (peerId === undefined || peerId.startsWith("--")) {
+      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+      process.exitCode = 1;
+      return;
+    }
+    await withIpc(async (c) => {
+      const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
+        contentHash,
+        recipient: peerId,
+      });
+      if (r.status === "rejected") {
+        console.log(`rejected ${contentHash} (owner did not approve the forward)`);
+      } else {
+        console.log(
+          r.delivered
+            ? `delivered ${contentHash}`
+            : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
+        );
+      }
+    });
+    return;
+  }
+  if (sub === "inbox") {
+    await withIpc(async (c) => {
+      const { inbox } = await c.call<{
+        inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
+      }>("share.inbox", { all: rest.includes("--all") });
+      for (const row of inbox) {
+        const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
+        console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
+      }
+    });
+    return;
+  }
+  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject|forward|inbox> ...");
   process.exitCode = 1;
 }
 
+interface ReplayStepShape {
+  readonly stepId: string;
+  readonly tool: string;
+  readonly service: string;
+  readonly status: string;
+  readonly originalStatus: string;
+  readonly detail?: string;
+}
+interface ReplayReportShape {
+  readonly sourceSessionId: string;
+  readonly steps: readonly ReplayStepShape[];
+  readonly summary: {
+    readonly total: number;
+    readonly match: number;
+    readonly diverged: number;
+    readonly missingConnector: number;
+    readonly skippedNonRead: number;
+    readonly error: number;
+  };
+}
+
+/** Pure renderer for the replay divergence report (one line per step + a summary). */
+export function formatReplayReport(report: ReplayReportShape): string {
+  const lines: string[] = [
+    `Replay of session ${report.sourceSessionId} (${report.summary.total} steps):`,
+  ];
+  if (report.steps.length === 0) {
+    lines.push("  (no replayable steps in this share)");
+  }
+  for (const s of report.steps) {
+    const suffix = s.detail === undefined ? "" : ` — ${s.detail}`;
+    lines.push(`  ${s.stepId}  ${s.status.padEnd(18)} ${s.tool}${suffix}`);
+  }
+  const m = report.summary;
+  lines.push(
+    `Summary: match ${m.match}, diverged ${m.diverged}, missing-connector ${m.missingConnector}, skipped-non-read ${m.skippedNonRead}, error ${m.error}`,
+  );
+  return lines.join("\n");
+}
+
 export async function runVerifyShare(args: string[]): Promise<void> {
-  const input = args[0];
+  const replay = args.includes("--replay");
+  const input = args.find((a) => !a.startsWith("--"));
   if (input === undefined) {
-    console.error("Usage: nimbus verify-share <file|url>");
+    console.error("Usage: nimbus verify-share <file|url> [--replay]");
     process.exitCode = 1;
     return;
   }
   const isUrl = input.startsWith("http://") || input.startsWith("https://");
+  // Read the local file up front with a friendly error (a missing/unreadable path otherwise crashes
+  // with an unhandled rejection). Applies to both the verify and replay paths.
+  let params: { input: string } | { bytesB64: string };
+  if (isUrl) {
+    params = { input };
+  } else {
+    try {
+      params = { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+    } catch {
+      console.error(`Cannot read share file: ${input}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   await withIpc(async (c) => {
-    const params = isUrl
-      ? { input }
-      : { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
+    if (replay) {
+      const r = await c.call<{
+        verify: { ok: boolean; signatureValid: boolean; expired: boolean; errors: string[] };
+        report: ReplayReportShape;
+      }>("share.replay", params);
+      console.log(
+        `signature: ${r.verify.signatureValid ? "VALID" : "INVALID"}${r.verify.expired ? " (expired)" : ""}`,
+      );
+      console.log(formatReplayReport(r.report));
+      if (!r.verify.ok) {
+        console.error(r.verify.errors.join("; ")); // surface why the share is invalid (tamper/expiry)
+        process.exitCode = 1;
+      }
+      return;
+    }
     const r = await c.call<{
       ok: boolean;
       signatureValid: boolean;

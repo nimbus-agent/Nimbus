@@ -25,6 +25,7 @@ export function buildFederationRuntime(
   cfg: NimbusFederationToml,
   index: LocalIndex,
   identity: BoxKeypair,
+  onPairComplete?: (peerId: string) => void | Promise<void>,
 ): FederationRuntime | undefined {
   if (!cfg.enabled) return undefined;
   const discovery: DiscoveryProvider = cfg.mdnsEnabled
@@ -34,7 +35,7 @@ export function buildFederationRuntime(
     outboundPairHandshake(host, port, code, identity);
   return {
     discovery,
-    pairing: new PeerPairing(index, handshake),
+    pairing: new PeerPairing(index, handshake, onPairComplete),
     consentTimeoutSeconds: cfg.consentTimeoutSeconds,
   };
 }

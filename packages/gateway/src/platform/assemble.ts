@@ -115,6 +115,7 @@ import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
 import { createIpcServer } from "../ipc/index.ts";
+import { sendFederatedOverWire } from "../ipc/lan-client.ts";
 import { startMetricsServer } from "../ipc/metrics-server.ts";
 import type { PolicyRpcCtx } from "../ipc/policy-rpc.ts";
 import { extractKbPageRef } from "../ipc/server/dispatchers.ts";
@@ -137,6 +138,16 @@ import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
 import { vectorSearchChunks } from "../search/vec-store.ts";
 import { shareConsent } from "../share/share-consent-broker.ts";
+import type { ShareFile } from "../share/share-format.ts";
+import {
+  drainPending,
+  insertPendingForward,
+  insertReceivedShare,
+  markDelivered,
+} from "../share/share-inbox-store.ts";
+import { ensureShareKeypair } from "../share/share-keypair.ts";
+import type { ShareRecord } from "../share/share-store.ts";
+import { getShareRecord } from "../share/share-store.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import type { SyncContext } from "../sync/types.ts";
@@ -590,7 +601,85 @@ async function bootFederationIntoIpcOpts(
   const { federationCfg, paths, vault, db, localIndex, ipcOpts, sidecarStops, policyGate } = opts;
   if (!federationCfg.enabled) return undefined;
   const identity = await loadOrCreateFederationIdentity(vault);
-  const federationRuntime = buildFederationRuntime(federationCfg, localIndex, identity);
+
+  // 8d: deliver a signed share to a peer over the authenticated, pubkey-pinned federation wire.
+  const deliverShareToPeer = async (
+    share: ShareFile,
+    peer: { host: string; port: number; pubkey: string },
+  ): Promise<void> => {
+    await sendFederatedOverWire(
+      peer.host,
+      peer.port,
+      identity,
+      new Uint8Array(Buffer.from(peer.pubkey, "base64")),
+      "federation.shareReceive",
+      { share },
+    );
+  };
+  // peerId/pubkey → reachable ForwardPeer (paired only, host+port must be present).
+  const lookupForwardPeer = (
+    recipientPubkey: string,
+  ): { host: string; port: number; pubkey: string } | undefined => {
+    const row = localIndex.getLanPeerByPubkey(
+      new Uint8Array(Buffer.from(recipientPubkey, "base64")),
+    );
+    if (row?.host_ip == null || row.host_port == null) return undefined;
+    return { host: row.host_ip, port: row.host_port, pubkey: recipientPubkey };
+  };
+  // Resolve a `peer:<hex>` id to its paired row's b64 pubkey. For a raw input, pass it through ONLY
+  // if it is a structurally-valid 32-byte Ed25519/X25519 pubkey (a cryptographic recipient identity,
+  // for the deferred-reveal queue — §9.4); any other unknown/garbage value resolves to `undefined`
+  // so the RPC rejects it (no caller-supplied arbitrary destination; no undrainable pending rows).
+  const resolvePeerPubkeyFn = (peerIdOrPubkey: string): string | undefined => {
+    const row = localIndex
+      .listLanPeers()
+      .find(
+        (r) =>
+          `peer:${bytesToHex(new Uint8Array(r.peer_pubkey).subarray(0, 8))}` === peerIdOrPubkey,
+      );
+    if (row !== undefined) return Buffer.from(new Uint8Array(row.peer_pubkey)).toString("base64");
+    // Not a known peer id → accept only a canonical 32-byte base64 pubkey.
+    try {
+      const decoded = Buffer.from(peerIdOrPubkey, "base64");
+      if (decoded.length === 32 && decoded.toString("base64") === peerIdOrPubkey) {
+        return peerIdOrPubkey;
+      }
+    } catch {
+      /* fall through to undefined */
+    }
+    return undefined;
+  };
+  // Reconstruct a ShareFile from a share_records row (camelCase mapped fields from share-store.ts).
+  const shareFileFromRecord = (r: ShareRecord): ShareFile => ({
+    format: "nimbus-share/v1",
+    contentHash: r.contentHash,
+    body: JSON.parse(r.bodyJson) as ShareFile["body"],
+    sig: JSON.parse(r.sigJson) as ShareFile["sig"],
+    forwarding: r.provenance as ShareFile["forwarding"],
+  });
+
+  // drain-on-pair: when a new peer pairs, flush any pending forwards queued for them.
+  const drainOnPair = async (peerId: string): Promise<void> => {
+    const pub = resolvePeerPubkeyFn(peerId);
+    if (pub === undefined) return;
+    const peer = lookupForwardPeer(pub);
+    if (peer === undefined) return;
+    for (const row of drainPending(db, pub)) {
+      try {
+        await deliverShareToPeer(row.share, peer);
+        markDelivered(db, row.id);
+      } catch {
+        /* best-effort; retried on next pair/online event */
+      }
+    }
+  };
+
+  const federationRuntime = buildFederationRuntime(
+    federationCfg,
+    localIndex,
+    identity,
+    drainOnPair,
+  );
   if (federationRuntime === undefined) return undefined;
   void federationRuntime.discovery.start();
   sidecarStops.push(() => void federationRuntime.discovery.stop());
@@ -684,6 +773,11 @@ async function bootFederationIntoIpcOpts(
       runCommand: defaultRunCommand,
       audit: (e) => appendPreflightAudit(db, e),
     },
+    // 8d: receive forwarded shares inert (spec §9.4) — store in share_inbox, no HITL.
+    receiveShareDeps: {
+      now: () => Date.now(),
+      storeReceived: (share) => insertReceivedShare(db, { share, now: Date.now() }),
+    },
   });
   // Register the stop callback BEFORE start() so a throw from start() can't leak the server.
   sidecarStops.push(() => void built.lanServer.stop());
@@ -694,6 +788,47 @@ async function bootFederationIntoIpcOpts(
   }
   ipcOpts.lanServer = built.lanServer;
   ipcOpts.lanPairingWindow = built.pairingWindow;
+
+  // 8d: wire forward/resolve deps into the local IPC federation dispatch path.
+  // forwardShareDeps — the second I27 chokepoint's dependencies (owner calls federation.shareForward).
+  ipcOpts.federationForwardShareDeps = {
+    now: () => Date.now(),
+    label: os.hostname(),
+    loadShare: (h) => {
+      const r = getShareRecord(db, h);
+      return r !== undefined ? shareFileFromRecord(r) : undefined;
+    },
+    shareKeypair: () => ensureShareKeypair(vault),
+    // SAME owner consent broker as createShare (D21 extension: second outbound-share chokepoint).
+    requestApproval: (preview, redactionSet) =>
+      shareConsent.request(
+        { sessionId: "", kind: "forward", preview, redactionSet, sink: "peer" },
+        (ipcOpts.federationConsentTimeoutSeconds ?? 30) * 1000 + 5000,
+      ),
+    lookupPeer: lookupForwardPeer,
+    deliver: deliverShareToPeer,
+    queuePending: (recipientPubkey, share) =>
+      insertPendingForward(db, { recipientPubkey, share, now: Date.now() }),
+    recordAudit: (entry) => appendAuditEntry(db, entry),
+  };
+  ipcOpts.federationResolvePeerPubkey = resolvePeerPubkeyFn;
+  // 8d origin emit (share.create --to-peer): deliver the already-approved+signed share to a peer.
+  // No hop is appended here (origin, hops stays 0) — createShare already ran the share.publish HITL.
+  ipcOpts.shareDeliverToPeer = async (share: ShareFile, peerId: string): Promise<boolean> => {
+    const pub = resolvePeerPubkeyFn(peerId);
+    if (pub === undefined) return false;
+    const peer = lookupForwardPeer(pub);
+    if (peer === undefined) return false;
+    // A transport failure must not fail `share.create --to-peer` — the share is already persisted
+    // locally (createShare ran first); report delivered:false rather than throwing.
+    try {
+      await deliverShareToPeer(share, peer);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   return delegationDep;
 }
 
@@ -1680,6 +1815,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     recordAudit: (entry) => appendAuditEntry(db, entry),
     respondApproval: (requestId, approved) => shareConsent.respond(requestId, approved),
     httpSink: shareHttpSink,
+    // Slice 8c replay: the live connector tool map. share.replay re-runs only read-only-classified
+    // tools (read-tool-registry) against it; an uninstalled connector → missing-connector.
+    listReplayTools: () => connectorMesh.listToolsForDispatcher(),
+    // 8d origin emit: deliver share.create --to-peer over the wire. Lazily reads the federation-wired
+    // closure at call time (ordering-independent); false when federation is disabled/peer unreachable.
+    deliverToPeer: async (share, peerId) =>
+      (await ipcOpts.shareDeliverToPeer?.(share, peerId)) ?? false,
   };
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);

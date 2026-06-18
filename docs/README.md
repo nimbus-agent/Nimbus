@@ -12,7 +12,7 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-purple)](https://modelcontextprotocol.io)
 ![Platforms](https://img.shields.io/badge/platforms-Windows_%7C_macOS_%7C_Linux-blue)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](../LICENSE)
-[![Release: v0.6.1](https://img.shields.io/badge/release-v0.6.1-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.6.1)
+[![Release: v0.11.2](https://img.shields.io/badge/release-v0.11.2-brightgreen)](https://github.com/nimbus-agent/Nimbus/releases/tag/v0.11.2)
 ![Status: Phase 6 In Progress](https://img.shields.io/badge/status-Phase_6_In_Progress-brightgreen)
 
 <picture>
@@ -176,7 +176,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 5 (✅ complete):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Remaining:** Tier-4 email (generic IMAP, Fastmail JMAP, ProtonMail Bridge) and Tier-5 local (DB schema indexing, filesystem-v2 profiling, Storybook). Local data-file profiling (Parquet / CSV / JSONL — header / footer / line counts only, never cell values) lands with Tier 5.
 
-**Phase 6 (Team tier, 🚧 in progress):** Federation Core, Team Vault + Quorum HITL, Identity/SSO/SCIM, Org Policy + Admin + Observability, ChatOps, and cross-colleague intelligence shipped (Slices 1–6). The warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) shipped 2026-06-13 with a cross-warehouse lineage graph (Slice 7 / Wave 7a). Remaining: Share & Virality primitives (Slice 8) and deferred Phase 5 write-path items (Slice 9).
+**Phase 6 (Team tier, 🚧 in progress):** Federation Core, Team Vault + Quorum HITL, Identity/SSO/SCIM, Org Policy + Admin + Observability, ChatOps, and cross-colleague intelligence shipped (Slices 1–6). The warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) shipped 2026-06-13 with a cross-warehouse lineage graph (Slice 7 / Wave 7a), followed by their team-shared credentials and HITL-gated writes (Waves 7b–7c). Share & Virality (Slice 8 — the signed, redacted, owner-gated outbound `nimbus share` behind invariant `I27`, plus declarative recipes) shipped 2026-06-15. Remaining: deferred Phase 5 write-path items (Slice 9).
 
 See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 

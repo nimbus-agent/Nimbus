@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.12.0](https://github.com/nimbus-agent/Nimbus/compare/v0.11.2...v0.12.0) (2026-06-17)
+
+
+### Features
+
+* **share:** Phase 6 Slice 8b — recipe (--as-recipe declarative DAG, V42 params) ([#679](https://github.com/nimbus-agent/Nimbus/issues/679)) ([97573bd](https://github.com/nimbus-agent/Nimbus/commit/97573bdc2423d8687a974ccc08ad4d5f26da15df))
+* **share:** Phase 6 Slice 8c — replay (verify-share --replay, recipe-runner) ([#684](https://github.com/nimbus-agent/Nimbus/issues/684)) ([8535f4d](https://github.com/nimbus-agent/Nimbus/commit/8535f4db75a68806806813131e7fb0a34327fba7))
+
+
+### Bug Fixes
+
+* **sonar:** clear last 2 S7735 negated-condition smells ([#683](https://github.com/nimbus-agent/Nimbus/issues/683)) ([e6cbfff](https://github.com/nimbus-agent/Nimbus/commit/e6cbfff9b4fdb173b3f650e8f1f98c494b985c43))
+* **test:** add --timeout 30000 to all coverage shards (Windows flake) ([#681](https://github.com/nimbus-agent/Nimbus/issues/681)) ([93270ca](https://github.com/nimbus-agent/Nimbus/commit/93270cad4eae8c14330ca67c09947d692ecc18e8))
+
 ## [0.11.2](https://github.com/nimbus-agent/Nimbus/compare/v0.11.1...v0.11.2) (2026-06-17)
 
 

@@ -7,11 +7,14 @@ import { federationConsent } from "../federation/consent-broker.ts";
 import { InMemoryDiscoveryProvider } from "../federation/discovery.ts";
 import { buildFederationLanServer } from "../federation/federation-server.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
+
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { type DeletionRecord, verifyDeletionRecord } from "../policy/deletion-record.ts";
 import { signPolicy } from "../policy/policy-signing.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
+import { buildShareFile } from "../share/share-format.ts";
+import type { ForwardShareDeps } from "../share/share-forward.ts";
 import type { FederationRpcContext } from "./federation-rpc.ts";
 import { dispatchFederationRpc } from "./federation-rpc.ts";
 import { generateBoxKeypair } from "./lan-crypto.ts";
@@ -1060,5 +1063,184 @@ test("federation.purge APPROVE: no deletePurgeContributions → deletedCount 0 (
     expect(v.kind).toBe("ok");
     expect(v.record.deletedCount).toBe(0);
     expect(typeof v.sig).toBe("string");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// federation.shareForward + federation.shareReceive (Slice 8d)
+// ---------------------------------------------------------------------------
+
+/** Build a valid signed share object suitable for passing as the `share` param of shareReceive. */
+function validSignedShareObject(): unknown {
+  const kp = generateEd25519Keypair();
+  const pubkeyB64 = encodeBase64(kp.pubkey);
+  const privkeyB64 = encodeBase64(kp.privkey);
+  const body = {
+    kind: "transcript" as const,
+    sessionId: "recv-session",
+    createdAt: 1,
+    expiresAt: null,
+    redactionSet: [],
+    origin: { label: "origin-gw", pubkey: pubkeyB64 },
+    turns: [],
+  };
+  return buildShareFile(body, privkeyB64, pubkeyB64);
+}
+
+/** Build a FederationRpcContext spread over the base ctx() with extra fields. */
+function makeFederationCtx(extra: Partial<FederationRpcContext>): FederationRpcContext {
+  return { ...ctx(), ...extra };
+}
+
+test("federation.shareForward routes to forwardShare with resolved pubkey", async () => {
+  let seen: { contentHash: string; recipientPubkey: string } | undefined;
+
+  const kp = generateEd25519Keypair();
+  const pubkeyB64 = encodeBase64(kp.pubkey);
+  const privkeyB64 = encodeBase64(kp.privkey);
+  const body = {
+    kind: "transcript" as const,
+    sessionId: "s-fwd",
+    createdAt: 1,
+    expiresAt: null,
+    redactionSet: [],
+    origin: { label: "test", pubkey: pubkeyB64 },
+    turns: [],
+  };
+  const shareFile = buildShareFile(body, privkeyB64, pubkeyB64);
+  const testHash = shareFile.contentHash;
+
+  // Capture the ACTUAL routed values (so the test fails if contentHash/recipient routing regresses):
+  // `loadShare` receives the routed contentHash; `queuePending` receives the resolved recipient pubkey.
+  let capturedHash: string | undefined;
+  const forwardShareDeps: ForwardShareDeps = {
+    now: () => 1,
+    label: "test-gateway",
+    loadShare: (h) => {
+      capturedHash = h;
+      return h === testHash ? shareFile : undefined;
+    },
+    shareKeypair: async () => ({ privkeyB64, pubkeyB64 }),
+    requestApproval: async (_preview, _redactionSet) => true,
+    lookupPeer: (_recipientPubkey) => undefined, // not paired → forwardShare queues it
+    deliver: async () => {},
+    queuePending: (recipientPubkey, _share) => {
+      seen = { contentHash: capturedHash ?? "", recipientPubkey };
+    },
+    recordAudit: (_e) => {},
+  };
+
+  const testCtx = makeFederationCtx({
+    resolvePeerPubkey: (id) => (id === "peer:bob" ? "BOBPUB" : undefined),
+    forwardShareDeps,
+  });
+  const out = await dispatchFederationRpc(
+    "federation.shareForward",
+    { contentHash: testHash, recipient: "peer:bob" },
+    testCtx,
+  );
+  expect(out.kind).toBe("hit");
+  expect(seen).toEqual({ contentHash: testHash, recipientPubkey: "BOBPUB" });
+});
+
+test("federation.shareForward fails closed when forwardShareDeps is undefined", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.shareForward",
+      { contentHash: "h1", recipient: "peer:bob" },
+      makeFederationCtx({}),
+    ),
+  ).rejects.toThrow(/ERR_SHARE_FORWARD_UNAVAILABLE/);
+});
+
+test("federation.shareForward fails with ERR_UNKNOWN_RECIPIENT when resolvePeerPubkey returns undefined", async () => {
+  const kp = generateEd25519Keypair();
+  const pubkeyB64 = encodeBase64(kp.pubkey);
+  const privkeyB64 = encodeBase64(kp.privkey);
+  const body = {
+    kind: "transcript" as const,
+    sessionId: "s-fwd2",
+    createdAt: 1,
+    expiresAt: null,
+    redactionSet: [],
+    origin: { label: "test", pubkey: pubkeyB64 },
+    turns: [],
+  };
+  const shareFile = buildShareFile(body, privkeyB64, pubkeyB64);
+  const deps: ForwardShareDeps = {
+    now: () => 1,
+    label: "test-gateway",
+    loadShare: (h) => (h === shareFile.contentHash ? shareFile : undefined),
+    shareKeypair: async () => ({ privkeyB64, pubkeyB64 }),
+    requestApproval: async () => true,
+    lookupPeer: () => undefined,
+    deliver: async () => {},
+    queuePending: () => {},
+    recordAudit: () => {},
+  };
+  await expect(
+    dispatchFederationRpc(
+      "federation.shareForward",
+      { contentHash: shareFile.contentHash, recipient: "peer:unknown" },
+      makeFederationCtx({
+        forwardShareDeps: deps,
+        resolvePeerPubkey: () => undefined,
+      }),
+    ),
+  ).rejects.toThrow(/ERR_UNKNOWN_RECIPIENT/);
+});
+
+test("federation.shareReceive stores inbound inert share", async () => {
+  let received = false;
+  const testCtx = makeFederationCtx({
+    receiveShareDeps: {
+      now: () => 1,
+      storeReceived: () => {
+        received = true;
+      },
+    },
+  });
+  const out = await dispatchFederationRpc(
+    "federation.shareReceive",
+    { share: validSignedShareObject() },
+    testCtx,
+  );
+  expect(out.kind).toBe("hit");
+  expect(received).toBe(true);
+});
+
+test("federation.shareReceive fails closed when receiveShareDeps is undefined", async () => {
+  await expect(
+    dispatchFederationRpc(
+      "federation.shareReceive",
+      { share: validSignedShareObject() },
+      makeFederationCtx({}),
+    ),
+  ).rejects.toThrow(/ERR_SHARE_RECEIVE_UNAVAILABLE/);
+});
+
+test("federation.shareReceive returns ok:false for a malformed share (no sig)", async () => {
+  const testCtx = makeFederationCtx({
+    receiveShareDeps: {
+      now: () => 1,
+      storeReceived: () => {},
+    },
+  });
+  const out = await dispatchFederationRpc(
+    "federation.shareReceive",
+    {
+      share: {
+        format: "nimbus-share/v1",
+        contentHash: "badhash",
+        body: {},
+        forwarding: { hops: 0, chain: [] },
+      },
+    },
+    testCtx,
+  );
+  expect(out.kind).toBe("hit");
+  if (out.kind === "hit") {
+    const v = out.value as { ok: boolean; reason?: string };
+    expect(v.ok).toBe(false);
   }
 });

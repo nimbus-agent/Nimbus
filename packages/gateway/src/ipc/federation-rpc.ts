@@ -29,6 +29,12 @@ import type { LanPeerRow, LocalIndex } from "../index/local-index.ts";
 import { type DeletionRecord, signDeletionRecord } from "../policy/deletion-record.ts";
 import { servePolicy } from "../policy/policy-distribution.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
+import {
+  type ForwardShareDeps,
+  forwardShare,
+  type ReceiveShareDeps,
+  receiveForwardedShare,
+} from "../share/share-forward.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { sendFederatedOverWire } from "./lan-client.ts";
@@ -88,6 +94,15 @@ export interface FederationRpcContext {
   // command resolver + HITL approval + sandbox runner + audit). `identity` is supplied separately
   // from `identityGuard`. Absent → federation.preflight fails closed (ERR_PREFLIGHT_UNAVAILABLE).
   readonly preflight?: Omit<PreflightGateCtx, "identity">;
+  // Share forwarding (Slice 8d). Present on the asker-side local dispatch path.
+  // Absent → federation.shareForward fails closed (ERR_SHARE_FORWARD_UNAVAILABLE).
+  readonly forwardShareDeps?: ForwardShareDeps;
+  // Share receiving (Slice 8d). Present on the answering path.
+  // Absent → federation.shareReceive fails closed (ERR_SHARE_RECEIVE_UNAVAILABLE).
+  readonly receiveShareDeps?: ReceiveShareDeps;
+  // Resolves a peerId or raw b64 pubkey string to a b64 pubkey for forwarding.
+  // Pass-through if already a raw pubkey; undefined if the peer is unknown.
+  readonly resolvePeerPubkey?: (peerIdOrPubkey: string) => string | undefined;
 }
 
 // One session-scoped consent cache per process. Shared across calls (the dispatcher is per-call).
@@ -623,6 +638,38 @@ export async function dispatchFederationRpc(
       });
 
       return { kind: "ok", record, sig } as const;
+    },
+    // Asker-side: re-forward an existing signed share to a peer (Slice 8d, I27 second chokepoint).
+    // The owner's share.publish HITL approval is mandatory and fail-closed (forwardShare handles it).
+    // Local-only entrypoint — federation.shareForward is FORBIDDEN_OVER_LAN (I5, mirrors federation.ask).
+    "federation.shareForward": async (p, ctx) => {
+      if (ctx.forwardShareDeps === undefined || ctx.resolvePeerPubkey === undefined) {
+        throw new FederationRpcError(
+          -32603,
+          "ERR_SHARE_FORWARD_UNAVAILABLE: federation forwarding not configured",
+        );
+      }
+      const rec = asRecord(p);
+      const contentHash = requireString(rec, "contentHash");
+      const recipientPubkey = ctx.resolvePeerPubkey(requireString(rec, "recipient"));
+      if (recipientPubkey === undefined) {
+        throw new FederationRpcError(-32602, "ERR_UNKNOWN_RECIPIENT: no pubkey for recipient");
+      }
+      return forwardShare({ contentHash, recipientPubkey }, ctx.forwardShareDeps);
+    },
+    // Answerer-side: accept an inbound forwarded share and store it INERT (Slice 8d, spec §9.4).
+    // The inner body+sig must verify (reject otherwise — never persist a forged body); no HITL needed.
+    // SECURITY (I17/R1): `peerId` (the sender identity) is forced by the LAN transport and is NOT
+    // trusted for content — the origin sig + hop chain are authoritative for provenance.
+    "federation.shareReceive": async (p, ctx) => {
+      if (ctx.receiveShareDeps === undefined) {
+        throw new FederationRpcError(
+          -32603,
+          "ERR_SHARE_RECEIVE_UNAVAILABLE: federation receive not configured",
+        );
+      }
+      const rec = asRecord(p);
+      return receiveForwardedShare(rec["share"], ctx.receiveShareDeps);
     },
   });
 }

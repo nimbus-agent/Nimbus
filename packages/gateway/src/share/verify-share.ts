@@ -1,15 +1,26 @@
 import { load as yamlParse } from "js-yaml";
 import { safeFetch } from "./safe-fetch.ts";
+import type { ShareFile } from "./share-format.ts";
 import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
+import { verifyForwardingChain } from "./share-forwarding.ts";
 
 /**
  * A {@link VerifyResult} augmented with the share's self-declared origin, when the bytes parse as
  * JSON carrying a `body.origin`. The origin is surfaced for display even when verification fails
  * (e.g. a tampered body), so the caller can show "claims to be from X — but signature invalid".
  * It is therefore UNTRUSTED until {@link VerifyResult.signatureValid} is true.
+ *
+ * `forwarding` is ADVISORY attribution only (spec §9.2): a bad/tampered hop never flips
+ * `signatureValid` or `ok` — content validity is determined independently by the inner sig.
  */
 export interface VerifyShareReport extends VerifyResult {
   readonly origin?: { readonly label: string; readonly pubkey: string };
+  /** Advisory forwarding hop-chain validation result. Absent when the share has no forwarding envelope or when the input cannot be parsed. */
+  readonly forwarding?: {
+    readonly hops: number;
+    readonly chainValid: boolean;
+    readonly hopsValid: number;
+  };
 }
 
 /**
@@ -65,21 +76,99 @@ export function verifyShareFromBytes(
   try {
     const parsed = JSON.parse(new TextDecoder().decode(jsonBytes)) as {
       body?: { origin?: unknown };
+      forwarding?: { hops?: unknown; chain?: unknown };
+      contentHash?: unknown;
+      format?: unknown;
+      sig?: unknown;
     };
     const origin = parsed.body?.origin;
     // `origin` is untrusted JSON — only surface it when it has the expected `{label, pubkey}`
     // string shape, so a malformed value can't poison the report's type contract.
-    if (
+    const originField =
       origin !== null &&
       typeof origin === "object" &&
       typeof (origin as { label?: unknown }).label === "string" &&
       typeof (origin as { pubkey?: unknown }).pubkey === "string"
+        ? (origin as { label: string; pubkey: string })
+        : undefined;
+
+    // Advisory forwarding chain: run only when the share parses as a valid ShareFile (has a
+    // proper forwarding envelope). Content validity (base) is NEVER affected by this check —
+    // a bad/tampered hop returns forwarding.chainValid=false while signatureValid stays true.
+    let forwardingField: { hops: number; chainValid: boolean; hopsValid: number } | undefined;
+    if (
+      parsed.forwarding !== null &&
+      typeof parsed.forwarding === "object" &&
+      typeof parsed.forwarding.hops === "number" &&
+      Array.isArray(parsed.forwarding.chain) &&
+      typeof parsed.contentHash === "string" &&
+      typeof parsed.format === "string" &&
+      parsed.sig !== null &&
+      typeof parsed.sig === "object"
     ) {
-      return { ...base, origin: origin as { label: string; pubkey: string } };
+      const chain = verifyForwardingChain(parsed as unknown as ShareFile);
+      forwardingField = {
+        // Report the hop depth from the actual chain, NOT the untrusted `forwarding.hops` field —
+        // a payload could otherwise claim an arbitrary hop count while `chainValid` derives from `chain`.
+        hops: chain.hopsTotal,
+        chainValid: chain.valid,
+        hopsValid: chain.hopsValid,
+      };
     }
-    return base;
+
+    const report: VerifyShareReport = {
+      ...base,
+      ...(originField !== undefined ? { origin: originField } : {}),
+      ...(forwardingField !== undefined ? { forwarding: forwardingField } : {}),
+    };
+    return report;
   } catch {
     return base;
+  }
+}
+
+/**
+ * Load raw share bytes from a URL (SSRF-safe {@link safeFetch}) or a local file path. The
+ * input-loading half of {@link verifyShareFromInput}, exported so `share.replay` can both verify and
+ * parse the same bytes without a second read.
+ */
+export async function loadShareBytes(
+  input: string,
+  deps?: { readonly safeFetchFn?: typeof safeFetch },
+): Promise<Uint8Array> {
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    const doFetch = deps?.safeFetchFn ?? safeFetch;
+    const res = await doFetch(input);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+  return await Bun.file(input).bytes();
+}
+
+/**
+ * Parse share bytes (JSON or YAML) into a {@link ShareFile} for replay, or `null` if the input is not
+ * a well-formed share envelope. Verification is the trust boundary ({@link verifyShareFromBytes}) —
+ * this only structurally validates enough to read `body`/`sig`/`forwarding`. Never throws.
+ */
+export function parseShareFile(bytes: Uint8Array): ShareFile | null {
+  try {
+    const obj = JSON.parse(new TextDecoder().decode(toJsonShareBytes(bytes))) as unknown;
+    if (
+      obj === null ||
+      typeof obj !== "object" ||
+      typeof (obj as { body?: unknown }).body !== "object" ||
+      (obj as { body?: unknown }).body === null ||
+      typeof (obj as { sig?: unknown }).sig !== "object" ||
+      (obj as { sig?: unknown }).sig === null ||
+      typeof (obj as { format?: unknown }).format !== "string" ||
+      typeof (obj as { contentHash?: unknown }).contentHash !== "string" ||
+      typeof (obj as { forwarding?: unknown }).forwarding !== "object" ||
+      (obj as { forwarding?: unknown }).forwarding === null
+    ) {
+      return null;
+    }
+    return obj as ShareFile;
+  } catch {
+    return null;
   }
 }
 

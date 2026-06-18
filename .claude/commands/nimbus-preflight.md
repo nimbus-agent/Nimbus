@@ -35,6 +35,24 @@ Develop on one OS, but CI runs all three (and PRs gate on Ubuntu). Build paths w
 - **pre-commit** refuses commits on `main`/`develop` — branch first. Override: `NIMBUS_ALLOW_DEFAULT_BRANCH_COMMIT=1`.
 - **pre-push** runs `preflight:fast`. Override (emergency/trivial): `NIMBUS_SKIP_PREPUSH=1`.
 
-## SonarQube
+## SonarQube — the quality gate IS blocking
 
-The SonarQube Cloud analysis step is `continue-on-error: true` — an external `sonar-scanner` failure (e.g. exit 3) does not fail the build, and is not a branch-protection required check. Analysis still uploads to the SonarCloud dashboard; review it there.
+Two distinct steps in `_test-suite.yml`, do not conflate them:
+
+- **"SonarQube Cloud analysis"** (the `sonar-scanner` upload) is `continue-on-error: true` — a transient scanner failure (e.g. exit 3) does not fail the build.
+- **"SonarQube quality gate (enforced)"** polls the `project_status` API and **`exit 1`s when the gate verdict is `ERROR`** — this **blocks the PR / push check**. New-code coverage, new smells/bugs/vulns, and unreviewed security hotspots can all flip the gate to ERROR.
+
+There is no local equivalent packaged (it needs `SONAR_TOKEN` + server-side analysis). If a PR's SonarCloud check is red, use the **`nimbus-sonar-gate`** agent — it queries the gate + issues + hotspots via the API and applies fix-not-exclude fixes.
+
+## Gates you CANNOT reproduce on one dev box
+
+These only run in CI (other OS, external tooling, or network) — when one reds, don't guess, drive it down with the named agent:
+
+- **Coverage floor** is **Linux-authoritative**: local lcov on Windows/macOS diverges from CI by tens of percent on OS-specific files. Reproduce with `scripts/coverage-floor/reseed-docker.sh` (builds the lcov in `oven/bun:latest` == CI bun). Red gate → **`nimbus-coverage-floor`** agent.
+- **SonarCloud quality gate** (above) → **`nimbus-sonar-gate`** agent.
+- **Cross-platform Windows/macOS** unit legs, **client node-compat** (real Node 20 ESM), **CodeQL / Trivy / cargo-audit / cargo-deny**, **install-smoke (3-OS)** — accept as push-time; a red here → **`nimbus-ci-doctor`** agent.
+
+## Two static gates worth knowing
+
+- **`audit:status-drift`** — keeps the doc "status surfaces" (CLAUDE.md, GEMINI.md, architecture.md, SECURITY-INVARIANTS.md) in sync with the canonical highest invariant (`I<N>`) and schema version (`V<N>`) read from code. Bumping an invariant/migration without updating the status lines fails this gate.
+- **`audit:action-sha-pins`** — asserts every third-party `uses:` in `.github/workflows` is pinned to a full 40-hex SHA (the org **requires** SHA-pinning; an unpinned tag ref is rejected at run time). Local `./` and reusable-workflow refs are exempt.

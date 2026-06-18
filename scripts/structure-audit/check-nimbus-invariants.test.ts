@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  checkForwardShareConfinement,
   checkShareConsentBrokerConfinement,
+  checkSharePublishConfinement,
   checkSpawnInvariant,
   checkVaultKeyAllowList,
   checkWarehouseWriteConfinement,
@@ -338,6 +340,40 @@ describe("D21 (I27) extension — createShare call-site + consent-broker wiring 
         contents: `await createShare(req, deps);`,
       },
       { relPath: ASSEMBLE, contents: `requestApproval: () => shareConsent.request` },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("D21: forwardShare called outside share-forward.ts + federation-rpc.ts is a violation", () => {
+    const v = checkForwardShareConfinement([
+      {
+        relPath: "packages/gateway/src/ipc/some-other.ts",
+        contents: "await forwardShare(req, deps);",
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toContain("D21-forwardshare-callsite");
+  });
+
+  test("D21: forwardShare called from its home + wiring site is allowed", () => {
+    const v = checkForwardShareConfinement([
+      {
+        relPath: "packages/gateway/src/share/share-forward.ts",
+        contents: "export async function forwardShare() {}",
+      },
+      {
+        relPath: "packages/gateway/src/ipc/federation-rpc.ts",
+        contents: "await forwardShare(req, deps);",
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("D21: share.publish named in share-forward.ts is allowed (re-forward audit action)", () => {
+    const v = checkSharePublishConfinement([
+      {
+        relPath: "packages/gateway/src/share/share-forward.ts",
+        contents: 'actionType: "share.publish"',
+      },
     ]);
     expect(v).toHaveLength(0);
   });

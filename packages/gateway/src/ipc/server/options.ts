@@ -13,6 +13,8 @@ import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
+import type { ShareFile } from "../../share/share-format.ts";
+import type { ForwardShareDeps, ReceiveShareDeps } from "../../share/share-forward.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -110,4 +112,17 @@ export type CreateIpcServerOptions = {
   // cleanly when unset. share.create/share.prune are LAN-forbidden (I5); only share.get/list/pubkey/
   // verify are Tauri-exposed (I7).
   shareRpcCtx?: ShareRpcCtx;
+  // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
+  // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
+  // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).
+  federationForwardShareDeps?: ForwardShareDeps;
+  // Resolve a peerId or raw b64 pubkey to a b64 pubkey; undefined when the peer is unknown.
+  federationResolvePeerPubkey?: (peerIdOrPubkey: string) => string | undefined;
+  // Share receiving — answerer-side (Slice 8d). Wired into the LAN server's FederationRpcContext so
+  // inbound `federation.shareReceive` calls can persist the share; absent → fails closed.
+  federationReceiveShareDeps?: ReceiveShareDeps;
+  // 8d origin emit: deliver an already-approved (createShare-HITL'd) share to a peer over the wire
+  // (resolve peerId→pubkey→reachable peer→federation.shareReceive). Present only when federation is
+  // enabled; share.create --to-peer reports delivered:false when unset/unreachable (share stays local).
+  shareDeliverToPeer?: (share: ShareFile, peerId: string) => Promise<boolean>;
 };

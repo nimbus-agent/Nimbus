@@ -60,7 +60,7 @@ function parseStripePage(parsed: unknown): ParsedPage {
     return { items, hasMore: false };
   }
   const last = asRecord(items.at(-1));
-  const nextId = last !== undefined ? (stringField(last, "id") ?? "") : "";
+  const nextId = last === undefined ? "" : (stringField(last, "id") ?? "");
   return { items, hasMore: nextId !== "", nextPageCursor: nextId };
 }
 

@@ -50,6 +50,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "federation.ask", // local-only asker entrypoint (sends over the wire to a peer); not answerable
   "federation.askExpertise", // local-only asker entrypoint; not answerable
   "federation.askInvoke", // local-only asker entrypoint (Slice 2 team-vault invoke); not answerable
+  "federation.shareForward", // local-only asker entrypoint (sends a share over the wire); not answerable
   // NOTE: federation.purge (Slice 4 GDPR serve) is deliberately NOT forbidden here — like
   // federation.query/expertise/invoke it is an ANSWERING method (a paired peer asks this gateway to
   // erase a user's contributions). It is HITL-gated inside the handler (the local operator must

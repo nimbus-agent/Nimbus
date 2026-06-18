@@ -635,29 +635,36 @@ describe("runIndexedSchemaMigrations — no pruning when backupOptions absent", 
 });
 
 // ---------------------------------------------------------------------------
-// Full migration stack — V1 through V41
+// Full migration stack — V1 through V43
 // ---------------------------------------------------------------------------
 
-describe("runIndexedSchemaMigrations — full stack V1→V41", () => {
-  it("advances to V41 without throwing", () => {
+describe("runIndexedSchemaMigrations — full stack V1→V43", () => {
+  it("advances to V43 without throwing", () => {
     const db = freshDb();
-    expect(() => runIndexedSchemaMigrations(db, 41)).not.toThrow();
-    expect(userVersion(db)).toBe(41);
+    expect(() => runIndexedSchemaMigrations(db, 43)).not.toThrow();
+    expect(userVersion(db)).toBe(43);
     db.close();
   });
 
-  it("records 41 ledger rows", () => {
+  it("records 43 ledger rows", () => {
     const db = freshDb();
-    runIndexedSchemaMigrations(db, 41);
-    expect(migrationCount(db)).toBe(41);
+    runIndexedSchemaMigrations(db, 43);
+    expect(migrationCount(db)).toBe(43);
     db.close();
   });
 
-  it("is idempotent at V41", () => {
+  it("is idempotent at V43", () => {
     const db = freshDb();
-    runIndexedSchemaMigrations(db, 41);
-    expect(() => runIndexedSchemaMigrations(db, 41)).not.toThrow();
-    expect(migrationCount(db)).toBe(41);
+    runIndexedSchemaMigrations(db, 43);
+    expect(() => runIndexedSchemaMigrations(db, 43)).not.toThrow();
+    expect(migrationCount(db)).toBe(43);
+    db.close();
+  });
+
+  it("creates share_inbox table after full migration", () => {
+    const db = freshDb();
+    runIndexedSchemaMigrations(db, 43);
+    expect(tableNames(db)).toContain("share_inbox");
     db.close();
   });
 });

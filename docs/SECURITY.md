@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-Nimbus is in active development (**Phase 6 — Team**, in progress; **Phase 5 — The Extended Surface** is complete). Security fixes land on `main` and are folded into the next `v0.6.x` patch release.
+Nimbus is in active development (**Phase 6 — Team**, nearly complete; **Phase 5 — The Extended Surface** is complete). Security fixes land on `main` and are folded into the next `v0.11.x` patch release.
 
 | Branch / Tag | Supported |
 |---|---|
 | `main` (HEAD) | ✅ Yes — tracks the upcoming version |
-| `v0.6.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
-| Older `v0.x` releases (`v0.1`–`v0.5`) | ❌ No — upgrade to the latest patch |
+| `v0.11.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
+| Older `v0.x` releases (`v0.1`–`v0.10`) | ❌ No — upgrade to the latest patch |
 | Pre-`v0.1.0` commits | ❌ No |
 
 ### Linux runtime support — glibc floor
@@ -138,7 +138,9 @@ Every destructive, outgoing, or irreversible action — delete, send, move, merg
 
 Every action Nimbus takes under a HITL approval is recorded with the action type, payload, decision, and timestamp. The audit log is append-only and locally stored in SQLite.
 
-> **Current state of the HITL whitelist:** The set covers cloud storage, email, calendar, source control (merge, push, branch delete), CI/CD (trigger, cancel), infrastructure (apply, destroy, scale), Kubernetes, and monitoring/incident actions. See the constant in `executor.ts` for the full list. Extensions that declare `hitlRequired` in their manifest have their write tools added to the gate automatically.
+> **Current state of the HITL whitelist:** The set covers cloud storage, email, calendar, source control (merge, push, branch delete), CI/CD (trigger, cancel), infrastructure (apply, destroy, scale), Kubernetes, monitoring/incident actions, and outbound shares. See the constant in `executor.ts` for the full list. Extensions that declare `hitlRequired` in their manifest have their write tools added to the gate automatically.
+>
+> **Outbound share gate (invariant `I27`).** The one deliberate *outbound* data path — `nimbus share` — leaves the machine only through `share/share-gate.ts`, behind the `share.publish` HITL action: the local owner approves the exact redacted preview, the body is signed with the Vault-only `share.signing.privkey`, and the applied redaction-set is audit-logged. A denied or timed-out approval emits nothing (fail-closed).
 
 ---
 

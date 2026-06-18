@@ -128,6 +128,61 @@ test("peerIdFor produces stable hex-prefix peer id across two separate approvals
   expect(idA).not.toBe(idB);
 });
 
+// --- onPairComplete seam (Task 9: drain-on-first-pair hook) ---
+
+test("approveInboundPair fires onPairComplete with the new peerId", () => {
+  const fired: string[] = [];
+  const pairing = new PeerPairing(index, undefined, (peerId) => {
+    fired.push(peerId);
+  });
+  const peerId = pairing.approveInboundPair({ peerPubkey: new Uint8Array(32).fill(7) });
+  expect(fired).toEqual([peerId]);
+});
+
+test("initiatePair fires onPairComplete after a successful handshake", async () => {
+  const fired: string[] = [];
+  const handshake = async () => new Uint8Array(32).fill(5);
+  const pairing = new PeerPairing(index, handshake, (peerId) => {
+    fired.push(peerId);
+  });
+  const peerId = await pairing.initiatePair("h", 1, "code");
+  expect(fired).toEqual([peerId]);
+});
+
+test("approveInboundPair: sync-throwing onPairComplete does not prevent peerId return", () => {
+  const pairing = new PeerPairing(index, undefined, (_peerId) => {
+    throw new Error("drain failed synchronously");
+  });
+  const peerId = pairing.approveInboundPair({ peerPubkey: new Uint8Array(32).fill(3) });
+  expect(peerId).toMatch(/^peer:[0-9a-f]{16}$/);
+});
+
+test("approveInboundPair: async-rejecting onPairComplete does not prevent peerId return", () => {
+  const pairing = new PeerPairing(index, undefined, (_peerId) => {
+    return Promise.reject(new Error("drain rejected async"));
+  });
+  const peerId = pairing.approveInboundPair({ peerPubkey: new Uint8Array(32).fill(4) });
+  expect(peerId).toMatch(/^peer:[0-9a-f]{16}$/);
+});
+
+test("initiatePair: sync-throwing onPairComplete does not prevent peerId return", async () => {
+  const handshake = async () => new Uint8Array(32).fill(8);
+  const pairing = new PeerPairing(index, handshake, (_peerId) => {
+    throw new Error("drain failed synchronously in initiatePair");
+  });
+  const peerId = await pairing.initiatePair("h", 2, "code2");
+  expect(peerId).toMatch(/^peer:[0-9a-f]{16}$/);
+});
+
+test("initiatePair: async-rejecting onPairComplete does not prevent peerId return", async () => {
+  const handshake = async () => new Uint8Array(32).fill(9);
+  const pairing = new PeerPairing(index, handshake, (_peerId) => {
+    return Promise.reject(new Error("drain rejected async in initiatePair"));
+  });
+  const peerId = await pairing.initiatePair("h", 3, "code3");
+  expect(peerId).toMatch(/^peer:[0-9a-f]{16}$/);
+});
+
 test("approveInboundPair second call for same pubkey overwrites direction (upsert)", () => {
   const pairing = new PeerPairing(index);
   const peerKey = generateBoxKeypair().publicKey;

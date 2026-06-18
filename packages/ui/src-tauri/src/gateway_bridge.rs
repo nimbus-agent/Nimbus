@@ -123,6 +123,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "scim.listUsers",
     "scim.status",
     "share.get",
+    "share.inbox",
     "share.list",
     "share.pubkey",
     "share.verify",
@@ -497,7 +498,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 94);
+        assert_eq!(ALLOWED_METHODS.len(), 95);
     }
 
     #[test]

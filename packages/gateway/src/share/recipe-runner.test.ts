@@ -1,0 +1,247 @@
+// packages/gateway/src/share/recipe-runner.test.ts
+import { describe, expect, test } from "bun:test";
+import { isReadOnlyToolId } from "./read-tool-registry.ts";
+import type { RecipeStep } from "./recipe.ts";
+import { replayRecipe, replayShare, stepsFromShare, type ToolRunOutcome } from "./recipe-runner.ts";
+import type { ShareFile } from "./share-format.ts";
+
+function shareWith(
+  body: Partial<ShareFile["body"]> & { kind: "transcript" | "recipe" },
+): ShareFile {
+  return {
+    format: "nimbus-share/v1",
+    contentHash: "x",
+    body: {
+      sessionId: "s1",
+      createdAt: 1,
+      expiresAt: null,
+      redactionSet: [],
+      origin: { label: "h", pubkey: "P" },
+      ...body,
+    },
+    sig: { alg: "ed25519", pubkey: "P", signature: "S" },
+    forwarding: { hops: 0, chain: [] },
+  };
+}
+
+describe("stepsFromShare", () => {
+  test("recipe share → uses body.recipe.steps in order", () => {
+    const share = shareWith({
+      kind: "recipe",
+      recipe: {
+        recipeVersion: 1,
+        sourceSessionId: "s1",
+        generatedAt: 1,
+        graphTraversals: [],
+        steps: [
+          {
+            stepId: "step-1",
+            tool: "gmail_list",
+            service: "gmail",
+            params: { a: 1 },
+            status: "ok",
+            dependsOn: [],
+          },
+          {
+            stepId: "step-2",
+            tool: "slack_search",
+            service: "slack",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+        ],
+      },
+    });
+    const { sourceSessionId, steps } = stepsFromShare(share);
+    expect(sourceSessionId).toBe("s1");
+    expect(steps.map((s) => s.tool)).toEqual(["gmail_list", "slack_search"]);
+  });
+
+  test("transcript share → synthesizes steps from body.toolCalls (ordered, step-N ids)", () => {
+    const share = shareWith({
+      kind: "transcript",
+      toolCalls: [
+        { toolId: "gmail_get", service: "gmail", params: { id: "1" }, status: "ok" },
+        { toolId: "file_delete", service: "fs", params: { path: "/x" }, status: "ok" },
+      ],
+    });
+    const { steps } = stepsFromShare(share);
+    expect(steps.map((s) => s.stepId)).toEqual(["step-1", "step-2"]);
+    expect(steps[1]?.tool).toBe("file_delete");
+    expect(steps[1]?.dependsOn).toEqual([]);
+  });
+
+  test("malformed / missing recipe → empty steps (fail-safe)", () => {
+    expect(stepsFromShare(shareWith({ kind: "recipe", recipe: undefined })).steps).toEqual([]);
+    expect(stepsFromShare(shareWith({ kind: "recipe", recipe: { nope: true } })).steps).toEqual([]);
+    expect(stepsFromShare(shareWith({ kind: "transcript" })).steps).toEqual([]);
+  });
+
+  test("transcript share with non-array toolCalls → empty steps, no throw", () => {
+    const share = {
+      ...shareWith({ kind: "transcript" }),
+      body: { ...shareWith({ kind: "transcript" }).body, toolCalls: "not-an-array" },
+    } as unknown as ShareFile;
+    expect(() => stepsFromShare(share)).not.toThrow();
+    expect(stepsFromShare(share).steps).toEqual([]);
+  });
+
+  test("transcript share with mixed valid/malformed toolCalls → only valid elements, sequential ids", () => {
+    const share = {
+      ...shareWith({ kind: "transcript" }),
+      body: {
+        ...shareWith({ kind: "transcript" }).body,
+        toolCalls: [
+          { toolId: "gmail_get", service: "gmail", params: { id: "1" }, status: "ok" },
+          { service: "fs", params: {}, status: "ok" }, // missing toolId
+          { toolId: "slack_search", service: "slack", params: {}, status: "ok" },
+        ],
+      },
+    } as unknown as ShareFile;
+    const { steps } = stepsFromShare(share);
+    expect(steps.length).toBe(2);
+    expect(steps[0]?.stepId).toBe("step-1");
+    expect(steps[0]?.tool).toBe("gmail_get");
+    expect(steps[1]?.stepId).toBe("step-2");
+    expect(steps[1]?.tool).toBe("slack_search");
+  });
+});
+
+function step(tool: string, status = "ok", params: unknown = {}): RecipeStep {
+  return {
+    stepId: `step-x`,
+    tool,
+    service: tool.split("_")[0] ?? "svc",
+    params,
+    status,
+    dependsOn: [],
+  };
+}
+
+describe("replayRecipe — per-step classification", () => {
+  const readOnly = (t: string) => t.endsWith("_get") || t.endsWith("_list");
+
+  test("non-read tool → skipped-non-read, executor NEVER called", async () => {
+    let calls = 0;
+    const report = await replayRecipe("s1", [step("file_delete")], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-non-read");
+    expect(calls).toBe(0);
+  });
+
+  test("unavailable → missing-connector (detail = service)", async () => {
+    const report = await replayRecipe("s1", [step("gmail_get")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "unavailable" }),
+    });
+    expect(report.steps[0]?.status).toBe("missing-connector");
+    expect(report.steps[0]?.detail).toBe("gmail");
+  });
+
+  test("threw → error (detail = message)", async () => {
+    const report = await replayRecipe("s1", [step("gmail_get")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "threw", message: "boom" }),
+    });
+    expect(report.steps[0]?.status).toBe("error");
+    expect(report.steps[0]?.detail).toBe("boom");
+  });
+
+  test("ran ok + original ok → match; ran ok + original error → diverged", async () => {
+    const ran: ToolRunOutcome = { kind: "ran", ok: true };
+    const r1 = await replayRecipe("s1", [step("gmail_get", "ok")], {
+      isReadOnly: readOnly,
+      run: async () => ran,
+    });
+    expect(r1.steps[0]?.status).toBe("match");
+    const r2 = await replayRecipe("s1", [step("gmail_get", "error")], {
+      isReadOnly: readOnly,
+      run: async () => ran,
+    });
+    expect(r2.steps[0]?.status).toBe("diverged");
+    // Reverse divergence: original ok but replay returns error → diverged
+    const r3 = await replayRecipe("s1", [step("gmail_get", "ok")], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "ran", ok: false }),
+    });
+    expect(r3.steps[0]?.status).toBe("diverged");
+  });
+
+  test("summary tallies each category and total", async () => {
+    const steps = [step("file_delete"), step("gmail_get", "ok"), step("slack_list", "ok")];
+    const report = await replayRecipe("s1", steps, {
+      isReadOnly: readOnly,
+      run: async (tool) =>
+        tool === "gmail_get" ? { kind: "ran", ok: true } : { kind: "unavailable" },
+    });
+    expect(report.summary).toEqual({
+      total: 3,
+      match: 1,
+      diverged: 0,
+      missingConnector: 1,
+      skippedNonRead: 1,
+      error: 0,
+    });
+  });
+});
+
+describe("replayShare", () => {
+  test("recipe share → report over its steps", async () => {
+    const share = shareWith({
+      kind: "recipe",
+      recipe: {
+        recipeVersion: 1,
+        sourceSessionId: "s1",
+        generatedAt: 1,
+        graphTraversals: [],
+        steps: [
+          {
+            stepId: "step-1",
+            tool: "gmail_list",
+            service: "gmail",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+        ],
+      },
+    });
+    const report = await replayShare(share, {
+      isReadOnly: () => true,
+      run: async () => ({ kind: "ran", ok: true }),
+    });
+    expect(report.summary.total).toBe(1);
+    expect(report.steps[0]?.status).toBe("match");
+  });
+
+  // SECURITY-LOAD-BEARING (spec §8.1 / §11): a write tool absent from HITL_REQUIRED_BACKING must be
+  // skipped-non-read and NEVER handed to the executor, under the REAL classifier.
+  test("a write tool absent from HITL is skipped-non-read and never executed", async () => {
+    const executed: string[] = [];
+    const share = shareWith({
+      kind: "transcript",
+      toolCalls: [
+        { toolId: "acme_destroy", service: "acme", params: { all: true }, status: "ok" }, // write, not in HITL
+        { toolId: "snowflake_tag_set", service: "snowflake", params: {}, status: "ok" }, // write, IS in HITL
+        { toolId: "gmail_get", service: "gmail", params: {}, status: "ok" }, // genuine read
+      ],
+    });
+    const report = await replayShare(share, {
+      isReadOnly: isReadOnlyToolId, // the REAL positive allowlist
+      run: async (toolId) => {
+        executed.push(toolId);
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(executed).toEqual(["gmail_get"]); // ONLY the read tool was executed
+    expect(report.steps[0]?.status).toBe("skipped-non-read"); // acme_destroy (HITL-absent write)
+    expect(report.steps[1]?.status).toBe("skipped-non-read"); // snowflake_tag_set (HITL-present write)
+    expect(report.steps[2]?.status).toBe("match"); // gmail_get
+  });
+});

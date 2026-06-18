@@ -43,6 +43,7 @@ import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.t
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
+import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
@@ -401,6 +402,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   simpleStep(40, 41, "share_records (share & virality ledger v41)", SHARE_RECORDS_V41_SQL),
   simpleStep(41, 42, "tool_call_log.params_json (recipe params v42)", TOOL_CALL_PARAMS_V42_SQL),
+  simpleStep(42, 43, "share_inbox (sovereign-mesh referral v43)", SHARE_INBOX_V43_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

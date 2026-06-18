@@ -39,16 +39,16 @@ describe("getEffectiveAgentModel / getEffectiveClassifierModel", () => {
 
   test("TOML overrides win over hardcoded defaults", () => {
     applyLlmTomlOverrides({
-      agentModel: "claude-opus-4-7",
+      agentModel: "claude-opus-4-8",
       classifierModel: "claude-haiku-4-5-20251001",
     });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-7");
+    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
     expect(getEffectiveClassifierModel()).toBe("claude-haiku-4-5-20251001");
   });
 
   test("calling applyLlmTomlOverrides({}) resets to hardcoded defaults", () => {
-    applyLlmTomlOverrides({ agentModel: "claude-opus-4-7" });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-7");
+    applyLlmTomlOverrides({ agentModel: "claude-opus-4-8" });
+    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
     applyLlmTomlOverrides({});
     expect(getEffectiveAgentModel()).toBe("claude-sonnet-4-6");
   });
@@ -60,14 +60,14 @@ describe("getEffectiveAgentModel / getEffectiveClassifierModel", () => {
   });
 
   test("partial overrides leave other field on default", () => {
-    applyLlmTomlOverrides({ agentModel: "claude-opus-4-7" });
-    expect(getEffectiveAgentModel()).toBe("claude-opus-4-7");
+    applyLlmTomlOverrides({ agentModel: "claude-opus-4-8" });
+    expect(getEffectiveAgentModel()).toBe("claude-opus-4-8");
     expect(getEffectiveClassifierModel()).toBe("claude-haiku-4-5-20251001");
   });
 
   test("env var wins over TOML override", () => {
     applyLlmTomlOverrides({
-      agentModel: "claude-opus-4-7",
+      agentModel: "claude-opus-4-8",
       classifierModel: "claude-haiku-4-5-20251001",
     });
     process.env["NIMBUS_AGENT_MODEL"] = "claude-sonnet-from-env";

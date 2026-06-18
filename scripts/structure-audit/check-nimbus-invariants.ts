@@ -457,6 +457,7 @@ export function checkWarehouseWriteConfinement(files: readonly FileEntry[]): Vio
 const D21_PUBLISH_ALLOWED = [
   "packages/gateway/src/engine/executor.ts",
   "packages/gateway/src/share/share-gate.ts",
+  "packages/gateway/src/share/share-forward.ts", // I27 second emit chokepoint (re-forward HITL)
 ];
 const D21_PUBLISH_RE = /['"`]share\.publish['"`]/;
 const D21_PRIVKEY_ALLOWED = ["packages/gateway/src/share/share-keypair.ts"];
@@ -535,6 +536,37 @@ export function checkShareConsentBrokerConfinement(files: readonly FileEntry[]):
       if (D21_CREATESHARE_RE.test(strippedLines[i] ?? "")) {
         out.push({
           rule: "D21-createshare-callsite",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// D21 (I27) extension: `forwardShare` — the re-forward chokepoint (owner-HITL + hop-append + emit) —
+// may be CALLED only from its home (share-forward.ts) and the single wiring file federation-rpc.ts.
+// Mirrors the createShare confinement so the SECOND outbound-share emit path cannot be invoked out of
+// band, bypassing the owner's share.publish HITL gate (I27). Test files are exempt.
+const D21_FORWARDSHARE_ALLOWED = [
+  "packages/gateway/src/share/share-forward.ts",
+  "packages/gateway/src/ipc/federation-rpc.ts",
+];
+const D21_FORWARDSHARE_RE = /\bforwardShare\b/;
+
+export function checkForwardShareConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (D21_FORWARDSHARE_ALLOWED.includes(f.relPath)) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (D21_FORWARDSHARE_RE.test(strippedLines[i] ?? "")) {
+        out.push({
+          rule: "D21-forwardshare-callsite",
           file: f.relPath,
           line: i + 1,
           snippet: (originalLines[i] ?? "").trim(),
@@ -705,6 +737,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D21 createShare called outside the gate/share-rpc sites, or assemble.ts does not wire shareConsent.request as the approval dep — bypasses I27: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkForwardShareConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D21 forwardShare called outside share-forward.ts/federation-rpc.ts — bypasses I27 second emit chokepoint: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
