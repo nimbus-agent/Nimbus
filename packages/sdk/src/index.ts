@@ -59,6 +59,15 @@ export {
   signManifest,
   verifyManifestSignature,
 } from "./crypto/verify-signature";
+export type { DataColumn, ParquetMetadataLike } from "./data-profile/index";
+export {
+  firstLineAndRows,
+  jsKind,
+  parquetColumnsFromMetadata,
+  parseCsvHeader,
+  parseJsonColumns,
+  parseJsonlColumns,
+} from "./data-profile/index";
 export {
   channelUpgradeHint,
   type DistributionChannel,

@@ -9,6 +9,7 @@ import {
   type DataColumn,
   type DataFileFormat,
   type DataModelProfile,
+  firstLineAndRows,
   mapDataModelToItem,
   type ParquetMetadataLike,
   parquetColumnsFromMetadata,
@@ -169,20 +170,6 @@ async function statViaHandle(
   } finally {
     await fh.close();
   }
-}
-
-/** First line + a newline-based row estimate from already-read text (no row data). */
-function firstLineAndRows(
-  text: string,
-  truncated: boolean,
-): { firstLine: string; rowCountEstimate: number | null } {
-  const idx = text.indexOf("\n");
-  const firstLine = idx === -1 ? text : text.slice(0, idx);
-  if (truncated) {
-    return { firstLine, rowCountEstimate: null };
-  }
-  const nl = (text.match(/\n/g) ?? []).length;
-  return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
 }
 
 /** Profile fields extracted from a file's content (path/format applied by the caller). */

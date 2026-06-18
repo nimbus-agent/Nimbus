@@ -1,6 +1,16 @@
 import type { FileHandle } from "node:fs/promises";
 import { open, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  type DataColumn,
+  firstLineAndRows,
+  jsKind,
+  type ParquetMetadataLike,
+  parquetColumnsFromMetadata,
+  parseCsvHeader,
+  parseJsonColumns,
+  parseJsonlColumns,
+} from "@nimbus-dev/sdk";
 
 /**
  * Local data profiling reader (Tier-5, no-row-data). The MCP-server-side
@@ -19,7 +29,6 @@ const MAX_FILES = 2000;
 const MAX_WALK_DEPTH = 12;
 const MAX_TEXT_BYTES = 64 * 1024 * 1024;
 const HEADER_PEEK_BYTES = 64 * 1024;
-const MAX_COLUMNS = 512;
 
 export type DataFileFormat = "parquet" | "csv" | "jsonl" | "json";
 
@@ -31,10 +40,8 @@ const EXT_FORMAT: Record<string, DataFileFormat> = {
   ".json": "json",
 };
 
-export interface DataColumn {
-  readonly name: string;
-  readonly type: string | null;
-}
+export type { DataColumn, ParquetMetadataLike };
+export { jsKind, parquetColumnsFromMetadata, parseCsvHeader, parseJsonColumns, parseJsonlColumns };
 
 export interface DataModel {
   readonly relativePath: string;
@@ -43,103 +50,6 @@ export interface DataModel {
   readonly columnCount: number;
   readonly rowCountEstimate: number | null;
   readonly sizeBytes: number;
-}
-
-export interface ParquetMetadataLike {
-  readonly schema?: ReadonlyArray<{ name?: unknown; type?: unknown }>;
-  readonly num_rows?: number | bigint;
-}
-
-export function jsKind(v: unknown): string {
-  if (v === null) {
-    return "null";
-  }
-  if (Array.isArray(v)) {
-    return "array";
-  }
-  return typeof v;
-}
-
-export function parseCsvHeader(firstLine: string): DataColumn[] {
-  const line = firstLine.replace(/\r$/, "");
-  if (line.trim() === "") {
-    return [];
-  }
-  return line
-    .split(",")
-    .slice(0, MAX_COLUMNS)
-    .map(
-      (raw) =>
-        ({
-          name: raw
-            .trim()
-            .replace(/^"(.*)"$/, "$1")
-            .trim(),
-          type: null,
-        }) satisfies DataColumn,
-    );
-}
-
-export function parseJsonlColumns(firstLine: string): DataColumn[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(firstLine);
-  } catch {
-    return [];
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return [];
-  }
-  return Object.entries(parsed as Record<string, unknown>)
-    .slice(0, MAX_COLUMNS)
-    .map(([name, value]) => ({ name, type: jsKind(value) }) satisfies DataColumn);
-}
-
-export function parseJsonColumns(parsed: unknown): {
-  columns: DataColumn[];
-  rowCountEstimate: number | null;
-} {
-  if (Array.isArray(parsed)) {
-    const first = parsed[0];
-    if (typeof first === "object" && first !== null && !Array.isArray(first)) {
-      return {
-        columns: Object.entries(first as Record<string, unknown>)
-          .slice(0, MAX_COLUMNS)
-          .map(([name, value]) => ({ name, type: jsKind(value) })),
-        rowCountEstimate: parsed.length,
-      };
-    }
-    return { columns: [], rowCountEstimate: parsed.length };
-  }
-  if (typeof parsed === "object" && parsed !== null) {
-    return {
-      columns: Object.entries(parsed as Record<string, unknown>)
-        .slice(0, MAX_COLUMNS)
-        .map(([name, value]) => ({ name, type: jsKind(value) })),
-      rowCountEstimate: null,
-    };
-  }
-  return { columns: [], rowCountEstimate: null };
-}
-
-export function parquetColumnsFromMetadata(meta: ParquetMetadataLike): {
-  columns: DataColumn[];
-  rowCountEstimate: number | null;
-} {
-  const schema = Array.isArray(meta.schema) ? meta.schema : [];
-  const columns: DataColumn[] = [];
-  for (const el of schema) {
-    if (el !== null && typeof el === "object" && typeof el.name === "string" && el.type != null) {
-      columns.push({ name: el.name, type: String(el.type) });
-      if (columns.length >= MAX_COLUMNS) {
-        break;
-      }
-    }
-  }
-  const nr = meta.num_rows;
-  const finiteRowCount = typeof nr === "number" && Number.isFinite(nr) ? nr : null;
-  const rowCountEstimate = typeof nr === "bigint" ? Number(nr) : finiteRowCount;
-  return { columns, rowCountEstimate };
 }
 
 export function dataDir(): string {
@@ -233,19 +143,6 @@ async function sizeViaHandle(path: string): Promise<number | null> {
   } finally {
     await fh.close();
   }
-}
-
-function firstLineAndRows(
-  text: string,
-  truncated: boolean,
-): { firstLine: string; rowCountEstimate: number | null } {
-  const idx = text.indexOf("\n");
-  const firstLine = idx === -1 ? text : text.slice(0, idx);
-  if (truncated) {
-    return { firstLine, rowCountEstimate: null };
-  }
-  const nl = (text.match(/\n/g) ?? []).length;
-  return { firstLine, rowCountEstimate: Math.max(0, text.endsWith("\n") ? nl : nl + 1) };
 }
 
 /** Profile fields extracted from a file's content (path/format applied by the caller). */
