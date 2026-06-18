@@ -8,7 +8,9 @@ import { buildRecipeFromSession } from "../share/recipe.ts";
 import { replayShare, type ToolRunOutcome } from "../share/recipe-runner.ts";
 import { serializeShareFileToYaml } from "../share/recipe-yaml.ts";
 import { safeFetch } from "../share/safe-fetch.ts";
+import type { ShareFile } from "../share/share-format.ts";
 import { type CreateShareRequest, createShare, type ShareSink } from "../share/share-gate.ts";
+import { listReceivedShares } from "../share/share-inbox-store.ts";
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import { getShareRecord, listShareRecords, pruneExpiredShares } from "../share/share-store.ts";
 import {
@@ -95,6 +97,12 @@ export interface ShareRpcCtx {
    * construction: the runner only ever invokes tools the positive allowlist classifies read-only.
    */
   readonly listReplayTools: () => Promise<LazyMeshToolMap>;
+  /**
+   * Deliver an already-approved, already-signed share to a federation peer (origin emit, Slice 8d).
+   * Returns `true` if delivered, `false` if the peer is unknown/unreachable — the persisted+signed
+   * share remains as a local artifact either way. Optional: wired in Task 12; absent in tests.
+   */
+  readonly deliverToPeer?: (share: ShareFile, peerId: string) => Promise<boolean>;
 }
 
 function requireString(params: unknown, key: string): string {
@@ -219,8 +227,13 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
       }
     } else if (sink.type === "http") {
       await emitHttp(ctx, json);
+    } else if (sink.type === "peer") {
+      // Origin emit: createShare already ran the share.publish HITL + signed; deliver the
+      // already-approved share to the peer over the federation wire. No hop is appended (origin,
+      // hops stays 0). If the peer is unknown/unreachable, the share stays a persisted local artifact.
+      const delivered = (await ctx.deliverToPeer?.(result.share, sink.peerId)) ?? false;
+      return { status: "ok", contentHash: result.share.contentHash, delivered } as const;
     }
-    // peer sink: persisted + signed, but NOT forwarded over the wire yet (explicit Slice-8d stub).
     return { status: "ok", contentHash: result.share.contentHash } as const;
   },
 
@@ -228,6 +241,12 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
     const rec = asRecord(params) ?? {};
     const includeExpired = rec["includeExpired"] === true;
     return { shares: listShareRecords(ctx.db, { now: ctx.now(), includeExpired }) };
+  },
+
+  // Inbound forwarded shares received as inert, viewable/replayable artifacts (Slice 8d).
+  "share.inbox": (params, ctx) => {
+    const includeAll = asRecord(params)?.["all"] === true;
+    return { inbox: listReceivedShares(ctx.db, includeAll ? {} : { limit: 200 }) };
   },
 
   "share.get": (params, ctx) => {
