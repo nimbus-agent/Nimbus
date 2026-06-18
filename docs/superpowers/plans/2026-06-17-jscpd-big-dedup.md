@@ -32,10 +32,12 @@
 **Why first:** `scripts/coverage/instrument-scope.ts` never instruments `mcp-connectors/shared/` files (the regex requires a `/src/` segment that shared helpers lack), so their unit-test coverage reports 0% to SonarCloud — the exact gate that reddened PR #678. Fixing it unblocks every new shared helper in Waves 2. Verified locally: the patch flips `merge-coverage: merged 0 shard(s)` → `1` and surfaces all 8 shared helpers in the lcov.
 
 **Files:**
+
 - Modify: `scripts/coverage/instrument-scope.ts:5`
 - Test: `scripts/coverage/instrument-scope.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new.
 - Produces: `shouldInstrument(absPath: string): boolean` now returns `true` for `…/packages/mcp-connectors/shared/**` paths (unchanged signature).
 
@@ -112,12 +114,14 @@ shared alternation. Wave 0 of the jscpd big-PR dedup program."
 ### Task 2 (C1): Hoist identical agent-brief TYPES to `@nimbus-dev/sdk`
 
 **Files:**
+
 - Create: `packages/sdk/src/agents/brief-types.ts`
 - Modify: `packages/sdk/src/index.ts` (add a root re-export of the new module)
 - Modify: `packages/gateway/src/agents/_lib/findings.ts` (import the shared types from sdk; keep gateway-only `AgentBrief` union + `BriefReadyPayload<B>` + the 8 type-guards)
 - Modify: `packages/cli/src/types/agents.ts` (import the shared types from sdk; keep cli-only divergent types)
 
 **Interfaces:**
+
 - Produces (in `@nimbus-dev/sdk`): the **genuinely-identical** types only — `Evidence`, `GapCategory`, `GapNote`, `AgentBriefBase`, `ExpertFinding`, `ImpactFinding`, `CatchupItem`, `CatchupSection`, `JanitorPeerTouch`, `PreflightDownstream`, and `ConflictType`.
 - **Do NOT move (behavior-divergent — pure-dedup means don't unify a wire contract):** cli's `GhostFinding` (literal rank union) vs gateway's (`ExpertiseRank` + `FederatedItemLite[]`); cli `ConflictCollision` vs gateway `ConflictFinding` naming; gateway-only `AgentBrief` union, `BriefReadyPayload<B>`, `FederatedItemLite`; the per-side type-guards (they differ subtly). Leave those redeclared on each side.
 
@@ -140,14 +144,17 @@ shared alternation. Wave 0 of the jscpd big-PR dedup program."
 ### Task 3 (C2): Extract gateway email-mapping helpers to `connectors/_lib/email-mapping.ts`
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/_lib/email-mapping.ts` + `…/email-mapping.test.ts`
 - Modify: `packages/gateway/src/connectors/{imap,protonmail,fastmail}-email-mapping.ts`
 
 **Interfaces (Produces):**
+
 ```ts
 export function clamp(s: string, max: number): string;
 export function parseDateMs(date: string | number | null): number | null;
 ```
+
 (The recon also sketched a generic `mapEmailToItem`; **prefer extracting only the two pure helpers `clamp` + `parseDateMs` first** — they are the verified-identical span. Only generalize the full mapper if the three `mapXToItem` bodies are byte-identical after that; if they differ in attachment-shape/external-id, leave each mapper's body in place. No force-fit.)
 
 - [ ] **Step 1: Write `email-mapping.test.ts`** covering `clamp` (under/over max → ellipsis) and `parseDateMs` (number finite, ISO string, empty/invalid → null).
@@ -165,10 +172,12 @@ export function parseDateMs(date: string | number | null): number | null;
 **Scope:** Only the 4 connectors that match the single-pass CLI-spawn shape: **cloudwatch, sagemaker, cloud-logging, vertex-ai**. **DEFER athena** (hierarchical multi-level pagination — no force-fit). bitrise/testflight/codemagic (HTTP build-poll) and google-meet/google-photos (HTTP) are **NOT** in this task (handled in Task 4b).
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/_lib/cli-shell-sync.ts` + `…/cli-shell-sync.test.ts`
 - Modify: `packages/gateway/src/connectors/{cloudwatch,sagemaker,cloud-logging,vertex-ai}-sync.ts`
 
 **Interfaces (Produces):**
+
 ```ts
 export function isSafeCliArg(value: string): boolean; // verbatim from sagemaker/vertex-ai (identical copies)
 export interface CliShellOutcome { readonly ok: boolean; readonly text: string; readonly bytes?: number; }
@@ -184,6 +193,7 @@ export interface CliShellSyncSpec<C> {
 }
 export function runSinglePassCliShellSync<C>(ctx: SyncContext, cursor: string | null, spec: CliShellSyncSpec<C>): Promise<SyncResult>;
 ```
+
 Mirror the Stage-A precedent `connectors/_lib/paginated-sync.ts` (same `loadCreds → walk pages → first-page-error-empty / later-page-error-break → upsert → pass-1-success` shape). The recon's draft body for `runSinglePassCliShellSync` is the reference implementation.
 
 - [ ] **Step 1: Write `cli-shell-sync.test.ts`** — unit-test `isSafeCliArg` (rejects empty, >1024, leading `-`, control chars; accepts normal) and `runSinglePassCliShellSync` with a fake spec: single page, multi-page via `nextPageCursor`, first-page `ok:false` → empty pass, unconfigured `loadCreds()===null` → noop, item mapping + upsert count. Inject a fake `ctx`/upsert per the existing `paginated-sync.test.ts` pattern (read it first).
@@ -209,10 +219,12 @@ Mirror the Stage-A precedent `connectors/_lib/paginated-sync.ts` (same `loadCred
 ### Task 5 (C4): Extract cli render + flag-parsing helpers
 
 **Files:**
+
 - Create: `packages/cli/src/lib/agent-brief-render.ts` + test; `packages/cli/src/lib/flag-parsing.ts` + test
 - Modify: `packages/cli/src/commands/{catchup,impact}.ts` and `{run-workflow,workflow}.ts`
 
 **Interfaces (Produces):**
+
 ```ts
 // agent-brief-render.ts
 export function awaitAgentBrief<T>(client: IPCClient, agentName: string, guard: (x: unknown) => x is T, onTimer: (t: ReturnType<typeof setTimeout>) => void): Promise<{ brief: string; findings: T }>;
@@ -221,6 +233,7 @@ export function renderAgentBrief<T extends { gaps: readonly { category: string }
 export function hasFlag(args: string[], flag: string): boolean;
 export function shiftFlag(args: string[], flag: string): string | undefined;
 ```
+
 `awaitAgentBrief` parameterizes the `${agentName}.briefReady`/`.briefError` notification names + the guard; `renderAgentBrief` is the shared json/empty-index/print block. `hasFlag`/`shiftFlag` are verbatim-identical between run-workflow/workflow.
 
 - [ ] **Step 1: Write tests** — `flag-parsing.test.ts` (hasFlag splices+returns bool; shiftFlag returns next arg or undefined, splices 2) and `agent-brief-render.test.ts` (renderAgentBrief: json → stringify; empty_index gap → stderr+exit; else print brief — use a mocked `process.stdout/stderr/exit`; awaitAgentBrief: resolves on briefReady w/ valid guard, rejects on malformed/briefError/timeout — inject a fake IPCClient).
@@ -238,6 +251,7 @@ export function shiftFlag(args: string[], flag: string): string | undefined;
 > **Order matters: do C5d (federation) first and run the security suite before touching anything else.**
 
 **Files:**
+
 - Create: `packages/gateway/src/federation/_lib/gate-commons.ts` + test
 - Modify: `packages/gateway/src/federation/{audit-export,query-gate}.ts`
 - Modify: `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts` (same-file local helper)
@@ -245,14 +259,16 @@ export function shiftFlag(args: string[], flag: string): string | undefined;
 **C5d — federation gate-commons (⚠️ I17 / static D13):**
 
 **Interfaces (Produces):**
+
 ```ts
 export async function enforceCommonGate<T>(ctx: CommonGateContext, req: FederationRequest, audit: (decision: GateDecision) => void): Promise<GateResult<void> | undefined>;
 ```
+
 This extracts ONLY the shared **preamble**: I18 identity check → namespace-exists → active-grant → consent (cache/prompt/timeout). It returns `undefined` on pass-through; the caller then runs its OWN logic. **The I17 leak-proof scope compilation (declaredServices/declaredTypes/`computeEffectiveTypes`, the no-full-index-dump checks) MUST stay inside `query-gate.ts` — it is the single sanctioned federated-answer site (static D13).**
 
 > **D13 hard guard (verified against `checkFederationImportInvariant`, `check-nimbus-invariants.ts:178`):** the static rule flags **any** `from "…item-list-query…"` import in **any** file under `packages/gateway/src/federation/` **except** `query-gate.ts` and `*.test.ts`. Since `gate-commons.ts` lives under `federation/_lib/`, it is subject to the rule: **`gate-commons.ts` MUST NOT import `item-list-query` / `buildItemListSql` (directly or transitively).** The consent preamble does not need them, so this is safe by construction; the leak-proof scope (which *does* import `item-list-query`) is exactly what stays in `query-gate.ts`. The rule is self-enforcing — if you accidentally pull query-compilation into `gate-commons.ts`, the static audit fails. Do not "helpfully" move any item-list/SQL logic into the shared helper.
 
-- [ ] **Step 1: Read** the D13 rule (`checkFederationImportInvariant`, `scripts/structure-audit/check-nimbus-invariants.ts:178`) and confirm the consent preamble you intend to move imports only `store`/`consentCache`/`prompt`/audit helpers — **never** `item-list-query`/`buildItemListSql`. If the preamble cannot be separated from query-compilation without an `item-list-query` import in `gate-commons.ts`, **keep the preamble in query-gate.ts and skip C5d** (note it). 
+- [ ] **Step 1: Read** the D13 rule (`checkFederationImportInvariant`, `scripts/structure-audit/check-nimbus-invariants.ts:178`) and confirm the consent preamble you intend to move imports only `store`/`consentCache`/`prompt`/audit helpers — **never** `item-list-query`/`buildItemListSql`. If the preamble cannot be separated from query-compilation without an `item-list-query` import in `gate-commons.ts`, **keep the preamble in query-gate.ts and skip C5d** (note it).
 - [ ] **Step 2: Write `gate-commons.test.ts`** — identity_invalid → error; namespace_unknown; no_grant; standing-grant skips prompt; cached-false → consent_denied; prompt approved → undefined (pass-through); prompt timeout → timeout error. (Mirror `query-gate.test.ts` fixtures.)
 - [ ] **Step 3: Run — FAIL.**
 - [ ] **Step 4: Implement `gate-commons.ts`** (lift the preamble verbatim per the recon draft; share the `withTimeout` helper).
@@ -280,14 +296,17 @@ This extracts ONLY the shared **preamble**: I18 identity check → namespace-exi
 **Scope:** imap, protonmail, fastmail (IMAP/JMAP family). The Microsoft Graph / Google email connectors (outlook/onedrive/gmail) are REST → Task 8, not here.
 
 **Files:**
+
 - Create: `packages/mcp-connectors/shared/imap-tool-kit.ts` + `…/imap-tool-kit.test.ts`
 - Modify: `packages/mcp-connectors/{imap,protonmail,fastmail}/src/tools.ts` (and `…/server.ts` for the shared helper funcs)
 
 **Interfaces (Produces):**
+
 ```ts
 export const emailToolSchemas: { listArgs; getArgs; searchArgs; sendArgs };   // shared zod schemas
 export function viewEmailMessage<M>(m: M, formatAddr: (a) => string): Record<string, unknown>; // shared view transformer
 ```
+
 Plus the byte-identical server.ts helper funcs (`envInt`, `previewFromParts`, `previewFetchQuery`, and the envelope/meta mappers) lifted to shared if they are identical across imap/protonmail.
 
 - [ ] **Step 1: Write `imap-tool-kit.test.ts`** — schemas parse/reject correctly; `viewEmailMessage` maps a sample meta → the expected json shape (uid/mailbox/subject/from/to/cc/attachments/preview), Date→ISO. **Strict-tsc:** type the test inputs as the exact shared interfaces (exactOptionalPropertyTypes).
@@ -305,10 +324,12 @@ Plus the byte-identical server.ts helper funcs (`envInt`, `previewFromParts`, `p
 **Scope:** github, github-actions, gitlab (REST) **and** outlook, onedrive, gmail (Graph/Google) — all share the "parse args → require token → fetch → wrap result" tool-registration body.
 
 **Files:**
+
 - Create: `packages/mcp-connectors/shared/rest-tool-kit.ts` + `…/rest-tool-kit.test.ts`
 - Modify: the six connectors' `src/server.ts`
 
 **Interfaces (Produces):**
+
 ```ts
 export interface RestFetchResult { ok: boolean; status: number; json: unknown; text: string; }
 export function restFetch(cfg: { apiBase: string; token: string; defaultHeaders?: Record<string,string>; tokenHeaderName?: string }, pathOrUrl: string, init?: RequestInit): Promise<RestFetchResult>;
@@ -316,6 +337,7 @@ export function resolvePaginationPath(input: { nextLink?: string; page?: number;
 // scope-gated registration (outlook/teams keep their own shouldRegister predicate)
 export function registerRestScopedTool<A>(register: RegisterSimpleToolFn, grantedScopes: string[], input: { toolId: string; description: string; schema: ZodObjectSchema<A>; shouldRegister: (scopes: string[]) => boolean; handler: (parsed: A) => Promise<McpListResult> }): void;
 ```
+
 Reuse the existing `shared/fetch-bearer-json.ts` / `mcp-tool-kit.ts` (`mcpJsonResultIfOk`) where possible — extend, don't duplicate. The `shouldRegister` scope predicates (`outlookToolShouldRegister` etc.) stay in each connector.
 
 - [ ] **Step 1: Write `rest-tool-kit.test.ts`** — `restFetch` builds URL (path vs absolute), sets Bearer vs `PRIVATE-TOKEN` header, parses ok/non-ok JSON (fetch faked at the boundary); `resolvePaginationPath` (nextLink wins / page+perPage / default); `registerRestScopedTool` (registers only when `shouldRegister` true; rejects malformed args). Strict-tsc typed.
@@ -335,10 +357,12 @@ Reuse the existing `shared/fetch-bearer-json.ts` / `mcp-tool-kit.ts` (`mcpJsonRe
 ### Task 9 (C8): Data-profile parsing → `sdk/src/data-profile/`
 
 **Files:**
+
 - Create: `packages/sdk/src/data-profile/index.ts` + `…/data-profile.test.ts`; re-export from `packages/sdk/src/index.ts`
 - Modify: `packages/gateway/src/connectors/data-profile-mapping.ts`, `data-profile-sync.ts`; `packages/mcp-connectors/dataprofile/src/profile.ts`
 
 **Interfaces (Produces — all PURE):**
+
 ```ts
 export interface DataColumn { readonly name: string; readonly type: string | null; }
 export interface ParquetMetadataLike { readonly schema?: ReadonlyArray<{ name?: unknown; type?: unknown }>; readonly num_rows?: number | bigint; }
@@ -349,6 +373,7 @@ export function parseJsonColumns(parsed: unknown): { columns: DataColumn[]; rowC
 export function parquetColumnsFromMetadata(meta: ParquetMetadataLike): { columns: DataColumn[]; rowCountEstimate: number | null };
 export function firstLineAndRows(text: string, truncated: boolean): { firstLine: string; rowCountEstimate: number | null };
 ```
+
 (`firstLineAndRows` is shared with C10b/localdb — this is its canonical home.) **I/O stays in callers:** `slurpFile`/`statViaHandle`/`sizeViaHandle`/`profileFile`/`profileParquet`.
 
 - [ ] **Step 1: Write `data-profile.test.ts`** — table-driven cases for each function (csv header w/ quotes; jsonl key/type extraction never emitting values; json array vs object row-count; parquet schema→columns + num_rows bigint→number; firstLineAndRows truncated vs full). Assert the **no-cell-values** contract (only keys/types).
@@ -364,6 +389,7 @@ export function firstLineAndRows(text: string, truncated: boolean): { firstLine:
 ### Task 10 (C9): Fastmail JMAP request/response parsing → `sdk/src/jmap-fastmail/`
 
 **Files:**
+
 - Create: `packages/sdk/src/jmap-fastmail/index.ts` + test; re-export from sdk index
 - Modify: `packages/gateway/src/connectors/fastmail-sync.ts`; `packages/mcp-connectors/fastmail/src/jmap-core.ts`
 
@@ -380,10 +406,12 @@ export function firstLineAndRows(text: string, truncated: boolean): { firstLine:
 ### Task 11 (C10): flux / storybook → sdk; localdb partial
 
 **Files:**
+
 - Create: `packages/sdk/src/flux-cd/index.ts` + test; `packages/sdk/src/storybook/index.ts` + test; re-export both from sdk index
 - Modify: `packages/gateway/src/connectors/flux-sync.ts` + `packages/mcp-connectors/flux/src/server.ts`; `packages/gateway/src/connectors/storybook-story-mapping.ts` + `packages/mcp-connectors/storybook/src/storybook-parse.ts`; `packages/gateway/src/connectors/localdb-sync.ts` + `packages/mcp-connectors/localdb/src/sql-scan.ts` (firstLineAndRows only)
 
 **Interfaces (Produces — all PURE):**
+
 ```ts
 // flux-cd
 export interface FluxKindEntry { readonly kind: string; readonly group: string; readonly version: string; readonly plural: string; }
@@ -408,6 +436,7 @@ export function parseStorybookIndex(parsed: unknown): StorybookStory[];
 **Do this LAST**, only after the cluster waves land and strict is confirmed `< 2.3%` (drive lower while clusters remain).
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml` (the `pr-quality-duplication` job, ~line 353)
 - Verify: `.jscpd.json` (already min-lines 5 / threshold 3 — no change expected)
 
