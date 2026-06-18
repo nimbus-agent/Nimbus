@@ -128,8 +128,8 @@ describe("loadNimbusLlmPartialFromPath", () => {
   test("returns only explicitly-set keys (no defaults)", () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-llm-partial-"));
     const tomlPath = join(dir, "nimbus.toml");
-    writeFileSync(tomlPath, `[llm]\nremote_model = "claude-opus-4-7"\n`);
-    expect(loadNimbusLlmPartialFromPath(tomlPath)).toEqual({ remoteModel: "claude-opus-4-7" });
+    writeFileSync(tomlPath, `[llm]\nremote_model = "claude-opus-4-8"\n`);
+    expect(loadNimbusLlmPartialFromPath(tomlPath)).toEqual({ remoteModel: "claude-opus-4-8" });
   });
 
   test("returns empty object when [llm] section is absent", () => {

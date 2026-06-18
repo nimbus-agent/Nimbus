@@ -38,12 +38,12 @@ afterEach(() => {
 
 describe("listTomlKeysWithEnv — llm.* entries", () => {
   test("llm.remote_model surfaces from env when NIMBUS_AGENT_MODEL is set", () => {
-    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-7";
+    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-8";
     const rows = listTomlKeysWithEnv(tomlPath);
     const row = rows.find((r) => r.key === "llm.remote_model");
     expect(row).toEqual({
       key: "llm.remote_model",
-      value: "claude-opus-4-7",
+      value: "claude-opus-4-8",
       source: "env",
       envVar: "NIMBUS_AGENT_MODEL",
     });
@@ -83,11 +83,11 @@ describe("listTomlKeysWithEnv — llm.* entries", () => {
 
   test("env beats file when both are set", () => {
     writeFileSync(tomlPath, `[llm]\nremote_model = "claude-sonnet-4-6"\n`);
-    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-7";
+    process.env["NIMBUS_AGENT_MODEL"] = "claude-opus-4-8";
     const rows = listTomlKeysWithEnv(tomlPath);
     const row = rows.find((r) => r.key === "llm.remote_model");
     expect(row?.source).toBe("env");
-    expect(row?.value).toBe("claude-opus-4-7");
+    expect(row?.value).toBe("claude-opus-4-8");
   });
 
   test("llm.* is omitted when both env and file are unset", () => {

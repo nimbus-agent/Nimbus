@@ -178,7 +178,7 @@ describe("toMastraModelId (via agentModel)", () => {
     expect(() =>
       createNimbusEngineAgent({
         localIndex,
-        agentModel: "claude-3-5-sonnet-20241022",
+        agentModel: "claude-sonnet-4-6",
       }),
     ).not.toThrow();
   });
