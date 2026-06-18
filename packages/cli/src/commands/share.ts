@@ -180,11 +180,19 @@ export async function runShare(args: string[]): Promise<void> {
       return;
     }
     await withIpc(async (c) => {
-      const r = await c.call<{ status: string }>("federation.shareForward", {
+      const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
         contentHash,
         recipient: peerId,
       });
-      console.log(r.status === "delivered" ? `delivered ${contentHash}` : `queued ${contentHash}`);
+      if (r.status === "rejected") {
+        console.log(`rejected ${contentHash} (owner did not approve the forward)`);
+      } else {
+        console.log(
+          r.delivered
+            ? `delivered ${contentHash}`
+            : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
+        );
+      }
     });
     return;
   }
