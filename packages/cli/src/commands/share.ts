@@ -2,6 +2,16 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
+/**
+ * Render the provenance attribution chip for a received/forwarded share (spec §9.3).
+ * Inlined from packages/gateway/src/share/attribution.ts — CLI cannot import gateway source.
+ */
+function formatAttributionChipInline(p: { originLabel: string; hops: number }): string {
+  if (p.hops <= 0) return `from ${p.originLabel} (direct)`;
+  const unit = p.hops === 1 ? "hop" : "hops";
+  return `forwarded from ${p.originLabel}, ${p.hops} ${unit} away`;
+}
+
 export type ShareSinkArg =
   | { readonly type: "file"; readonly path?: string }
   | { readonly type: "http" }
@@ -155,7 +165,42 @@ export async function runShare(args: string[]): Promise<void> {
     });
     return;
   }
-  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject> ...");
+  if (sub === "forward") {
+    const contentHash = rest[0];
+    if (contentHash === undefined || contentHash.startsWith("--")) {
+      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+      process.exitCode = 1;
+      return;
+    }
+    const peerIdx = rest.indexOf("--to-peer");
+    const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
+    if (peerId === undefined || peerId.startsWith("--")) {
+      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+      process.exitCode = 1;
+      return;
+    }
+    await withIpc(async (c) => {
+      const r = await c.call<{ status: string }>("federation.shareForward", {
+        contentHash,
+        recipient: peerId,
+      });
+      console.log(r.status === "delivered" ? `delivered ${contentHash}` : `queued ${contentHash}`);
+    });
+    return;
+  }
+  if (sub === "inbox") {
+    await withIpc(async (c) => {
+      const { inbox } = await c.call<{
+        inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
+      }>("share.inbox", { all: rest.includes("--all") });
+      for (const row of inbox) {
+        const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
+        console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
+      }
+    });
+    return;
+  }
+  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject|forward|inbox> ...");
   process.exitCode = 1;
 }
 

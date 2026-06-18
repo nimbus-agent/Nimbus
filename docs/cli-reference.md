@@ -2185,6 +2185,119 @@ nimbus update --yes                 # Skip confirmation prompt (for scripted/una
 
 ---
 
+## Share & Virality
+
+Export, verify, and forward signed session snapshots and recipe DAGs. All outbound shares leave the machine through the share-gate (`share.create` / `share.publish` HITL action, invariant `I27`). Forwarding re-routes an existing share to a federation peer; the inner body and origin signature are never altered (the forwarder appends its own hop signature). Inbound shares are viewable artifacts only — never auto-merged or auto-executed (invariant spec §9.4).
+
+### `nimbus share create <session-id> [--out <file>] [--http] [--to-peer <peerId>] [--expires <dur>] [--redact <field>]... [--as-recipe]`
+
+Create and emit a signed share for a session. Requires your HITL approval before the share leaves the machine. The HITL preview shows the exact redacted content that will be exported.
+
+```bash
+nimbus share create sess_abc123 --out ./share.json
+nimbus share create sess_abc123 --http
+nimbus share create sess_abc123 --to-peer peer_xyz --expires 7d
+nimbus share create sess_abc123 --as-recipe --out ./recipe.json
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--out <file>` | Write the share to a local file |
+| `--http` | Emit to the configured HTTP sink |
+| `--to-peer <peerId>` | Send directly to a paired federation peer |
+| `--expires <dur>` | Expiry duration: `30s`, `5m`, `2h`, `7d`, etc. |
+| `--redact <field>` | Redact a field from the share body (repeatable) |
+| `--as-recipe` | Emit a declarative V42 recipe DAG instead of a transcript |
+
+---
+
+### `nimbus share list [--all]`
+
+List share records in the local store. Without `--all`, expired shares are excluded.
+
+```bash
+nimbus share list
+nimbus share list --all
+```
+
+---
+
+### `nimbus share prune`
+
+Delete all expired share records from the local store.
+
+```bash
+nimbus share prune
+```
+
+---
+
+### `nimbus share pubkey`
+
+Print this gateway's Ed25519 share-signing public key (base64). Recipients can use this to verify the origin signature on shares you send.
+
+```bash
+nimbus share pubkey
+```
+
+---
+
+### `nimbus share approve <request-id>` / `nimbus share reject <request-id>`
+
+Respond to a pending HITL share-approval request. The `request-id` is printed when a share is created and shown in the TUI consent panel.
+
+```bash
+nimbus share approve req_abc123
+nimbus share reject req_abc123
+```
+
+---
+
+### `nimbus share forward <contentHash> --to-peer <peerId>`
+
+Forward an already-emitted share (identified by its content hash) to a federation peer. Requires your HITL `share.publish` approval before the forwarded envelope leaves the machine. The inner body and origin signature are byte-identical across all hops; the forwarder appends only its own hop signature. `federation.shareForward` is local-only and cannot be triggered over LAN by a remote peer (invariant global-constraints §8).
+
+```bash
+nimbus share forward sha256:abc123 --to-peer peer_xyz456
+```
+
+Prints `delivered <contentHash>` when the peer accepted immediately, or `queued <contentHash>` when the peer is offline and the share will be retried.
+
+---
+
+### `nimbus share inbox [--all]`
+
+List inbound forwarded shares received from federation peers. Each row shows a provenance attribution chip, the content hash, and the share kind. Without `--all`, only unread/unacknowledged shares are shown.
+
+```bash
+nimbus share inbox
+nimbus share inbox --all
+```
+
+**Example output:**
+
+```
+forwarded from alice, 2 hops away  sha256:abc123  transcript
+from bob (direct)                  sha256:def456  recipe
+```
+
+---
+
+### `nimbus verify-share <file|url> [--replay]`
+
+Verify the Ed25519 signature and content hash of a share file or URL. With `--replay`, re-execute the session steps against the current local index and compare results.
+
+```bash
+nimbus verify-share ./share.json
+nimbus verify-share https://example.com/share.json --replay
+```
+
+Prints `signature: VALID` or `INVALID`, plus expiry status. With `--replay`, also prints a per-step divergence report and a summary.
+
+---
+
 ## LAN Remote Access
 
 Encrypted, relay-free remote access between machines on the same network. Disabled by default (`[lan] enabled = false` in `nimbus.toml`). Enable via `nimbus config set lan.enabled true`.
