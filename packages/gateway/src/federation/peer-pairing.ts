@@ -37,6 +37,9 @@ export class PeerPairing {
     /** Outbound handshake. Defaults to the real LAN-client implementation in production;
      *  injected with a fake in unit tests. The default is wired in Task 15's E2E. */
     private readonly handshake?: OutboundPairHandshake,
+    /** Fired once with the new peerId after a peer is first persisted — drives the
+     *  share-inbox drain (8d). Best-effort: a drain failure must never fail the pairing. */
+    private readonly onPairComplete?: (peerId: string) => void | Promise<void>,
   ) {}
 
   /**
@@ -57,6 +60,11 @@ export class PeerPairing {
       hostIp: host,
       hostPort: port,
     });
+    try {
+      await this.onPairComplete?.(peerId);
+    } catch {
+      /* best-effort drain — a drain failure must not fail the pair */
+    }
     return peerId;
   }
 
@@ -75,6 +83,14 @@ export class PeerPairing {
       ...(req.hostPort === undefined ? {} : { hostPort: req.hostPort }),
       ...(req.displayName === undefined ? {} : { displayName: req.displayName }),
     });
+    if (this.onPairComplete) {
+      try {
+        const res = this.onPairComplete(peerId);
+        if (res instanceof Promise) res.catch(() => {}); // swallow async rejection (best-effort drain)
+      } catch {
+        /* swallow sync throw — pairing must succeed even if the drain fails */
+      }
+    }
     return peerId;
   }
 
