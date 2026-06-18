@@ -1,26 +1,16 @@
+import { parseStorybookIndex, type StorybookStory } from "@nimbus-dev/sdk";
 import type { MappedRow } from "./mapped-row.ts";
 
 /**
- * One story entry parsed from a local Storybook manifest (`index.json` v7+ or
- * the legacy `stories.json` v6). The gateway cannot import the connector
- * package, so this mirrors the parsed shape.
- *
- * Local-only, no-network: the Storybook component/story manifest is a JSON file
- * the user's `storybook build` (or dev server) writes to disk. No browser, no
- * dev server connection, no code execution.
+ * Gateway-side Storybook story mapping. Pure parsing of the manifest is shared
+ * via `@nimbus-dev/sdk` (`parseStorybookIndex` / `StorybookStory`); this module
+ * owns only the gateway-specific mapper that converts a story to an IndexedItem.
  */
-export interface StorybookStoryInput {
-  /** Stable story id (e.g. `button--primary`). */
-  readonly id: string;
-  /** Component title / kind (e.g. `Components/Button`). */
-  readonly title: string | null;
-  /** Story name (e.g. `Primary`). */
-  readonly name: string | null;
-  readonly importPath: string | null;
-  readonly tags: readonly string[];
-  /** `"story"` | `"docs"` (v7) — null for legacy manifests. */
-  readonly entryType: string | null;
-}
+
+/** @deprecated Use `StorybookStory` from `@nimbus-dev/sdk` instead. */
+export type StorybookStoryInput = StorybookStory;
+
+export { parseStorybookIndex };
 
 export interface StorybookMappingContext {
   readonly syncedAt: number;
@@ -36,64 +26,6 @@ const TYPE = "story" as const;
 
 function clamp(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-function str(v: unknown): string | null {
-  return typeof v === "string" && v !== "" ? v : null;
-}
-
-function tagsOf(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : [];
-}
-
-function entryToInput(raw: unknown): StorybookStoryInput | null {
-  const r = asRecord(raw);
-  if (r === null) {
-    return null;
-  }
-  const id = str(r["id"]);
-  if (id === null) {
-    return null;
-  }
-  return {
-    id,
-    // v6 `stories.json` uses `kind` for the component title; v7 uses `title`.
-    title: str(r["title"]) ?? str(r["kind"]),
-    name: str(r["name"]) ?? str(r["story"]),
-    importPath: str(r["importPath"]),
-    tags: tagsOf(r["tags"]),
-    entryType: str(r["type"]),
-  };
-}
-
-/**
- * Pure parse of a Storybook manifest JSON object into story inputs. Handles the
- * v7+ `{ entries: { <id>: {…} } }` shape and the legacy v6 `{ stories: { <id>:
- * {…} } }` shape. Returns [] for an unrecognized shape.
- */
-export function parseStorybookIndex(parsed: unknown): StorybookStoryInput[] {
-  const root = asRecord(parsed);
-  if (root === null) {
-    return [];
-  }
-  const container = asRecord(root["entries"]) ?? asRecord(root["stories"]);
-  if (container === null) {
-    return [];
-  }
-  const out: StorybookStoryInput[] = [];
-  for (const value of Object.values(container)) {
-    const input = entryToInput(value);
-    if (input !== null) {
-      out.push(input);
-    }
-  }
-  return out;
 }
 
 /**

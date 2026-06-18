@@ -74,6 +74,8 @@ export {
   type ResolveChannelOptions,
   resolveDistributionChannel,
 } from "./distribution-channel";
+export type { FluxKindEntry } from "./flux-cd/index";
+export { FLUX_KINDS, trimTrailingSlash } from "./flux-cd/index";
 export type { HitlRequest } from "./hitl-request";
 export { isHitlRequest } from "./hitl-request";
 export {
@@ -103,5 +105,7 @@ export {
   viewEmail,
 } from "./jmap-fastmail/index";
 export { NimbusExtensionServer } from "./server";
+export type { StorybookStory } from "./storybook/index";
+export { parseStorybookIndex } from "./storybook/index";
 export { MockGateway } from "./testing/index";
 export type { ExtensionManifest, NimbusItem } from "./types";

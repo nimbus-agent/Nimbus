@@ -1,61 +1,8 @@
+import { FLUX_KINDS, type FluxKindEntry, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFluxResources } from "./search-filter.ts";
-
-interface FluxKindEntry {
-  readonly kind: string;
-  readonly group: string;
-  readonly version: string;
-  readonly plural: string;
-}
-
-const FLUX_KINDS: readonly FluxKindEntry[] = [
-  {
-    kind: "kustomization",
-    group: "kustomize.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "kustomizations",
-  },
-  { kind: "helm_release", group: "helm.toolkit.fluxcd.io", version: "v2", plural: "helmreleases" },
-  {
-    kind: "git_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "gitrepositories",
-  },
-  {
-    kind: "oci_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "ocirepositories",
-  },
-  {
-    kind: "helm_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "helmrepositories",
-  },
-  { kind: "bucket", group: "source.toolkit.fluxcd.io", version: "v1", plural: "buckets" },
-  {
-    kind: "image_repository",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta2",
-    plural: "imagerepositories",
-  },
-  {
-    kind: "image_policy",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta2",
-    plural: "imagepolicies",
-  },
-  {
-    kind: "image_update_automation",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta1",
-    plural: "imageupdateautomations",
-  },
-];
 
 const KIND_VALUES = FLUX_KINDS.map((e) => e.kind) as [string, ...string[]];
 
@@ -65,10 +12,6 @@ function kindEntry(kind: string): FluxKindEntry {
     throw new Error(`Unknown Flux kind: ${kind}`);
   }
   return found;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 function apiBase(): string {

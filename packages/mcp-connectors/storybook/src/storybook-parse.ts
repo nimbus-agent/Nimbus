@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { parseStorybookIndex, type StorybookStory } from "@nimbus-dev/sdk";
+
+export type { StorybookStory };
+export { parseStorybookIndex };
 
 /**
  * Local-only reader for a Storybook component/story manifest. This module is the
@@ -13,71 +17,6 @@ import { join, resolve } from "node:path";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MANIFEST_NAMES = ["index.json", "stories.json"] as const;
-
-export interface StorybookStory {
-  readonly id: string;
-  readonly title: string | null;
-  readonly name: string | null;
-  readonly importPath: string | null;
-  readonly tags: readonly string[];
-  readonly entryType: string | null;
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-function str(v: unknown): string | null {
-  return typeof v === "string" && v !== "" ? v : null;
-}
-
-function tagsOf(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : [];
-}
-
-function entryToStory(raw: unknown): StorybookStory | null {
-  const r = asRecord(raw);
-  if (r === null) {
-    return null;
-  }
-  const id = str(r["id"]);
-  if (id === null) {
-    return null;
-  }
-  return {
-    id,
-    title: str(r["title"]) ?? str(r["kind"]),
-    name: str(r["name"]) ?? str(r["story"]),
-    importPath: str(r["importPath"]),
-    tags: tagsOf(r["tags"]),
-    entryType: str(r["type"]),
-  };
-}
-
-/**
- * Pure parse of a Storybook manifest JSON object into stories. Handles the v7+
- * `{ entries: {…} }` shape and the legacy v6 `{ stories: {…} }` shape.
- */
-export function parseStorybookIndex(parsed: unknown): StorybookStory[] {
-  const root = asRecord(parsed);
-  if (root === null) {
-    return [];
-  }
-  const container = asRecord(root["entries"]) ?? asRecord(root["stories"]);
-  if (container === null) {
-    return [];
-  }
-  const out: StorybookStory[] = [];
-  for (const value of Object.values(container)) {
-    const story = entryToStory(value);
-    if (story !== null) {
-      out.push(story);
-    }
-  }
-  return out;
-}
 
 /**
  * Resolve the configured Storybook dir from the environment. Throws when unset so

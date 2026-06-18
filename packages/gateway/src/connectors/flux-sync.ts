@@ -1,3 +1,4 @@
+import { FLUX_KINDS, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
@@ -16,60 +17,6 @@ function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies FluxCursorV1);
 }
 
-interface FluxKindEntry {
-  readonly kind: string;
-  readonly group: string;
-  readonly version: string;
-  readonly plural: string;
-}
-
-const FLUX_KINDS: readonly FluxKindEntry[] = [
-  {
-    kind: "kustomization",
-    group: "kustomize.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "kustomizations",
-  },
-  { kind: "helm_release", group: "helm.toolkit.fluxcd.io", version: "v2", plural: "helmreleases" },
-  {
-    kind: "git_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "gitrepositories",
-  },
-  {
-    kind: "oci_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "ocirepositories",
-  },
-  {
-    kind: "helm_repository",
-    group: "source.toolkit.fluxcd.io",
-    version: "v1",
-    plural: "helmrepositories",
-  },
-  { kind: "bucket", group: "source.toolkit.fluxcd.io", version: "v1", plural: "buckets" },
-  {
-    kind: "image_repository",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta2",
-    plural: "imagerepositories",
-  },
-  {
-    kind: "image_policy",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta2",
-    plural: "imagepolicies",
-  },
-  {
-    kind: "image_update_automation",
-    group: "image.toolkit.fluxcd.io",
-    version: "v1beta1",
-    plural: "imageupdateautomations",
-  },
-];
-
 export type FluxSyncableOptions = {
   ensureFluxMcpRunning: () => Promise<void>;
 };
@@ -77,10 +24,6 @@ export type FluxSyncableOptions = {
 interface FluxCreds {
   readonly apiUrl: string;
   readonly token: string;
-}
-
-function trimTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 async function loadCreds(ctx: SyncContext): Promise<FluxCreds | null> {
