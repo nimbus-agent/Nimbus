@@ -198,4 +198,14 @@ describe("federation over LAN (I5 + I17)", () => {
       expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
     }
   });
+
+  test("federation.shareForward is forbidden over LAN; federation.shareReceive is answerable", () => {
+    // shareForward is the local-only asker entrypoint (like federation.ask) — forbidden over LAN.
+    expect(() => checkLanMethodAllowed("federation.shareForward", peer)).toThrow(LanError);
+    expect(() => checkLanMethodAllowed("federation.shareForward", peer)).toThrow(
+      /not callable over LAN/,
+    );
+    // shareReceive is the answering method (how shares arrive over the wire) — must stay admitted.
+    expect(() => checkLanMethodAllowed("federation.shareReceive", peer)).not.toThrow();
+  });
 });
