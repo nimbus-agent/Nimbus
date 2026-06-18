@@ -7,6 +7,7 @@ import { PairingWindow } from "../ipc/lan-pairing.ts";
 import { LanRateLimiter } from "../ipc/lan-rate-limit.ts";
 import { LanError } from "../ipc/lan-rpc.ts";
 import { LanServer, type PairingService } from "../ipc/lan-server.ts";
+import type { ReceiveShareDeps } from "../share/share-forward.ts";
 import type { DiscoveryProvider } from "./discovery.ts";
 import type { PeerPairing } from "./peer-pairing.ts";
 
@@ -42,6 +43,9 @@ export interface BuildFederationLanServerDeps {
   // I24 (Slice 6b): downstream preflight gate deps — present so an upstream peer's federation.preflight
   // is served over the wire (behind THIS owner's local HITL approval; command from local config).
   readonly preflight?: FederationRpcContext["preflight"];
+  // Share receiving (Slice 8d): answerer-side deps for federation.shareReceive — inbound forwarded
+  // shares from a peer are stored INERT (viewable artifact only, no HITL needed, spec §9.4).
+  readonly receiveShareDeps?: ReceiveShareDeps;
 }
 
 export interface FederationLanServer {
@@ -127,6 +131,7 @@ export function buildFederationLanServer(deps: BuildFederationLanServerDeps): Fe
           ? {}
           : { deletePurgeContributions: deps.deletePurgeContributions }),
         ...(deps.preflight === undefined ? {} : { preflight: deps.preflight }),
+        ...(deps.receiveShareDeps === undefined ? {} : { receiveShareDeps: deps.receiveShareDeps }),
       };
       const out = await dispatchFederationRpc(method, forced, ctx);
       if (out.kind === "hit") return out.value;
