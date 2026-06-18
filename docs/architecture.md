@@ -687,13 +687,13 @@ Infrastructure resources are indexed with: `provider`, `service`, `resource_type
 
 Alerts are indexed with: `monitor_name`, `severity`, `status`, `service`, `fired_at`, `resolved_at`, `url`. Cross-service correlation (alert → deployment → PR → commit) is performed by the Memory Layer's hybrid search over indexed items from multiple connectors.
 
-#### Data Warehouse, Orchestration, BI & ML (Phase 5/6 — planned)
+#### Data Warehouse, Orchestration, BI & ML (Phase 6 Slice 7 — shipped)
 
-Warehouse, orchestration, BI, and ML/MLOps connectors are forward-looking; the **architectural boundary** they hold is the load-bearing fact here:
+Warehouse, orchestration, BI, and ML/MLOps connectors are live (Snowflake, Tableau, Looker, Power BI, Monte Carlo, Bigeye, dbt, Metabase, Databricks, MLflow, Airflow, Prefect, Dagster, …; see [`CHANGELOG.md`](./CHANGELOG.md) for delivery dates). The **architectural boundary** they hold is the load-bearing fact here:
 
 > **Metadata-only boundary.** These connectors ingest schema definitions (DDL), column tags, job/run status, run history, and query plans — **never row data, binary extracts, or result sets**. There is no code path in any connector that fetches them, and a contract test asserts the absence of row-fetch tools on each connector's MCP surface (see the [Security threat-to-mitigation table](#threat-to-mitigation-table)). The same boundary applies to the Phase 5 local data-file profiler (Parquet / CSV / JSONL / ORC under `[[filesystem.roots]]`): it reads footers, header rows, and line counts to derive column names, types, and row-count estimates — it never reads row groups, samples rows, or captures cell values.
 
-They introduce these item types (write tools — `warehouse.job.trigger`, `dbt.job.trigger`, `bi.dataset.refresh`, `ml.model.promote`, `dq.incident.resolve`, … — are all HITL-gated):
+They introduce these item types. Their write tools are HITL-gated: the warehouse/BI write action types (`snowflake.tag.set`, `snowflake.comment.set`, `tableau.datasource.refresh`, `tableau.workbook.refresh`, `looker.datagroup.trigger`, `looker.schedule.run_once`, `powerbi.dataset.refresh`, `powerbi.dataflow.refresh`, `montecarlo.incident.acknowledge`, `montecarlo.incident.resolve`, `bigeye.issue.acknowledge`, `bigeye.issue.resolve`) are live in the frozen HITL set (I2) — see `HITL_REQUIRED_BACKING` / `WAREHOUSE_BI_WRITES` in `engine/executor.ts`:
 
 | Item type | Source domain | Key indexed fields |
 |---|---|---|

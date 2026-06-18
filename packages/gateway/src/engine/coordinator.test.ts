@@ -176,7 +176,7 @@ describe("AgentCoordinator", () => {
           text: "answer",
           tokensIn: 10,
           tokensOut: 5,
-          modelUsed: "claude-3",
+          modelUsed: "claude-sonnet-4-6",
         }),
       },
     ];
@@ -184,7 +184,7 @@ describe("AgentCoordinator", () => {
     const results = await coordinator.run(tasks);
     expect(results).toHaveLength(1);
     expect(results[0]?.status).toBe("done");
-    expect(results[0]?.modelUsed).toBe("claude-3");
+    expect(results[0]?.modelUsed).toBe("claude-sonnet-4-6");
   });
 
   test("converts non-Error thrown value to string in errorText (L75 branch)", async () => {
