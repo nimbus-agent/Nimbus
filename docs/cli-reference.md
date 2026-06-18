@@ -2278,7 +2278,7 @@ nimbus share inbox --all
 
 **Example output:**
 
-```
+```text
 forwarded from alice, 2 hops away  sha256:abc123  transcript
 from bob (direct)                  sha256:def456  recipe
 ```

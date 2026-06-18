@@ -223,4 +223,4 @@ A received share/brief surfaces "forwarded from `<origin>`, N hops away" — a f
 | 8a | share + verify-share + redaction + gate | I27 / D21, V41 | plan-8a |
 | 8b | `--as-recipe` + declarative DAG | V42 | plan-8b |
 | 8c | replay + recipe-runner | — | plan-8c ✅ shipped 2026-06-17 |
-| 8d | sovereign-mesh referral | V43 | plan-8d |
+| 8d | sovereign-mesh referral | V43 | plan-8d ✅ shipped 2026-06-18 |

@@ -9,17 +9,24 @@ Below are suggestions and warnings to ensure robust execution.
 ## 1. Important Recommendations & Robustness Fixes
 
 ### A. Task 9: Promise and Synchronous Exception Guarding for Inbound Pairing
-In **Task 9**, `onPairComplete` is introduced as a callback on `PeerPairing`. It is invoked during the critical pairing paths. 
+
+In **Task 9**, `onPairComplete` is introduced as a callback on `PeerPairing`. It is invoked during the critical pairing paths.
+
 * In `initiatePair` (async), the callback is correctly wrapped in a `try/catch` block:
+
   ```typescript
   try { await this.onPairComplete?.(peerId); } catch { /* best-effort drain */ }
   ```
+
 * In `approveInboundPair` (sync), the callback is triggered asynchronously without awaiting:
+
   ```typescript
   void this.onPairComplete?.(peerId);
   ```
+
 * **Risk**: If the callback returns a promise that rejects, it will trigger an **unhandled promise rejection** in Bun. If it throws synchronously before returning the promise, it will crash the handshake process, which is highly critical.
 * **Robustness Suggestion**: Wrap the synchronous invoke in a wrapper that catches synchronous throws and prevents unhandled promise rejections:
+
   ```typescript
   if (this.onPairComplete) {
     try {
@@ -34,6 +41,7 @@ In **Task 9**, `onPairComplete` is introduced as a callback on `PeerPairing`. It
   ```
 
 ### B. Task 12: Tauri Allowlist Rust Count Test
+
 * In `packages/ui/src-tauri/src/gateway_bridge.rs`, adding `"share.inbox"` to the `ALLOWED_METHODS` slice will throw off any hardcoded array length check in the Rust unit tests.
 * **Tip**: Be sure to grep for `ALLOWED_METHODS` in Rust test files to bump the array size assertion to match the newly added read-only RPC method.
 
@@ -42,10 +50,13 @@ In **Task 9**, `onPairComplete` is introduced as a callback on `PeerPairing`. It
 ## 2. Clarifications on Schema & Storage
 
 ### A. ID Uniqueness in `share_inbox` (Task 3)
+
 * The unique index constraint:
+
   ```sql
   CREATE UNIQUE INDEX IF NOT EXISTS idx_share_inbox_unique ON share_inbox(recipient_pubkey, content_hash, direction);
   ```
+
 * Because received shares are stored under `recipient_pubkey = '@self'` with `direction = 'received'`, this correctly allows multiple distinct shares to reside in the inbox as long as they have different `content_hash`es. This is perfectly correct and supports a clean, deduplicated inbox store.
 
 ### B. Migration assertions (Task 2)

@@ -1216,6 +1216,23 @@ const streamReq: JSONRPCRequest = {
 // Phase 6 Slice 6a surfaces — cross-colleague read-only agents:
 // agents.ghost / agents.conflicts / agents.huddle — fan out over paired peers via federation/peer-fanout.ts;
 //   renderer-exposed (read-only briefs, Tauri count 83 → 86); emit <agent>.briefReady notifications
+//
+// Phase 6 Slice 8 surfaces — Share & Virality (Waves 8a–8d):
+// share.create       — I27 gate: redact → owner-HITL → sign → persist → emit (CLI-only; FORBIDDEN_OVER_LAN)
+// share.verify       — verify a share file or URL signature (read; renderer-exposed)
+// share.list         — list share records (read; renderer-exposed)
+// share.get          — retrieve a single share record (read; renderer-exposed)
+// share.pubkey       — return the gateway's share signing pubkey (read; renderer-exposed)
+// share.prune        — prune expired share records (CLI-only; FORBIDDEN_OVER_LAN)
+// share.approvalRespond — owner HITL response for share.publish (local; renderer-exposed)
+// share.replay       — re-run a share's read-only tool calls locally; divergence report (8c)
+// share.inbox        — drain + reveal inbound forwarded shares from share_inbox (local-only; CLI-only; 8d)
+// federation.shareForward  — asker-side trigger to forward a share to a peer (local-only; FORBIDDEN_OVER_LAN; 8d)
+//   Builds the forwarding hop (signs contentHash ++ prior-chain with the local Ed25519 share key),
+//   appends to forwarding.hops, and sends the forwarding envelope to the target peer via the LAN channel.
+// federation.shareReceive  — answerable over the LAN wire; stores the inbound share in share_inbox (NOT FORBIDDEN; 8d)
+//   The inbound forwarded share is stored inert (no auto-index, no auto-execute) — a tested property.
+//   Receiving needs no HITL; the local owner drains and reviews via share.inbox.
 ```
 
 ### AbortController scope in `engine.cancelStream`
@@ -1241,7 +1258,8 @@ The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / 
 - The Phase 6 Slice 8a **share ledger** (`share_records`, V41) is the content-addressed, append-only record of every emitted share — one row per `createShare()` call through the I27 gate (content hash, kind, redaction-set, provenance, signed body, sink).
 - The Phase 6 Slice 8b **recipe params column** (`tool_call_log.params_json`, V42) adds secret-redacted input params to each tool-call-log row so recipe steps reconstructed by `share/recipe.ts` carry real params — resolving the "input args not stored" limitation.
 - The Phase 6 Slice 8c **replay** (`share.replay` RPC + `share/recipe-runner.ts`) re-executes a share's read-only-classified tool calls locally and renders a divergence report; read-only is enforced by a positive allowlist (`share/read-tool-registry.ts`), not by HITL absence; it adds no schema (schema stays V42) and no invariant.
-- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V42** (`tool_call_log.params_json` recipe step params — Phase 6 Slice 8b; V41 added `share_records`, the content-addressed share ledger — Phase 6 Slice 8a; V40 added `graph_relation_type` cross-warehouse lineage relations — `derived_from` / `upstream_refs` / `monitors` — Phase 6 Slice 7 Wave 7a; V39 added the `tribal_clusters` repeated-question cluster ledger — Phase 6 Slice 6c; V38 added the asker-side known-namespaces cache — Phase 6 Slice 6a; V37 added the GDPR-purge ledger — Phase 6 Slice 4; V36 added the org-policy tables — Phase 6 Slice 4; V35 added team-vault entries/grants + quorum delegations — Phase 6 Slice 2; V34 identity/SCIM tables — Phase 6 Slice 3; V33 added federation namespaces/filters/grants + `audit_log.federation_json` — Phase 6 Slice 1; `CURRENT_SCHEMA_VERSION = 42` in `index/local-index.ts`). Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
+- The Phase 6 Slice 8d **share inbox** (`share_inbox`, V43) is the deferred-reveal inbox table for inbound forwarded shares — one row per received forwarded share (content hash, hop-chain JSON, origin pubkey, received timestamp, revealed flag). Rows are drained on first `share.inbox` IPC call, marked revealed in a single transaction, so a freshly paired peer sees the full backlog exactly once. The forwarding envelope carries the origin's `body`+`sig` byte-identical through every hop (verifiable against the origin's Ed25519 pubkey); each forwarder appends a signed hop record (`contentHash ++ JSON(prior-chain)`, signed with the forwarder's own Ed25519 share key) to the advisory `forwarding.hops` chain. Receiving is inert (no auto-index, no auto-execute, no embedding write — a tested property). No new invariant: forwarding reuses I27 / D21 extended.
+- **The migration runner** at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) is authoritative (`INDEXED_SCHEMA_STEPS`). **Latest applied migration: V43** (`share_inbox` deferred-reveal inbox — Phase 6 Slice 8d; V42 added `tool_call_log.params_json` recipe step params — Phase 6 Slice 8b; V41 added `share_records`, the content-addressed share ledger — Phase 6 Slice 8a; V40 added `graph_relation_type` cross-warehouse lineage relations — `derived_from` / `upstream_refs` / `monitors` — Phase 6 Slice 7 Wave 7a; V39 added the `tribal_clusters` repeated-question cluster ledger — Phase 6 Slice 6c; V38 added the asker-side known-namespaces cache — Phase 6 Slice 6a; V37 added the GDPR-purge ledger — Phase 6 Slice 4; V36 added the org-policy tables — Phase 6 Slice 4; V35 added team-vault entries/grants + quorum delegations — Phase 6 Slice 2; V34 identity/SCIM tables — Phase 6 Slice 3; V33 added federation namespaces/filters/grants + `audit_log.federation_json` — Phase 6 Slice 1; `CURRENT_SCHEMA_VERSION = 43` in `index/local-index.ts`). Migrations are append-only and forward-only — see the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill for the authoring contract.
 - **SQLite write boundary:** every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `db/write.ts` (invariant `I14`, static gate `D12`).
 
 Planned Phase 6+ tables (`service` / `scorecard` / `security_finding` / `llm_trace` / …) are tracked in [`roadmap.md` § Planned](./roadmap.md#planned).
