@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emailToolSchemas } from "../../shared/imap-tool-kit.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
@@ -39,14 +40,6 @@ const searchArgs = z.object({
   limit: z.number().int().min(1).max(200).optional(),
 });
 
-const sendArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
-  body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
-});
-
 /**
  * Register the Fastmail JMAP read tools + the HITL-gated send tool onto an MCP
  * server. The JMAP client is injected so tests exercise the tool surface without
@@ -57,6 +50,7 @@ export function registerFastmailTools(
   client: JmapClient,
 ): void {
   const registerSimpleTool = createRegisterSimpleTool(server);
+  const { sendArgs } = emailToolSchemas;
 
   registerSimpleTool(
     "fastmail_list",

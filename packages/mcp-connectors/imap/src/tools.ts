@@ -1,67 +1,10 @@
-import { z } from "zod";
-
+import { emailToolSchemas, viewEmailMessage } from "../../shared/imap-tool-kit.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
   mcpJsonResult,
 } from "../../shared/mcp-tool-kit.ts";
-import {
-  clampLimit,
-  formatAddress,
-  type ImapClient,
-  type ImapMessageMeta,
-  type SmtpMailer,
-} from "./imap-core.ts";
-
-/**
- * Reduce an {@link ImapMessageMeta} to a JSON-safe view. Carries HEADERS,
- * attachment METADATA (filename/size/mimetype), and the capped preview — never
- * attachment bytes or a full body.
- */
-function viewMessage(m: ImapMessageMeta): Record<string, unknown> {
-  const env = m.envelope;
-  return {
-    uid: m.uid,
-    mailbox: m.mailbox,
-    uidValidity: m.uidValidity,
-    messageId: env.messageId ?? null,
-    subject: env.subject ?? null,
-    date: env.date instanceof Date ? env.date.toISOString() : (env.date ?? null),
-    from: (env.from ?? []).map(formatAddress),
-    to: (env.to ?? []).map(formatAddress),
-    cc: (env.cc ?? []).map(formatAddress),
-    attachments: m.attachments.map((a) => ({
-      filename: a.filename,
-      sizeBytes: a.sizeBytes,
-      mimeType: a.mimeType,
-    })),
-    preview: m.preview,
-  };
-}
-
-const listArgs = z.object({
-  mailbox: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-});
-
-const getArgs = z.object({
-  uid: z.number().int().min(1),
-  mailbox: z.string().min(1).optional(),
-});
-
-const searchArgs = z.object({
-  query: z.string().min(1).max(500),
-  mailbox: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-});
-
-const sendArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
-  body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
-});
+import { clampLimit, formatAddress, type ImapClient, type SmtpMailer } from "./imap-core.ts";
 
 /**
  * Register the IMAP read tools + the SMTP send tool onto an MCP server. The
@@ -74,6 +17,7 @@ export function registerImapTools(
   mailer: SmtpMailer,
 ): void {
   const registerSimpleTool = createRegisterSimpleTool(server);
+  const { listArgs, getArgs, searchArgs, sendArgs } = emailToolSchemas;
 
   registerSimpleTool(
     "imap_list",
@@ -90,7 +34,7 @@ export function registerImapTools(
       }
       opts.limit = clampLimit(parsed.data.limit);
       const items = await client.list(opts);
-      return mcpJsonResult({ items: items.map(viewMessage) });
+      return mcpJsonResult({ items: items.map((m) => viewEmailMessage(m, formatAddress)) });
     },
   );
 
@@ -104,7 +48,9 @@ export function registerImapTools(
         throw new Error(parsed.error.message);
       }
       const m = await client.get(parsed.data.uid, parsed.data.mailbox);
-      return mcpJsonResult(m === null ? { item: null } : { item: viewMessage(m) });
+      return mcpJsonResult(
+        m === null ? { item: null } : { item: viewEmailMessage(m, formatAddress) },
+      );
     },
   );
 
@@ -125,7 +71,7 @@ export function registerImapTools(
         opts.mailbox = parsed.data.mailbox;
       }
       const items = await client.search(opts);
-      return mcpJsonResult({ matches: items.map(viewMessage) });
+      return mcpJsonResult({ matches: items.map((m) => viewEmailMessage(m, formatAddress)) });
     },
   );
 

@@ -7,9 +7,9 @@ import {
   extractAttachments,
   findTextPlainPart,
 } from "../../shared/imap-bodystructure.ts";
+import { envInt, previewFromParts } from "../../shared/imap-tool-kit.ts";
 import { requireProcessEnv } from "../../shared/mcp-tool-kit.ts";
 import {
-  capPreview,
   clampLimit,
   type ImapAddress,
   type ImapClient,
@@ -27,15 +27,6 @@ import { registerImapTools } from "./tools.ts";
 const DEFAULT_IMAP_PORT = 993;
 const DEFAULT_SMTP_PORT = 465;
 const DEFAULT_MAILBOX = "INBOX";
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (raw === undefined || raw === "") {
-    return fallback;
-  }
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n <= 65535 ? Math.trunc(n) : fallback;
-}
 
 /**
  * Build an {@link ImapAddress} from an imapflow envelope address, omitting
@@ -65,23 +56,6 @@ function envelopeFromImap(env: FetchMessageObject["envelope"]): ImapEnvelope {
     to: (env.to ?? []).map(toImapAddress),
     cc: (env.cc ?? []).map(toImapAddress),
   };
-}
-
-/**
- * Build the truncated plain-text preview from the SINGLE text/plain body part we
- * requested (capped to PREVIEW_FETCH_BYTES at fetch time, then to
- * PREVIEW_MAX_CHARS). We NEVER request `BODY[]` or an attachment part, so this
- * Buffer is at most a couple KB of the text body.
- */
-function previewFromParts(parts: Map<string, Buffer> | undefined, partKey: string): string {
-  if (parts === undefined) {
-    return "";
-  }
-  const buf = parts.get(partKey) ?? parts.get("1") ?? parts.get("TEXT");
-  if (buf === undefined) {
-    return "";
-  }
-  return capPreview(buf.toString("utf8"));
 }
 
 function toMessageMeta(

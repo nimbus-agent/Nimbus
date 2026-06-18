@@ -7,9 +7,9 @@ import {
   extractAttachments,
   findTextPlainPart,
 } from "../../shared/imap-bodystructure.ts";
+import { envInt, previewFromParts } from "../../shared/imap-tool-kit.ts";
 import { requireProcessEnv } from "../../shared/mcp-tool-kit.ts";
 import {
-  capPreview,
   clampLimit,
   type MailClient,
   type MailEnvelope,
@@ -35,15 +35,6 @@ function envStr(name: string, fallback: string): string {
   return raw === undefined || raw === "" ? fallback : raw;
 }
 
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (raw === undefined || raw === "") {
-    return fallback;
-  }
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n <= 65535 ? Math.trunc(n) : fallback;
-}
-
 function envelopeFromImap(env: FetchMessageObject["envelope"]): MailEnvelope {
   if (env === undefined) {
     return {};
@@ -66,14 +57,6 @@ function envelopeFromImap(env: FetchMessageObject["envelope"]): MailEnvelope {
     to: (env.to ?? []).map(toAddr),
     cc: (env.cc ?? []).map(toAddr),
   };
-}
-
-function previewFromParts(parts: Map<string, Buffer> | undefined, partKey: string): string {
-  if (parts === undefined) {
-    return "";
-  }
-  const buf = parts.get(partKey) ?? parts.get("1") ?? parts.get("TEXT");
-  return buf === undefined ? "" : capPreview(buf.toString("utf8"));
 }
 
 function toMessageMeta(
