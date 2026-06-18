@@ -81,3 +81,57 @@ describe("verifyForwardingChain", () => {
     expect(r.errors.length).toBeGreaterThan(0);
   });
 });
+
+describe("defensive branches", () => {
+  test("appendForwardingHop throws on a non-32-byte seed", () => {
+    const base = originShare();
+    const badPriv = Buffer.from(new Uint8Array(16).fill(9)).toString("base64"); // 16 bytes, not 32
+    expect(() =>
+      appendForwardingHop(base, {
+        gatewayLabel: "bob",
+        pubkeyB64: kp(2).pubkeyB64,
+        privkeyB64: badPriv,
+      }),
+    ).toThrow(/32-byte seed/);
+  });
+
+  test("a hop with a wrong-length pubkey is reported invalid (not a verify call)", () => {
+    const base = originShare();
+    const hop1 = appendForwardingHop(base, { gatewayLabel: "bob", ...kp(2) });
+    // Replace the hop's pubkey with a too-short key → the length guard short-circuits to invalid.
+    const shortPubHop = {
+      ...hop1,
+      forwarding: {
+        hops: 1,
+        chain: [
+          {
+            ...hop1.forwarding.chain[0]!,
+            pubkey: Buffer.from(new Uint8Array(16)).toString("base64"),
+          },
+        ],
+      },
+    };
+    const r = verifyForwardingChain(shortPubHop);
+    expect(r.valid).toBe(false);
+    expect(r.hopsValid).toBe(0);
+    expect(r.errors[0]).toContain("signature invalid");
+  });
+
+  test("a hop with a malformed (undecodable) signature is reported, never throws out", () => {
+    const base = originShare();
+    const hop1 = appendForwardingHop(base, { gatewayLabel: "bob", ...kp(2) });
+    const badSigHop = {
+      ...hop1,
+      forwarding: {
+        hops: 1,
+        // a too-short sig (decodes to <64 bytes) → length guard fails → reported invalid, no throw
+        chain: [
+          { ...hop1.forwarding.chain[0]!, sig: Buffer.from(new Uint8Array(8)).toString("base64") },
+        ],
+      },
+    };
+    const r = verifyForwardingChain(badSigHop);
+    expect(r.valid).toBe(false);
+    expect(r.errors.length).toBeGreaterThan(0);
+  });
+});

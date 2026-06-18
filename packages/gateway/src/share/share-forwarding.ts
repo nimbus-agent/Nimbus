@@ -69,9 +69,7 @@ export function verifyForwardingChain(share: ShareFile): ForwardingChainResult {
   const chain = share.forwarding.chain;
   const errors: string[] = [];
   let hopsValid = 0;
-  for (let i = 0; i < chain.length; i++) {
-    const hop = chain[i];
-    if (hop === undefined) continue;
+  for (const [i, hop] of chain.entries()) {
     try {
       const pub = new Uint8Array(Buffer.from(hop.pubkey, "base64"));
       const sig = new Uint8Array(Buffer.from(hop.sig, "base64"));
