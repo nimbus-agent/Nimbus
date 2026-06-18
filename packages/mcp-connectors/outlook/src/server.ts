@@ -11,13 +11,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { fetchBearerAuthorizedJson, resolveUrlWithBase } from "../../shared/fetch-bearer-json.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
   mcpJsonResult,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
 import {
   outlookToolShouldRegister,
   parseMicrosoftOAuthScopesFromEnv,
@@ -25,13 +25,12 @@ import {
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
-async function graphRequest(
+function graphRequest(
   token: string,
   pathOrUrl: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const url = resolveUrlWithBase(GRAPH, pathOrUrl);
-  return fetchBearerAuthorizedJson(url, token, init);
+  return makeRestFetcher({ apiBase: GRAPH, token })(pathOrUrl, init);
 }
 
 const server = new McpServer({ name: "nimbus-outlook", version: "0.1.0" });

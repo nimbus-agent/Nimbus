@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { fetchBearerAuthorizedJson } from "../../shared/fetch-bearer-json.ts";
 import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
@@ -10,6 +9,7 @@ import {
   mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
 
 const GH_API = "https://api.github.com";
 const GH_HEADERS: Record<string, string> = {
@@ -17,13 +17,12 @@ const GH_HEADERS: Record<string, string> = {
   "X-GitHub-Api-Version": "2022-11-28",
 };
 
-async function ghFetch(
+function ghFetch(
   token: string,
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const url = path.startsWith("http") ? path : `${GH_API}${path}`;
-  return fetchBearerAuthorizedJson(url, token, init, GH_HEADERS);
+  return makeRestFetcher({ apiBase: GH_API, token, defaultHeaders: GH_HEADERS })(path, init);
 }
 
 const mcp = new McpServer({ name: "nimbus-github-actions", version: "0.1.0" });

@@ -2,23 +2,22 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { fetchBearerAuthorizedJson, resolveUrlWithBase } from "../../shared/fetch-bearer-json.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
   mcpJsonResult,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-async function gmailFetch(
+function gmailFetch(
   token: string,
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const url = resolveUrlWithBase(GMAIL_BASE, path);
-  return fetchBearerAuthorizedJson(url, token, init);
+  return makeRestFetcher({ apiBase: GMAIL_BASE, token })(path, init);
 }
 
 function buildRfc822Message(params: {

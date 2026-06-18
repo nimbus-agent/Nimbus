@@ -1,0 +1,172 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
+import { makeRestFetcher, type RestFetcherConfig, type RestFetchResult } from "./rest-tool-kit.ts";
+
+// ---------------------------------------------------------------------------
+// globalThis.fetch stub helpers
+// ---------------------------------------------------------------------------
+
+type CapturedRequest = {
+  url: string;
+  headers: Record<string, string>;
+  method: string;
+};
+
+let captured: CapturedRequest = { url: "", headers: {}, method: "GET" };
+let originalFetch: typeof globalThis.fetch;
+
+function stubFetch(body: string, status: number): void {
+  const impl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headersObj = new Headers(init?.headers);
+    const headers: Record<string, string> = {};
+    for (const [k, v] of headersObj) {
+      headers[k] = v;
+    }
+    captured = { url, headers, method: init?.method ?? "GET" };
+    return new Response(body, { status });
+  };
+  globalThis.fetch = impl as unknown as typeof globalThis.fetch;
+}
+
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+  captured = { url: "", headers: {}, method: "GET" };
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+// ---------------------------------------------------------------------------
+// makeRestFetcher — URL resolution
+// ---------------------------------------------------------------------------
+
+describe("makeRestFetcher — URL resolution", () => {
+  it("prefixes a relative path with apiBase", async () => {
+    stubFetch('{"ok":true}', 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await fetcher("/repos/owner/repo");
+    expect(captured["url"]).toBe("https://api.example.com/repos/owner/repo");
+  });
+
+  it("passes through an absolute URL unchanged", async () => {
+    stubFetch('{"ok":true}', 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await fetcher("https://other.example.com/v2/items?$top=10");
+    expect(captured["url"]).toBe("https://other.example.com/v2/items?$top=10");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeRestFetcher — Bearer auth header
+// ---------------------------------------------------------------------------
+
+describe("makeRestFetcher — Bearer auth header", () => {
+  it("sets Authorization: Bearer <token>", async () => {
+    stubFetch("{}", 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "mytoken123",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await fetcher("/path");
+    expect(captured["headers"]["authorization"]).toBe("Bearer mytoken123");
+  });
+
+  it("merges defaultHeaders into every request", async () => {
+    stubFetch("{}", 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.github.com",
+      token: "ghp_tok",
+      defaultHeaders: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await fetcher("/user/repos");
+    expect(captured["headers"]["accept"]).toBe("application/vnd.github+json");
+    expect(captured["headers"]["x-github-api-version"]).toBe("2022-11-28");
+    expect(captured["headers"]["authorization"]).toBe("Bearer ghp_tok");
+  });
+
+  it("caller init.headers override defaultHeaders but not Bearer token", async () => {
+    stubFetch("{}", 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+      defaultHeaders: { Accept: "application/json" },
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await fetcher("/path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(captured["headers"]["content-type"]).toBe("application/json");
+    expect(captured["headers"]["authorization"]).toBe("Bearer tok");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeRestFetcher — response parsing
+// ---------------------------------------------------------------------------
+
+describe("makeRestFetcher — response parsing", () => {
+  it("returns ok=true, json, text for a 200 JSON response", async () => {
+    stubFetch('{"id":42}', 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    const result: RestFetchResult = await fetcher("/item/42");
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
+    expect(result.json).toEqual({ id: 42 });
+    expect(result.text).toBe('{"id":42}');
+  });
+
+  it("returns ok=false with status and text for a 404 response", async () => {
+    stubFetch("not found", 404);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    const result: RestFetchResult = await fetcher("/missing");
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(404);
+    expect(result.text).toBe("not found");
+    expect(result.json).toBeNull();
+  });
+
+  it("sets json=null when the body is not valid JSON", async () => {
+    stubFetch("plain text", 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    const result: RestFetchResult = await fetcher("/text");
+    expect(result.json).toBeNull();
+    expect(result.text).toBe("plain text");
+  });
+});
