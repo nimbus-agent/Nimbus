@@ -471,6 +471,145 @@ test("P4 — deferred path: forward to not-yet-paired pubkey queues; drainOnPair
   // of those deps in the receiveShareDeps interface.)
 }, 30_000);
 
+test("P4 (seam) — onPairComplete seam drives the drain end-to-end via real PeerPairing.approveInboundPair", async () => {
+  // -----------------------------------------------------------------------
+  // Proves: real PeerPairing.onPairComplete → real drain closure → real NaCl wire
+  //         → real receiveForwardedShare → B's inbox row.
+  // The drain is NOT called inline — it is fired only through approveInboundPair.
+  // -----------------------------------------------------------------------
+
+  // -----------------------------------------------------------------------
+  // SETUP: Gateway B (recipient) — real LanServer with receiveShareDeps.
+  // -----------------------------------------------------------------------
+  const bDb = makeShareInboxDb();
+  const bIndexDb = new Database(":memory:");
+  runIndexedSchemaMigrations(bIndexDb, 43);
+  const bIndex = new LocalIndex(bIndexDb);
+  const bBoxKp = generateBoxKeypair();
+
+  const bReceiveDeps = {
+    now: () => Date.now(),
+    storeReceived: (share: ShareFile) => insertReceivedShare(bDb, { share, now: Date.now() }),
+  };
+
+  const bBuilt = buildFederationLanServer({
+    db: bIndexDb,
+    index: bIndex,
+    identity: bBoxKp,
+    lan: {
+      bind: "127.0.0.1",
+      port: 0,
+      pairingWindowSeconds: 60,
+      maxFailedAttempts: 5,
+      lockoutSeconds: 60,
+    },
+    consentTimeoutMs: 200,
+    notify: () => {},
+    receiveShareDeps: bReceiveDeps,
+  });
+  await bBuilt.lanServer.start();
+  toStop.push(bBuilt.lanServer);
+  const bPort = bBuilt.lanServer.listenAddr()?.port as number;
+  expect(typeof bPort).toBe("number");
+
+  // -----------------------------------------------------------------------
+  // SETUP: Gateway A (sender) — real index DB + real share_records DB.
+  // -----------------------------------------------------------------------
+  const aIndexDb = new Database(":memory:");
+  runIndexedSchemaMigrations(aIndexDb, 43);
+  const aIndex = new LocalIndex(aIndexDb);
+  const aBoxKp = generateBoxKeypair();
+  const aDb = makeShareDb();
+
+  // -----------------------------------------------------------------------
+  // Register A as a known peer on B's side so B's NaCl session accepts A.
+  // (Mirrors what existing P2+P3 hop-chain test does for bBoxKp on C.)
+  // -----------------------------------------------------------------------
+  bIndex.addLanPeer({
+    peerId: "peer:a-drain",
+    peerPubkey: aBoxKp.publicKey,
+    direction: "inbound",
+  });
+
+  // -----------------------------------------------------------------------
+  // STEP 1: Queue a pending forward to B's box pubkey BEFORE pairing.
+  // B is not yet a peer in A's index — this is the deferred case.
+  // -----------------------------------------------------------------------
+  const senderEdKp = edKp(0x77);
+  const body = makeShareBody("drain-seam-gw", senderEdKp);
+  const share: ShareFile = buildShareFile(body, senderEdKp.privkeyB64, senderEdKp.pubkeyB64);
+
+  // Key pending forwards by B's box pubkey (base64) — mirrors assemble.ts.
+  const bPubkeyB64 = Buffer.from(bBoxKp.publicKey).toString("base64");
+  insertPendingForward(aDb, { recipientPubkey: bPubkeyB64, share, now: Date.now() });
+
+  // Confirm the row is pending before any pairing.
+  expect(drainPending(aDb, bPubkeyB64)).toHaveLength(1);
+  expect(listReceivedShares(bDb, {})).toHaveLength(0);
+
+  // -----------------------------------------------------------------------
+  // STEP 2: Build the REAL drainOnPair closure (mirrors assemble.ts wiring).
+  // It resolves peerId → peer row in A's index → host/port → wire delivery.
+  // -----------------------------------------------------------------------
+  const drainOnPair = async (peerId: string): Promise<void> => {
+    // Resolve the peer row (registered by approveInboundPair before we are called).
+    const peer = aIndex.listLanPeers().find((p) => p.peer_id === peerId);
+    if (peer === undefined || peer.host_ip === null || peer.host_port === null) return;
+
+    const recipientPubkeyB64 = Buffer.from(peer.peer_pubkey).toString("base64");
+    const rows = drainPending(aDb, recipientPubkeyB64);
+    for (const row of rows) {
+      await sendFederatedOverWire(
+        peer.host_ip,
+        peer.host_port,
+        aBoxKp,
+        peer.peer_pubkey,
+        "federation.shareReceive",
+        { share: row.share },
+      );
+      markDelivered(aDb, row.id);
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // STEP 3: Construct real PeerPairing with the drain seam, then fire it via
+  // approveInboundPair — this is the ONLY path that triggers the drain.
+  // -----------------------------------------------------------------------
+  const aPairing = new PeerPairing(aIndex, undefined, drainOnPair);
+
+  // Approve B as an inbound peer, supplying B's host/port so the peer row is
+  // reachable (approveInboundPair persists the row then fires onPairComplete).
+  aPairing.approveInboundPair({
+    peerPubkey: bBoxKp.publicKey,
+    hostIp: "127.0.0.1",
+    hostPort: bPort,
+  });
+
+  // -----------------------------------------------------------------------
+  // P4a: Poll B's inbox until the drained share arrives (onPairComplete is async/best-effort).
+  // -----------------------------------------------------------------------
+  const row = await until(
+    () => {
+      const rows = listReceivedShares(bDb, {});
+      return rows.length > 0 ? rows[0] : undefined;
+    },
+    "drained share in B inbox via onPairComplete seam",
+    10_000,
+  );
+  expect(row).toBeDefined();
+  expect(row!.direction).toBe("received");
+  expect(row!.originLabel).toBe("drain-seam-gw");
+
+  // P4b: markDelivered worked — drainPending returns empty.
+  expect(drainPending(aDb, bPubkeyB64)).toHaveLength(0);
+
+  // Cleanup
+  bIndex.close();
+  bIndexDb.close();
+  aIndex.close();
+  aIndexDb.close();
+}, 60_000);
+
 test("P1 (fail-closed) — tampered share is rejected by receiveForwardedShare; inbox stays empty", async () => {
   // Proves the inert-receiving property's security boundary: a forged/tampered body that fails
   // content verification is never persisted — B's inbox stays empty (spec §9.4, global-constraints).
