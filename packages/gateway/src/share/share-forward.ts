@@ -1,5 +1,6 @@
 // packages/gateway/src/share/share-forward.ts
 import type { ShareFile } from "./share-format.ts";
+import { verifyShareBytes } from "./share-format.ts";
 import { appendForwardingHop } from "./share-forwarding.ts";
 
 export interface ForwardPeer {
@@ -92,4 +93,35 @@ export async function forwardShare(
     timestamp: ts,
   });
   return { status: "ok", delivered, contentHash: share.contentHash };
+}
+
+export interface ReceiveShareDeps {
+  readonly now: () => number;
+  /** Persist the inbound share as an INERT, viewable artifact (insertReceivedShare). */
+  readonly storeReceived: (share: ShareFile) => void;
+}
+
+export type ReceiveOutcome = { readonly ok: boolean; readonly reason?: string };
+
+/**
+ * Accept an inbound forwarded share and store it INERT (spec §9.4): the content signature must
+ * verify (reject otherwise — never persist a forged body), then the share is recorded as a
+ * viewable/replayable artifact. This function has NO access to the executor, index writer, or
+ * embedding pipeline — receiving never executes, never merges into the index, and needs no HITL.
+ * The advisory hop chain is not a storage gate.
+ */
+export async function receiveForwardedShare(
+  rawShare: unknown,
+  deps: ReceiveShareDeps,
+): Promise<ReceiveOutcome> {
+  if (rawShare === null || typeof rawShare !== "object") {
+    return { ok: false, reason: "malformed" };
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(rawShare));
+  const verdict = verifyShareBytes(bytes, { now: deps.now() });
+  if (!verdict.signatureValid || !verdict.contentHashValid) {
+    return { ok: false, reason: "content signature invalid" };
+  }
+  deps.storeReceived(rawShare as ShareFile);
+  return { ok: true };
 }

@@ -2,7 +2,13 @@
 import { describe, expect, test } from "bun:test";
 import nacl from "tweetnacl";
 import { buildShareFile, type ShareBody, type ShareFile } from "./share-format.ts";
-import { type ForwardPeer, type ForwardShareDeps, forwardShare } from "./share-forward.ts";
+import {
+  type ForwardPeer,
+  type ForwardShareDeps,
+  forwardShare,
+  type ReceiveShareDeps,
+  receiveForwardedShare,
+} from "./share-forward.ts";
 import { verifyForwardingChain } from "./share-forwarding.ts";
 
 function kp(b: number) {
@@ -164,5 +170,48 @@ describe("forwardShare", () => {
     );
     expect(deliveredShare?.forwarding.hops).toBe(0);
     expect(deliveredShare?.forwarding.chain).toHaveLength(0);
+  });
+});
+
+describe("receiveForwardedShare — inert inbound", () => {
+  test("valid signed share → stored inert (no execution dep exists to call)", async () => {
+    const share = aliceShare();
+    let stored: ShareFile | undefined;
+    const deps: ReceiveShareDeps = {
+      now: () => 1,
+      storeReceived: (s) => {
+        stored = s;
+      },
+    };
+    const out = await receiveForwardedShare(share, deps);
+    expect(out.ok).toBe(true);
+    expect(stored?.contentHash).toBe(share.contentHash);
+  });
+
+  test("tampered body (bad content sig) → rejected, NOT stored", async () => {
+    const share = aliceShare();
+    const tampered = { ...share, body: { ...share.body, sessionId: "EVIL" } }; // sig no longer matches
+    let stored = false;
+    const out = await receiveForwardedShare(tampered, {
+      now: () => 1,
+      storeReceived: () => {
+        stored = true;
+      },
+    });
+    expect(out.ok).toBe(false);
+    expect(stored).toBe(false);
+  });
+
+  test("non-object / malformed input → rejected (fail-safe)", async () => {
+    let stored = false;
+    const deps: ReceiveShareDeps = {
+      now: () => 1,
+      storeReceived: () => {
+        stored = true;
+      },
+    };
+    expect((await receiveForwardedShare(null, deps)).ok).toBe(false);
+    expect((await receiveForwardedShare("nope", deps)).ok).toBe(false);
+    expect(stored).toBe(false);
   });
 });
