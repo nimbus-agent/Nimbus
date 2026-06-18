@@ -12,11 +12,13 @@ Today's first-value path needs: install → connect a real service (OAuth) → a
 ## Goals / Non-goals
 
 **Goals**
+
 - One command, post-install, that shows a real cross-service query working: `nimbus demo`.
 - No network calls, no credentials, no cloud LLM required.
 - Reuses the real engine + real index path (not a faked screen) so what users see is what they'd get.
 
 **Non-goals**
+
 - Not a sandbox of the full product; it's a curated taste.
 - No write/HITL actions in demo mode (read-only).
 - Not a replacement for real onboarding — it ends by pointing at "connect your first real service."

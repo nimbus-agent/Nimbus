@@ -47,6 +47,7 @@ curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/insta
 bash /tmp/nimbus-install.sh
 nimbus --version
 ```
+
 </details>
 
 <details>
@@ -57,6 +58,7 @@ irm https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1 
 # open a new PowerShell window:
 nimbus --version
 ```
+
 </details>
 
 Every release artefact is GPG-signed (key `5A20457CCD8B53FFAA945240886ADA6B487CAB6E`) with a SHA-256 manifest and build-provenance attestations — see [Verify your download](https://nimbus-agent.dev/user-guide/verify-your-download/). Homebrew and Scoop taps are also available (see the [install guide](https://nimbus-agent.dev/user-guide/install/)).
@@ -91,7 +93,7 @@ See [Local & air-gapped LLM setup](https://nimbus-agent.dev/user-guide/first-run
 
 ## How it works
 
-```
+```text
 80+ cloud services ─▶ first-party MCP connectors ─▶ local SQLite index (+ embeddings)
                                                           │
                               your question ─▶ engine ─▶ HITL consent gate ─▶ action
@@ -112,7 +114,7 @@ A headless **Bun Gateway** maintains the private index and runs the agent; clien
 - **Signed, reproducible releases** — GPG manifests, SBOM (CycloneDX), build-provenance attestations.
 - **Audited** — see the [security model & disclosure policy](https://github.com/nimbus-agent/nimbus-security).
 
-Found a vulnerability? See [SECURITY.md](./SECURITY.md).
+Found a vulnerability? See [SECURITY.md](./.github/SECURITY.md).
 
 ## Community & contributing
 

@@ -16,6 +16,7 @@
 > Nimbus is a headless agent that builds a private SQLite index of your work across ~80 services (GitHub, Slack, Jira, PagerDuty, Datadog, Tableau, …) and answers questions / runs multi-step workflows — entirely on your machine. The index, your credentials (in the OS keystore), and the audit log never leave the box; the cloud is just a connector.
 >
 > Two things I cared about building it:
+>
 > - **Human-in-the-loop is structural.** Every outbound/destructive action hits a consent gate in the executor, not the prompt — so a jailbroken prompt can't bypass it.
 > - **MCP-native.** Every connector speaks the Model Context Protocol; the engine never calls a cloud API directly. Next up: exposing your whole private index *as* an MCP server you attach to Claude Desktop/Cursor.
 >
@@ -101,6 +102,7 @@
 
 **Working title:** `Why I built a local-first AI agent (and why "the cloud is just a connector" matters)`
 **Outline:**
+
 - The problem: cloud assistants need your data on their servers; for work tools that's a non-starter.
 - The thesis: local-first + MCP + structural HITL.
 - Walkthrough: install → connect GitHub → ask → an incident-correlation example (embed the cast).
@@ -108,6 +110,7 @@
 - Running fully offline with Ollama.
 - What's next (MCP server, proactive watch daemon) + how to contribute.
 **Opening line:**
+
 > Every "AI assistant for your tools" asks the same thing first: connect your accounts to *our* servers. I wanted the opposite — so I built one where the data, the credentials, and the agent all stay on your machine.
 
 ---

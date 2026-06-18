@@ -24,6 +24,7 @@ You get one first impression per channel. A launch-readiness audit (2026-06-18) 
 ## Phase 0 — Close the surface gaps (the gate, ~1 week)
 
 **Blockers (before any public post):**
+
 1. **Root `README.md`** — drafted in this branch. Review/merge it. (Keystone: every channel links here.)
 2. **A genuine 2-minute try-it path** — see the companion spec `2026-06-18-demo-mode-design.md`. Ship `nimbus demo` (sample-data, zero accounts) and/or a one-step "fully local with Ollama" quickstart so the first run matches the local-first pitch.
 3. **Community home** — stand up a Discord (or formally adopt GitHub Discussions as the sync point) and link it from README + docs. Seed channels + first posts so it isn't empty on day one.
@@ -36,6 +37,7 @@ You get one first impression per channel. A launch-readiness audit (2026-06-18) 
 ## Phase 1 — Soft launch / seed (week 1–2)
 
 Feedback-first, low-volume. **Target: 10–20 real users, 1+ external contributor, a friction list.**
+
 - Post to 2–3 high-tolerance niche venues: r/selfhosted, MCP/agent Discords, local-first communities, Lobsters (if invited). Frame as "built this, want feedback," not a megaphone.
 - Fix onboarding friction in real time as people hit it.
 - Pull 3–5 early adopters into the community home; convert 1–2 to contributors via good-first-issues (CONTRIBUTING + templates are already strong).
@@ -45,6 +47,7 @@ Feedback-first, low-volume. **Target: 10–20 real users, 1+ external contributo
 Coordinated, one launch day, everything pre-written. Multiple **tailored** posts (never identical cross-posts). Per-audience angles + the channel playbook live in `2026-06-18-launch-posts.md`.
 
 **Audience angles (hook changes, product doesn't):**
+
 - **DevOps / SRE / platform** — "<100ms cross-service incident context, on your machine; no data leaves the box."
 - **Local-first / privacy** — "an AI agent over 80 tools whose credentials never leave the machine; AGPL, audited."
 - **AI-agent / MCP builders** — "MCP-native today; soon your whole private index *as* an MCP server you plug into Claude Desktop/Cursor" (tease the S3 work).
@@ -57,6 +60,7 @@ Coordinated, one launch day, everything pre-written. Multiple **tailored** posts
 ## Phase 3 — Sustained community engine (ongoing)
 
 A spike without cadence is wasted.
+
 - **Content rhythm** (your strength): biweekly post tied to a real beat — new connector, recipe, changelog highlight, "how Nimbus does X locally." Each → 1 blog + 1 social thread.
 - **Build-in-public:** ship the MCP-server work in the open; publish specs + rigorous reviews — the transparency is itself marketing to devs.
 - **Ecosystem flywheel:** feature community connectors/recipes; push `create-nimbus-connector` + `nimbus-recipes`.
