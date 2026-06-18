@@ -1,5 +1,6 @@
 // packages/gateway/src/share/share-inbox-store.ts
 import type { Database } from "bun:sqlite";
+import { dbRun } from "../db/write.ts";
 import type { ShareFile } from "./share-format.ts";
 
 /** Received rows are the local gateway's own inbox — keyed by this constant, not a peer pubkey. */
@@ -53,7 +54,8 @@ function insert(
     now: number;
   },
 ): void {
-  db.run(
+  dbRun(
+    db,
     `INSERT OR IGNORE INTO share_inbox
        (recipient_pubkey, content_hash, direction, share_json, origin_label, hops, received_at, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -108,5 +110,5 @@ export function drainPending(db: Database, recipientPubkey: string): ShareInboxR
 
 /** Mark a pending forward delivered (kept for audit; never re-drained). */
 export function markDelivered(db: Database, id: number): void {
-  db.run(`UPDATE share_inbox SET status = 'delivered' WHERE id = ?`, [id]);
+  dbRun(db, `UPDATE share_inbox SET status = 'delivered' WHERE id = ?`, [id]);
 }
