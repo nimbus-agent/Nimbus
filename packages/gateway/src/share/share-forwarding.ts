@@ -38,18 +38,26 @@ export function appendForwardingHop(
     throw new TypeError(`hop signing key must be a 32-byte seed, got ${seed.length}`);
   }
   const kp = nacl.sign.keyPair.fromSeed(seed);
+  // Bind the hop's recorded pubkey to the ACTUAL signing key (derived from the seed), not a
+  // caller-supplied value — a mismatched input pair would otherwise emit a self-invalid hop.
+  const derivedPubkeyB64 = Buffer.from(kp.publicKey).toString("base64");
+  if (signer.pubkeyB64 !== derivedPubkeyB64) {
+    throw new TypeError("hop signer pubkey does not match the private-key seed");
+  }
   const priorChain = share.forwarding.chain;
-  const self = { gatewayLabel: signer.gatewayLabel, pubkey: signer.pubkeyB64 };
+  const self = { gatewayLabel: signer.gatewayLabel, pubkey: derivedPubkeyB64 };
   const msg = hopSigningMessage(share.contentHash, priorChain, self);
   const sig = Buffer.from(nacl.sign.detached(msg, kp.secretKey)).toString("base64");
   const hop: ShareForwardingHop = {
     gatewayLabel: signer.gatewayLabel,
-    pubkey: signer.pubkeyB64,
+    pubkey: derivedPubkeyB64,
     sig,
   };
+  const chain = [...priorChain, hop];
   return {
+    // `hops` is derived from the chain length so it can never drift from the actual chain.
     ...share,
-    forwarding: { hops: share.forwarding.hops + 1, chain: [...priorChain, hop] },
+    forwarding: { hops: chain.length, chain },
   };
 }
 

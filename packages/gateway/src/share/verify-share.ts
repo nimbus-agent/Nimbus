@@ -108,7 +108,9 @@ export function verifyShareFromBytes(
     ) {
       const chain = verifyForwardingChain(parsed as unknown as ShareFile);
       forwardingField = {
-        hops: (parsed.forwarding as { hops: number }).hops,
+        // Report the hop depth from the actual chain, NOT the untrusted `forwarding.hops` field —
+        // a payload could otherwise claim an arbitrary hop count while `chainValid` derives from `chain`.
+        hops: chain.hopsTotal,
         chainValid: chain.valid,
         hopsValid: chain.hopsValid,
       };

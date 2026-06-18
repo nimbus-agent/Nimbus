@@ -83,6 +83,18 @@ describe("verifyForwardingChain", () => {
 });
 
 describe("defensive branches", () => {
+  test("appendForwardingHop throws when the pubkey does not match the seed", () => {
+    const base = originShare();
+    // valid 32-byte seed for key #2, but the WRONG pubkey (key #3's) → mismatch.
+    expect(() =>
+      appendForwardingHop(base, {
+        gatewayLabel: "bob",
+        pubkeyB64: kp(3).pubkeyB64,
+        privkeyB64: kp(2).privkeyB64,
+      }),
+    ).toThrow(/does not match/);
+  });
+
   test("appendForwardingHop throws on a non-32-byte seed", () => {
     const base = originShare();
     const badPriv = Buffer.from(new Uint8Array(16).fill(9)).toString("base64"); // 16 bytes, not 32

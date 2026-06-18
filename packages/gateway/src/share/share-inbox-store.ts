@@ -85,9 +85,10 @@ export function insertReceivedShare(db: Database, p: { share: ShareFile; now: nu
   insert(db, { recipientPubkey: RECEIVED_SELF, ...p, direction: "received", status: "viewable" });
 }
 
-/** List the local inbox (received inert shares), newest first. */
+/** List the local inbox (received inert shares), newest first. An absent `limit` returns ALL rows
+ * (SQLite treats a negative LIMIT as unlimited), so the `--all` path is not silently truncated. */
 export function listReceivedShares(db: Database, opts: { limit?: number }): ShareInboxRow[] {
-  const limit = opts.limit ?? 200;
+  const limit = opts.limit ?? -1;
   const rows = db
     .query(
       `SELECT * FROM share_inbox WHERE direction = 'received' AND recipient_pubkey = ?

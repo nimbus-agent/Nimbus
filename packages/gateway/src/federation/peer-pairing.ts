@@ -60,10 +60,15 @@ export class PeerPairing {
       hostIp: host,
       hostPort: port,
     });
-    try {
-      await this.onPairComplete?.(peerId);
-    } catch {
-      /* best-effort drain — a drain failure must not fail the pair */
+    // Fire-and-forget the best-effort drain (same guard as approveInboundPair): the hook does
+    // network delivery work, so AWAITING it would let a slow/hung drain stall successful pairing.
+    if (this.onPairComplete) {
+      try {
+        const res = this.onPairComplete(peerId);
+        if (res instanceof Promise) res.catch(() => {}); // swallow async rejection (best-effort)
+      } catch {
+        /* swallow sync throw — pairing must succeed even if the drain fails */
+      }
     }
     return peerId;
   }

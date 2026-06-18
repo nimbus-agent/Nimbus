@@ -626,7 +626,10 @@ async function bootFederationIntoIpcOpts(
     if (row?.host_ip == null || row.host_port == null) return undefined;
     return { host: row.host_ip, port: row.host_port, pubkey: recipientPubkey };
   };
-  // Resolve a paired peerId (peer:<hex>) to its row's b64 pubkey; otherwise pass through as-is.
+  // Resolve a `peer:<hex>` id to its paired row's b64 pubkey. For a raw input, pass it through ONLY
+  // if it is a structurally-valid 32-byte Ed25519/X25519 pubkey (a cryptographic recipient identity,
+  // for the deferred-reveal queue — §9.4); any other unknown/garbage value resolves to `undefined`
+  // so the RPC rejects it (no caller-supplied arbitrary destination; no undrainable pending rows).
   const resolvePeerPubkeyFn = (peerIdOrPubkey: string): string | undefined => {
     const row = localIndex
       .listLanPeers()
@@ -634,7 +637,17 @@ async function bootFederationIntoIpcOpts(
         (r) =>
           `peer:${bytesToHex(new Uint8Array(r.peer_pubkey).subarray(0, 8))}` === peerIdOrPubkey,
       );
-    return row ? Buffer.from(new Uint8Array(row.peer_pubkey)).toString("base64") : peerIdOrPubkey;
+    if (row !== undefined) return Buffer.from(new Uint8Array(row.peer_pubkey)).toString("base64");
+    // Not a known peer id → accept only a canonical 32-byte base64 pubkey.
+    try {
+      const decoded = Buffer.from(peerIdOrPubkey, "base64");
+      if (decoded.length === 32 && decoded.toString("base64") === peerIdOrPubkey) {
+        return peerIdOrPubkey;
+      }
+    } catch {
+      /* fall through to undefined */
+    }
+    return undefined;
   };
   // Reconstruct a ShareFile from a share_records row (camelCase mapped fields from share-store.ts).
   const shareFileFromRecord = (r: ShareRecord): ShareFile => ({
@@ -806,8 +819,14 @@ async function bootFederationIntoIpcOpts(
     if (pub === undefined) return false;
     const peer = lookupForwardPeer(pub);
     if (peer === undefined) return false;
-    await deliverShareToPeer(share, peer);
-    return true;
+    // A transport failure must not fail `share.create --to-peer` — the share is already persisted
+    // locally (createShare ran first); report delivered:false rather than throwing.
+    try {
+      await deliverShareToPeer(share, peer);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   return delegationDep;

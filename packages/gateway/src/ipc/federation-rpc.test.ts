@@ -1110,18 +1110,23 @@ test("federation.shareForward routes to forwardShare with resolved pubkey", asyn
   const shareFile = buildShareFile(body, privkeyB64, pubkeyB64);
   const testHash = shareFile.contentHash;
 
+  // Capture the ACTUAL routed values (so the test fails if contentHash/recipient routing regresses):
+  // `loadShare` receives the routed contentHash; `queuePending` receives the resolved recipient pubkey.
+  let capturedHash: string | undefined;
   const forwardShareDeps: ForwardShareDeps = {
     now: () => 1,
     label: "test-gateway",
-    loadShare: (h) => (h === testHash ? shareFile : undefined),
-    shareKeypair: async () => ({ privkeyB64, pubkeyB64 }),
-    requestApproval: async (_preview, _redactionSet) => {
-      seen = { contentHash: testHash, recipientPubkey: "BOBPUB" };
-      return true;
+    loadShare: (h) => {
+      capturedHash = h;
+      return h === testHash ? shareFile : undefined;
     },
-    lookupPeer: (_recipientPubkey) => undefined,
+    shareKeypair: async () => ({ privkeyB64, pubkeyB64 }),
+    requestApproval: async (_preview, _redactionSet) => true,
+    lookupPeer: (_recipientPubkey) => undefined, // not paired → forwardShare queues it
     deliver: async () => {},
-    queuePending: (_recipientPubkey, _share) => {},
+    queuePending: (recipientPubkey, _share) => {
+      seen = { contentHash: capturedHash ?? "", recipientPubkey };
+    },
     recordAudit: (_e) => {},
   };
 
