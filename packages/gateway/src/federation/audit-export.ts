@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { enforceCommonGate } from "./_lib/gate-commons.ts";
 import type { SessionConsentCache } from "./consent-cache.ts";
 import { appendFederationAudit } from "./federation-audit.ts";
 import type { NamespaceStore } from "./namespace-store.ts";
-import type { ConsentDecision, ConsentPrompter } from "./query-gate.ts";
-import type { FederationDecision, FederationWireError } from "./types.ts";
+import type { ConsentPrompter } from "./query-gate.ts";
+import type { FederationWireError } from "./types.ts";
 
 export interface FederationAuditEntry {
   readonly actionType: string;
@@ -57,35 +58,12 @@ export type AuditExportResult =
   | { readonly kind: "ok"; readonly entries: FederationAuditEntry[] }
   | { readonly kind: "error"; readonly error: FederationWireError };
 
-/** Audit one gate decision, mirroring query-gate's `audit()` — federation metadata only, never
- *  any exported audit_log row content (the slice itself is never logged). */
-function audit(ctx: AuditExportGateCtx, q: InboundAuditExport, decision: FederationDecision): void {
-  const nowMs = (ctx.now ?? Date.now)();
-  appendFederationAudit(ctx.db, {
-    peerId: q.peerId,
-    namespace: q.namespace,
-    purpose: q.purpose,
-    decision,
-    method: "federation.auditExport",
-    timestamp: nowMs,
-  });
-}
-
-function withTimeout(p: Promise<ConsentDecision>, ms: number): Promise<ConsentDecision> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p.finally(() => clearTimeout(timer)),
-    new Promise<ConsentDecision>((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), ms);
-    }),
-  ]);
-}
-
 /**
- * Consent-gated answer for an inbound `federation.auditExport`. Mirrors `answerFederatedQuery`'s
- * gating EXACTLY (I18 identity guard → namespace exists → live-checked grant → standing/cached/
- * prompted consent), then returns the FEDERATION-only, METADATA-only audit slice (never
- * `action_json`). Fail-closed: any unmet gate returns an opaque wire error and NO audit data.
+ * Consent-gated answer for an inbound `federation.auditExport`. Delegates the shared preamble
+ * (I18 identity guard → namespace exists → live-checked grant → standing/cached/prompted consent)
+ * to `enforceCommonGate`, then audits the "answered" outcome and returns the FEDERATION-only,
+ * METADATA-only audit slice (never `action_json`). Fail-closed: any unmet gate returns an opaque
+ * wire error and NO audit data.
  *
  * The namespace+grant is the access-control subject (the requester must already hold a federation
  * grant the same way it must to run `federation.query`); the returned slice itself is namespace-
@@ -95,55 +73,25 @@ export async function answerFederatedAuditExport(
   ctx: AuditExportGateCtx,
   q: InboundAuditExport,
 ): Promise<AuditExportResult> {
-  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
-    // Audited precisely; over the wire we return the SAME opaque denial as no_grant (matches query-gate).
-    audit(ctx, q, "identity_invalid");
-    return { kind: "error", error: "no_grant" };
+  // I17/I18 preamble: identity check → namespace-exists → active-grant → consent.
+  const preambleError = await enforceCommonGate(
+    ctx,
+    { peerId: q.peerId, namespace: q.namespace, purpose: q.purpose },
+    "federation.auditExport",
+  );
+  if (preambleError !== undefined) {
+    return preambleError;
   }
 
-  const ns = ctx.store.getByName(q.namespace);
-  if (ns === undefined) {
-    audit(ctx, q, "namespace_unknown");
-    return { kind: "error", error: "namespace_unknown" };
-  }
+  // Audit the granted outcome (federation metadata only — never the exported slice content).
+  appendFederationAudit(ctx.db, {
+    peerId: q.peerId,
+    namespace: q.namespace,
+    purpose: q.purpose,
+    decision: "answered",
+    method: "federation.auditExport",
+    timestamp: (ctx.now ?? Date.now)(),
+  });
 
-  // Live-checked grant — revocation takes effect immediately.
-  const grant = ctx.store.getActiveGrant(q.namespace, q.peerId);
-  if (grant === undefined) {
-    audit(ctx, q, "no_grant");
-    return { kind: "error", error: "no_grant" };
-  }
-
-  // Consent: standing grant never prompts; otherwise use session cache or prompt with a timeout.
-  if (!grant.standingConsent) {
-    const cached = ctx.consentCache.get(q.peerId, q.namespace);
-    if (cached === false) {
-      audit(ctx, q, "consent_denied");
-      return { kind: "error", error: "consent_denied" };
-    }
-    if (cached === undefined) {
-      const decision = await withTimeout(
-        ctx.prompt({
-          peerId: q.peerId,
-          namespace: q.namespace,
-          purpose: q.purpose,
-          role: grant.role,
-        }),
-        ctx.consentTimeoutMs,
-      );
-      if (decision === "timeout") {
-        audit(ctx, q, "timeout");
-        return { kind: "error", error: "timeout_waiting_for_consent" };
-      }
-      const approved = decision === "approved";
-      ctx.consentCache.set(q.peerId, q.namespace, approved);
-      if (!approved) {
-        audit(ctx, q, "consent_denied");
-        return { kind: "error", error: "consent_denied" };
-      }
-    }
-  }
-
-  audit(ctx, q, "answered");
   return { kind: "ok", entries: exportFederationAudit(ctx.db, { sinceMs: q.sinceMs }) };
 }

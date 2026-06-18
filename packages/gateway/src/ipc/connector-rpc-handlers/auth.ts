@@ -44,6 +44,11 @@ import {
 } from "../connector-rpc-shared.ts";
 import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
 
+/** Returns the trimmed string value of `raw`, or `""` if it is not a non-empty string. */
+function extractStringField(raw: unknown): string {
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : "";
+}
+
 function oauthScopesFromConnectorRequest(
   rec: Record<string, unknown> | undefined,
   defaultScopes: readonly string[],
@@ -91,7 +96,7 @@ async function connectorAuthGithub(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for github");
   }
@@ -110,7 +115,7 @@ async function connectorAuthGitlab(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for gitlab");
   }
@@ -132,7 +137,7 @@ async function connectorAuthLinear(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"] ?? rec?.["apiKey"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing API key for linear");
   }
@@ -158,7 +163,7 @@ async function connectorAuthDiscord(
     );
   }
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing bot token for discord");
   }
@@ -175,7 +180,7 @@ async function connectorAuthCircleci(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing API token for circleci");
   }
@@ -281,7 +286,7 @@ async function connectorAuthGcp(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const pathRaw = rec?.["gcpCredentialsJsonPath"] ?? rec?.["credentialsJsonPath"] ?? rec?.["path"];
-  const path = typeof pathRaw === "string" && pathRaw.trim() !== "" ? pathRaw.trim() : "";
+  const path = extractStringField(pathRaw);
   if (path === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -290,7 +295,7 @@ async function connectorAuthGcp(
   }
   await writeConnectorSecret(vault, "gcp", "credentials_json_path", path);
   const projRaw = rec?.["gcpProjectId"] ?? rec?.["projectId"];
-  const proj = typeof projRaw === "string" && projRaw.trim() !== "" ? projRaw.trim() : "";
+  const proj = extractStringField(projRaw);
   if (proj === "") {
     await deleteConnectorSecret(vault, "gcp", "project_id");
   } else {
@@ -331,7 +336,7 @@ async function connectorAuthGrafana(
       ? stripTrailingSlashes(baseRaw.trim())
       : "";
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (base === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -357,9 +362,9 @@ async function connectorAuthSentry(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   const orgRaw = rec?.["sentryOrgSlug"] ?? rec?.["orgSlug"];
-  const org = typeof orgRaw === "string" && orgRaw.trim() !== "" ? orgRaw.trim() : "";
+  const org = extractStringField(orgRaw);
   if (token === "" || org === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -387,7 +392,7 @@ async function connectorAuthNewrelic(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -396,7 +401,7 @@ async function connectorAuthNewrelic(
   }
   await writeConnectorSecret(vault, "newrelic", "api_key", token);
   const acctRaw = rec?.["newrelicAccountId"] ?? rec?.["accountId"];
-  const acct = typeof acctRaw === "string" && acctRaw.trim() !== "" ? acctRaw.trim() : "";
+  const acct = extractStringField(acctRaw);
   if (acct === "") {
     await deleteConnectorSecret(vault, "newrelic", "account_id");
   } else {
@@ -414,8 +419,8 @@ async function connectorAuthDatadog(
 ): Promise<ConnectorRpcHit> {
   const apiRaw = rec?.["datadogApiKey"] ?? rec?.["apiKey"];
   const appRaw = rec?.["datadogAppKey"] ?? rec?.["appKey"];
-  const api = typeof apiRaw === "string" && apiRaw.trim() !== "" ? apiRaw.trim() : "";
-  const app = typeof appRaw === "string" && appRaw.trim() !== "" ? appRaw.trim() : "";
+  const api = extractStringField(apiRaw);
+  const app = extractStringField(appRaw);
   if (api === "" || app === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -425,7 +430,7 @@ async function connectorAuthDatadog(
   await writeConnectorSecret(vault, "datadog", "api_key", api);
   await writeConnectorSecret(vault, "datadog", "app_key", app);
   const siteRaw = rec?.["datadogSite"] ?? rec?.["site"];
-  const site = typeof siteRaw === "string" && siteRaw.trim() !== "" ? siteRaw.trim() : "";
+  const site = extractStringField(siteRaw);
   if (site === "") {
     await deleteConnectorSecret(vault, "datadog", "site");
   } else {
@@ -442,7 +447,7 @@ async function connectorAuthKubernetes(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const pathRaw = rec?.["kubeconfigPath"] ?? rec?.["kubeconfig"] ?? rec?.["path"];
-  const kubePath = typeof pathRaw === "string" && pathRaw.trim() !== "" ? pathRaw.trim() : "";
+  const kubePath = extractStringField(pathRaw);
   if (kubePath === "") {
     throw new ConnectorRpcError(
       -32602,
@@ -467,7 +472,7 @@ async function connectorAuthPagerduty(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing API token for pagerduty");
   }
@@ -494,9 +499,9 @@ async function connectorAuthJenkins(
     );
   }
   const userRaw = rec?.["username"];
-  const user = typeof userRaw === "string" && userRaw.trim() !== "" ? userRaw.trim() : "";
+  const user = extractStringField(userRaw);
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Jenkins requires --username <jenkins_user>");
   }
@@ -517,9 +522,9 @@ async function connectorAuthBitbucket(
   localIndex: LocalIndex,
 ): Promise<ConnectorRpcHit> {
   const userRaw = rec?.["bitbucketUsername"] ?? rec?.["username"];
-  const user = typeof userRaw === "string" && userRaw.trim() !== "" ? userRaw.trim() : "";
+  const user = extractStringField(userRaw);
   const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
-  const token = typeof tokenRaw === "string" && tokenRaw.trim() !== "" ? tokenRaw.trim() : "";
+  const token = extractStringField(tokenRaw);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Missing username for bitbucket (Atlassian account)");
   }

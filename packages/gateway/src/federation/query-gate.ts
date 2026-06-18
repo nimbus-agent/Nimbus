@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { buildItemListSql } from "../index/item-list-query.ts";
+import { enforceCommonGate } from "./_lib/gate-commons.ts";
 import type { SessionConsentCache } from "./consent-cache.ts";
 import { appendFederationAudit } from "./federation-audit.ts";
 import type { NamespaceStore } from "./namespace-store.ts";
@@ -83,45 +84,6 @@ function emptyAnswer(ctx: QueryGateCtx, q: InboundQuery): AnswerResult {
   return { kind: "ok", response: { items: [] } };
 }
 
-/** Consent step: standing grant never prompts; otherwise use session cache or prompt with a
- *  timeout. Returns the audited error result on denial/timeout, or undefined to proceed. */
-async function enforceConsent(
-  ctx: QueryGateCtx,
-  q: InboundQuery,
-  grant: { readonly standingConsent: boolean; readonly role: string },
-): Promise<AnswerResult | undefined> {
-  if (grant.standingConsent) {
-    return undefined;
-  }
-  const cached = ctx.consentCache.get(q.peerId, q.request.namespace);
-  if (cached === false) {
-    audit(ctx, q, "consent_denied");
-    return { kind: "error", error: "consent_denied" };
-  }
-  if (cached === undefined) {
-    const decision = await withTimeout(
-      ctx.prompt({
-        peerId: q.peerId,
-        namespace: q.request.namespace,
-        purpose: q.request.purpose,
-        role: grant.role,
-      }),
-      ctx.consentTimeoutMs,
-    );
-    if (decision === "timeout") {
-      audit(ctx, q, "timeout");
-      return { kind: "error", error: "timeout_waiting_for_consent" };
-    }
-    const approved = decision === "approved";
-    ctx.consentCache.set(q.peerId, q.request.namespace, approved);
-    if (!approved) {
-      audit(ctx, q, "consent_denied");
-      return { kind: "error", error: "consent_denied" };
-    }
-  }
-  return undefined;
-}
-
 /** Leak-proof effective-type computation. Returns the type filter to compile into the read, or
  *  undefined when the peer requested ONLY undeclared types (caller must answer empty — never
  *  reveal those items exist). [] means "unrestricted within declared services". */
@@ -150,29 +112,14 @@ export async function answerFederatedQuery(
   ctx: QueryGateCtx,
   q: InboundQuery,
 ): Promise<AnswerResult> {
-  if (ctx.identity?.enabled === true && !ctx.identity.isOperatorValid()) {
-    // Audited precisely; over the wire we return the SAME opaque denial as no_grant (no identity-state leak).
-    audit(ctx, q, "identity_invalid");
-    return { kind: "error", error: "no_grant" };
-  }
-
-  const ns = ctx.store.getByName(q.request.namespace);
-  if (ns === undefined) {
-    audit(ctx, q, "namespace_unknown");
-    return { kind: "error", error: "namespace_unknown" };
-  }
-
-  // Live-checked grant — revocation takes effect immediately.
-  const grant = ctx.store.getActiveGrant(q.request.namespace, q.peerId);
-  if (grant === undefined) {
-    audit(ctx, q, "no_grant");
-    return { kind: "error", error: "no_grant" };
-  }
-
-  // Consent: standing grant never prompts; otherwise use session cache or prompt with a timeout.
-  const consentRefusal = await enforceConsent(ctx, q, grant);
-  if (consentRefusal !== undefined) {
-    return consentRefusal;
+  // I17/I18 preamble: identity check → namespace-exists → active-grant → consent.
+  const preambleError = await enforceCommonGate(
+    ctx,
+    { peerId: q.peerId, namespace: q.request.namespace, purpose: q.request.purpose },
+    "federation.query",
+  );
+  if (preambleError !== undefined) {
+    return preambleError;
   }
 
   // --- LEAK-PROOF SCOPE COMPILATION ---
@@ -204,14 +151,4 @@ export async function answerFederatedQuery(
 
   audit(ctx, q, "answered");
   return { kind: "ok", response: { items } };
-}
-
-function withTimeout(p: Promise<ConsentDecision>, ms: number): Promise<ConsentDecision> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p.finally(() => clearTimeout(timer)),
-    new Promise<ConsentDecision>((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), ms);
-    }),
-  ]);
 }
