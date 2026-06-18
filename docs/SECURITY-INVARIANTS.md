@@ -1,5 +1,7 @@
 # Nimbus Security Invariants
 
+**Current ceiling:** invariants I1–I27 (static rules D10–D21).
+
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
 **The rule:** every invariant below has at least one enforcement test in [`packages/gateway/src/security-invariants.test.ts`](../packages/gateway/src/security-invariants.test.ts). If you change the wiring, the test must be updated in the same commit; if you remove the defense, the test must fail.
@@ -130,7 +132,9 @@ No inline comments were mapped to I6 in the triage. No additional subsection nee
 
 **Phase 6 Slice 4 additions (2026-06-07):** three read-only org-policy / admin / team-audit methods — `admin.status`, `policy.show`, `team.auditMerged` — joined the allowlist (79 → 82). The privileged policy-mutating methods (`policy.sign` / `policy.trust` / `policy.refetch`) and `team.purge` stay CLI-only (`policy.sign` signs with the Vault-only anchor key — secret-bearing, same class as `vault.*`).
 
-**Phase 6 Slice 5 additions (2026-06-09):** the read-only `chatops.status` joined the allowlist (82 → 83, the current `allowlist_exact_size`). The operational `chatops.start` / `chatops.stop` / `chatops.test` stay off the renderer surface (CLI-only). 83 is the value asserted by `allowlist_exact_size` in `gateway_bridge.rs` and by the `I7` / `I18` describe blocks in `security-invariants.test.ts`.
+**Phase 6 Slice 5 additions (2026-06-09):** the read-only `chatops.status` joined the allowlist (82 → 83). The operational `chatops.start` / `chatops.stop` / `chatops.test` stay off the renderer surface (CLI-only).
+
+**Phase 6 Slices 6–8 additions (83 → 94, the current `allowlist_exact_size`):** the read-only cross-colleague / tribal-knowledge / data-warehouse query surfaces (Slices 6a–7), the additional identity/federation read methods, and the read-only share surfaces (`share.verify` / `share.list` / `share.get` / `share.pubkey`, Slice 8) joined the allowlist, bringing it to 94. The secret/RCE/owner-HITL-class methods stay CLI-only: the share write/owner-action chokepoints (`share.create` / `share.prune` / `share.approvalRespond`, the I27 outbound-publish gate) and the tribal capture write path stay off the renderer surface (same class as `vault.*`). 94 is the value asserted by `allowlist_exact_size` in `gateway_bridge.rs` and by the `I7` / `I18` describe blocks in `security-invariants.test.ts`.
 
 ### Migrated rationale (2026-05-28)
 
@@ -350,7 +354,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 - `packages/gateway/src/federation/query-gate.ts` — `answerFederatedQuery` consults `isOperatorValid()` before answering when identity is enabled.
 - `packages/gateway/src/identity/identity-vault.ts` — the only module that constructs the `identity.oidc.*` / `identity.scim.bearer` Vault keys; tokens never leave the Vault.
 - Enforced statically by **D14** in `scripts/structure-audit/check-nimbus-invariants.ts` — any file outside `packages/gateway/src/identity/` (and not a `.test.ts`) that references an identity token Vault-key string literal causes `audit:invariants` to exit 1.
-- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I18` describe block (Tauri allowlist surface for the identity/scim read+login methods, size assertion 74, and the query-gate `isOperatorValid` consult).
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I18` describe block (Tauri allowlist surface for the identity/scim read+login methods, size assertion 94, and the query-gate `isOperatorValid` consult).
 
 **Anti-pattern:** validating an ID token anywhere other than `verifier.ts`; placing a token field on an IPC/wire/notification shape or a DB column; reading `identity.oidc.*` / `identity.scim.bearer` outside `identity/`; a federation answer path that skips the `isOperatorValid()` consult when identity is enabled. Note: the renderer-callable surface exposes only the read/login methods (`identity.login`/`status`/`logout`/`listBindings`, `scim.status`/`listUsers`); the credential-mutating methods (`identity.bind`/`unbind`, `scim.setToken`/`deprovision`) stay CLI-only and out of the Tauri allowlist (I7).
 
@@ -541,12 +545,12 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I19 — Sub-agent tool scope enforcement` section (the next free number after the current `I18`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I28 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I27`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
 ```typescript
-test("I19 — sub-agent dispatcher checks frozen tool scope", () => {
+test("I28 — sub-agent dispatcher checks frozen tool scope", () => {
   const source = readFileSync(
     join(REPO_ROOT, "packages/gateway/src/engine/sub-agent.ts"),
     "utf8"

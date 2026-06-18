@@ -530,7 +530,7 @@ nimbus tui
 - **Mid-stream HITL:** `──[ consent required ]──` banner appears inline; prompt switches to `nimbus[hitl]>` with single-keystroke capture:
   - `a` — approve current action
   - `r` — reject current action
-  - `d` — show details (no-op in v0.1.0; full payload is already shown)
+  - `d` — show details (no-op; full payload is already shown)
   - `q` — reject all remaining actions and exit
 
 **Automatic fallback** (invokes `nimbus repl` instead, no Ink render) when any of these hold:
@@ -1361,6 +1361,57 @@ nimbus tribal capture tq_ab12cd34ef56 --target notion
 ### `nimbus tribal dismiss <cluster-id>` · `nimbus tribal scan`
 
 `dismiss` suppresses a cluster (enters cooldown); `scan` re-fires suggestions for any pending cluster that already crossed the threshold.
+
+---
+
+## Sharing
+
+Publish a redacted, signed, verifiable copy of an agent session — Phase 6 Slice 8, behind invariant `I27`. An outbound share leaves the machine **only** through the share gate: default + caller-supplied redaction is applied, the LOCAL owner approves the exact redacted preview via the `share.publish` HITL action, the body is signed with the Vault-only `share.signing.privkey`, and the share record is persisted to the `share_records` table (schema V41/V42). A denied or timed-out approval emits nothing (fail-closed). The write/owner-action subcommands (`create`, `prune`, `approve`/`reject`) are local/CLI-only — forbidden over the LAN wire so a remote peer can never trigger or approve an outbound publish; only the read-only verify/list/pubkey surfaces are LAN- and Tauri-reachable.
+
+### `nimbus share create <session-id>`
+
+Publish a redacted, signed copy of a session. By default the share is written to a local file; choose a sink with the flags below. The command blocks on the `share.publish` HITL approval of the redacted preview and prints the resulting content hash on success.
+
+| Flag | Effect |
+| --- | --- |
+| `--out <file>` | Write the signed share bundle to `<file>` (default sink is a file). |
+| `--http` | POST the bundle to the config-pinned `[share.http_sink]` (SSRF-safe; the only host `--http` may target). |
+| `--to-peer <id>` | Send the bundle to a paired federation peer. |
+| `--as-recipe` | Share a declarative recipe (DAG of params) instead of the raw transcript. |
+| `--redact <pattern>` | Add a redaction pattern (repeatable); applied on top of the default redaction set. |
+| `--expires <dur>` | Expiry as `30s` / `15m` / `12h` / `7d`; omit for no expiry. |
+
+```bash
+nimbus share create sess_ab12cd34 --out ./my-session.share
+nimbus share create sess_ab12cd34 --as-recipe --redact "internal-host" --expires 7d
+```
+
+Precedence when multiple sinks are given: `--out` (file) > `--http` > `--to-peer` > default file.
+
+### `nimbus share list [--all]`
+
+List persisted share records (content hash, kind, creation time). `--all` includes expired records.
+
+```bash
+nimbus share list
+```
+
+### `nimbus share prune`
+
+Delete expired `share_records` rows and report how many were removed. Local-only.
+
+```bash
+nimbus share prune
+```
+
+### `nimbus share pubkey` · `nimbus share approve|reject <request-id>` · `nimbus verify-share <file|url>`
+
+`pubkey` prints this gateway's share-signing public key (so recipients can verify). `approve`/`reject` answer a pending `share.publish` approval prompt by request id (the LOCAL-owner action — never answerable over LAN). `nimbus verify-share` checks a received share file or URL: it reports whether the signature is valid, whether the content hash matches, and whether the share has expired.
+
+```bash
+nimbus share pubkey
+nimbus verify-share ./received.share
+```
 
 ---
 
@@ -2302,7 +2353,7 @@ Prints `signature: VALID` or `INVALID`, plus expiry status. With `--replay`, als
 
 Encrypted, relay-free remote access between machines on the same network. Disabled by default (`[lan] enabled = false` in `nimbus.toml`). Enable via `nimbus config set lan.enabled true`.
 
-All traffic is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). `vault.*`, `updater.*`, `lan.*`, and `profile.*` methods are forbidden over LAN regardless of peer grants.
+All traffic is E2E encrypted with NaCl box (X25519 DH + XSalsa20-Poly1305). A set of exfiltration- and management-class methods is forbidden over LAN regardless of peer grants (`FORBIDDEN_OVER_LAN` in `packages/gateway/src/ipc/lan-rpc.ts`, invariant I5) — forbidden namespaces include (but are not limited to) `vault.*`, `updater.*`, `lan.*`, `profile.*`, `audit.*`, `data.*`, `security.*`, `chatops.*`, `tribal.*`, `team.*`, `teamvault.*`, `hitl.*`, `identity.*`, and `scim.*`, plus the full-method forbids `connector.addMcp`, the `extension.*` management methods, `index.reembed` / `index.reembedCancel`, the federation management/asker methods (`federation.discover` / `pair` / `peers` / `namespace.*` / `consentRespond` / `ask*`), and the share owner-action chokepoints `share.create` / `share.prune` / `share.approvalRespond` (the I27 outbound-publish gate). The read-only share methods (`share.verify` / `list` / `get` / `pubkey`) and the answering methods `federation.query` / `federation.expertise` / `federation.invoke` (gated by I17 / I19) stay admitted.
 
 ### `nimbus lan status`
 
