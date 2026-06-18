@@ -349,8 +349,13 @@ jobs:
         uses: ./.github/actions/setup-nimbus-ci
 
       - name: Detect code duplication (jscpd)
-        # Exclude dependencies and tests to avoid false positives.
-        run: bunx jscpd --min-lines 10 --min-tokens 50 --threshold 5 --reporters console -i "**/node_modules/**,**/*.test.ts,**/*.test.tsx,**/*.vitest.tsx" packages/
+        # Reads .jscpd.json (min-lines 5 / min-tokens 50 / shared ignore set) so
+        # local `bun run audit:duplication` and CI measure identically. The
+        # threshold there is a RATCHET pinned just above the current strict
+        # duplication (~4.41% after the Stage-A/B + big-PR extraction program) —
+        # it fails on regression and is lowered as further dedup lands; the
+        # standing target remains < 3%. See docs/superpowers/specs/2026-06-17-jscpd-big-dedup-design.md.
+        run: bunx jscpd packages
 
   # Structure audit — D1/D2/D3 boundaries, D8 any-count ratchet, D10/D11
   # nimbus-invariants, release-please manifest drift. Static-time complement

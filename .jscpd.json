@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/kucherenko/jscpd/master/packages/jscpd/schemas/jscpd.json",
   "minTokens": 50,
   "minLines": 5,
-  "threshold": 3,
+  "threshold": 4.5,
   "reporters": ["json", "console"],
   "output": "docs/structure-audit",
   "ignore": [
