@@ -433,6 +433,8 @@ export function parseStorybookIndex(parsed: unknown): StorybookStory[];
 
 ## Task 12 (Wave 4): Re-measure and tighten the CI duplication gate
 
+> **LANDED AS (PR #688):** the 10 clusters drove strict to **4.41%**, not `< 3%` / `< 2.3%` — the residual is dominated by fidelity-deferred parts + connector-template parallelism the project already accepts (Sonar-CPD-excluded) + the documented `gateway-process`↔`gw-state-helpers` twin, so reaching `< 3%` needs a separate connector-template-restructuring project. Per that finding, the gate was **ratcheted** rather than tightened to the aspirational target: `.jscpd.json` threshold `3 → 4.5` (pinned just above current strict; stricter than the prior min-lines-10/threshold-5 gate), and `ci.yml` runs `bunx jscpd packages` so local == CI. The `threshold 3` instructions below are the ORIGINAL aspiration; the standing target stays `< 3%`, to be reached by lowering the ratchet as further dedup lands.
+
 **Do this LAST**, only after the cluster waves land and strict is confirmed `< 2.3%` (drive lower while clusters remain).
 
 **Files:**
