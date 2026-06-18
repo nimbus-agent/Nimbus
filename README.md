@@ -103,7 +103,7 @@ A headless **Bun Gateway** maintains the private index and runs the agent; clien
 
 ## Connectors
 
-80+ first-party MCP connectors across Google, Microsoft, GitHub/GitLab, Slack, Jira, Notion, plus observability, CI/CD, security/quality, feature-flags, GitOps, data/BI, deploy, finance, and support tools. Browse the full roster in the [connector docs](https://nimbus-agent.dev/connectors/), and build your own with [`create-nimbus-connector`](https://github.com/nimbus-agent/create-nimbus-connector).
+80+ first-party MCP connectors across Google, Microsoft, GitHub/GitLab, Slack, Jira, Notion, plus observability, CI/CD, security/quality, feature-flags, GitOps, data/BI, deploy, finance, and support tools. Browse the full roster in the [connector docs](https://nimbus-agent.dev/connectors/); building your own is covered in [CONTRIBUTING](./docs/CONTRIBUTING.md).
 
 ## Security & trust
 
