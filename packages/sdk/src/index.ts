@@ -76,6 +76,32 @@ export {
 } from "./distribution-channel";
 export type { HitlRequest } from "./hitl-request";
 export { isHitlRequest } from "./hitl-request";
+export {
+  asRecord,
+  asString,
+  buildGetRequest,
+  buildListRequest,
+  buildSearchRequest,
+  CORE_CAPABILITY,
+  capPreview,
+  EMAIL_PROPERTIES,
+  extractAttachments,
+  extractEmailList,
+  formatAddress,
+  formatAddresses,
+  type JmapAttachmentMeta,
+  type JmapEmailView,
+  type JmapSession,
+  MAIL_CAPABILITY,
+  MAX_BODY_VALUE_BYTES,
+  methodResponseArgs,
+  PREVIEW_MAX_CHARS,
+  parseSession,
+  previewFor,
+  SUBMISSION_CAPABILITY,
+  validateApiUrl,
+  viewEmail,
+} from "./jmap-fastmail/index";
 export { NimbusExtensionServer } from "./server";
 export { MockGateway } from "./testing/index";
 export type { ExtensionManifest, NimbusItem } from "./types";
