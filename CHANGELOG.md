@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.13.0](https://github.com/nimbus-agent/Nimbus/compare/v0.12.0...v0.13.0) (2026-06-18)
+
+
+### Features
+
+* **share:** Phase 6 Slice 8d — sovereign-mesh referral (forwarding, provenance, V43 inbox) ([#687](https://github.com/nimbus-agent/Nimbus/issues/687)) ([18131cf](https://github.com/nimbus-agent/Nimbus/commit/18131cf9d9499614d20b10421e5c511086942618))
+
 ## [0.12.0](https://github.com/nimbus-agent/Nimbus/compare/v0.11.2...v0.12.0) (2026-06-17)
 
 
