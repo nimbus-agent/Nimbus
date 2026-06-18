@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { serializeShareFileToYaml } from "./recipe-yaml.ts";
 import { buildShareFile, type ShareBody } from "./share-format.ts";
+import { appendForwardingHop } from "./share-forwarding.ts";
 import {
   loadShareBytes,
   parseShareFile,
@@ -105,6 +106,65 @@ describe("verifyShareFromBytes", () => {
     const r = verifyShareFromBytes(new TextEncoder().encode(JSON.stringify(file)), { now: 200 });
     expect(r.ok).toBe(true);
     expect(r.expired).toBe(true);
+  });
+
+  test("verify surfaces an advisory forwarding result without affecting content validity", () => {
+    const kp = generateEd25519Keypair();
+    const body: ShareBody = {
+      kind: "transcript",
+      sessionId: "s-fwd",
+      createdAt: 1,
+      expiresAt: null,
+      redactionSet: [],
+      origin: { label: "alice", pubkey: encodeBase64(kp.pubkey) },
+      turns: [],
+    };
+    const signed = buildShareFile(body, encodeBase64(kp.privkey), encodeBase64(kp.pubkey));
+    const bobKp = generateEd25519Keypair();
+    const fwd = appendForwardingHop(signed, {
+      gatewayLabel: "bob",
+      pubkeyB64: encodeBase64(bobKp.pubkey),
+      privkeyB64: encodeBase64(bobKp.privkey),
+    });
+    const bytes = new TextEncoder().encode(JSON.stringify(fwd));
+    const r = verifyShareFromBytes(bytes);
+    expect(r.signatureValid).toBe(true);
+    expect(r.forwarding?.hops).toBe(1);
+    expect(r.forwarding?.chainValid).toBe(true);
+    expect(r.forwarding?.hopsValid).toBe(1);
+  });
+
+  test("a tampered hop → chainValid false but content still verifies", () => {
+    const kp = generateEd25519Keypair();
+    const body: ShareBody = {
+      kind: "transcript",
+      sessionId: "s-tamper",
+      createdAt: 1,
+      expiresAt: null,
+      redactionSet: [],
+      origin: { label: "alice", pubkey: encodeBase64(kp.pubkey) },
+      turns: [],
+    };
+    const signed = buildShareFile(body, encodeBase64(kp.privkey), encodeBase64(kp.pubkey));
+    const bobKp = generateEd25519Keypair();
+    const fwd = appendForwardingHop(signed, {
+      gatewayLabel: "bob",
+      pubkeyB64: encodeBase64(bobKp.pubkey),
+      privkeyB64: encodeBase64(bobKp.privkey),
+    });
+    // Tamper the hop's gatewayLabel — the hop sig no longer matches
+    const tampered = {
+      ...fwd,
+      forwarding: {
+        hops: 1,
+        chain: [{ ...fwd.forwarding.chain[0], gatewayLabel: "mallory" }],
+      },
+    };
+    const r = verifyShareFromBytes(new TextEncoder().encode(JSON.stringify(tampered)));
+    expect(r.signatureValid).toBe(true); // inner content is untouched
+    expect(r.ok).toBe(true);
+    expect(r.forwarding?.chainValid).toBe(false);
+    expect(r.forwarding?.hopsValid).toBe(0);
   });
 });
 

@@ -2,15 +2,25 @@ import { load as yamlParse } from "js-yaml";
 import { safeFetch } from "./safe-fetch.ts";
 import type { ShareFile } from "./share-format.ts";
 import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
+import { verifyForwardingChain } from "./share-forwarding.ts";
 
 /**
  * A {@link VerifyResult} augmented with the share's self-declared origin, when the bytes parse as
  * JSON carrying a `body.origin`. The origin is surfaced for display even when verification fails
  * (e.g. a tampered body), so the caller can show "claims to be from X — but signature invalid".
  * It is therefore UNTRUSTED until {@link VerifyResult.signatureValid} is true.
+ *
+ * `forwarding` is ADVISORY attribution only (spec §9.2): a bad/tampered hop never flips
+ * `signatureValid` or `ok` — content validity is determined independently by the inner sig.
  */
 export interface VerifyShareReport extends VerifyResult {
   readonly origin?: { readonly label: string; readonly pubkey: string };
+  /** Advisory forwarding hop-chain validation result. Absent when the share has no forwarding envelope or when the input cannot be parsed. */
+  readonly forwarding?: {
+    readonly hops: number;
+    readonly chainValid: boolean;
+    readonly hopsValid: number;
+  };
 }
 
 /**
@@ -66,19 +76,50 @@ export function verifyShareFromBytes(
   try {
     const parsed = JSON.parse(new TextDecoder().decode(jsonBytes)) as {
       body?: { origin?: unknown };
+      forwarding?: { hops?: unknown; chain?: unknown };
+      contentHash?: unknown;
+      format?: unknown;
+      sig?: unknown;
     };
     const origin = parsed.body?.origin;
     // `origin` is untrusted JSON — only surface it when it has the expected `{label, pubkey}`
     // string shape, so a malformed value can't poison the report's type contract.
-    if (
+    const originField =
       origin !== null &&
       typeof origin === "object" &&
       typeof (origin as { label?: unknown }).label === "string" &&
       typeof (origin as { pubkey?: unknown }).pubkey === "string"
+        ? (origin as { label: string; pubkey: string })
+        : undefined;
+
+    // Advisory forwarding chain: run only when the share parses as a valid ShareFile (has a
+    // proper forwarding envelope). Content validity (base) is NEVER affected by this check —
+    // a bad/tampered hop returns forwarding.chainValid=false while signatureValid stays true.
+    let forwardingField: { hops: number; chainValid: boolean; hopsValid: number } | undefined;
+    if (
+      parsed.forwarding !== null &&
+      typeof parsed.forwarding === "object" &&
+      typeof parsed.forwarding.hops === "number" &&
+      Array.isArray(parsed.forwarding.chain) &&
+      typeof parsed.contentHash === "string" &&
+      typeof parsed.format === "string" &&
+      parsed.sig !== null &&
+      typeof parsed.sig === "object"
     ) {
-      return { ...base, origin: origin as { label: string; pubkey: string } };
+      const chain = verifyForwardingChain(parsed as unknown as ShareFile);
+      forwardingField = {
+        hops: (parsed.forwarding as { hops: number }).hops,
+        chainValid: chain.valid,
+        hopsValid: chain.hopsValid,
+      };
     }
-    return base;
+
+    const report: VerifyShareReport = {
+      ...base,
+      ...(originField !== undefined ? { origin: originField } : {}),
+      ...(forwardingField !== undefined ? { forwarding: forwardingField } : {}),
+    };
+    return report;
   } catch {
     return base;
   }
