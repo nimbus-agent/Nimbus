@@ -350,7 +350,7 @@ jobs:
 
       - name: Detect code duplication (jscpd)
         # Reads .jscpd.json (min-lines 5 / min-tokens 50 / shared ignore set) so
-        # local `bun run audit:duplication` and CI measure identically. The
+        # the local `audit:duplication` script and CI measure identically. The
         # threshold there is a RATCHET pinned just above the current strict
         # duplication (~4.41% after the Stage-A/B + big-PR extraction program) —
         # it fails on regression and is lowered as further dedup lands; the

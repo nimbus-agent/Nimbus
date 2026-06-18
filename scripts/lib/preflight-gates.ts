@@ -26,22 +26,11 @@ const FAST: readonly Gate[] = [
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
   {
+    // Reads .jscpd.json (min-lines 5 / min-tokens 50 / threshold ratchet / shared
+    // ignore) so preflight and CI measure identically — matches the ci.yml
+    // pr-quality-duplication step verbatim.
     name: "duplication (jscpd)",
-    cmd: [
-      "bunx",
-      "jscpd",
-      "--min-lines",
-      "10",
-      "--min-tokens",
-      "50",
-      "--threshold",
-      "5",
-      "--reporters",
-      "console",
-      "-i",
-      "**/node_modules/**,**/*.test.ts,**/*.test.tsx,**/*.vitest.tsx",
-      "packages/",
-    ],
+    cmd: ["bunx", "jscpd", "packages"],
     tier: "fast",
   },
 ];
