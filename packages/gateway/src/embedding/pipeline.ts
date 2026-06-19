@@ -139,15 +139,17 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      for (const row of rows) {
-        try {
-          await this.embedItem(row);
-        } catch (err) {
-          this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
-        }
-        done += 1;
-        onProgress?.(done, total);
-      }
+      await Promise.all(
+        rows.map(async (row) => {
+          try {
+            await this.embedItem(row);
+          } catch (err) {
+            this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
+          }
+          done += 1;
+          onProgress?.(done, total);
+        }),
+      );
     }
   }
 
@@ -195,15 +197,17 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      for (const row of rows) {
-        try {
-          await this.embedItem(row);
-        } catch (err) {
-          this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
-        }
-        done += 1;
-        onProgress?.(done, total);
-      }
+      await Promise.all(
+        rows.map(async (row) => {
+          try {
+            await this.embedItem(row);
+          } catch (err) {
+            this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
+          }
+          done += 1;
+          onProgress?.(done, total);
+        }),
+      );
     }
   }
 }
