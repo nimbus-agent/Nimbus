@@ -1,9 +1,5 @@
-import { IPCClient } from "../ipc-client/index.ts";
-import { awaitAgentBrief, renderAgentBrief } from "../lib/agent-brief-render.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
+import { runAgentCli } from "../lib/agent-cli-dispatcher.ts";
 import { parseSinceDurationToMs } from "../lib/parse-since.ts";
-import { getCliPlatformPaths } from "../paths.ts";
 import { isCatchupBrief } from "../types/agents.ts";
 
 const DEFAULT_SINCE_MS = 3 * 24 * 60 * 60 * 1000;
@@ -58,35 +54,13 @@ export function parseCatchupArgs(args: string[]): CatchupCliArgs {
 
 export async function runCatchupCli(args: string[]): Promise<void> {
   const parsed = parseCatchupArgs(args);
-
-  const paths = getCliPlatformPaths();
-  const state = await readGatewayState(paths);
-  if (state === undefined) {
-    process.stderr.write("Gateway is not running. Start with: nimbus start\n");
-    process.exit(1);
-  }
-
-  const client = new IPCClient(state.socketPath);
-  await client.connect();
-  registerInteractiveCliIpcHandlers(client);
-
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const briefPromise = awaitAgentBrief(client, "catchup", isCatchupBrief, (t) => {
-    timeout = t;
-  });
-
   const callParams: { sinceMs: number; service?: string } = { sinceMs: parsed.sinceMs };
   if (parsed.service !== undefined) callParams.service = parsed.service;
-
-  try {
-    await client.call<{ sessionId: string }>("agents.catchup", callParams);
-    const { brief, findings } = await briefPromise;
-    renderAgentBrief(brief, findings, parsed.json);
-  } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(2);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-    await client.disconnect();
-  }
+  await runAgentCli({
+    agentName: "catchup",
+    ipcMethod: "agents.catchup",
+    callParams,
+    guard: isCatchupBrief,
+    json: parsed.json,
+  });
 }
