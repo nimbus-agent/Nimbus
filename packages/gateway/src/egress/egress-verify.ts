@@ -59,9 +59,30 @@ export type EgressVerifyResult = {
  * constant-time hex comparator (I10 — `sha256HexEqualConstantTime` works on any 64-char hex,
  * which is BLAKE3's output width — never `===`). A `prev_hash` discontinuity or a hash mismatch
  * fails closed with `brokenAt`.
+ *
+ * Attested-boundary rule: after a tombstone-boundary prune the first surviving segment starts
+ * at a pruned boundary — its `prev_hash` equals the `row_hash` of the last deleted row, which is
+ * no longer present. This is legitimate: the tombstone (`source_type='prune'`) records that
+ * boundary hash in `source_id` (a field that IS part of `computeEgressRowHash`, making the
+ * attestation tamper-evident). The verifier pre-scans all prune tombstones to collect the set of
+ * attested boundaries and accepts a `prev_hash` mismatch at the START of the walk if (and only if)
+ * the mismatched `prev_hash` is one of those attested boundaries. A mid-chain mismatch is still
+ * a real break and fails closed.
  */
 export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult {
   const start = Math.max(0, Math.floor(fromId));
+
+  // Pre-scan: collect every boundary hash attested by a prune tombstone (source_id on prune rows).
+  const attestedBoundaries = new Set<string>(
+    (
+      db
+        .query(
+          `SELECT source_id FROM egress_ledger WHERE source_type = 'prune' AND source_id IS NOT NULL`,
+        )
+        .all() as { source_id: string }[]
+    ).map((r) => r.source_id),
+  );
+
   const rows = db
     .query(
       `SELECT id, timestamp, source_type, source_id, destination, method, payload_summary,
@@ -80,14 +101,23 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
       : GENESIS_HASH;
 
   let verified = 0;
+  let isFirst = true;
   for (const r of rows) {
     if (!sha256HexEqualConstantTime(r.prev_hash, prev)) {
-      return {
-        ok: false,
-        verifiedRows: verified,
-        brokenAt: r.id,
-        reason: `prev_hash mismatch at id ${String(r.id)}`,
-      };
+      // Accept a boundary mismatch only at the very first row of the walk when the prev_hash is
+      // an attested prune boundary. A mid-chain mismatch is always a real break (fail-closed).
+      if (isFirst && attestedBoundaries.has(r.prev_hash)) {
+        // Legitimate prune boundary: advance `prev` to the attested boundary so the row_hash
+        // recomputation below uses the correct prevHash the row was originally written with.
+        prev = r.prev_hash;
+      } else {
+        return {
+          ok: false,
+          verifiedRows: verified,
+          brokenAt: r.id,
+          reason: `prev_hash mismatch at id ${String(r.id)}`,
+        };
+      }
     }
     const expected = computeEgressRowHash({
       prevHash: prev,
@@ -108,6 +138,7 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
     }
     prev = r.row_hash;
     verified += 1;
+    isFirst = false;
   }
   return { ok: true, verifiedRows: verified };
 }
