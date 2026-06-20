@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { resolveUrlWithBase } from "../../shared/fetch-bearer-json.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
@@ -16,7 +17,7 @@ async function graphRequest(
   pathOrUrl: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string; bytes: number }> {
-  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${GRAPH}${pathOrUrl}`;
+  const url = resolveUrlWithBase(GRAPH, pathOrUrl);
   const mergedHeaders = new Headers({ Authorization: `Bearer ${token}` });
   if (init?.headers !== undefined) {
     const extra = new Headers(init.headers);

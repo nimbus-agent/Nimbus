@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { headerLine } from "../../shared/header-safe.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
@@ -164,11 +164,11 @@ registerSimpleTool(
 );
 
 const gmailDraftCreateArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
+  to: headerLine({ min: 1 }),
+  subject: headerLine({ min: 1, max: 998 }),
   body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: headerLine().optional(),
+  bcc: headerLine().optional(),
 });
 
 registerSimpleTool(
@@ -232,11 +232,11 @@ registerSimpleTool(
 );
 
 const gmailMessageSendArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
+  to: headerLine({ min: 1 }),
+  subject: headerLine({ min: 1, max: 998 }),
   body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: headerLine().optional(),
+  bcc: headerLine().optional(),
 });
 
 registerSimpleTool(

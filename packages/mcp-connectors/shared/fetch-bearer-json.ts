@@ -5,8 +5,26 @@ export type BearerJsonFetchResult = {
   text: string;
 };
 
+/**
+ * Resolve a path-or-URL against `baseUrl`. A relative path is prefixed with the
+ * base. An ABSOLUTE URL is only allowed when it shares the base's origin — this
+ * is the single chokepoint that prevents a caller-supplied pagination link
+ * (`@odata.nextLink`, etc.) from redirecting a credential-bearing fetch at an
+ * attacker-controlled host (SSRF / bearer-token exfiltration). A cross-origin or
+ * malformed absolute URL throws and is never fetched.
+ */
 export function resolveUrlWithBase(baseUrl: string, pathOrUrl: string): string {
-  return pathOrUrl.startsWith("http") ? pathOrUrl : `${baseUrl}${pathOrUrl}`;
+  if (!pathOrUrl.startsWith("http")) {
+    return `${baseUrl}${pathOrUrl}`;
+  }
+  const target = new URL(pathOrUrl);
+  const base = new URL(baseUrl);
+  if (target.origin !== base.origin) {
+    throw new Error(
+      `resolveUrlWithBase: refusing to fetch cross-origin URL (got ${target.origin}, expected ${base.origin})`,
+    );
+  }
+  return pathOrUrl;
 }
 
 export async function fetchBearerAuthorizedJson(

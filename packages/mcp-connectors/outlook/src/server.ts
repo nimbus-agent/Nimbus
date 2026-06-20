@@ -10,7 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { headerLine } from "../../shared/header-safe.ts";
 import {
   createRegisterSimpleTool,
   type McpListResult,
@@ -148,11 +148,11 @@ if (outlookToolShouldRegister("outlook_mail_read", grantedOutlookScopes)) {
 }
 
 const outlookMailSendArgs = z.object({
-  to: z.string().min(1).max(2000),
-  subject: z.string().min(1).max(500),
+  to: headerLine({ min: 1, max: 2000 }),
+  subject: headerLine({ min: 1, max: 500 }),
   body: z.string().min(1).max(1_000_000),
   contentType: z.enum(["text", "html"]).optional(),
-  cc: z.string().max(2000).optional(),
+  cc: headerLine({ max: 2000 }).optional(),
 });
 
 if (outlookToolShouldRegister("outlook_mail_send", grantedOutlookScopes)) {
@@ -263,12 +263,12 @@ if (outlookToolShouldRegister("outlook_calendar_get", grantedOutlookScopes)) {
 }
 
 const outlookCalendarCreateArgs = z.object({
-  subject: z.string().min(1).max(500),
+  subject: headerLine({ min: 1, max: 500 }),
   startDateTime: z.string().min(1),
   endDateTime: z.string().min(1),
   timeZone: z.string().min(1).max(100).optional(),
   body: z.string().max(50_000).optional(),
-  attendees: z.string().max(4000).optional(),
+  attendees: headerLine({ max: 4000 }).optional(),
 });
 
 if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) {

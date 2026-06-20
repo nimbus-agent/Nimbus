@@ -56,7 +56,7 @@ describe("makeRestFetcher — URL resolution", () => {
     expect(captured["url"]).toBe("https://api.example.com/repos/owner/repo");
   });
 
-  it("passes through an absolute URL unchanged", async () => {
+  it("passes through a SAME-ORIGIN absolute URL unchanged (legit pagination link)", async () => {
     stubFetch('{"ok":true}', 200);
 
     const cfg: RestFetcherConfig = {
@@ -64,8 +64,23 @@ describe("makeRestFetcher — URL resolution", () => {
       token: "tok",
     };
     const fetcher = makeRestFetcher(cfg);
-    await fetcher("https://other.example.com/v2/items?$top=10");
-    expect(captured["url"]).toBe("https://other.example.com/v2/items?$top=10");
+    await fetcher("https://api.example.com/v2/items?$top=10");
+    expect(captured["url"]).toBe("https://api.example.com/v2/items?$top=10");
+  });
+
+  it("REFUSES a cross-origin absolute URL (bearer-token exfil / SSRF guard)", async () => {
+    stubFetch('{"ok":true}', 200);
+
+    const cfg: RestFetcherConfig = {
+      apiBase: "https://api.example.com",
+      token: "tok",
+    };
+    const fetcher = makeRestFetcher(cfg);
+    await expect(fetcher("https://other.example.com/v2/items?$top=10")).rejects.toThrow(
+      /cross-origin/i,
+    );
+    // The credential-bearing fetch must NOT have been issued.
+    expect(captured["url"]).toBe("");
   });
 });
 

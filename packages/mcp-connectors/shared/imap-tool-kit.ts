@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 
+import { headerLine } from "./header-safe.ts";
 import { capPreview } from "./imap-mail-core.ts";
 
 // ---------------------------------------------------------------------------
@@ -36,11 +37,11 @@ const searchArgs = z.object({
 });
 
 const sendArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
+  to: headerLine({ min: 1 }),
+  subject: headerLine({ min: 1, max: 998 }),
   body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: headerLine().optional(),
+  bcc: headerLine().optional(),
 });
 
 /** Shared Zod schemas for the IMAP/protonmail tool arg payloads. */
