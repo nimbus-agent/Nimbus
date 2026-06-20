@@ -178,6 +178,69 @@ describe("pruneEgress — tombstone-boundary design (LOAD-BEARING)", () => {
   });
 });
 
+describe("pruneEgress — sequential multi-prune (LOAD-BEARING regression)", () => {
+  test("two sequential prunes: second deletes first tombstone, chain still verifies ok", () => {
+    // Seed a 4-row chain: ts 10, 20, 30, 40
+    appendEgressEntry(db, e(10));
+    appendEgressEntry(db, e(20));
+    appendEgressEntry(db, e(30));
+    appendEgressEntry(db, e(40));
+
+    // Prune 1: delete ts < 25 (ts=10 and ts=20); tombstone T1 appended with timestamp now1=26
+    const r1 = pruneEgress(db, 25, 26);
+    expect(r1.prunedCount).toBe(2);
+
+    // Capture T1's row_hash before prune 2 deletes it
+    const t1Hash = (
+      db
+        .query(
+          `SELECT row_hash FROM egress_ledger WHERE source_type = 'prune' ORDER BY id DESC LIMIT 1`,
+        )
+        .get() as { row_hash: string }
+    ).row_hash;
+
+    // Capture R30's row_hash before prune 2 deletes it (it is the last deleted REGULAR row;
+    // T1, appended after R40, has a higher id — so the boundary must be R30's hash, not T1's,
+    // because R40's prev_hash points to R30).
+    const r30Hash = (
+      db.query(`SELECT row_hash FROM egress_ledger WHERE timestamp = 30`).get() as {
+        row_hash: string;
+      }
+    ).row_hash;
+
+    // Prune 2: delete ts < 35 (ts=30 AND T1 whose timestamp=26 < 35); tombstone T2 appended
+    const r2 = pruneEgress(db, 35, 100);
+    // Deleted rows: ts=30 and T1 (ts=26) — 2 rows
+    expect(r2.prunedCount).toBe(2);
+    // T2's source_id must equal R30's row_hash (= R40's prev_hash — the correct boundary),
+    // NOT T1's row_hash: T1 was appended after R40 and has a higher id, so "last deleted by id"
+    // would be T1, but R40's prev_hash is R30's hash — that mismatch was the original bug.
+    const t2 = db
+      .query(
+        `SELECT source_id FROM egress_ledger WHERE source_type = 'prune' ORDER BY id DESC LIMIT 1`,
+      )
+      .get() as { source_id: string };
+    expect(t2.source_id).toBe(r30Hash);
+    // t1Hash and r30Hash must be distinct hashes (sanity: these are different rows)
+    expect(t1Hash).not.toBe(r30Hash);
+
+    // Chain must still verify: surviving row (ts=40) + T2
+    expect(verifyEgressChain(db).ok).toBe(true);
+
+    // The surviving row (ts=40) is still intact and unmodified
+    const survivor = db
+      .query(
+        `SELECT timestamp FROM egress_ledger WHERE source_type != 'prune' ORDER BY id ASC LIMIT 1`,
+      )
+      .get() as { timestamp: number };
+    expect(survivor.timestamp).toBe(40);
+
+    // Appending a new entry after the second prune still chains and verifies
+    appendEgressEntry(db, e(500, "slack.post"));
+    expect(verifyEgressChain(db).ok).toBe(true);
+  });
+});
+
 describe("pruneEgress — existing tamper tests (T5 compatibility)", () => {
   test("a tampered data field on a surviving row is still detected via row_hash mismatch", () => {
     appendEgressEntry(db, e(10));

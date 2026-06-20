@@ -12,9 +12,18 @@ import { appendEgressEntry } from "./egress-ledger.ts";
  * from a history rewrite.
  *
  * After deletion a single `source_type='prune'` tombstone is appended whose `source_id`
- * carries `boundaryHash` (the `row_hash` of the last deleted row). `source_id` is part of
+ * carries `boundaryHash` (the `prev_hash` of the first surviving row, or — for a full prune —
+ * the `row_hash` of the last deleted row by monotonic id). `source_id` is part of
  * `computeEgressRowHash`, so the attestation is tamper-evident. `verifyEgressChain` accepts
  * the attested boundary as a legitimate chain start for the surviving segment.
+ *
+ * Sequential multi-prune correctness: a prior tombstone row is appended AFTER the regular rows
+ * of its era, so it has a higher AUTOINCREMENT id than any survivor row from that era. A second
+ * prune that deletes the first tombstone would make "last deleted by id" point to the tombstone —
+ * but the first survivor's prev_hash points to the last regular deleted row, not the tombstone.
+ * Using the first survivor's prev_hash as the boundary fixes this: it is always the hash the
+ * survivor was originally written against, regardless of how many tombstones have since been
+ * stacked on top.
  *
  * When nothing qualifies (`prunedCount === 0`) the function is a no-op: no tombstone is
  * written and the chain is not touched.
@@ -34,7 +43,9 @@ export function pruneEgress(
   let boundaryHash: string | undefined;
 
   db.transaction(() => {
-    // 1. Identify rows to delete (ordered by id ascending; last = highest-id row).
+    // 1. Identify rows to delete (ordered by id ascending).
+    //    row_hash is captured here for the full-prune fallback (no survivors); in the partial-prune
+    //    case the correct boundary is the first survivor's prev_hash — see step 4 below.
     const toDelete = db
       .query(`SELECT id, row_hash FROM egress_ledger WHERE timestamp < ? ORDER BY id ASC`)
       .all(before) as { id: number; row_hash: string }[];
@@ -44,16 +55,32 @@ export function pruneEgress(
     // No-op: nothing to prune → skip tombstone entirely.
     if (prunedCount === 0) return;
 
-    // 2. Capture boundaryHash = row_hash of the LAST deleted row (= prev_hash of first survivor).
-    //    Array.at(-1) returns undefined only when length === 0, which is guarded above.
-    const lastHash = toDelete.at(-1)?.row_hash;
-    if (lastHash === undefined) return; // unreachable; satisfies the type checker
-    boundaryHash = lastHash;
-
-    // 3. DELETE the qualifying rows (I14/D12, I9).
+    // 2. DELETE the qualifying rows (I14/D12, I9).
     dbRun(db, `DELETE FROM egress_ledger WHERE timestamp < ?`, [before]);
 
-    // 4. Surviving rows are NOT touched — their prev_hash/row_hash stay as originally written.
+    // 3. Surviving rows are NOT touched — their prev_hash/row_hash stay as originally written.
+
+    // 4. Determine boundaryHash — the hash the first surviving row was chained against.
+    //    Use the first survivor's prev_hash: it is the exact hash the survivor was written
+    //    against, even when a prior tombstone row (appended after regular survivors, so it has
+    //    a higher id) was itself deleted in this prune pass.  When such a tombstone is deleted
+    //    its row_hash ≠ the first survivor's prev_hash, so the old "last deleted by id" approach
+    //    would store the wrong boundary.
+    //    When all rows were deleted (full prune) there is no survivor; fall back to the
+    //    last-deleted row's row_hash (by id = monotonic AUTOINCREMENT order, I14/D12).
+    const firstSurvivor = db
+      .query(`SELECT prev_hash FROM egress_ledger ORDER BY id ASC LIMIT 1`)
+      .get() as { prev_hash: string } | null | undefined;
+
+    if (firstSurvivor != null) {
+      // Partial prune: boundary = prev_hash of the first surviving row.
+      boundaryHash = firstSurvivor.prev_hash;
+    } else {
+      // Full prune: no survivors — boundary = last-deleted row's row_hash (monotonic id order).
+      const lastDeleted = toDelete.at(-1);
+      if (lastDeleted === undefined) return; // unreachable; guarded by prunedCount > 0
+      boundaryHash = lastDeleted.row_hash;
+    }
 
     // 5. Append the tombstone. appendEgressEntry calls readHeadHash() internally, which will see
     //    the post-delete head (last surviving row or GENESIS_HASH) since we are on the same
