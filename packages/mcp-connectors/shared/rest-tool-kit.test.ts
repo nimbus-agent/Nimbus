@@ -359,12 +359,11 @@ describe("makeRestToolRegistrar", () => {
 
   it("throws when the token env is unset (requireProcessEnv fail-closed)", async () => {
     const tools: CapturedTool[] = [];
-    const fetch = async (): Promise<HttpJsonBodyResponse> => ({
-      ok: true,
-      status: 200,
-      json: {},
-      text: "{}",
-    });
+    let fetchCalled = false;
+    const fetch = async (): Promise<HttpJsonBodyResponse> => {
+      fetchCalled = true;
+      return { ok: true, status: 200, json: {}, text: "{}" };
+    };
     const register = makeRestToolRegistrar({
       registrar: makeCapturingRegistrar(tools),
       tokenEnv: TOKEN_ENV,
@@ -377,5 +376,7 @@ describe("makeRestToolRegistrar", () => {
     const tool = tools[0];
     expect(tool).toBeDefined();
     await expect(tool?.handler({})).rejects.toThrow(`${TOKEN_ENV} is not set`);
+    // Fail-closed: the credential-bearing fetch must NOT be reached when the env is missing.
+    expect(fetchCalled).toBe(false);
   });
 });
