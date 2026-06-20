@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I27 (static rules D10–D21).
+**Current ceiling:** invariants I1–I29 (static rules D10–D22). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` — the I27→I29 gap is documented intent, reconciled at that branch's merge.
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -522,6 +522,25 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 **Anti-pattern:** emitting a share (file write / HTTP POST / federation forward) from anywhere but the share-rpc wiring after the gate; calling `createShare` or `forwardShare` outside their respective gate + share-rpc; reading `share.signing.privkey` outside share-keypair.ts; naming `share.publish` outside executor + share-gate; replacing the `shareConsent` broker with an always-true approval; auto-merging or auto-executing an inbound forwarded share on receive.
 
 **How to comply:** route every outbound share through `createShare` (origin) or `forwardShare` (re-forward); keep the emit confined to share-rpc.ts after a successful gate result; read the signing key only via `ensureShareKeypair`; never make `requestApproval` resolve true without explicit owner approval of the redacted/forwarded preview; on receive, store to `share_inbox` only.
+
+---
+
+## I29 — egress-ledger completeness over the executor chokepoint
+
+**Statement:** Every gated action appends one `egress_ledger` row to the BLAKE3-chained append-only ledger BEFORE `connectors.dispatch` is called — so a 0-row window is structurally impossible. A denied action appends a `blocked` row (and never dispatches); an append failure aborts the action entirely (fail-closed — dispatch never runs). The ledger is tamper-evident (BLAKE3 chain, timing-safe verify per I10), and the sole mutation (`egress.prune` — a continuing-tombstone retention edit) is gated by the owner's HITL approval (I2 frozen set member). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server`.
+
+**Wired at:**
+
+- `packages/gateway/src/engine/executor.ts` `ToolExecutor.gate()` — the egress row is appended (via the injected `EgressSink`) after the audit record and before the `if (hitlStatus === "rejected")` return, so both approved and denied decisions are ledgered. If `EgressSink.append` throws, `gate()` throws, and `execute()` propagates the error before reaching `connectors.dispatch` (fail-closed).
+- `packages/gateway/src/egress/egress-ledger.ts` `makeEgressSink` — the production sink that wraps `appendEgressEntry`. Injected at boot via `platform/assemble.ts`.
+- `packages/gateway/src/egress/egress-record.ts` `buildEgressEntry` — builds the `EgressEntry` struct from the gated action (destination = `serviceOf(action.type)`, method = `action.type`, redacted payload summary, hitlStatus, resultStatus).
+- `packages/gateway/src/egress/egress-prune.ts` `pruneEgress` — the sole mutation: writes a continuing tombstone that preserves chain integrity. Only reachable after the owner's HITL approval via `"egress.prune"` in `HITL_REQUIRED_BACKING` (I2).
+- Enforced statically by **D22** in `scripts/structure-audit/check-nimbus-invariants.ts` — (a) any non-test file other than `engine/executor.ts` that references `connectors.dispatch` causes `audit:invariants` to exit 1 (the chokepoint is total; no wrapper/allowlist exemption); (b) any non-test file outside `packages/gateway/src/egress/` that references `appendEgressEntry` causes `audit:invariants` to exit 1.
+- Runtime test in `packages/gateway/src/security-invariants.test.ts` — the `I29` describe block: `egress.prune` ∈ `HITL_REQUIRED`, append-before-dispatch ordering, blocked row on deny, abort on append failure, plus the D22 presence assertion.
+
+**Anti-pattern:** inserting a `try/catch` around the egress append that swallows the error and allows dispatch to proceed; calling `connectors.dispatch` from any site other than `executor.ts`; calling `appendEgressEntry` from any file outside `egress/*`; a production boot that wires a no-op or always-succeeding sink (the sink is optional for tests only — production must inject `makeEgressSink(db)`).
+
+**How to comply:** `EgressSink` is the only DI seam for the ledger write — inject `makeEgressSink(db)` at boot. Every new action type that reaches `connectors.dispatch` will automatically be ledgered. If you add a new chokepoint around `connectors.dispatch`, you must run it through the existing executor gate (not bypass it); the D22 static check will catch any bypass immediately.
 
 ---
 

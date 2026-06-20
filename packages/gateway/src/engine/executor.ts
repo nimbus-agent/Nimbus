@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import type { EgressSink } from "../egress/egress-ledger.ts";
+import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
@@ -122,6 +124,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Phase 6 Slice 8 — outbound share publish is owner-HITL-gated (I27); the share-gate
   // (share/share-gate.ts) redacts → owner HITL → signs → persists → audits.
   "share.publish",
+  // Phase 7 egress-ledger — the sole retention-edit mutation (I29) is owner-HITL-gated;
+  // the egress.prune RPC consults the owner consent broker before pruning the ledger.
+  "egress.prune",
 ]);
 
 export const HITL_REQUIRED = Object.freeze({
@@ -219,6 +224,7 @@ export class ToolExecutor {
     private readonly audit: AuditSink,
     private readonly connectors: ConnectorDispatcher,
     private readonly delegation?: ExecutorDelegationDep,
+    private readonly egressSink?: EgressSink,
   ) {}
 
   /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
@@ -290,6 +296,18 @@ export class ToolExecutor {
       timestamp: Date.now(),
       ...(sessionId === undefined ? {} : { sessionId }),
     });
+
+    if (this.egressSink !== undefined) {
+      this.egressSink.append(
+        buildEgressEntry({
+          action,
+          hitlStatus,
+          resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
+          sessionId,
+          now: Date.now(),
+        }),
+      );
+    }
 
     if (hitlStatus === "rejected") {
       return { status: "rejected", reason: rejectReason };

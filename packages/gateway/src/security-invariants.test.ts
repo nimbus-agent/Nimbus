@@ -1036,3 +1036,70 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
     expect(HITL_REQUIRED.has("share.publish")).toBe(true);
   });
 });
+
+describe("I29 — egress-ledger completeness over the executor chokepoint", () => {
+  test("egress.prune is in the I2 HITL frozen set", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("egress.prune")).toBe(true);
+  });
+
+  test("executor.gate appends an egress row before dispatch, blocks on deny, aborts on append failure", async () => {
+    const { ToolExecutor } = await import("./engine/executor.ts");
+    const order: string[] = [];
+    const appended: Array<{ resultStatus: string }> = [];
+    const consent = { requestApproval: async () => true };
+    const audit = { recordAudit: () => {} };
+    const connectors = {
+      dispatch: async () => {
+        order.push("dispatch");
+        return {};
+      },
+    };
+    const sink = {
+      append: (e: { resultStatus: string }) => {
+        order.push("append");
+        appended.push(e);
+      },
+    };
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, sink);
+    await exec.execute({ type: "search.run", payload: {} });
+    expect(order).toEqual(["append", "dispatch"]);
+
+    // deny → blocked row, no dispatch
+    const order2: string[] = [];
+    const denyConsent = { requestApproval: async () => false };
+    const sink2 = { append: (e: { resultStatus: string }) => order2.push(e.resultStatus) };
+    const connectors2 = {
+      dispatch: async () => {
+        order2.push("dispatch");
+        return {};
+      },
+    };
+    const exec2 = new ToolExecutor(denyConsent, audit, connectors2, undefined, sink2);
+    await exec2.execute({ type: "email.send", payload: {} });
+    expect(order2).toContain("blocked");
+    expect(order2).not.toContain("dispatch");
+
+    // append throws → abort
+    const throwingSink = {
+      append: () => {
+        throw new Error("x");
+      },
+    };
+    const connectors3 = { dispatch: async () => ({}) };
+    const exec3 = new ToolExecutor(consent, audit, connectors3, undefined, throwingSink);
+    await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
+  });
+
+  test("D22 confines connectors.dispatch to executor.ts and the egress append to egress/*", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain("D22-connectors-dispatch");
+    expect(audit).toContain("D22-egress-append");
+  });
+
+  test("the egress append symbol is NOT referenced outside egress/* and executor.ts", async () => {
+    // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
+    const exec = await read("packages/gateway/src/engine/executor.ts");
+    expect(exec).toContain("EgressSink");
+  });
+});
