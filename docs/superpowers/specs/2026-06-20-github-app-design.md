@@ -99,6 +99,14 @@ PR opened / pushed
 
 The user's private index never leaves the machine: every Gateway call is `GET` to `localhost`. The only outbound call is `GitHub REST → github.com`, carrying *only the rendered verdict text the action computed from already-public-to-the-team CI signals*, authenticated by GitHub's own job token.
 
+### Forked PRs / `pull_request_target` (security-caveated)
+
+On a `pull_request` event **from a fork**, GitHub downgrades `secrets.GITHUB_TOKEN` to read-only, so the comment POST/PATCH will 403. **v1 is internal-PRs-only:** the action runs on same-repo PRs; for a fork PR it detects the read-only token (or `github.event.pull_request.head.repo.fork === true`) and **skips posting with a one-line note**, never failing the step on a fork 403.
+
+Public-repo / fork-PR comment posting is possible only via a `pull_request_target` workflow — that event runs in the context of the **base** repo and so carries a write-scoped token. This is offered as an **opt-in, documented, caveated** pattern, **never the default**:
+
+> **SECURITY WARNING — do not run fork code in a `pull_request_target` job that talks to the Gateway.** A `pull_request_target` workflow executes with elevated, write-scoped credentials. Checking out and running untrusted fork code (its build, tests, or scripts) in the *same* job that queries the local read-only Gateway API is dangerous: the fork code can exfiltrate the elevated token or probe `localhost`. The opt-in recipe MUST NOT `actions/checkout` the fork ref, and MUST NOT run any fork-supplied step in the posting job — it posts only the verdict text the action rendered from the Gateway's own read-only response. The documented recipe will pin the base-ref checkout (no `head.sha`), scope the token to `pull-requests: write` only, and carry this warning inline.
+
 ### IPC / CLI surface
 
 - **MVP: none added to the Gateway.** The action speaks the existing read-only HTTP API. No new `nimbus <cmd>`, no new RPC, no new write route.
@@ -113,6 +121,8 @@ The user's private index never leaves the machine: every Gateway call is `GET` t
 5. **Platform equality** — ✅ The action is `node20` + bare `fetch` (no native deps), identical to `preflight-query`; runs on any self-hosted runner OS. Tests run on the Ubuntu PR gate + 3-OS push matrix.
 6. **AGPL-3.0 core / MIT sdk** — ✅ `packages/github-pr-check/` is a core action → **AGPL-3.0** (matches the existing `github-actions/*`). No license field changes.
 7. **No `any`** — ✅ TS 6 strict; GitHub REST responses + Gateway JSON typed as `unknown` then validated/narrowed (reuse `safeString`/`safeInt` from `gha-io.ts`).
+
+**Numbering note:** I28 is reserved for the MCP-server owner-sink (branch `dev/asafgolombek/phase7-mcp-gateway-server`). The I29/D22/V44-style numbers here follow the *proposed* global sequence in `2026-06-20-superpowers-specs-consolidated-review.md` §1 — these family ideas are mutually exclusive, so the actual number is the next-free at this spec's own merge time, reconciled by build order. (The MVP itself adds **no** new invariant/D/migration; the I29 below is only the *if-webhook-receiver* future reservation.)
 
 **Invariant impact:**
 - **No new invariant for the MVP.** The action touches no Gateway write surface; the read-only API is unchanged. **I13** (`WRITE_ROUTE_ALLOWLIST`) stays a frozen 6-entry list — the drift test in `security-invariants.test.ts` keeps passing because we add nothing to it.
@@ -154,7 +164,7 @@ The user's private index never leaves the machine: every Gateway call is `GET` t
 1. **"One-click" honesty.** Stakeholder expectation is a Marketplace Install button. MVP delivers "paste a composite action." Acceptable as v1, with Approach C/B as the upgrade path? (Recommendation: yes — local-first beats one-click.)
 2. **DORA in Wave 1 or Wave 2?** Including `GET /v1/metrics/dora` in the comment is cheap (read-only, already shipped). Recommendation: include behind an `include-dora` input (default true) — it's the "team posture" hook for the paid anchor.
 3. **Bot identity.** `GITHUB_TOKEN` posts as `github-actions[bot]`. Is that acceptable for v1, or is "Nimbus[bot]" (Approach C, Vault-held App key) needed for the commercial feel? (Recommendation: ship as `github-actions[bot]`; offer Approach C as a Wave-2 opt-in.)
-4. **Forked PRs.** `GITHUB_TOKEN` on `pull_request` from forks is read-only by default; the comment post will 403. Use `pull_request_target` (with the documented security caveats) or document "internal PRs only"? (Recommendation: document internal-PR-only for v1; `pull_request_target` is a sharp edge.)
+4. **Forked PRs. — RESOLVED.** `GITHUB_TOKEN` on `pull_request` from forks is read-only by default; the comment post will 403. **v1 stays internal-PRs-only** (the comment posts on same-repo PRs; fork PRs are skipped with a documented note, never a 403-failed step). Public-repo / fork-PR comment posting requires a `pull_request_target` workflow (which runs with the *base* repo's write-scoped token); this is offered only as an **opt-in, documented, caveated** pattern, **not** the default. **SECURITY WARNING:** a `pull_request_target` workflow runs with elevated, write-scoped credentials in the context of the base repo — checking out and executing untrusted fork code *in the same job that queries the local Gateway* (read-only API on `localhost`) is dangerous: the fork code could exfiltrate the elevated token or probe the Gateway. The opt-in `pull_request_target` recipe MUST therefore **never check out or run fork code in the posting job** — it posts only the verdict text the action rendered from the Gateway's read-only response, and runs no fork-supplied build/test step. See §Design data-flow + §Forked PRs.
 5. **Licensing gate.** If this is the paid anchor, where does tier enforcement live — in the action (checks a Vault `license.tier`?) or purely honor-system at MVP? (Recommendation: honor-system + read-only at MVP; tier gate lands with Enterprise Phase 12, not here.)
 6. **Package name.** `packages/github-pr-check/` vs folding under `packages/github-actions/pr-check/` (sibling of the other two). Recommendation: **`packages/github-actions/pr-check/`** for consistency — keeps the shared `gha-io.ts` relative import trivial and groups all three actions.
 
@@ -171,3 +181,4 @@ The user's private index never leaves the machine: every Gateway call is `GET` t
 7. Per-file coverage ≥80% line+branch on every new file (coverage-floor build green on Linux). `audit:package-readmes` and `audit:cross-platform` pass.
 8. The 7 Non-Negotiables hold as documented in §Security; the spec records I28 as reserved and I29 as the *only-if-webhook-receiver* future invariant (explicitly not built here).
 9. A composite action chains the existing `preflight-query` with `pr-check`, and `packages/docs/` documents the ~8-line workflow snippet (self-hosted runner + reachable Gateway).
+10. **Forked PRs:** v1 is internal-PRs-only — a fork PR (read-only `GITHUB_TOKEN`) is **skipped with a documented note, never a 403-failed step**. The `pull_request_target` opt-in is documented **only** as a caveated pattern whose recipe never checks out or runs fork code in the posting job and carries the inline SECURITY WARNING (docs-reviewed).

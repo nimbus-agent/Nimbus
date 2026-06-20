@@ -71,12 +71,12 @@ Lead reasoning: every shipped agent in `packages/gateway/src/agents/` is a **pur
 
 **1. The agent — `packages/gateway/src/agents/postmortem.ts`** (new, AGPL, mirrors `impact.ts`)
 
-- `PostmortemInput = { incidentId: string; atMs?: number }` — `incidentId` is the PagerDuty external id (the `externalId` upserted in `pagerduty-sync.ts`); `atMs` is an optional point-in-time clamp (sub-agents ignore items modified after `atMs`). `atMs` is the *only* optional knob in v1; full historical reconstruction is a non-goal (see below).
+- `PostmortemInput = { incidentId: string; atMs?: number; commitRange?: { from: string; to: string } }` — `incidentId` is the PagerDuty external id (the `externalId` upserted in `pagerduty-sync.ts`); `atMs` is an optional point-in-time clamp (sub-agents ignore items modified after `atMs`); `commitRange` is an optional manual anchor that scopes `subChangeChain` to an explicit commit/PR range when automatic deploy→PR correlation fails (degrade-to-manual; never guesses causality). `atMs` and `commitRange` are the only optional knobs in v1; full historical reconstruction is a non-goal (see below).
 - `runPostmortem(input, ctx): Promise<PostmortemBrief>` — three phases, copied structurally from `runImpact`:
   1. **Resolve incident.** `index.getItem`-style lookup of the `item(service='pagerduty', type='incident', externalId=incidentId)` row; read `metadata.opened_at_ms`, `status`, `pagerduty_service_id`, `severity`. If absent → emit a `GapNote` (`missing_connector`) and a gap-only brief (fail-soft, never throw — matches `detectEmptyIndex` in `impact.ts`).
   2. **Fan out 4 read-only sub-agents in parallel** via `AgentCoordinator` (the exact pattern at `impact.ts` lines 62–94 — `makeSubAgent` wrapping each in a `SubTask` whose `execute` returns `JSON.stringify(SubAgentResult)`). Each is independent; a failure in one becomes a `GapNote`, never blocks the others:
      - `subDeploys` — deployment/`ci_run` items with `modified_at <= opened_at_ms` within the configured incident window (reuse the window from `metrics/dora.ts` config `incidentWindowMinutes`).
-     - `subChangeChain` — the PR(s) + commit(s) tied to that deploy (via existing item metadata links the impact agent already traverses).
+     - `subChangeChain` — the PR(s) + commit(s) tied to that deploy (via existing item metadata links the impact agent already traverses). When `commitRange` is supplied, this sub-agent is scoped to exactly that explicit range (manual anchor) instead of inferring the shipping change from deploy links.
      - `subCiRuns` — CI runs around the deploy.
      - `subWarRoom` — Slack/Teams threads mentioning the affected service in the incident window (`index.search` over the service name, read-only).
   3. **Aggregate** into a `PostmortemBrief` with an ordered `timeline: TimelineEvent[]` (sorted by `eventTimestamp`), a `rootCauseCandidates` list (the deploy + change chain), `actionItems` (deterministic stubs derived from gaps + the change chain), and an `mttrContext` footnote computed by **calling the shipped `mttr(db, cfg, …)`** for the incident's service (informational only; never a confident prediction — see I11 note).
@@ -93,7 +93,7 @@ export type TimelineEvent = {
 };
 export type PostmortemBrief = AgentBriefBase & {
   kind: "postmortem";
-  query: { incidentId: string; atMs: number | null };
+  query: { incidentId: string; atMs: number | null; commitRange: { from: string; to: string } | null };
   incidentItemId: string | null;
   timeline: TimelineEvent[];
   rootCauseCandidates: TimelineEvent[];
@@ -104,10 +104,11 @@ export type PostmortemBrief = AgentBriefBase & {
 Add `PostmortemBrief` to the `AnyBrief` union in `emit-brief.ts` and to `synthesize.ts`/`render.ts` (one Markdown renderer arm). No `any` anywhere; LLM-returned narrative is typed `unknown` and validated before use.
 
 **3. IPC — `packages/gateway/src/ipc/agents-rpc.ts`** (extend; follow `nimbus-ipc` + `nimbus-agent-patterns`)
-- New method `agents.postmortem` — params `{ incidentId: string; atMs?: number }`, returns `{ sessionId }` immediately; the brief arrives via the `agents.postmortem.briefReady` notification (the fire-and-forget shape every agent uses). Method is **read-only**, so it is Tauri-allowlist-eligible alongside the other `agents.*` read methods (per `nimbus-tauri-allowlist`); it never reaches an RCE-class surface.
+- New method `agents.postmortem` — params `{ incidentId: string; atMs?: number; commitRange?: { from: string; to: string } }`, returns `{ sessionId }` immediately; the brief arrives via the `agents.postmortem.briefReady` notification (the fire-and-forget shape every agent uses). Method is **read-only**, so it is Tauri-allowlist-eligible alongside the other `agents.*` read methods (per `nimbus-tauri-allowlist`); it never reaches an RCE-class surface.
 
 **4. CLI — `packages/cli/src/commands/incident.ts`** (new; mirror `commands/impact.ts`)
-- `nimbus incident show <incident-id> [--at <iso8601>] [--json]` → calls `agents.postmortem`, waits for `briefReady`, prints the Markdown (or the JSON brief with `--json`).
+- `nimbus incident show <incident-id> [--at <iso8601>] [--commit-range <from>..<to>] [--json]` → calls `agents.postmortem`, waits for `briefReady`, prints the Markdown (or the JSON brief with `--json`).
+- **`--commit-range <from>..<to>` (manual timeline anchor):** when automatic deploy→PR/merge-commit correlation in `subChangeChain` fails (sparse or missing deploy↔change-chain links), the user can manually anchor the timeline to an explicit commit range. The agent then scopes `subChangeChain` to exactly those commits/PRs instead of inferring the shipping change — a **degrade-to-manual** path. The override only *constrains* which change-chain items are considered; it never *fabricates* a causal link. Absent the flag and absent automatic correlation, the postmortem still degrades to a gap note (never guesses causality).
 - **Sharing is a separate, explicit step** (no auto-egress): the printed draft tells the user to run `nimbus share create --session <id>` to sign + publish through the I27 gate. We do NOT add an outbound flag to `incident show` — keeping assembly (read-only) and emit (HITL-gated) cleanly separated.
 
 ### Data flow
@@ -146,6 +147,8 @@ Every byte of input is local. The only egress path is the *unchanged* I27 share 
 - **I11** (tool-output envelope) — if a sub-agent's `index.search` result reaches the LLM during `synthesize`, it flows through the agents' existing `wrapToolOutput` wrapping (per `nimbus-tool-output-envelope`). The MTTR footnote is rendered as an informational "pattern match", never a confident LLM prediction, honoring the "no over-confident claims" posture (cf. I11/I23 anti-pattern).
 - **I27 / D21** (single outbound-share chokepoint) — the signed/shareable postmortem is emitted **only** via the unchanged `share/share-gate.ts` `createShare()`. The design deliberately does **not** add a parallel signing-and-emit path; that is the whole point of choosing Approach A.
 - **Schema:** **No V44 in v1** (Approach A). If the Phase 10 stretch (point-in-time re-open + incident-keyed query) is later approved, it adds `incident_postmortem_v44` via `simpleStep(43, 44, …)` in `migrations/runner.ts` (next free version is 44; head is V43 = `share_inbox`, confirmed at `runner.ts:405`). **I28 is reserved** for the unmerged MCP-server owner-sink; a future invariant here (none needed) would be I29+.
+
+**Numbering note:** I28 is reserved for the MCP-server owner-sink (branch dev/asafgolombek/phase7-mcp-gateway-server). The I29/D22/V44-style numbers here follow the *proposed* global sequence in 2026-06-20-superpowers-specs-consolidated-review.md §1 — these family ideas are mutually exclusive, so the actual number is the next-free at this spec's own merge time, reconciled by build order.
 - **Fail-closed behavior:** a missing incident, a failed sub-agent, or an absent connector yields a **gap-annotated brief**, never a partial/false timeline and never an exception (matches `impact.ts` gap handling). The share path is independently fail-closed (deny/timeout emits nothing — existing `createShare` behavior at lines 90–105).
 
 ### Testing
@@ -170,7 +173,7 @@ Every byte of input is local. The only egress path is the *unchanged* I27 share 
 
 ## Open questions
 
-1. **Change-chain linkage fidelity.** How reliably can `subChangeChain` map a deploy item → the PR/commit that shipped it from current index metadata? `impact.ts` already traverses some of these links; we should reuse its resolver. If links are sparse, the postmortem degrades to a gap note ("could not correlate the shipping PR") rather than guessing — acceptable for v1.
+1. **Change-chain linkage fidelity.** ✅ **Resolved.** How reliably can `subChangeChain` map a deploy item → the PR/commit that shipped it from current index metadata? `impact.ts` already traverses some of these links; we reuse its resolver. When automatic correlation succeeds, it is used. When links are sparse and correlation fails, the user can manually anchor the timeline via the `--commit-range <from>..<to>` CLI override (degrade-to-manual), which scopes `subChangeChain` to exactly that range. Absent both automatic correlation and the manual override, the postmortem degrades to a gap note ("could not correlate the shipping PR") rather than guessing causality — acceptable for v1.
 2. **War-room thread matching.** Matching Slack/Teams threads by service name within the window will have false positives/negatives. v1 uses a conservative `index.search` over the affected-service token and labels results "possibly related" — never asserts causality. Is that precision acceptable, or do we want an explicit `--war-room-thread <url>` override?
 3. **MTTR footnote framing.** Confirm the footnote stays strictly informational ("similar incidents on this service resolved in a median of Xs over N samples") and never reads as a prediction for the current incident.
 4. **Stretch trigger.** When (if ever) do we promote Approach B? Concretely: the first time a user asks "re-open the postmortem for INC-123" and expects the *same* signed artifact back rather than a re-derivation.
@@ -179,7 +182,7 @@ Every byte of input is local. The only egress path is the *unchanged* I27 share 
 
 1. `packages/gateway/src/agents/postmortem.ts` exists; `runPostmortem` fans out ≥3 read-only sub-agents in parallel via `AgentCoordinator` and returns a typed `PostmortemBrief` with no `any`.
 2. `nimbus incident show <incident-id>` prints a deterministic Markdown postmortem containing an ordered timeline (alert/deploy/pr_merge/commit/ci_run/war_room events, each source-cited by `itemId`), a root-cause-candidates section, action items, and an MTTR footnote computed from the shipped `metrics/dora.ts` `mttr()`.
-3. A missing incident id, a missing connector, or a failed sub-agent yields a **gap-annotated brief** (never an exception, never a false/partial timeline).
+3. A missing incident id, a missing connector, or a failed sub-agent yields a **gap-annotated brief** (never an exception, never a false/partial timeline). When automatic deploy→PR/commit correlation fails, `nimbus incident show --commit-range <from>..<to>` lets the user manually anchor the change chain (degrade-to-manual); absent both automatic correlation and the override, the change-chain section degrades to a gap note rather than guessing causality.
 4. Assembly performs **zero egress and zero writes**; the *only* way a postmortem leaves the machine is `nimbus share create`, which routes through the unchanged I27 `createShare()` (owner-approved redacted `share.publish`, Vault-signed, `share_records` row, audit entry).
 5. All 7 Non-Negotiables hold (checked above); **no new invariant** and **no V44 migration** are introduced in v1 (the V44 `incident_postmortem` table is documented only as a deferred Phase 10 stretch).
 6. New files (`postmortem.ts`, the CLI command, any `_lib` helper) each clear the ≥80% line+branch coverage floor; unit tests use real `bun:sqlite`; an e2e CLI test (alongside `incident-correlation-indexed.e2e.test.ts`) proves the five-event ordered timeline; `bun run preflight:fast` is green before review.

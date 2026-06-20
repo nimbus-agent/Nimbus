@@ -86,7 +86,7 @@ const MAX_SINCE_MS     = 90 * 24 * 60 * 60 * 1000; // same ceiling as catchup
 - `awaitAgentBrief(client, "standup", isStandupBrief, …)` + `client.call("agents.standup", { sinceMs })` (reuse `agent-brief-render.ts`).
 - Output: `--json` → findings JSON (reuse `renderAgentBrief`); otherwise apply the **pure text transform** for `--format`:
   - `markdown` → the brief Markdown as-is (the gateway-rendered `brief` string).
-  - `slack` → Slack-flavored mrkdwn (e.g. `*bold*`, `_italic_`, `•` bullets) produced by a **pure string function** `toSlackMrkdwn(brief: string): string`. **No Slack API call.**
+  - `slack` → Slack-flavored mrkdwn (e.g. `*bold*`, `_italic_`, `•` bullets) produced by a **pure string function** `toSlackMrkdwn(brief: string): string`. **No Slack API call and no Block Kit payload assembly** — full Slack Block Kit integration is an explicit Non-goal for v1 (see Non-goals). The transform is a pure Markdown→mrkdwn STRING rewrite.
   - `plain` → strip Markdown markers to plain text via a pure `toPlainText(brief: string): string`.
   Respect `NO_COLOR` (reuse the catchup CLI's render path).
 - CLI-side mirror type `StandupBrief` + `isStandupBrief` in `packages/cli/src/types/agents.ts` (clone the `CatchupBrief` mirror, line 71 — the CLI cannot import gateway types).
@@ -158,14 +158,14 @@ Every DB read is against the local SQLite index. No connector/MCP/cloud call occ
 - **Scheduled/unattended standup posting** (cron → ChatOps daily) — would re-introduce HITL/egress concerns and needs a scheduler + the share/ChatOps gate. Deferred (Phase 7 Wave 5 / autonomous-agent track). v1 is a one-shot CLI command only.
 - **DORA metrics in the brief** (`--include-metrics`) — roadmap does not require it for standup; adds a `metrics/dora.ts` dependency + a sub-agent. Deferred; can be an opt-in flag later.
 - **`--service` filter** — catchup has it; standup's "everything I did today" framing wants the full picture. Omit in v1; add later if requested.
-- **Slack Block Kit JSON** — `--format slack` is copy-pasteable mrkdwn (the roadmap says "copy-pasteable Markdown"), users paste it themselves. No Slack API integration here.
+- **Slack Block Kit JSON / full Block Kit payload integration** — **explicit Non-goal for v1.** `--format slack` is copy-pasteable Slack **mrkdwn** produced by a pure string transform (the roadmap says "copy-pasteable Markdown"); users paste it themselves. No Slack API call and no Block Kit payload assembly here. v1 output = plain Markdown + the pure mrkdwn STRING transform only.
 - **Streaming sections incrementally** — the brief is small (24h window); a single `briefReady` notification is sufficient. (Catchup's `emit*Brief` is already fire-and-forget; we inherit it.)
 
 ## Open questions
 
 1. **Reuse `CatchupBrief` vs new `StandupBrief`?** Recommendation: new `kind: "standup"` (Approach C) for a clean verb/notification/CLI, structurally reusing `CatchupSection`/`CatchupItem` SDK shapes (no new SDK item types). Cost is ~5 mechanical clone sites. If the user prefers absolute minimum surface, fall back to Approach A (`--mode` on catchup) — but that loses the dedicated `nimbus standup` verb the roadmap names.
 2. **Recency-first vs catchup's relevance-first ordering** — design assumes recency-primary, involvement-score tie-break (grounding's recommendation). Confirm this is the desired "what did I do today" ordering, or whether owned-service items should still float to the top.
-3. **`--format slack` fidelity** — mrkdwn (`*bold*`, `_italic_`) confirmed as the v1 target (no Block Kit). OK?
+3. **`--format slack` fidelity** — ✅ **Resolved.** v1 output is plain Markdown (copy-paste) plus a **pure Slack-mrkdwn STRING transform** (`*bold*`, `_italic_`, `•` bullets) — no Slack API call. Full Slack **Block Kit** payload integration is an explicit **Non-goal for v1** (see Non-goals).
 4. **Tauri exposure** — ship CLI-only in v1, or add `agents.standup` to the renderer allowlist immediately if catchup is already there? (Pure read-only, safe either way.)
 5. **Export footprint from `catchup.ts`** — Approach C exports `subWindowItems` (and possibly the involvement sub-agents) + reuses the already-exported `scoreItem`/`scoreAndGroup`. Confirm these become module exports vs. extracting them to a shared `_lib/involvement.ts` (cleaner, slightly larger diff). Recommendation: minimal `export` first; extract only if a third consumer appears (YAGNI).
 
@@ -173,7 +173,7 @@ Every DB read is against the local SQLite index. No connector/MCP/cloud call occ
 
 1. `nimbus standup` with a populated index prints a copy-pasteable Markdown brief of the user's last-24h activity, grouped by service, recency-ordered, in < 15 s on a mid-range laptop.
 2. `--since 7d` widens the window (capped 90d); `--since` over 90d errors clearly.
-3. `--format markdown|slack|plain` produces the three text renderings via **pure functions**; a fetch-spy proves **zero network calls** during `nimbus standup` (the no-egress guarantee).
+3. `--format markdown|slack|plain` produces the three text renderings via **pure string functions** — `markdown` is plain copy-paste Markdown, `slack` is a pure Markdown→mrkdwn STRING transform (no Slack Block Kit payload, no Slack API), `plain` strips markers; a fetch-spy proves **zero network calls** during `nimbus standup` (the no-egress guarantee).
 4. `--json` emits the typed `StandupBrief`.
 5. Unresolved identity → a clear `[user] me_person_id` remediation gap, not a crash; empty index → "run `nimbus connector sync`" + non-zero exit.
 6. E2E test asserts: correct sections, 24h boundary respected, **zero HITL fires** (no `ToolExecutor` import), `standup.briefReady` emitted with non-empty brief + valid findings, and **no `external_id`/secret leak** in output.
