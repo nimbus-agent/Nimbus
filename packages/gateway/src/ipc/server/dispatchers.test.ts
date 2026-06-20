@@ -8,12 +8,14 @@ import { join } from "node:path";
 import { ProfileManager } from "../../config/profiles.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
-import { LocalIndex } from "../../index/local-index.ts";
+import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
+import type { EgressRpcCtx } from "../egress-rpc.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { PairingWindow } from "../lan-pairing.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
@@ -41,6 +43,7 @@ import {
   tryDispatchDataRpc,
   tryDispatchDeploymentRpc,
   tryDispatchDiagnosticsRpc,
+  tryDispatchEgressRpc,
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
@@ -902,5 +905,31 @@ describe("tryDispatchFederationRpc team.auditMerged (local stream)", () => {
       namespace: "ns",
     })) as Record<string, unknown>;
     expect(Array.isArray(out["entries"])).toBe(true);
+  });
+});
+
+describe("tryDispatchEgressRpc", () => {
+  test("skips a non-egress method", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchEgressRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("skips when egressRpcCtx is not wired", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchEgressRpc(ctx, "egress.head", {})).toBe(phase4RpcSkipped);
+  });
+  test("dispatches egress.head when wired", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    const egressRpcCtx: EgressRpcCtx = {
+      db,
+      // biome-ignore lint/suspicious/noExplicitAny: test stand-in
+      vault: { get: async () => null, set: async () => {} } as any,
+      now: () => 1,
+      requestPruneApproval: async () => false,
+    };
+    openDbs.push(db);
+    const { ctx } = makeCtx({ egressRpcCtx });
+    const out = (await tryDispatchEgressRpc(ctx, "egress.head", {})) as { count: number };
+    expect(out.count).toBe(0);
   });
 });

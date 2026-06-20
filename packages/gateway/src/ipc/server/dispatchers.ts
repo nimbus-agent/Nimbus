@@ -22,6 +22,7 @@ import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
+import { dispatchEgressRpc, EgressRpcError } from "../egress-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
@@ -817,6 +818,24 @@ export async function tryDispatchShareRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchEgressRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("egress.")) return phase4RpcSkipped;
+  const rpc = ctx.options.egressRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchEgressRpc(method, params, rpc);
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof EgressRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
   if (method !== "admin.status" || ctx.options.statusReaders === undefined) {
     return phase4RpcSkipped;
@@ -892,6 +911,8 @@ async function dispatchPhase4PlatformGroup(
   if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
   const shareOutcome = await tryDispatchShareRpc(ctx, method, params);
   if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
+  const egressOutcome = await tryDispatchEgressRpc(ctx, method, params);
+  if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
 

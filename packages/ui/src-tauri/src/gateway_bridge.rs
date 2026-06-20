@@ -83,6 +83,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "db.setMeta",
     "diag.getVersion",
     "diag.snapshot",
+    "egress.head",
+    "egress.list",
+    "egress.proveWindow",
+    "egress.verify",
     "engine.askStream",
     "engine.cancelStream",
     "engine.getSessionTranscript",
@@ -497,8 +501,19 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_egress_read_only() {
+        // Egress Ledger: only the 4 read verbs are renderer-callable; egress.prune
+        // is a mutation and must never be reachable from the renderer (I7).
+        assert!(is_method_allowed("egress.head"));
+        assert!(is_method_allowed("egress.list"));
+        assert!(is_method_allowed("egress.verify"));
+        assert!(is_method_allowed("egress.proveWindow"));
+        assert!(!is_method_allowed("egress.prune"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 95);
+        assert_eq!(ALLOWED_METHODS.len(), 99);
     }
 
     #[test]
