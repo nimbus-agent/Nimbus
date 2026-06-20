@@ -533,9 +533,17 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 95", async () => {
+  test("allowlist_exact_size assertion is 99", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*95\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*99\s*\)/);
+  });
+
+  test("I29: the 4 egress read verbs are renderer-exposed; egress.prune (mutation) stays absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of ["egress.head", "egress.list", "egress.proveWindow", "egress.verify"]) {
+      expect(rust).toContain(`"${m}"`);
+    }
+    expect(rust).not.toMatch(/^\s*"egress\.prune",\s*$/m);
   });
 
   test("Slice 6c: read-only tribal.status/list allowed; control-plane tribal methods stay absent", async () => {

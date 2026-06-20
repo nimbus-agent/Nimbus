@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProfileManager } from "../../config/profiles.ts";
+import { appendEgressEntry } from "../../egress/egress-ledger.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../../index/local-index.ts";
@@ -911,11 +912,11 @@ describe("tryDispatchFederationRpc team.auditMerged (local stream)", () => {
 describe("tryDispatchEgressRpc", () => {
   test("skips a non-egress method", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchEgressRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchEgressRpc(ctx, "engine.ask", {}, "c1")).toBe(phase4RpcSkipped);
   });
   test("skips when egressRpcCtx is not wired", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchEgressRpc(ctx, "egress.head", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchEgressRpc(ctx, "egress.head", {}, "c1")).toBe(phase4RpcSkipped);
   });
   test("dispatches egress.head when wired", async () => {
     const db = new Database(":memory:");
@@ -929,7 +930,44 @@ describe("tryDispatchEgressRpc", () => {
     };
     openDbs.push(db);
     const { ctx } = makeCtx({ egressRpcCtx });
-    const out = (await tryDispatchEgressRpc(ctx, "egress.head", {})) as { count: number };
+    const out = (await tryDispatchEgressRpc(ctx, "egress.head", {}, "c1")) as { count: number };
     expect(out.count).toBe(0);
+  });
+  test("egress.prune binds the owner HITL gate — fail-closed deny when no consent session is live", async () => {
+    // The base ctx requestPruneApproval would APPROVE; the dispatcher must OVERRIDE it with the
+    // I2 gate bound to the calling client. makeCtx's consent has no live writer → the gate rejects
+    // (fail-closed) → nothing is pruned. Proves the gate is wired, not the injected default.
+    const localIndex = new LocalIndex(makeDb());
+    openDbs.push(localIndex.getDatabase());
+    appendEgressEntry(localIndex.getDatabase(), {
+      timestamp: 10,
+      sourceType: "task",
+      sourceId: "s",
+      destination: "email",
+      method: "email.send",
+      payloadSummary: "{}",
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+    });
+    const egressRpcCtx: EgressRpcCtx = {
+      db: localIndex.getDatabase(),
+      // biome-ignore lint/suspicious/noExplicitAny: test stand-in
+      vault: { get: async () => null, set: async () => {} } as any,
+      now: () => 1,
+      requestPruneApproval: async () => true, // would approve — but the gate override denies
+    };
+    const { ctx } = makeCtx({ localIndex, egressRpcCtx });
+    const out = (await tryDispatchEgressRpc(ctx, "egress.prune", { beforeTs: 9999 }, "c1")) as {
+      approved: boolean;
+      prunedCount: number;
+    };
+    expect(out.approved).toBe(false);
+    expect(out.prunedCount).toBe(0);
+    const count = (
+      localIndex.getDatabase().query("SELECT COUNT(*) as c FROM egress_ledger").get() as {
+        c: number;
+      }
+    ).c;
+    expect(count).toBe(1);
   });
 });

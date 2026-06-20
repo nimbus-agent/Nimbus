@@ -78,6 +78,7 @@ import {
   startToolCallLogRetention,
 } from "../db/tool-call-log-retention.ts";
 import { dbRun } from "../db/write.ts";
+import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
@@ -111,6 +112,7 @@ import {
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
+import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
 import { HTTP_API_DEPLOYMENT_TOKEN_VAULT_KEY } from "../ipc/http-auth.ts";
 import { type ReadOnlyHttpServerOptions, startReadOnlyHttpServer } from "../ipc/http-server.ts";
 import type { TeamsEventsSurface } from "../ipc/http-write-routes.ts";
@@ -1250,6 +1252,9 @@ async function bootTribalKnowledge(deps: {
       { requestApproval: (p, d) => cb.requestOwnerApproval(p, d) },
       localIndex,
       tribalDispatcher,
+      undefined,
+      // I29: in-chat tribal capture dispatches a real connector KB write — ledger it.
+      makeEgressSink(localIndex.getDatabase()),
     );
     const submit: TribalSubmitAction = async (action) => {
       const res = await executor.execute({ type: action.type, payload: action.payload });
@@ -1469,6 +1474,8 @@ function bootChatopsIntoAssembly(deps: {
             getToolsEpoch: () => connectorMesh.getToolsEpoch(),
           })
         : buildE2eSinkDispatcher(chatopsE2eSinkDir),
+    // I29: chatops-approved writes dispatch real connector actions — ledger them (append-before-dispatch).
+    egressSink: makeEgressSink(db),
     ...(chatopsCfg.teamsEnabled && chatopsCfg.teamsBotAppId !== ""
       ? {
           validateTeamsJwt: buildTeamsBotJwtValidator({
@@ -1823,6 +1830,19 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     deliverToPeer: async (share, peerId) =>
       (await ipcOpts.shareDeliverToPeer?.(share, peerId)) ?? false,
   };
+
+  // I29 (S1 egress ledger): the read/verify/prove/prune surface behind the egress.* IPC namespace.
+  // The 4 read verbs are pure reads; proveWindow signs with the Vault-only share keypair only on
+  // sign:true. `requestPruneApproval` is the fail-closed DEFAULT (deny) — the dispatcher overrides it
+  // per-request, binding the LOCAL owner's HITL consent gate to the calling client (egress.prune is
+  // in the I2 frozen set). So prune is never approved unless an owner answers the gate.
+  const egressRpcCtx: EgressRpcCtx = {
+    db,
+    vault,
+    now: () => Date.now(),
+    requestPruneApproval: () => Promise.resolve(false),
+  };
+  ipcOpts.egressRpcCtx = egressRpcCtx;
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 

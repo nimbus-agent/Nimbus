@@ -156,7 +156,7 @@ export function egressHead(db: Database): { head: string; count: number } {
 
 export function listEgress(
   db: Database,
-  opts: { since?: number; until?: number; limit?: number },
+  opts: { since?: number | undefined; until?: number | undefined; limit?: number | undefined },
 ): EgressRow[] {
   const since = opts.since ?? 0;
   const until = opts.until ?? Number.MAX_SAFE_INTEGER;
@@ -188,7 +188,7 @@ export type EgressCompleteness = { tier: "authorized-actions"; outboundEgressEve
  */
 export function proveWindow(
   db: Database,
-  opts: { since?: number; until?: number },
+  opts: { since?: number | undefined; until?: number | undefined },
 ): { rows: EgressRow[]; completeness: EgressCompleteness; verify: EgressVerifyResult } {
   const rows = listEgress(db, {
     ...(opts.since !== undefined && { since: opts.since }),

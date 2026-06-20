@@ -1,4 +1,5 @@
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
+import type { EgressSink } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
@@ -38,6 +39,8 @@ export interface ChatopsBootDeps {
   readonly audit: AuditSink;
   /** Dispatches an approved action to the live connector mesh (same seam as the engine). */
   readonly dispatcher: ConnectorDispatcher;
+  /** I29 egress ledger: appends one row before every connector dispatch. Absent → no ledger. */
+  readonly egressSink?: EgressSink;
   /** Bot Framework JWT validator (I18 verifier, aud === teamsBotAppId). Absent → the Teams
    *  events surface is NOT exposed (fail-closed). */
   readonly validateTeamsJwt?: TeamsEventsSurface["validateBotJwt"];
@@ -217,23 +220,31 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       return localConsent(prompt, details);
     },
   };
-  const executor = new ToolExecutor(consent, deps.audit, deps.dispatcher, {
-    store: {
-      activeDelegateePeer: () => getChatopsApprovalContext()?.ownerExternalId,
-      activeDelegateFor: (_scopeKind, _scopeValue, peerId) => {
-        const owner = getChatopsApprovalContext()?.ownerExternalId;
-        return owner !== undefined && peerId === owner;
+  const executor = new ToolExecutor(
+    consent,
+    deps.audit,
+    deps.dispatcher,
+    {
+      store: {
+        activeDelegateePeer: () => getChatopsApprovalContext()?.ownerExternalId,
+        activeDelegateFor: (_scopeKind, _scopeValue, peerId) => {
+          const owner = getChatopsApprovalContext()?.ownerExternalId;
+          return owner !== undefined && peerId === owner;
+        },
       },
+      isOperatorValid: () => {
+        const ctx = getChatopsApprovalContext();
+        if (ctx === undefined || identity === undefined) return false;
+        const scim = identity.findScimByEmail(ctx.ownerEmail);
+        if (!scim?.active) return false;
+        return identity.isOperatorValid(scim.issuer);
+      },
+      requestRemote: () => presenter.requestApproval(),
     },
-    isOperatorValid: () => {
-      const ctx = getChatopsApprovalContext();
-      if (ctx === undefined || identity === undefined) return false;
-      const scim = identity.findScimByEmail(ctx.ownerEmail);
-      if (!scim?.active) return false;
-      return identity.isOperatorValid(scim.issuer);
-    },
-    requestRemote: () => presenter.requestApproval(),
-  });
+    // I29: a chatops-approved write dispatches a real connector action — an outbound event — so the
+    // executor carries the egress sink (append-before-dispatch). Absent (sink not wired) → no ledger.
+    deps.egressSink,
+  );
   const knownActions = HITL_REQUIRED;
 
   const routerFor = (msg: ChatMessage): IntentRouter =>

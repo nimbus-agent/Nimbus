@@ -4,6 +4,7 @@ import {
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
+import { makeEgressSink } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
@@ -22,7 +23,7 @@ import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
-import { dispatchEgressRpc, EgressRpcError } from "../egress-rpc.ts";
+import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
@@ -774,10 +775,14 @@ export async function tryDispatchTribalRpc(
     if (dispatcher === undefined || index === undefined) {
       return rpc.capture(clusterId, target, async () => ({ status: "rejected" }));
     }
+    // I29: tribal capture dispatches a real connector write (notion/confluence KB append) — an
+    // outbound event — so this executor carries the egress sink (append-before-dispatch).
     const executor = new ToolExecutor(
       bindConsentChannel(ctx.consentImpl, clientId),
       index,
       dispatcher,
+      undefined,
+      makeEgressSink(index.getDatabase()),
     );
     return rpc.capture(clusterId, target, async (action) => {
       const result = await executor.execute({ type: action.type, payload: action.payload });
@@ -822,10 +827,19 @@ export async function tryDispatchEgressRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   if (!method.startsWith("egress.")) return phase4RpcSkipped;
-  const rpc = ctx.options.egressRpcCtx;
-  if (rpc === undefined) return phase4RpcSkipped;
+  const base = ctx.options.egressRpcCtx;
+  if (base === undefined) return phase4RpcSkipped;
+  // I2: bind `egress.prune` (the sole mutation, in the HITL frozen set) to the LOCAL owner's consent
+  // gate via the calling client's channel — the teamvault.put/delete pattern. A gate-only stub
+  // executor (no egress sink: prune is a local mutation, NOT outbound) prompts the owner; deny /
+  // disconnect → not approved → nothing pruned. The assemble-built default is fail-closed.
+  const rpc: EgressRpcCtx =
+    method === "egress.prune" && ctx.options.localIndex !== undefined
+      ? { ...base, requestPruneApproval: makePruneApproval(ctx, clientId) }
+      : base;
   try {
     const out = await dispatchEgressRpc(method, params, rpc);
     if (out.kind === "hit") return out.value;
@@ -834,6 +848,29 @@ export async function tryDispatchEgressRpc(
     throw e;
   }
   return phase4RpcSkipped;
+}
+
+/** Owner-HITL approval for `egress.prune`, gated through the calling client's consent channel. */
+function makePruneApproval(
+  ctx: ServerCtx,
+  clientId: string,
+): (beforeTs: number) => Promise<boolean> {
+  return async (beforeTs) => {
+    const index = ctx.options.localIndex;
+    if (index === undefined) return false;
+    const stubDispatcher: ConnectorDispatcher = {
+      dispatch(): Promise<unknown> {
+        return Promise.reject(new Error("egress prune gate does not dispatch to MCP"));
+      },
+    };
+    const executor = new ToolExecutor(
+      bindConsentChannel(ctx.consentImpl, clientId),
+      index,
+      stubDispatcher,
+    );
+    const gate = await executor.gate({ type: "egress.prune", payload: { beforeTs } });
+    return gate === "proceed";
+  };
 }
 
 export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unknown): unknown {
@@ -911,7 +948,7 @@ async function dispatchPhase4PlatformGroup(
   if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
   const shareOutcome = await tryDispatchShareRpc(ctx, method, params);
   if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
-  const egressOutcome = await tryDispatchEgressRpc(ctx, method, params);
+  const egressOutcome = await tryDispatchEgressRpc(ctx, method, params, clientId);
   if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
