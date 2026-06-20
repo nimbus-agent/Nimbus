@@ -19,6 +19,7 @@ export type {
   JanitorPeerTouch,
   PreflightDownstream,
 } from "./agents/brief-types.ts";
+export { createBriefGuard } from "./agents/guard-factory";
 export type { AuditEmit, AuditLogger } from "./audit-logger";
 export { createScopedAuditLogger } from "./audit-logger";
 export {
