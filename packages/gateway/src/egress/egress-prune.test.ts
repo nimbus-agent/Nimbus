@@ -94,7 +94,7 @@ describe("pruneEgress — tombstone-boundary design (LOAD-BEARING)", () => {
         `SELECT source_id FROM egress_ledger WHERE source_type = 'prune' ORDER BY id DESC LIMIT 1`,
       )
       .get() as { source_id: string };
-    expect(tomb.source_id).toBe(result.boundaryHash);
+    expect(tomb.source_id).toBe(result.boundaryHash!);
   });
 
   test("survivor tamper still detected after prune (hash mismatch)", () => {

@@ -190,7 +190,10 @@ export function proveWindow(
   db: Database,
   opts: { since?: number; until?: number },
 ): { rows: EgressRow[]; completeness: EgressCompleteness; verify: EgressVerifyResult } {
-  const rows = listEgress(db, { since: opts.since, until: opts.until });
+  const rows = listEgress(db, {
+    ...(opts.since !== undefined && { since: opts.since }),
+    ...(opts.until !== undefined && { until: opts.until }),
+  });
   const outbound = rows.filter((r) => r.resultStatus === "authorized").length;
   return {
     rows,

@@ -98,5 +98,5 @@ export function pruneEgress(
     });
   })();
 
-  return { prunedCount, boundaryHash };
+  return boundaryHash !== undefined ? { prunedCount, boundaryHash } : { prunedCount };
 }
