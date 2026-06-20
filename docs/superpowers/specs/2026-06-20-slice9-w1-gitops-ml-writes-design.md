@@ -81,14 +81,16 @@ realized as the service-specific types below.)
 path params, body — is fixed in the **plan** from the connector's existing `*-sync.ts` read code +
 the vendor docs **before** any handler is written. Two items need explicit verification in the plan:
 
-- **Flux reconcile is a Kubernetes-CR PATCH, not a Flux endpoint.** The read connector reads via
-  `flux.api_url` + `flux.token` (SA Bearer); reconcile is performed by annotating the custom resource
-  (`reconcile.fluxcd.io/requestedAt`) through the kube-apiserver path. The plan pins the exact
-  `apiVersion`/`kind`/`namespace`/`name` → URL mapping for Kustomization
-  (`kustomize.toolkit.fluxcd.io`) and HelmRelease (`helm.toolkit.fluxcd.io`) from the read connector's
-  resource model, and confirms `flux.api_url` reaches a PATCH-capable apiserver path. If the
-  read connector's `api_url` is a read-only proxy, this becomes a plan-time blocker to resolve
-  (fail the plan, don't guess).
+- **Flux reconcile is a Kubernetes-CR PATCH, not a Flux endpoint — feasibility confirmed.**
+  `FLUX_API_URL` is a generic **kube-apiserver base**; the read tools already hit
+  `/apis/<group>/<version>/namespaces/<ns>/<plural>/<name>` via the connector's `kindEntry()` +
+  `listPath()` helpers. The reconcile write is a `PATCH` to that **same path** with a JSON
+  merge-patch body setting `metadata.annotations["reconcile.fluxcd.io/requestedAt"]` = RFC3339 now
+  (the standard `flux reconcile` mechanism). The write reuses `kindEntry()` for the Kustomization
+  (`kustomize.toolkit.fluxcd.io`) and HelmRelease (`helm.toolkit.fluxcd.io`) group/version/plural
+  mapping — no new path logic. The only precondition is the SA's `patch` RBAC verb (§3 patch note).
+  (No plan-time blocker remains; the earlier read-only-proxy concern is resolved — the read code
+  proves the apiserver base is reachable, and PATCH on the same resource path is standard k8s.)
 - **`mlflow.model.promote` is a thin alias** over transition-stage with `stage` pinned to
   `Production` — kept as a distinct action type for a cleaner HITL prompt ("promote to Production")
   and a tighter arg schema (no free `stage`).
@@ -137,13 +139,25 @@ the I11 envelope, not swallowed.
 
 ### 4.1 Connector write tools (server-side)
 
-Each connector's `src/server.ts` gains its two write tools (ArgoCD/MLflow) or two write tools (Flux)
-through the existing `register<Svc>Tools(reg: ZodToolRegistrar)` export. Tools are thin API callers
-reading credentials from `process.env` only; real stdio transport stays guarded by
-`if (import.meta.main)`. Per the connector contract each write tool calls
-`server.assertHitlRequired()` at the top of its handler and is listed in the manifest `hitlRequired`
-array, but the **authoritative** gate is gateway-side (I2). Server tools are unit-tested via the
-inline-registrar `captureTools()` pattern with a `globalThis.fetch` stub — no subprocess spawn.
+**Registrar-extraction prerequisite (discovered against current code).** Unlike the warehouse
+connectors (which got an exported `register<Svc>Tools` + an `if (import.meta.main)` guard in Wave 7b),
+ArgoCD/Flux/MLflow are still **inline-only**: each calls `runReadOnlyMcpConnector("nimbus-<svc>",
+(reg) => { ...read tools... })` directly, with **no exported registrar** and **no `import.meta.main`
+guard**. So the first per-connector step is a behavior-preserving refactor — extract the inline
+callback into an exported `register<Svc>Tools(reg: ZodToolRegistrar)` and replace the call site with
+`if (import.meta.main) await runReadOnlyMcpConnector("nimbus-<svc>", register<Svc>Tools)` — which both
+makes the connector unit-testable (the `captureTools()` pattern) and matches the warehouse shape.
+
+Each connector then gains its two write tools inside its registrar. Tools are **thin API callers**
+reading credentials from `process.env` only (`ARGOCD_URL`/`ARGOCD_TOKEN`, `FLUX_API_URL`/`FLUX_TOKEN`,
+`MLFLOW_HOST`/`MLFLOW_TOKEN`; auth = `Authorization: Bearer <token>`). **There is no
+`assertHitlRequired()` helper in the codebase** — HITL is declared in the connector's
+`nimbus.extension.json` `hitlRequired` array and enforced **gateway-side by I2** (the authoritative
+gate); the handler does not self-gate. Each write tool's *description* names its required HITL action
+type (the Tableau convention: `"...(requires HITL argocd.app.sync). Async — returns the operation
+id."`). Server tools are unit-tested via the exported-registrar `captureTools()` pattern with a
+`globalThis.fetch` stub — no subprocess spawn. The `hitlRequired` manifest entry mirrors the shipped
+warehouse connectors' shape exactly (read `tableau/nimbus.extension.json` and match it).
 
 ### 4.2 Local write flow — the only write path (reuses I2, no new gate file)
 
@@ -285,8 +299,11 @@ Shared gateway scaffolding (one commit, lands first):
 Then one commit **per connector** (the subagent-death lesson — files shared across connectors run
 sequentially, commit per connector):
 
-- `mcp-connectors/<svc>/src/server.ts` — two write tools + `assertHitlRequired`
-- `mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired` includes the write permission(s)
+- `mcp-connectors/<svc>/src/server.ts` — (1) extract the inline callback into an exported
+  `register<Svc>Tools(reg)` + `if (import.meta.main)` guard (behavior-preserving prerequisite), then
+  (2) add the two write tools
+- `mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired` entry mirroring the warehouse
+  connectors' shape
 - gateway-side parse/shape helper for the write args if the connector needs one
 - any scoping-id metadata the write needs but Phase 5 read does not index (verified per §3)
 - the connector's server-tool test + a transport/dispatch test for its two action types
