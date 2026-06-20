@@ -39,7 +39,7 @@ describe("verifyEgressChain", () => {
     expect(r.ok).toBe(true);
     expect(r.verifiedRows).toBe(3);
   });
-  test("a tampered row_hash is detected and brokenAt points at it", () => {
+  test("a tampered data field is detected via row_hash mismatch", () => {
     appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
     appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));
     const id = (
@@ -49,6 +49,25 @@ describe("verifyEgressChain", () => {
     const r = verifyEgressChain(db);
     expect(r.ok).toBe(false);
     expect(r.brokenAt).toBe(id);
+    expect(r.reason).toMatch(/row_hash mismatch/);
+  });
+  test("a tampered prev_hash is detected via linkage check", () => {
+    appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
+    appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));
+    appendEgressEntry(db, e({ method: "c.z", timestamp: 3 }));
+    expect(verifyEgressChain(db).ok).toBe(true);
+    // Fetch the second row's id — the one whose prev_hash we'll corrupt.
+    const secondId = (
+      db.query(`SELECT id FROM egress_ledger ORDER BY id ASC LIMIT 1 OFFSET 1`).get() as {
+        id: number;
+      }
+    ).id;
+    // Mutate ONLY prev_hash (no hashed data field changes) so only the linkage check fires.
+    db.run(`UPDATE egress_ledger SET prev_hash = ? WHERE id = ?`, ["0".repeat(64), secondId]);
+    const r = verifyEgressChain(db);
+    expect(r.ok).toBe(false);
+    expect(r.brokenAt).toBe(secondId);
+    expect(r.reason).toMatch(/prev_hash mismatch/);
   });
 });
 

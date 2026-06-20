@@ -147,6 +147,13 @@ export type EgressCompleteness = { tier: "authorized-actions"; outboundEgressEve
  * "authorized-actions" boundary — does NOT claim raw-syscall capture, per the spec), and the chain
  * verify result. A degraded chain surfaces `verify.ok === false` — the CLI prints `indeterminate`,
  * never a false `0` (the EAF "indeterminate, never a false zero" rule).
+ *
+ * NOTE — `verify` runs `verifyEgressChain` over the WHOLE ledger (fromId = 0), not just the
+ * window rows. This is intentional and fail-closed: the "zero egress in window W" inference is
+ * only sound if the entire chain is intact. A row deleted or relinked outside the window would
+ * corrupt the `prev_hash` linkage of a later row without touching any row inside the window, so a
+ * window-scoped verify would silently miss it. If `verify.ok === false`, the ledger's integrity is
+ * in question even when the window's own rows appear fine.
  */
 export function proveWindow(
   db: Database,
