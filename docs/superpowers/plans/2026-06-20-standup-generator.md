@@ -17,6 +17,10 @@
 - **Biome** is the linter/formatter. Validate with `bunx biome check packages scripts` (NOT `bun run lint` inside a `.claude` worktree — it reports 0 files).
 - **No auto-egress (Non-Negotiable #5 / I27):** `--format slack` is a *pure string* Markdown→mrkdwn rewrite — no Slack API call, no Block Kit. A fetch-spy test proves zero network calls during the CLI render path.
 
+## Non-goals / future optimization
+
+- **Sub-agent scan caching is DEFERRED (YAGNI) — no caching task ships in v1.** A reviewer suggested caching the five catchup sub-agents' scans (and/or a cross-command catchup+standup shared cache). We are not building it: the sub-agent queries already run against indexed timestamp ranges over a **bounded 24h window**, so each scan is cheap and bounded — standup is not a hot path (a developer runs it a handful of times a day, not in a tight loop). A shared catchup+standup cache would add cache-invalidation complexity (every sync, every connector backfill, every people-graph relink would have to bust it) for no measured win. **Revisit only if profiling shows the sub-agent fan-out is a real bottleneck** — not speculatively. Until then, standup re-runs the same five sub-agents through `AgentCoordinator` on each invocation, exactly as catchup does.
+
 ---
 
 ## File Structure
@@ -440,6 +444,8 @@ EOF
 
 > **Ordering contract:** `scoreAndGroupRecencyFirst` buckets by service like `scoreAndGroup`, but: (1) **items within a section** are sorted by `modifiedAt DESC`, score DESC tie-break; (2) **sections** are ordered by their most-recent item's `modifiedAt DESC`. This is the inverse of catchup's relevance-first ordering and is what `renderStandup` (Task 3) emits verbatim.
 
+> **Identity-gap remediation (shared, no env var):** standup inherits catchup's self-person resolution path (`resolveSelfPerson`) and its remediation. When the current user cannot be resolved, `unresolvedIdentityGap()` in `standup.ts` REUSES the **exact** existing message from `packages/gateway/src/agents/catchup.ts:76` — verbatim: *"Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id."* The real mechanism is the `[user] me_person_id` key in nimbus.toml (parsed in `packages/gateway/src/config/nimbus-toml.ts`); there is **no** `NIMBUS_ME_PERSON_ID` env var, and one must NOT be introduced. A **headless / cron** operator (no interactive session to run `nimbus people search`) resolves the identity gap the same way: by setting `[user] me_person_id` in nimbus.toml — never via an environment variable. Do not paraphrase or fork the string; if it drifts from catchup's, the copy is wrong.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `packages/gateway/src/agents/standup.test.ts`:
@@ -564,7 +570,13 @@ describe("runStandup", () => {
       { db, sessionId: "s2", notify: () => {} },
     );
     expect(brief.selfPersonId).toBeNull();
-    expect(brief.gaps.some((g) => g.category === "missing_user_identity")).toBe(true);
+    const idGap = brief.gaps.find((g) => g.category === "missing_user_identity");
+    expect(idGap).toBeDefined();
+    // Remediation must name the real mechanism — the `[user] me_person_id` nimbus.toml key
+    // (NOT an env var) — and reuse catchup's shared string verbatim. This is the headless/cron
+    // operator's path: there is no NIMBUS_ME_PERSON_ID env var.
+    expect(idGap?.remediation).toContain("[user] me_person_id");
+    expect(idGap?.remediation).not.toContain("NIMBUS_ME_PERSON_ID");
   });
 
   test("emitStandupBrief fires standup.briefReady with brief + findings", async () => {
@@ -1328,6 +1340,8 @@ EOF
 > - `toPlainText`: strip `**`/`__` and single `*`/`_` emphasis; strip leading `#`+space from headings; convert `- `/`   - ` bullets to `• `; strip surrounding backticks from inline code.
 > - `markdown`: identity (return the brief unchanged).
 > - `applyFormat` dispatches on the enum.
+>
+> **Network-free (I27):** all three transforms are pure string rewrites — `--format slack` produces Slack mrkdwn *text*, it does NOT call the Slack API. The `installFetchSpy` test below asserts `fetchSpy.callCount === 0` across the `toSlackMrkdwn` / `toPlainText` render paths, proving no auto-egress (I27 / Non-Negotiable #5 — no Slack API call). No additional test is needed for this acceptance; the fetch-spy already covers it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2032,7 +2046,7 @@ Assembles everything the authenticated user did across all connected services in
 | `--format <fmt>` | `markdown` | Output rendering: `markdown` (copy-paste), `slack` (Slack mrkdwn string — no Slack API), `plain` (markers stripped). |
 | `--json` | off | Emit the structured `StandupBrief` JSON instead of rendered text. |
 
-Unresolved identity prints a `[user] me_person_id` remediation gap (non-zero exit on an empty index).
+Unresolved identity prints a `[user] me_person_id` remediation gap (non-zero exit on an empty index). The remediation reuses catchup's shared message verbatim ("Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id."); a headless / cron operator (no interactive session) resolves the gap by setting `[user] me_person_id` in nimbus.toml — there is no `NIMBUS_ME_PERSON_ID` environment variable.
 ```
 
 - [ ] **Step 3: Mark the roadmap row delivered**
@@ -2116,7 +2130,7 @@ This task makes no code changes; it gates the branch. Confirm `git status` is cl
 - Optional static read-only guard (`check-nimbus-invariants.ts`) → Task 9. ✅
 - E2E scenario (sections, 24h boundary, zero-HITL source check, `briefReady`, no secret leak) → Task 9. ✅
 - Acceptance #3 fetch-spy "zero network calls" → Task 8 (transform tests + dispatcher test) + Task 9 (no-secret-leak). ✅
-- Acceptance #5 unresolved-identity gap / empty-index non-zero exit → Task 4 (`runStandup` gap) + `renderAgentBrief` reuse in Task 8 (`empty_index` → exit 1, inherited). ✅
+- Acceptance #5 unresolved-identity gap / empty-index non-zero exit → Task 4 (`runStandup` gap; the gap test asserts the remediation names `[user] me_person_id` and does NOT mention any env var — standup reuses catchup's verbatim shared string, and a headless/cron operator sets `[user] me_person_id` in nimbus.toml, never an env var) + `renderAgentBrief` reuse in Task 8 (`empty_index` → exit 1, inherited). ✅
 - Docs (CHANGELOG, cli-reference, roadmap line 460) → Task 10. ✅
 - Preflight + coverage floor (Acceptance #8) → Task 11. ✅
 - No new invariant / no migration (Acceptance #7) → Global Constraints + Task 9 guard (not numbered). ✅

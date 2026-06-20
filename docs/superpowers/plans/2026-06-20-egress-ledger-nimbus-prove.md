@@ -4,15 +4,15 @@
 
 **Goal:** Ship an always-on, append-only, BLAKE3-chained **egress ledger** that records every outbound action the gateway authorizes — co-located with the executor HITL gate — plus the `nimbus prove` / `nimbus egress` read-and-verify surface, so a user can *see and verify* that zero outbound calls occurred for a local-only query.
 
-**Architecture:** A new `packages/gateway/src/egress/` directory owns the write path (`appendEgressEntry`), the pure record/redaction helpers, and the verify/prove/prune logic. The single write hook lives inside `ToolExecutor.gate()` (the existing connector-dispatch chokepoint), injected via a DI'd `EgressSink` so the executor stays import-light and test-isolated. A V44 SQLite migration adds the `egress_ledger` table. A new `egress.*` IPC namespace + `nimbus prove`/`nimbus egress` CLI expose read/verify/prove/prune. A new invariant **I30** (with static complement **D23**) makes the executor chokepoint *total* so a `0`-row window is a sound negative, not a hopeful one.
+**Architecture:** A new `packages/gateway/src/egress/` directory owns the write path (`appendEgressEntry`), the pure record/redaction helpers, and the verify/prove/prune logic. The single write hook lives inside `ToolExecutor.gate()` (the existing connector-dispatch chokepoint), injected via a DI'd `EgressSink` so the executor stays import-light and test-isolated. A V44 SQLite migration adds the `egress_ledger` table. A new `egress.*` IPC namespace + `nimbus prove`/`nimbus egress` CLI expose read/verify/prove/prune. A new invariant **I29** (with static complement **D22**) makes the executor chokepoint *total* so a `0`-row window is a sound negative, not a hopeful one.
 
 **Tech Stack:** Bun v1.2+, TypeScript 6.x strict (NO `any`), Biome, bun:sqlite, bun test.
 
 ## Global Constraints
 
-- **Numbering — migration is V44; invariant is a reconcile-at-execution label.** Migrations are CONTIGUOUS (never skip a version): the schema head is V43 and egress is built before the Watch Daemon, so this migration is **V44** (`simpleStep(43, 44, …)`). The invariant is labelled **I30** / static complement **D23** as a proposed-sequence placeholder; at execution set it to the real next-free invariant above the current ceiling (I27 today — **I28** if the MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` is still unmerged when this lands, else the next free) and the next-free D, applied consistently across the I-row in `SECURITY-INVARIANTS.md`/`CLAUDE.md`/`GEMINI.md`, the `security-invariants.test.ts` test, and the `check-nimbus-invariants.ts` D check, in one pass.
+- **Numbering — invariant **I29**, static complement **D22**, migration **V44**.** Egress is the FIRST family idea to be built, so its invariant takes the next free slot above **I28** — which is reserved for the MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` — giving egress **I29** and the next-free D, **D22**. The Watch Daemon is now the SECOND family idea to land, so the Watch Daemon takes I30 / D23. Migrations are CONTIGUOUS (never skip a version): the schema head is **V43**, so this migration is **V44** (`simpleStep(43, 44, …)`). The I-row label is applied consistently across `SECURITY-INVARIANTS.md`/`CLAUDE.md`/`GEMINI.md`, the `security-invariants.test.ts` test, and the `check-nimbus-invariants.ts` D check, in one pass. Reconcile at merge: if another family invariant lands first, rebase the invariant/D up by one (migrations stay contiguous regardless).
 - **Per-file coverage floor ≥80% line+branch**, CI-Linux-authoritative (`audit:coverage-floor`). Baseline is `{}` (every non-flagship file must clear the floor). DI every seam (db, clock/`now`, vault, notify) so each new `egress/*`, `ipc/egress-rpc.ts`, and CLI file is unit-testable without integration scaffolding.
-- **Invariant triple rule (one commit).** The I30 wiring + the `SECURITY-INVARIANTS.md` row + the `CLAUDE.md`/`GEMINI.md` row + the `security-invariants.test.ts` test + the `scripts/structure-audit/check-nimbus-invariants.ts` D23 static check ALL land in the SAME commit (Task 7). Retiring an invariant = delete the row, never leave drift.
+- **Invariant triple rule (one commit).** The I29 wiring + the `SECURITY-INVARIANTS.md` row + the `CLAUDE.md`/`GEMINI.md` row + the `security-invariants.test.ts` test + the `scripts/structure-audit/check-nimbus-invariants.ts` D22 static check ALL land in the SAME commit (Task 7). Retiring an invariant = delete the row, never leave drift.
 - **Branch hygiene.** Never commit on `main`/`develop`. Before any commit: `git switch -c dev/asafgolombek/egress-ledger-nimbus-prove` and verify `git rev-parse --abbrev-ref HEAD`.
 - **No `any`** — `unknown` for external/raw data; strict mode is non-negotiable.
 - **Biome** is the linter/formatter; run `bunx biome check packages scripts` (NOT `bun run lint`, which 0-files in worktrees).
@@ -54,15 +54,15 @@
 | `packages/gateway/src/index/migrations/runner.ts` | Import `EGRESS_LEDGER_V44_SQL`; append `simpleStep(43, 44, …)`. (BACKFILL_LABELS is NOT touched — it intentionally stops at v37.) |
 | `packages/gateway/src/index/local-index.ts` | Bump `CURRENT_SCHEMA_VERSION` 43 → 44. |
 | `packages/gateway/src/engine/executor.ts` | Add `egress.prune` to `HITL_REQUIRED_BACKING`; add optional `egressSink?: EgressSink` constructor param; append-before-dispatch wiring in `gate()`/`execute()`. |
-| `packages/gateway/src/security-invariants.test.ts` | Add the `describe("I30 — …")` block (3 sub-tests + D23-presence test). |
-| `scripts/structure-audit/check-nimbus-invariants.ts` | Add `checkEgressChokepointConfinement` (D23) + wire it into `run()`. |
-| `scripts/structure-audit/check-nimbus-invariants.test.ts` | Add a D23 unit test (planted `connectors.dispatch` outside executor fails). |
+| `packages/gateway/src/security-invariants.test.ts` | Add the `describe("I29 — …")` block (3 sub-tests + D22-presence test). |
+| `scripts/structure-audit/check-nimbus-invariants.ts` | Add `checkEgressChokepointConfinement` (D22) + wire it into `run()`. |
+| `scripts/structure-audit/check-nimbus-invariants.test.ts` | Add a D22 unit test (planted `connectors.dispatch` outside executor fails). |
 | `packages/gateway/src/ipc/server/dispatchers.ts` | Add `tryDispatchEgressRpc` + wire it into the phase-4 chain. |
 | `packages/gateway/src/ipc/server/options.ts` | Add `egressRpcCtx?: EgressRpcCtx` to the server options. |
 | `packages/ui/src-tauri/src/gateway_bridge.rs` | Add the 4 read-only `egress.*` verbs to `ALLOWED_METHODS` (bump count 95 → 99); NOT `egress.prune`. |
 | `packages/cli/src/index.ts` | Register `prove: runProve` + `egress: runEgress` in `COMMAND_HANDLERS`. |
-| `docs/SECURITY-INVARIANTS.md` | Add the I30 row (triple rule, Task 7). |
-| `CLAUDE.md` + `GEMINI.md` | Add the I30 bullet + the D23 line in the "Static complement" paragraph (triple rule, Task 7). |
+| `docs/SECURITY-INVARIANTS.md` | Add the I29 row (triple rule, Task 7). |
+| `CLAUDE.md` + `GEMINI.md` | Add the I29 bullet + the D22 line in the "Static complement" paragraph (triple rule, Task 7). |
 | `docs/CHANGELOG.md` | Add the dated egress-ledger entry (Task 13). |
 
 ---
@@ -71,9 +71,9 @@
 
 **Files:** Create: (none) · Modify: (none) · Test: this task is a verification gate, not code.
 
-**Interfaces:** Produces: a documented finding that every `connectors.dispatch` call site routes through `ToolExecutor`, OR a BLOCKER if it does not. (D23 in Task 7 will switch the rule on; this proves the current tree already satisfies it.)
+**Interfaces:** Produces: a documented finding that every `connectors.dispatch` call site routes through `ToolExecutor`, OR a BLOCKER if it does not. (D22 in Task 7 will switch the rule on; this proves the current tree already satisfies it.)
 
-This is criterion 9 of the spec: the "zero egress" completeness claim is only sound if every outbound action routes through the ledgered `ToolExecutor`. If a `connectors.dispatch` call exists outside `engine/executor.ts`, the ledger is incomplete and the slice does not ship until that bypass is removed. Verify it BEFORE enforcing D23.
+This is criterion 9 of the spec: the "zero egress" completeness claim is only sound if every outbound action routes through the ledgered `ToolExecutor`. If a `connectors.dispatch` call exists outside `engine/executor.ts`, the ledger is incomplete and the slice does not ship until that bypass is removed. Verify it BEFORE enforcing D22.
 
 - [ ] **Step 1: Enumerate every `connectors.dispatch` reference.** Run:
   ```
@@ -93,7 +93,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 - [ ] **Step 3: Document the finding.** Confirm in the PR description / commit body that:
   - The only `connectors.dispatch` (property access on the executor-injected dispatcher) is `executor.ts:303`.
   - All other `.dispatch(action)` occurrences are interface declarations, `ConnectorDispatcher` implementations, or the `connectors/`-internal decorator delegation (`inner.dispatch`) — none of which is an outbound-action call that bypasses `ToolExecutor.gate()`.
-  - **Therefore the executor chokepoint is already total**, and D23 (forbidding `connectors.dispatch` outside `engine/executor.ts`) can be switched on in Task 7 without first removing any bypass.
+  - **Therefore the executor chokepoint is already total**, and D22 (forbidding `connectors.dispatch` outside `engine/executor.ts`) can be switched on in Task 7 without first removing any bypass.
 - [ ] **Step 4: BLOCKER check.** If Step 1 returns more than one hit, or if any `.dispatch(action)` in Step 2 is a *call on the executor's dispatcher from outside `ToolExecutor`*, STOP: the slice cannot ship until that path is routed through `ToolExecutor`. Record it as a blocker and surface it to the user before proceeding.
 
 (No commit for this task — it is a read-only acceptance gate. Its conclusion is captured in the Task 7 commit body.)
@@ -188,7 +188,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
    * raw URL with a query-string secret. `payload_summary` is `redactAuditPayload(action.payload)`
    * capped at 256 bytes. `result_status='blocked'` rows record what was STOPPED (a denied gate).
    * `source_type='prune'` is the single tombstone row class (the only sanctioned mutation continues
-   * the chain rather than leaving a silent gap). Append-only; manual prune only. See I30/D23.
+   * the chain rather than leaving a silent gap). Append-only; manual prune only. See I29/D22.
    */
   export const EGRESS_LEDGER_V44_SQL = `
   CREATE TABLE IF NOT EXISTS egress_ledger (
@@ -1001,7 +1001,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 
 ---
 
-## Task 7: Wire the sink into the executor + the I30 invariant TRIPLE (one commit)
+## Task 7: Wire the sink into the executor + the I29 invariant TRIPLE (one commit)
 
 **Files:** Modify: `packages/gateway/src/engine/executor.ts`, `packages/gateway/src/security-invariants.test.ts`, `scripts/structure-audit/check-nimbus-invariants.ts`, `scripts/structure-audit/check-nimbus-invariants.test.ts`, `docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`, `GEMINI.md` · Test: `packages/gateway/src/engine/executor.test.ts` (extend), the two test files above.
 
@@ -1036,7 +1036,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     return { consent, audit, connectors, appended };
   }
 
-  describe("I30 — egress ledger append-before-dispatch (executor wiring)", () => {
+  describe("I29 — egress ledger append-before-dispatch (executor wiring)", () => {
     test("a row is appended BEFORE connectors.dispatch is called", async () => {
       const order: string[] = [];
       const appended: EgressEntry[] = [];
@@ -1078,9 +1078,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
-  Append the I30 block to `packages/gateway/src/security-invariants.test.ts`:
+  Append the I29 block to `packages/gateway/src/security-invariants.test.ts`:
   ```ts
-  describe("I30 — egress-ledger completeness over the executor chokepoint", () => {
+  describe("I29 — egress-ledger completeness over the executor chokepoint", () => {
     test("egress.prune is in the I2 HITL frozen set", async () => {
       const { HITL_REQUIRED } = await import("./engine/executor.ts");
       expect(HITL_REQUIRED.has("egress.prune")).toBe(true);
@@ -1115,10 +1115,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
       await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
     });
 
-    test("D23 confines connectors.dispatch to executor.ts and the egress append to egress/*", async () => {
+    test("D22 confines connectors.dispatch to executor.ts and the egress append to egress/*", async () => {
       const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
-      expect(audit).toContain("D23-connectors-dispatch");
-      expect(audit).toContain("D23-egress-append");
+      expect(audit).toContain("D22-connectors-dispatch");
+      expect(audit).toContain("D22-egress-append");
     });
 
     test("the egress append symbol is NOT referenced outside egress/* and executor.ts", async () => {
@@ -1128,7 +1128,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
-  Add the D23 static-check unit test to `scripts/structure-audit/check-nimbus-invariants.test.ts` (follow the existing per-check test style — import the new function, feed a planted-violation `FileEntry[]`, assert a violation):
+  Add the D22 static-check unit test to `scripts/structure-audit/check-nimbus-invariants.test.ts` (follow the existing per-check test style — import the new function, feed a planted-violation `FileEntry[]`, assert a violation):
   ```ts
   import { describe, expect, test } from "bun:test";
   import {
@@ -1136,13 +1136,13 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     type FileEntry,
   } from "./check-nimbus-invariants.ts";
 
-  describe("D23 — egress chokepoint confinement", () => {
+  describe("D22 — egress chokepoint confinement", () => {
     test("flags connectors.dispatch outside engine/executor.ts", () => {
       const files: FileEntry[] = [
         { relPath: "packages/gateway/src/rogue/bypass.ts", contents: "await this.connectors.dispatch(action);\n" },
       ];
       const v = checkEgressChokepointConfinement(files);
-      expect(v.some((x) => x.rule === "D23-connectors-dispatch")).toBe(true);
+      expect(v.some((x) => x.rule === "D22-connectors-dispatch")).toBe(true);
     });
 
     test("allows connectors.dispatch inside engine/executor.ts", () => {
@@ -1157,7 +1157,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         { relPath: "packages/gateway/src/rogue/x.ts", contents: "appendEgressEntry(db, e);\n" },
       ];
       const v = checkEgressChokepointConfinement(files);
-      expect(v.some((x) => x.rule === "D23-egress-append")).toBe(true);
+      expect(v.some((x) => x.rule === "D22-egress-append")).toBe(true);
     });
 
     test("allows appendEgressEntry inside egress/*", () => {
@@ -1168,7 +1168,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
-- [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: FAIL (`ToolExecutor` has no 5th param / ignores the sink; `egress.prune` not in the set; `checkEgressChokepointConfinement` is not exported; the D23 rule strings are absent from `check-nimbus-invariants.ts`).
+- [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: FAIL (`ToolExecutor` has no 5th param / ignores the sink; `egress.prune` not in the set; `checkEgressChokepointConfinement` is not exported; the D22 rule strings are absent from `check-nimbus-invariants.ts`).
 - [ ] **Step 3: Implement.** In `packages/gateway/src/engine/executor.ts`:
   - Add the import (top of file, after the existing imports):
     ```ts
@@ -1208,17 +1208,21 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     ```
     (`sessionId` is already in scope from the `getAgentRequestSessionId()` call above the audit record.)
   - In `packages/gateway/src/index/local-index.ts` no change is needed here (done in Task 2).
-  - In `scripts/structure-audit/check-nimbus-invariants.ts`, add the D23 check function (after `checkForwardShareConfinement`, before the `type Mode` line):
+  - In `scripts/structure-audit/check-nimbus-invariants.ts`, add the D22 check function (after `checkForwardShareConfinement`, before the `type Mode` line):
     ```ts
-    // D23 (I30) — the executor chokepoint must be TOTAL. (a) `connectors.dispatch` (the property
-    // access on the executor-injected dispatcher) may appear ONLY in engine/executor.ts — a reference
-    // anywhere else would let an outbound action bypass the ledgered gate, making a 0-row window a
-    // false negative. (b) the egress-ledger append symbol (`appendEgressEntry`) is confined to
-    // egress/* (the write path's only home). Test files are exempt.
-    const D23_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
-    const D23_DISPATCH_RE = /\bconnectors\.dispatch\b/;
-    const D23_APPEND_RE = /\bappendEgressEntry\b/;
-    const D23_APPEND_ALLOWED_PREFIX = "packages/gateway/src/egress/";
+    // D22 (I29) — the executor chokepoint must be TOTAL. (a) EVERY `connectors.dispatch` call site in
+    // the gateway (the property access on the executor-injected dispatcher) may appear ONLY in
+    // engine/executor.ts — with NO wrapper/allowlist exemption: there is no escape hatch, no
+    // "approved wrapper" carve-out, no per-file allow entry. Any future shortcut or custom-wrapper
+    // bypass (a new dispatcher decorator, a helper that re-exposes dispatch, a "just this once" call)
+    // therefore fails this preflight static check immediately, because a reference anywhere else would
+    // let an outbound action bypass the ledgered gate, making a 0-row window a false negative.
+    // (b) the egress-ledger append symbol (`appendEgressEntry`) is confined to egress/* (the write
+    // path's only home). Test files are exempt.
+    const D22_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
+    const D22_DISPATCH_RE = /\bconnectors\.dispatch\b/;
+    const D22_APPEND_RE = /\bappendEgressEntry\b/;
+    const D22_APPEND_ALLOWED_PREFIX = "packages/gateway/src/egress/";
 
     export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
       const out: Violation[] = [];
@@ -1228,17 +1232,17 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         const originalLines = f.contents.split("\n");
         for (let i = 0; i < strippedLines.length; i++) {
           const line = strippedLines[i] ?? "";
-          if (D23_DISPATCH_RE.test(line) && f.relPath !== D23_DISPATCH_ALLOWED) {
+          if (D22_DISPATCH_RE.test(line) && f.relPath !== D22_DISPATCH_ALLOWED) {
             out.push({
-              rule: "D23-connectors-dispatch",
+              rule: "D22-connectors-dispatch",
               file: f.relPath,
               line: i + 1,
               snippet: (originalLines[i] ?? "").trim(),
             });
           }
-          if (D23_APPEND_RE.test(line) && !f.relPath.startsWith(D23_APPEND_ALLOWED_PREFIX)) {
+          if (D22_APPEND_RE.test(line) && !f.relPath.startsWith(D22_APPEND_ALLOWED_PREFIX)) {
             out.push({
-              rule: "D23-egress-append",
+              rule: "D22-egress-append",
               file: f.relPath,
               line: i + 1,
               snippet: (originalLines[i] ?? "").trim(),
@@ -1255,18 +1259,18 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         const v = checkEgressChokepointConfinement(files);
         for (const e of v) {
           console.error(
-            `::error file=${e.file},line=${e.line}::D23 egress chokepoint breach (connectors.dispatch outside executor.ts, or appendEgressEntry outside egress/) — bypasses I30: ${e.snippet}`,
+            `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, or appendEgressEntry outside egress/) — bypasses I29: ${e.snippet}`,
           );
         }
         if (v.length > 0) exit = 1;
       }
     ```
-  - In `docs/SECURITY-INVARIANTS.md`, add the I30 row (mirror the I27 entry's structure: wiring + test + static complement). Place it after the I27 row.
-  - In `CLAUDE.md` AND `GEMINI.md`, add the I30 bullet to the invariant list (after the I27 bullet) and append `, I30 (D23)` to the "Static complement" paragraph's enumerated rule list:
+  - In `docs/SECURITY-INVARIANTS.md`, add the I29 row (mirror the I27 entry's structure: wiring + test + static complement). Place it after the I27 row.
+  - In `CLAUDE.md` AND `GEMINI.md`, add the I29 bullet to the invariant list (after the I27 bullet) and append `, I29 (D22)` to the "Static complement" paragraph's enumerated rule list:
     ```
-    - **I30** — egress-ledger completeness over the executor chokepoint: every gated action appends one `egress_ledger` row before `connectors.dispatch` (blocked row on deny; append failure aborts); BLAKE3-chained, append-only, timing-safe verify (I10); the sole mutation is HITL-gated `egress.prune` (continuing tombstone). D23 confines `connectors.dispatch` to `executor.ts` + the append to `egress/*` · `engine/executor.ts`, `egress/*`
+    - **I29** — egress-ledger completeness over the executor chokepoint: every gated action appends one `egress_ledger` row before `connectors.dispatch` (blocked row on deny; append failure aborts); BLAKE3-chained, append-only, timing-safe verify (I10); the sole mutation is HITL-gated `egress.prune` (continuing tombstone). D22 confines EVERY `connectors.dispatch` call site to `executor.ts` (no wrapper/allowlist exemption — any custom-wrapper or shortcut bypass fails the preflight static check) + the append to `egress/*` · `engine/executor.ts`, `egress/*`
     ```
-- [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: PASS. Then run the static audit binary to confirm the live tree is clean: `bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only` — Expected: exit 0, no `D23` errors printed.
+- [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: PASS. Then run the static audit binary to confirm the live tree is clean: `bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only` — Expected: exit 0, no `D22` errors printed.
 - [ ] **Step 5: Commit** (the whole triple in one commit) —
   ```
   git add packages/gateway/src/engine/executor.ts packages/gateway/src/engine/executor.test.ts \
@@ -1274,11 +1278,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
           scripts/structure-audit/check-nimbus-invariants.ts scripts/structure-audit/check-nimbus-invariants.test.ts \
           docs/SECURITY-INVARIANTS.md CLAUDE.md GEMINI.md
   git commit -m "$(cat <<'EOF'
-  feat(egress): I30 + D23 — egress-ledger completeness over the executor chokepoint
+  feat(egress): I29 + D22 — egress-ledger completeness over the executor chokepoint
 
   Append-before-dispatch wiring in ToolExecutor.gate (blocked row on deny;
-  append failure aborts), egress.prune joins the I2 frozen set, the I30 test
-  trio, the D23 static check (connectors.dispatch confined to executor.ts;
+  append failure aborts), egress.prune joins the I2 frozen set, the I29 test
+  trio, the D22 static check (connectors.dispatch confined to executor.ts;
   appendEgressEntry confined to egress/*), and the SECURITY-INVARIANTS.md +
   CLAUDE.md + GEMINI.md rows — the invariant triple in one commit.
 
@@ -1350,6 +1354,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+  (Note: the `never returns the private key material` test is the Vault assertion for Non-Negotiable #3 — the Ed25519 seed never escapes through the return value, so it never reaches a log line or a DB column; only the detached signature + public key are surfaced.)
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-sign.test.ts` — Expected: FAIL (`./egress-sign.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-sign.ts`:
   ```ts
@@ -1785,16 +1790,18 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 
 **Files:** Create: `packages/cli/src/commands/prove.ts`, `packages/cli/src/commands/prove.test.ts` · Modify: `packages/cli/src/index.ts`
 
-**Interfaces:** Consumes (existing): `IPCClient` from `../ipc-client/index.ts`; `readGatewayState`, `getCliPlatformPaths` (the `withIpc` helper pattern from `audit.ts`). Consumes (over IPC): `egress.head`, `egress.list`, `egress.verify`, `egress.proveWindow`, `egress.prune`. Produces:
+**Interfaces:** Consumes (existing): `IPCClient` from `../ipc-client/index.ts`; `readGatewayState`, `getCliPlatformPaths` (the `withIpc` helper pattern from `audit.ts`); `parseSinceDurationToMs` from `../lib/parse-since.ts` (the shared duration grammar — reused by the prune `--older-than` form). Consumes (over IPC): `egress.head`, `egress.list`, `egress.verify`, `egress.proveWindow`, `egress.prune`. Produces:
 - `export async function runProve(args: string[]): Promise<void>`
 - `export async function runEgress(args: string[]): Promise<void>`
 - `export async function runEgressVerify(client: IPCClient): Promise<void>` (DI'd client for unit tests)
 - `export async function runEgressReport(client: IPCClient, opts: { since?: number; json: boolean; sign: boolean }): Promise<void>`
+- `export function resolvePruneBeforeTs(args: string[], now: number): number` (prune cutoff resolver — `--before <ISO|epoch>` XOR `--older-than <duration>`; `now` is DI'd for a deterministic unit test)
 
 - [ ] **Step 1: Write the failing test** — `packages/cli/src/commands/prove.test.ts` (inject a fake `IPCClient`; do NOT spawn a gateway here):
   ```ts
   import { describe, expect, test } from "bun:test";
-  import { runEgressReport, runEgressVerify } from "./prove.ts";
+  import { parseSinceDurationToMs } from "../lib/parse-since.ts";
+  import { resolvePruneBeforeTs, runEgressReport, runEgressVerify } from "./prove.ts";
 
   type Call = { method: string; params: unknown };
 
@@ -1841,12 +1848,30 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
       expect((c.calls[0]?.params as { sign?: boolean }).sign).toBe(true);
     });
   });
+
+  describe("resolvePruneBeforeTs", () => {
+    const NOW = 1_000_000_000_000;
+
+    test("--older-than 30d resolves to now - parseSinceDurationToMs('30d')", () => {
+      expect(resolvePruneBeforeTs(["--older-than", "30d"], NOW)).toBe(NOW - parseSinceDurationToMs("30d"));
+    });
+    test("--before <epoch> still works (absolute form preserved)", () => {
+      expect(resolvePruneBeforeTs(["--before", "1700"], NOW)).toBe(1700);
+    });
+    test("passing BOTH --before and --older-than is rejected", () => {
+      expect(() => resolvePruneBeforeTs(["--before", "1700", "--older-than", "30d"], NOW)).toThrow(/not both/);
+    });
+    test("neither form present is rejected", () => {
+      expect(() => resolvePruneBeforeTs([], NOW)).toThrow(/--before|--older-than/);
+    });
+  });
   ```
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/cli/src/commands/prove.test.ts` — Expected: FAIL (`./prove.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/cli/src/commands/prove.ts`:
   ```ts
   import { IPCClient } from "../ipc-client/index.ts";
   import { readGatewayState } from "../lib/gateway-process.ts";
+  import { parseSinceDurationToMs } from "../lib/parse-since.ts";
   import { getCliPlatformPaths } from "../paths.ts";
 
   type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
@@ -1886,6 +1911,36 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     const unit = m[2] as string;
     const ms = unit === "s" ? 1000 : unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000;
     return Date.now() - n * ms;
+  }
+
+  /**
+   * Resolve the prune cutoff from EITHER the absolute `--before <ISO|epoch>` form OR the relative
+   * `--older-than <dur>` form (e.g. `--older-than 30d`). The two are mutually exclusive — supplying
+   * both is an error. `--older-than` reuses the shipped `parseSinceDurationToMs` (the `nimbus audit
+   * --since` parser) so the duration grammar (`7d`/`24h`/`30m`/…) is identical across the CLI:
+   * `beforeTs = now - parseSinceDurationToMs(value)`. `--before` accepts an ISO date or an epoch-ms
+   * integer. Throws on a missing/invalid value or when neither form is present.
+   */
+  export function resolvePruneBeforeTs(args: string[], now: number): number {
+    const bi = args.indexOf("--before");
+    const oi = args.indexOf("--older-than");
+    const beforeRaw = bi >= 0 ? args[bi + 1] : undefined;
+    const olderRaw = oi >= 0 ? args[oi + 1] : undefined;
+    if (beforeRaw !== undefined && olderRaw !== undefined) {
+      throw new Error("Use either --before <ISO|epoch> or --older-than <duration>, not both.");
+    }
+    if (olderRaw !== undefined) {
+      // parseSinceDurationToMs throws on an invalid grammar (examples: 7d, 24h, 30m).
+      return now - parseSinceDurationToMs(olderRaw);
+    }
+    if (beforeRaw !== undefined) {
+      const asEpoch = /^\d+$/.test(beforeRaw) ? Number.parseInt(beforeRaw, 10) : Date.parse(beforeRaw);
+      if (Number.isNaN(asEpoch)) {
+        throw new Error(`Invalid --before value: ${beforeRaw} (expected an ISO date or epoch ms)`);
+      }
+      return asEpoch;
+    }
+    throw new Error("Usage: nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)");
   }
 
   export async function runEgressVerify(client: IPCClient): Promise<void> {
@@ -1948,7 +2003,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   }
 
-  /** `nimbus egress [verify] [--since <dur>] [--json] [--sign]` — the report / offline verify. */
+  /**
+   * `nimbus egress [verify] [--since <dur>] [--json] [--sign]` — the report / offline verify.
+   * `nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)` — HITL-gated retention
+   * (e.g. `nimbus egress prune --older-than 30d`); the two cutoff forms are mutually exclusive.
+   */
   export async function runEgress(args: string[]): Promise<void> {
     const [sub, ...rest] = args;
     if (sub === "verify") {
@@ -1956,15 +2015,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
       return;
     }
     if (sub === "prune") {
-      const i = rest.indexOf("--before");
-      const dateStr = i >= 0 ? rest[i + 1] : undefined;
-      if (dateStr === undefined) {
-        throw new Error("Usage: nimbus egress prune --before <ISO-date>");
-      }
-      const beforeTs = Date.parse(dateStr);
-      if (Number.isNaN(beforeTs)) {
-        throw new Error(`Invalid --before date: ${dateStr}`);
-      }
+      // Accepts either the absolute `--before <ISO|epoch>` or the relative `--older-than <duration>`
+      // (e.g. `nimbus egress prune --older-than 30d`); the two are mutually exclusive.
+      const beforeTs = resolvePruneBeforeTs(rest, Date.now());
       await withIpc(async (c) => {
         const out = await c.call<{ approved: boolean; prunedCount: number }>("egress.prune", { beforeTs });
         console.log(
@@ -1988,7 +2041,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     prove: runProve,
     egress: runEgress,
   ```
-- [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/cli/src/commands/prove.test.ts` — Expected: PASS (3 tests). Then typecheck the CLI package: `bunx tsc --noEmit -p packages/cli/tsconfig.json` — Expected: no errors.
+- [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/cli/src/commands/prove.test.ts` — Expected: PASS (7 tests: 2 verify + 1 report + 4 `resolvePruneBeforeTs`). Then typecheck the CLI package: `bunx tsc --noEmit -p packages/cli/tsconfig.json` — Expected: no errors.
 - [ ] **Step 5: Commit** —
   ```
   git add packages/cli/src/commands/prove.ts packages/cli/src/commands/prove.test.ts packages/cli/src/index.ts
@@ -1997,6 +2050,8 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 
   prove snapshots the ledger head before/after a query and prints the diff
   (0 -> the headline negative); egress {verify,prune,--since,--json,--sign}.
+  egress prune takes --before <ISO|epoch> OR --older-than <duration> (e.g. 30d,
+  via the shared parseSinceDurationToMs grammar; mutually exclusive).
 
   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
   EOF
@@ -2016,7 +2071,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
   ### 2026-06-20 — Egress Ledger & `nimbus prove` (S1 "Local Brain")
 
   - **Egress ledger (V44 `egress_ledger`):** an always-on, append-only, BLAKE3-chained ledger of every authorized outbound action, written from `ToolExecutor.gate()` BEFORE `connectors.dispatch()` (a denied action records a `result_status='blocked'` row; an append failure aborts the action, fail-closed).
-  - **Invariant I30 + static complement D23:** the executor chokepoint is made total — `connectors.dispatch` is confined to `engine/executor.ts` and the ledger append to `egress/*`, so a `0`-row window is a sound negative. I28 reserved (MCP-server owner-sink).
+  - **Invariant I29 + static complement D22:** the executor chokepoint is made total — `connectors.dispatch` is confined to `engine/executor.ts` and the ledger append to `egress/*`, so a `0`-row window is a sound negative. I28 reserved (MCP-server owner-sink).
   - **`nimbus prove "<query>"`** shows the ledger before/after a query (`outbound egress events: 0 ✓` for a local-only query); **`nimbus egress [verify|prune|--since|--json|--sign]`** is the report / offline chain-verify / HITL-gated retention control. The 4 read verbs are renderer-exposed (I7); `egress.prune` is not.
   - Receipt signing reuses the Vault-only Ed25519 share keypair (no new Vault key; private seed never leaves the Vault). The external/auditor-grade signed export remains deferred to Phase 12.5.
   ```
@@ -2024,7 +2079,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
   ```
   bun run preflight:fast
   ```
-  Expected: PASS (types, Biome, static rules incl. D23, `audit:doc-refs`). Then the full suite for the touched subsystems:
+  Expected: PASS (types, Biome, static rules incl. D22, `audit:doc-refs`). Then the full suite for the touched subsystems:
   ```
   bun test packages/gateway/src/egress packages/gateway/src/ipc/egress-rpc.test.ts \
            packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts \
@@ -2055,14 +2110,14 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 
 **Spec coverage (acceptance criteria → task):**
 1. V44 migration applies on V43, idempotent, only new table → **Task 2** (`runner-v44.test.ts`: applies-on-V43, idempotent, table shape, indexes).
-2. Every dispatched action has a preceding row; denied → blocked row; append failure aborts → **Task 4** (append path) + **Task 7** (`gate()` wiring + the I30 trio test).
+2. Every dispatched action has a preceding row; denied → blocked row; append failure aborts → **Task 4** (append path) + **Task 7** (`gate()` wiring + the I29 trio test).
 3. `nimbus prove` prints `0` for local-only / exactly the rows for a dispatch → **Task 5** (`proveWindow`) + **Task 12** (`runProve` head-diff).
 4. `egress verify` exits 0 clean / non-zero tampered, timing-safe → **Task 5** (`verifyEgressChain` + `sha256HexEqualConstantTime`) + **Task 12** (`runEgressVerify` exit codes).
 5. No seeded credential in `payload_summary`; receipt reuses Vault key, private key never crosses IPC → **Task 3** (`redactEgressSummary` strips ghp_/sk-/Bearer) + **Task 8** (`signWindowDigest` returns only sig+pubkey, Vault test).
-6. `egress.prune` in I2 set, HITL-gated, continuing tombstone, NOT renderer-exposed → **Task 7** (`egress.prune` in `HITL_REQUIRED_BACKING` + I30 test) + **Task 6** (tombstone) + **Task 9** (approval broker) + **Task 10** (`!is_method_allowed("egress.prune")`).
-7. I30 in three places in one commit + D23 + I28 reserved → **Task 7** (wiring + SECURITY-INVARIANTS.md + CLAUDE.md/GEMINI.md + security-invariants.test.ts + D23 static check, all one commit; numbering note documents the I28 reservation).
+6. `egress.prune` in I2 set, HITL-gated, continuing tombstone, NOT renderer-exposed → **Task 7** (`egress.prune` in `HITL_REQUIRED_BACKING` + I29 test) + **Task 6** (tombstone) + **Task 9** (approval broker) + **Task 10** (`!is_method_allowed("egress.prune")`).
+7. I29 in three places in one commit + D22 + I28 reserved; D22 confines EVERY `connectors.dispatch` call site to `executor.ts` with NO wrapper/allowlist exemption (any future shortcut or custom-wrapper bypass fails the preflight static check immediately) → **Task 7** (wiring + SECURITY-INVARIANTS.md + CLAUDE.md/GEMINI.md + security-invariants.test.ts + D22 static check, all one commit; numbering note documents the I28 reservation).
 8. Every new file ≥80% floor; `preflight` green before first push → **Task 13** (coverage-floor gate + full preflight); each task's tests target the new file's arms.
-9. Pre-impl audit proves `connectors.dispatch` total before D23 is switched on → **Task 1** (enumerate + document + BLOCKER check), referenced in the Task 7 commit body.
+9. Pre-impl audit proves `connectors.dispatch` total before D22 is switched on → **Task 1** (enumerate + document + BLOCKER check), referenced in the Task 7 commit body.
 
 **Placeholder scan:** No "TBD"/"TODO"/"implement later"/"handle edge cases"/"similar to Task N". Each code step contains the actual code; each test step the actual test; each command is exact with an expected outcome. The two spots that defer to real-tree identifiers (Task 11 assemble variable names; Task 13 the exact coverage-floor command) are unavoidable boot-wiring/repo-tooling specifics, each with a Step-1 discovery command and an explicit "mirror the `shareRpcCtx` site" instruction — not unspecified logic.
 
