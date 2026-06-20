@@ -83,7 +83,7 @@ Capture the full page HTML, run a Readability-style extraction, store the cleane
 
 ### Data flow
 
-```
+```text
 [browser tab] --user clicks "Save"-->  extension service worker
   builds {url,title,snippet,selection?,extensionVersion,browserContext}
   --> POST http://127.0.0.1:<port>/v1/web/capture  (Authorization: Bearer <web_capture.bearer>)
@@ -96,7 +96,7 @@ Capture the full page HTML, run a Readability-style extraction, store the cleane
                    -> append audit entry {action: web.capture.indexed, token_fingerprint, url-host}
             <-- {ok:true, itemId} (leak-proof; never echoes the token)
   [later] nimbus search / catchup / expert  --finds-->  web:page item
-```
+```text
 
 ### IPC / CLI surface
 
@@ -114,6 +114,7 @@ Capture the full page HTML, run a Readability-style extraction, store the cleane
 7. **No `any`** — ✅ the POST body arrives as `unknown` and is narrowed with the existing `asRecord`/`stringField`/`numberField` helpers (`connectors/unknown-record.ts`); strict mode throughout.
 
 **Invariant impact:**
+
 - **Reuses I13** (`http-write-routes.ts` dispatcher + `WRITE_ROUTE_ALLOWLIST` + bearer + rate-limit + audit). Concrete edit: bump the count-integrity test in `security-invariants.test.ts` from `WRITE_ROUTE_ALLOWLIST.length === 6` to `7` and add `"POST /v1/web/capture"` to the asserted array — **in the same commit** as the route (the triple rule).
 - **Reuses I6** — the HTTP server already binds `127.0.0.1` (`http-server.ts` line 540); the extension's `host_permissions` are loopback-only. No remote caller can reach the route.
 - **Reuses I10** — bearer compared via `requireBearer` → `constantTimeStringEqual`.

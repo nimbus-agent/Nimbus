@@ -76,15 +76,19 @@
 This is criterion 9 of the spec: the "zero egress" completeness claim is only sound if every outbound action routes through the ledgered `ToolExecutor`. If a `connectors.dispatch` call exists outside `engine/executor.ts`, the ledger is incomplete and the slice does not ship until that bypass is removed. Verify it BEFORE enforcing D22.
 
 - [ ] **Step 1: Enumerate every `connectors.dispatch` reference.** Run:
-  ```
+
+  ```sh
   bun run --bun rg -n "connectors\.dispatch" packages/gateway/src --glob '!*.test.ts'
   ```
+
   (or use the Grep tool with pattern `connectors\.dispatch`). **Expected:** exactly ONE hit:
   - `packages/gateway/src/engine/executor.ts:303 — const result = await this.connectors.dispatch(action);`
 - [ ] **Step 2: Enumerate every `.dispatch(action` reference to confirm no OTHER caller invokes a dispatcher.** Run:
-  ```
+
+  ```sh
   bun run --bun rg -n "\.dispatch\(action" packages/gateway/src --glob '!*.test.ts'
   ```
+
   **Expected:** these hits, and confirm each is a *method definition* or an in-`connectors/` decorator delegation, NOT a `ToolExecutor`-bypassing call:
   - `connectors/registry.ts` — `async dispatch(action: PlannedAction)` — the `ConnectorDispatcher` *implementation* (definition, not a call).
   - `connectors/warehouse-write-dispatch.ts` — `dispatch(action: …)` (definition) + `inner.dispatch(action)` (the decorator delegating to the wrapped dispatcher, INSIDE the `connectors/` layer — this is `inner.dispatch`, NOT `connectors.dispatch`).
@@ -107,6 +111,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Interfaces:** Produces: `export const EGRESS_LEDGER_V44_SQL: string` (the CREATE TABLE + indexes). Consumes (existing): `runIndexedSchemaMigrations(db, targetVersion)`, `CURRENT_SCHEMA_VERSION`, `GENESIS_HASH`.
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/index/migrations/runner-v44.test.ts`:
+
   ```ts
   import { Database } from "bun:sqlite";
   import { describe, expect, test } from "bun:test";
@@ -177,8 +182,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/index/migrations/runner-v44.test.ts` — Expected: FAIL (`CURRENT_SCHEMA_VERSION` is 43, so the `>= 44` assertion fails; `runIndexedSchemaMigrations(db, 44)` throws "Unsupported local index schema version" because no 43→44 step exists yet).
 - [ ] **Step 3: Implement.** Create `packages/gateway/src/index/egress-ledger-v44-sql.ts`:
+
   ```ts
   /**
    * V44 (S1 "Local Brain" — provable-locality primitive) — `egress_ledger`: an always-on,
@@ -209,22 +216,30 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
   CREATE INDEX IF NOT EXISTS idx_egress_ledger_dest ON egress_ledger(destination);
   `;
   ```
+
   In `packages/gateway/src/index/migrations/runner.ts`, add the import next to the other SQL-constant imports (near line 46, where `SHARE_INBOX_V43_SQL` is imported):
+
   ```ts
   import { EGRESS_LEDGER_V44_SQL } from "../egress-ledger-v44-sql.ts";
   ```
+
   Append to the `INDEXED_SCHEMA_STEPS` array immediately after the `simpleStep(42, 43, …)` line (~line 405):
+
   ```ts
   simpleStep(43, 44, "egress_ledger (provable-locality primitive v44)", EGRESS_LEDGER_V44_SQL),
   ```
+
   (V44 is the next-free contiguous schema version — head is V43. Migrations are never skipped. Do NOT add a `BACKFILL_LABELS` entry: that array stops at v37 and the runner test pins the missing-label throw to v38.)
   In `packages/gateway/src/index/local-index.ts`, bump the version (line ~269):
+
   ```ts
   export const CURRENT_SCHEMA_VERSION = 44;
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/index/migrations/runner-v44.test.ts` — Expected: PASS (4 tests). Then run the existing migration-runner pin to confirm no regression: `bun test packages/gateway/src/index/migrations/runner.test.ts` — Expected: PASS.
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git switch -c dev/asafgolombek/egress-ledger-nimbus-prove
   git add packages/gateway/src/index/egress-ledger-v44-sql.ts \
           packages/gateway/src/index/migrations/runner-v44.test.ts \
@@ -248,6 +263,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/egress/egress-record.ts`, `packages/gateway/src/egress/egress-record.test.ts`
 
 **Interfaces:** Consumes (existing): `serviceOf(actionType: string): string` from `engine/executor.ts`; `redactAuditPayload(payload: unknown, maxBytes?: number): string` from `audit/format-audit-payload.ts`; `PlannedAction` from `engine/types.ts`. Produces:
+
 - `export type EgressResultStatus = "authorized" | "blocked"`
 - `export type EgressHitlStatus = "approved" | "not_required" | "rejected"`
 - `export interface EgressEntry { timestamp: number; sourceType: string; sourceId: string | null; destination: string; method: string; payloadSummary: string; hitlStatus: EgressHitlStatus; resultStatus: EgressResultStatus }`
@@ -256,6 +272,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 - `export function buildEgressEntry(args: { action: PlannedAction; hitlStatus: EgressHitlStatus; resultStatus: EgressResultStatus; sessionId: string | undefined; now: number }): EgressEntry`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/egress/egress-record.test.ts`:
+
   ```ts
   import { describe, expect, test } from "bun:test";
   import { buildEgressEntry, redactEgressSummary, summarizeDestination } from "./egress-record.ts";
@@ -331,8 +348,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-record.test.ts` — Expected: FAIL (`./egress-record.ts` does not exist — module resolution error).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-record.ts`:
+
   ```ts
   import { redactAuditPayload } from "../audit/format-audit-payload.ts";
   import { serviceOf } from "../engine/executor.ts";
@@ -394,9 +413,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     };
   }
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/egress/egress-record.test.ts` — Expected: PASS (8 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/egress/egress-record.ts packages/gateway/src/egress/egress-record.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): pure egress-record helpers (destination/redaction/entry builder)
@@ -416,12 +437,14 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/egress/egress-ledger.ts`, `packages/gateway/src/egress/egress-ledger.test.ts`
 
 **Interfaces:** Consumes (existing): `blake3` from `@noble/hashes/blake3.js`, `bytesToHex` from `@noble/hashes/utils.js`, `GENESIS_HASH` from `db/audit-chain.ts`, `dbRun` from `db/write.ts`. Consumes (Task 3): `EgressEntry`. Produces:
+
 - `export function computeEgressRowHash(input: { prevHash: string; timestamp: number; sourceType: string; sourceId: string | null; destination: string; method: string; resultStatus: string }): string`
 - `export function appendEgressEntry(db: Database, entry: EgressEntry): void`
 - `export interface EgressSink { append(entry: EgressEntry): void }`
 - `export function makeEgressSink(db: Database): EgressSink`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/egress/egress-ledger.test.ts`:
+
   ```ts
   import { Database } from "bun:sqlite";
   import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -506,8 +529,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-ledger.test.ts` — Expected: FAIL (`./egress-ledger.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-ledger.ts`:
+
   ```ts
   import type { Database } from "bun:sqlite";
   import { blake3 } from "@noble/hashes/blake3.js";
@@ -594,9 +619,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     };
   }
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/egress/egress-ledger.test.ts` — Expected: PASS (6 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/egress/egress-ledger.ts packages/gateway/src/egress/egress-ledger.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): appendEgressEntry + EgressSink (BLAKE3-chained, append-only)
@@ -616,6 +643,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/egress/egress-verify.ts`, `packages/gateway/src/egress/egress-verify.test.ts`
 
 **Interfaces:** Consumes (existing): `sha256HexEqualConstantTime(a, b): boolean` from `util/timing-safe-compare.ts` (I10 — works on 64-char hex, which is BLAKE3's output width); `GENESIS_HASH` from `db/audit-chain.ts`. Consumes (Task 4): `computeEgressRowHash`. Produces:
+
 - `export type EgressRow = { id: number; timestamp: number; sourceType: string; sourceId: string | null; destination: string; method: string; payloadSummary: string; hitlStatus: string; resultStatus: string; rowHash: string; prevHash: string }`
 - `export type EgressVerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string }`
 - `export function verifyEgressChain(db: Database, fromId?: number): EgressVerifyResult`
@@ -625,6 +653,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 - `export function proveWindow(db: Database, opts: { since?: number; until?: number }): { rows: EgressRow[]; completeness: EgressCompleteness; verify: EgressVerifyResult }`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/egress/egress-verify.test.ts`:
+
   ```ts
   import { Database } from "bun:sqlite";
   import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -717,8 +746,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-verify.test.ts` — Expected: FAIL (`./egress-verify.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-verify.ts`:
+
   ```ts
   import type { Database } from "bun:sqlite";
   import { GENESIS_HASH } from "../db/audit-chain.ts";
@@ -868,9 +899,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     };
   }
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/egress/egress-verify.test.ts` — Expected: PASS (9 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/egress/egress-verify.ts packages/gateway/src/egress/egress-verify.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): verify/prove/list/head read path (timing-safe chain verify)
@@ -890,9 +923,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/egress/egress-prune.ts`, `packages/gateway/src/egress/egress-prune.test.ts`
 
 **Interfaces:** Consumes (existing): `dbRun`, `dbExec` from `db/write.ts`. Consumes (Task 4): `appendEgressEntry`. Consumes (Task 5): `verifyEgressChain`. Produces:
+
 - `export function pruneEgress(db: Database, beforeTs: number, now: number): { prunedCount: number }`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/egress/egress-prune.test.ts`:
+
   ```ts
   import { Database } from "bun:sqlite";
   import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -950,8 +985,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-prune.test.ts` — Expected: FAIL (`./egress-prune.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-prune.ts`:
+
   ```ts
   import type { Database } from "bun:sqlite";
   import { dbRun } from "../db/write.ts";
@@ -983,10 +1020,12 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     return { prunedCount: matched };
   }
   ```
+
   (Note: `dbExec` is not needed here — the import list is just `dbRun`. The tombstone re-chains via `appendEgressEntry`, which reads the surviving head; after a full prune the surviving head is `GENESIS_HASH`, so the tombstone correctly chains from genesis and `verifyEgressChain` stays green.)
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/egress/egress-prune.test.ts` — Expected: PASS (3 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/egress/egress-prune.ts packages/gateway/src/egress/egress-prune.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): pruneEgress — the sole mutation, writes a continuing tombstone
@@ -1010,6 +1049,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **This is the invariant triple-rule task: wiring + docs (SECURITY-INVARIANTS.md + CLAUDE.md + GEMINI.md) + test (security-invariants.test.ts) + static check (check-nimbus-invariants.ts) ALL land here in ONE commit.**
 
 - [ ] **Step 1: Write the failing tests.** Append to `packages/gateway/src/engine/executor.test.ts` (create a focused new describe; reuse the file's existing harness style — a stub `ConsentChannel`, `AuditSink`, `ConnectorDispatcher`):
+
   ```ts
   import { describe, expect, test } from "bun:test";
   import { ToolExecutor } from "./executor.ts";
@@ -1078,7 +1118,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
   Append the I29 block to `packages/gateway/src/security-invariants.test.ts`:
+
   ```ts
   describe("I29 — egress-ledger completeness over the executor chokepoint", () => {
     test("egress.prune is in the I2 HITL frozen set", async () => {
@@ -1128,7 +1170,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
   Add the D22 static-check unit test to `scripts/structure-audit/check-nimbus-invariants.test.ts` (follow the existing per-check test style — import the new function, feed a planted-violation `FileEntry[]`, assert a violation):
+
   ```ts
   import { describe, expect, test } from "bun:test";
   import {
@@ -1168,20 +1212,26 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: FAIL (`ToolExecutor` has no 5th param / ignores the sink; `egress.prune` not in the set; `checkEgressChokepointConfinement` is not exported; the D22 rule strings are absent from `check-nimbus-invariants.ts`).
 - [ ] **Step 3: Implement.** In `packages/gateway/src/engine/executor.ts`:
   - Add the import (top of file, after the existing imports):
+
     ```ts
     import type { EgressSink } from "../egress/egress-ledger.ts";
     import { buildEgressEntry } from "../egress/egress-record.ts";
     ```
+
   - Add `"egress.prune"` to `HITL_REQUIRED_BACKING` (immediately after `"share.publish",` near line 124):
+
     ```ts
       // S1 "Local Brain" — egress-ledger retention edit (the sole ledger mutation) is owner-HITL
       // gated (I2 frozen set); the egress.prune RPC consults the owner consent broker before pruning.
       "egress.prune",
     ```
+
   - Add the optional 5th constructor param (after `delegation?`):
+
     ```ts
     export class ToolExecutor {
       constructor(
@@ -1192,7 +1242,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         private readonly egressSink?: EgressSink,
       ) {}
     ```
+
   - In `gate()`, immediately AFTER the `this.audit.recordAudit({...})` call and BEFORE the `if (hitlStatus === "rejected")` return, append the egress row (so every gate decision is ledgered, regardless of caller — per Open Question 1's "write from gate()" resolution). The append throwing propagates out of `gate()` (hence out of `execute()`), aborting before any dispatch:
+
     ```ts
         if (this.egressSink !== undefined) {
           this.egressSink.append(
@@ -1206,9 +1258,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
           );
         }
     ```
+
     (`sessionId` is already in scope from the `getAgentRequestSessionId()` call above the audit record.)
   - In `packages/gateway/src/index/local-index.ts` no change is needed here (done in Task 2).
   - In `scripts/structure-audit/check-nimbus-invariants.ts`, add the D22 check function (after `checkForwardShareConfinement`, before the `type Mode` line):
+
     ```ts
     // D22 (I29) — the executor chokepoint must be TOTAL. (a) EVERY `connectors.dispatch` call site in
     // the gateway (the property access on the executor-injected dispatcher) may appear ONLY in
@@ -1253,7 +1307,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
       return out;
     }
     ```
+
     Wire it into `run()` alongside the other `binary-only`/`all` checks (after the `checkForwardShareConfinement` block, before the `db-run` block):
+
     ```ts
       if (mode === "binary-only" || mode === "all") {
         const v = checkEgressChokepointConfinement(files);
@@ -1265,14 +1321,18 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         if (v.length > 0) exit = 1;
       }
     ```
+
   - In `docs/SECURITY-INVARIANTS.md`, add the I29 row (mirror the I27 entry's structure: wiring + test + static complement). Place it after the I27 row.
   - In `CLAUDE.md` AND `GEMINI.md`, add the I29 bullet to the invariant list (after the I27 bullet) and append `, I29 (D22)` to the "Static complement" paragraph's enumerated rule list:
-    ```
+
+    ```sh
     - **I29** — egress-ledger completeness over the executor chokepoint: every gated action appends one `egress_ledger` row before `connectors.dispatch` (blocked row on deny; append failure aborts); BLAKE3-chained, append-only, timing-safe verify (I10); the sole mutation is HITL-gated `egress.prune` (continuing tombstone). D22 confines EVERY `connectors.dispatch` call site to `executor.ts` (no wrapper/allowlist exemption — any custom-wrapper or shortcut bypass fails the preflight static check) + the append to `egress/*` · `engine/executor.ts`, `egress/*`
     ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts` — Expected: PASS. Then run the static audit binary to confirm the live tree is clean: `bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only` — Expected: exit 0, no `D22` errors printed.
 - [ ] **Step 5: Commit** (the whole triple in one commit) —
-  ```
+
+  ```sh
   git add packages/gateway/src/engine/executor.ts packages/gateway/src/engine/executor.test.ts \
           packages/gateway/src/security-invariants.test.ts \
           scripts/structure-audit/check-nimbus-invariants.ts scripts/structure-audit/check-nimbus-invariants.test.ts \
@@ -1303,10 +1363,12 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/egress/egress-sign.ts`, `packages/gateway/src/egress/egress-sign.test.ts`
 
 **Interfaces:** Consumes (existing): `ensureShareKeypair(vault): Promise<{ privkeyB64; pubkeyB64 }>` from `share/share-keypair.ts`; `decodeBase64`, `encodeBase64` from `@nimbus-dev/sdk`; `nacl` from `tweetnacl`; `NimbusVault` from `vault/nimbus-vault.ts`. Produces:
+
 - `export async function signWindowDigest(vault: NimbusVault, digest: string): Promise<{ sigB64: string; pubkeyB64: string }>`
 - `export function digestEgressWindow(rows: readonly { rowHash: string }[]): string`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/egress/egress-sign.test.ts`:
+
   ```ts
   import { describe, expect, test } from "bun:test";
   import { decodeBase64 } from "@nimbus-dev/sdk";
@@ -1354,9 +1416,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
   (Note: the `never returns the private key material` test is the Vault assertion for Non-Negotiable #3 — the Ed25519 seed never escapes through the return value, so it never reaches a log line or a DB column; only the detached signature + public key are surfaced.)
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/egress/egress-sign.test.ts` — Expected: FAIL (`./egress-sign.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/egress/egress-sign.ts`:
+
   ```ts
   import { blake3 } from "@noble/hashes/blake3.js";
   import { bytesToHex } from "@noble/hashes/utils.js";
@@ -1388,9 +1452,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     return { sigB64: encodeBase64(sig), pubkeyB64 };
   }
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/egress/egress-sign.test.ts` — Expected: PASS (3 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/egress/egress-sign.ts packages/gateway/src/egress/egress-sign.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): signWindowDigest — local receipt via the Vault-only share keypair
@@ -1410,11 +1476,13 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/gateway/src/ipc/egress-rpc.ts`, `packages/gateway/src/ipc/egress-rpc.test.ts`
 
 **Interfaces:** Consumes (existing): `dispatchByMethod`, `RpcMissOrHit` from `ipc/_lib/dispatch-by-method.ts`; `Database` from `bun:sqlite`; `NimbusVault`. Consumes (Task 5): `verifyEgressChain`, `listEgress`, `egressHead`, `proveWindow`. Consumes (Task 6): `pruneEgress`. Consumes (Task 8): `signWindowDigest`, `digestEgressWindow`. Produces:
+
 - `export interface EgressRpcCtx { db: Database; vault: NimbusVault; now: () => number; requestPruneApproval: (beforeTs: number) => Promise<boolean> }`
 - `export class EgressRpcError extends Error { rpcCode: number }`
 - `export async function dispatchEgressRpc(method, params, ctx): Promise<RpcMissOrHit>`
 
 - [ ] **Step 1: Write the failing test** — `packages/gateway/src/ipc/egress-rpc.test.ts`:
+
   ```ts
   import { Database } from "bun:sqlite";
   import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -1495,8 +1563,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/ipc/egress-rpc.test.ts` — Expected: FAIL (`./egress-rpc.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/gateway/src/ipc/egress-rpc.ts`:
+
   ```ts
   import type { Database } from "bun:sqlite";
   import { digestEgressWindow, signWindowDigest } from "../egress/egress-sign.ts";
@@ -1595,9 +1665,11 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   }
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/ipc/egress-rpc.test.ts` — Expected: PASS (8 tests).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/ipc/egress-rpc.ts packages/gateway/src/ipc/egress-rpc.test.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): egress.* IPC handler (list/verify/head/proveWindow/prune)
@@ -1619,6 +1691,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Interfaces:** Consumes (Task 9): `dispatchEgressRpc`, `EgressRpcError`, `EgressRpcCtx`. Produces: `tryDispatchEgressRpc(ctx, method, params): Promise<unknown>` (mirrors `tryDispatchShareRpc`).
 
 - [ ] **Step 1: Write the failing test.** Add to `packages/gateway/src/ipc/server/dispatchers.test.ts` (follow the existing `tryDispatchShareRpc` test style — `makeCtx` with the new `egressRpcCtx`):
+
   ```ts
   describe("tryDispatchEgressRpc", () => {
     test("skips a non-egress method", async () => {
@@ -1645,7 +1718,9 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
   Add the Tauri assertions to `packages/ui/src-tauri/src/gateway_bridge.rs` (in the test module, alongside the existing share/audit asserts; update the count assertion):
+
   ```rust
   assert!(is_method_allowed("egress.head"));
   assert!(is_method_allowed("egress.list"));
@@ -1653,19 +1728,25 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
   assert!(is_method_allowed("egress.proveWindow"));
   assert!(!is_method_allowed("egress.prune"));
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/gateway/src/ipc/server/dispatchers.test.ts` — Expected: FAIL (`tryDispatchEgressRpc` is not exported; `egressRpcCtx` is not on the options type). (The Rust test fails on `cargo test` — see Step 4.)
 - [ ] **Step 3: Implement.**
   - In `packages/gateway/src/ipc/server/options.ts`, add the import + field (near the other RPC-ctx fields like `shareRpcCtx`):
+
     ```ts
     import type { EgressRpcCtx } from "../egress-rpc.ts";
     // ... inside the options interface:
     egressRpcCtx?: EgressRpcCtx;
     ```
+
   - In `packages/gateway/src/ipc/server/dispatchers.ts`, add the import (alongside `dispatchShareRpc`):
+
     ```ts
     import { dispatchEgressRpc, EgressRpcError } from "../egress-rpc.ts";
     ```
+
     Add the `try*` function (mirror `tryDispatchShareRpc`, ~line 802):
+
     ```ts
     export async function tryDispatchEgressRpc(
       ctx: ServerCtx,
@@ -1685,12 +1766,16 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
       return phase4RpcSkipped;
     }
     ```
+
     Wire it into the phase-4 chain immediately before `tryDispatchAdminRpc` (~line 893, where `tryDispatchShareRpc` is called):
+
     ```ts
       const egressOutcome = await tryDispatchEgressRpc(ctx, method, params);
       if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
     ```
+
   - In `packages/ui/src-tauri/src/gateway_bridge.rs`, insert the 4 read verbs into `ALLOWED_METHODS` in alphabetical order (they sort after `"diag.snapshot"` and before `"engine.askStream"`):
+
     ```rust
         "diag.snapshot",
         "egress.head",
@@ -1699,13 +1784,17 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
         "egress.verify",
         "engine.askStream",
     ```
+
     Bump the count assertion from `95` to `99`:
+
     ```rust
             assert_eq!(ALLOWED_METHODS.len(), 99);
     ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/gateway/src/ipc/server/dispatchers.test.ts` — Expected: PASS. Then the Rust allowlist test: `cargo test --manifest-path packages/ui/src-tauri/Cargo.toml allowlist` — Expected: PASS (count is 99, alphabetized, `egress.prune` absent). (If `cargo` is unavailable locally, the CI cross-platform job covers it; verify the array is alphabetized and `egress.prune` is NOT present by inspection.)
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/ipc/server/dispatchers.ts packages/gateway/src/ipc/server/options.ts \
           packages/gateway/src/ipc/server/dispatchers.test.ts packages/ui/src-tauri/src/gateway_bridge.rs
   git commit -m "$(cat <<'EOF'
@@ -1728,12 +1817,15 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Interfaces:** Consumes (Task 4): `makeEgressSink`. Consumes (Task 9): `EgressRpcCtx`. Produces: a `ToolExecutor` constructed with the egress sink; an `egressRpcCtx` passed into the IPC server options.
 
 - [ ] **Step 1: Find the wiring sites.** Run:
-  ```
+
+  ```sh
   bun run --bun rg -n "new ToolExecutor\(" packages/gateway/src
   bun run --bun rg -n "shareRpcCtx:" packages/gateway/src/platform/assemble.ts
   ```
+
   **Expected:** the `new ToolExecutor(...)` construction site(s) and the `shareRpcCtx:` option assignment (the model to mirror for `egressRpcCtx:`).
 - [ ] **Step 2: Write/extend the failing test.** If `platform/assemble.ts` has a companion test that asserts the share ctx is wired, add an analogous assertion that `egressRpcCtx` is present and that the constructed `ToolExecutor` received a sink. If no such test exists, mark this task verified by the Task 12 e2e (an `egress.head` call over a real gateway must return `count: 0`, which only works if `egressRpcCtx` is wired). Prefer adding a minimal unit assertion:
+
   ```ts
   // in the nearest assemble/server-options test:
   test("egressRpcCtx is wired into the IPC server options", () => {
@@ -1742,20 +1834,26 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     expect(opts.egressRpcCtx?.db).toBeDefined();
   });
   ```
+
   (Use the assemble/options test harness already present in the repo; if none, rely on Task 12.)
 - [ ] **Step 3: Implement.** In `packages/gateway/src/platform/assemble.ts`:
   - Import the sink + ctx builders:
+
     ```ts
     import { makeEgressSink } from "../egress/egress-ledger.ts";
     import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
     ```
+
   - At the `ToolExecutor` construction site, pass the sink as the 5th argument (the db is the LocalIndex DB already in scope at assemble time):
+
     ```ts
     const egressSink = makeEgressSink(localIndex.getDatabase());
     const executor = new ToolExecutor(consentChannel, auditSink, dispatcher, delegationDep, egressSink);
     ```
+
     (Match the exact identifiers used at the real construction site found in Step 1 — `consentChannel`/`auditSink`/`dispatcher`/`delegationDep` are placeholders for the local variable names already present there.)
   - Build the `egressRpcCtx` and assign it into the IPC server options (mirror the `shareRpcCtx:` assignment), reusing the same owner-consent broker the share gate uses for `requestApproval` so prune is fail-closed:
+
     ```ts
     const egressRpcCtx: EgressRpcCtx = {
       db: localIndex.getDatabase(),
@@ -1768,10 +1866,12 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     };
     ipcOpts.egressRpcCtx = egressRpcCtx;
     ```
+
     (Use the actual owner-consent broker identifier present in assemble — the same one wired as `createShare`'s `requestApproval` per D21. If the broker's method signature differs, adapt the call to return a `Promise<boolean>`.)
 - [ ] **Step 4: Run it to verify it passes** — Run the nearest assemble/options test, e.g. `bun test packages/gateway/src/platform/assemble.test.ts` (or the file found in Step 1) — Expected: PASS. Then a full typecheck of the package: `bun run --cwd packages/gateway typecheck` (or `bunx tsc --noEmit -p packages/gateway/tsconfig.json`) — Expected: no errors.
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/gateway/src/platform/assemble.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): boot wiring — executor egress sink + egressRpcCtx in assemble
@@ -1791,6 +1891,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Files:** Create: `packages/cli/src/commands/prove.ts`, `packages/cli/src/commands/prove.test.ts` · Modify: `packages/cli/src/index.ts`
 
 **Interfaces:** Consumes (existing): `IPCClient` from `../ipc-client/index.ts`; `readGatewayState`, `getCliPlatformPaths` (the `withIpc` helper pattern from `audit.ts`); `parseSinceDurationToMs` from `../lib/parse-since.ts` (the shared duration grammar — reused by the prune `--older-than` form). Consumes (over IPC): `egress.head`, `egress.list`, `egress.verify`, `egress.proveWindow`, `egress.prune`. Produces:
+
 - `export async function runProve(args: string[]): Promise<void>`
 - `export async function runEgress(args: string[]): Promise<void>`
 - `export async function runEgressVerify(client: IPCClient): Promise<void>` (DI'd client for unit tests)
@@ -1798,6 +1899,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 - `export function resolvePruneBeforeTs(args: string[], now: number): number` (prune cutoff resolver — `--before <ISO|epoch>` XOR `--older-than <duration>`; `now` is DI'd for a deterministic unit test)
 
 - [ ] **Step 1: Write the failing test** — `packages/cli/src/commands/prove.test.ts` (inject a fake `IPCClient`; do NOT spawn a gateway here):
+
   ```ts
   import { describe, expect, test } from "bun:test";
   import { parseSinceDurationToMs } from "../lib/parse-since.ts";
@@ -1866,8 +1968,10 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     });
   });
   ```
+
 - [ ] **Step 2: Run it to verify it fails** — Run: `bun test packages/cli/src/commands/prove.test.ts` — Expected: FAIL (`./prove.ts` does not exist).
 - [ ] **Step 3: Implement** — `packages/cli/src/commands/prove.ts`:
+
   ```ts
   import { IPCClient } from "../ipc-client/index.ts";
   import { readGatewayState } from "../lib/gateway-process.ts";
@@ -2034,16 +2138,20 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
     await withIpc((c) => runEgressReport(c, { since, json, sign: signFlag }));
   }
   ```
+
   Register in `packages/cli/src/index.ts` — add the imports (near `runShare`) and the two handler entries (in `COMMAND_HANDLERS`, after `share: runShare,`):
+
   ```ts
   import { runEgress, runProve } from "./commands/prove.ts";
   // ... in COMMAND_HANDLERS:
     prove: runProve,
     egress: runEgress,
   ```
+
 - [ ] **Step 4: Run it to verify it passes** — Run: `bun test packages/cli/src/commands/prove.test.ts` — Expected: PASS (7 tests: 2 verify + 1 report + 4 `resolvePruneBeforeTs`). Then typecheck the CLI package: `bunx tsc --noEmit -p packages/cli/tsconfig.json` — Expected: no errors.
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add packages/cli/src/commands/prove.ts packages/cli/src/commands/prove.test.ts packages/cli/src/index.ts
   git commit -m "$(cat <<'EOF'
   feat(egress): nimbus prove + nimbus egress CLI (report / verify / prune)
@@ -2067,6 +2175,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 **Interfaces:** (none — documentation + verification only)
 
 - [ ] **Step 1: Add the CHANGELOG entry.** Prepend a dated entry under the current unreleased/most-recent section of `docs/CHANGELOG.md` (match the file's existing date-heading + bullet format):
+
   ```markdown
   ### 2026-06-20 — Egress Ledger & `nimbus prove` (S1 "Local Brain")
 
@@ -2075,26 +2184,34 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
   - **`nimbus prove "<query>"`** shows the ledger before/after a query (`outbound egress events: 0 ✓` for a local-only query); **`nimbus egress [verify|prune|--since|--json|--sign]`** is the report / offline chain-verify / HITL-gated retention control. The 4 read verbs are renderer-exposed (I7); `egress.prune` is not.
   - Receipt signing reuses the Vault-only Ed25519 share keypair (no new Vault key; private seed never leaves the Vault). The external/auditor-grade signed export remains deferred to Phase 12.5.
   ```
+
 - [ ] **Step 2: Run the full per-file coverage floor + preflight.** Run:
-  ```
+
+  ```sh
   bun run preflight:fast
   ```
+
   Expected: PASS (types, Biome, static rules incl. D22, `audit:doc-refs`). Then the full suite for the touched subsystems:
-  ```
+
+  ```sh
   bun test packages/gateway/src/egress packages/gateway/src/ipc/egress-rpc.test.ts \
            packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts \
            packages/gateway/src/index/migrations/runner-v44.test.ts packages/cli/src/commands/prove.test.ts \
            scripts/structure-audit/check-nimbus-invariants.test.ts
   ```
+
   Expected: all PASS.
 - [ ] **Step 3: Verify the coverage floor (CI-Linux-authoritative).** Run the repo's coverage-floor gate (e.g. `bun run audit:coverage-floor` or the documented `build-lcov.sh` + `check.ts` flow) and confirm every new `egress/*`, `ipc/egress-rpc.ts`, and `cli/.../prove.ts` file clears ≥80% line+branch. If any file is below, add the missing-arm unit tests in its `*.test.ts` before proceeding. Expected: no `below_floor` violations for the new files.
 - [ ] **Step 4: Full preflight.** Run:
-  ```
+
+  ```sh
   bun run preflight
   ```
+
   Expected: GREEN. Fix any failure locally before considering the slice done (do not push red).
 - [ ] **Step 5: Commit** —
-  ```
+
+  ```sh
   git add docs/CHANGELOG.md
   git commit -m "$(cat <<'EOF'
   docs(egress): CHANGELOG — Egress Ledger & nimbus prove (S1 Local Brain)
@@ -2109,6 +2226,7 @@ This is criterion 9 of the spec: the "zero egress" completeness claim is only so
 ## Self-review (writing-plans)
 
 **Spec coverage (acceptance criteria → task):**
+
 1. V44 migration applies on V43, idempotent, only new table → **Task 2** (`runner-v44.test.ts`: applies-on-V43, idempotent, table shape, indexes).
 2. Every dispatched action has a preceding row; denied → blocked row; append failure aborts → **Task 4** (append path) + **Task 7** (`gate()` wiring + the I29 trio test).
 3. `nimbus prove` prints `0` for local-only / exactly the rows for a dispatch → **Task 5** (`proveWindow`) + **Task 12** (`runProve` head-diff).

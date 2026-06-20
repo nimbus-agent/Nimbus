@@ -38,17 +38,23 @@ This is a **packaging + lockdown profile**, not a feature: it composes the alrea
 ## Approaches considered
 
 ### Approach A — Reuse the `isConnectorAllowed` (I22) seam with a stricter predicate; no new invariant
+
 Compose air-gap into the existing policy allowlist: when `[air_gap].strict`, wrap `isConnectorAllowed` so it additionally returns `false` for every cloud connector. Plus set `enforceAirGap=true` on the LLM router + auto-update + embeddings + skip federation.
+
 - **Pro:** smallest diff; the filter seam is already enforced in both the mesh dispatcher and the sync scheduler, so cloud sync is already prevented through it.
 - **Con (fatal):** I22's `isConnectorAllowed` is a *tool-visibility / sync-registration* filter, not a *spawn* gate. A cloud connector can still be spawned on demand via `ensureXRunning()` paths, and the predicate defaulting to permit-all means a future refactor that bypasses the dispatcher would silently re-open egress. No structural test asserts "no cloud child process spawns in strict mode." For a defense/healthcare claim, "we filter the tools" is not strong enough — the guarantee must be at the spawn boundary, fail-closed, and test-pinned.
 
 ### Approach B — Boot-time hard rejection at mesh build + fail-loud config validation, with a new invariant I32 (recommended)
+
 Add a strict-mode gate **at the connector mesh** that (1) refuses to spawn any cloud connector (the predicate is evaluated before any child process), and (2) at boot, if any cloud connector is *configured* (has connector config/credentials) while strict mode is on, the gateway **aborts startup with a clear error** rather than starting degraded. Wire `enforceAirGap=true` through the LLM registry, auto-update, and embeddings, and skip the `LanServer` start. Pin the spawn-rejection as new invariant **I32** (production wiring + docs row + `security-invariants.test.ts` + static complement), reusing the *same injected predicate seam* as A so the diff stays small.
+
 - **Pro:** structural + fail-closed + fail-loud; the guarantee lives at the spawn boundary and is regression-locked by a test and a static audit; reuses the existing predicate injection point (no new plumbing through the mesh).
 - **Con:** one new invariant to carry (I32) and a fail-loud boot path that must be cross-platform.
 
 ### Approach C — Separate build artifact (compile cloud connectors out)
+
 Produce a distinct `nimbus-airgapped` binary where cloud connector spawn modules are tree-shaken out at build time.
+
 - **Pro:** strongest possible guarantee (the code literally isn't present).
 - **Con:** violates **Platform equality** spirit by forking the distribution into a second binary to maintain across 3 OSes; large packaging/CI change; can't be toggled or audited at runtime; the grounding constraint says "config-only, no new feature code / second binary." Over-engineered for the threat model — a runtime fail-closed gate with a static audit gives ~equivalent assurance at a fraction of the surface.
 
@@ -74,7 +80,7 @@ Produce a distinct `nimbus-airgapped` binary where cloud connector spawn modules
 
 ### Data flow
 
-```
+```text
 boot (assemble.ts)
   └─ load [air_gap] → strict?
        ├─ no  → unchanged behavior (default false; zero impact on existing installs)
@@ -90,7 +96,7 @@ runtime
   └─ LLM task → router selects ollama/llamacpp only (no remote provider survives the air-gap skip)
   └─ agent asks for a cloud tool → tool absent from dispatcher (filtered) AND spawn guard would throw (I32)
   └─ sync scheduler → cloud connector never registered (assemble.ts:414)
-```
+```text
 
 ### IPC / CLI surface
 
@@ -112,6 +118,7 @@ Per the grounding constraint (*config-only; no new CLI flags or IPC methods*), t
 7. **No `any`** — config parse uses the existing `parseBool` helper (returns `boolean | undefined`); connector classification is over the typed `ConnectorServiceId` union; external data stays `unknown`. No `any`.
 
 **Invariant impact.**
+
 - **Reuses I22** seam (`isConnectorAllowed` injection) for the dispatcher + sync filter — no change to the I22 gate itself.
 - **Reuses I6** (LAN loopback default) — strict mode goes further: no LAN bind at all.
 - **New invariant I32** — *"In `[air_gap] strict` mode, no cloud-connector MCP child process is spawned: the mesh spawn path rejects every `isCloudConnectorService(id)` before a child process is created, and boot aborts fail-loud if a cloud connector is configured. Only `LOCAL_ONLY_CONNECTOR_SERVICES` (+ the built-in filesystem server) may run."* Wiring: `connectors/lazy-mesh/mesh.ts` (`assertConnectorSpawnable`). Test: `security-invariants.test.ts`. Static complement **D25**: `scripts/structure-audit/check-nimbus-invariants.ts` (assert the spawn helpers route through the guard; assert no spawn helper bypasses it). **I28 is reserved** for the unmerged MCP-server owner-sink (`dev/asafgolombek/phase7-mcp-gateway-server`); this profile claims **I32** to avoid the collision.

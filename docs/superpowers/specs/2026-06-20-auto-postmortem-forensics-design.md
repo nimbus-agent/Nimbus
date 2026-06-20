@@ -4,6 +4,7 @@
 **Status:** Design — pending user review
 **Roadmap home:** Near-Term Spine **S4 Autonomous Agent** (SRE core; the post-incident synthesis half of `incident-brief`). Lands as a Phase 10 ("The Autonomous Agent") deliverable; composes with the shipped DORA MTTR layer (Phase 5 T4) and the shipped Share signing chokepoint (Phase 6 Slice 8).
 **Scope:**
+
 - New built-in agent: `packages/gateway/src/agents/postmortem.ts` (+ sub-agent helpers under `packages/gateway/src/agents/_lib/`).
 - Brief type added to `packages/gateway/src/agents/_lib/findings.ts` + the `AnyBrief` union in `emit-brief.ts`.
 - New IPC handler in the agents RPC surface (`packages/gateway/src/ipc/agents-rpc.ts`) — method `agents.postmortem`.
@@ -30,6 +31,7 @@ The output is always a **local draft**. Nothing leaves the machine until the own
 **Roadmap home:** `docs/roadmap.md` Phase 10 ("The Autonomous Agent") lists `nimbus incident-brief` and "Post-mortem generation" as deliverables; `docs/superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md` folds these into spine **S4** ("Watch → learn → act loop, proactive SRE automation, `incident-brief`; fold in the On-Call Copilot").
 
 **Not already shipped (verified in-tree):**
+
 - The agents directory `packages/gateway/src/agents/` holds 8 agents (catchup, conflicts, expert, ghost, huddle, impact, janitor, preflight) — **no `postmortem.ts` and no incident-brief agent.** Confirmed by globbing `packages/gateway/src/agents/_lib/*.ts` and reading `impact.ts`.
 - `packages/gateway/test/e2e/scenarios/incident-correlation-indexed.e2e.test.ts` exists but only proves PagerDuty incidents are *indexed* as `item.type='incident'` — there is **no timeline assembly, no signing, no postmortem synthesis**.
 - The PagerDuty `incident` item shape is live (`connectors/pagerduty-sync.ts` `buildPagerdutyMetadata()` line 59: `status`, `opened_at_ms`, `pagerduty_service_id`, `severity`, `urgency`).
@@ -43,17 +45,23 @@ So: **the inputs and the signing/HITL machinery all exist; the synthesis agent d
 ## Approaches considered
 
 ### Approach A — Pure agent, **no migration**: assemble + sign on-demand, persist nothing new
+
 The postmortem agent reads the index, fans out sub-agents, builds the timeline + draft, and returns it as a `briefReady` notification. If the owner wants it durable/shareable, they pipe the draft through the **existing** `share.create` path (kind `transcript`) — which already signs, persists to `share_records` (V41), and audits. No V44, no new tables.
+
 - **Pro:** Zero schema change; smallest possible surface; the signed artifact lives in the already-audited `share_records` ledger; the agent stays a pure read-only view (matches every other agent, which persist nothing).
 - **Con:** The *unsigned* draft is ephemeral — re-running re-assembles from scratch. A "point-in-time" historical re-open (`--at`) re-derives rather than reads a snapshot. The signed artifact is a generic share row, not queryable as "the postmortem for incident X".
 
 ### Approach B — Dedicated `incident_postmortem_v44` table: persist the signed draft + approval trail
+
 A V44 migration adds `incident_postmortem` (incident_id, content_json, signed_at, signer_pubkey, signature_b64, approval audit link, optional pushed_to_url). The agent writes the signed draft here; the share-gate push links back via `contentHash`.
+
 - **Pro:** `nimbus incident show X` is idempotent + fast on re-open; the postmortem is a first-class, queryable, append-only record keyed by incident; the approval trail is co-located.
 - **Con:** A second persistence path for signed content that *duplicates* what `share_records` already does; risks two sources of truth for "the signed postmortem"; more code (migration + store + tests) for a v1 nobody has asked to query yet.
 
 ### Approach C — Reuse DORA's correlation engine wholesale; postmortem is a thin formatter
+
 Lean entirely on `metrics/dora.ts` — call `selectResolvedIncidents` + the deploy/PR correlation that `changeFailureRate` already does, and just render it as Markdown.
+
 - **Pro:** Maximum reuse; almost no new logic.
 - **Con:** DORA's correlation is *aggregate-statistical* (a time-window attribution for a ratio), not *per-incident forensic* (one incident's exact deploy→PR→commit→CI→Slack chain). The window heuristic that's fine for a CFR ratio is too coarse for a single postmortem's "which deploy caused this". Forcing the forensic view through the stats engine couples two different altitudes and would distort DORA. **Rejected** as primary; we *call* `mttr()` for a footnote only.
 
@@ -84,6 +92,7 @@ Lead reasoning: every shipped agent in `packages/gateway/src/agents/` is a **pur
 - `emitPostmortemBrief(input, ctx)` — uses the shared `emitBriefWithSynthesis` (`agents/_lib/emit-brief.ts`) unchanged: builds the brief, runs `synthesize` (deterministic Markdown ground truth + optional LLM narrative polish, same as every agent), emits `agents.postmortem.briefReady` / `.briefError`. **The deterministic Markdown is the ground truth; the LLM rewrite is decorative** (matches the `synthesize.ts` contract).
 
 **2. Brief type — `packages/gateway/src/agents/_lib/findings.ts`** (extend)
+
 ```ts
 export type TimelineEvent = {
   eventType: "alert" | "deploy" | "pr_merge" | "commit" | "ci_run" | "war_room";
@@ -100,20 +109,23 @@ export type PostmortemBrief = AgentBriefBase & {
   actionItems: string[];
   mttrContext: { medianSeconds: number | null; sample: number } | null;
 };
-```
+```text
+
 Add `PostmortemBrief` to the `AnyBrief` union in `emit-brief.ts` and to `synthesize.ts`/`render.ts` (one Markdown renderer arm). No `any` anywhere; LLM-returned narrative is typed `unknown` and validated before use.
 
 **3. IPC — `packages/gateway/src/ipc/agents-rpc.ts`** (extend; follow `nimbus-ipc` + `nimbus-agent-patterns`)
+
 - New method `agents.postmortem` — params `{ incidentId: string; atMs?: number; commitRange?: { from: string; to: string } }`, returns `{ sessionId }` immediately; the brief arrives via the `agents.postmortem.briefReady` notification (the fire-and-forget shape every agent uses). Method is **read-only**, so it is Tauri-allowlist-eligible alongside the other `agents.*` read methods (per `nimbus-tauri-allowlist`); it never reaches an RCE-class surface.
 
 **4. CLI — `packages/cli/src/commands/incident.ts`** (new; mirror `commands/impact.ts`)
+
 - `nimbus incident show <incident-id> [--at <iso8601>] [--commit-range <from>..<to>] [--json]` → calls `agents.postmortem`, waits for `briefReady`, prints the Markdown (or the JSON brief with `--json`).
 - **`--commit-range <from>..<to>` (manual timeline anchor):** when automatic deploy→PR/merge-commit correlation in `subChangeChain` fails (sparse or missing deploy↔change-chain links), the user can manually anchor the timeline to an explicit commit range. The agent then scopes `subChangeChain` to exactly those commits/PRs instead of inferring the shipping change — a **degrade-to-manual** path. The override only *constrains* which change-chain items are considered; it never *fabricates* a causal link. Absent the flag and absent automatic correlation, the postmortem still degrades to a gap note (never guesses causality).
 - **Sharing is a separate, explicit step** (no auto-egress): the printed draft tells the user to run `nimbus share create --session <id>` to sign + publish through the I27 gate. We do NOT add an outbound flag to `incident show` — keeping assembly (read-only) and emit (HITL-gated) cleanly separated.
 
 ### Data flow
 
-```
+```text
 nimbus incident show INC-123
         │ JSON-RPC agents.postmortem { incidentId:"INC-123" }
         ▼
@@ -129,7 +141,8 @@ notify agents.postmortem.briefReady { sessionId, brief:<md>, findings:<typed> } 
 [ owner reviews the draft locally ]
         ▼  optional, explicit:
 nimbus share create --session <id>   → share-gate.createShare()  ← I27: redact → HITL share.publish → sign → share_records → audit
-```
+```text
+
 Every byte of input is local. The only egress path is the *unchanged* I27 share gate, behind owner HITL.
 
 ### Security — explicit check against the 7 Non-Negotiables
@@ -143,12 +156,14 @@ Every byte of input is local. The only egress path is the *unchanged* I27 share 
 7. **No `any`** ✅ — `PostmortemBrief`, `TimelineEvent`, and sub-agent results are fully typed; LLM-generated narrative is typed `unknown` and validated before rendering.
 
 **Invariant impact (reuse-only, NO new invariant):**
+
 - **I2 / I4** (HITL frozen set; `hitlStatus` set only by the gate) — reused unchanged via the `share.publish` action when the draft is shared. Assembly itself adds no new HITL action.
 - **I11** (tool-output envelope) — if a sub-agent's `index.search` result reaches the LLM during `synthesize`, it flows through the agents' existing `wrapToolOutput` wrapping (per `nimbus-tool-output-envelope`). The MTTR footnote is rendered as an informational "pattern match", never a confident LLM prediction, honoring the "no over-confident claims" posture (cf. I11/I23 anti-pattern).
 - **I27 / D21** (single outbound-share chokepoint) — the signed/shareable postmortem is emitted **only** via the unchanged `share/share-gate.ts` `createShare()`. The design deliberately does **not** add a parallel signing-and-emit path; that is the whole point of choosing Approach A.
 - **Schema:** **No V44 in v1** (Approach A). If the Phase 10 stretch (point-in-time re-open + incident-keyed query) is later approved, it adds `incident_postmortem_v44` via `simpleStep(43, 44, …)` in `migrations/runner.ts` (next free version is 44; head is V43 = `share_inbox`, confirmed at `runner.ts:405`). **I28 is reserved** for the unmerged MCP-server owner-sink; a future invariant here (none needed) would be I29+.
 
 **Numbering note:** I28 is reserved for the MCP-server owner-sink (branch dev/asafgolombek/phase7-mcp-gateway-server). The I29/D22/V44-style numbers here follow the *proposed* global sequence in 2026-06-20-superpowers-specs-consolidated-review.md §1 — these family ideas are mutually exclusive, so the actual number is the next-free at this spec's own merge time, reconciled by build order.
+
 - **Fail-closed behavior:** a missing incident, a failed sub-agent, or an absent connector yields a **gap-annotated brief**, never a partial/false timeline and never an exception (matches `impact.ts` gap handling). The share path is independently fail-closed (deny/timeout emits nothing — existing `createShare` behavior at lines 90–105).
 
 ### Testing

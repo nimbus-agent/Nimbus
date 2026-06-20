@@ -18,11 +18,13 @@ The hard part — **"proof of what did NOT leave"** — is solved structurally, 
 ## Where this fits (roadmap home + not-already-shipped evidence)
 
 **Roadmap home.** Track 1 Spine **S1 "Local Brain"**, per `docs/superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md` lines 66–68: *"[NEW] Egress ledger as an always-on primitive + `nimbus prove` — pulled up from Phase 22. The cheap seed of the deepest moat."* The substrate rows are listed unchecked at `docs/roadmap.md`:
+
 - line 1132 — `nimbus egress` signed ledger "built on the I15 per-host network allowlist + the BLAKE3 audit chain … the North-Star M7 (Provable Locality) capability".
 - line 1028 / 1053 — `nimbus prove [<query>]` interactive proof mode showing the ledger before/after a query.
 - line 1526 — the *auditor-grade externally-anchored export* is explicitly **deferred to Phase 12.5**; in scope here is only the local ledger + read surface.
 
 **Not already shipped (verified).** There is no `egress_ledger` table and no `egress/` directory. The migration list in `packages/gateway/src/index/migrations/runner.ts` ends at `simpleStep(42, 43, …)` (V43 `share_inbox`); **V45 is the next free under the proposed global sequence** (see Numbering note below). The closest shipped neighbors are reusable but distinct:
+
 - `share/share-gate.ts` (I27) is the *outbound-share* chokepoint — it gates a user-initiated *publish*, not every machine egress. It is the architectural model to copy, not the thing to extend.
 - `db/audit-chain.ts` (V18 BLAKE3 `row_hash`/`prev_hash` over `audit_log`) already chains **HITL decisions**, but `audit_log` (`schema-sql.ts` line 45) records *consent outcomes*, not *egress events with destination + result*. The egress ledger is a sibling table with destination/result columns the audit log lacks.
 
@@ -31,18 +33,21 @@ So this is **net-new scope built on shipped primitives** — reuse the chain mat
 ## Approaches considered
 
 ### Approach A — Syscall / kernel-level egress capture (eBPF / dtrace / ETW)
+
 Intercept every outbound network syscall from the gateway and every sandboxed connector at the OS boundary, log host/port/bytes.
 
 - **Pro:** captures *truly everything*, including a connector that tries to exfiltrate outside its declared hosts; closest to a "tamper-evident wiretap."
 - **Con (fatal for now):** violates **Platform equality (Non-Negotiable 5)** unless three separate, privileged, fragile interceptors (eBPF on Linux, dtrace/Endpoint Security on macOS, ETW/WFP on Windows) are built and kept at parity — each needs elevated permissions Nimbus does not assume. It is a multi-month platform effort, not "the cheapest primitive." It also captures bytes the gateway can't attribute to a task/action (no semantic source), producing a noisy ledger that proves *traffic* but not *intent*. **Defer to Phase 8 W4 hardening**; out of scope.
 
 ### Approach B — Chokepoint ledger at the executor + connector-dispatch seam (recommended)
+
 The gateway's own architecture already funnels every *authorized outbound action* through exactly one place: `ToolExecutor.gate()` in `engine/executor.ts`. The Non-Negotiable **"MCP as connector standard" (#4)** — an architectural rule, not an invariant-backed runtime check — means the engine *never* calls a cloud API directly: every cloud touch is an MCP tool dispatch the engine plans as a `PlannedAction` and routes through `connectors.dispatch()`. So a ledger write co-located with the existing `recordAudit` call in `gate()` captures every outbound action the gateway authorizes, *with its semantic source* (action type, session, HITL status). The "completeness claim" is then a claim over a code-level chokepoint the new invariant (I30) makes total — I30 is precisely the runtime/static enforcement this architectural rule has lacked.
 
 - **Pro:** ~1 hook, platform-equal (pure TypeScript), zero new privileges, every row is semantically attributed, reuses the entire shipped chain+redactor+keypair stack. Directly delivers the `nimbus prove` "before/after a query" demo because the ledger is in the same process as the planner.
 - **Con:** the completeness guarantee is "every action the engine plans" — it does **not** catch a sandboxed connector making an *undeclared* extra HTTP call inside its own process. That gap is real and must be stated honestly in the proof output (see Security). It is bounded by the I15 sandbox host-allowlist (already shipped) and closed fully only by Approach A later.
 
 ### Approach C — Per-connector MCP-server-side instrumentation
+
 Each first-party MCP connector self-reports its outbound calls back to the gateway over a side channel.
 
 - **Pro:** sees real connector traffic, not just planned actions.
@@ -80,6 +85,7 @@ CLI: `packages/cli/src/commands/egress.ts` + `prove.ts` (or one `prove.ts` that 
 ### IPC / CLI surface
 
 IPC namespace `egress.*` (handler `ipc/egress-rpc.ts`):
+
 - `egress.list({ since?, until?, limit? })` → rows (read-only).
 - `egress.verify()` → `{ ok, brokenAt? }`.
 - `egress.head()` → current chain head hash + count (lets the CLI snapshot before/after a query).
@@ -87,6 +93,7 @@ IPC namespace `egress.*` (handler `ipc/egress-rpc.ts`):
 - `egress.prune({ beforeTs })` → owner-HITL-gated; returns `{ prunedCount }`.
 
 CLI:
+
 - `nimbus prove "<query>"` — runs the query, shows ledger before/after (the demo surface).
 - `nimbus prove --receipt "<query>"` — same, plus a signed `outbound_egress_events: n` artifact.
 - `nimbus egress [--since <dur>] [--json] [--sign]` — the report.
@@ -112,6 +119,7 @@ CLI:
 **Invariant impact — new invariant I30** (I28 is reserved for the unmerged MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server`; under the proposed global sequence the Watch Daemon takes I29, so the egress ledger is I30):
 
 > **I30 — Egress-ledger completeness over the executor chokepoint.** Every authorized outbound action (`ToolExecutor.gate()` resolving to non-`rejected`, i.e. about to reach `connectors.dispatch()`) appends exactly one `egress_ledger` row **before** dispatch returns; a rejected/blocked action appends a `result_status='blocked'` row. No action reaches `connectors.dispatch()` without a preceding ledger append (fail-closed: an append failure aborts the action). The ledger is append-only + BLAKE3-chained; the only mutation is the HITL-gated `egress.prune`, which writes a continuing tombstone (never a silent gap). Verification compares hashes with `timingSafeCompare` (I10), never `===`. **The chokepoint's totality is itself enforced statically (D23 below): every egress that the ledger claims to cover must route through `ToolExecutor` — no call to or import of `connectors.dispatch` may exist outside `ToolExecutor`, closing the "a dispatch bypassed the gate" hole that would otherwise make a `0`-row window a false negative.**
+>
 > - **Wiring:** `engine/executor.ts` `gate()`/`execute()` (the append-before-dispatch seam) + `egress/egress-ledger.ts` (append) + `egress/egress-prune.ts` (the sole mutation).
 > - **Test:** `security-invariants.test.ts` — a `gate()`→`execute()` run with a stub dispatcher asserts a row was appended *before* dispatch was called, that a denied action still appends a `blocked` row, and that `execute()` throws (action aborted) if the append throws.
 > - **Static complement:** `scripts/structure-audit/check-nimbus-invariants.ts` (new check `D23`): (a) the egress-ledger append symbol and the `egress_ledger` table-write are confined to `egress/*`; no other file may INSERT into `egress_ledger`; `executor.ts` must reference the egress sink; **(b) `connectors.dispatch` is called/imported only from within `ToolExecutor` — any reference to `connectors.dispatch` outside `engine/executor.ts` fails the audit, making the executor chokepoint *total* (every egress provably routes through the ledgered gate, not just by convention).**

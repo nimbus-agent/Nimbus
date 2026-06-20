@@ -1,5 +1,5 @@
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import { serviceOf } from "../engine/executor.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
 
 /** Max body bytes for `payload_summary` before the redactor appends `…[truncated]`. */

@@ -26,6 +26,7 @@
 ## File Structure
 
 **Created:**
+
 - `packages/gateway/src/agents/standup.ts` — the standup agent: `runStandup` (reuses catchup sub-agents + `scoreAndGroupRecencyFirst`) and `emitStandupBrief`.
 - `packages/gateway/src/agents/standup.test.ts` — unit tests for `runStandup` recency-first ordering, identity gap, 24h window, default window.
 - `packages/cli/src/commands/standup.ts` — the CLI command: `parseStandupArgs`, `runStandupCli`, and the pure transforms `toSlackMrkdwn` / `toPlainText` / `applyFormat`.
@@ -33,6 +34,7 @@
 - `packages/gateway/test/e2e/scenarios/standup.e2e.test.ts` — in-process e2e: sections recency-ordered, 24h boundary, HITL-free source check, `standup.briefReady` notification, no secret leak.
 
 **Modified:**
+
 - `packages/gateway/src/agents/catchup.ts:201` — add `export` to `scoreItem`; export `subWindowItems` and the four involvement sub-agents so `standup.ts` reuses them by composition.
 - `packages/gateway/src/agents/_lib/findings.ts:47-58,132-140,178-191` — add `StandupBrief` type, add it to the `AgentBrief` union, add `isStandupBrief` guard.
 - `packages/gateway/src/agents/_lib/render.ts:1-17,123` — add `renderStandup`.
@@ -52,6 +54,7 @@
 **Files:** Modify: `packages/gateway/src/agents/_lib/findings.ts:47-58,132-140,178-191`
 
 **Interfaces:**
+
 - Consumes: `AgentBriefBase`, `CatchupSection` (already imported in `findings.ts` from `@nimbus-dev/sdk`).
 - Produces:
   - `type StandupBrief = AgentBriefBase & { kind: "standup"; query: { sinceMs: number }; selfPersonId: string | null; involvement: { ownedServices: string[]; activeRepos: string[]; incidentServices: string[]; collaboratorPersonIds: string[] }; sections: CatchupSection[] }`
@@ -185,6 +188,7 @@ EOF
 **Test:** `packages/gateway/src/agents/catchup-exports.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new.
 - Produces (newly exported, same bodies, just the `export` keyword):
   - `export function scoreItem(item: WindowItem, involvement: Involvement): { score: number; reasons: string[] }`
@@ -293,6 +297,7 @@ EOF
 **Test:** `packages/gateway/src/agents/_lib/render.standup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `StandupBrief` (Task 1), the existing module-private `renderCatchupItem`, `renderGaps`, `renderLatency` (all in `render.ts`).
 - Produces: `export function renderStandup(brief: StandupBrief): string` — header `# Standup — last 24h`, one `## <serviceId> (<n> items in window)` block per section in the order the sections arrive (recency-first from Task 4), items rendered by `renderCatchupItem` in the order they arrive (no re-sort, unlike `renderCatchup` which re-sorts by relevance).
 
@@ -433,6 +438,7 @@ EOF
 **Files:** Create: `packages/gateway/src/agents/standup.ts` · Test: `packages/gateway/src/agents/standup.test.ts`
 
 **Interfaces:**
+
 - Consumes (from Task 2): `subOwnedServices`, `subActiveRepos`, `subRespondedIncidents`, `subCollaborators`, `subWindowItems`, `scoreItem`, type `WindowItem`, type `Involvement`, type `SubAgentResult` from `./catchup.ts`. From `_lib`: `emitBriefWithSynthesis`, `detectEmptyIndex`, `resolveSelfPerson`, type `GitRunner`, type `SynthesizerLlm`, type `StandupBrief`, type `CatchupItem`, type `CatchupSection`, type `GapNote`. From `../engine/coordinator.ts`: `AgentCoordinator`, type `SubTask`, type `SubTaskResult`.
 - Produces:
   - `type StandupInput = { sinceMs?: number; mePersonIdOverride?: string; runGitOverride?: GitRunner; osUsernameOverride?: string }`
@@ -443,7 +449,7 @@ EOF
   - `export function emitStandupBrief(input: StandupInput, ctx: StandupContext): Promise<{ sessionId: string }>` — emits `standup.briefReady` / `standup.briefError`.
 
 > **Ordering contract:** `scoreAndGroupRecencyFirst` buckets by service like `scoreAndGroup`, but: (1) **items within a section** are sorted by `modifiedAt DESC`, score DESC tie-break; (2) **sections** are ordered by their most-recent item's `modifiedAt DESC`. This is the inverse of catchup's relevance-first ordering and is what `renderStandup` (Task 3) emits verbatim.
-
+>
 > **Identity-gap remediation (shared, no env var):** standup inherits catchup's self-person resolution path (`resolveSelfPerson`) and its remediation. When the current user cannot be resolved, `unresolvedIdentityGap()` in `standup.ts` REUSES the **exact** existing message from `packages/gateway/src/agents/catchup.ts:76` — verbatim: *"Set `[user] me_person_id` in your active profile's nimbus.toml, or run `nimbus people search <you>` to find your person id."* The real mechanism is the `[user] me_person_id` key in nimbus.toml (parsed in `packages/gateway/src/config/nimbus-toml.ts`); there is **no** `NIMBUS_ME_PERSON_ID` env var, and one must NOT be introduced. A **headless / cron** operator (no interactive session to run `nimbus people search`) resolves the identity gap the same way: by setting `[user] me_person_id` in nimbus.toml — never via an environment variable. Do not paraphrase or fork the string; if it drifts from catchup's, the copy is wrong.
 
 - [ ] **Step 1: Write the failing test**
@@ -856,6 +862,7 @@ EOF
 **Test:** `packages/gateway/src/agents/_lib/synthesize.standup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `StandupBrief` (Task 1), `renderStandup` (Task 3).
 - Produces: `synthesize(brief)` and `deterministicRender` accept a `StandupBrief`; `toolNameFor` returns `"agents.standup"`; `emitBriefWithSynthesis`'s `AnyBrief` includes `StandupBrief`.
 
@@ -1026,6 +1033,7 @@ EOF
 **Test:** `packages/gateway/src/ipc/agents-rpc.standup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `emitStandupBrief` (Task 4), `loadNimbusUserFromConfigDir` (already imported), `dispatchByMethod` (already imported), `AgentsRpcContext`, `AgentsRpcError`, `MAX_SINCE_MS` (module const), `MAX_SERVICE_LEN` (unused here — standup has no service filter).
 - Produces:
   - `function requireStandupParams(params: unknown): { sinceMs?: number }`
@@ -1223,6 +1231,7 @@ EOF
 **Test:** `packages/cli/src/types/agents.standup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CatchupSection`, `GapNote` (already imported into `agents.ts` from `@nimbus-dev/sdk`).
 - Produces (CLI cannot import gateway types — this is the wire-shape mirror):
   - `export type StandupBrief = { kind: "standup"; agentVersion: 1; generatedAt: number; latencyMs: number; gaps: GapNote[]; query: { sinceMs: number }; selfPersonId: string | null; involvement: { ownedServices: string[]; activeRepos: string[]; incidentServices: string[]; collaboratorPersonIds: string[] }; sections: CatchupSection[] }`
@@ -1325,6 +1334,7 @@ EOF
 **Files:** Create: `packages/cli/src/commands/standup.ts` · Test: `packages/cli/src/commands/standup.test.ts` · Modify: `packages/cli/src/index.ts:89`
 
 **Interfaces:**
+
 - Consumes: `IPCClient`, `awaitAgentBrief`, `renderAgentBrief`, `readGatewayState`, `registerInteractiveCliIpcHandlers`, `parseSinceDurationToMs`, `getCliPlatformPaths`, `isStandupBrief` (Task 7), type `StandupBrief` (Task 7).
 - Produces:
   - `export type StandupFormat = "markdown" | "slack" | "plain"`
@@ -1336,8 +1346,9 @@ EOF
   - `export async function runStandupCli(args: string[]): Promise<void>`
 
 > **Transform rules (pure, deterministic, no I/O):**
-> - `toSlackMrkdwn`: `**bold**` → `*bold*`; `*italic*`/`_italic_` left as `_italic_`; leading `- ` / `   - ` bullets → `• ` (preserving indentation); strip leading `#`+space heading markers but keep the heading text wrapped in `*…*` (bold). Headings: a line matching `^#{1,6}\s+(.*)$` becomes `*$1*`.
-> - `toPlainText`: strip `**`/`__` and single `*`/`_` emphasis; strip leading `#`+space from headings; convert `- `/`   - ` bullets to `• `; strip surrounding backticks from inline code.
+>
+> - `toSlackMrkdwn`: `**bold**` → `*bold*`; `*italic*`/`_italic_` left as `_italic_`; leading `-` / ` - ` bullets → `•` (preserving indentation); strip leading `#`+space heading markers but keep the heading text wrapped in `*…*` (bold). Headings: a line matching `^#{1,6}\s+(.*)$` becomes `*$1*`.
+> - `toPlainText`: strip `**`/`__` and single `*`/`_` emphasis; strip leading `#`+space from headings; convert `-`/` - ` bullets to `•`; strip surrounding backticks from inline code.
 > - `markdown`: identity (return the brief unchanged).
 > - `applyFormat` dispatches on the enum.
 >
@@ -1775,6 +1786,7 @@ EOF
 **Files:** Modify: `packages/ui/src-tauri/src/gateway_bridge.rs:66,501` · `scripts/structure-audit/check-nimbus-invariants.ts:178-219,612+` · Create: `packages/gateway/test/e2e/scenarios/standup.e2e.test.ts` · Test: `scripts/structure-audit/check-nimbus-invariants.standup.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runStandup` (Task 4), `isStandupBrief` (Task 1), `LocalIndex`, `insertPerson`; for the static guard: `FileEntry`, `Violation`, `iterateSourceFiles`/`loadFiles` patterns already in the checker.
 - Produces: `export function checkStandupReadOnlyImports(files: readonly FileEntry[]): Violation[]` — flags any `share/` or `chatops/` import inside `packages/gateway/src/agents/standup.ts`.
 
@@ -2088,6 +2100,7 @@ Run: `bun run preflight:fast` — Expected: PASS (types, Biome, static invariant
 - [ ] **Step 2: Run the touched test suites**
 
 Run, expecting PASS for each:
+
 - `bun test packages/gateway/src/agents/` (standup + findings + render + synthesize + catchup-exports)
 - `bun test packages/gateway/src/ipc/agents-rpc.standup.test.ts`
 - `bun test packages/gateway/test/e2e/scenarios/standup.e2e.test.ts`
@@ -2100,6 +2113,7 @@ Run, expecting PASS for each:
 The coverage floor is CI-Linux-authoritative. Run the floor check the way CI does:
 
 Run: `bun run audit:coverage-floor` (or the documented `build-lcov.sh` + `check.ts` sequence from the `nimbus-preflight` skill) — Expected: PASS, with **every** new file clearing **≥80% line + branch**:
+
 - `packages/gateway/src/agents/standup.ts`
 - `packages/cli/src/commands/standup.ts`
 - (the new arms in `render.ts` / `synthesize.ts` / `findings.ts` / `emit-brief.ts` / `agents-rpc.ts` / `cli/src/types/agents.ts` are covered by their `.standup.test.ts` files)
@@ -2119,6 +2133,7 @@ This task makes no code changes; it gates the branch. Confirm `git status` is cl
 ## Self-Review
 
 **1. Spec coverage** (each spec section → task):
+
 - Agent `standup.ts` (`runStandup`/`emitStandupBrief`, 24h default, recency-first, reuse catchup sub-agents) → Tasks 2 + 4. ✅
 - `StandupBrief` type + `isStandupBrief` (gateway) + `AgentBrief` union → Task 1. ✅
 - `renderStandup` → Task 3. ✅
@@ -2138,6 +2153,7 @@ This task makes no code changes; it gates the branch. Confirm `git status` is cl
 **2. Placeholder scan:** No `TBD`/`TODO`/"implement later"/"add error handling"/"similar to Task N"/"write tests for the above" remain. Every code step shows the actual code; every test step shows the actual test; every command is exact with an expected outcome. ✅
 
 **3. Type consistency:**
+
 - `StandupBrief` shape is identical in Task 1 (gateway), Task 4 (returned by `runStandup`), Task 7 (CLI mirror) — `kind: "standup"`, `query: { sinceMs }`, `selfPersonId`, `involvement` (4 string arrays), `sections: CatchupSection[]`. ✅
 - `scoreAndGroupRecencyFirst(items: WindowItem[], involvement: Involvement): CatchupSection[]` — defined in Task 4, name used consistently in Task 4's tests and referenced by `renderStandup` (Task 3) which consumes its output order. ✅
 - `runStandup(input: StandupInput, ctx: StandupContext)` / `emitStandupBrief(input, ctx)` — signatures identical across Tasks 4, 6, 9. ✅

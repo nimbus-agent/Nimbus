@@ -95,7 +95,7 @@ No new agent at all; `nimbus secops` is `nimbus ask` with a security-tuned syste
 export type SecopsFinding = { itemId: string; service: string; severity: "critical"|"high"|"medium"|"low"; title: string; ownerPersonId: string|null; modifiedAt: number; confidence: "high"|"medium"|"low" };
 export type SecopsBrief = AgentBriefBase & { kind: "secops"; query: { scope: string }; sections: { exploitableNow: SecopsFinding[]; codeHotspots: SecopsFinding[]; dependencyRisk: SecopsFinding[] } };
 export type DataengBrief = AgentBriefBase & { kind: "dataeng"; query: { scope: string }; sections: { lineageImpact: DataengFinding[]; brokenDashboards: DataengFinding[]; dataHealth: DataengFinding[] } };
-```
+```text
 
 Add `isSecopsBrief`/`isDataengBrief` type-guards in `agents/_lib/findings.ts` next to the existing `isExpertBrief` etc., and extend the `AgentBrief` union. (The guard + union extension is the established pattern; CLI re-uses it via `cli/src/types/agents.ts`.)
 
@@ -108,16 +108,18 @@ bundle  = "security"          # resolves to SECURITY_BUNDLE
 sections = ["exploitableNow", "codeHotspots", "dependencyRisk", "owners"]
 [persona.dataeng]
 bundle  = "data"
-```
+```text
 
 Persona config is **read-only metadata** (which sections to render, which bundle) — it never carries credentials and never enables a write tool.
 
 **IPC** (`packages/gateway/src/ipc/agents-rpc.ts`): register two methods in the existing `dispatchByMethod` table:
+
 - `agents.secops` → `requireSecopsParams` (validate `{ scope?: string, limit?: number }` with the same MIN/MAX trim guards already in the file) → `emitSecopsBrief`.
 - `agents.dataeng` → analogous.
 Plus `persona.list` (returns the static built-in persona registry + each bundle's present/missing connectors) — a pure read, no agent run.
 
 **CLI** (`packages/cli/src/commands/`):
+
 - `secops.ts` + `dataeng.ts` — copy the `catchup.ts` skeleton: parse args, `awaitAgentBrief(client, "secops", isSecopsBrief, …)`, `client.call("agents.secops", …)`, `renderAgentBrief`. Convenience commands `nimbus secops` / `nimbus dataeng`.
 - `persona.ts` — `nimbus persona list` (calls `persona.list`), `nimbus persona enable <name>` (writes `enabled = true` to the `[persona.<name>]` block via the existing config writer), `nimbus persona configure <name>` (opens the TOML block in `$EDITOR`).
 
@@ -125,7 +127,7 @@ Plus `persona.list` (returns the static built-in persona registry + each bundle'
 
 ### Data flow
 
-```
+```text
 nimbus secops [--scope <service|all>] [--json]
   → CLI awaitAgentBrief + client.call("agents.secops", {scope})
   → agents-rpc dispatchByMethod → emitSecopsBrief(input, ctx)
@@ -136,7 +138,7 @@ nimbus secops [--scope <service|all>] [--json]
       → synthesize(brief, {llm}) → Markdown (persona-scoped synthesis prompt)
       → ctx.notify("secops.briefReady", { sessionId, brief: markdown, findings: SecopsBrief })
   → CLI renderAgentBrief(brief, findings, json)
-```
+```text
 
 No step touches a cloud API or an MCP connector at run time — the brief is assembled purely from the local SQLite index (the index was populated earlier by the normal connector sync path). This is the same flow `expert.ts`/`catchup.ts` use.
 
@@ -160,6 +162,7 @@ No step touches a cloud API or an MCP connector at run time — the brief is ass
 7. **No `any`** — ✅ Follows the strict-typed agent pattern; external data typed as the explicit row shapes (`as Array<{…}>` after a parameterized query, exactly like `expert.ts`); type-guards return `x is SecopsBrief`.
 
 **Invariant impact:**
+
 - **No new invariant required.** Read-only personas add no gating surface. Reuse: I2/I3/I4 (untouched — no write path), I11 (`wrapToolOutput` — only relevant if a persona sub-agent ever feeds raw results to the LLM; the synthesis path already runs through `synthesize()`, which operates on the structured `Brief`, not raw tool output, so I11 is not newly engaged — but **if** a sub-agent is later given an LLM tool, `wrapToolOutput` must wrap it).
 - **Federation guard (I17) — one real check.** The new `secops`/`dataeng` `*Brief` shapes must **not** leak into a federated namespace export by accident. Security findings and warehouse/lineage data are production-adjacent and carry governance risk. **Action:** add a contract test asserting `vulnerability`/`code_issue`/`finding`/`project` and `data_model`/`dashboard`/`data_quality_test` item types fail the federated-namespace shape validator unless explicitly opted into a namespace policy — extending the existing pattern in `security-invariants.test.ts` (same shape as the roadmap's `health.*` exclusion test, line 1988). This reuses I17's leak-proof contract; it does **not** create a new invariant. **(The current invariant ceiling on `main` is `I27` — verified at `docs/SECURITY-INVARIANTS.md:3` "Current ceiling: invariants I1–I27" and `CLAUDE.md`. The `## I28 — Sub-agent tool scope enforcement` text in `docs/SECURITY-INVARIANTS.md` is the doc's hypothetical "How a new invariant is added" worked example, not a shipped invariant: `packages/gateway/src/engine/sub-agent.ts` has no `dispatchToolCall`/`scope.has(toolId)` wiring. This design adds no invariant at all. **Numbering note:** `I28` is reserved for the MCP-server owner-sink (branch `dev/asafgolombek/phase7-mcp-gateway-server`); any I29/D22/V44-style numbers cited by sibling specs follow the *proposed* global sequence in `2026-06-20-superpowers-specs-consolidated-review.md` §1 — those family ideas are mutually exclusive, so the actual number is the next-free at each spec's own merge time, reconciled by build order. This spec slots into none of that sequence: it carries no invariant/D/migration.)**
 - **Schema:** **No V44 migration.** Both personas query already-existing item types and the already-populated V40 lineage edges. Persona config lives in TOML, not the DB. Zero migration burden.

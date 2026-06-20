@@ -8,6 +8,7 @@ import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
+import { serviceOf } from "./service-of.ts";
 import type {
   ActionResult,
   AuditSink,
@@ -192,18 +193,6 @@ function auditPayload(
   extras: { hitlRejectReason?: string } | undefined,
 ): string {
   return redactAuditPayload(extras === undefined ? { action } : { action, ...extras });
-}
-
-/**
- * The connector/service prefix of an action type — the segment before the first ".", or the whole
- * type when it has no dot (e.g. "email.send" → "email"). Used to match a service-scoped delegation.
- * Exported so the no-dot arm is branch-coverable directly (the HITL gate only ever sees dotted
- * action types). Equivalent to `action.type.split(".")[0] ?? ""` but without the unreachable
- * nullish-coalesce arm (`String.prototype.split` always yields a string at index 0).
- */
-export function serviceOf(actionType: string): string {
-  const dot = actionType.indexOf(".");
-  return dot === -1 ? actionType : actionType.slice(0, dot);
 }
 
 /**

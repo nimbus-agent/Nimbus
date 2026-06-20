@@ -4,6 +4,7 @@
 **Status:** Design — pending user review
 **Roadmap home:** Phase 4 `v0.1.1` deferred batch (`docs/roadmap.md` line 460, `nimbus standup`) — surfaced as a daily-habit micro-product on the Near-Term Spine S1 (Local Brain) / S4 (Autonomous Agent surface). `nimbus weekly-review` is explicitly **deferred** (see Non-goals + Open questions).
 **Scope:** New built-in agent + CLI command composing the **already-shipped** `catchup` involvement-detection machinery. Files touched:
+
 - `packages/gateway/src/agents/standup.ts` (new)
 - `packages/gateway/src/agents/_lib/findings.ts` (extend: `StandupBrief` type + `isStandupBrief` guard)
 - `packages/gateway/src/agents/_lib/render.ts` (extend: `renderStandup`)
@@ -30,6 +31,7 @@ This is the **smallest** idea in the family set: one agent file + one CLI file +
 **Roadmap home.** `docs/roadmap.md` line 460 specifies `nimbus standup` verbatim: "assembles everything the authenticated user did across all connected services in the last 24 hours (configurable via `--since`)… Output is copy-pasteable Markdown. Scoped to the current user's identity as resolved by the people graph. `--format <markdown|slack|plain>` flag. Read-only, no HITL. Entirely local — nothing is posted anywhere without a separate explicit command." This sits in the v0.1.1 deferred batch ("engineering work only — uses existing people graph"). The `nimbus-agent-patterns` skill confirms standup is a deferred planning agent: *"Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap."*
 
 **Not already shipped — confirmed by reading source:**
+
 - `catchup` **is** shipped: agent (`packages/gateway/src/agents/catchup.ts`), IPC handler `agents.catchup` (`packages/gateway/src/ipc/agents-rpc.ts` line 285, registered in the `dispatchByMethod` map line 385), CLI (`packages/cli/src/commands/catchup.ts`, registered `catchup: runCatchupCli` in `packages/cli/src/index.ts` line 89).
 - `standup` is **not** shipped: `Glob packages/cli/src/commands/{changelog,standup}.ts` → **No files found**; no `agents.standup` key in the `agents-rpc.ts` dispatch map; no `standup` arm in `synthesize.ts` / `render.ts`; no `StandupBrief` in `findings.ts`. The sibling `nimbus changelog` (line 459) is likewise unbuilt — out of scope here.
 - **Weekly-review** appears nowhere in the codebase, roadmap, or any spec — it is net-new scope and is **deferred** (Non-goals).
@@ -39,17 +41,23 @@ This is the **smallest** idea in the family set: one agent file + one CLI file +
 ## Approaches considered
 
 ### Approach A — `--mode=standup` flag on the existing catchup agent (no new agent/type)
+
 Add a `mode` discriminator to `CatchupInput`; when `standup`, default `sinceMs` to 24h and sort by `modifiedAt DESC`. One handler, one brief type, zero new registration sites.
+
 - **Pros:** absolute minimum code; no new `StandupBrief`/SDK export/CLI mirror/type-guard fan-out (the `findings.ts` + `cli/src/types/agents.ts` + `synthesize.ts` + `render.ts` + `emit-brief.ts` octopus stays untouched).
 - **Cons:** No distinct `nimbus standup` verb (the roadmap names the command explicitly and daily-habit virality *needs* a memorable verb). Conflates two products in one brief `kind`; the `briefReady` notification name (`catchup.briefReady`) wouldn't match a `nimbus standup` CLI subscriber. Recency-first ordering is a behavioral fork inside catchup that risks regressing catchup's relevance-first ordering. Fails the "dedicated CLI command per agent" convention the other seven agents follow.
 
 ### Approach B — New thin `standup` agent that **calls `runCatchup` internally** and re-projects
+
 `runStandup` invokes the exported `runCatchup({ sinceMs: 24h })`, then transforms the returned `CatchupBrief.sections` into a flat recency-ordered `StandupBrief`. New `kind: "standup"`, new `agents.standup` handler, new CLI command + notification name, but the heavy SQL/involvement logic is reused by *call*, not by copy.
+
 - **Pros:** Distinct verb + notification + brief type (clean virality + clean CLI). Zero duplication of the five sub-agent SQL queries — it literally calls the shipped function. New `kind` keeps catchup's ordering invariant intact. Honors the per-agent-command convention.
 - **Cons:** Re-sorting catchup's already-grouped/scored sections into recency order is a lossy second pass (catchup pre-buckets per service); to truly sort the whole 24h window by `modifiedAt DESC` we'd want the raw `WindowItem[]` before grouping, which `runCatchup` does not currently return. Either accept service-grouped output (fine, arguably better for standup) or export the pre-group window items (small refactor to catchup).
 
 ### Approach C — New `standup` agent that **reuses the sub-agent functions + `scoreAndGroup` directly** (composition at the function level)
+
 `runStandup` imports the exported helpers — `scoreAndGroup`, and (newly exported) `subWindowItems`/involvement sub-agents — runs the same `AgentCoordinator` fan-out with `sinceMs = 24h`, but produces a `StandupBrief` whose sections are ordered by recency (primary) with involvement score as tie-breaker, per the grounding's scoring recommendation. New `kind`, handler, CLI, notification.
+
 - **Pros:** Full control over standup's ordering (recency-first, the roadmap's "what did I do today" framing) without forking catchup's behavior. Reuses the exact same SQL (the sub-agent functions) and `scoreAndGroup` for the tie-break score, so no SQL duplication. Distinct verb/type/notification for virality + convention.
 - **Cons:** Requires exporting `subWindowItems` (and optionally the involvement sub-agents) from `catchup.ts` — a one-line `export` each. Slightly more surface than B.
 
@@ -60,11 +68,14 @@ Add a `mode` discriminator to `CatchupInput`; when `standup`, default `sinceMs` 
 ### Architecture & components
 
 **Agent — `packages/gateway/src/agents/standup.ts` (new).**
-```
+
+```text
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;   // standup default = today
 const MAX_SINCE_MS     = 90 * 24 * 60 * 60 * 1000; // same ceiling as catchup
-```
+```text
+
 `runStandup(input, ctx)` mirrors `runCatchup` exactly:
+
 1. `detectEmptyIndex(ctx.db)` → preflight gap (reuse `_lib/gap-notes.ts`).
 2. `resolveSelfPerson(ctx.db, …)` (reuse `_lib/self-person.ts`); on `unresolved`, push the identity gap (clone `unresolvedIdentityGap`, line 70 — remediation already names `[user] me_person_id`).
 3. `AgentCoordinator` fan-out of the **same** five sub-agents, calling `subWindowItems`/involvement detectors **exported from `catchup.ts`** with `sinceMs = 24h`. (Latency: identical shape to catchup, well under the 15 s budget — the involvement detectors are unchanged 90-day aggregates; `subWindowItems` over a 24h window is *cheaper* than catchup's 3d.)
@@ -82,6 +93,7 @@ const MAX_SINCE_MS     = 90 * 24 * 60 * 60 * 1000; // same ceiling as catchup
 **IPC handler — `packages/gateway/src/ipc/agents-rpc.ts` (extend).** Add `requireStandupParams` (clone `requireCatchupParams`, line 128 — same `sinceMs` non-negative-integer-≤-MAX validation; standup has **no** `service` filter in v1, keep it lean), add `"standup"` to the `newSessionId` kind union (line 175), add `handleStandup` (clone `handleCatchup`, line 285 — including the `[user] me_person_id` override read via `loadNimbusUserFromConfigDir`), and register `"agents.standup": handleStandup` in the `dispatchByMethod` map (line 382). This handler is mounted wherever `dispatchAgentsRpc` is wired (`packages/gateway/src/ipc/server/dispatchers.ts`) — no extra boot wiring beyond the map entry.
 
 **CLI — `packages/cli/src/commands/standup.ts` (new).** Clone `catchup.ts`:
+
 - `parseStandupArgs(args)` → `{ sinceMs (default 24h), json, format }`. Reuse `parseSinceDurationToMs` (`packages/cli/src/lib/parse-since.ts`) and the `MAX_SINCE_MS` guard. New `--format <markdown|slack|plain>` (default `markdown`).
 - `awaitAgentBrief(client, "standup", isStandupBrief, …)` + `client.call("agents.standup", { sinceMs })` (reuse `agent-brief-render.ts`).
 - Output: `--json` → findings JSON (reuse `renderAgentBrief`); otherwise apply the **pure text transform** for `--format`:
@@ -95,7 +107,7 @@ const MAX_SINCE_MS     = 90 * 24 * 60 * 60 * 1000; // same ceiling as catchup
 
 ### Data flow
 
-```
+```text
 nimbus standup [--since 24h] [--format markdown|slack|plain] [--json]
    │  CLI parses args; default sinceMs = 86_400_000
    ▼
@@ -111,7 +123,7 @@ emitBriefWithSynthesis → synthesize(brief)              (deterministic Markdow
 notify("standup.briefReady", { sessionId, brief, findings })
    ▼
 CLI awaitAgentBrief → apply --format pure transform → stdout   (NO network egress)
-```
+```text
 
 Every DB read is against the local SQLite index. No connector/MCP/cloud call occurs at standup time (the index was populated by prior `connector sync`).
 
@@ -133,6 +145,7 @@ Every DB read is against the local SQLite index. No connector/MCP/cloud call occ
 7. **No `any`** — ✅ all params typed; external IPC params handled as `unknown` then narrowed by `requireStandupParams` / `isStandupBrief`, matching catchup.
 
 **Invariant impact — NO new invariant.** Standup is a pure read-only agent like `catchup`/`expert`/`impact`; the agent-patterns shape invariant (read-only, HITL-free, notifying) is the only structural rule and it is satisfied by construction. No structural defense is required, so **no I29** (and the I28 reservation for the unmerged MCP-server owner-sink is untouched). Existing invariants:
+
 - **I2/I3/I4** (HITL frozen set / `action.type` consult) — no impact; standup adds no HITL action type.
 - **I7** (Tauri allowlist) — read-only method; CLI-only in v1, optional later parallel to catchup.
 - **I11** (`wrapToolOutput`) — the `synthesize` LLM-refine path already wraps the brief via `wrapToolOutput` (synthesize.ts line 78); standup inherits it for free when an LLM is configured.

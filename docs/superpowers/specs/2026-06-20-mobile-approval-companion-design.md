@@ -4,6 +4,7 @@
 **Status:** Design — pending user review
 **Roadmap home:** Track 2 / Phase 13.5 — Mobile Companion (`docs/roadmap.md` §"Phase 13.5 — Mobile Companion", lines 1673–1722). Builds the **mobile-companion consumer layer** on top of — and strictly *consuming* — the I28 owner-sink consent re-routing seam that the unmerged MCP-gateway-server Wave 2 authors (invariant **I28**, reserved). This spec authors the use-case/transport-to-phone half (companion app + APNs wakeup + device registry); it does **not** author or complete the I28 owner-sink seam itself — that remains Wave 2's, and this design blocks on it (see "Depends on" below and Open question 1).
 **Scope:**
+
 - **New gateway subsystem** `packages/gateway/src/companion/` — device-token registry, APNs wakeup sender, encrypted-envelope builder, paired-device key store, the `companion.*` IPC namespace, and the `consent` owner-sink writer that bridges a HITL request to a paired phone.
 - **New CLI** under `packages/cli/src/commands/companion.ts` — `nimbus companion pair|list-devices|revoke-device`.
 - **Extends** `packages/gateway/src/ipc/consent.ts` (owner-sink registration — depends on I28 Wave 2), `packages/gateway/src/ipc/lan-server.ts` + `lan-rpc.ts` (pairing reuse + LAN-forbidden additions), `packages/gateway/src/platform/types.ts` (no change — reuses `NotificationService`), `nimbus.toml` (`[companion]` block).
@@ -23,12 +24,14 @@ Goal: ship a **passive phone app** that is the HITL "owner-sink" — it receives
 ## Where this fits (roadmap home + not-already-shipped evidence)
 
 **Not already shipped — verified in-tree:**
+
 - `packages/mcp-gateway-server/` **does not exist on main** (`Glob packages/mcp-gateway-server/**` → no files). I28 and its owner-sink consent re-routing are specced only on the unmerged Wave 2 branch.
 - `ConsentCoordinatorImpl` (read in full, `consent.ts`) has **no owner-sink registry**. Its only re-route axis is `clientId`: `requestConsent(clientId, …)` looks up `this.getWriter(clientId)` and `handleRespond` rejects a foreign approver (`entry?.clientId !== clientId` → `-32602 "Unknown or foreign consent request"`). There is no `attachOwner`, no role parameter, no device routing.
 - No mobile app exists anywhere in the repo (no `apps/`, no Swift/Xcode files; `Glob` for the package dir empty).
 - The roadmap section (lines 1673–1722) is **planned, unchecked** — every `[ ]` checkbox.
 
 **What this design adds vs. what it reuses:**
+
 - **Reuses (do not rebuild):** the NaCl-box pairing handshake + encrypted frame format (`ipc/lan-server.ts` `handleHandshake`/`handleEncryptedMessage`, `ipc/lan-crypto.ts` `sealBoxFrame`/`openBoxFrame`); the `PairingService` open/consume/expiry contract (`lan-server.ts` lines 10–16); constant-time pairing-code compare (`util/timing-safe-compare.ts` `constantTimeStringEqual`, I10); the Vault-derived stable-keypair pattern (`share/share-keypair.ts` `ensureShareKeypair`); the `NotificationService.show()` desktop fallback (`platform/types.ts` lines 20–22); the delegated-approval round-trip shape with fallback-to-owner (`engine/delegated-approval.ts`, I20).
 - **Depends on (blocks on Wave 2):** the I28 owner-sink consent re-routing — `ConsentCoordinator` must learn to route a HITL request to a registered owner-sink writer and accept the answer scoped by that sink, not by the originating `clientId`. This spec calls that the **owner-sink writer seam** and assumes Wave 2 lands it.
 - **Net-new here:** the off-LAN HITL *transport* (APNs wakeup sender + encrypted envelope), the device-token registry, the companion key store, the `companion.*` IPC + CLI, and the iOS client.
@@ -40,6 +43,7 @@ Goal: ship a **passive phone app** that is the HITL "owner-sink" — it receives
 ### Approach A — Phone as a paired LAN/mesh peer that registers as the owner-sink (recommended)
 
 The phone pairs exactly like a second Nimbus box (reusing `handleHandshake` `kind:"pair"` → `registerPeer` → NaCl-box session). After pairing it holds a long-lived encrypted session over the mesh. On connect it calls a new wire method `companion.attachSink`, which registers the phone as the gateway's owner-sink writer (the I28 seam). When a HITL gate fires, the gateway:
+
 1. sends an **APNs wakeup** (opaque encrypted envelope, no detail) to nudge the phone awake;
 2. the phone re-establishes / resumes its mesh session and **pulls** the consent request body over the encrypted channel;
 3. the owner taps Approve/Reject → the phone sends `companion.respondSink` over the same encrypted channel → bridges to `ConsentCoordinator.handleRespond` via the owner-sink seam.
@@ -77,6 +81,7 @@ New gateway subsystem `packages/gateway/src/companion/`:
 - `owner-sink-bridge.ts` — the glue between the I28 owner-sink seam and a paired device. Registers the phone's encrypted-session writer as the owner-sink via the Wave 2 `ConsentCoordinator` owner-sink API; on a HITL request, fires the APNs wakeup, then serves the consent-request body when the phone pulls; on `companion.respondSink`, calls the owner-sink `handleRespond` with the request scoped to **this** device + originating host.
 
 Extended files:
+
 - `ipc/consent.ts` — **(Wave 2 / I28 dependency)** gains an owner-sink writer registry + re-route. This design does not author it; it asserts the seam: `attachOwnerSink(writer)` (last-writer-wins, displaces prior), re-route of a relayed/agent-tripped HITL to the owner-sink, and `handleRespond` scoped by sink identity + `requestId` (idempotent duplicate rejection). If Wave 2 is not on main, this design is blocked (see Open questions).
 - `ipc/lan-rpc.ts` — add `companion.attachSink` and `companion.respondSink` to the **answerable** wire methods (they are the phone, an authenticated paired peer, answering the local owner's gate), and add `companion` *management* methods (`companion.pair`, `companion.listDevices`, `companion.revokeDevice`) to `FORBIDDEN_OVER_LAN` — pairing/listing/revoking are local/CLI/Tauri-only, exactly mirroring how `federation.pair`/`federation.peers` are forbidden (lines 43–45). Wire-answerable ≠ management.
 - `platform/types.ts` — **no change.** The desktop-side "you have a pending approval on your phone" toast reuses `NotificationService.show()`.
@@ -86,7 +91,7 @@ New native app `apps/nimbus-companion-ios/` (SwiftUI, iOS 17+, AGPL, **not** a B
 
 ### Data flow (HITL round-trip, happy path)
 
-```
+```text
 agent action → executor.gate() (engine/executor.ts) trips HITL
   → ConsentCoordinator.requestConsent(...)            [unchanged core]
   → I28 owner-sink seam: a phone is the registered owner-sink
@@ -98,7 +103,7 @@ agent action → executor.gate() (engine/executor.ts) trips HITL
   → owner taps Approve/Reject → companion.respondSink{requestId, approved}
       → owner-sink-bridge → ConsentCoordinator.handleRespond (owner-sink-scoped, idempotent)
       → executor.gate() resolves; hitlStatus set ONLY by the gate (I4)
-```
+```text
 
 APNs sees only `{device token, ~80-byte opaque blob}`. Brief/HITL bodies travel only over the NaCl-box mesh session — never through Apple. If the brief is large (Phase 17 assembled brief), it is always a pull, so the 4KB APNs cap is irrelevant.
 
@@ -110,12 +115,14 @@ APNs sees only `{device token, ~80-byte opaque blob}`. Brief/HITL bodies travel 
 ### IPC / CLI surface
 
 Gateway IPC (`companion.*`):
+
 - `companion.pair` → opens a 5-minute pairing window via the existing `PairingService.open(code)`; returns the 120-bit base58 code for display. **Local/Tauri/CLI only** (FORBIDDEN_OVER_LAN).
 - `companion.listDevices` → `[{ deviceId, label, lastSeen, lastMessageAt, tokenSuffix }]`. No secrets. Local only.
 - `companion.revokeDevice` → drops the device record + Vault token, sends a final `{kind:"unpaired"}` envelope, audit-logs the revocation. Local only.
 - `companion.attachSink` / `companion.respondSink` / `companion.pullRequest` → **wire-answerable** (the authenticated paired phone). Scoped to the authenticated peer session; never accept a host/device identity from the caller's params (forced from the session, mirroring the I17/R1 "force the peerId from the authenticated session" rule used by `federation.requestApproval`, lan-rpc.ts lines 59–63).
 
 CLI (`packages/cli/src/commands/companion.ts`):
+
 - `nimbus companion pair` — prints the base58 code + a 5-minute countdown (roadmap line 1702).
 - `nimbus companion list-devices` — table of paired devices, last-seen / last-message (line 1703).
 - `nimbus companion revoke-device <id>` — unpair + final notice (line 1704).
@@ -133,6 +140,7 @@ Tauri: a Companion settings panel is roadmapped (line 1706) but **deferred to th
 7. **No `any`** — all new TS uses `unknown` for the wire params (e.g. `companion.respondSink` params are `unknown` then validated, exactly as `handleRespond` does in `consent.ts` lines 56–63). **Preserved.**
 
 **Invariant impact (reuse, not new):**
+
 - **I5 / I6 (loopback bind + LAN allowlist):** unchanged. The gateway still binds `127.0.0.1` by default (I6); the phone reaches it over the **Phase 11 mesh** (user-run WireGuard/Tailscale overlay, roadmap line 1859 "no Nimbus relay"), not by exposing a new public port. `companion.*` management methods are added to `FORBIDDEN_OVER_LAN`; only the three phone-answer methods are wire-answerable.
 - **I10:** the 120-bit base58 pairing code is compared with `constantTimeStringEqual` inside the existing `PairingService.consume` path — reused verbatim.
 - **I4:** `hitlStatus` set only by the gate — the owner-sink answer flows *into* the gate, never sets status directly.
@@ -144,6 +152,7 @@ Tauri: a Companion settings panel is roadmapped (line 1706) but **deferred to th
 **Schema:** **No V44 migration.** Pairing keys → Vault; device records → Vault (small, key-value, no query needs). HITL approvals are audited through the existing `audit_chain` / `tool_call_log` the same as a CLI/Tauri approval. *Optional future:* if the audit context should record "which device approved," that is a V44 audit-enrichment migration — explicitly deferred (YAGNI; out of scope here).
 
 **Fail-closed behavior:**
+
 - No owner-sink registered / phone offline at gate time → the HITL falls back to the **local owner prompt** (the existing behavior; the gate never auto-approves), mirroring `delegated-approval.ts` `fallback_to_owner`.
 - APNs send fails → log + still serve the pull if the phone is reachable; never block the gate on APNs. The gate's own timeout governs (no new indefinite hold).
 - Revoked device → its session is dropped and its next `attachSink`/`respondSink` is rejected (unknown peer); a final encrypted `unpaired` notice is best-effort. Audit-logged.
@@ -173,6 +182,7 @@ Tauri: a Companion settings panel is roadmapped (line 1706) but **deferred to th
 ### Relay dependency (idea #6), honestly assessed
 
 A relay is **NOT a dependency** of this design for the target persona (the user approving from their own phone for their own laptop):
+
 - APNs is a *stateless wakeup* — it is not a relay; it buffers no bodies and holds no key.
 - Off-home-network reach is the **Phase 11 mesh** (the user's own WireGuard/Tailscale overlay), which the roadmap mandates be **relay-free** (lines 1426, 780, 1859). The phone reaches the laptop point-to-point, NaCl-box-encrypted.
 - A relay (idea #6) becomes relevant *only* for the enterprise case where both endpoints are behind symmetric NAT/firewalls and no user overlay exists. That is an **optional, additive** transport — a future `RelayTransport` behind the same envelope contract — and an **explicit non-goal here**. If pursued, it is a separate design and must preserve "the relay sees only an opaque encrypted blob + token" (the same bar APNs meets), or it violates the no-trusted-third-party stance.

@@ -43,18 +43,21 @@ The "learn → act" autonomy half (standing-approval *auto-execution*, watcher-t
 ## Approaches considered
 
 ### Approach A — Scheduled task *inside* the existing `SyncScheduler`
+
 Add a `scheduledWorkflows` / `watchTasks` queue to `SyncScheduler` alongside connector sync jobs, reusing its concurrency control, backoff, and `notify` callback.
 
 - **Pro:** zero new lifecycle code; one event loop to reason about; reuses rate-limiting + `SchedulerStateRepository`.
 - **Con:** conflates two very different cadences — connector sync runs every few minutes with backoff on auth/rate-limit errors; a morning briefing fires *once daily* at a user-local hour, and an incident pre-brief is *event-driven* (fires when an alert row lands). Shoehorning daily/event triggers into a minutes-granularity backoff loop muddies a load-bearing, well-tested subsystem (`scheduler.ts` is coverage-gated). High blast radius for a behavior that wants different timing semantics.
 
 ### Approach B — Separate `WatchDaemon` process (OS service)
+
 Ship the daemon as its own OS-level background process (launchd/systemd/Windows Service), separate from the Gateway.
 
 - **Pro:** survives Gateway crashes; clean separation.
 - **Con:** **violates Vault access boundaries and Platform Equality cleanly only at high cost.** The daemon must read the local index and (for proposals) reach the executor — that means either re-opening the Vault out-of-process (a second DPAPI/Keychain consumer — risky and platform-divergent) or talking to the Gateway over IPC (then it's just an external client and can't reach `executor.gate()` directly). Adds three OS-specific service installers. Over-engineered for v1.
 
 ### Approach C — Separate **in-gateway** `WatchDaemon`, sharing the clock abstraction (recommended)
+
 A new `WatchDaemon` class under `packages/gateway/src/watch/`, instantiated in `assemblePlatformServices()` (`packages/gateway/src/platform/assemble.ts:1501`) exactly like the `ExtensionAutoUpdater` runtime is today (`createAutoUpdateRuntime` / `maybeStartAutoUpdateRuntime`, `assemble.ts:913`/`:1618`). It owns its own tick loop (injected `now()` + an `AbortController`), reads the local index directly (in-process, full Vault access already available to the Gateway), and pushes via `broadcastNotification`. Proposed actions go through the **same** `executor.gate()` the rest of the engine uses.
 
 - **Pro:** copies a proven in-tree daemon pattern; one process, one Vault, no new transport, no OS service installers (Platform Equality holds trivially — pure Bun event loop + SQLite); different cadence from sync without touching `scheduler.ts`; proposals inherit I2/I3/I4 for free.
@@ -84,7 +87,7 @@ Wiring: `WatchDaemon` is constructed in `assemblePlatformServices()` (`packages/
 
 ### Data flow
 
-```
+```text
                        (in-process, full Vault, local SQLite)
   daily tick ─────────► buildMorningBriefing(db) ──► emit envelope
                           ├─ runCatchup (PRs/activity)        │
@@ -102,7 +105,7 @@ Wiring: `WatchDaemon` is constructed in `assemblePlatformServices()` (`packages/
 
   any *proposed* write ─► watch-proposal-gate (I30 provenance check)
                           └─► executor.gate(action)  ◄── I2 HITL, owner approves/declines
-```
+```text
 
 No step in this flow makes an outbound network call. Briefing/incident assembly reads only rows already synced into the local index by the existing connectors.
 
@@ -135,6 +138,7 @@ New `watch.*` RPC namespace (`packages/gateway/src/ipc/watch-rpc.ts`, dispatched
 7. **No `any`** ✅ — external inputs (`watch.config.set` params, cached JSON) typed as `unknown` and validated, mirroring `requireExpertParams` (`agents-rpc.ts:48`). Typed briefs throughout.
 
 **Invariant reuse:**
+
 - **I2 / I3 / I4** — every proposed write rides the existing `gate()`; matching dispatches the correct `action.type` (I3); `hitlStatus` is written only by the gate (I4). The daemon adds **no** new HITL action type — it reuses whatever action types its proposals already carry.
 - **I9 / I14** — V45 writes use bound params + `dbRun`/`dbExec`/`dbStmtRun`.
 - **I11** — incident/briefing sub-agent runs (via `runImpact`/`runCatchup`/`AgentCoordinator`) already wrap tool outputs in the envelope; no new LLM-facing path bypasses it.
@@ -143,12 +147,14 @@ New `watch.*` RPC namespace (`packages/gateway/src/ipc/watch-rpc.ts`, dispatched
 **Numbering note:** I28 is reserved for the MCP-server owner-sink (branch dev/asafgolombek/phase7-mcp-gateway-server). Per plans-review §1 build order: the egress-ledger is built **first**, so it takes I29 / D22 / V44. This Watch Daemon is the **second** family idea to land, so it takes **I30 / D23 / V45** (its migration lands after egress's V44 — migrations are contiguous). These numbers should be reconciled to the real next-free at this spec's own merge time, per build order.
 
 **New invariant — I30 (proposal taint barrier).** *Note: **I28 is reserved** (not yet merged) for the MCP-server owner-sink on branch `dev/asafgolombek/phase7-mcp-gateway-server` — a different concern from this design's proposal-taint barrier. The egress-ledger (built first) takes I29; to avoid colliding with both that and the reserved I28, this design claims **I30**. (If the build order shifts, re-confirm the next free number before wiring.)*
+
 - **Statement:** A watch-daemon-originated proposed action must be tagged with the provenance of the data that triggered it. A proposal whose triggering input derives from attacker-controllable content (cloud-indexed item text, a federated answer, a user-supplied template) is `untrusted`; an `untrusted` proposal may **never** be presented as pre-approved or auto-executable — it is downgraded to a standard owner HITL prompt (fail-closed). Only `trusted`-provenance findings (the daemon's own local metric series, the user's explicit config) may, in a *future* slice, ride a standing approval.
 - **Why now:** this slice does not yet ship auto-execute, but it *does* ship the daemon that decides what to propose. Establishing I30 now means the act-half slice inherits a wired, tested taint barrier rather than retrofitting one — and it closes the obvious prompt-injection vector (a malicious indexed Slack message that nudges the daemon to "propose deleting X").
 - **Wiring site:** `packages/gateway/src/watch/watch-proposal-gate.ts` — the single function the daemon uses to mint a proposal; it stamps provenance and refuses to mark anything `untrusted` as auto-approvable (today: forces full HITL).
 - **Triple rule:** docs row in `docs/SECURITY-INVARIANTS.md`, enforcement test in `packages/gateway/src/security-invariants.test.ts`, static complement **D23** in `scripts/structure-audit/check-nimbus-invariants.ts` (confine the proposal-mint path to `watch-proposal-gate.ts`, analogous to D21 confining share emit).
 
 **Schema — V45** (`packages/gateway/src/index/migrations/`, append-only, via a `simpleStep(44, 45, …)` after the egress-ledger's V44 row, which itself lands after the V43 row at `runner.ts:405`):
+
 - `watch_daemon_config(key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)` — `briefing_hour`, `timezone` (IANA TZ name; resolves `briefing_hour`, default unset → OS local TZ), `anomaly_threshold`, `incident_severity_floor`, `next_briefing_at`, `last_fired_at`.
 - `incident_record(id TEXT PRIMARY KEY, external_incident_id TEXT, discovered_at INTEGER, assembled_at INTEGER, brief_json TEXT, resolved_at INTEGER)` with index on `(discovered_at, resolved_at)` — caches assembled pre-briefs so `watch.incident.show` never re-queries.
 

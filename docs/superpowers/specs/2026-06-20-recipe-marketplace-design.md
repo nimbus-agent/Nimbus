@@ -4,6 +4,7 @@
 **Status:** Design — pending user review
 **Roadmap home:** Track 1 Near-Term Spine **S3 — Open Surface** (marketplace registry overlay) · folds into **Phase 9.5 — Marketplace Registry** as a `/recipes/` index alongside the planned extension index
 **Scope:**
+
 - New: `packages/gateway/src/recipes/` (registry client, install gate, recipe-manifest types, recipe store)
 - Extend: `packages/gateway/src/ipc/share-rpc.ts` (recipe RPC handlers) or a sibling `recipe-rpc.ts`; `packages/cli/src/commands/` (new `recipes.ts`)
 - Extend: `packages/gateway/src/engine/executor.ts` (`HITL_REQUIRED_BACKING` adds `recipe.publish`)
@@ -93,6 +94,7 @@ New subsystem `packages/gateway/src/recipes/` (AGPL, gateway-owned — see Licen
 ### IPC / CLI surface
 
 New CLI command group `nimbus recipes`:
+
 - `nimbus recipes search <query>` → RPC `recipes.search`
 - `nimbus recipes info <id>` → RPC `recipes.info`
 - `nimbus recipes check-connectors <recipe-id>` → RPC `recipes.checkConnectors` (read-only: reports which connectors a recipe declares that the local gateway has vs is missing, before install)
@@ -116,6 +118,7 @@ RPC handlers land in a new `packages/gateway/src/ipc/recipe-rpc.ts` (sibling to 
 7. **No `any`** — all registry responses, manifests, and rating records are parsed from `unknown` with explicit validators (the `parseStep`/`parseExtensionManifestJson` pattern). ✅
 
 **Invariant impact:**
+
 - **Reuse I27 / D21** for the *publish* emit (a published recipe leaves the machine only through the share-gate `createShare()` with owner HITL approval of the exact redacted body). The publish path is literally `createShare({ kind: "recipe" })` — no new emit chokepoint. (The *rate* emit is deferred with ratings to a later sub-slice; when built it reuses the same I27 owner-approved emit pattern.)
 - **Reuse I16** for publisher-key verification at install (Ed25519 chain, `extensions/verify-signature.ts`).
 - **Reuse I14** for all `recipe_index` writes; **I10** constant-time compare is inherited via `verifyShareBytes`.

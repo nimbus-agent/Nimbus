@@ -64,6 +64,7 @@ Write only an embedding guide; tell integrators to spawn the gateway themselves 
 ### Architecture & components
 
 **MIT side — `packages/client` (extends existing exports):**
+
 - `packages/client/src/managed-gateway.ts` (NEW) — `ManagedGateway` class:
   - `ManagedGateway.start(opts: ManagedGatewayOptions): Promise<ManagedGateway>` — resolves the `nimbus-gateway` binary path (host-supplied via `opts.binaryPath`; **no auto-download in v1** — YAGNI/security), spawns it in **embedded boot mode** with `extensionProcessEnv`-style minimal env, waits for the gateway state file (reuses `readGatewayState`/`gatewayStatePath` from `packages/client/src/discovery.ts`), then opens a `NimbusClient` against the discovered `socketPath`.
   - Exposes `.client: NimbusClient` (the existing typed wrapper — `agentInvoke`, `askStream`, `subscribeHitl`, `queryItems`).
@@ -75,6 +76,7 @@ Write only an embedding guide; tell integrators to spawn the gateway themselves 
 - Attribution helper: `export const POWERED_BY_NIMBUS = { name, version, url } as const` (a tiny constant the host renders; the "powered by Nimbus" brand is a licensing/marketing artifact, not enforced in code).
 
 **AGPL side — `packages/gateway` (additive, source stays AGPL):**
+
 - `packages/gateway/src/index.ts` — add an **embedded boot mode** branch (env `NIMBUS_EMBEDDED=1` or `--embedded` argv). In embedded mode the existing `main()` path:
   - binds the IPC socket on an **ephemeral path** under `dataDir` and **loopback only** (reuses the I6 default in `config/nimbus-toml.ts` — bind defaults to `127.0.0.1`; embedded mode asserts it and refuses any non-loopback `[lan]` bind, fail-closed),
   - **disables the HTTP write surface by default** (I13: `WRITE_ROUTE_ALLOWLIST` gated; embedded mode defaults the surface off unless the host opts in with a bearer token),
