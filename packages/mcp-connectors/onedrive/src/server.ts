@@ -5,8 +5,9 @@ import { z } from "zod";
 import { resolveUrlWithBase } from "../../shared/fetch-bearer-json.ts";
 import {
   createRegisterSimpleTool,
-  type McpListResult,
+  createZodToolRegistrar,
   mcpJsonResult,
+  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
 
@@ -42,7 +43,7 @@ async function graphRequest(
 
 const server = new McpServer({ name: "nimbus-onedrive", version: "0.1.0" });
 
-const registerSimpleTool = createRegisterSimpleTool(server);
+const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 
 const onedriveItemListArgs = z.object({
   parentId: z.string().min(1).optional(),
@@ -50,35 +51,23 @@ const onedriveItemListArgs = z.object({
   nextLink: z.url().optional(),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_list",
   "List drive items under root or a folder (by parentId). Use nextLink from prior response for pagination.",
-  onedriveItemListArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemListArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemListArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
     let path: string;
-    if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-      const r = await graphRequest(token, parsed.data.nextLink);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+    if (data.nextLink !== undefined && data.nextLink !== "") {
+      return mcpJsonResultIfOk("Graph", await graphRequest(token, data.nextLink), 200);
     }
-    const pageSize = parsed.data.pageSize ?? 50;
-    if (parsed.data.parentId !== undefined && parsed.data.parentId !== "") {
-      path = `/me/drive/items/${encodeURIComponent(parsed.data.parentId)}/children?$top=${String(pageSize)}`;
+    const pageSize = data.pageSize ?? 50;
+    if (data.parentId !== undefined && data.parentId !== "") {
+      path = `/me/drive/items/${encodeURIComponent(data.parentId)}/children?$top=${String(pageSize)}`;
     } else {
       path = `/me/drive/root/children?$top=${String(pageSize)}`;
     }
-    const r = await graphRequest(token, path);
-    if (!r.ok) {
-      throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
   },
 );
 
@@ -86,24 +75,14 @@ const onedriveItemGetArgs = z.object({
   itemId: z.string().min(1),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_get",
   "Get OneDrive item metadata by id (file or folder).",
-  onedriveItemGetArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemGetArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemGetArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const r = await graphRequest(
-      token,
-      `/me/drive/items/${encodeURIComponent(parsed.data.itemId)}`,
-    );
-    if (!r.ok) {
-      throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    const r = await graphRequest(token, `/me/drive/items/${encodeURIComponent(data.itemId)}`);
+    return mcpJsonResultIfOk("Graph", r, 200);
   },
 );
 
@@ -117,20 +96,16 @@ const onedriveItemDownloadArgs = z.object({
     .optional(),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_download",
   "Download file content as base64 (capped by maxBytes, default 256 KiB). Folders are rejected.",
-  onedriveItemDownloadArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemDownloadArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemDownloadArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const maxBytes = parsed.data.maxBytes ?? 256 * 1024;
+    const maxBytes = data.maxBytes ?? 256 * 1024;
     const meta = await graphRequest(
       token,
-      `/me/drive/items/${encodeURIComponent(parsed.data.itemId)}?$select=id,name,folder,file`,
+      `/me/drive/items/${encodeURIComponent(data.itemId)}?$select=id,name,folder,file`,
     );
     if (!meta.ok) {
       throw new Error(`Graph ${String(meta.status)}: ${meta.text.slice(0, 200)}`);
@@ -143,10 +118,9 @@ registerSimpleTool(
     if (folder !== undefined && folder !== null) {
       throw new Error("Item is a folder; download applies to files only");
     }
-    const res = await fetch(
-      `${GRAPH}/me/drive/items/${encodeURIComponent(parsed.data.itemId)}/content`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
+    const res = await fetch(`${GRAPH}/me/drive/items/${encodeURIComponent(data.itemId)}/content`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     const buf = await res.arrayBuffer();
     if (!res.ok) {
       const err = new TextDecoder().decode(buf);
@@ -156,7 +130,7 @@ registerSimpleTool(
     const slice = truncated ? buf.slice(0, maxBytes) : buf;
     const b64 = Buffer.from(slice).toString("base64");
     const out = {
-      itemId: parsed.data.itemId,
+      itemId: data.itemId,
       encoding: "base64" as const,
       truncated,
       byteLength: buf.byteLength,
@@ -173,29 +147,21 @@ const onedriveItemSearchArgs = z.object({
   nextLink: z.url().optional(),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_search",
   "Search OneDrive under /me/drive/root/search.",
-  onedriveItemSearchArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemSearchArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemSearchArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const pageSize = parsed.data.pageSize ?? 25;
+    const pageSize = data.pageSize ?? 25;
     let path: string;
-    if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-      path = parsed.data.nextLink;
+    if (data.nextLink !== undefined && data.nextLink !== "") {
+      path = data.nextLink;
     } else {
-      const escaped = parsed.data.query.replaceAll("'", "''");
+      const escaped = data.query.replaceAll("'", "''");
       path = `/me/drive/root/search(q='${escaped}')?$top=${String(pageSize)}`;
     }
-    const r = await graphRequest(token, path);
-    if (!r.ok) {
-      throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
   },
 );
 
@@ -203,21 +169,15 @@ const onedriveItemDeleteArgs = z.object({
   itemId: z.string().min(1),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_delete",
   "Permanently delete a OneDrive item. Requires Gateway HITL onedrive.delete.",
-  onedriveItemDeleteArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemDeleteArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemDeleteArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const r = await graphRequest(
-      token,
-      `/me/drive/items/${encodeURIComponent(parsed.data.itemId)}`,
-      { method: "DELETE" },
-    );
+    const r = await graphRequest(token, `/me/drive/items/${encodeURIComponent(data.itemId)}`, {
+      method: "DELETE",
+    });
     if (!r.ok && r.status !== 204) {
       throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
     }
@@ -231,35 +191,24 @@ const onedriveItemMoveArgs = z.object({
   newName: z.string().min(1).max(500).optional(),
 });
 
-registerSimpleTool(
+reg(
   "onedrive_item_move",
   "Move (and optionally rename) a drive item. Requires Gateway HITL onedrive.move.",
-  onedriveItemMoveArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = onedriveItemMoveArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
+  onedriveItemMoveArgs,
+  async (data) => {
     const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
     const body: Record<string, unknown> = {
-      parentReference: { id: parsed.data.newParentId },
+      parentReference: { id: data.newParentId },
     };
-    if (parsed.data.newName !== undefined) {
-      body["name"] = parsed.data.newName;
+    if (data.newName !== undefined) {
+      body["name"] = data.newName;
     }
-    const r = await graphRequest(
-      token,
-      `/me/drive/items/${encodeURIComponent(parsed.data.itemId)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!r.ok) {
-      throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    const r = await graphRequest(token, `/me/drive/items/${encodeURIComponent(data.itemId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return mcpJsonResultIfOk("Graph", r, 200);
   },
 );
 

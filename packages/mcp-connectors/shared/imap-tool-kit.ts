@@ -14,7 +14,8 @@
 import { z } from "zod";
 
 import { headerLine } from "./header-safe.ts";
-import { capPreview } from "./imap-mail-core.ts";
+import { capPreview, clampLimit } from "./imap-mail-core.ts";
+import { createRegisterSimpleTool, type McpListResult, mcpJsonResult } from "./mcp-tool-kit.ts";
 
 // ---------------------------------------------------------------------------
 // Shared Zod arg schemas (byte-identical across imap + protonmail tools.ts)
@@ -143,4 +144,135 @@ export function previewFromParts(parts: Map<string, Buffer> | undefined, partKey
     return "";
   }
   return capPreview(buf.toString("utf8"));
+}
+
+// ---------------------------------------------------------------------------
+// Shared tool-registration factory (imap + protonmail tools.ts — the 4 blocks)
+// ---------------------------------------------------------------------------
+
+/** Read surface the email tool factory depends on (imap's ImapClient / protonmail's MailClient both satisfy it). */
+export interface EmailReadClient {
+  list(options: { mailbox?: string; limit?: number }): Promise<EmailMessageMeta[]>;
+  get(uid: number, mailbox?: string): Promise<EmailMessageMeta | null>;
+  search(options: { query: string; mailbox?: string; limit?: number }): Promise<EmailMessageMeta[]>;
+}
+
+/** Send surface the email tool factory depends on (imap's/protonmail's SmtpMailer satisfy it). */
+export interface EmailSendMailer {
+  send(input: { to: string; subject: string; body: string; cc?: string; bcc?: string }): Promise<{
+    messageId: string | null;
+    accepted: readonly string[];
+    rejected: readonly string[];
+  }>;
+}
+
+/** The four tool descriptions, supplied verbatim by each connector. */
+export interface EmailToolDescriptions {
+  readonly list: string;
+  readonly get: string;
+  readonly search: string;
+  readonly send: string;
+}
+
+/**
+ * Register the 4 email tools (`<prefix>_list|_get|_search|_mail_send`) onto an
+ * MCP server. The IMAP client + SMTP mailer are injected so tests exercise the
+ * tool surface without opening sockets. Byte-equivalent to the hand-written
+ * `registerImapTools` / `registerProtonmailTools` bodies it replaces — the tool
+ * names (via `toolPrefix`) and descriptions are the only per-connector inputs.
+ */
+export function registerEmailConnectorTools(opts: {
+  server: { tool: (...args: never) => unknown };
+  toolPrefix: string;
+  descriptions: EmailToolDescriptions;
+  client: EmailReadClient;
+  mailer: EmailSendMailer;
+  formatAddr: (a: { readonly name?: string; readonly address?: string }) => string;
+}): void {
+  const { server, toolPrefix, descriptions, client, mailer, formatAddr } = opts;
+  const registerSimpleTool = createRegisterSimpleTool(server);
+  const { listArgs, getArgs, searchArgs, sendArgs } = emailToolSchemas;
+
+  registerSimpleTool(
+    `${toolPrefix}_list`,
+    descriptions.list,
+    listArgs.shape,
+    async (args: unknown): Promise<McpListResult> => {
+      const parsed = listArgs.safeParse(args);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+      const o: { mailbox?: string; limit?: number } = {};
+      if (parsed.data.mailbox !== undefined) {
+        o.mailbox = parsed.data.mailbox;
+      }
+      o.limit = clampLimit(parsed.data.limit);
+      const items = await client.list(o);
+      return mcpJsonResult({ items: items.map((m) => viewEmailMessage(m, formatAddr)) });
+    },
+  );
+
+  registerSimpleTool(
+    `${toolPrefix}_get`,
+    descriptions.get,
+    getArgs.shape,
+    async (args: unknown): Promise<McpListResult> => {
+      const parsed = getArgs.safeParse(args);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+      const m = await client.get(parsed.data.uid, parsed.data.mailbox);
+      return mcpJsonResult(m === null ? { item: null } : { item: viewEmailMessage(m, formatAddr) });
+    },
+  );
+
+  registerSimpleTool(
+    `${toolPrefix}_search`,
+    descriptions.search,
+    searchArgs.shape,
+    async (args: unknown): Promise<McpListResult> => {
+      const parsed = searchArgs.safeParse(args);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+      const o: { query: string; mailbox?: string; limit?: number } = {
+        query: parsed.data.query,
+        limit: clampLimit(parsed.data.limit),
+      };
+      if (parsed.data.mailbox !== undefined) {
+        o.mailbox = parsed.data.mailbox;
+      }
+      const items = await client.search(o);
+      return mcpJsonResult({ matches: items.map((m) => viewEmailMessage(m, formatAddr)) });
+    },
+  );
+
+  registerSimpleTool(
+    `${toolPrefix}_mail_send`,
+    descriptions.send,
+    sendArgs.shape,
+    async (args: unknown): Promise<McpListResult> => {
+      const parsed = sendArgs.safeParse(args);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+      const input: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
+        to: parsed.data.to,
+        subject: parsed.data.subject,
+        body: parsed.data.body,
+      };
+      if (parsed.data.cc !== undefined && parsed.data.cc !== "") {
+        input.cc = parsed.data.cc;
+      }
+      if (parsed.data.bcc !== undefined && parsed.data.bcc !== "") {
+        input.bcc = parsed.data.bcc;
+      }
+      const res = await mailer.send(input);
+      return mcpJsonResult({
+        messageId: res.messageId,
+        accepted: res.accepted,
+        rejected: res.rejected,
+      });
+    },
+  );
 }
