@@ -27,7 +27,7 @@ describe("runAgentCli", () => {
   });
 
   it("exits 1 when the gateway is not running", async () => {
-    setFixture({ gatewayState: undefined });
+    setFixture({});
     await expect(
       runAgentCli({
         agentName: "x",
