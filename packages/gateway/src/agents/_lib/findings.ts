@@ -1,3 +1,5 @@
+import { createBriefGuard } from "@nimbus-dev/sdk";
+
 import type { ExpertiseRank } from "../../federation/types.ts";
 
 export type {
@@ -145,125 +147,53 @@ export type BriefReadyPayload<B extends AgentBrief> = {
   findings: B;
 };
 
-export function isExpertBrief(x: unknown): x is ExpertBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "expert" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["ranked"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isExpertBrief = createBriefGuard<ExpertBrief>(
+  "expert",
+  (b) => Array.isArray(b["ranked"]),
+  { requireQuery: true },
+);
 
-export function isImpactBrief(x: unknown): x is ImpactBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "impact" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["affected"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isImpactBrief = createBriefGuard<ImpactBrief>(
+  "impact",
+  (b) => Array.isArray(b["affected"]),
+  { requireQuery: true },
+);
 
-export function isCatchupBrief(x: unknown): x is CatchupBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "catchup" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["sections"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isCatchupBrief = createBriefGuard<CatchupBrief>(
+  "catchup",
+  (b) => Array.isArray(b["sections"]),
+  { requireQuery: true },
+);
 
-export function isGhostBrief(x: unknown): x is GhostBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "ghost" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["findings"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isGhostBrief = createBriefGuard<GhostBrief>(
+  "ghost",
+  (b) => Array.isArray(b["findings"]),
+  { requireQuery: true },
+);
 
-export function isConflictBrief(x: unknown): x is ConflictBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "conflict" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["collisions"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isConflictBrief = createBriefGuard<ConflictBrief>(
+  "conflict",
+  (b) => Array.isArray(b["collisions"]),
+  { requireQuery: true },
+);
 
-export function isHuddleBrief(x: unknown): x is HuddleBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "huddle" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    Array.isArray(b["contributions"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isHuddleBrief = createBriefGuard<HuddleBrief>(
+  "huddle",
+  (b) => Array.isArray(b["contributions"]),
+  { requireQuery: true },
+);
 
-export function isJanitorBrief(x: unknown): x is JanitorBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "janitor" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
-    typeof b["idle"] === "boolean" &&
-    Array.isArray(b["peersTouched"]) &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+export const isJanitorBrief = createBriefGuard<JanitorBrief>(
+  "janitor",
+  (b) => typeof b["idle"] === "boolean" && Array.isArray(b["peersTouched"]),
+  { requireQuery: true },
+);
 
-export function isPreflightBrief(x: unknown): x is PreflightBrief {
-  if (x === null || typeof x !== "object") return false;
-  const b = x as Record<string, unknown>;
-  return (
-    b["kind"] === "preflight" &&
-    b["agentVersion"] === 1 &&
-    Array.isArray(b["gaps"]) &&
+export const isPreflightBrief = createBriefGuard<PreflightBrief>(
+  "preflight",
+  (b) =>
     Array.isArray(b["downstreams"]) &&
     typeof b["anyFailed"] === "boolean" &&
-    typeof b["anyIncomplete"] === "boolean" &&
-    typeof b["generatedAt"] === "number" &&
-    typeof b["latencyMs"] === "number" &&
-    typeof b["query"] === "object" &&
-    b["query"] !== null
-  );
-}
+    typeof b["anyIncomplete"] === "boolean",
+  { requireQuery: true },
+);

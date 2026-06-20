@@ -1,13 +1,17 @@
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import {
-  syncPassCursorParseEmpty,
-  syncPassCursorSuccess,
-} from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { awsCliJson, awsCredentialsExtra } from "./_lib/aws-cli.ts";
+  awsCliJson,
+  awsCredentialsExtra,
+  parseJson,
+  type RunAwsCli,
+  runAwsCliPaginatedWalk,
+} from "./_lib/aws-cli.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapSagemakerModelToItem } from "./sagemaker-model-mapping.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
+
+export type { RunAwsCli };
 
 const SERVICE_ID = "sagemaker";
 const CURSOR_PREFIX = "nimbus-sm1:";
@@ -25,43 +29,11 @@ function pass1Cursor(): string {
   return encodeNimbusJsonCursor(CURSOR_PREFIX, { pass: 1 } satisfies SagemakerCursorV1);
 }
 
-/** Injectable AWS-CLI runner — defaults to the shared `awsCliJson` spawn; tests pass a stub. */
-export type RunAwsCli = (
-  ctx: SyncContext,
-  args: string[],
-) => Promise<{ ok: boolean; text: string }>;
-
 export type SagemakerSyncableOptions = {
   ensureSagemakerMcpRunning: () => Promise<void>;
   /** Override the AWS-CLI runner (dependency injection for tests). */
   runAwsCli?: RunAwsCli;
 };
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-function nextToken(parsed: unknown): string | null {
-  const rec = asRecord(parsed);
-  if (rec === undefined) {
-    return null;
-  }
-  const tok = stringField(rec, "NextToken");
-  return tok !== undefined && tok !== "" ? tok : null;
-}
-
-function extractArray(parsed: unknown, key: string): unknown[] {
-  const rec = asRecord(parsed);
-  if (rec === undefined) {
-    return [];
-  }
-  const arr = rec[key];
-  return Array.isArray(arr) ? arr : [];
-}
 
 /**
  * Guard a value before it is passed as a positional/flag-value to the spawned
@@ -157,68 +129,32 @@ async function processModel(
   }
 }
 
-/** Process a single `list-models` page, threading counters through `state`. */
-async function processModelPage(
-  run: RunAwsCli,
-  ctx: SyncContext,
-  parsed: unknown,
-  now: number,
-  state: ModelWalkState,
-): Promise<void> {
-  for (const entry of extractArray(parsed, "Models")) {
-    if (state.seen >= MAX_MODELS) {
-      break;
-    }
-    state.seen += 1;
-    await processModel(run, ctx, entry, now, state);
-  }
-}
-
 export function createSagemakerSyncable(options: SagemakerSyncableOptions): Syncable {
   const run = options.runAwsCli ?? awsCliJson;
   return {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureSagemakerMcpRunning();
-
-      // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials.
-      const extra = await awsCredentialsExtra(ctx);
-      if (extra === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      const now = Date.now();
-      const state: ModelWalkState = { upserted: 0, bytes: 0, seen: 0, described: 0 };
-      let token: string | null = null;
-      let page = 0;
-
-      while (state.seen < MAX_MODELS) {
-        const args = ["sagemaker", "list-models", "--max-results", String(PAGE_SIZE)];
-        if (token !== null && token !== "") {
-          args.push("--next-token", token);
-        }
-        const res = await run(ctx, args);
-        state.bytes += res.text.length;
-        if (!res.ok) {
-          if (page === 0) {
-            // Graceful empty pass — no throw past the Syncable boundary.
-            return syncPassCursorParseEmpty(t0, state.bytes, pass1Cursor());
+    sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      return runAwsCliPaginatedWalk<ModelWalkState>(ctx, cursor, run, {
+        ensureRunning: options.ensureSagemakerMcpRunning,
+        // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials.
+        loadCreds: () => awsCredentialsExtra(ctx),
+        pass1Cursor,
+        maxItems: MAX_MODELS,
+        pageSize: PAGE_SIZE,
+        tokenKey: "NextToken",
+        arrayKey: "Models",
+        initialState: () => ({ upserted: 0, bytes: 0, seen: 0, described: 0 }),
+        buildPageArgs: (pageSize, token) => {
+          const args = ["sagemaker", "list-models", "--max-results", String(pageSize)];
+          if (token !== null && token !== "") {
+            args.push("--next-token", token);
           }
-          break;
-        }
-        const parsed = parseJson(res.text);
-        await processModelPage(run, ctx, parsed, now, state);
-        token = nextToken(parsed);
-        page += 1;
-        if (token === null) {
-          break;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, state.bytes, pass1Cursor(), state.upserted);
+          return args;
+        },
+        processEntry: processModel,
+      });
     },
   };
 }

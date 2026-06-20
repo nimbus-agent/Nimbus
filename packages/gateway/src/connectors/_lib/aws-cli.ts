@@ -1,6 +1,11 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
-import type { SyncContext } from "../../sync/types.ts";
+import {
+  syncPassCursorParseEmpty,
+  syncPassCursorSuccess,
+} from "../../sync/pass-cursor-sync-result.ts";
+import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { asRecord, stringField } from "../unknown-record.ts";
 
 /**
  * Resolve the AWS credential environment from the shared `aws.*` vault keys
@@ -65,4 +70,136 @@ export async function awsCliJson(
   const code = await proc.exited;
   const out = await new Response(proc.stdout).text();
   return { ok: code === 0, text: out };
+}
+
+// ---------------------------------------------------------------------------
+// Shared single-pass paginated AWS-CLI walk (cloudwatch, sagemaker, …)
+// ---------------------------------------------------------------------------
+
+/** Injectable AWS-CLI runner — defaults to {@link awsCliJson}; tests pass a stub. */
+export type RunAwsCli = (
+  ctx: SyncContext,
+  args: string[],
+) => Promise<{ ok: boolean; text: string }>;
+
+/** Parse CLI stdout as JSON, returning `undefined` on any parse error. */
+export function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read a non-empty string continuation token under `key` (e.g. `nextToken`/`NextToken`), else `null`. */
+export function awsNextToken(parsed: unknown, key: string): string | null {
+  const rec = asRecord(parsed);
+  if (rec === undefined) {
+    return null;
+  }
+  const tok = stringField(rec, key);
+  return tok !== undefined && tok !== "" ? tok : null;
+}
+
+/** Extract `parsed[key]` as an array (empty array when absent / not an object / not an array). */
+export function extractArray(parsed: unknown, key: string): unknown[] {
+  const rec = asRecord(parsed);
+  if (rec === undefined) {
+    return [];
+  }
+  const arr = rec[key];
+  return Array.isArray(arr) ? arr : [];
+}
+
+/** Mutable counters threaded through a paginated walk. */
+export interface BaseWalkState {
+  upserted: number;
+  bytes: number;
+  seen: number;
+}
+
+/**
+ * Spec for {@link runAwsCliPaginatedWalk}. The connector supplies the list-page
+ * argv, the continuation-token key + result-array key, the per-cycle item cap,
+ * and a `processEntry` callback that enriches/maps/upserts one entry (mutating
+ * the walk state's `upserted`/`bytes` as the hand-written connector bodies did).
+ */
+export interface AwsPaginatedWalkSpec<S extends BaseWalkState> {
+  readonly ensureRunning: () => Promise<void>;
+  /** Resolve credentials (or null → noop). Typically {@link awsCredentialsExtra}. */
+  readonly loadCreds: () => Promise<unknown | null>;
+  readonly pass1Cursor: () => string;
+  readonly maxItems: number;
+  readonly pageSize: number;
+  /** Continuation-token key in the JSON response (`nextToken` / `NextToken`). */
+  readonly tokenKey: string;
+  /** Result-array key in the JSON response (`logGroups` / `Models`). */
+  readonly arrayKey: string;
+  readonly initialState: () => S;
+  /** Build the list-page argv. `token` is null on the first page. */
+  readonly buildPageArgs: (pageSize: number, token: string | null) => string[];
+  /** Enrich + map + upsert one entry, mutating `state.upserted`/`state.bytes`. */
+  readonly processEntry: (
+    run: RunAwsCli,
+    ctx: SyncContext,
+    entry: unknown,
+    now: number,
+    state: S,
+  ) => Promise<void>;
+}
+
+/**
+ * Run a single-pass, token-paginated AWS-CLI walk: ensure-running → load creds
+ * (noop if absent) → page through the list call (first-page failure degrades to
+ * a parse-empty pass-cursor; a later-page failure breaks) → for each entry up to
+ * `maxItems`, delegate to `processEntry` → pass-1 success. Byte/upsert accounting
+ * is owned by `state`, threaded exactly as the hand-written connector `sync()`
+ * bodies did. Per-item enrichment (and its own byte accounting + caps) lives in
+ * the connector's `processEntry`.
+ */
+export async function runAwsCliPaginatedWalk<S extends BaseWalkState>(
+  ctx: SyncContext,
+  cursor: string | null,
+  run: RunAwsCli,
+  spec: AwsPaginatedWalkSpec<S>,
+): Promise<SyncResult> {
+  const t0 = performance.now();
+  await spec.ensureRunning();
+
+  const creds = await spec.loadCreds();
+  if (creds === null) {
+    return syncNoopResult(cursor, t0);
+  }
+
+  const now = Date.now();
+  const state = spec.initialState();
+  let token: string | null = null;
+  let page = 0;
+
+  while (state.seen < spec.maxItems) {
+    const args = spec.buildPageArgs(spec.pageSize, token);
+    const res = await run(ctx, args);
+    state.bytes += res.text.length;
+    if (!res.ok) {
+      if (page === 0) {
+        return syncPassCursorParseEmpty(t0, state.bytes, spec.pass1Cursor());
+      }
+      break;
+    }
+    const parsed = parseJson(res.text);
+    for (const entry of extractArray(parsed, spec.arrayKey)) {
+      if (state.seen >= spec.maxItems) {
+        break;
+      }
+      state.seen += 1;
+      await spec.processEntry(run, ctx, entry, now, state);
+    }
+    token = awsNextToken(parsed, spec.tokenKey);
+    page += 1;
+    if (token === null) {
+      break;
+    }
+  }
+
+  return syncPassCursorSuccess(t0, state.bytes, spec.pass1Cursor(), state.upserted);
 }
