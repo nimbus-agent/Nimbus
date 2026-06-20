@@ -74,8 +74,8 @@ realized as the service-specific types below.)
 | ArgoCD | `argocd.app.rollback` | `argocd_app_rollback` | `POST /api/v1/applications/{name}/rollback` (`id` = target history id) |
 | Flux | `flux.kustomization.reconcile` | `flux_kustomization_reconcile` | `PATCH` the Kustomization CR: set `metadata.annotations["reconcile.fluxcd.io/requestedAt"]` = RFC3339 now |
 | Flux | `flux.helmrelease.reconcile` | `flux_helmrelease_reconcile` | `PATCH` the HelmRelease CR: same `reconcile.fluxcd.io/requestedAt` annotation |
-| MLflow | `mlflow.model.promote` | `mlflow_model_promote` | `POST /api/2.0/mlflow/model-versions/transition-stage` → `stage: "Production"` (`archive_existing_versions` optional) |
-| MLflow | `mlflow.model.transition_stage` | `mlflow_model_transition_stage` | `POST /api/2.0/mlflow/model-versions/transition-stage` → caller-supplied `stage` (Staging/Production/Archived) |
+| MLflow | `mlflow.model.promote` | `mlflow_model_promote` | `POST /api/2.0/mlflow/model-versions/transition-stage` → `stage: "Production"` (explicit `archiveExisting` arg, default `false` — see §3 note) |
+| MLflow | `mlflow.model.transition_stage` | `mlflow_model_transition_stage` | `POST /api/2.0/mlflow/model-versions/transition-stage` → caller-supplied `stage` (Staging/Production/Archived), explicit `archiveExisting` arg, default `false` |
 
 **Reference-API pinning (the #595 lesson).** Each request shape — auth header, base URL resolution,
 path params, body — is fixed in the **plan** from the connector's existing `*-sync.ts` read code +
@@ -93,18 +93,39 @@ the vendor docs **before** any handler is written. Two items need explicit verif
   `Production` — kept as a distinct action type for a cleaner HITL prompt ("promote to Production")
   and a tighter arg schema (no free `stage`).
 
+**`archiveExisting` is an explicit arg, default `false` (review §2).** Both MLflow writes expose
+`archiveExisting?: boolean` (maps to the API's `archive_existing_versions`), **defaulting `false`**.
+Rationale: `false` is MLflow's own API default, and a `true` would silently *archive a different
+version* (the incumbent in the target stage) as a side effect of promoting the named one — an implicit
+destructive mutation that contradicts W1's "no destructive default" posture (§1.1). The owner opts
+into the single-active-version semantic by setting `archiveExisting: true`; because the value is
+surfaced in the I2 HITL preview, the archiving is always a consciously-approved action, never silent.
+
+**Flux reconcile requires `patch` RBAC (review §1).** A read-only Flux ServiceAccount has only
+`get`/`list`/`watch`; reconcile needs the **`patch`** verb on `kustomizations`
+(`kustomize.toolkit.fluxcd.io`) and `helmreleases` (`helm.toolkit.fluxcd.io`). This is a **user-facing
+setup requirement** (documented in the connector setup guide + the W1 CHANGELOG note): the SA behind
+`flux.token` must be bound to a Role/ClusterRole granting `patch` on those CRs. When it is not, the
+kube-apiserver returns `403 Forbidden` (naming the missing verb), surfaced raw per the error rule
+below. Generating a bespoke "upgrade your RBAC" remediation message is **deferred** (§8) — the same
+per-error suggestion-templating line Wave 7c drew; the raw provider `403` is already actionable.
+
 **Scoping-id args.** Write-arg Zod schemas validate the ids each endpoint requires, sourced by the
 agent from indexed metadata: ArgoCD `name` (the `argocd:application` external id); Flux
 `kind`/`namespace`/`name` (the `flux:resource` model already carries these); MLflow model `name` +
 `version` (the `ml_model` metadata carries name + latest_version). A plan task verifies each write's
 required ids are retrievable from indexed metadata and adds any missing field before the handler.
 
-**Async output shape.** ArgoCD sync and Flux reconcile are asynchronous (the action is *requested*;
-convergence happens later). Each such tool's result (through the I11 `wrapToolOutput` envelope)
-returns the operation/sync id (ArgoCD) or `status: "requested"` (Flux) with an explicit non-complete
-marker, so the agent does not treat it as synchronously done. Verification is via the next scheduled
-metadata sync (ArgoCD already indexes `sync_status`/`health_status`; Flux indexes Ready conditions).
-A dedicated poll tool is out of scope (§8).
+**Async output shape + agent guidance (review §3).** ArgoCD sync and Flux reconcile are asynchronous
+(the action is *requested*; convergence happens later). Each such tool's result (through the I11
+`wrapToolOutput` envelope) returns the operation/sync id (ArgoCD) or `status: "requested"` (Flux) with
+an explicit non-complete marker, so the agent does not treat it as synchronously done. The **tool
+description** instructs the agent to tell the user the operation has only been *requested*, that
+current state in the local index is stale until the next sync, and that verification should wait for
+the next scheduled metadata sync (ArgoCD already indexes `sync_status`/`health_status`; Flux indexes
+Ready conditions) — recommending `/schedule` to re-check after a short interval is good agent
+behavior. A dedicated poll tool, and any new "trigger a metadata sync now" tool, are **out of scope**
+(§8) — verification rides the existing scheduled sync, matching the Wave 7c no-poll-tool decision.
 
 **Error surfacing.** Provider errors (ArgoCD `403`/sync-in-progress `409`, Flux RBAC `403`, MLflow
 `RESOURCE_DOES_NOT_EXIST` / stage-permission) are propagated with provider status + message through
@@ -192,9 +213,20 @@ export function connectorWriteByActionType(type: string): ConnectorWrite | undef
 ```
 
 This module drives: the dispatch routing (4.2), the generalized I26 predicate (4.4), and a **drift
-test** asserting (a) every `actionType` is present in `HITL_REQUIRED`, and (b) every `toolId` is
-registered by its connector server. The HITL strings stay hand-declared in `executor.ts` (per the
-invariant rule); the drift test ties the lists so neither silently diverges.
+test** (review §4) that is an explicit **completeness** check — not a spot check:
+
+- **(a) HITL coverage (the I26↔I2 tie):** *every* tool id for which `isConnectorWriteToolId` returns
+  true MUST have its `actionType` present in `HITL_REQUIRED_BACKING`. Iterate the full union
+  (`WAREHOUSE_BI_WRITES ∪ GITOPS_ML_WRITES`) and assert membership — so any future write that is wired
+  into a connector but forgotten in the HITL gate **fails CI**. This is what structurally guarantees a
+  connector write can never reach `connectors.dispatch` un-gated.
+- **(b) Server registration:** every `toolId` is registered by its connector server (via the
+  `captureTools()` registrar surface).
+- **(c) 1:1 integrity:** `actionType` and `toolId` are each unique across the union (no collision),
+  and `connectorWriteByActionType` round-trips.
+
+The HITL strings stay hand-declared in `executor.ts` (per the invariant rule "added by editing the
+static source declaration only"); the drift test ties the lists so neither can silently diverge.
 
 ### 4.4 Generalized invariant I26 / static D20 — federated write confinement (no new number)
 
@@ -291,8 +323,10 @@ Run once against a sandbox/staging account per connector before declaring the li
 
 - [ ] ArgoCD: `app.sync` returns a sync/operation id; `sync_status` reflects on next metadata sync.
       `app.rollback` to a prior history id succeeds.
-- [ ] Flux: `kustomization.reconcile` + `helmrelease.reconcile` update `reconcile.fluxcd.io/requestedAt`
-      and trigger a reconcile (Ready condition `lastHandledReconcileAt` advances).
+- [ ] Flux: confirm the `flux.token` SA has the `patch` verb on `kustomizations`/`helmreleases`
+      (precondition); `kustomization.reconcile` + `helmrelease.reconcile` update
+      `reconcile.fluxcd.io/requestedAt` and trigger a reconcile (Ready condition
+      `lastHandledReconcileAt` advances). With a read-only SA, confirm the write returns a raw `403`.
 - [ ] MLflow: `model.promote` moves the version to `Production`; `model.transition_stage` to an
       explicit stage; read-back via the registry reflects the new stage.
 - [ ] Team path: with a connector's token stored in a team-vault entry and `credential = "team"`, the
@@ -307,6 +341,26 @@ Run once against a sandbox/staging account per connector before declaring the li
 - **Federated peer-requested writes behind local HITL** (the I24-style option) — deferred; W1 is
   local-owner-triggered only.
 - **Destructive writes** (`delete`/drop/endpoint teardown) — out of scope.
-- **A "check status" poll tool** for the async ArgoCD/Flux operations — rely on scheduled metadata sync.
+- **A "check status" poll tool** for the async ArgoCD/Flux operations, and any **"trigger a metadata
+  sync now"** tool (review §3) — rely on the existing scheduled metadata sync.
+- **Bespoke per-error privilege/RBAC remediation templating** (review §1) — surface raw provider
+  errors (e.g. Flux's `403` naming the missing `patch` verb); the setup-guide RBAC note (§3) is the
+  documentation half.
 - Slice 9 W2 (Workday) → W3 (Apple Mail + macOS Calendar) → W4 (Web clipper) → W5 (Marketplace
   monetization, best-effort) follow this unit, each its own spec → plan.
+
+---
+
+## 9. Review responses (review doc 2026-06-20, fix/defer triage)
+
+| # | Review point | Decision | Where |
+|---|---|---|---|
+| 1 | Flux requires `patch` RBAC; catch `403` and suggest RBAC upgrade | **Fix** (setup-guide `patch`-verb requirement + reaffirm raw `403` surfacing) **+ Defer** (bespoke RBAC-remediation templating — same line 7c drew) | §3 (`patch` note + error rule), §7 checklist, §8 |
+| 2 | Define `archive_existing_versions` default | **Fix** — explicit `archiveExisting` arg, **default `false`** (MLflow's API default + no-silent-destructive posture); owner opts in via the I2 preview. Declined the suggested `true` default with rationale. | §3 (`archiveExisting` note), §3 table |
+| 3 | Async writes: agent may read stale state; guide it / suggest `/schedule` | **Fix** (tool-description guidance: op is *requested*-not-done, verify on next sync, `/schedule` re-check) **+ Defer** (no poll tool, no manual sync-trigger tool) | §3 (async output shape), §8 |
+| 4 | Drift test should programmatically assert every connector-write tool id is in `HITL_REQUIRED_BACKING` | **Fix** — drift test made an explicit completeness check over the full union (HITL coverage + server registration + 1:1 integrity); forgotten HITL wiring fails CI | §4.3 |
+
+**Verified during triage:** the existing error rule (§3) already surfaces raw provider `403`s, so #1's
+surfacing half needs no change — only the setup-guide RBAC documentation and the reaffirmation;
+MLflow's `archive_existing_versions` API default is `false`, confirming the #2 chosen default matches
+the provider rather than diverging from it.
