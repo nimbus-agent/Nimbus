@@ -1,0 +1,185 @@
+import { IPCClient } from "../ipc-client/index.ts";
+import { readGatewayState } from "../lib/gateway-process.ts";
+import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
+import { parseSinceDurationToMs } from "../lib/parse-since.ts";
+import { getCliPlatformPaths } from "../paths.ts";
+
+type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
+type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
+type ProveResult = {
+  rows: EgressRow[];
+  completeness: { tier: string; outboundEgressEvents: number };
+  verify: VerifyResult;
+  receipt?: { sigB64: string; pubkeyB64: string; digest: string };
+};
+type Head = { head: string; count: number };
+
+async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
+  const state = await readGatewayState(getCliPlatformPaths());
+  if (state === undefined) {
+    throw new Error("Gateway is not running. Start with: nimbus start");
+  }
+  const client = new IPCClient(state.socketPath);
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.disconnect();
+  }
+}
+
+/**
+ * Like {@link withIpc} but registers the interactive consent prompt handler first, so an inline
+ * `consent.request` (egress.prune's owner-HITL gate, or any HITL action triggered by a proved
+ * query) reaches the user as a y/n prompt instead of hanging. Without it the gateway's consent
+ * gate would wait indefinitely for an answer the CLI never sends.
+ */
+async function withConsentIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
+  return withIpc(async (client) => {
+    registerConsentPromptHandler(client);
+    return fn(client);
+  });
+}
+
+/**
+ * Resolve the prune cutoff from EITHER the absolute `--before <ISO|epoch>` form OR the relative
+ * `--older-than <dur>` form (e.g. `--older-than 30d`). The two are mutually exclusive — supplying
+ * both is an error. `--older-than` reuses the shipped `parseSinceDurationToMs` (the `nimbus audit
+ * --since` parser) so the duration grammar (`7d`/`24h`/`30m`/…) is identical across the CLI:
+ * `beforeTs = now - parseSinceDurationToMs(value)`. `--before` accepts an ISO date or an epoch-ms
+ * integer. Throws on a missing/invalid value or when neither form is present.
+ */
+export function resolvePruneBeforeTs(args: string[], now: number): number {
+  const bi = args.indexOf("--before");
+  const oi = args.indexOf("--older-than");
+  const beforeRaw = bi >= 0 ? args[bi + 1] : undefined;
+  const olderRaw = oi >= 0 ? args[oi + 1] : undefined;
+  if (beforeRaw !== undefined && olderRaw !== undefined) {
+    throw new Error("Use either --before <ISO|epoch> or --older-than <duration>, not both.");
+  }
+  if (olderRaw !== undefined) {
+    // parseSinceDurationToMs throws on an invalid grammar (examples: 7d, 24h, 30m).
+    return now - parseSinceDurationToMs(olderRaw);
+  }
+  if (beforeRaw !== undefined) {
+    const asEpoch = /^\d+$/.test(beforeRaw)
+      ? Number.parseInt(beforeRaw, 10)
+      : Date.parse(beforeRaw);
+    if (Number.isNaN(asEpoch)) {
+      throw new Error(`Invalid --before value: ${beforeRaw} (expected an ISO date or epoch ms)`);
+    }
+    return asEpoch;
+  }
+  throw new Error("Usage: nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)");
+}
+
+/** Parse `--since <dur>` (e.g. 24h, 30m, 7d) into an epoch-ms lower bound relative to now. */
+function parseSince(args: string[], now: number): number | undefined {
+  const i = args.indexOf("--since");
+  if (i < 0) return undefined;
+  const raw = args[i + 1];
+  if (raw === undefined || raw.startsWith("--")) return undefined;
+  return now - parseSinceDurationToMs(raw);
+}
+
+export async function runEgressVerify(client: IPCClient): Promise<void> {
+  const out = await client.call<VerifyResult>("egress.verify", {});
+  if (out.ok) {
+    console.log(`[ok]   egress chain integrity — ${String(out.verifiedRows)} rows verified`);
+    process.exitCode = 0;
+  } else {
+    console.log(
+      `[FAIL] egress chain break at row ${String(out.brokenAt)}: ${out.reason ?? "unknown"}`,
+    );
+    process.exitCode = 1;
+  }
+}
+
+export async function runEgressReport(
+  client: IPCClient,
+  opts: { since?: number | undefined; json?: boolean; sign?: boolean },
+): Promise<void> {
+  const params: Record<string, unknown> = {};
+  if (opts.since !== undefined) params["since"] = opts.since;
+  if (opts.sign === true) params["sign"] = true;
+  const out = await client.call<ProveResult>("egress.proveWindow", params);
+  if (opts.json === true) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  if (!out.verify.ok) {
+    // The EAF "indeterminate, never a false zero" rule: a degraded chain is unverifiable, NOT proof
+    // of zero egress.
+    console.log(
+      `indeterminate — egress chain is unverifiable (break at row ${String(out.verify.brokenAt)})`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log(
+    `outbound egress events: ${String(out.completeness.outboundEgressEvents)} (tier: ${out.completeness.tier})`,
+  );
+  for (const r of out.rows) {
+    const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
+    console.log(`  ${ts}  ${r.method.padEnd(28)} ${r.resultStatus}`);
+  }
+  if (out.receipt !== undefined) {
+    console.log(`receipt: digest=${out.receipt.digest} sig=${out.receipt.sigB64.slice(0, 16)}…`);
+  }
+}
+
+/** `nimbus prove "<query>"` — snapshot head, run the query, print the egress diff (before/after). */
+export async function runProve(args: string[]): Promise<void> {
+  const sign = args.includes("--receipt") || args.includes("--sign");
+  const query = args.find((a) => !a.startsWith("--"));
+  await withConsentIpc(async (client) => {
+    const before = await client.call<Head>("egress.head", {});
+    if (query !== undefined && query !== "") {
+      // The blocking ask path (mirrors `nimbus ask`): agent.invoke runs the query so the ledger head
+      // advances if (and only if) the agent dispatches a real outbound action.
+      await client.call("agent.invoke", { input: query, stream: false });
+    }
+    const after = await client.call<Head>("egress.head", {});
+    const delta = after.count - before.count;
+    if (delta === 0) {
+      console.log("outbound egress events during this query: 0 ✓");
+    } else {
+      console.log(`outbound egress events during this query: ${String(delta)}`);
+      await runEgressReport(client, { json: false, sign });
+    }
+  });
+}
+
+/**
+ * `nimbus egress [verify] [--since <dur>] [--json] [--sign]` — the report / offline verify.
+ * `nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)` — HITL-gated retention
+ * (e.g. `nimbus egress prune --older-than 30d`); the two cutoff forms are mutually exclusive.
+ */
+export async function runEgress(args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
+  if (sub === "verify") {
+    await withIpc((c) => runEgressVerify(c));
+    return;
+  }
+  if (sub === "prune") {
+    // Accepts either the absolute `--before <ISO|epoch>` or the relative `--older-than <duration>`
+    // (e.g. `nimbus egress prune --older-than 30d`); the two are mutually exclusive. The owner-HITL
+    // gate prompts inline (registerConsentPromptHandler) — deny → nothing removed.
+    const beforeTs = resolvePruneBeforeTs(rest, Date.now());
+    await withConsentIpc(async (c) => {
+      const out = await c.call<{ approved: boolean; prunedCount: number }>("egress.prune", {
+        beforeTs,
+      });
+      console.log(
+        out.approved
+          ? `[ok] pruned ${String(out.prunedCount)} egress rows (tombstone written)`
+          : "[denied] prune not approved — nothing removed",
+      );
+    });
+    return;
+  }
+  const since = parseSince(args, Date.now());
+  const json = args.includes("--json");
+  const signFlag = args.includes("--sign");
+  await withIpc((c) => runEgressReport(c, { since, json, sign: signFlag }));
+}

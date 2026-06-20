@@ -29,6 +29,7 @@ export { runPeople } from "./people.ts";
 export { runPolicy } from "./policy.ts";
 export { runPreflightCli } from "./preflight.ts";
 export { runProfile } from "./profile.ts";
+export { runEgress, runProve } from "./prove.ts";
 export { runQuery } from "./query.ts";
 export { runRepl } from "./repl.ts";
 export { runWorkflowFromFile } from "./run-workflow.ts";
