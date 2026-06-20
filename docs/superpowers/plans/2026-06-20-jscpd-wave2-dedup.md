@@ -29,6 +29,7 @@ migrates the call sites, and proves zero behavior change by keeping every existi
 ### Task C1: agent-brief guards → sdk guard-factory
 
 **Files:**
+
 - Create: `packages/sdk/src/agents/guard-factory.ts`
 - Create: `packages/sdk/src/agents/guard-factory.test.ts`
 - Modify: `packages/sdk/src/index.ts` (barrel: export `createBriefGuard`)
@@ -36,11 +37,13 @@ migrates the call sites, and proves zero behavior change by keeping every existi
 - Modify: `packages/gateway/src/agents/_lib/findings.ts` (replace 8 guard bodies with factory calls, `requireQuery: true`)
 
 **Interfaces:**
+
 - Produces: `createBriefGuard<T>(kind: string, extra: (b: Record<string, unknown>) => boolean, opts?: { requireQuery?: boolean }): (x: unknown) => x is T`
 
 - [ ] **Step 1 — Read the two source files fully.** `packages/cli/src/types/agents.ts` (guards at lines ~34–276) and `packages/gateway/src/agents/_lib/findings.ts` (guards at lines ~148–269). Record each guard's exact `extra` predicate (the brief-specific field checks) and confirm gateway adds `typeof b["query"]==="object" && b["query"]!==null` while CLI does not.
 
 - [ ] **Step 2 — Write `guard-factory.test.ts` (failing).** Cover both branches:
+
 ```ts
 import { describe, expect, it } from "bun:test";
 import { createBriefGuard } from "./guard-factory.ts";
@@ -75,6 +78,7 @@ describe("createBriefGuard", () => {
 - [ ] **Step 3 — Run it, expect FAIL** (`bun test packages/sdk/src/agents/guard-factory.test.ts`) → "Cannot find module ./guard-factory.ts".
 
 - [ ] **Step 4 — Implement `guard-factory.ts`:**
+
 ```ts
 /**
  * Build a discriminated-union type guard for an agent brief. The base shape
@@ -130,6 +134,7 @@ export function createBriefGuard<T>(
 ### Task C2: imap/protonmail email connectors → shared
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/shared/imap-mail-core.ts` (add free helpers; attempt shared client base)
 - Modify: `packages/mcp-connectors/shared/imap-tool-kit.ts` (add `registerEmailConnectorTools` factory)
 - Modify/Test: `packages/mcp-connectors/shared/imap-tool-kit.test.ts`, `imap-mail-core.test.ts` (or new co-located tests)
@@ -137,6 +142,7 @@ export function createBriefGuard<T>(
 - Modify: `packages/mcp-connectors/protonmail/src/server.ts`, `protonmail/src/tools.ts`
 
 **Interfaces:**
+
 - Consumes: existing `emailToolSchemas`, `viewEmailMessage`, `EmailMessageMeta`, `RegisterSimpleToolFn` from `imap-tool-kit.ts`/`mcp-tool-kit.ts`.
 - Produces: free helpers `toImapAddress`, `envelopeFromImap`, `toMessageMeta`, `previewFetchQuery` (exact existing signatures); `registerEmailConnectorTools(opts)` (see spec C2b).
 
@@ -185,13 +191,16 @@ export function createBriefGuard<T>(
 ### Task C3: cloudwatch/sagemaker async-enrichment CLI-shell helper
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/_lib/cli-shell-sync.ts` (add `runAsyncEnrichmentCliShellSync` + spec type)
 - Create: `packages/gateway/src/connectors/_lib/cli-shell-enrich-sync.test.ts` (co-located unit test for the new helper)
 - Modify: `packages/gateway/src/connectors/cloudwatch-sync.ts`, `sagemaker-sync.ts`
 
 **Interfaces:**
+
 - Consumes: `isSafeCliArg`, `CliShellOutcome`, `ParsedCliPage`, `SyncUpsertRow` from `cli-shell-sync.ts`; `syncPassCursorParseEmpty`/`syncPassCursorSuccess`/`syncNoopResult`.
 - Produces:
+
   ```ts
   export interface AsyncEnrichmentCliShellSyncSpec<C, E> {
     readonly ensureRunning: () => Promise<void>;
@@ -234,10 +243,12 @@ export function createBriefGuard<T>(
 ### Task C4: REST registrar migration (gmail / outlook / onedrive / gitlab)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/gmail/src/server.ts`, `outlook/src/server.ts`, `onedrive/src/server.ts`, `gitlab/src/server.ts`
 - (No shared change needed — `registerZodTool`/`createZodToolRegistrar` already exist in `shared/mcp-tool-kit.ts`.)
 
 **Interfaces:**
+
 - Consumes: `createZodToolRegistrar(registerSimpleTool)` → `<T>(name, description, schema, handler:(args:T)=>Promise<McpListResult>)=>void` from `shared/mcp-tool-kit.ts`. On parse failure it throws `new Error(parsed.error.message)` — identical to the manual guard being removed.
 
 - [ ] **Step 1 — Read gmail/server.ts fully.** Confirm each tool uses `registerSimpleTool(name, desc, schema.shape, async (args:unknown)=>{ const parsed = schema.safeParse(args); if(!parsed.success) throw new Error(parsed.error.message); … })`. Confirm NO tool uses custom error text or extra pre-parse logic (those stay hand-written).
@@ -263,11 +274,13 @@ export function createBriefGuard<T>(
 ### Task C5: gateway email-mapping bodies → `_lib`
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/_lib/email-mapping.ts` (+ `buildEmailPayload`), `email-mapping.test.ts`
 - Create (or extend `_lib`): a `parsePortSecret` helper (place in `_lib/cli-shell-sync.ts`'s sibling or a new `_lib/secret-parsers.ts` with co-located test)
 - Modify: `packages/gateway/src/connectors/imap-email-mapping.ts`, `protonmail-email-mapping.ts`, `fastmail-email-mapping.ts`, `imap-sync.ts`, `protonmail-sync.ts`
 
 **Interfaces:**
+
 - Produces: `buildEmailPayload(input) → { title, bodyPreview, modifiedAt, attachments, participants }` (see spec C5a); `parsePortSecret(raw: string | null | undefined, fallback: number): number`.
 
 - [ ] **Step 1 — Read all three `*-email-mapping.ts` fully.** Confirm the common transform block (subject→title clamp, preview clamp, date→ms, attachment map, participants) is identical modulo field-name aliases. Record the per-connector ID-validation + metadata that must stay inline.
@@ -301,6 +314,7 @@ export function createBriefGuard<T>(
 ### Task SHIP: lower ratchet + full preflight + push
 
 **Files:**
+
 - Modify: `.jscpd.json` (`threshold`)
 
 - [ ] **Step 1 — Final strict measure:** `bunx jscpd packages`. Record the new total %.

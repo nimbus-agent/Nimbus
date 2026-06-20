@@ -33,6 +33,7 @@ fidelity rule).
   `typeof b["query"]==="object" && b["query"]!==null`; the **CLI** guards do **not**. This is a real
   behavioral difference. The factory parameterizes it; we do **not** silently tighten CLI.
 - **Extraction:** new `packages/sdk/src/agents/guard-factory.ts`:
+
   ```ts
   export function createBriefGuard<T>(
     kind: string,
@@ -40,6 +41,7 @@ fidelity rule).
     opts?: { requireQuery?: boolean },
   ): (x: unknown) => x is T
   ```
+
   Base body checks kind/agentVersion/gaps/generatedAt/latencyMs, then (if `requireQuery`) the query
   object, then `extra(b)`. Exported from `packages/sdk/src/index.ts` barrel.
 - **Call sites:** CLI `agents.ts` → `createBriefGuard<ExpertBrief>("expert", b => Array.isArray(b["ranked"]))`
@@ -61,6 +63,7 @@ Two safe sub-parts plus one attempted-risky part.
 - **C2b tools.ts registration factory (~75L safe):** the 4 `registerSimpleTool` blocks
   (`*_list`/`*_get`/`*_search`/`*_mail_send`) are structurally identical; differ only in tool-name
   prefix + description text + the local client/mailer types. Add a factory to `shared/imap-tool-kit.ts`:
+
   ```ts
   export function registerEmailConnectorTools(opts: {
     registerSimpleTool: RegisterSimpleToolFn;
@@ -70,6 +73,7 @@ Two safe sub-parts plus one attempted-risky part.
     formatAddr: (a) => string;
   }): void
   ```
+
   Descriptions passed verbatim from each connector so tool metadata is byte-identical.
 - **C2c class-body merge (ATTEMPT, defer-on-deviation):** `ImapFlowClient` (imap) vs
   `BridgeImapClient` (protonmail) differ in implemented interface (`ImapClient` vs `MailClient`),
@@ -92,10 +96,12 @@ Two safe sub-parts plus one attempted-risky part.
   models only one page's bytes.
 - **Extraction:** new **sibling** helper in `gateway/src/connectors/_lib/cli-shell-sync.ts` (or a new
   `_lib/cli-shell-enrich-sync.ts`):
+
   ```ts
   export async function runAsyncEnrichmentCliShellSync<C, E>(
     ctx, cursor, spec: AsyncEnrichmentCliShellSyncSpec<C, E>): Promise<SyncResult>
   ```
+
   Spec adds, on top of `CliShellSyncSpec`: `maxEnrichmentPerPage?: number`;
   `enrichOne?: (creds, raw) => Promise<{ enrichment: E | undefined; bytes: number }>`;
   `map: (raw, enrichment: E | undefined, creds, now) => SyncUpsertRow | null`.
@@ -140,6 +146,7 @@ Two safe sub-parts plus one attempted-risky part.
   participants aggregation, and attachment-meta map are identical across the three mappers (modulo
   field-name aliases `filename`/`name`, `date`/`receivedAt`). Extract a pure helper into the existing
   `gateway/src/connectors/_lib/email-mapping.ts`:
+
   ```ts
   export function buildEmailPayload(input: {
     subject: string | null; preview: string; dateMs: number | null; syncedAt: number;
@@ -147,6 +154,7 @@ Two safe sub-parts plus one attempted-risky part.
     from: readonly string[]; to: readonly string[]; cc?: readonly string[];
   }): { title: string; bodyPreview: string; modifiedAt: number; attachments: …[]; participants: string[] }
   ```
+
   Per-connector ID-validation + service-specific `metadata` object **stay inline** (genuinely
   divergent — not force-fit).
 - **C5b `parsePortSecret` (intFromSecret):** the 7-line port/secret numeric parser duplicated in
