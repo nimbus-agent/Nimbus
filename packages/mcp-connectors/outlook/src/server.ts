@@ -15,10 +15,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult,
-  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
-import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
+import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 import {
   outlookToolShouldRegister,
   parseMicrosoftOAuthScopesFromEnv,
@@ -39,26 +38,31 @@ const server = new McpServer({ name: "nimbus-outlook", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 const grantedOutlookScopes = parseMicrosoftOAuthScopesFromEnv();
 
+/** Standard Graph read tool: token → graphRequest(buildPath[, buildInit]) → mcpJsonResultIfOk("Graph", …, 200). */
+const registerOutlookTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "MICROSOFT_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Graph",
+  fetch: graphRequest,
+  snippetMax: 200,
+});
+
 const outlookMailFoldersArgs = z.object({
   top: z.number().int().min(1).max(200).optional(),
   nextLink: z.url().optional(),
 });
 
 if (outlookToolShouldRegister("outlook_mail_folders", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_mail_folders",
     "List mail folders (pagination via nextLink).",
     outlookMailFoldersArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
+    (data) => {
       if (data.nextLink !== undefined && data.nextLink !== "") {
-        path = data.nextLink;
-      } else {
-        const top = data.top ?? 50;
-        path = `/me/mailFolders?$top=${String(top)}`;
+        return data.nextLink;
       }
-      return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+      const top = data.top ?? 50;
+      return `/me/mailFolders?$top=${String(top)}`;
     },
   );
 }
@@ -72,32 +76,28 @@ const outlookMailListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_list", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_mail_list",
     "List mail messages (default folder inbox if folderId omitted). Pagination via nextLink.",
     outlookMailListArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const top = data.top ?? 25;
-      let path: string;
+    (data) => {
       if (data.nextLink !== undefined && data.nextLink !== "") {
-        path = data.nextLink;
-      } else {
-        const fid = data.folderId !== undefined && data.folderId !== "" ? data.folderId : "inbox";
-        const skip = data.skip ?? 0;
-        const u = new URL(`${GRAPH}/me/mailFolders/${encodeURIComponent(fid)}/messages`);
-        u.searchParams.set("$top", String(top));
-        u.searchParams.set("$skip", String(skip));
-        u.searchParams.set(
-          "$select",
-          "id,subject,bodyPreview,receivedDateTime,lastModifiedDateTime,hasAttachments,webLink",
-        );
-        if (data.filter !== undefined && data.filter !== "") {
-          u.searchParams.set("$filter", data.filter);
-        }
-        path = `${u.pathname}${u.search}`;
+        return data.nextLink;
       }
-      return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+      const top = data.top ?? 25;
+      const fid = data.folderId !== undefined && data.folderId !== "" ? data.folderId : "inbox";
+      const skip = data.skip ?? 0;
+      const u = new URL(`${GRAPH}/me/mailFolders/${encodeURIComponent(fid)}/messages`);
+      u.searchParams.set("$top", String(top));
+      u.searchParams.set("$skip", String(skip));
+      u.searchParams.set(
+        "$select",
+        "id,subject,bodyPreview,receivedDateTime,lastModifiedDateTime,hasAttachments,webLink",
+      );
+      if (data.filter !== undefined && data.filter !== "") {
+        u.searchParams.set("$filter", data.filter);
+      }
+      return `${u.pathname}${u.search}`;
     },
   );
 }
@@ -107,18 +107,11 @@ const outlookMailReadArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_read", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_mail_read",
     "Read a single message (body, headers, attachments metadata).",
     outlookMailReadArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(
-        token,
-        `/me/messages/${encodeURIComponent(data.messageId)}?$expand=attachments`,
-      );
-      return mcpJsonResultIfOk("Graph", r, 200);
-    },
+    (data) => `/me/messages/${encodeURIComponent(data.messageId)}?$expand=attachments`,
   );
 }
 
@@ -181,22 +174,18 @@ const outlookCalendarListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_list", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_calendar_list",
     "List calendar events in a time window (ISO 8601 startDateTime / endDateTime).",
     outlookCalendarListArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
+    (data) => {
       if (data.nextLink !== undefined && data.nextLink !== "") {
-        path = data.nextLink;
-      } else {
-        const top = data.top ?? 50;
-        const s = encodeURIComponent(data.startDateTime);
-        const e = encodeURIComponent(data.endDateTime);
-        path = `/me/calendarView?startDateTime=${s}&endDateTime=${e}&$top=${String(top)}`;
+        return data.nextLink;
       }
-      return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+      const top = data.top ?? 50;
+      const s = encodeURIComponent(data.startDateTime);
+      const e = encodeURIComponent(data.endDateTime);
+      return `/me/calendarView?startDateTime=${s}&endDateTime=${e}&$top=${String(top)}`;
     },
   );
 }
@@ -206,15 +195,11 @@ const outlookCalendarGetArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_get", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_calendar_get",
     "Get a single calendar event by id.",
     outlookCalendarGetArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(token, `/me/events/${encodeURIComponent(data.eventId)}`);
-      return mcpJsonResultIfOk("Graph", r, 200);
-    },
+    (data) => `/me/events/${encodeURIComponent(data.eventId)}`,
   );
 }
 
@@ -228,12 +213,12 @@ const outlookCalendarCreateArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_calendar_create",
     "Create a calendar event. Requires Gateway HITL calendar.event.create.",
     outlookCalendarCreateArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
+    () => "/me/events",
+    (data) => {
       const tz = data.timeZone ?? "UTC";
       const body: Record<string, unknown> = {
         subject: data.subject,
@@ -253,12 +238,11 @@ if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) 
           type: "required",
         }));
       }
-      const r = await graphRequest(token, "/me/events", {
+      return {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
-      return mcpJsonResultIfOk("Graph", r, 200);
+      };
     },
   );
 }
@@ -292,21 +276,17 @@ const outlookContactListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_contact_list", grantedOutlookScopes)) {
-  reg(
+  registerOutlookTool(
     "outlook_contact_list",
     "List contacts from the default folder.",
     outlookContactListArgs,
-    async (data) => {
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
+    (data) => {
       if (data.nextLink !== undefined && data.nextLink !== "") {
-        path = data.nextLink;
-      } else {
-        const top = data.top ?? 50;
-        const skip = data.skip ?? 0;
-        path = `/me/contacts?$top=${String(top)}&$skip=${String(skip)}`;
+        return data.nextLink;
       }
-      return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+      const top = data.top ?? 50;
+      const skip = data.skip ?? 0;
+      return `/me/contacts?$top=${String(top)}&$skip=${String(skip)}`;
     },
   );
 }
@@ -316,11 +296,12 @@ const outlookContactGetArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_contact_get", grantedOutlookScopes)) {
-  reg("outlook_contact_get", "Get a single contact by id.", outlookContactGetArgs, async (data) => {
-    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const r = await graphRequest(token, `/me/contacts/${encodeURIComponent(data.contactId)}`);
-    return mcpJsonResultIfOk("Graph", r, 200);
-  });
+  registerOutlookTool(
+    "outlook_contact_get",
+    "Get a single contact by id.",
+    outlookContactGetArgs,
+    (data) => `/me/contacts/${encodeURIComponent(data.contactId)}`,
+  );
 }
 
 await server.connect(new StdioServerTransport());

@@ -6,9 +6,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult as jsonResult,
-  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const API = "https://api.pagerduty.com";
 
@@ -53,35 +53,37 @@ async function pdIncidentPutMutation(actionLabel: string, pathSuffix: string, in
 const mcp = new McpServer({ name: "nimbus-pagerduty", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
 
-reg(
+/** Standard PagerDuty read tool: token → pdFetch(buildPath) → mcpJsonResultIfOk("PagerDuty"). */
+const registerPdTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "PAGERDUTY_API_TOKEN",
+  serviceLabel: "PagerDuty",
+  fetch: pdFetch,
+});
+
+registerPdTool(
   "pd_incident_list",
   "List PagerDuty incidents (open and recently resolved).",
   z.object({
     statuses: z.array(z.enum(["triggered", "acknowledged", "resolved"])).optional(),
     limit: z.number().int().min(1).max(100).optional(),
   }),
-  async (parsed) => {
-    const token = requireProcessEnv("PAGERDUTY_API_TOKEN");
+  (parsed) => {
     const u = new URL(`${API}/incidents`);
     u.searchParams.set("limit", String(parsed.limit ?? 25));
     const st = parsed.statuses ?? ["triggered", "acknowledged"];
     for (const s of st) {
       u.searchParams.append("statuses[]", s);
     }
-    const res = await pdFetch(token, `${u.pathname}${u.search}`);
-    return mcpJsonResultIfOk("PagerDuty", res);
+    return `${u.pathname}${u.search}`;
   },
 );
 
-reg(
+registerPdTool(
   "pd_incident_get",
   "Get a single incident by id.",
   z.object({ incidentId: z.string().min(1) }),
-  async (parsed) => {
-    const token = requireProcessEnv("PAGERDUTY_API_TOKEN");
-    const res = await pdFetch(token, `/incidents/${encodeURIComponent(parsed.incidentId)}`);
-    return mcpJsonResultIfOk("PagerDuty", res);
-  },
+  (parsed) => `/incidents/${encodeURIComponent(parsed.incidentId)}`,
 );
 
 reg(

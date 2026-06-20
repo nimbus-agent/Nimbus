@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { makeRestFetcher, type RestFetcherConfig, type RestFetchResult } from "./rest-tool-kit.ts";
+import type { HttpJsonBodyResponse, McpListResult, ZodObjectSchema } from "./mcp-tool-kit.ts";
+import {
+  makeRestFetcher,
+  makeRestToolRegistrar,
+  type RestFetcherConfig,
+  type RestFetchResult,
+  type RestToolRegistrar,
+} from "./rest-tool-kit.ts";
 
 // ---------------------------------------------------------------------------
 // globalThis.fetch stub helpers
@@ -183,5 +190,192 @@ describe("makeRestFetcher — response parsing", () => {
     const result: RestFetchResult = await fetcher("/text");
     expect(result.json).toBeNull();
     expect(result.text).toBe("plain text");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeRestToolRegistrar — the standard-tool body factory
+// ---------------------------------------------------------------------------
+
+type CapturedTool = {
+  name: string;
+  description: string;
+  handler: (args: unknown) => Promise<McpListResult>;
+};
+
+/** A registrar that records what was registered so we can drive the wrapped handler. */
+function makeCapturingRegistrar(sink: CapturedTool[]): RestToolRegistrar {
+  return (name, description, _schema, handler) => {
+    sink.push({
+      name,
+      description,
+      handler: handler as (args: unknown) => Promise<McpListResult>,
+    });
+  };
+}
+
+/** A no-validation schema — the helper only forwards it to the registrar. */
+function passthroughSchema<T>(): ZodObjectSchema<T> {
+  return {
+    shape: {},
+    safeParse: (args: unknown) => ({ success: true, data: args as T }),
+  };
+}
+
+type FetchCall = { token: string; pathOrUrl: string; init: RequestInit | undefined };
+
+describe("makeRestToolRegistrar", () => {
+  const TOKEN_ENV = "TEST_REST_KIT_TOKEN";
+
+  afterEach(() => {
+    delete process.env[TOKEN_ENV];
+  });
+
+  it("standard tool: reads the token env, fetches buildPath, wraps the ok json", async () => {
+    process.env[TOKEN_ENV] = "secret-tok";
+    const tools: CapturedTool[] = [];
+    const calls: FetchCall[] = [];
+    const fetch = async (
+      token: string,
+      pathOrUrl: string,
+      init?: RequestInit,
+    ): Promise<HttpJsonBodyResponse> => {
+      calls.push({ token, pathOrUrl, init });
+      return { ok: true, status: 200, json: { id: 7 }, text: '{"id":7}' };
+    };
+    const register = makeRestToolRegistrar({
+      registrar: makeCapturingRegistrar(tools),
+      tokenEnv: TOKEN_ENV,
+      serviceLabel: "Svc",
+      fetch,
+    });
+
+    register(
+      "svc_get",
+      "Get a thing.",
+      passthroughSchema<{ id: number }>(),
+      (a) => `/things/${String(a.id)}`,
+    );
+
+    const tool = tools[0];
+    expect(tool).toBeDefined();
+    expect(tool?.name).toBe("svc_get");
+    expect(tool?.description).toBe("Get a thing.");
+
+    const res = await tool?.handler({ id: 7 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.token).toBe("secret-tok");
+    expect(calls[0]?.pathOrUrl).toBe("/things/7");
+    expect(calls[0]?.init).toBeUndefined();
+    expect(res).toEqual({ content: [{ type: "text", text: JSON.stringify({ id: 7 }, null, 2) }] });
+  });
+
+  it("passes buildInit (method/body) through to the fetcher", async () => {
+    process.env[TOKEN_ENV] = "tok";
+    const tools: CapturedTool[] = [];
+    const calls: FetchCall[] = [];
+    const fetch = async (
+      token: string,
+      pathOrUrl: string,
+      init?: RequestInit,
+    ): Promise<HttpJsonBodyResponse> => {
+      calls.push({ token, pathOrUrl, init });
+      return { ok: true, status: 200, json: {}, text: "{}" };
+    };
+    const register = makeRestToolRegistrar({
+      registrar: makeCapturingRegistrar(tools),
+      tokenEnv: TOKEN_ENV,
+      serviceLabel: "Svc",
+      fetch,
+    });
+
+    register(
+      "svc_post",
+      "Post a thing.",
+      passthroughSchema<{ name: string }>(),
+      () => "/things",
+      (a) => ({ method: "POST", body: JSON.stringify({ name: a.name }) }),
+    );
+
+    await tools[0]?.handler({ name: "x" });
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ name: "x" }));
+  });
+
+  it("applies snippetMax to the error message on a non-ok response", async () => {
+    process.env[TOKEN_ENV] = "tok";
+    const tools: CapturedTool[] = [];
+    const fetch = async (): Promise<HttpJsonBodyResponse> => ({
+      ok: false,
+      status: 500,
+      json: null,
+      text: "ABCDEFGHIJ",
+    });
+    const register = makeRestToolRegistrar({
+      registrar: makeCapturingRegistrar(tools),
+      tokenEnv: TOKEN_ENV,
+      serviceLabel: "Svc",
+      fetch,
+      snippetMax: 3,
+    });
+
+    register("svc_err", "Errors.", passthroughSchema<Record<string, never>>(), () => "/boom");
+
+    const tool = tools[0];
+    expect(tool).toBeDefined();
+    await expect(tool?.handler({})).rejects.toThrow("Svc 500: ABC");
+  });
+
+  it("omitting snippetMax falls back to mcpJsonResultIfOk's 300-char default", async () => {
+    process.env[TOKEN_ENV] = "tok";
+    const tools: CapturedTool[] = [];
+    const fetch = async (): Promise<HttpJsonBodyResponse> => ({
+      ok: false,
+      status: 502,
+      json: null,
+      text: "x".repeat(350),
+    });
+    const register = makeRestToolRegistrar({
+      registrar: makeCapturingRegistrar(tools),
+      tokenEnv: TOKEN_ENV,
+      serviceLabel: "Svc",
+      fetch,
+      // snippetMax intentionally omitted → must default to 300
+    });
+
+    register("svc_long", "Long error.", passthroughSchema<Record<string, never>>(), () => "/x");
+
+    const tool = tools[0];
+    expect(tool).toBeDefined();
+    let message = "";
+    try {
+      await tool?.handler({});
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    // Truncated at 300, NOT the full 350-char body — pins the default.
+    expect(message).toBe(`Svc 502: ${"x".repeat(300)}`);
+  });
+
+  it("throws when the token env is unset (requireProcessEnv fail-closed)", async () => {
+    const tools: CapturedTool[] = [];
+    const fetch = async (): Promise<HttpJsonBodyResponse> => ({
+      ok: true,
+      status: 200,
+      json: {},
+      text: "{}",
+    });
+    const register = makeRestToolRegistrar({
+      registrar: makeCapturingRegistrar(tools),
+      tokenEnv: TOKEN_ENV,
+      serviceLabel: "Svc",
+      fetch,
+    });
+
+    register("svc_get", "Get.", passthroughSchema<Record<string, never>>(), () => "/x");
+
+    const tool = tools[0];
+    expect(tool).toBeDefined();
+    await expect(tool?.handler({})).rejects.toThrow(`${TOKEN_ENV} is not set`);
   });
 });

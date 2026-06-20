@@ -2,13 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { headerLine } from "../../shared/header-safe.ts";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  mcpJsonResultIfOk,
-  requireProcessEnv,
-} from "../../shared/mcp-tool-kit.ts";
-import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
+import { createRegisterSimpleTool, createZodToolRegistrar } from "../../shared/mcp-tool-kit.ts";
+import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -47,6 +42,15 @@ const server = new McpServer({ name: "nimbus-gmail", version: "0.1.0" });
 
 const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 
+/** Standard Gmail tool: token → gmailFetch(buildPath[, buildInit]) → mcpJsonResultIfOk("Gmail API", …, 200). */
+const registerGmailTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "GOOGLE_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Gmail API",
+  fetch: gmailFetch,
+  snippetMax: 200,
+});
+
 const gmailMessageListArgs = z.object({
   maxResults: z.number().int().min(1).max(100).optional(),
   pageToken: z.string().optional(),
@@ -55,12 +59,11 @@ const gmailMessageListArgs = z.object({
   includeSpamTrash: z.boolean().optional(),
 });
 
-reg(
+registerGmailTool(
   "gmail_message_list",
   "List Gmail message ids (metadata). Optional Gmail search query `q` (same syntax as Gmail UI).",
   gmailMessageListArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  (data) => {
     const u = new URL(`${GMAIL_BASE}/messages`);
     u.searchParams.set("maxResults", String(data.maxResults ?? 25));
     if (data.pageToken !== undefined && data.pageToken !== "") {
@@ -77,7 +80,7 @@ reg(
     if (data.includeSpamTrash === true) {
       u.searchParams.set("includeSpamTrash", "true");
     }
-    return mcpJsonResultIfOk("Gmail API", await gmailFetch(token, u.toString()), 200);
+    return u.toString();
   },
 );
 
@@ -86,12 +89,11 @@ const gmailMessageReadArgs = z.object({
   format: z.enum(["minimal", "full", "metadata", "raw"]).optional(),
 });
 
-reg(
+registerGmailTool(
   "gmail_message_read",
   "Read a single Gmail message (format minimal | metadata | full | raw).",
   gmailMessageReadArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  (data) => {
     const fmt = data.format ?? "metadata";
     const u = new URL(`${GMAIL_BASE}/messages/${encodeURIComponent(data.messageId)}`);
     u.searchParams.set("format", fmt);
@@ -101,7 +103,7 @@ reg(
       u.searchParams.append("metadataHeaders", "To");
       u.searchParams.append("metadataHeaders", "Date");
     }
-    return mcpJsonResultIfOk("Gmail API", await gmailFetch(token, u.toString()), 200);
+    return u.toString();
   },
 );
 
@@ -110,25 +112,26 @@ const gmailThreadReadArgs = z.object({
   format: z.enum(["minimal", "full", "metadata"]).optional(),
 });
 
-reg(
+registerGmailTool(
   "gmail_thread_read",
   "Read a Gmail thread and its messages.",
   gmailThreadReadArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  (data) => {
     const fmt = data.format ?? "metadata";
     const u = new URL(`${GMAIL_BASE}/threads/${encodeURIComponent(data.threadId)}`);
     u.searchParams.set("format", fmt);
-    return mcpJsonResultIfOk("Gmail API", await gmailFetch(token, u.toString()), 200);
+    return u.toString();
   },
 );
 
 const gmailLabelListArgs = z.object({});
 
-reg("gmail_label_list", "List all Gmail labels.", gmailLabelListArgs, async () => {
-  const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-  return mcpJsonResultIfOk("Gmail API", await gmailFetch(token, `${GMAIL_BASE}/labels`), 200);
-});
+registerGmailTool(
+  "gmail_label_list",
+  "List all Gmail labels.",
+  gmailLabelListArgs,
+  () => `${GMAIL_BASE}/labels`,
+);
 
 const gmailDraftCreateArgs = z.object({
   to: headerLine({ min: 1 }),
@@ -138,12 +141,12 @@ const gmailDraftCreateArgs = z.object({
   bcc: headerLine().optional(),
 });
 
-reg(
+registerGmailTool(
   "gmail_draft_create",
   "Create a Gmail draft. Requires Gateway HITL email.draft.create.",
   gmailDraftCreateArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  () => `${GMAIL_BASE}/drafts`,
+  (data) => {
     const msgParams: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
       to: data.to,
       subject: data.subject,
@@ -156,12 +159,11 @@ reg(
       msgParams.bcc = data.bcc;
     }
     const raw = toRawBase64Url(buildRfc822Message(msgParams));
-    const r = await gmailFetch(token, `${GMAIL_BASE}/drafts`, {
+    return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: { raw } }),
-    });
-    return mcpJsonResultIfOk("Gmail API", r, 200);
+    };
   },
 );
 
@@ -169,19 +171,16 @@ const gmailDraftSendArgs = z.object({
   draftId: z.string().min(1),
 });
 
-reg(
+registerGmailTool(
   "gmail_draft_send",
   "Send an existing Gmail draft by id. Requires Gateway HITL email.draft.send.",
   gmailDraftSendArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const r = await gmailFetch(token, `${GMAIL_BASE}/drafts/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: data.draftId }),
-    });
-    return mcpJsonResultIfOk("Gmail API", r, 200);
-  },
+  () => `${GMAIL_BASE}/drafts/send`,
+  (data) => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: data.draftId }),
+  }),
 );
 
 const gmailMessageSendArgs = z.object({
@@ -192,12 +191,12 @@ const gmailMessageSendArgs = z.object({
   bcc: headerLine().optional(),
 });
 
-reg(
+registerGmailTool(
   "gmail_message_send",
   "Send a new Gmail message (not a draft). Requires Gateway HITL email.send.",
   gmailMessageSendArgs,
-  async (data) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  () => `${GMAIL_BASE}/messages/send`,
+  (data) => {
     const sendParams: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
       to: data.to,
       subject: data.subject,
@@ -210,12 +209,11 @@ reg(
       sendParams.bcc = data.bcc;
     }
     const raw = toRawBase64Url(buildRfc822Message(sendParams));
-    const r = await gmailFetch(token, `${GMAIL_BASE}/messages/send`, {
+    return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ raw }),
-    });
-    return mcpJsonResultIfOk("Gmail API", r, 200);
+    };
   },
 );
 

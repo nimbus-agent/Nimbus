@@ -7,9 +7,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult,
-  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
@@ -45,29 +45,34 @@ const server = new McpServer({ name: "nimbus-onedrive", version: "0.1.0" });
 
 const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 
+/** Standard Graph tool: token → graphRequest(buildPath[, buildInit]) → mcpJsonResultIfOk("Graph", …, 200). */
+const registerOnedriveTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "MICROSOFT_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Graph",
+  fetch: graphRequest,
+  snippetMax: 200,
+});
+
 const onedriveItemListArgs = z.object({
   parentId: z.string().min(1).optional(),
   pageSize: z.number().int().min(1).max(200).optional(),
   nextLink: z.url().optional(),
 });
 
-reg(
+registerOnedriveTool(
   "onedrive_item_list",
   "List drive items under root or a folder (by parentId). Use nextLink from prior response for pagination.",
   onedriveItemListArgs,
-  async (data) => {
-    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    let path: string;
+  (data) => {
     if (data.nextLink !== undefined && data.nextLink !== "") {
-      return mcpJsonResultIfOk("Graph", await graphRequest(token, data.nextLink), 200);
+      return data.nextLink;
     }
     const pageSize = data.pageSize ?? 50;
     if (data.parentId !== undefined && data.parentId !== "") {
-      path = `/me/drive/items/${encodeURIComponent(data.parentId)}/children?$top=${String(pageSize)}`;
-    } else {
-      path = `/me/drive/root/children?$top=${String(pageSize)}`;
+      return `/me/drive/items/${encodeURIComponent(data.parentId)}/children?$top=${String(pageSize)}`;
     }
-    return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+    return `/me/drive/root/children?$top=${String(pageSize)}`;
   },
 );
 
@@ -75,15 +80,11 @@ const onedriveItemGetArgs = z.object({
   itemId: z.string().min(1),
 });
 
-reg(
+registerOnedriveTool(
   "onedrive_item_get",
   "Get OneDrive item metadata by id (file or folder).",
   onedriveItemGetArgs,
-  async (data) => {
-    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const r = await graphRequest(token, `/me/drive/items/${encodeURIComponent(data.itemId)}`);
-    return mcpJsonResultIfOk("Graph", r, 200);
-  },
+  (data) => `/me/drive/items/${encodeURIComponent(data.itemId)}`,
 );
 
 const onedriveItemDownloadArgs = z.object({
@@ -147,21 +148,17 @@ const onedriveItemSearchArgs = z.object({
   nextLink: z.url().optional(),
 });
 
-reg(
+registerOnedriveTool(
   "onedrive_item_search",
   "Search OneDrive under /me/drive/root/search.",
   onedriveItemSearchArgs,
-  async (data) => {
-    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-    const pageSize = data.pageSize ?? 25;
-    let path: string;
+  (data) => {
     if (data.nextLink !== undefined && data.nextLink !== "") {
-      path = data.nextLink;
-    } else {
-      const escaped = data.query.replaceAll("'", "''");
-      path = `/me/drive/root/search(q='${escaped}')?$top=${String(pageSize)}`;
+      return data.nextLink;
     }
-    return mcpJsonResultIfOk("Graph", await graphRequest(token, path), 200);
+    const pageSize = data.pageSize ?? 25;
+    const escaped = data.query.replaceAll("'", "''");
+    return `/me/drive/root/search(q='${escaped}')?$top=${String(pageSize)}`;
   },
 );
 
@@ -191,24 +188,23 @@ const onedriveItemMoveArgs = z.object({
   newName: z.string().min(1).max(500).optional(),
 });
 
-reg(
+registerOnedriveTool(
   "onedrive_item_move",
   "Move (and optionally rename) a drive item. Requires Gateway HITL onedrive.move.",
   onedriveItemMoveArgs,
-  async (data) => {
-    const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
+  (data) => `/me/drive/items/${encodeURIComponent(data.itemId)}`,
+  (data) => {
     const body: Record<string, unknown> = {
       parentReference: { id: data.newParentId },
     };
     if (data.newName !== undefined) {
       body["name"] = data.newName;
     }
-    const r = await graphRequest(token, `/me/drive/items/${encodeURIComponent(data.itemId)}`, {
+    return {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
-    return mcpJsonResultIfOk("Graph", r, 200);
+    };
   },
 );
 

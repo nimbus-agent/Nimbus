@@ -6,10 +6,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult as jsonResult,
-  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
-import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
+import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const GH_API = "https://api.github.com";
 const GH_HEADERS: Record<string, string> = {
@@ -28,6 +27,17 @@ function ghFetch(
 const mcp = new McpServer({ name: "nimbus-github-actions", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
 
+/** Standard GitHub Actions tool: token → ghFetch(buildPath) → mcpJsonResultIfOk("GitHub Actions"). */
+const registerGhaTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "GITHUB_PAT",
+  serviceLabel: "GitHub Actions",
+  fetch: ghFetch,
+});
+
+const slug = (owner: string, repo: string): string =>
+  `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+
 const repoSlugArgs = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -41,32 +51,25 @@ const runListSchema = repoSlugArgs.extend({
   status: z.string().optional(),
 });
 
-reg(
+registerGhaTool(
   "gha_workflow_list",
   "List GitHub Actions workflows for a repository.",
   repoSlugArgs.extend({
     perPage: z.number().int().min(1).max(100).optional(),
     page: z.number().int().min(1).optional(),
   }),
-  async (parsed) => {
-    const token = requireProcessEnv("GITHUB_PAT");
-    const u = new URL(
-      `${GH_API}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/actions/workflows`,
-    );
+  (parsed) => {
+    const u = new URL(`${GH_API}${slug(parsed.owner, parsed.repo)}/actions/workflows`);
     u.searchParams.set("per_page", String(parsed.perPage ?? 30));
     if (parsed.page !== undefined) {
       u.searchParams.set("page", String(parsed.page));
     }
-    const res = await ghFetch(token, `${u.pathname}${u.search}`);
-    return mcpJsonResultIfOk("GitHub Actions", res);
+    return `${u.pathname}${u.search}`;
   },
 );
 
-reg("gha_run_list", "List workflow runs for a repository.", runListSchema, async (parsed) => {
-  const token = requireProcessEnv("GITHUB_PAT");
-  const u = new URL(
-    `${GH_API}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/actions/runs`,
-  );
+registerGhaTool("gha_run_list", "List workflow runs for a repository.", runListSchema, (parsed) => {
+  const u = new URL(`${GH_API}${slug(parsed.owner, parsed.repo)}/actions/runs`);
   u.searchParams.set("per_page", String(parsed.perPage ?? 30));
   if (parsed.page !== undefined) {
     u.searchParams.set("page", String(parsed.page));
@@ -80,27 +83,26 @@ reg("gha_run_list", "List workflow runs for a repository.", runListSchema, async
   if (parsed.status !== undefined) {
     u.searchParams.set("status", parsed.status);
   }
-  const res = await ghFetch(token, `${u.pathname}${u.search}`);
-  return mcpJsonResultIfOk("GitHub Actions", res);
+  return `${u.pathname}${u.search}`;
 });
 
 const runIdSchema = repoSlugArgs.extend({
   runId: z.number().int().min(1),
 });
 
-reg("gha_run_get", "Get a single workflow run by id.", runIdSchema, async (parsed) => {
-  const token = requireProcessEnv("GITHUB_PAT");
-  const path = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/actions/runs/${String(parsed.runId)}`;
-  const res = await ghFetch(token, path);
-  return mcpJsonResultIfOk("GitHub Actions", res);
-});
+registerGhaTool(
+  "gha_run_get",
+  "Get a single workflow run by id.",
+  runIdSchema,
+  (parsed) => `${slug(parsed.owner, parsed.repo)}/actions/runs/${String(parsed.runId)}`,
+);
 
-reg("gha_run_jobs", "List jobs for a workflow run.", runIdSchema, async (parsed) => {
-  const token = requireProcessEnv("GITHUB_PAT");
-  const path = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/actions/runs/${String(parsed.runId)}/jobs`;
-  const res = await ghFetch(token, path);
-  return mcpJsonResultIfOk("GitHub Actions", res);
-});
+registerGhaTool(
+  "gha_run_jobs",
+  "List jobs for a workflow run.",
+  runIdSchema,
+  (parsed) => `${slug(parsed.owner, parsed.repo)}/actions/runs/${String(parsed.runId)}/jobs`,
+);
 
 reg(
   "gha_run_log",
@@ -148,10 +150,8 @@ reg(
   }),
   async (parsed) => {
     const token = requireProcessEnv("GITHUB_PAT");
-    const encOwner = encodeURIComponent(parsed.owner);
-    const encRepo = encodeURIComponent(parsed.repo);
     const encWf = encodeURIComponent(parsed.workflowId);
-    const path = `/repos/${encOwner}/${encRepo}/actions/workflows/${encWf}/dispatches`;
+    const path = `${slug(parsed.owner, parsed.repo)}/actions/workflows/${encWf}/dispatches`;
     const ref = parsed.ref ?? "main";
     const res = await ghFetch(token, path, {
       method: "POST",
@@ -179,9 +179,7 @@ reg(
   runIdSchema,
   async (parsed) => {
     const token = requireProcessEnv("GITHUB_PAT");
-    const encOwner = encodeURIComponent(parsed.owner);
-    const encRepo = encodeURIComponent(parsed.repo);
-    const path = `/repos/${encOwner}/${encRepo}/actions/runs/${String(parsed.runId)}/cancel`;
+    const path = `${slug(parsed.owner, parsed.repo)}/actions/runs/${String(parsed.runId)}/cancel`;
     const res = await ghFetch(token, path, { method: "POST" });
     if (!res.ok) {
       throw new Error(`GitHub Actions cancel ${String(res.status)}: ${res.text.slice(0, 400)}`);
