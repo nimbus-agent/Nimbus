@@ -64,4 +64,34 @@ describe("runAgentCli", () => {
     ).rejects.toThrow("process.exit(2)");
     expect(stderrChunks.join("")).toContain("plain string failure");
   });
+
+  it("exits 2 and still disconnects when connect() fails inside the boundary", async () => {
+    let disconnected = false;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        // connect() now runs inside the try/finally, so a setup failure must
+        // hit the stderr + exit(2) path AND the finally disconnect.
+        connect: async () => {
+          throw new Error("stale socket");
+        },
+        disconnect: async () => {
+          disconnected = true;
+        },
+        call: async () => undefined,
+        onNotification: () => {},
+      },
+    });
+    await expect(
+      runAgentCli({
+        agentName: "x",
+        ipcMethod: "agents.x",
+        callParams: {},
+        guard: isAnyBrief,
+        json: false,
+      }),
+    ).rejects.toThrow("process.exit(2)");
+    expect(stderrChunks.join("")).toContain("stale socket");
+    expect(disconnected).toBe(true);
+  });
 });

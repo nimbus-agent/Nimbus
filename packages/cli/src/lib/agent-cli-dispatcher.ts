@@ -28,15 +28,17 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
   }
 
   const client = new IPCClient(state.socketPath);
-  await client.connect();
-  registerInteractiveCliIpcHandlers(client);
-
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const briefPromise = awaitAgentBrief(client, opts.agentName, opts.guard, (t) => {
-    timeout = t;
-  });
 
   try {
+    // Connect + handler registration live inside the boundary so a stale
+    // socket or setup failure still hits the stderr + exit(2) path and the
+    // finally disconnect, rather than escaping uncaught.
+    await client.connect();
+    registerInteractiveCliIpcHandlers(client);
+    const briefPromise = awaitAgentBrief(client, opts.agentName, opts.guard, (t) => {
+      timeout = t;
+    });
     await client.call<{ sessionId: string }>(opts.ipcMethod, opts.callParams);
     const { brief, findings } = await briefPromise;
     renderAgentBrief(brief, findings, opts.json);

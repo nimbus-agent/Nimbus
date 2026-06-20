@@ -98,7 +98,9 @@ registerGitlabTool(
     if (parsed.page !== undefined) {
       u.searchParams.set("page", String(parsed.page));
     }
-    return `${u.pathname}${u.search}`;
+    // Absolute URL: u already includes apiBase()'s `/api/v4`; returning a
+    // relative path would let glFetch re-prefix apiBase() → `/api/v4/api/v4/…`.
+    return u.toString();
   },
 );
 
@@ -120,7 +122,9 @@ registerGitlabTool(
     if (parsed.page !== undefined) {
       u.searchParams.set("page", String(parsed.page));
     }
-    return `${u.pathname}${u.search}`;
+    // Absolute URL: u already includes apiBase()'s `/api/v4`; returning a
+    // relative path would let glFetch re-prefix apiBase() → `/api/v4/api/v4/…`.
+    return u.toString();
   },
 );
 
@@ -186,7 +190,9 @@ registerGitlabTool(
     if (parsed.page !== undefined) {
       u.searchParams.set("page", String(parsed.page));
     }
-    return `${u.pathname}${u.search}`;
+    // Absolute URL: u already includes apiBase()'s `/api/v4`; returning a
+    // relative path would let glFetch re-prefix apiBase() → `/api/v4/api/v4/…`.
+    return u.toString();
   },
 );
 
@@ -226,7 +232,9 @@ registerGitlabTool(
     if (parsed.status !== undefined) {
       u.searchParams.set("status", parsed.status);
     }
-    return `${u.pathname}${u.search}`;
+    // Absolute URL: u already includes apiBase()'s `/api/v4`; returning a
+    // relative path would let glFetch re-prefix apiBase() → `/api/v4/api/v4/…`.
+    return u.toString();
   },
 );
 
