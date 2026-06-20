@@ -641,9 +641,14 @@ test("does NOT flag the gitops-ml SSoT module", () => {
 Run: `bun test packages/gateway/src/security-invariants.test.ts scripts/structure-audit/check-nimbus-invariants.test.ts`
 Expected: FAIL (new tests).
 
-- [ ] **Step 4: Swap the federated predicate**
+- [ ] **Step 4: Verify the full set of injection/reference sites, then swap the federated predicate**
 
-In `packages/gateway/src/ipc/federation-rpc.ts`: change the import `import { isWarehouseWriteToolId } from "../connectors/warehouse-write-tools.ts";` → `import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";` and the injection (`~line 495`) `isWriteForbiddenToolId: isWarehouseWriteToolId,` → `isWriteForbiddenToolId: isConnectorWriteToolId,`. Update the adjacent I26 comment from "warehouse/BI write" → "connector write".
+First enumerate every place the old predicate is referenced (guards against a missed federated route — plan-review §3):
+
+Run: `git grep -n "isWarehouseWriteToolId" -- packages/gateway/src`
+Expected (verified during planning): exactly three hits — the definition in `connectors/warehouse-write-tools.ts`, the injection in `ipc/federation-rpc.ts`, and the runtime test in `security-invariants.test.ts`. The dispatcher routes via `warehouseWriteByActionType` (not the predicate), so `federation-rpc.ts` is the **sole production injection site**. If the grep shows any *other* production file injecting the predicate, swap it to `isConnectorWriteToolId` too and note it.
+
+Then in `packages/gateway/src/ipc/federation-rpc.ts`: change the import `import { isWarehouseWriteToolId } from "../connectors/warehouse-write-tools.ts";` → `import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";` and the injection (`~line 495`) `isWriteForbiddenToolId: isWarehouseWriteToolId,` → `isWriteForbiddenToolId: isConnectorWriteToolId,`. Update the adjacent I26 comment from "warehouse/BI write" → "connector write". (The `security-invariants.test.ts` hit is updated in Step 1; `warehouse-write-tools.ts` keeps its definition.)
 
 - [ ] **Step 5: Generalize the D20 static check**
 
@@ -902,7 +907,7 @@ git commit -m "feat(argocd): HITL-gated app.sync + app.rollback write tools"
 - Modify: `packages/mcp-connectors/flux/nimbus.extension.json`
 - Create: `packages/mcp-connectors/flux/test/server-writes.test.ts`
 
-**Reference:** base = `${FLUX_API_URL}` (kube-apiserver, no suffix); auth = Bearer. Existing helpers `kindEntry(kind)` → `{ group, version, plural }` and `listPath(entry, ns)` → `/apis/{group}/{version}/namespaces/{ns}/{plural}`. The reconcile write = `PATCH {listPath}/{name}` with `Content-Type: application/merge-patch+json`, body `{ metadata: { annotations: { "reconcile.fluxcd.io/requestedAt": <RFC3339 now> } } }`. Each write tool is fixed to one kind (Kustomization / HelmRelease) — reuse the existing kind constant the read enum defines for each (read `KIND_VALUES`/the kind map to get the exact constant string).
+**Reference (verified against `flux/src/server.ts` + `@nimbus-dev/sdk` `FLUX_KINDS`):** base = `${FLUX_API_URL}` (kube-apiserver, no suffix); auth = `Authorization: Bearer ${FLUX_TOKEN}`. The connector already has `apiBase()`, `authHeader()`, `kindEntry(kind: string): FluxKindEntry` (looks up `FLUX_KINDS` by the `kind` string), and `listPath(entry, ns)` → `/apis/{group}/{version}/namespaces/{ns}/{plural}`. **There are no `KIND_*` constants** — `kindEntry` takes a kind *string*. The exact kind strings are **`"kustomization"`** (group `kustomize.toolkit.fluxcd.io`, version `v1`, plural `kustomizations`) and **`"helm_release"`** (group `helm.toolkit.fluxcd.io`, version `v2`, plural `helmreleases`). The reconcile write = `PATCH {listPath(kindEntry(kind), ns)}/{name}` with `Content-Type: application/merge-patch+json`, body `{ metadata: { annotations: { "reconcile.fluxcd.io/requestedAt": <RFC3339 now> } } }`.
 
 - [ ] **Step 1: Refactor — extract exported `registerFluxTools` + `import.meta.main` guard** (same pattern as Task 9 Step 1).
 
@@ -985,8 +990,8 @@ Expected: FAIL.
 Add a `fluxReconcile(kindValue, namespace, name)` helper that reuses `kindEntry`/`listPath`:
 
 ```ts
-async function fluxReconcile(kindValue: FluxKind, namespace: string, name: string): Promise<string> {
-  const entry = kindEntry(kindValue);
+async function fluxReconcile(kind: string, namespace: string, name: string): Promise<string> {
+  const entry = kindEntry(kind);
   const path = `${listPath(entry, namespace)}/${encodeURIComponent(name)}`;
   const requestedAt = new Date().toISOString();
   const res = await fetch(`${apiBase()}${path}`, {
@@ -1011,7 +1016,7 @@ reg(
     jsonResult({
       status: "requested",
       name: p.name,
-      requestedAt: await fluxReconcile(/* Kustomization kind const */ KIND_KUSTOMIZATION, p.namespace, p.name),
+      requestedAt: await fluxReconcile("kustomization", p.namespace, p.name),
     }),
 );
 
@@ -1023,12 +1028,12 @@ reg(
     jsonResult({
       status: "requested",
       name: p.name,
-      requestedAt: await fluxReconcile(/* HelmRelease kind const */ KIND_HELMRELEASE, p.namespace, p.name),
+      requestedAt: await fluxReconcile("helm_release", p.namespace, p.name),
     }),
 );
 ```
 
-> Replace `KIND_KUSTOMIZATION` / `KIND_HELMRELEASE` and `FluxKind` with the exact kind-value constants + type the connector already defines (from its `KIND_VALUES` enum / kind map — read `flux/src/server.ts` and the SDK `flux-cd/index.ts`). Do not introduce new kind strings; reuse the read path's source of truth so the group/version stays consistent.
+> The kind strings `"kustomization"` / `"helm_release"` are the exact `FLUX_KINDS[].kind` values (verified in `@nimbus-dev/sdk`); `kindEntry()` resolves them to the group/version/plural, so the write reuses the read path's single source of truth — no new kind strings, no version drift. `FluxKindEntry` is already imported transitively via `kindEntry`'s return type; `fluxReconcile`'s `kind` param is a plain `string`.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1099,7 +1104,7 @@ describe("mlflow write tools", () => {
     globalThis.fetch = origFetch;
   });
 
-  it("mlflow_model_promote sends stage=Production and archive_existing_versions=false by default", async () => {
+  it("mlflow_model_promote sends stage=Production and archive_existing_versions=true by default", async () => {
     const out = payload(
       await (captureTools().get("mlflow_model_promote") as Handler)({ name: "ranker", version: "4" }),
     );
@@ -1108,17 +1113,17 @@ describe("mlflow write tools", () => {
       name: "ranker",
       version: "4",
       stage: "Production",
-      archive_existing_versions: false,
+      archive_existing_versions: true,
     });
   });
 
-  it("mlflow_model_promote honors archiveExisting:true", async () => {
+  it("mlflow_model_promote honors archiveExisting:false override", async () => {
     await (captureTools().get("mlflow_model_promote") as Handler)({
       name: "ranker",
       version: "4",
-      archiveExisting: true,
+      archiveExisting: false,
     });
-    expect(bodies[0]?.["archive_existing_versions"]).toBe(true);
+    expect(bodies[0]?.["archive_existing_versions"]).toBe(false);
   });
 
   it("mlflow_model_transition_stage sends the caller stage", async () => {
@@ -1160,7 +1165,7 @@ const TRANSITION_PATH = "/api/2.0/mlflow/model-versions/transition-stage";
 ```ts
 reg(
   "mlflow_model_promote",
-  "Promote a model version to Production (`POST /api/2.0/mlflow/model-versions/transition-stage`, stage=Production; requires HITL mlflow.model.promote). `archiveExisting` (default false) archives other Production versions — opt in explicitly.",
+  "Promote a model version to Production (`POST /api/2.0/mlflow/model-versions/transition-stage`, stage=Production; requires HITL mlflow.model.promote). `archiveExisting` (default true) archives other Production versions so this becomes the single active one; pass false to keep them. Archiving is a reversible stage change.",
   z.object({
     name: z.string().min(1),
     version: z.string().min(1),
@@ -1171,7 +1176,7 @@ reg(
       name: p.name,
       version: p.version,
       stage: "Production",
-      archive_existing_versions: p.archiveExisting ?? false,
+      archive_existing_versions: p.archiveExisting ?? true, // promote defaults to archiving the incumbent
     });
     return jsonResult({ status: "ok", name: p.name, version: p.version, stage: "Production" });
   },

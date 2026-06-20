@@ -74,7 +74,7 @@ realized as the service-specific types below.)
 | ArgoCD | `argocd.app.rollback` | `argocd_app_rollback` | `POST /api/v1/applications/{name}/rollback` (`id` = target history id) |
 | Flux | `flux.kustomization.reconcile` | `flux_kustomization_reconcile` | `PATCH` the Kustomization CR: set `metadata.annotations["reconcile.fluxcd.io/requestedAt"]` = RFC3339 now |
 | Flux | `flux.helmrelease.reconcile` | `flux_helmrelease_reconcile` | `PATCH` the HelmRelease CR: same `reconcile.fluxcd.io/requestedAt` annotation |
-| MLflow | `mlflow.model.promote` | `mlflow_model_promote` | `POST /api/2.0/mlflow/model-versions/transition-stage` → `stage: "Production"` (explicit `archiveExisting` arg, default `false` — see §3 note) |
+| MLflow | `mlflow.model.promote` | `mlflow_model_promote` | `POST /api/2.0/mlflow/model-versions/transition-stage` → `stage: "Production"` (explicit `archiveExisting` arg, default **`true`** — see §3 note) |
 | MLflow | `mlflow.model.transition_stage` | `mlflow_model_transition_stage` | `POST /api/2.0/mlflow/model-versions/transition-stage` → caller-supplied `stage` (Staging/Production/Archived), explicit `archiveExisting` arg, default `false` |
 
 **Reference-API pinning (the #595 lesson).** Each request shape — auth header, base URL resolution,
@@ -95,13 +95,21 @@ the vendor docs **before** any handler is written. Two items need explicit verif
   `Production` — kept as a distinct action type for a cleaner HITL prompt ("promote to Production")
   and a tighter arg schema (no free `stage`).
 
-**`archiveExisting` is an explicit arg, default `false` (review §2).** Both MLflow writes expose
-`archiveExisting?: boolean` (maps to the API's `archive_existing_versions`), **defaulting `false`**.
-Rationale: `false` is MLflow's own API default, and a `true` would silently *archive a different
-version* (the incumbent in the target stage) as a side effect of promoting the named one — an implicit
-destructive mutation that contradicts W1's "no destructive default" posture (§1.1). The owner opts
-into the single-active-version semantic by setting `archiveExisting: true`; because the value is
-surfaced in the I2 HITL preview, the archiving is always a consciously-approved action, never silent.
+**`archiveExisting` is an explicit arg; defaults differ per tool (review §2, plan-review §1).** Both
+MLflow writes expose `archiveExisting?: boolean` (maps to the API's `archive_existing_versions`):
+
+- **`mlflow_model_promote` defaults `true`.** `promote` is a *distinct* tool from `transition_stage`
+  precisely to encode the opinionated "make this THE Production version" semantic; leaving multiple
+  versions active in `Production` is the real footgun. Archiving the incumbent is a **reversible
+  stage change** (it sets the prior version's stage to `Archived`, recoverable by a later transition —
+  not data loss), and the flag value appears in the I2 HITL preview the owner approves, so it is never
+  a *silent* mutation. (This reverses the initial design-review §2 default of `false`, whose rationale
+  rested on "silent"/"destructive" framings that don't hold up: the HITL preview makes it non-silent
+  and the archive is reversible.)
+- **`mlflow_model_transition_stage` defaults `false`** — it is the flexible, manual stage-management
+  tool (MLflow's own API default), where the caller may legitimately want multiple versions in a stage
+  or to move a version without touching others. The owner opts into archiving with `archiveExisting:
+  true`.
 
 **Flux reconcile requires `patch` RBAC (review §1).** A read-only Flux ServiceAccount has only
 `get`/`list`/`watch`; reconcile needs the **`patch`** verb on `kustomizations`
@@ -373,7 +381,7 @@ Run once against a sandbox/staging account per connector before declaring the li
 | # | Review point | Decision | Where |
 |---|---|---|---|
 | 1 | Flux requires `patch` RBAC; catch `403` and suggest RBAC upgrade | **Fix** (setup-guide `patch`-verb requirement + reaffirm raw `403` surfacing) **+ Defer** (bespoke RBAC-remediation templating — same line 7c drew) | §3 (`patch` note + error rule), §7 checklist, §8 |
-| 2 | Define `archive_existing_versions` default | **Fix** — explicit `archiveExisting` arg, **default `false`** (MLflow's API default + no-silent-destructive posture); owner opts in via the I2 preview. Declined the suggested `true` default with rationale. | §3 (`archiveExisting` note), §3 table |
+| 2 | Define `archive_existing_versions` default | **Fix** — explicit `archiveExisting` arg. Initially defaulted both to `false`; **revised in plan-review §1 to `true` for `promote`** (reversible stage change + non-silent via HITL preview + promote's distinct singular-Production semantic), `false` for `transition_stage`. | §3 (`archiveExisting` note), §3 table |
 | 3 | Async writes: agent may read stale state; guide it / suggest `/schedule` | **Fix** (tool-description guidance: op is *requested*-not-done, verify on next sync, `/schedule` re-check) **+ Defer** (no poll tool, no manual sync-trigger tool) | §3 (async output shape), §8 |
 | 4 | Drift test should programmatically assert every connector-write tool id is in `HITL_REQUIRED_BACKING` | **Fix** — drift test made an explicit completeness check over the full union (HITL coverage + server registration + 1:1 integrity); forgotten HITL wiring fails CI | §4.3 |
 
