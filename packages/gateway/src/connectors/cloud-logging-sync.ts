@@ -1,6 +1,6 @@
-import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
+import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
 import { mapCloudLoggingSinkToItem } from "./cloud-logging-sink-mapping.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -26,25 +26,14 @@ function pass1Cursor(): string {
  * the caller degrades gracefully (no throw past the Syncable boundary),
  * mirroring gcp-sync's `!res.ok` posture.
  */
-async function gcloudLoggingSinksList(
+function gcloudLoggingSinksList(
   credPath: string,
   project: string,
 ): Promise<{ ok: boolean; text: string }> {
-  try {
-    const proc = Bun.spawn(
-      ["gcloud", "logging", "sinks", "list", "--project", project, "--format", "json"],
-      {
-        env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const code = await proc.exited;
-    const out = await new Response(proc.stdout).text();
-    return { ok: code === 0, text: out };
-  } catch {
-    return { ok: false, text: "" };
-  }
+  return runGcloudCommand(
+    ["gcloud", "logging", "sinks", "list", "--project", project, "--format", "json"],
+    credPath,
+  );
 }
 
 /**
