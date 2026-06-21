@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.15.0](https://github.com/nimbus-agent/Nimbus/compare/v0.14.0...v0.15.0) (2026-06-21)
+
+
+### Features
+
+* **slice9-w1:** HITL-gated GitOps + ML writes (ArgoCD/Flux/MLflow), generalize I26 ([#700](https://github.com/nimbus-agent/Nimbus/issues/700)) ([bccab8b](https://github.com/nimbus-agent/Nimbus/commit/bccab8bf9e8f34fabed47afff3619bf6dc6802ff))
+
+
+### Bug Fixes
+
+* **test:** resolve LanServer gate test flake ([#705](https://github.com/nimbus-agent/Nimbus/issues/705)) ([2e757e8](https://github.com/nimbus-agent/Nimbus/commit/2e757e8143045963ba7c78cb58bcb4806071fdd9))
+
 ## [0.14.0](https://github.com/nimbus-agent/Nimbus/compare/v0.13.1...v0.14.0) (2026-06-21)
 
 
