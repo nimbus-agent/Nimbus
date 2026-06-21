@@ -16,6 +16,7 @@ import {
   runDeployCli,
   runDiag,
   runDoctor,
+  runEgress,
   runExpertCli,
   runExtension,
   runGhostCli,
@@ -32,6 +33,7 @@ import {
   runPolicy,
   runPreflightCli,
   runProfile,
+  runProve,
   runQuery,
   runRepl,
   runScaffold,
@@ -123,6 +125,8 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   share: runShare,
   "verify-share": runVerifyShare,
   "mcp-server": runMcpServer,
+  prove: runProve,
+  egress: runEgress,
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);

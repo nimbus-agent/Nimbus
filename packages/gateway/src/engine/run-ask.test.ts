@@ -391,6 +391,49 @@ describe("runAsk", () => {
     localIndex.close();
   });
 
+  test("I29: a dispatched action writes an egress_ledger row (sink wired into the ask executor)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    const dispatcher: ConnectorDispatcher = {
+      async dispatch() {
+        return { hits: [] };
+      },
+    };
+
+    // Before the dispatch the ledger is empty — a sound zero (this is the headline negative).
+    const before = (db.query("SELECT COUNT(*) as c FROM egress_ledger").get() as { c: number }).c;
+    expect(before).toBe(0);
+
+    await runAsk({
+      input: "find files named *.md",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher,
+      sendChunk: () => {},
+      classify: async () => ({
+        intent: "file_search",
+        entities: { pattern: "*.md" },
+        requiresHITL: false,
+        confidence: 0.9,
+      }),
+    });
+
+    const rows = db
+      .query("SELECT method, result_status FROM egress_ledger ORDER BY id ASC")
+      .all() as { method: string; result_status: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.method).toBe("filesystem_search_files");
+    expect(rows[0]?.result_status).toBe("authorized");
+    localIndex.close();
+  });
+
   test("reports a rejection when the consent gate denies a HITL action (actions-plan path)", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);

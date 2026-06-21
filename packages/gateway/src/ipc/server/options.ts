@@ -22,6 +22,7 @@ import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
+import type { EgressRpcCtx } from "../egress-rpc.ts";
 import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
@@ -112,6 +113,11 @@ export type CreateIpcServerOptions = {
   // cleanly when unset. share.create/share.prune are LAN-forbidden (I5); only share.get/list/pubkey/
   // verify are Tauri-exposed (I7).
   shareRpcCtx?: ShareRpcCtx;
+  // Egress Ledger. The dependency seam behind the egress.* IPC namespace (list, verify, head,
+  // proveWindow, prune). egress.prune gates through requestPruneApproval (owner HITL, I2, fail-closed).
+  // Present only when assembled at boot; the dispatcher skips cleanly when unset. egress.prune is
+  // NOT Tauri-exposed (I7 — mutation/RCE-class surface); only the 4 read verbs are renderer-callable.
+  egressRpcCtx?: EgressRpcCtx;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
   // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).

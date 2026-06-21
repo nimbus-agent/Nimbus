@@ -8,8 +8,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { agentRequestContext } from "./agent-request-context.ts";
-import { redactPayloadForConsentDisplay, serviceOf } from "./executor.ts";
+import { redactPayloadForConsentDisplay } from "./executor.ts";
 import { HITL_REQUIRED, ToolExecutor } from "./index.ts";
+import { serviceOf } from "./service-of.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "./types.ts";
 
 type AuditRecord = Parameters<AuditSink["recordAudit"]>[0];

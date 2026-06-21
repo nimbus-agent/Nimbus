@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
   checkConnectorWriteConfinement,
+  checkEgressChokepointConfinement,
   checkForwardShareConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
@@ -396,5 +397,46 @@ describe("D21 (I27) extension — createShare call-site + consent-broker wiring 
       },
     ]);
     expect(v).toHaveLength(0);
+  });
+});
+
+describe("D22 — egress chokepoint confinement", () => {
+  test("flags connectors.dispatch outside engine/executor.ts", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/rogue/bypass.ts",
+        contents: "await this.connectors.dispatch(action);\n",
+      },
+    ];
+    const v = checkEgressChokepointConfinement(files);
+    expect(v.some((x) => x.rule === "D22-connectors-dispatch")).toBe(true);
+  });
+
+  test("allows connectors.dispatch inside engine/executor.ts", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/engine/executor.ts",
+        contents: "await this.connectors.dispatch(action);\n",
+      },
+    ];
+    expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
+  });
+
+  test("flags appendEgressEntry referenced outside egress/*", () => {
+    const files: FileEntry[] = [
+      { relPath: "packages/gateway/src/rogue/x.ts", contents: "appendEgressEntry(db, e);\n" },
+    ];
+    const v = checkEgressChokepointConfinement(files);
+    expect(v.some((x) => x.rule === "D22-egress-append")).toBe(true);
+  });
+
+  test("allows appendEgressEntry inside egress/*", () => {
+    const files: FileEntry[] = [
+      {
+        relPath: "packages/gateway/src/egress/egress-prune.ts",
+        contents: "appendEgressEntry(db, e);\n",
+      },
+    ];
+    expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
   });
 });

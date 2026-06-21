@@ -6,14 +6,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProfileManager } from "../../config/profiles.ts";
+import { appendEgressEntry } from "../../egress/egress-ledger.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
-import { LocalIndex } from "../../index/local-index.ts";
+import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
+import type { EgressRpcCtx } from "../egress-rpc.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import { PairingWindow } from "../lan-pairing.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
@@ -41,6 +44,7 @@ import {
   tryDispatchDataRpc,
   tryDispatchDeploymentRpc,
   tryDispatchDiagnosticsRpc,
+  tryDispatchEgressRpc,
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
@@ -902,5 +906,68 @@ describe("tryDispatchFederationRpc team.auditMerged (local stream)", () => {
       namespace: "ns",
     })) as Record<string, unknown>;
     expect(Array.isArray(out["entries"])).toBe(true);
+  });
+});
+
+describe("tryDispatchEgressRpc", () => {
+  test("skips a non-egress method", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchEgressRpc(ctx, "engine.ask", {}, "c1")).toBe(phase4RpcSkipped);
+  });
+  test("skips when egressRpcCtx is not wired", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchEgressRpc(ctx, "egress.head", {}, "c1")).toBe(phase4RpcSkipped);
+  });
+  test("dispatches egress.head when wired", async () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    const egressRpcCtx: EgressRpcCtx = {
+      db,
+      // biome-ignore lint/suspicious/noExplicitAny: test stand-in
+      vault: { get: async () => null, set: async () => {} } as any,
+      now: () => 1,
+      requestPruneApproval: async () => false,
+    };
+    openDbs.push(db);
+    const { ctx } = makeCtx({ egressRpcCtx });
+    const out = (await tryDispatchEgressRpc(ctx, "egress.head", {}, "c1")) as { count: number };
+    expect(out.count).toBe(0);
+  });
+  test("egress.prune binds the owner HITL gate — fail-closed deny when no consent session is live", async () => {
+    // The base ctx requestPruneApproval would APPROVE; the dispatcher must OVERRIDE it with the
+    // I2 gate bound to the calling client. makeCtx's consent has no live writer → the gate rejects
+    // (fail-closed) → nothing is pruned. Proves the gate is wired, not the injected default.
+    const localIndex = new LocalIndex(makeDb());
+    openDbs.push(localIndex.getDatabase());
+    appendEgressEntry(localIndex.getDatabase(), {
+      timestamp: 10,
+      sourceType: "task",
+      sourceId: "s",
+      destination: "email",
+      method: "email.send",
+      payloadSummary: "{}",
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+    });
+    const egressRpcCtx: EgressRpcCtx = {
+      db: localIndex.getDatabase(),
+      // biome-ignore lint/suspicious/noExplicitAny: test stand-in
+      vault: { get: async () => null, set: async () => {} } as any,
+      now: () => 1,
+      requestPruneApproval: async () => true, // would approve — but the gate override denies
+    };
+    const { ctx } = makeCtx({ localIndex, egressRpcCtx });
+    const out = (await tryDispatchEgressRpc(ctx, "egress.prune", { beforeTs: 9999 }, "c1")) as {
+      approved: boolean;
+      prunedCount: number;
+    };
+    expect(out.approved).toBe(false);
+    expect(out.prunedCount).toBe(0);
+    const count = (
+      localIndex.getDatabase().query("SELECT COUNT(*) as c FROM egress_ledger").get() as {
+        c: number;
+      }
+    ).c;
+    expect(count).toBe(1);
   });
 });

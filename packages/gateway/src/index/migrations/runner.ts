@@ -12,6 +12,7 @@ import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
+import { EGRESS_LEDGER_V44_SQL } from "../egress-ledger-v44-sql.ts";
 import {
   EMBEDDING_V6_MIGRATION_SQL,
   EMBEDDING_V6_NO_VEC_MIGRATION_SQL,
@@ -403,6 +404,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(40, 41, "share_records (share & virality ledger v41)", SHARE_RECORDS_V41_SQL),
   simpleStep(41, 42, "tool_call_log.params_json (recipe params v42)", TOOL_CALL_PARAMS_V42_SQL),
   simpleStep(42, 43, "share_inbox (sovereign-mesh referral v43)", SHARE_INBOX_V43_SQL),
+  simpleStep(43, 44, "egress_ledger (provable-locality primitive v44)", EGRESS_LEDGER_V44_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

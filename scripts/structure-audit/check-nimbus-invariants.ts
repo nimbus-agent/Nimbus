@@ -582,6 +582,49 @@ export function checkForwardShareConfinement(files: readonly FileEntry[]): Viola
   return out;
 }
 
+// D22 (I29) — the executor chokepoint must be TOTAL. (a) EVERY `connectors.dispatch` call site in
+// the gateway (the property access on the executor-injected dispatcher) may appear ONLY in
+// engine/executor.ts — with NO wrapper/allowlist exemption: there is no escape hatch, no
+// "approved wrapper" carve-out, no per-file allow entry. Any future shortcut or custom-wrapper
+// bypass (a new dispatcher decorator, a helper that re-exposes dispatch, a "just this once" call)
+// therefore fails this preflight static check immediately, because a reference anywhere else would
+// let an outbound action bypass the ledgered gate, making a 0-row window a false negative.
+// (b) the egress-ledger append symbol (`appendEgressEntry`) is confined to egress/* (the write
+// path's only home). Test files are exempt.
+const D22_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
+const D22_DISPATCH_RE = /\bconnectors\.dispatch\b/;
+const D22_APPEND_RE = /\bappendEgressEntry\b/;
+const D22_APPEND_ALLOWED_PREFIX = "packages/gateway/src/egress/";
+
+export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (D22_DISPATCH_RE.test(line) && f.relPath !== D22_DISPATCH_ALLOWED) {
+        out.push({
+          rule: "D22-connectors-dispatch",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+      if (D22_APPEND_RE.test(line) && !f.relPath.startsWith(D22_APPEND_ALLOWED_PREFIX)) {
+        out.push({
+          rule: "D22-egress-append",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 type Mode = "spawn" | "wrap-spec" | "vault-key" | "db-run" | "db-run-exec" | "binary-only" | "all";
 
 function parseArgs(argv: readonly string[]): Mode {
@@ -751,6 +794,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D21 forwardShare called outside share-forward.ts/federation-rpc.ts — bypasses I27 second emit chokepoint: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkEgressChokepointConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, or appendEgressEntry outside egress/) — bypasses I29: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
