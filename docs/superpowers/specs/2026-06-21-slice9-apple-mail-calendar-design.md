@@ -14,7 +14,7 @@ A single first-party MCP connector, service id **`apple`**, that indexes the use
 
 The connector is **cross-platform**: although the roadmap labels the item "macOS-only," the chosen transport (IMAP/SMTP/CalDAV to iCloud) is pure network protocol with no native macOS dependency — that is precisely the point of the roadmap's "via local IMAP (no Bridge required)" phrasing. See §8.
 
-**No new security invariant and no new migration.** All four write actions already exist in the I2 HITL frozen set; the connector's write tool ids extend the **existing I26** connector-write registry (so federated peers fail-closed). New item types are registered without a schema change (the index is type-agnostic).
+**No new security invariant and no new migration.** All four write actions already exist in the I2 HITL frozen set, and apple's write tools ride the **existing generic email/calendar write path** exactly like the five sibling email connectors (imap/gmail/outlook/fastmail/protonmail) — protected by the executor's I2 HITL gate on the generic action types. They are **not** I26 connector-write-registry writes (see §6.2 for why). New item types are registered without a schema change (the index is type-agnostic).
 
 ---
 
@@ -89,23 +89,22 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 - `apple_mail_send` reuses the exact HITL path the existing `imap_mail_send` uses (`email.send`).
 - **Forced sender.** iCloud SMTP rejects a `From` that does not match the authenticated account (`554 5.7.1 …`). `apple_mail_send` therefore **forces the envelope/`From` sender to `apple.icloud_email`** and ignores any caller-supplied `From` — mirroring the existing `NodemailerMailer` (`from = this.from = authenticated user`). Same for the `apple_mail_draft_create` APPEND (the drafted message's `From` is set to the authenticated address).
 
-### 6.2 I26 extension (federated-peer write confinement)
+### 6.2 Why NOT the I26 connector-write registry (grounded in planning)
 
-The federated invoke gate (`federation/invoke-gate.ts` `answerFederatedInvoke`) fail-closes any tool id for which the injected `isWriteForbiddenToolId` predicate returns true — currently wired to `isConnectorWriteToolId` (= warehouse/BI ∪ GitOps/ML). The Apple write tool ids are **not** in that union today, so to keep I26 ("connector write actions execute only behind the LOCAL owner's HITL gate; the federated peer invoke gate fail-closed rejects any write-classified tool id … the union `isConnectorWriteToolId`") honest, they must join it.
+The earlier draft proposed extending the I26 `isConnectorWriteToolId` registry. Reading the real call sites during planning showed that is the **wrong** mechanism for apple, for two concrete reasons:
 
-**Wiring:**
-- New SSoT `packages/gateway/src/connectors/apple-write-tools.ts` exporting `APPLE_WRITES` (the four `ConnectorWrite` records via the `w()` helper), `isAppleWriteToolId`, `appleWriteByActionType` — mirroring `gitops-ml-write-tools.ts`.
-- `connector-write-registry.ts`: add `...APPLE_WRITES` to `CONNECTOR_WRITES`, OR `isAppleWriteToolId(id)` into `isConnectorWriteToolId`, and `appleWriteByActionType` into `connectorWriteByActionType`.
+1. **Dispatch routes by action type, and apple's action types are generic + shared.** The connector-write dispatcher (`connectors/connector-write-dispatch.ts`) routes via `connectorWriteByActionType(action.type)`. Apple's four action types (`email.send`, `email.draft.create`, `calendar.event.create`, `calendar.event.delete`) are **generic** and already used by the five sibling email/calendar connectors (imap/gmail/outlook/fastmail/protonmail), which dispatch through the **generic** path (`registry.ts` resolves `payload.mcpToolId ?? action.type` against the live MCP tool map). Putting an `email.send → apple` row into the registry's action-type map would **hijack every `email.send` to apple**, breaking the other connectors. So the action-type dispatch map is off-limits.
 
-> **Action-type collision caveat (resolved in planning):** the four action types are *generic* (`email.send`, etc.) and may already be the dispatch key for imap/gmail/outlook. The connector-write registry's `BY_ACTION_TYPE` map is for credential-aware dispatch routing; the Apple write *tool ids* are distinct (`apple_*`). Planning will read the existing generic email/calendar dispatch path **and** the gitops/ml write dispatch path (2–3 real call sites) to decide whether `apple_*` writes route through the generic executor path or the connector-write dispatch path, and to ensure no `BY_ACTION_TYPE` key collision. The I26 federation-confinement requirement (tool ids in `isConnectorWriteToolId`) holds regardless.
+2. **Federation can't reach personal connectors anyway.** `federation/invoke-gate.ts` `answerFederatedInvoke` only routes to tools backed by a **team-vault entry** (`store.getEntry(q.entry)` + `checkGrant` + a team-credentialed `runTool`). Apple is a personal-credential connector with **no team-vault entry**, so a peer invoke fails at `getEntry === undefined` regardless. The `isConnectorWriteToolId` fail-close exists to harden the *team-credentialed* warehouse/GitOps writes (which I19 can run with team creds); it is a no-op for a personal connector. The five sibling email connectors are, correctly, **not** in the registry for exactly this reason.
 
-### 6.3 Triple rule (one commit)
+**Conclusion:** apple's writes are *classic personal email/calendar writes*, identical in shape to `imap_mail_send`. They ride the **generic dispatch path** (`payload.mcpToolId = "apple_mail_send"`, etc.) and are protected by the **executor I2 HITL gate** keyed on the generic action type — no `apple-write-tools.ts`, no `connector-write-registry.ts` edit, no D20 allow-list change, no `SECURITY-INVARIANTS.md` change. (Whether the personal-email-write class *as a whole* warrants federation fail-close is a pre-existing, slice-wide question — explicitly out of scope here, since fixing only apple would be half a fix.)
 
-Because this **extends I26** (not a new invariant), the triple lands together:
-1. **Wiring** — `apple-write-tools.ts` + the `connector-write-registry.ts` union edits.
-2. **Docs** — update the **I26** row in `docs/SECURITY-INVARIANTS.md` (and the matching line in CLAUDE.md/GEMINI.md only if its I26 prose enumerates groups; per convention connector *deliveries* are logged in `docs/CHANGELOG.md`, not the status line).
-3. **Test** — `packages/gateway/src/security-invariants.test.ts`: assert each `apple_*` write id is write-forbidden by `isConnectorWriteToolId`, and (HITL) that the gate fires for each of the four action types before dispatch.
-4. **Static D20** — add `apple-write-tools.ts` to the allowed write-tool-id sites in `scripts/structure-audit/check-nimbus-invariants.ts` so the confinement check passes.
+### 6.3 What the write path actually requires (no new invariant)
+
+1. **HITL (I2) — already satisfied.** The four action types are already members of `HITL_REQUIRED_BACKING`; the gate fires on `action.type` (I3). No frozen-set edit. The connector is HITL-agnostic (the gate lives in the gateway, never the connector).
+2. **Forced sender (§6.1)** in `apple_mail_send` + `apple_mail_draft_create`.
+3. **Test (this slice's belt-and-suspenders).** A gateway-side executor test asserting that `executor.execute({ type, payload: { mcpToolId: "apple_*", input } })` triggers the consent gate **before** dispatch for each of the four apple write actions (mirrors the existing `executor.test.ts` HITL pattern). This proves apple's writes are gated without touching any invariant wiring.
+4. **No `docs/SECURITY-INVARIANTS.md` change** (no invariant added/modified); the connector delivery is logged in `docs/CHANGELOG.md` per convention.
 
 ---
 
@@ -145,8 +144,7 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 
 - **Connector contract tests:** tool surface (`APPLE_TOOL_NAMES`), preview ≤2000 cap, no-full-body / no-attachment-bytes invariant, ICS build/parse round-trip.
 - **Pure-logic unit tests:** `ics.ts`, mapping, mailbox/calendar selection, window + recurrence-expansion math, address formatting — to clear the coverage floor.
-- **HITL enforcement test:** the gate fires for all four write action types before connector dispatch.
-- **I26 test:** each `apple_*` write id is rejected by `isConnectorWriteToolId` (federated-peer fail-closed).
+- **HITL enforcement test (executor-level):** `executor.execute` triggers the consent gate before dispatch for all four apple write actions (`email.send`, `email.draft.create`, `calendar.event.create`, `calendar.event.delete`) — mirrors `executor.test.ts`. (No I26 test — apple is not a connector-write-registry write; see §6.2.)
 - **Sync integration test:** real SQLite + injected `ImapClient`/`CalDavClient` (no sockets), asserting `apple:email` + `apple:event` items land with the right shapes and embedding routing.
 - **Pre-first-push gate (no push-and-see):** full `bun run preflight` + the Docker-Linux coverage-floor check (authoritative for new non-`server.ts`/`tools.ts` files) + a whole-branch `/code-review` + `audit:package-readmes` (public-tier README sections).
 
@@ -180,8 +178,8 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 
 ## 13. Definition of done
 
-- `apple` connector indexes iCloud Mail + Calendar; four write tools gated by the existing HITL actions.
-- I26 extended (wiring + docs + test + static D20) in one commit; security-invariants suite green.
+- `apple` connector indexes iCloud Mail + Calendar; four write tools gated by the existing I2 HITL actions (generic email/calendar path; no new invariant).
+- Executor-level HITL test green for all four apple write actions; security-invariants suite unchanged + green.
 - `apple:email` routed 1536-dim; `apple:event` 384-dim.
 - Cross-platform; full `preflight` + Docker coverage-floor + `/code-review` clean before first push.
 - `docs/CHANGELOG.md` entry; roadmap row checked with the macOS-only-relaxed note.
@@ -196,3 +194,7 @@ From `2026-06-21-slice9-apple-mail-calendar-design-review.md` — all four **fix
 2. **Auth propagation across the CalDAV cross-host redirect** → **Fixed (§4, §12).** The client addresses the discovered `p##-caldav.icloud.com` host directly and re-applies `Authorization: Basic` on every request rather than relying on transparent 30x following (which can strip auth headers).
 3. **Recurrence exceptions (`RECURRENCE-ID` / `EXDATE`)** → **Fixed by design change (§5.2, §11, §12).** Adopted **server-side `<C:expand>`** so iCloud applies overrides/exclusions and returns concrete occurrences; a client-side RRULE/timezone engine is explicitly out of scope. Overridden occurrences key on `<UID>:<RECURRENCE-ID>`. A documented fallback indexes the unexpanded master + server-returned override VEVENTs.
 4. **IMAP IDLE vs pull** → **Fixed (§11).** Real-time IMAP IDLE / CalDAV push is explicitly out of scope; sync is periodic pull on `MIN5`.
+
+### Planning-phase correction (2026-06-21, before plan authoring)
+
+5. **Dropped the I26 connector-write-registry extension** that the approved spec's §6.2 had prescribed. Grounding the write path in the real call sites showed the registry dispatches by *action type*, and apple's action types are generic + shared with five sibling email connectors (so a registry row would hijack their dispatch), while `federation.invoke` is structurally unreachable for personal connectors (no team-vault entry). Apple writes therefore ride the existing generic email/calendar path like `imap_mail_send`, protected by the I2 HITL gate — no `apple-write-tools.ts`, no registry/D20/`SECURITY-INVARIANTS.md` edits. Decision confirmed with the user. §1, §6.2, §6.3, §10, §13 updated accordingly. This is the `plan-template-codebase-verification` discipline catching an over-engineered design before code.
