@@ -108,11 +108,29 @@ returns the static map entry for every existing provider and `makeWorkdayDescrip
 exchange/refresh logic. Because `tenant_host` is configured directly, Workday needs **no**
 `instance_url` discovery (the REST/RaaS API host is already known).
 
-### Non-secret config (`nimbus.toml`)
+### Tenant + client config (env vars)
+Workday's OAuth descriptor is built **at authorize/refresh time** and must know the tenant
+host + tenant name then (review point 1), exactly when the client id/secret are needed.
+Following the established `NIMBUS_OAUTH_<X>_CLIENT_ID` env-var pattern, tenant config is env
+vars too (not Vault, not toml — they are needed before any token exists):
+
+- `NIMBUS_OAUTH_WORKDAY_CLIENT_ID`, `NIMBUS_OAUTH_WORKDAY_CLIENT_SECRET` — confidential client.
+- `NIMBUS_WORKDAY_TENANT_HOST` (e.g. `https://wd5-services1.workday.com`) — per-tenant API host;
+  added to the sandbox network allowlist at spawn.
+- `NIMBUS_WORKDAY_TENANT` (e.g. `acme`) — tenant name (URL path segment).
+
+These are read via `Config.*` (mirroring `Config.oauthMendeleyClientId`) by the descriptor
+factory, the lazy-mesh spawn, and the sync handler.
+
+> **Design note (refines the brainstorm):** the brainstorm placed `tenant_host`/`tenant` in
+> `[connectors.workday]`. Planning found that (a) the descriptor needs them before a token
+> exists, and (b) the existing `[connectors.X]` parser (`nimbus-toml-connectors.ts`) throws for
+> any non-team-credential connector. Env vars are the lower-risk, codebase-consistent home;
+> only the optional RaaS `reports[]` stays in `nimbus.toml`.
+
+### Non-secret structured config (`nimbus.toml`)
 ```toml
 [connectors.workday]
-tenant_host          = "https://wd5-services1.workday.com"  # per-tenant API host (sandbox-allowlisted)
-tenant               = "acme"                                # Workday tenant name (URL path segment)
 time_off_history_days = 365                                  # optional; default 365 (review point 5)
 
 # optional RaaS reports — each row becomes a workday:report item; same OAuth bearer:
@@ -274,7 +292,11 @@ Mirrors the Mendeley sub-project A checklist:
 5. Lazy-mesh spawn registry — `ensureWorkdayMcp`/`ensureWorkdayRunning` + the spawner bundle
    + `CredentialSpawners` slot.
 6. Sync-handler registration + the connector's item-type registration (no migration).
-7. `[connectors.workday]` config schema in `nimbus-toml.ts` (tenant_host, tenant, reports[]).
+7. Config: add `Config.oauthWorkdayClientId`/`ClientSecret` + `Config.workdayTenantHost`/
+   `workdayTenant` (env reads) in `config.ts`. Add a `parseNimbusWorkdayToml` for
+   `[connectors.workday]` `time_off_history_days` + `[[connectors.workday.reports]]`; guard the
+   existing team-credential parser (`nimbus-toml-connectors.ts`) to ignore `[connectors.X]`
+   tables that have no `credential` key (so `[connectors.workday]` doesn't throw).
 8. Docs: `docs/CHANGELOG.md` (connector-delivery convention — NOT the CLAUDE.md/GEMINI.md
    status line), roadmap row checkbox, connector README with the public-tier H2 sections
    (`audit:package-readmes`).
