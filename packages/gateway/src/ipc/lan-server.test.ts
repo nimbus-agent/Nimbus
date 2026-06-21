@@ -64,6 +64,8 @@ async function sendEncryptedRpc(
   const helloHeader = new Uint8Array(4);
   new DataView(helloHeader.buffer).setUint32(0, helloBytes.length, false);
 
+  let buffer = new Uint8Array(0);
+
   return new Promise((resolve, reject) => {
     const conn = Bun.connect({
       hostname: "127.0.0.1",
@@ -75,10 +77,20 @@ async function sendEncryptedRpc(
         },
         data(socket, chunk) {
           try {
-            const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-            if (chunk.length >= 4) {
+            const merged = new Uint8Array(buffer.length + chunk.length);
+            merged.set(buffer, 0);
+            merged.set(chunk, buffer.length);
+            buffer = merged;
+
+            while (buffer.length >= 4) {
+              const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
               const len = view.getUint32(0, false);
-              const body = chunk.slice(4, 4 + len);
+              if (buffer.length < 4 + len) {
+                return;
+              }
+              const body = buffer.slice(4, 4 + len);
+              buffer = buffer.slice(4 + len);
+
               const text = new TextDecoder().decode(body);
               if (text.includes("hello_ok")) {
                 socket.write(header);
@@ -92,6 +104,7 @@ async function sendEncryptedRpc(
                   },
                 );
                 socket.end();
+                return;
               }
             }
           } catch (e) {
