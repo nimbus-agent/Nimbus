@@ -1,7 +1,10 @@
 import { FLUX_KINDS, type FluxKindEntry, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { z } from "zod";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterFluxResources } from "./search-filter.ts";
 
 const KIND_VALUES = FLUX_KINDS.map((e) => e.kind) as [string, ...string[]];
@@ -55,7 +58,28 @@ function listPath(entry: FluxKindEntry, namespace?: string): string {
   return `${prefix}/${entry.plural}`;
 }
 
-await runReadOnlyMcpConnector("nimbus-flux", (reg) => {
+/** Request a reconcile by annotating reconcile.fluxcd.io/requestedAt on the CR (the same mechanism
+ *  `flux reconcile` uses). Returns the RFC3339 timestamp written. Reuses kindEntry/listPath so the
+ *  write path shares the read path's single source of truth — no new kind strings or version drift. */
+async function fluxReconcile(kind: string, namespace: string, name: string): Promise<string> {
+  const entry = kindEntry(kind);
+  const path = `${listPath(entry, namespace)}/${encodeURIComponent(name)}`;
+  const requestedAt = new Date().toISOString();
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "PATCH",
+    headers: { ...authHeader(), "Content-Type": "application/merge-patch+json" },
+    body: JSON.stringify({
+      metadata: { annotations: { "reconcile.fluxcd.io/requestedAt": requestedAt } },
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Flux reconcile ${path} ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  return requestedAt;
+}
+
+export function registerFluxTools(reg: ZodToolRegistrar): void {
   reg(
     "flux_list",
     "List Flux Custom Resources of one `kind` (default `kustomization`). Reads the Kubernetes API: all-namespaces by default, or scoped to `namespace` when given. `limit` (default 200) caps the returned `items` client-side. Returns the raw Kubernetes List envelope.",
@@ -106,4 +130,32 @@ await runReadOnlyMcpConnector("nimbus-flux", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+
+  reg(
+    "flux_kustomization_reconcile",
+    "Request a reconcile of a Flux Kustomization by annotating reconcile.fluxcd.io/requestedAt (PATCH the CR; requires HITL flux.kustomization.reconcile, and the SA's `patch` RBAC verb on kustomizations). Async — verify via the next metadata sync.",
+    z.object({ namespace: z.string().min(1), name: z.string().min(1) }),
+    async (p) =>
+      jsonResult({
+        status: "requested",
+        name: p.name,
+        requestedAt: await fluxReconcile("kustomization", p.namespace, p.name),
+      }),
+  );
+
+  reg(
+    "flux_helmrelease_reconcile",
+    "Request a reconcile of a Flux HelmRelease by annotating reconcile.fluxcd.io/requestedAt (PATCH the CR; requires HITL flux.helmrelease.reconcile, and the SA's `patch` RBAC verb on helmreleases). Async — verify via the next metadata sync.",
+    z.object({ namespace: z.string().min(1), name: z.string().min(1) }),
+    async (p) =>
+      jsonResult({
+        status: "requested",
+        name: p.name,
+        requestedAt: await fluxReconcile("helm_release", p.namespace, p.name),
+      }),
+  );
+}
+
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-flux", registerFluxTools);
+}
