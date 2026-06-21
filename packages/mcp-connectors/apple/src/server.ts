@@ -495,9 +495,24 @@ const tsdavClient = new TsdavCalDavClient(email, appPw);
 // Perform CalDAV principal + calendar-home discovery so that subsequent
 // requests are authenticated against the resolved p##-caldav.icloud.com host.
 await tsdavClient.login();
+// Warm the calendar cache at boot so a cold apple_calendar_event_create/delete
+// (before any apple_calendar_list) resolves a fully-formed DAVCalendar (with its
+// account binding) rather than a bare { url } that could fail auth on the
+// resolved host. Best-effort: ignore discovery errors here (tools re-discover).
+try {
+  await tsdavClient.listCalendars();
+} catch {
+  // non-fatal; listEvents/list tools will re-discover on demand
+}
 
 const calendar: CalDavClient = tsdavClient;
-const now = (): string => new Date().toISOString();
+// iCalendar DTSTAMP format (RFC 5545): YYYYMMDDTHHMMSSZ — buildVEvent emits the
+// value verbatim, so it must NOT be ISO-8601 (no hyphens/colons/milliseconds).
+const now = (): string =>
+  new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d+Z$/, "Z");
 
 const server = new McpServer({ name: "nimbus-apple", version: "0.1.0" });
 
