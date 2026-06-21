@@ -290,22 +290,25 @@ describe("env-var parsers", () => {
 
 describe("Config frozen snapshot — Workday fields", () => {
   // Config is built once at import time (frozen `as const`); env-var reads cannot
-  // be tested by re-importing within the same process.  These tests assert that
-  // the four Workday keys exist on the exported Config object, are strings, and
-  // default to "" when the env vars are absent (which they are in CI).
+  // be tested by re-importing within the same process. The client id/secret are
+  // never mutated by any other test, so we assert the exact "" default (env vars
+  // absent in CI). workdayTenantHost/workdayTenant ARE mutated by sibling tests
+  // (connector-spawns / workday-access-token via a mutableConfig cast) within the
+  // shared process, so for those we assert the type only — a stricter toBe("")
+  // would be order-dependent on a sibling file's afterEach reset.
   test("oauthWorkdayClientId defaults to empty string", () => {
-    expect(typeof Config.oauthWorkdayClientId).toBe("string");
+    expect(Config.oauthWorkdayClientId).toBe("");
   });
 
   test("oauthWorkdayClientSecret defaults to empty string", () => {
-    expect(typeof Config.oauthWorkdayClientSecret).toBe("string");
+    expect(Config.oauthWorkdayClientSecret).toBe("");
   });
 
-  test("workdayTenantHost defaults to empty string", () => {
+  test("workdayTenantHost is a string", () => {
     expect(typeof Config.workdayTenantHost).toBe("string");
   });
 
-  test("workdayTenant defaults to empty string", () => {
+  test("workdayTenant is a string", () => {
     expect(typeof Config.workdayTenant).toBe("string");
   });
 });

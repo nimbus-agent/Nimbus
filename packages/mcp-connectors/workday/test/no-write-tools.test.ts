@@ -22,7 +22,7 @@ describe("Workday no-row-data + read-only contract", () => {
 
   it("has no create/update/delete/write tool name", () => {
     const writeish = WORKDAY_TOOL_NAMES.filter((n) =>
-      /_(create|update|delete|promote|sync|put|post)$/.test(n),
+      /_(create|update|delete|write|promote|sync|put|post)$/.test(n),
     );
     expect(writeish).toEqual([]);
   });

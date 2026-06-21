@@ -38,7 +38,9 @@ function finalizeReport(r: ReportAccum): WorkdayReport | null {
     label: r.label,
     url: r.url,
     ...(r.keyField !== undefined && r.keyField !== "" ? { keyField: r.keyField } : {}),
-    ...(r.fields !== undefined && r.fields.length > 0 ? { fields: r.fields } : {}),
+    // Preserve a present-but-empty `fields` (e.g. it parsed to []) so applyReportFieldPolicy
+    // fails closed (emit nothing) instead of dropping to undefined and widening to the denylist.
+    ...(r.fields !== undefined ? { fields: r.fields } : {}),
   };
 }
 

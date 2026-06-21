@@ -22,6 +22,18 @@ export function makeWorkdayDescriptor(args: {
       "Workday tenant not configured; set NIMBUS_WORKDAY_TENANT_HOST and NIMBUS_WORKDAY_TENANT",
     );
   }
+  // Validate the host is an absolute http(s) URL up front, so a malformed value (e.g. a
+  // missing scheme) fails fast here rather than producing opaque authorize/token-URL errors
+  // deep in the OAuth flow.
+  let parsedHost: URL;
+  try {
+    parsedHost = new URL(host);
+  } catch {
+    throw new Error(`Invalid NIMBUS_WORKDAY_TENANT_HOST (not an absolute URL): ${host}`);
+  }
+  if (parsedHost.protocol !== "https:" && parsedHost.protocol !== "http:") {
+    throw new Error(`NIMBUS_WORKDAY_TENANT_HOST must be an http(s) URL: ${host}`);
+  }
   const base = `${host}/ccx/oauth2/${encodeURIComponent(tenant)}`;
   return {
     id: "workday",

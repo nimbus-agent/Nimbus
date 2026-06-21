@@ -66,8 +66,8 @@ Each `[[connectors.workday.reports]]` entry requires:
 | --- | --- | --- |
 | `label` | yes | Human-readable name for the report (used as the indexed item title) |
 | `url` | yes | Full RaaS URL; must share the same origin as `NIMBUS_WORKDAY_TENANT_HOST` |
-| `key_field` | yes | The field whose value becomes the indexed item's unique key |
-| `fields` | yes | List of field names to index from the report rows |
+| `key_field` | no | Field whose value becomes the item's stable key; when omitted a BLAKE3 hash of the row content is used |
+| `fields` | no | Explicit allowlist of field names to index; when omitted, all non-PII fields are indexed (PII denylist applied). A present-but-empty list indexes nothing (fail-closed) |
 
 Vault keys:
 

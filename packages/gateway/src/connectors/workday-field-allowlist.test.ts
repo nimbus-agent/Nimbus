@@ -48,6 +48,13 @@ describe("workday field allowlist", () => {
     "iban",
     "gender",
     "ethnicity",
+    // camelCase / no-separator variants must also be caught (RaaS columns are often camelCase)
+    "homeAddress",
+    "dateOfBirth",
+    "personalEmail",
+    "personalPhone",
+    "nationalId",
+    "totalComp",
   ])("isPiiKey flags %s", (k) => {
     expect(isPiiKey(k)).toBe(true);
   });
@@ -67,12 +74,11 @@ describe("workday field allowlist", () => {
     expect(applyReportFieldPolicy(row)).toEqual({ employee_id: "e1", org: "Eng" }); // salary+ssn dropped by denylist
   });
 
-  test("applyReportFieldPolicy: empty fields array falls through to denylist", () => {
+  test("applyReportFieldPolicy: a present-but-empty fields list is fail-closed (emits nothing)", () => {
     const row = { employee_id: "e1", ssn: "x" };
-    // fields=[] has length 0, so denylist path applies — ssn is stripped
-    const out = applyReportFieldPolicy(row, []);
-    expect(out["employee_id"]).toBe("e1");
-    expect(out).not.toHaveProperty("ssn");
+    // An explicit (present) but empty allowlist must NOT widen to the denylist — it emits
+    // nothing, so a malformed/empty `fields` config can never broaden what is indexed.
+    expect(applyReportFieldPolicy(row, [])).toEqual({});
   });
 
   test("applyReportFieldPolicy: denylist skips null/undefined values", () => {

@@ -32,10 +32,14 @@ function workerCanonicalUrl(ctx: WorkdayMapContext, id: string): string {
 }
 
 function stableRowKey(row: Record<string, unknown>): string {
-  const sorted = Object.keys(row)
-    .sort()
-    .map((k) => `${k}=${String(row[k])}`)
-    .join("");
+  // JSON-encode the sorted [key, value] pairs so the hash preimage is unambiguous —
+  // a plain `${k}=${v}` join can collide (e.g. {a:"b=c"} vs {a:"b","c":""}), which would
+  // clobber distinct report rows that hash to the same externalId on upsert.
+  const sorted = JSON.stringify(
+    Object.keys(row)
+      .sort((a, b) => a.localeCompare(b))
+      .map((k) => [k, row[k]]),
+  );
   return bytesToHex(blake3(new TextEncoder().encode(sorted))).slice(0, 32);
 }
 
@@ -124,6 +128,7 @@ export function mapReportRowToItem(
   const keyVal =
     report.keyField !== undefined &&
     typeof row[report.keyField] === "string" &&
+    row[report.keyField] !== "" &&
     !isPiiKey(report.keyField)
       ? (row[report.keyField] as string)
       : stableRowKey(filtered);

@@ -252,6 +252,26 @@ describe("mapReportRowToItem", () => {
     expect(JSON.stringify(r)).not.toContain("123-45-6789");
   });
 
+  test("an empty key_field value falls back to the content hash (no blank-suffix collisions)", () => {
+    const r = mapReportRowToItem(
+      { employee_id: "", org: "Eng" },
+      { ...rpt, keyField: "employee_id" },
+      ctx,
+    );
+    // Must NOT be the bare "headcount:" (which would collapse all blank-key rows together).
+    expect(r?.externalId).not.toBe("headcount:");
+    expect(r?.externalId.startsWith("headcount:")).toBe(true);
+    expect(r?.externalId.length ?? 0).toBeGreaterThan("headcount:".length);
+  });
+
+  test("content hash distinguishes rows that a naive join would collide", () => {
+    // {a:"b=c"} and {a:"b", c:""} both flatten to "a=b=c"/"a=bc=" under a naive join;
+    // the JSON-encoded preimage keeps them distinct.
+    const a = mapReportRowToItem({ a: "b=c" }, rpt, ctx);
+    const b = mapReportRowToItem({ a: "b", c: "" }, rpt, ctx);
+    expect(a?.externalId).not.toBe(b?.externalId);
+  });
+
   test("hashes the row content when no key_field — same content yields same id (position-independent)", () => {
     const a = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);
     const b = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);

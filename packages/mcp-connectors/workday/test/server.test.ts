@@ -19,7 +19,10 @@ function payload(res: McpListResult): Record<string, unknown> {
 
 describe("workday connector tools", () => {
   const origFetch = globalThis.fetch;
+  const ENV_KEYS = ["WORKDAY_ACCESS_TOKEN", "WORKDAY_TENANT_HOST", "WORKDAY_TENANT"] as const;
+  const prevEnv: Record<string, string | undefined> = {};
   beforeEach(() => {
+    for (const k of ENV_KEYS) prevEnv[k] = process.env[k];
     process.env["WORKDAY_ACCESS_TOKEN"] = "tok";
     process.env["WORKDAY_TENANT_HOST"] = "https://wd5.workday.com";
     process.env["WORKDAY_TENANT"] = "acme";
@@ -30,9 +33,13 @@ describe("workday connector tools", () => {
   });
   afterEach(() => {
     globalThis.fetch = origFetch;
-    delete process.env["WORKDAY_ACCESS_TOKEN"];
-    delete process.env["WORKDAY_TENANT_HOST"];
-    delete process.env["WORKDAY_TENANT"];
+    // Restore prior values rather than blindly deleting, so we never clobber env state
+    // that belonged to another test in the same process.
+    for (const k of ENV_KEYS) {
+      const prev = prevEnv[k];
+      if (prev === undefined) delete process.env[k];
+      else process.env[k] = prev;
+    }
   });
 
   it("registers exactly the three read tools", () => {

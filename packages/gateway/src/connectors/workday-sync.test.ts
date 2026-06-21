@@ -48,8 +48,7 @@ describe("createWorkdaySyncable", () => {
       }),
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(3);
     expectServiceItemCount(db, "workday", 3);
 
@@ -80,8 +79,7 @@ describe("createWorkdaySyncable", () => {
     });
 
     // Should NOT throw, worker should still be upserted
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "workday", 1);
   });
@@ -99,8 +97,7 @@ describe("createWorkdaySyncable", () => {
       fetchFn: fetchStub({}),
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "workday", 0);
   });
@@ -120,8 +117,7 @@ describe("createWorkdaySyncable", () => {
       }),
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.hasMore).toBe(false);
     expect(r.cursor).toMatch(/^nimbus-workday1:/);
@@ -147,8 +143,7 @@ describe("createWorkdaySyncable", () => {
       fetchFn: throwingFetchFn,
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     // Sync must NOT throw, and the worker from /workers must be upserted
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "workday", 1);
@@ -180,16 +175,14 @@ describe("createWorkdaySyncable", () => {
       fetchFn: captureFetchFn,
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r1 = await syncable.sync(ctx as any, null);
+    const r1 = await syncable.sync(ctx, null);
     expect(r1.itemsUpserted).toBe(50);
     expect(r1.cursor).toMatch(/^nimbus-workday1:/);
 
     // Second sync with the non-null cursor exercises the decodeCursor branch and
     // must resume the workers walk at the stored (non-zero) offset.
     urls.length = 0;
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    await syncable.sync(ctx as any, r1.cursor);
+    await syncable.sync(ctx, r1.cursor);
     const resumedWorkersUrl = urls.find((u) => u.includes("/workers"));
     expect(resumedWorkersUrl).toBeDefined();
     expect(resumedWorkersUrl).toContain("offset=");
@@ -231,8 +224,7 @@ describe("createWorkdaySyncable", () => {
       }),
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "workday", 1);
 
@@ -275,8 +267,7 @@ describe("createWorkdaySyncable", () => {
       fetchFn: guardedFetch,
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    await syncable.sync(ctx as any, null);
+    await syncable.sync(ctx, null);
     expect(evilFetched).toBe(false);
     expectServiceItemCount(db, "workday", 0);
   });
@@ -306,8 +297,7 @@ describe("createWorkdaySyncable", () => {
       }),
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     // Must not throw; no report item upserted
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "workday", 0);
@@ -325,8 +315,7 @@ describe("createWorkdaySyncable", () => {
         ensureWorkdayMcpRunning: async () => {},
         loadAccessToken: async () => "tok",
       });
-      // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-      const r = await syncable.sync(ctx as any, null);
+      const r = await syncable.sync(ctx, null);
       expect(r.itemsUpserted).toBe(0);
     } finally {
       globalThis.fetch = origFetch;
@@ -346,8 +335,7 @@ describe("createWorkdaySyncable", () => {
         "/jobRequisitions": { data: [] },
       }),
     });
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "workday", 0);
   });
@@ -373,8 +361,7 @@ describe("createWorkdaySyncable", () => {
       loadWorkdayConfig: () => DEFAULT_NIMBUS_WORKDAY_TOML,
       fetchFn: malformedFetch,
     });
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     // The bare-array worker is still mapped + upserted; the non-array time-off yields nothing.
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "workday", 1);
@@ -408,8 +395,7 @@ describe("createWorkdaySyncable", () => {
       tenantHost: "https://wd5.workday.com",
       fetchFn: reportFetch,
     });
-    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
-    const r = await syncable.sync(ctx as any, null);
+    const r = await syncable.sync(ctx, null);
     // bare report → 1 row upserted; empty report → 0
     expect(r.itemsUpserted).toBe(1);
     expectServiceItemCount(db, "workday", 1);

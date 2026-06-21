@@ -35,11 +35,17 @@ export const JOB_POSTING_ALLOWED_FIELDS = [
   "canonicalUrl",
 ] as const;
 
+// Separator-free PII tokens. Matched against a normalized key (see isPiiKey) so the same
+// patterns catch snake_case, kebab-case, and camelCase (home_address / home-address /
+// homeAddress all normalize to "homeaddress").
 const PII_KEY_RE =
-  /(ssn|social_security|national_id|nationalid|tax_id|taxid|passport|salary|compensation|total_comp|remuneration|\bcomp\b|dob|date_of_birth|birth|home_address|^address$|street|postal|zip|medical|fmla|disability|bank|account_number|routing|iban|swift|gender|ethnicity|race|religion|marital|personal_email|personal_phone)/i;
+  /(ssn|socialsecurity|nationalid|taxid|passport|salary|compensation|totalcomp|remuneration|dob|dateofbirth|birth|homeaddress|address|street|postal|zip|medical|fmla|disability|bank|accountnumber|routing|iban|swift|gender|ethnicity|race|religion|marital|personalemail|personalphone)/;
 
 export function isPiiKey(key: string): boolean {
-  return PII_KEY_RE.test(key);
+  // Normalize separators + case so camelCase / snake_case / kebab-case PII keys all match.
+  // Over-matching is the safe direction for a denylist backstop — it drops data, never leaks it.
+  const normalized = key.toLowerCase().replace(/[\s._-]/g, "");
+  return PII_KEY_RE.test(normalized);
 }
 
 export function pickAllowed<T extends Record<string, unknown>>(
@@ -56,18 +62,19 @@ export function pickAllowed<T extends Record<string, unknown>>(
 /**
  * Apply the RaaS report field policy to a single row.
  *
- * - When `fields` is provided and non-empty, ONLY those keys are emitted — this is
- *   an explicit admin-supplied allowlist and it INTENTIONALLY BYPASSES the
- *   {@link isPiiKey} denylist. The caller (the report config author) is responsible
- *   for the contents of `fields`; if they list a PII key it will be indexed.
- * - Otherwise (no `fields`, or empty), every non-PII key is emitted, with the
- *   {@link isPiiKey} denylist applied as a defense-in-depth backstop.
+ * - When `fields` is provided (the `fields` key was present in the report config), ONLY
+ *   those keys are emitted — an explicit admin-supplied allowlist that INTENTIONALLY
+ *   BYPASSES the {@link isPiiKey} denylist. The caller owns its contents; if they list a
+ *   PII key it will be indexed. A PRESENT-but-empty `fields` (incl. a config that failed
+ *   to parse to a non-empty list) emits NOTHING — fail-closed, never widening to the denylist.
+ * - When `fields` is absent (no `fields` key at all), every non-PII key is emitted, with
+ *   the {@link isPiiKey} denylist applied as a defense-in-depth backstop.
  */
 export function applyReportFieldPolicy(
   row: Record<string, unknown>,
   fields?: readonly string[],
 ): Record<string, unknown> {
-  if (fields !== undefined && fields.length > 0) {
+  if (fields !== undefined) {
     return pickAllowed(row, fields);
   }
   const out: Record<string, unknown> = {};
