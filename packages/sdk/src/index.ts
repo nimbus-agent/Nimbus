@@ -80,6 +80,12 @@ export { FLUX_KINDS, trimTrailingSlash } from "./flux-cd/index";
 export type { HitlRequest } from "./hitl-request";
 export { isHitlRequest } from "./hitl-request";
 export {
+  type BuildEventInput,
+  buildVEvent,
+  type ParsedEvent,
+  parseICalendar,
+} from "./icalendar";
+export {
   asRecord,
   asString,
   buildGetRequest,
