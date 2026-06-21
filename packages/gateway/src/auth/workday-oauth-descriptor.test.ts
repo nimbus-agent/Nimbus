@@ -10,7 +10,12 @@ describe("makeWorkdayDescriptor", () => {
     expect(d.id).toBe("workday");
     expect(d.clientSecret).toBe("required");
   });
-  test("throws when tenant config is empty", () => {
+  test("throws when tenant host is empty", () => {
     expect(() => makeWorkdayDescriptor({ tenantHost: "", tenant: "acme" })).toThrow(/tenant/i);
+  });
+  test("throws when tenant name is empty (covers the second throw operand)", () => {
+    expect(() =>
+      makeWorkdayDescriptor({ tenantHost: "https://wd5.workday.com", tenant: "" }),
+    ).toThrow(/tenant/i);
   });
 });
