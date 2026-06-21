@@ -34,6 +34,10 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "fastmail:email",
   // ProtonMail (via Bridge) email bodies are prose, like imap:email.
   "protonmail:email",
+  // iCloud Mail (IMAP) email bodies are prose, like imap:email. Calendar
+  // events (apple:event) stay on local MiniLM 384-dim — short structured
+  // summary/notes, not paragraph-shaped.
+  "apple:email",
 ]);
 
 export function routingKey(service: string, type: string): string {
