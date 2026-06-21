@@ -197,24 +197,30 @@ describe("registerAppleTools (mail)", () => {
 
 ---
 
-## Phase B — Pure iCalendar build/parse (the new building block)
+## Phase B — Pure iCalendar build/parse in the SDK (shared by connector + gateway)
 
-### Task B1: `ics.ts` — line unfolding + VEVENT property parse (server-expanded objects)
+> **Decision (pre-flight review):** the pure iCalendar module lives ONCE in `@nimbus-dev/sdk` and is imported by both the apple connector (build+parse for tools) and the gateway sync (parse). The gateway already depends on `@nimbus-dev/sdk` (`workspace:*`), and connectors depend on the SDK by rule — so this is the only place both can share, and it removes the parser duplication a reviewer would flag. First read `packages/sdk/src/index.ts` (or the `exports` map in `packages/sdk/package.json`) to learn the SDK's public-export convention, and re-export the new module the same way.
+
+### Task B1: SDK `icalendar.ts` — line unfolding + VEVENT property parse (server-expanded objects)
 
 **Files:**
-- Create: `packages/mcp-connectors/apple/src/ics.ts`
-- Test: `packages/mcp-connectors/apple/test/ics.test.ts`
+- Create: `packages/sdk/src/icalendar.ts`
+- Test: `packages/sdk/src/icalendar.test.ts` (or `packages/sdk/test/…` — match the SDK's existing test location)
+- Modify: `packages/sdk/src/index.ts` (export the new module per the SDK convention)
 
 **Interfaces:**
 - Produces:
   - `export interface ParsedEvent { readonly uid: string; readonly recurrenceId: string | null; readonly summary: string | null; readonly description: string | null; readonly location: string | null; readonly start: string | null; readonly end: string | null; readonly allDay: boolean; readonly status: string | null; readonly organizer: string | null; readonly attendees: readonly string[]; readonly rrule: string | null; readonly dtstamp: string | null; }`
   - `export function parseICalendar(ics: string): ParsedEvent[]` — unfolds folded lines (RFC 5545 §3.1: a CRLF followed by space/tab continues the previous line), splits VEVENT blocks, extracts properties. Multiple VEVENTs (master + RECURRENCE-ID overrides, or expanded occurrences) → one `ParsedEvent` each. Attendees: collect every `ATTENDEE` line's `mailto:` value. `allDay` = `DTSTART;VALUE=DATE`. Unknown/malformed block → skipped (never throws).
+- Consumed by: the apple connector (Tasks C2/D1) and the gateway sync (Tasks F1/F2/F3), both via `import { parseICalendar, type ParsedEvent } from "@nimbus-dev/sdk"`.
+
+> **Coverage:** new SDK source files are subject to the same ≥85% line / ≥80% branch floor — the fixtures below must hit the all-day, folded, override, skip, and escaping branches.
 
 - [ ] **Step 1: Write failing tests** with real fixtures: (a) a single timed VEVENT with attendees/location/description; (b) an all-day event (`DTSTART;VALUE=DATE:20260601`); (c) a folded `DESCRIPTION` spanning 3 physical lines → unfolded to one string; (d) two VEVENTs where the second carries `RECURRENCE-ID` → two `ParsedEvent`s, second has `recurrenceId !== null`; (e) a block missing `UID` → skipped; (f) escaped commas/semicolons in `SUMMARY` (`\,` `\;` `\n`) → unescaped.
 
 ```ts
 import { describe, expect, it } from "bun:test";
-import { parseICalendar } from "../src/ics.ts";
+import { parseICalendar } from "./icalendar.ts";
 
 const TIMED = [
   "BEGIN:VCALENDAR","BEGIN:VEVENT","UID:abc-1","SUMMARY:Standup \\, daily",
@@ -236,25 +242,26 @@ describe("parseICalendar", () => {
 });
 ```
 
-- [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement `parseICalendar`** (unfold → block-split on `BEGIN:VEVENT`/`END:VEVENT` → per-property parse with param stripping + value unescaping). Pure; no I/O.
-- [ ] **Step 4: Run → pass** (add the all-day, folded, RECURRENCE-ID, missing-UID, escaping cases until green).
-- [ ] **Step 5: Commit.** `feat(apple): pure iCalendar VEVENT parser`
+- [ ] **Step 2: Run → fail** (`bun test packages/sdk/src/icalendar.test.ts`).
+- [ ] **Step 3: Implement `parseICalendar`** in `packages/sdk/src/icalendar.ts` (unfold → block-split on `BEGIN:VEVENT`/`END:VEVENT` → per-property parse with param stripping + value unescaping). Pure; no I/O. Export from the SDK index per convention.
+- [ ] **Step 4: Run → pass** (add the all-day, folded, RECURRENCE-ID, missing-UID, escaping cases until green; confirm coverage floor).
+- [ ] **Step 5: Commit.** `feat(sdk): pure iCalendar VEVENT parser`
 
-### Task B2: `ics.ts` — VEVENT builder for writes
+### Task B2: SDK `icalendar.ts` — VEVENT builder for writes
 
 **Files:**
-- Modify: `packages/mcp-connectors/apple/src/ics.ts`
-- Test: `packages/mcp-connectors/apple/test/ics.test.ts`
+- Modify: `packages/sdk/src/icalendar.ts`, `packages/sdk/src/index.ts`
+- Test: `packages/sdk/src/icalendar.test.ts`
 
 **Interfaces:**
 - Produces: `export interface BuildEventInput { readonly uid: string; readonly summary: string; readonly start: string; readonly end: string; readonly description?: string; readonly location?: string; readonly attendees?: readonly string[]; }` and `export function buildVEvent(input: BuildEventInput, now: string): string` — emits a valid `VCALENDAR>VEVENT` string: required `UID`/`DTSTAMP`(=`now`)/`DTSTART`/`DTEND`/`SUMMARY`, optional `DESCRIPTION`/`LOCATION`/`ATTENDEE` (each `mailto:`), with proper escaping (`,`→`\,`, `;`→`\;`, newline→`\n`) and CRLF line endings. `now` injected (no `Date.now()` in the pure module).
+- Consumed by: the apple connector's calendar create tool (Task C2) via `import { buildVEvent } from "@nimbus-dev/sdk"`.
 
 - [ ] **Step 1: Write failing test** — `buildVEvent` round-trips through `parseICalendar` (build → parse → fields match); SUMMARY with a comma is escaped then un-escaped back; DTSTAMP equals the injected `now`.
 - [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement `buildVEvent`.**
+- [ ] **Step 3: Implement `buildVEvent`** + export it from the SDK index.
 - [ ] **Step 4: Run → pass.**
-- [ ] **Step 5: Commit.** `feat(apple): pure iCalendar VEVENT builder`
+- [ ] **Step 5: Commit.** `feat(sdk): pure iCalendar VEVENT builder`
 
 ---
 
@@ -267,7 +274,7 @@ describe("parseICalendar", () => {
 - Test: `packages/mcp-connectors/apple/test/caldav-core.test.ts`
 
 **Interfaces:**
-- Consumes: `ParsedEvent` from `./ics.ts`.
+- Consumes: `ParsedEvent` from `@nimbus-dev/sdk` (Task B1).
 - Produces:
   - `export interface CalendarRef { readonly url: string; readonly displayName: string; }`
   - `export interface EventWindow { readonly startUtc: string; readonly endUtc: string; }`
@@ -288,7 +295,7 @@ describe("parseICalendar", () => {
 - Test: `packages/mcp-connectors/apple/test/calendar-tools.test.ts`
 
 **Interfaces:**
-- Consumes: `CalDavClient`, `selectCalendars`, `clampInstances` from `./caldav-core.ts`; `buildVEvent` from `./ics.ts`.
+- Consumes: `CalDavClient`, `selectCalendars`, `clampInstances` from `./caldav-core.ts`; `buildVEvent` from `@nimbus-dev/sdk` (Task B2).
 - Produces: `registerAppleCalendarTools(server, { calendar: CalDavClient, now: () => string, config }): void` registering:
   - `apple_calendar_list` (read): list events across selected calendars within a window arg → returns `{ items: ViewEvent[] }` (capped notes preview ≤2000, attendee emails included).
   - `apple_calendar_event_create` (write): args `{ calendar?, summary, start, end, description?, location?, attendees? }` → `buildVEvent` (uid = a generated stable id; inject via `now`/uid arg to stay pure-testable) → `calendar.putEvent` → `{ uid, href }`.
@@ -372,32 +379,19 @@ describe("parseICalendar", () => {
 
 ## Phase F — Gateway: calendar sync
 
-### Task F1: `_lib/ical-parse.ts` — gateway-side VEVENT parse (sync)
+### Task F1: (removed) — gateway parses via the shared SDK module
 
-**Files:**
-- Create: `packages/gateway/src/connectors/_lib/ical-parse.ts`
-- Test: `packages/gateway/src/connectors/_lib/ical-parse.test.ts`
+> **Per the pre-flight decision**, there is NO gateway-side parser. The gateway imports `parseICalendar` + `type ParsedEvent` from `@nimbus-dev/sdk` (Task B1). The gateway already depends on `@nimbus-dev/sdk` (`workspace:*`). This removes the duplicated parser the original plan had here. Tasks F2/F3 import directly from the SDK. No work in F1 beyond confirming the import resolves (covered by F2's first test run).
 
-> Dependency rule: the gateway must NOT import from `packages/mcp-connectors/*`. This is the gateway-side twin of the connector's `ics.ts` parser (exactly as the gateway's `_lib/imap-client.ts` re-implements `capPreview`/parsing rather than importing the connector's). Keep it minimal — it only parses **server-expanded concrete VEVENTs**.
-
-**Interfaces:**
-- Produces: `export interface ParsedCalendarEvent { uid; recurrenceId; summary; description; location; start; end; allDay; status; organizer; attendees; rrule; dtstamp; }` (same shape as the connector `ParsedEvent`) and `export function parseExpandedCalendar(ics: string): ParsedCalendarEvent[]`.
-
-- [ ] **Step 1: Write failing tests** — reuse the Task B1 fixtures (timed, all-day, folded, RECURRENCE-ID, missing-UID, escaping). Same assertions.
-- [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement** the parser (port of B1; keep ≥85% line / ≥80% branch — the fixtures must hit the all-day, override, skip, and escape branches).
-- [ ] **Step 4: Run → pass.**
-- [ ] **Step 5: Commit.** `feat(apple): gateway-side iCalendar parser for sync`
-
-### Task F2: `apple-event-mapping.ts` — `ParsedCalendarEvent` → `MappedRow<"apple","event">`
+### Task F2: `apple-event-mapping.ts` — `ParsedEvent` → `MappedRow<"apple","event">`
 
 **Files:**
 - Create: `packages/gateway/src/connectors/apple-event-mapping.ts`
 - Test: `packages/gateway/src/connectors/apple-event-mapping.test.ts`
 
 **Interfaces:**
-- Consumes: `ParsedCalendarEvent` (`_lib/ical-parse.ts`); `MappedRow` (`mapped-row.ts`).
-- Produces: `export function mapAppleEventToItem(ev: ParsedCalendarEvent, ctx: { calendar: string; syncedAt: number }): MappedRow<"apple","event"> | null`.
+- Consumes: `ParsedEvent` from `@nimbus-dev/sdk` (Task B1); `MappedRow` (`mapped-row.ts`).
+- Produces: `export function mapAppleEventToItem(ev: ParsedEvent, ctx: { calendar: string; syncedAt: number }): MappedRow<"apple","event"> | null`.
   - `externalId` = `ev.recurrenceId ? \`${ev.uid}:${ev.recurrenceId}\` : ev.uid`; null when `uid` empty.
   - `type:"event"`, `title` = summary (clamped 256) or `"(untitled event)"`, `bodyPreview` = `capPreview(description ?? "")` (≤2000 — gateway has its own `capPreview` in `_lib/imap-client.ts`; reuse or replicate), `modifiedAt` = parse `dtstamp`→`start`→`syncedAt`, `url:null`, `canonicalUrl:null`, `metadata` = `{ uid, calendar, start, end, allDay, location, organizer, status, recurrence: rrule, attendees }`, `syncedAt`.
 
@@ -420,9 +414,9 @@ describe("parseICalendar", () => {
   - `export function fetchAppleCalendarEvents(config, window, transport = defaultCalDavTransport): Promise<...>` — `transport` is the injectable network seam (returns raw expanded ICS per calendar); the function never throws (catch → `{ok:false}`), mirroring `fetchImapMessages`. The real `defaultCalDavTransport` (tsdav, network) is the only thin uncovered bit; tests inject a fake transport returning fixture ICS.
   - `loadCalConfig(ctx): Promise<AppleCalConfig | null>` (vault creds + fixed `caldav.icloud.com` + window/selection config).
 
-- [ ] **Step 1: Write failing tests** — (a) `fetchAppleCalendarEvents` with a fake transport returning two-calendars-of-ICS → `{ok:true, events:[...]}`; a throwing transport → `{ok:false,error}`. (b) Extend `apple-sync.test.ts`: `sync()` now also upserts `apple:event` rows (fake `fetchEvents` returns fixture ICS; assert events parsed via `parseExpandedCalendar` + mapped via `mapAppleEventToItem` land in SQLite alongside the emails).
+- [ ] **Step 1: Write failing tests** — (a) `fetchAppleCalendarEvents` with a fake transport returning two-calendars-of-ICS → `{ok:true, events:[...]}`; a throwing transport → `{ok:false,error}`. (b) Extend `apple-sync.test.ts`: `sync()` now also upserts `apple:event` rows (fake `fetchEvents` returns fixture ICS; assert events parsed via `parseICalendar` (from `@nimbus-dev/sdk`) + mapped via `mapAppleEventToItem` land in SQLite alongside the emails).
 - [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement** `fetchAppleCalendarEvents` + the calendar half of `createAppleSyncable.sync` (after the mail pass: ensure running → load cal config → rate-limit acquire → fetch events → for each: `parseExpandedCalendar` → `mapAppleEventToItem` → `upsertIndexedItemForSync`). Cap via `max_instances_per_calendar`.
+- [ ] **Step 3: Implement** `fetchAppleCalendarEvents` + the calendar half of `createAppleSyncable.sync` (after the mail pass: ensure running → load cal config → rate-limit acquire → fetch events → for each: `parseICalendar` (from `@nimbus-dev/sdk`) → `mapAppleEventToItem` → `upsertIndexedItemForSync`). Cap via `max_instances_per_calendar`.
 - [ ] **Step 4: Run → pass.**
 - [ ] **Step 5: Commit.** `feat(apple): gateway calendar sync (events indexed)`
 
@@ -558,7 +552,7 @@ syncScheduler.register(
 **Files:** none (verification only)
 
 - [ ] **Step 1:** `bun run preflight` (FULL, all-package tsc). Fix any failure before proceeding.
-- [ ] **Step 2:** Docker-Linux coverage-floor: build lcov + `check.ts` (authoritative). Confirm every NEW gateway file (`apple-sync.ts`, `apple-event-mapping.ts`, `_lib/ical-parse.ts`, `_lib/apple-caldav-fetch.ts`) clears ≥85% line / ≥80% branch. Add tests or exclude only true glue.
+- [ ] **Step 2:** Docker-Linux coverage-floor: build lcov + `check.ts` (authoritative). Confirm every NEW non-excluded file clears ≥85% line / ≥80% branch: `packages/sdk/src/icalendar.ts`, gateway `apple-sync.ts`, `apple-event-mapping.ts`, `_lib/apple-caldav-fetch.ts`. Add tests or exclude only true glue.
 - [ ] **Step 3:** `bun run audit:invariants` (D-checks) + `bun run audit:package-readmes`. Expected: pass (no new invariant; apple is NOT in the D20 write-tool list — confirm the audit doesn't flag `apple_*` strings anywhere, since they're only generic-path tool ids in the connector + payload).
 - [ ] **Step 4:** Whole-branch `/code-review`. Address findings.
 - [ ] **Step 5:** Only then push + open PR (do NOT co-merge with Workday; rebase onto main after Workday lands and re-resolve the 9 sites).
@@ -575,8 +569,9 @@ syncScheduler.register(
 
 ## Plan-review resolutions (2026-06-21)
 
-From `2026-06-21-slice9-apple-mail-calendar-review.md` — all three **fixed**, none deferred:
+From `2026-06-21-slice9-apple-mail-calendar-review.md` (reviewer #1–#3) plus one controller-found pre-flight item (#4) — all **resolved**, none deferred:
 
 1. **Cross-package relative imports (A2/D1)** → **Fixed.** The plan no longer imports `../../imap/src/*`. Apple's client/mailer types come from the shared `imap-tool-kit.ts` (`EmailReadClient`/`EmailSendMailer`/`EmailMessageMeta`), which the kit already defines and which are importable from the shared location; the real `server.ts` copies the imapflow shaping helpers locally (coverage-excluded). Reviewer's "redefine locally or move to the shared toolkit" — adopted the shared-toolkit form for types, local copy for the imapflow-specific `server.ts` helpers.
 2. **tsdav principal-host redirect (D1)** → **Fixed.** Adopted the reviewer's two-phase `DAVClient`: bootstrap-discover the `calendar-home-set`, then construct a working `DAVClient` targeting the resolved `p##-caldav.icloud.com` URL for all subsequent ops (Basic auth re-applied to the resolved host; no reliance on transparent redirects).
 3. **Generic dispatch mapping for writes (I1)** → **Verified; no change needed.** Traced the real runtime path: the dispatcher resolves the tool by `payload.mcpToolId ?? action.type` (`connectors/registry.ts` ~line 67) and the gate keys on `action.type` (`executor.ts:262`). There is **no** tool-id→action-type map and **no** per-service dispatch allowlist — so the reviewer's conditional ("if explicit mapping required, add it in Phase H") resolves to **not required**; mirroring imap is structurally sufficient. Added an explicit confirmation + a scope note to Task I1 (the end-to-end write-invocation *surface* is a pre-existing, connector-agnostic concern shared with the five sibling email connectors, out of scope for this slice — which delivers the connector + tools + executor-level gating exactly as imap does).
+4. **iCalendar parser duplication (controller pre-flight scan)** → **Fixed by relocation.** The original plan duplicated the parser (connector `ics.ts` + gateway `_lib/ical-parse.ts`). Since the gateway already depends on `@nimbus-dev/sdk` (`workspace:*`) and connectors depend on the SDK by rule, the pure iCalendar build/parse now lives ONCE in `packages/sdk/src/icalendar.ts` (Phase B), imported by both. Phase F's gateway parser file is removed. Decision confirmed with the user.
