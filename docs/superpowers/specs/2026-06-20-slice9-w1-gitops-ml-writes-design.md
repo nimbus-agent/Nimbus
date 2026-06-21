@@ -10,6 +10,7 @@
 ## 1. Summary
 
 The ArgoCD, Flux, and MLflow connectors are **read-only** today (Phase 5 Tier 1; metadata indexing
+
 + three read tools each, `hitlRequired: []`). W1 adds **HITL-gated WRITE actions** — six total — that
 execute **only** behind the local owner's I2 consent gate, with a **personal _and_ team-credential**
 path for all three (discrete-token connectors fit the team-vault model cleanly).
@@ -27,7 +28,7 @@ connectors' existing tokens in `TEAM_SECRET_ANYOF_GROUPS`.
 
 ### 1.1 Explicitly excluded / deferred (kept honest in the roadmap)
 
-- **SageMaker writes** (`endpoint.update` / `endpoint.delete` / `job.stop`) and **Vertex AI writes**
++ **SageMaker writes** (`endpoint.update` / `endpoint.delete` / `job.stop`) and **Vertex AI writes**
   (`endpoint.update` / `pipeline.cancel`) — **remain deferred.** These are Tier-3 "no-row-data"
   connectors that shell the **aws / gcloud CLI** against the local provider credential chain
   (`CONNECTOR_VAULT_SECRET_KEYS` is empty for both). They have no discrete token, so they fit
@@ -36,7 +37,7 @@ connectors' existing tokens in `TEAM_SECRET_ANYOF_GROUPS`.
   more code. They are also S5-demoted ("commodity, API-fakeable → not a moat") by the Phase 7+
   re-sequence. Revisit only if/when a discrete-token credential path exists for them. The roadmap
   rows are updated to record this.
-- **Any destructive write** (`delete` / drop / endpoint teardown) — out of scope, matching the
++ **Any destructive write** (`delete` / drop / endpoint teardown) — out of scope, matching the
   Wave 7c safety posture. W1 writes are all idempotent-ish operational actions (sync / reconcile /
   stage-transition). The destructive `ml.endpoint.delete` the roadmap listed for SageMaker is dropped
   with the SageMaker deferral above.
@@ -45,18 +46,18 @@ connectors' existing tokens in `TEAM_SECRET_ANYOF_GROUPS`.
 
 ## 2. Non-negotiables honored
 
-- **HITL is structural (executor, not prompt).** All six write action types are added to the frozen
++ **HITL is structural (executor, not prompt).** All six write action types are added to the frozen
   `HITL_REQUIRED_BACKING` set in `engine/executor.ts`; the I2 test asserts every member triggers the
   consent channel. Writes cannot be configured away.
-- **No peer-triggered writes without local consent.** The generalized I26 fail-closed rejects every
++ **No peer-triggered writes without local consent.** The generalized I26 fail-closed rejects every
   connector write tool id on the federated path; the only write path is the locally-I2-gated executor
   dispatch (peer or not).
-- **No plaintext credentials.** No new secret keys; the three tokens already live in Vault. Team
++ **No plaintext credentials.** No new secret keys; the three tokens already live in Vault. Team
   sourcing stays inside the I19 gate; the write transport injects secrets into the subprocess env
   exactly as the read transport does.
-- **MCP as connector standard.** Writes are real MCP tools on the connector servers; the gateway
++ **MCP as connector standard.** Writes are real MCP tools on the connector servers; the gateway
   never calls a cloud API directly.
-- **No `any`.** External payloads typed `unknown`; strict mode. Write-arg schemas are Zod-validated.
++ **No `any`.** External payloads typed `unknown`; strict mode. Write-arg schemas are Zod-validated.
 
 ---
 
@@ -81,7 +82,7 @@ realized as the service-specific types below.)
 path params, body — is fixed in the **plan** from the connector's existing `*-sync.ts` read code +
 the vendor docs **before** any handler is written. Two items need explicit verification in the plan:
 
-- **Flux reconcile is a Kubernetes-CR PATCH, not a Flux endpoint — feasibility confirmed.**
++ **Flux reconcile is a Kubernetes-CR PATCH, not a Flux endpoint — feasibility confirmed.**
   `FLUX_API_URL` is a generic **kube-apiserver base**; the read tools already hit
   `/apis/<group>/<version>/namespaces/<ns>/<plural>/<name>` via the connector's `kindEntry()` +
   `listPath()` helpers. The reconcile write is a `PATCH` to that **same path** with a JSON
@@ -91,22 +92,22 @@ the vendor docs **before** any handler is written. Two items need explicit verif
   mapping — no new path logic. The only precondition is the SA's `patch` RBAC verb (§3 patch note).
   (No plan-time blocker remains; the earlier read-only-proxy concern is resolved — the read code
   proves the apiserver base is reachable, and PATCH on the same resource path is standard k8s.)
-- **`mlflow.model.promote` is a thin alias** over transition-stage with `stage` pinned to
++ **`mlflow.model.promote` is a thin alias** over transition-stage with `stage` pinned to
   `Production` — kept as a distinct action type for a cleaner HITL prompt ("promote to Production")
   and a tighter arg schema (no free `stage`).
 
 **`archiveExisting` is an explicit arg; defaults differ per tool (review §2, plan-review §1).** Both
 MLflow writes expose `archiveExisting?: boolean` (maps to the API's `archive_existing_versions`):
 
-- **`mlflow_model_promote` defaults `true`.** `promote` is a *distinct* tool from `transition_stage`
++ **`mlflow_model_promote` defaults `true`.** `promote` is a _distinct_ tool from `transition_stage`
   precisely to encode the opinionated "make this THE Production version" semantic; leaving multiple
   versions active in `Production` is the real footgun. Archiving the incumbent is a **reversible
   stage change** (it sets the prior version's stage to `Archived`, recoverable by a later transition —
   not data loss), and the flag value appears in the I2 HITL preview the owner approves, so it is never
-  a *silent* mutation. (This reverses the initial design-review §2 default of `false`, whose rationale
+  a _silent_ mutation. (This reverses the initial design-review §2 default of `false`, whose rationale
   rested on "silent"/"destructive" framings that don't hold up: the HITL preview makes it non-silent
   and the archive is reversible.)
-- **`mlflow_model_transition_stage` defaults `false`** — it is the flexible, manual stage-management
++ **`mlflow_model_transition_stage` defaults `false`** — it is the flexible, manual stage-management
   tool (MLflow's own API default), where the caller may legitimately want multiple versions in a stage
   or to move a version without touching others. The owner opts into archiving with `archiveExisting:
   true`.
@@ -127,10 +128,10 @@ agent from indexed metadata: ArgoCD `name` (the `argocd:application` external id
 required ids are retrievable from indexed metadata and adds any missing field before the handler.
 
 **Async output shape + agent guidance (review §3).** ArgoCD sync and Flux reconcile are asynchronous
-(the action is *requested*; convergence happens later). Each such tool's result (through the I11
+(the action is _requested_; convergence happens later). Each such tool's result (through the I11
 `wrapToolOutput` envelope) returns the operation/sync id (ArgoCD) or `status: "requested"` (Flux) with
 an explicit non-complete marker, so the agent does not treat it as synchronously done. The **tool
-description** instructs the agent to tell the user the operation has only been *requested*, that
+description** instructs the agent to tell the user the operation has only been _requested_, that
 current state in the local index is stale until the next sync, and that verification should wait for
 the next scheduled metadata sync (ArgoCD already indexes `sync_status`/`health_status`; Flux indexes
 Ready conditions) — recommending `/schedule` to re-check after a short interval is good agent
@@ -161,7 +162,7 @@ reading credentials from `process.env` only (`ARGOCD_URL`/`ARGOCD_TOKEN`, `FLUX_
 `MLFLOW_HOST`/`MLFLOW_TOKEN`; auth = `Authorization: Bearer <token>`). **There is no
 `assertHitlRequired()` helper in the codebase** — HITL is declared in the connector's
 `nimbus.extension.json` `hitlRequired` array and enforced **gateway-side by I2** (the authoritative
-gate); the handler does not self-gate. Each write tool's *description* names its required HITL action
+gate); the handler does not self-gate. Each write tool's _description_ names its required HITL action
 type (the Tableau convention: `"...(requires HITL argocd.app.sync). Async — returns the operation
 id."`). Server tools are unit-tested via the exported-registrar `captureTools()` pattern with a
 `globalThis.fetch` stub — no subprocess spawn. The `hitlRequired` manifest entry mirrors the shipped
@@ -186,19 +187,19 @@ invokeConnectorWrite(ctx, { service, writeToolId, args })   ← already generic 
         └─ team     → answerLocalOperatorInvoke (existing I19 local-operator single-tool variant)
 ```
 
-- **HITL:** the six action types are added to `HITL_REQUIRED_BACKING` in `engine/executor.ts`. The
++ **HITL:** the six action types are added to `HITL_REQUIRED_BACKING` in `engine/executor.ts`. The
   existing I2 test asserts every member triggers the consent channel, so each local write is gated
   automatically. **No separate local write-gate file** — the executor's `gate()` is the local HITL
   gate, structurally upstream of `connectors.dispatch`.
-- **Transport reuse (improve-the-code-you're-in).** The Wave 7c transport `invokeConnectorWrite` is
++ **Transport reuse (improve-the-code-you're-in).** The Wave 7c transport `invokeConnectorWrite` is
   **already service-agnostic** (it takes `service`/`writeToolId`/`args` and branches personal/team).
   W1 **renames** `connectors/warehouse-write-transport.ts` → `connectors/connector-write-transport.ts`
   and `WarehouseWriteContext` → `ConnectorWriteContext` (no logic change), and reuses it for all
   connector writes. The E2E sink seam and the `__setPersonalInvokeForTest` DI seam are retained.
-- **Team-credentialed write:** reuses the existing `answerLocalOperatorInvoke` (added by 7c) — no new
++ **Team-credentialed write:** reuses the existing `answerLocalOperatorInvoke` (added by 7c) — no new
   gate code. The three connectors' tokens are enrolled in `TEAM_SECRET_ANYOF_GROUPS`
   (`argocd: [["argocd.token"]]`, `flux: [["flux.token"]]`, `mlflow: [["mlflow.token"]]`).
-- **Confinement of the local write path.** `answerLocalOperatorInvoke` and `invokeConnectorWrite`
++ **Confinement of the local write path.** `answerLocalOperatorInvoke` and `invokeConnectorWrite`
   remain strictly internal to the gateway connector-execution layer: not IPC methods, not in the
   Tauri `ALLOWED_METHODS` (I7), not LAN-reachable (I5), not HTTP write routes (I13). The only trigger
   is `connectors.dispatch` reached after `executor.gate()` returns `proceed`. D20's existing
@@ -237,14 +238,14 @@ export function connectorWriteByActionType(type: string): ConnectorWrite | undef
 This module drives: the dispatch routing (4.2), the generalized I26 predicate (4.4), and a **drift
 test** (review §4) that is an explicit **completeness** check — not a spot check:
 
-- **(a) HITL coverage (the I26↔I2 tie):** *every* tool id for which `isConnectorWriteToolId` returns
++ **(a) HITL coverage (the I26↔I2 tie):** _every_ tool id for which `isConnectorWriteToolId` returns
   true MUST have its `actionType` present in `HITL_REQUIRED_BACKING`. Iterate the full union
   (`WAREHOUSE_BI_WRITES ∪ GITOPS_ML_WRITES`) and assert membership — so any future write that is wired
   into a connector but forgotten in the HITL gate **fails CI**. This is what structurally guarantees a
   connector write can never reach `connectors.dispatch` un-gated.
-- **(b) Server registration:** every `toolId` is registered by its connector server (via the
++ **(b) Server registration:** every `toolId` is registered by its connector server (via the
   `captureTools()` registrar surface).
-- **(c) 1:1 integrity:** `actionType` and `toolId` are each unique across the union (no collision),
++ **(c) 1:1 integrity:** `actionType` and `toolId` are each unique across the union (no collision),
   and `connectorWriteByActionType` round-trips.
 
 The HITL strings stay hand-declared in `executor.ts` (per the invariant rule "added by editing the
@@ -252,7 +253,7 @@ static source declaration only"); the drift test ties the lists so neither can s
 
 ### 4.4 Generalized invariant I26 / static D20 — federated write confinement (no new number)
 
-**Statement (generalized).** *Connector* write tool ids (warehouse/BI ∪ GitOps/ML) execute only
+**Statement (generalized).** _Connector_ write tool ids (warehouse/BI ∪ GitOps/ML) execute only
 behind the local owner's executor I2 HITL gate. The federated peer invoke gate
 (`federation/invoke-gate.ts` `answerFederatedInvoke`, I19) fail-closed **rejects** any
 write-classified tool id before grant/quorum resolution.
@@ -265,16 +266,16 @@ it already consults the predicate and audits `write_forbidden`. `answerLocalOper
 
 **Triple rule — all in the same commit:**
 
-1. *Wiring:* the `assemble.ts` predicate swap to the union.
-2. *Docs:* the I26 row in `docs/SECURITY-INVARIANTS.md` is **reworded** from "warehouse/BI write tool
+1. _Wiring:_ the `assemble.ts` predicate swap to the union.
+2. _Docs:_ the I26 row in `docs/SECURITY-INVARIANTS.md` is **reworded** from "warehouse/BI write tool
    ids" to "connector write tool ids." **No new invariant id is added or removed** — I26 is
    generalized in place, so the invariant roster (and any per-block count) is unchanged; only I26's
    wording (and its examples) update. No invariant-count prose laggard needs a number bump.
-3. *Test:* `security-invariants.test.ts` — extend the existing I26 test so a peer with a valid grant
+3. _Test:_ `security-invariants.test.ts` — extend the existing I26 test so a peer with a valid grant
    for a **GitOps/ML** write tool id over `answerFederatedInvoke` returns an error and `runTool` is
    never called (and `answerLocalOperatorInvoke` DOES call `runTool` for the same id). Keep the
    warehouse assertions.
-4. *Static:* **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — extend the literal
+4. _Static:_ **D20** in `scripts/structure-audit/check-nimbus-invariants.ts` — extend the literal
    confinement to also confine the GitOps/ML write tool id literals to `gitops-ml-write-tools.ts` +
    the three connector servers + the dispatch/transport sites, and assert `assemble.ts` injects the
    **union** predicate. The non-exposure (no `ipc/`/`ui` import) assertion now covers the renamed
@@ -289,32 +290,32 @@ avoiding the in-flight MCP-server (I28) + egress-ledger (I29) numbering collisio
 
 Shared gateway scaffolding (one commit, lands first):
 
-- `connectors/connector-write.ts` (new) — hoisted `ConnectorWrite` type + `w()` builder + test
-- `connectors/warehouse-write-tools.ts` — import the hoisted type/builder (no behavior change)
-- `connectors/gitops-ml-write-tools.ts` (new) — the six rows + predicate + by-action-type + test
-- `connectors/connector-write-registry.ts` (new) — union predicate + union map + test
-- `connectors/warehouse-write-transport.ts` → **rename** `connector-write-transport.ts`
++ `connectors/connector-write.ts` (new) — hoisted `ConnectorWrite` type + `w()` builder + test
++ `connectors/warehouse-write-tools.ts` — import the hoisted type/builder (no behavior change)
++ `connectors/gitops-ml-write-tools.ts` (new) — the six rows + predicate + by-action-type + test
++ `connectors/connector-write-registry.ts` (new) — union predicate + union map + test
++ `connectors/warehouse-write-transport.ts` → **rename** `connector-write-transport.ts`
   (`WarehouseWriteContext` → `ConnectorWriteContext`); update importers
-- `engine/executor.ts` — six types into `HITL_REQUIRED_BACKING`
-- `connectors/registry.ts` (dispatch) — route connector-write action types via the union map to
++ `engine/executor.ts` — six types into `HITL_REQUIRED_BACKING`
++ `connectors/registry.ts` (dispatch) — route connector-write action types via the union map to
   `invokeConnectorWrite`
-- `connectors/connector-secrets-manifest.ts` — enroll `argocd`/`flux`/`mlflow` in
++ `connectors/connector-secrets-manifest.ts` — enroll `argocd`/`flux`/`mlflow` in
   `TEAM_SECRET_ANYOF_GROUPS`
-- `platform/assemble.ts` — swap `isWriteForbiddenToolId` to `isConnectorWriteToolId`
-- I26 generalization triple: `docs/SECURITY-INVARIANTS.md`, `security-invariants.test.ts`,
++ `platform/assemble.ts` — swap `isWriteForbiddenToolId` to `isConnectorWriteToolId`
++ I26 generalization triple: `docs/SECURITY-INVARIANTS.md`, `security-invariants.test.ts`,
   `scripts/structure-audit/check-nimbus-invariants.ts` (D20) — **same commit as the wiring**
 
 Then one commit **per connector** (the subagent-death lesson — files shared across connectors run
 sequentially, commit per connector):
 
-- `mcp-connectors/<svc>/src/server.ts` — (1) extract the inline callback into an exported
++ `mcp-connectors/<svc>/src/server.ts` — (1) extract the inline callback into an exported
   `register<Svc>Tools(reg)` + `if (import.meta.main)` guard (behavior-preserving prerequisite), then
   (2) add the two write tools
-- `mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired` entry mirroring the warehouse
++ `mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired` entry mirroring the warehouse
   connectors' shape
-- gateway-side parse/shape helper for the write args if the connector needs one
-- any scoping-id metadata the write needs but Phase 5 read does not index (verified per §3)
-- the connector's server-tool test + a transport/dispatch test for its two action types
++ gateway-side parse/shape helper for the write args if the connector needs one
++ any scoping-id metadata the write needs but Phase 5 read does not index (verified per §3)
++ the connector's server-tool test + a transport/dispatch test for its two action types
 
 No change to: `CONNECTOR_VAULT_SECRET_KEYS` (no new secrets), rate-limiter providers,
 `FIRST_PARTY_MANIFESTS`, the schema (no migration — stays V43), the item types.
@@ -323,16 +324,16 @@ No change to: `CONNECTOR_VAULT_SECRET_KEYS` (no new secrets), rate-limiter provi
 
 ## 6. Testing & ship-readiness
 
-- **TDD per task.** Red → green → refactor for every handler, the union registry, the generalized
++ **TDD per task.** Red → green → refactor for every handler, the union registry, the generalized
   I26 test, the drift test.
-- **Coverage floor.** Every new file (`connector-write.ts`, `gitops-ml-write-tools.ts`,
++ **Coverage floor.** Every new file (`connector-write.ts`, `gitops-ml-write-tools.ts`,
   `connector-write-registry.ts`, six server tools, parse helpers) must clear ≥80% line+branch.
   `audit:coverage-floor` is CI-Linux-authoritative; run the Docker (`oven/bun:latest`) dry-run
   before the first push.
-- **Invariant suite**: no invariant added/removed (I26 generalized in place); static
++ **Invariant suite**: no invariant added/removed (I26 generalized in place); static
   `check-nimbus-invariants` D20 broadened (not a new D).
-- **Contract tests** (`runContractTests`) green per connector; write tools listed in `hitlRequired`.
-- **Ship-readiness before the FIRST push** (never push-and-see): full `bun run preflight`, the Docker
++ **Contract tests** (`runContractTests`) green per connector; write tools listed in `hitlRequired`.
++ **Ship-readiness before the FIRST push** (never push-and-see): full `bun run preflight`, the Docker
   coverage-floor dry-run, `bun run lint:markdown` on new docs, `lychee` on changed docs, whole-branch
   `/code-review`, then push + open PR. Add the CHANGELOG W1 entry (connector-docs-changelog
   convention; do **not** edit the CLAUDE.md/GEMINI.md status line). Roadmap rows updated: the three
@@ -346,32 +347,32 @@ No change to: `CONNECTOR_VAULT_SECRET_KEYS` (no new secrets), rate-limiter provi
 Run once against a sandbox/staging account per connector before declaring the live contract verified
 (cannot run in CI — no live credentials):
 
-- [ ] ArgoCD: `app.sync` returns a sync/operation id; `sync_status` reflects on next metadata sync.
++ [ ] ArgoCD: `app.sync` returns a sync/operation id; `sync_status` reflects on next metadata sync.
       `app.rollback` to a prior history id succeeds.
-- [ ] Flux: confirm the `flux.token` SA has the `patch` verb on `kustomizations`/`helmreleases`
++ [ ] Flux: confirm the `flux.token` SA has the `patch` verb on `kustomizations`/`helmreleases`
       (precondition); `kustomization.reconcile` + `helmrelease.reconcile` update
       `reconcile.fluxcd.io/requestedAt` and trigger a reconcile (Ready condition
       `lastHandledReconcileAt` advances). With a read-only SA, confirm the write returns a raw `403`.
-- [ ] MLflow: `model.promote` moves the version to `Production`; `model.transition_stage` to an
++ [ ] MLflow: `model.promote` moves the version to `Production`; `model.transition_stage` to an
       explicit stage; read-back via the registry reflects the new stage.
-- [ ] Team path: with a connector's token stored in a team-vault entry and `credential = "team"`, the
++ [ ] Team path: with a connector's token stored in a team-vault entry and `credential = "team"`, the
       same write succeeds through `answerLocalOperatorInvoke` and is audited.
 
 ---
 
 ## 8. Out of scope / follow-ups
 
-- **SageMaker / Vertex AI writes** — deferred (CLI-credential connectors; §1.1). The roadmap rows
++ **SageMaker / Vertex AI writes** — deferred (CLI-credential connectors; §1.1). The roadmap rows
   record the reason.
-- **Federated peer-requested writes behind local HITL** (the I24-style option) — deferred; W1 is
++ **Federated peer-requested writes behind local HITL** (the I24-style option) — deferred; W1 is
   local-owner-triggered only.
-- **Destructive writes** (`delete`/drop/endpoint teardown) — out of scope.
-- **A "check status" poll tool** for the async ArgoCD/Flux operations, and any **"trigger a metadata
++ **Destructive writes** (`delete`/drop/endpoint teardown) — out of scope.
++ **A "check status" poll tool** for the async ArgoCD/Flux operations, and any **"trigger a metadata
   sync now"** tool (review §3) — rely on the existing scheduled metadata sync.
-- **Bespoke per-error privilege/RBAC remediation templating** (review §1) — surface raw provider
++ **Bespoke per-error privilege/RBAC remediation templating** (review §1) — surface raw provider
   errors (e.g. Flux's `403` naming the missing `patch` verb); the setup-guide RBAC note (§3) is the
   documentation half.
-- Slice 9 W2 (Workday) → W3 (Apple Mail + macOS Calendar) → W4 (Web clipper) → W5 (Marketplace
++ Slice 9 W2 (Workday) → W3 (Apple Mail + macOS Calendar) → W4 (Web clipper) → W5 (Marketplace
   monetization, best-effort) follow this unit, each its own spec → plan.
 
 ---
@@ -382,7 +383,7 @@ Run once against a sandbox/staging account per connector before declaring the li
 |---|---|---|---|
 | 1 | Flux requires `patch` RBAC; catch `403` and suggest RBAC upgrade | **Fix** (setup-guide `patch`-verb requirement + reaffirm raw `403` surfacing) **+ Defer** (bespoke RBAC-remediation templating — same line 7c drew) | §3 (`patch` note + error rule), §7 checklist, §8 |
 | 2 | Define `archive_existing_versions` default | **Fix** — explicit `archiveExisting` arg. Initially defaulted both to `false`; **revised in plan-review §1 to `true` for `promote`** (reversible stage change + non-silent via HITL preview + promote's distinct singular-Production semantic), `false` for `transition_stage`. | §3 (`archiveExisting` note), §3 table |
-| 3 | Async writes: agent may read stale state; guide it / suggest `/schedule` | **Fix** (tool-description guidance: op is *requested*-not-done, verify on next sync, `/schedule` re-check) **+ Defer** (no poll tool, no manual sync-trigger tool) | §3 (async output shape), §8 |
+| 3 | Async writes: agent may read stale state; guide it / suggest `/schedule` | **Fix** (tool-description guidance: op is _requested_-not-done, verify on next sync, `/schedule` re-check) **+ Defer** (no poll tool, no manual sync-trigger tool) | §3 (async output shape), §8 |
 | 4 | Drift test should programmatically assert every connector-write tool id is in `HITL_REQUIRED_BACKING` | **Fix** — drift test made an explicit completeness check over the full union (HITL coverage + server registration + 1:1 integrity); forgotten HITL wiring fails CI | §4.3 |
 
 **Verified during triage:** the existing error rule (§3) already surfaces raw provider `403`s, so #1's

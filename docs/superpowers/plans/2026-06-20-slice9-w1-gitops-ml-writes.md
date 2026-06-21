@@ -29,15 +29,18 @@
 ## File Structure
 
 **New gateway files:**
+
 - `packages/gateway/src/connectors/connector-write.ts` — shared `ConnectorWrite` type + `w()` builder (hoisted from `warehouse-write-tools.ts`).
 - `packages/gateway/src/connectors/gitops-ml-write-tools.ts` — the six-row SSoT + predicate + by-action-type lookup.
 - `packages/gateway/src/connectors/connector-write-registry.ts` — union predicate (`isConnectorWriteToolId`) + union lookup (`connectorWriteByActionType`).
 
 **Renamed gateway files (behavior-preserving):**
+
 - `warehouse-write-transport.ts` → `connector-write-transport.ts` (`WarehouseWriteContext` → `ConnectorWriteContext`).
 - `warehouse-write-dispatch.ts` → `connector-write-dispatch.ts` (`createWarehouseWriteDispatcher` → `createConnectorWriteDispatcher`, routes via the union lookup).
 
 **Modified gateway files:**
+
 - `connectors/warehouse-write-tools.ts` — import the hoisted type/builder.
 - `engine/executor.ts` — six action types into `HITL_REQUIRED_BACKING`.
 - `ipc/federation-rpc.ts` — swap `isWriteForbiddenToolId: isWarehouseWriteToolId` → `isConnectorWriteToolId`.
@@ -47,6 +50,7 @@
 - `docs/SECURITY-INVARIANTS.md` — I26 reworded.
 
 **Connector files (per connector, ArgoCD/Flux/MLflow):**
+
 - `packages/mcp-connectors/<svc>/src/server.ts` — extract exported `register<Svc>Tools` + guard, then add two write tools.
 - `packages/mcp-connectors/<svc>/nimbus.extension.json` — `hitlRequired: ["write"]` + description update.
 - `packages/mcp-connectors/<svc>/test/server-writes.test.ts` — `captureTools()` unit tests.
@@ -58,11 +62,13 @@
 ## Task 1: Hoist the `ConnectorWrite` type + `w()` builder
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/connector-write.ts`
 - Create: `packages/gateway/src/connectors/connector-write.test.ts`
 - Modify: `packages/gateway/src/connectors/warehouse-write-tools.ts` (import the hoisted symbols)
 
 **Interfaces:**
+
 - Produces: `interface ConnectorWrite { readonly actionType: string; readonly toolId: string; readonly service: string }` and `function w(actionType: string, toolId: string, service: string): ConnectorWrite`.
 
 - [ ] **Step 1: Write the failing test**
@@ -127,10 +133,12 @@ git commit -m "refactor(connectors): hoist ConnectorWrite descriptor + w() build
 ## Task 2: GitOps/ML write SSoT (`gitops-ml-write-tools.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/gitops-ml-write-tools.ts`
 - Create: `packages/gateway/src/connectors/gitops-ml-write-tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ConnectorWrite`, `w` (Task 1).
 - Produces: `GITOPS_ML_WRITES: readonly ConnectorWrite[]`, `GITOPS_ML_WRITE_TOOL_IDS: ReadonlySet<string>`, `isGitopsMlWriteToolId(id: string): boolean`, `gitopsMlWriteByActionType(type: string): ConnectorWrite | undefined`.
 
@@ -233,10 +241,12 @@ git commit -m "feat(connectors): GitOps/ML write SSoT (6 actions: argocd/flux/ml
 ## Task 3: Union registry (`connector-write-registry.ts`)
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/connector-write-registry.ts`
 - Create: `packages/gateway/src/connectors/connector-write-registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: `WAREHOUSE_BI_WRITES`/`isWarehouseWriteToolId`/`warehouseWriteByActionType`; `GITOPS_ML_WRITES`/`isGitopsMlWriteToolId`/`gitopsMlWriteByActionType`; `ConnectorWrite`.
 - Produces: `CONNECTOR_WRITES: readonly ConnectorWrite[]` (union), `isConnectorWriteToolId(id: string): boolean`, `connectorWriteByActionType(type: string): ConnectorWrite | undefined`.
 
@@ -334,10 +344,12 @@ git commit -m "feat(connectors): union connector-write registry (warehouse ∪ g
 ## Task 4: Add the six action types to the HITL frozen set + the completeness drift test
 
 **Files:**
+
 - Modify: `packages/gateway/src/engine/executor.ts` (inside `HITL_REQUIRED_BACKING`)
 - Modify: `packages/gateway/src/connectors/connector-write-registry.test.ts` (add the drift test)
 
 **Interfaces:**
+
 - Consumes: `HITL_REQUIRED` (exported from `engine/executor.ts`), `CONNECTOR_WRITES` (Task 3).
 
 - [ ] **Step 1: Write the failing completeness drift test** (append to `connector-write-registry.test.ts`)
@@ -403,11 +415,13 @@ git commit -m "feat(engine): HITL-gate the 6 GitOps/ML writes + I26↔I2 complet
 ## Task 5: Rename the write transport to `connector-write-transport.ts`
 
 **Files:**
+
 - Rename: `packages/gateway/src/connectors/warehouse-write-transport.ts` → `connector-write-transport.ts`
 - Rename: `packages/gateway/src/connectors/warehouse-write-transport.test.ts` → `connector-write-transport.test.ts`
 - Modify: importers (`warehouse-write-dispatch.ts` — handled in Task 6; any others found by grep)
 
 **Interfaces:**
+
 - Produces (unchanged behavior, renamed type): `interface ConnectorWriteContext { ... }`, `invokeConnectorWrite(ctx, req)`, `__setPersonalInvokeForTest`.
 
 - [ ] **Step 1: Git-rename both files**
@@ -448,11 +462,13 @@ git commit -m "refactor(connectors): rename warehouse-write-transport → connec
 ## Task 6: Generalize the dispatcher to route the full connector-write union
 
 **Files:**
+
 - Rename: `packages/gateway/src/connectors/warehouse-write-dispatch.ts` → `connector-write-dispatch.ts`
 - Rename: `packages/gateway/src/connectors/warehouse-write-dispatch.test.ts` → `connector-write-dispatch.test.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (call site)
 
 **Interfaces:**
+
 - Consumes: `connectorWriteByActionType` (Task 3), `invokeConnectorWrite` + `ConnectorWriteContext` (Task 5), `extractToolInput` (from `registry.ts`).
 - Produces: `createConnectorWriteDispatcher(inner: ConnectorDispatcher, deps: ConnectorWriteContext): ConnectorDispatcher`.
 
@@ -573,6 +589,7 @@ git commit -m "refactor(connectors): generalize write dispatcher to the full con
 ## Task 7: Generalize invariant I26 (wiring + docs + test + static — ONE commit)
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/federation-rpc.ts` (predicate swap)
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (D20 generalization)
 - Modify: `scripts/structure-audit/check-nimbus-invariants.test.ts` (D20 test)
@@ -580,6 +597,7 @@ git commit -m "refactor(connectors): generalize write dispatcher to the full con
 - Modify: `docs/SECURITY-INVARIANTS.md` (I26 reword)
 
 **Interfaces:**
+
 - Consumes: `isConnectorWriteToolId` (Task 3).
 
 - [ ] **Step 1: Write the failing runtime test** (extend the I26 block in `security-invariants.test.ts`)
@@ -653,13 +671,16 @@ Then in `packages/gateway/src/ipc/federation-rpc.ts`: change the import `import 
 - [ ] **Step 5: Generalize the D20 static check**
 
 In `scripts/structure-audit/check-nimbus-invariants.ts`:
+
 - Rename `WAREHOUSE_WRITE_ALLOWED` → `CONNECTOR_WRITE_ALLOWED`; add the three connector servers + the GitOps/ML SSoT:
+
   ```ts
   "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
   "packages/mcp-connectors/argocd/src/server.ts",
   "packages/mcp-connectors/flux/src/server.ts",
   "packages/mcp-connectors/mlflow/src/server.ts",
   ```
+
   and update the two renamed transport/dispatch entries to `connector-write-transport.ts` / `connector-write-dispatch.ts`.
 - Rename `WAREHOUSE_WRITE_RE` → `CONNECTOR_WRITE_RE` and extend the alternation with the six new ids:
   `argocd_app_sync|argocd_app_rollback|flux_kustomization_reconcile|flux_helmrelease_reconcile|mlflow_model_promote|mlflow_model_transition_stage`.
@@ -688,6 +709,7 @@ git commit -m "feat(security): generalize I26/D20 to all connector write tool id
 ## Task 8: Enroll ArgoCD/Flux/MLflow in the team-vault group
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts` (`TEAM_SECRET_ANYOF_GROUPS`)
 - Modify: the manifest's test (find with `git grep -n "TEAM_SECRET_ANYOF_GROUPS" -- packages/gateway/src/**/*.test.ts`)
 
@@ -742,6 +764,7 @@ git commit -m "feat(connectors): enroll argocd/flux/mlflow tokens in TEAM_SECRET
 ## Task 9: ArgoCD write tools (registrar extraction + sync/rollback)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/argocd/src/server.ts`
 - Modify: `packages/mcp-connectors/argocd/nimbus.extension.json`
 - Create: `packages/mcp-connectors/argocd/test/server-writes.test.ts`
@@ -903,6 +926,7 @@ git commit -m "feat(argocd): HITL-gated app.sync + app.rollback write tools"
 ## Task 10: Flux write tools (registrar extraction + kustomization/helmrelease reconcile)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/flux/src/server.ts`
 - Modify: `packages/mcp-connectors/flux/nimbus.extension.json`
 - Create: `packages/mcp-connectors/flux/test/server-writes.test.ts`
@@ -1057,6 +1081,7 @@ git commit -m "feat(flux): HITL-gated kustomization + helmrelease reconcile writ
 ## Task 11: MLflow write tools (registrar extraction + promote/transition-stage)
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/mlflow/src/server.ts`
 - Modify: `packages/mcp-connectors/mlflow/nimbus.extension.json`
 - Create: `packages/mcp-connectors/mlflow/test/server-writes.test.ts`
@@ -1225,6 +1250,7 @@ git commit -m "feat(mlflow): HITL-gated model.promote + model.transition_stage w
 ## Task 12: Docs (CHANGELOG + roadmap), invariant doc-drift, and ship-readiness gate
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md` (W1 entry)
 - Modify: `docs/roadmap.md` (GitOps/MLflow write rows checked; SageMaker/Vertex annotated deferred)
 - Verify: `docs/architecture.md` (IPC/connector counts if any reference the I26 subject — reword only if it names "warehouse writes")
@@ -1236,6 +1262,7 @@ Add a dated entry under the current unreleased section summarizing W1: six HITL-
 - [ ] **Step 2: Roadmap rows**
 
 In `docs/roadmap.md` "Deferred from Phase 5":
+
 - Check off ArgoCD writes, Flux writes, and the MLflow line of ML writes (mark "✅ delivered 2026-06-20 (W1)").
 - Annotate the SageMaker writes + Vertex AI writes rows: "remains deferred — CLI-credential connectors (no discrete token); does not fit the team-vault/discrete-token write model; S5-demoted."
 
@@ -1247,6 +1274,7 @@ Expected: PASS.
 - [ ] **Step 4: Full ship-readiness (the never-push-and-see rule)**
 
 Run, in order, and fix any failure before proceeding:
+
 - `bun run preflight` (full CI parity — all-package tsc, biome, tests, static audits)
 - the Docker Linux coverage-floor dry-run (`oven/bun:latest`) over the new files, then `check.ts` — every new file ≥80% line+branch
 - `bun run audit:structure` (D20 generalized) — no violations
