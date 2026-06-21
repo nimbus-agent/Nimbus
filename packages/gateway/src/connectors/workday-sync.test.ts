@@ -254,7 +254,9 @@ describe("createWorkdaySyncable", () => {
     let evilFetched = false;
     const guardedFetch = (async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("evil.example.com")) {
+      // Parse the host (not a substring check) so the spy can't be fooled by a host
+      // like evil.example.com.attacker.com — and to satisfy CodeQL js/incomplete-url-substring-sanitization.
+      if (new URL(u).hostname === "evil.example.com") {
         evilFetched = true;
         return new Response("{}", { status: 200 });
       }
