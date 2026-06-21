@@ -98,6 +98,9 @@ describe("apple-mail-core", () => {
 - [ ] **Step 3: Implement.** Re-export the shared symbols; declare `DraftInput`/`DraftResult`/`DraftAppender`.
 
 ```ts
+// Helpers + client/mailer types come ONLY from the shared connector toolkit
+// (packages/mcp-connectors/shared/*) — NEVER cross-import a sibling connector's
+// src (e.g. ../../imap/src/...): that breaks per-workspace tsc/bundling output.
 export {
   capPreview,
   clampLimit,
@@ -105,14 +108,13 @@ export {
   PREVIEW_FETCH_BYTES,
   PREVIEW_MAX_CHARS,
 } from "../../shared/imap-mail-core.ts";
+// The shared kit already defines the structural client/mailer/message contracts
+// the connector must satisfy (EmailReadClient/EmailSendMailer/EmailMessageMeta).
 export type {
-  ImapAddress,
-  ImapClient,
-  ImapMessageMeta,
-  SendMailInput,
-  SendMailResult,
-  SmtpMailer,
-} from "../../imap/src/imap-core.ts";
+  EmailMessageMeta,
+  EmailReadClient,
+  EmailSendMailer,
+} from "../../shared/imap-tool-kit.ts";
 
 export interface DraftInput {
   readonly to: string;
@@ -130,7 +132,7 @@ export interface DraftAppender {
 }
 ```
 
-> Verify the cross-package import path `../../imap/src/imap-core.ts` resolves under the apple tsconfig; if connectors don't import each other's `src`, instead re-declare the small set of types locally (mirror imap-core) — read how `protonmail` reuses imap types to decide.
+> **Monorepo isolation (review #1):** do NOT import from `../../imap/src/*`. Apple's read client + mailer only need to satisfy the SHARED structural types `EmailReadClient` / `EmailSendMailer` (consumed by `registerEmailConnectorTools`), which live in `shared/imap-tool-kit.ts` and are importable. The real `server.ts` clients (Task D1) implement those structural types directly and copy any imapflow-specific shaping (`toMessageMeta`/`previewFetchQuery`) locally — `server.ts` is coverage-excluded, so the small copy is acceptable and keeps package boundaries clean. If a genuinely shared helper emerges, move it INTO `shared/imap-tool-kit.ts`, never cross-import a sibling package.
 
 - [ ] **Step 4: Run → pass.**
 - [ ] **Step 5: Commit.** `feat(apple): mail-core re-exports + Drafts appender interface`
@@ -142,7 +144,7 @@ export interface DraftAppender {
 - Test: `packages/mcp-connectors/apple/test/tools.test.ts`
 
 **Interfaces:**
-- Consumes: `registerEmailConnectorTools` from `packages/mcp-connectors/shared/imap-tool-kit.ts`; `ImapClient`, `SmtpMailer`, `DraftAppender`, `formatAddress` from `./apple-mail-core.ts`.
+- Consumes: `registerEmailConnectorTools`, `EmailReadClient`, `EmailSendMailer` from `packages/mcp-connectors/shared/imap-tool-kit.ts`; `DraftAppender`, `formatAddress` from `./apple-mail-core.ts`. (Apple's `client`/`mailer` are typed as `EmailReadClient`/`EmailSendMailer` — no imap-package import.)
 - Produces:
   - `registerAppleTools(server, { client, mailer, draftAppender, calendar }): void` — registers mail tools (prefix `apple`) + the draft tool + (Phase C) calendar tools.
   - `export const APPLE_TOOL_NAMES = ["apple_list","apple_get","apple_search","apple_mail_send","apple_mail_draft_create","apple_calendar_list","apple_calendar_event_create","apple_calendar_event_delete"] as const;`
@@ -325,10 +327,10 @@ describe("parseICalendar", () => {
 - [ ] **Step 1: `bun add` safety pre-flight for `tsdav`.** In `packages/mcp-connectors/apple`, run `bun add tsdav`. Verify: license is permissive (MIT/ISC/Apache), it builds under Bun, and it exposes a CalDAV client supporting calendar discovery + a `calendar-query` REPORT with **`expand`** + time-range. Smoke: `bun -e "import { DAVClient } from 'tsdav'; console.log(typeof DAVClient)"`. **If tsdav does not fit** (no Bun support / no expand), fall back to raw `fetch` PROPFIND/REPORT in `server.ts` + `fast-xml-parser` (run the same safety check) — the `CalDavClient` interface isolates the choice; nothing else changes.
 
 - [ ] **Step 2: Implement `server.ts`.** Mirror `imap/src/server.ts`: read env (`APPLE_ICLOUD_EMAIL`, `APPLE_ICLOUD_APP_PASSWORD`) via `requireProcessEnv`. Construct:
-  - `ImapFlowClient` against `imap.mail.me.com:993` (reuse the imap connector's client logic — copy `toMessageMeta`/`previewFetchQuery` or import from the imap package if cross-package src import is allowed).
-  - `NodemailerMailer` against `smtp.mail.me.com:587` (STARTTLS, `secure:false`), **`from` pinned to `APPLE_ICLOUD_EMAIL`** (the forced sender).
+  - An `EmailReadClient` over `imapflow` against `imap.mail.me.com:993` (TLS). **Copy** the imapflow message-shaping helpers (`toMessageMeta`/`previewFetchQuery`) from `imap/src/server.ts` INTO this file — do NOT cross-import `../../imap/src/*` (review #1; `server.ts` is coverage-excluded so the copy is acceptable).
+  - An `EmailSendMailer` over `nodemailer` against `smtp.mail.me.com:587` (STARTTLS, `secure:false`), **`from` pinned to `APPLE_ICLOUD_EMAIL`** (the forced sender; ignore any caller `From`).
   - A `DraftAppender` that IMAP-`APPEND`s a built RFC822 message (From pinned) to the `Drafts` mailbox (imapflow `append`).
-  - A `CalDavClient` via tsdav: login with `caldav.icloud.com` + basic auth (email + app-pw), discover calendar-home, list/expand/PUT/DELETE; **re-apply auth on every request to the discovered `p##-caldav.icloud.com` host** (don't rely on transparent redirects). Inject `now = () => new Date().toISOString()`.
+  - A `CalDavClient` over tsdav using a **two-phase client** (review #2): (1) instantiate a *bootstrap* `DAVClient({ serverUrl: "https://caldav.icloud.com", credentials: { username: email, password: appPw }, authMethod: "Basic", defaultAccountType: "caldav" })` and `login()` → fetch the principal + `calendar-home-set`; (2) instantiate the *working* `DAVClient` targeting the resolved `p##-caldav.icloud.com` calendar-home URL and run all list/`expand`/PUT/DELETE against it, so Basic auth is applied to the resolved host on every request (never relying on transparent cross-host redirects). Inject `now = () => new Date().toISOString()`.
   Then `registerAppleTools(server, { client, mailer, draftAppender, calendar, now })` and `await server.connect(new StdioServerTransport())`.
 
 - [ ] **Step 3: Typecheck** the package: `cd packages/mcp-connectors/apple && bunx tsc --noEmit`. Expected: clean.
@@ -519,6 +521,10 @@ syncScheduler.register(
 - Test: `packages/gateway/src/engine/executor-apple-writes.test.ts` (or extend `executor.test.ts`)
 
 > No production code — this proves the **existing** I2 gate covers apple's writes on the generic path (spec §6.3).
+>
+> **Dispatch routing confirmed (review #3):** the generic dispatcher (`connectors/registry.ts` ~line 67) resolves the connector tool as `payload.mcpToolId ?? action.type` against the live mesh tool map, and the executor gate (`executor.ts:262`) keys on `action.type` alone. There is **no** tool-id→action-type map and **no** per-service dispatch allowlist that apple must join — so **no Phase-H mapping is required** for the write path (this directly answers the reviewer's "add a mapping if needed"). Mirroring imap is structurally sufficient: `email.send`/`email.draft.create`/`calendar.event.create`/`calendar.event.delete` are already in `HITL_REQUIRED_BACKING`, and dispatch is `mcpToolId`-based.
+>
+> **Scope note:** like the five sibling email connectors, the *end-to-end invocation surface* (a conversational-agent / chatops / planner path that builds a write `PlannedAction` with `payload.mcpToolId` set and runs it through `executor.execute`) is a pre-existing, connector-agnostic concern and is **out of scope** for this slice. This slice delivers the connector, its tools, and executor-level HITL gating — exactly the surface imap ships. The action `{ type, payload: { mcpToolId, input } }` shape used in Step 1 is the contract every such surface must produce.
 
 - [ ] **Step 1: Write the test** — for each of `email.send`, `email.draft.create`, `calendar.event.create`, `calendar.event.delete`: build a `ToolExecutor` with a consent coordinator stub that records the prompt and a dispatcher stub that records dispatch; call `executor.execute({ type, payload: { mcpToolId: "apple_…", input: {…} } })`; assert (a) consent was prompted BEFORE dispatch, (b) on approval it dispatches, (c) on rejection it returns `{status:"rejected"}` and never dispatches. Mirror `executor.test.ts` HITL cases.
 - [ ] **Step 2: Run → it should PASS immediately** (the gate already covers these action types) — if it fails, the action type is missing from `HITL_REQUIRED_BACKING` (it isn't) or the harness is wrong; fix the test, not prod.
@@ -562,4 +568,15 @@ syncScheduler.register(
 ## Self-review notes (coverage of spec)
 
 - Spec §3 topology → Phases A–D. §4 creds/endpoints → A1/D1/H1. §5.1 mail → A2/A3/E1. §5.2 calendar + recurrence → B/C/F. §6.1 forced sender → A3/D1. §6.2/§6.3 generic-path writes + HITL test (no I26) → I1. §7 embedding → G1. §8 platform (no gate) → nothing to do (verified by absence). §9 registration → H. §10 testing → tests throughout + J2. §11 out-of-scope → respected (no update tool, no IDLE, no client RRULE engine). §12 risks → D1 (auth-on-redirect, tsdav fallback), F-phase (injectable transport for coverage).
-- **Open implementation choice flagged for the implementer:** cross-package `src` import vs local type re-declaration in A2/D1 (decide by reading how `protonmail` reuses imap) — does not change behavior.
+- **Resolved (review #1):** no cross-package `src` imports. Apple's client/mailer types come from the SHARED `imap-tool-kit.ts` (`EmailReadClient`/`EmailSendMailer`/`EmailMessageMeta`); `server.ts` copies imapflow shaping locally (it's coverage-excluded). Genuinely shared helpers move INTO `shared/`, never a sibling-package import.
+- **Resolved (review #2):** tsdav uses a two-phase client — bootstrap-discover then re-instantiate against the resolved `p##-caldav.icloud.com` calendar-home host — so Basic auth is applied to the resolved host on every request (D1 Step 2).
+
+---
+
+## Plan-review resolutions (2026-06-21)
+
+From `2026-06-21-slice9-apple-mail-calendar-review.md` — all three **fixed**, none deferred:
+
+1. **Cross-package relative imports (A2/D1)** → **Fixed.** The plan no longer imports `../../imap/src/*`. Apple's client/mailer types come from the shared `imap-tool-kit.ts` (`EmailReadClient`/`EmailSendMailer`/`EmailMessageMeta`), which the kit already defines and which are importable from the shared location; the real `server.ts` copies the imapflow shaping helpers locally (coverage-excluded). Reviewer's "redefine locally or move to the shared toolkit" — adopted the shared-toolkit form for types, local copy for the imapflow-specific `server.ts` helpers.
+2. **tsdav principal-host redirect (D1)** → **Fixed.** Adopted the reviewer's two-phase `DAVClient`: bootstrap-discover the `calendar-home-set`, then construct a working `DAVClient` targeting the resolved `p##-caldav.icloud.com` URL for all subsequent ops (Basic auth re-applied to the resolved host; no reliance on transparent redirects).
+3. **Generic dispatch mapping for writes (I1)** → **Verified; no change needed.** Traced the real runtime path: the dispatcher resolves the tool by `payload.mcpToolId ?? action.type` (`connectors/registry.ts` ~line 67) and the gate keys on `action.type` (`executor.ts:262`). There is **no** tool-id→action-type map and **no** per-service dispatch allowlist — so the reviewer's conditional ("if explicit mapping required, add it in Phase H") resolves to **not required**; mirroring imap is structurally sufficient. Added an explicit confirmation + a scope note to Task I1 (the end-to-end write-invocation *surface* is a pre-existing, connector-agnostic concern shared with the five sibling email connectors, out of scope for this slice — which delivers the connector + tools + executor-level gating exactly as imap does).
