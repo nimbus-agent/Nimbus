@@ -9,10 +9,17 @@
 // into any real-resolver twin in the same process and make ensureSlackMcp spawn
 // despite an absent/malformed token — green on the src-only PR gate, red on the
 // combined push run. One such twin was removed for exactly this reason.
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+import { Config } from "../../../../src/config.ts";
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
+
+// Config is `as const` (mutable at runtime, not Object.frozen). ensureWorkdayMcp reads the
+// tenant host/name from Config; set them deterministically per-test rather than relying on
+// env-vars-before-import (which is order-dependent and fails in the combined `bun test` run
+// once another file has already imported + frozen config.ts). Mirrors workday-access-token.test.ts.
+const mutableWorkdayConfig = Config as { workdayTenantHost: string; workdayTenant: string };
 
 type CapturedClientArgs = {
   readonly id: string;
@@ -1234,6 +1241,15 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
 });
 
 describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)", () => {
+  beforeEach(() => {
+    mutableWorkdayConfig.workdayTenantHost = "https://acme.workday.com";
+    mutableWorkdayConfig.workdayTenant = "acme";
+  });
+  afterEach(() => {
+    mutableWorkdayConfig.workdayTenantHost = "";
+    mutableWorkdayConfig.workdayTenant = "";
+  });
+
   test("missing workday.oauth → no spawn", async () => {
     const { ctx, calls } = makeCtx();
     await ensureWorkdayMcp(ctx);
