@@ -25,6 +25,7 @@ import {
 } from "./_lib/apple-caldav-fetch.ts";
 import { runImapLikeSync } from "./_lib/imap-sync-core.ts";
 import { mapAppleEventToItem } from "./apple-event-mapping.ts";
+import { readConnectorSecret } from "./connector-vault.ts";
 import { mapImapLikeMessageToItem } from "./imap-email-mapping.ts";
 import type { ImapConnectionConfig, ImapMessageFetcher } from "./imap-sync.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -58,12 +59,14 @@ function pass1Cursor(): string {
  * allow user-configurable endpoints.
  */
 export async function loadMailConfig(ctx: SyncContext): Promise<ImapConnectionConfig | null> {
-  const email = (await ctx.vault.get("apple.icloud_email"))?.trim() ?? "";
-  const appPw = (await ctx.vault.get("apple.icloud_app_password"))?.trim() ?? "";
+  const email = (await readConnectorSecret(ctx.vault, "apple", "icloud_email"))?.trim() ?? "";
+  const appPw =
+    (await readConnectorSecret(ctx.vault, "apple", "icloud_app_password"))?.trim() ?? "";
   if (email === "" || appPw === "") {
     return null;
   }
-  const mailbox = (await ctx.vault.get("apple.mailbox"))?.trim() || DEFAULT_MAILBOX;
+  const mailbox =
+    (await readConnectorSecret(ctx.vault, "apple", "mailbox"))?.trim() || DEFAULT_MAILBOX;
   return {
     host: ICLOUD_IMAP_HOST,
     port: ICLOUD_IMAP_PORT,

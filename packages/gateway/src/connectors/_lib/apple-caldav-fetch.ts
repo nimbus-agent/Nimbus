@@ -14,6 +14,7 @@
  *    c8 ignore start/stop because it opens real network sockets.
  */
 import type { SyncContext } from "../../sync/types.ts";
+import { readConnectorSecret } from "../connector-vault.ts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -203,8 +204,9 @@ const DEFAULT_MAX_INSTANCES = 1000;
  *  - apple.cal_exclude_calendars  (comma-separated displayNames; default: none)
  */
 export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | null> {
-  const email = (await ctx.vault.get("apple.icloud_email"))?.trim() ?? "";
-  const appPw = (await ctx.vault.get("apple.icloud_app_password"))?.trim() ?? "";
+  const email = (await readConnectorSecret(ctx.vault, "apple", "icloud_email"))?.trim() ?? "";
+  const appPw =
+    (await readConnectorSecret(ctx.vault, "apple", "icloud_app_password"))?.trim() ?? "";
   if (email === "" || appPw === "") {
     return null;
   }

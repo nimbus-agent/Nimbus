@@ -1151,7 +1151,7 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
  * (the single app-specific password authenticates all three protocols). The
  * iCloud IMAP (993) / SMTP (587) hosts are on non-443 ports, so their concrete
  * `imap.mail.me.com:993` / `smtp.mail.me.com:587` host:port entries are added to
- * the sandbox network allow-list at spawn (mirroring phase3AddImapMcp);
+ * the sandbox network allow-list at spawn time, mirroring phase3AddImapMcp;
  * `caldav.icloud.com` is declared statically in the apple manifest. (The
  * per-account `p##-caldav.icloud.com` partition host is resolved at runtime
  * inside server.ts; under strict per-host gating CalDAV degrades — see the apple
