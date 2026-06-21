@@ -24,7 +24,7 @@ describe("TEAM_SECRET_ANYOF_GROUPS", () => {
 
   test("every grouped key is a real CONNECTOR_VAULT_SECRET_KEYS entry for its service", () => {
     for (const [service, groups] of Object.entries(TEAM_SECRET_ANYOF_GROUPS)) {
-      const known = new Set(
+      const known = new Set<string>(
         CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
       );
       for (const key of (groups ?? []).flat()) {
