@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterMlflowModels } from "./search-filter.ts";
 
 function trimTrailingSlash(s: string): string {
@@ -25,7 +28,7 @@ function authHeader(): Record<string, string> {
 }
 
 async function mlflowGet(path: string): Promise<unknown> {
-  const res = await fetch(`${apiBase()}${path}`, { headers: authHeader() });
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, { headers: authHeader() });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`MLflow ${String(res.status)}: ${text.slice(0, 400)}`);
@@ -33,12 +36,27 @@ async function mlflowGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
+async function mlflowPost(path: string, body: unknown): Promise<unknown> {
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, {
+    method: "POST",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`MLflow ${path} ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  return text === "" ? {} : (JSON.parse(text) as unknown);
+}
+
+const TRANSITION_PATH = "/api/2.0/mlflow/model-versions/transition-stage";
+
 function modelsFrom(root: unknown): unknown[] {
   const models = (root as { registered_models?: unknown } | null)?.registered_models;
   return Array.isArray(models) ? models : [];
 }
 
-await runReadOnlyMcpConnector("nimbus-mlflow", (reg) => {
+export function registerMlflowTools(reg: ZodToolRegistrar): void {
   reg(
     "mlflow_list",
     "List MLflow registered models (`GET /api/2.0/mlflow/registered-models/search`). Returns a single page; `limit` (1..100, default 100) caps the page size. Returns the raw `{ registered_models, next_page_token }` envelope.",
@@ -82,4 +100,47 @@ await runReadOnlyMcpConnector("nimbus-mlflow", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+
+  reg(
+    "mlflow_model_promote",
+    "Promote a model version to Production (`POST /api/2.0/mlflow/model-versions/transition-stage`, stage=Production; requires HITL mlflow.model.promote). `archiveExisting` (default true) archives other Production versions so this becomes the single active one; pass false to keep them. Archiving is a reversible stage change.",
+    z.object({
+      name: z.string().min(1),
+      version: z.string().min(1),
+      archiveExisting: z.boolean().optional(),
+    }),
+    async (p) => {
+      await mlflowPost(TRANSITION_PATH, {
+        name: p.name,
+        version: p.version,
+        stage: "Production",
+        archive_existing_versions: p.archiveExisting ?? true, // promote defaults to archiving the incumbent
+      });
+      return jsonResult({ status: "ok", name: p.name, version: p.version, stage: "Production" });
+    },
+  );
+
+  reg(
+    "mlflow_model_transition_stage",
+    "Transition a model version to a chosen stage (`POST /api/2.0/mlflow/model-versions/transition-stage`; requires HITL mlflow.model.transition_stage). `archiveExisting` default false.",
+    z.object({
+      name: z.string().min(1),
+      version: z.string().min(1),
+      stage: z.enum(["None", "Staging", "Production", "Archived"]),
+      archiveExisting: z.boolean().optional(),
+    }),
+    async (p) => {
+      await mlflowPost(TRANSITION_PATH, {
+        name: p.name,
+        version: p.version,
+        stage: p.stage,
+        archive_existing_versions: p.archiveExisting ?? false,
+      });
+      return jsonResult({ status: "ok", name: p.name, version: p.version, stage: p.stage });
+    },
+  );
+}
+
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-mlflow", registerMlflowTools);
+}

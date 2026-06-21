@@ -857,14 +857,14 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 ##### GitOps (Write Tools)
 
-- [ ] **ArgoCD writes** — `gitops.app.sync`, `gitops.app.rollback` behind HITL; depends on the read-only ArgoCD connector landing in Phase 5
-- [ ] **Flux writes** — `gitops.kustomization.reconcile`, `gitops.helmrelease.reconcile` behind HITL; depends on the read-only Flux connector landing in Phase 5
+- [x] **ArgoCD writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `argocd.app.sync`, `argocd.app.rollback` behind HITL (I2); personal + I19 team credentials; I26/D20 generalized to all connector writes (see [`docs/CHANGELOG.md`](./CHANGELOG.md))
+- [x] **Flux writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `flux.kustomization.reconcile`, `flux.helmrelease.reconcile` behind HITL (I2); reconcile via the `reconcile.fluxcd.io/requestedAt` annotation PATCH (needs the SA's `patch` RBAC verb)
 
 ##### ML/AI (Write Tools)
 
-- [ ] **MLflow writes** — `ml.model.promote`, `ml.model.transition-stage` behind HITL; depends on the read-only MLflow connector landing in Phase 5
-- [ ] **SageMaker writes** — `ml.endpoint.update`, `ml.endpoint.delete`, `ml.job.stop` behind HITL; depends on the read-only SageMaker connector landing in Phase 5
-- [ ] **Vertex AI writes** — `ml.endpoint.update`, `ml.pipeline.cancel` behind HITL; depends on the read-only Vertex AI connector landing in Phase 5
+- [x] **MLflow writes** ✅ delivered 2026-06-21 (Slice 9 W1) — `mlflow.model.promote`, `mlflow.model.transition_stage` behind HITL (I2); `POST /api/2.0/mlflow/model-versions/transition-stage` (promote defaults `archive_existing_versions=true`)
+- [ ] **SageMaker writes** — `ml.endpoint.update`, `ml.endpoint.delete`, `ml.job.stop` behind HITL. **Remains deferred** — CLI-credential connector (reuses the shared AWS `_lib/aws-cli.ts` creds; no discrete token), so it does not fit the team-vault/discrete-token write model the Slice 9 W1 write path is built on; S5-demoted.
+- [ ] **Vertex AI writes** — `ml.endpoint.update`, `ml.pipeline.cancel` behind HITL. **Remains deferred** — CLI-credential connector (reuses the gcloud CLI / GCP creds; no discrete token), so it does not fit the team-vault/discrete-token write model the Slice 9 W1 write path is built on; S5-demoted.
 
 ##### Marketplace v2 Monetization
 

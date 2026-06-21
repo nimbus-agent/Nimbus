@@ -2,8 +2,8 @@ import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
+import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
-import { createWarehouseWriteDispatcher } from "./connectors/warehouse-write-dispatch.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { runAsk } from "./engine/run-ask.ts";
 import { emergencyGatewayLog } from "./platform/gateway-log-file.ts";
@@ -45,9 +45,9 @@ async function main(): Promise<void> {
     listTools: () => mcp.listToolsForDispatcher(),
     getToolsEpoch: () => mcp.getToolsEpoch(),
   };
-  const dispatcher = createWarehouseWriteDispatcher(
+  const dispatcher = createConnectorWriteDispatcher(
     createConnectorDispatcher(dispatcherClient),
-    platform.warehouseWriteDeps,
+    platform.connectorWriteDeps,
   );
   const engine = createNimbusEngineAgent({
     localIndex: platform.localIndex,

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
   checkForwardShareConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
   checkSpawnInvariant,
   checkVaultKeyAllowList,
-  checkWarehouseWriteConfinement,
   collectDbRunCensus,
   DB_RUN_EXEC_ALLOW_LIST,
   type FileEntry,
@@ -234,20 +234,40 @@ describe("D12 — direct db.run / db.exec outside allow-list", () => {
   });
 });
 
-describe("D20 — warehouse write-id confinement", () => {
+describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", () => {
   test("flags a write tool id referenced outside the allowed sites", () => {
-    const v = checkWarehouseWriteConfinement([
+    const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/ipc/some-handler.ts",
         contents: `dispatch("tableau_datasource_refresh")`,
       },
     ]);
     expect(v).toHaveLength(1);
-    expect(v[0]?.rule).toBe("D20-warehouse-write");
+    expect(v[0]?.rule).toBe("D20-connector-write");
+  });
+
+  test("flags a gitops write tool id literal outside the allowed set", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/engine/agent.ts",
+        contents: `const x = "argocd_app_sync";`,
+      },
+    ]);
+    expect(v.some((x) => x.rule === "D20-connector-write")).toBe(true);
+  });
+
+  test("does NOT flag the gitops-ml SSoT module", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
+        contents: `w("argocd.app.sync", "argocd_app_sync", "argocd");`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
   });
 
   test("allows the SSoT, connector servers, and transport/dispatch sites", () => {
-    const v = checkWarehouseWriteConfinement([
+    const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
         contents: `"tableau_datasource_refresh"`,
@@ -257,7 +277,7 @@ describe("D20 — warehouse write-id confinement", () => {
   });
 
   test("requires answerFederatedInvoke to consult isWriteForbiddenToolId", () => {
-    const v = checkWarehouseWriteConfinement([
+    const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/federation/invoke-gate.ts",
         contents: `export async function answerFederatedInvoke() { return; }`,
@@ -267,7 +287,7 @@ describe("D20 — warehouse write-id confinement", () => {
   });
 
   test("does NOT flag invoke-gate.ts when it consults isWriteForbiddenToolId", () => {
-    const v = checkWarehouseWriteConfinement([
+    const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/federation/invoke-gate.ts",
         contents: `if (ctx.isWriteForbiddenToolId?.(q.toolId) === true) audit(ctx, q, "write_forbidden");`,
@@ -277,7 +297,7 @@ describe("D20 — warehouse write-id confinement", () => {
   });
 
   test("ignores .test.ts files", () => {
-    const v = checkWarehouseWriteConfinement([
+    const v = checkConnectorWriteConfinement([
       {
         relPath: "packages/gateway/src/ipc/some-handler.test.ts",
         contents: `dispatch("tableau_datasource_refresh")`,

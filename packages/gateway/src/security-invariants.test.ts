@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
-import { WAREHOUSE_BI_WRITES } from "./connectors/warehouse-write-tools.ts";
+import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
@@ -1012,11 +1012,11 @@ describe("I22 — org policy applied only from a signature-verified bundle, mono
   });
 });
 
-describe("I26 — warehouse/BI writes are confined to the local I2 path; federated gate rejects them", () => {
-  test("answerFederatedInvoke is wired with isWriteForbiddenToolId in federation-rpc.ts", async () => {
+describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to the local I2 path; federated gate rejects them", () => {
+  test("answerFederatedInvoke is wired with the union isConnectorWriteToolId predicate in federation-rpc.ts", async () => {
     const src = await read("packages/gateway/src/ipc/federation-rpc.ts");
     expect(src).toContain("isWriteForbiddenToolId");
-    expect(src).toContain("isWarehouseWriteToolId");
+    expect(src).toContain("isConnectorWriteToolId");
   });
 
   test("the federated invoke gate fail-closed rejects write-classified tool ids (D20 predicate)", async () => {
@@ -1025,15 +1025,15 @@ describe("I26 — warehouse/BI writes are confined to the local I2 path; federat
     expect(gate).toContain("write_forbidden");
   });
 
-  test("every warehouse write tool id is HITL-gated via its action type (local path)", () => {
-    for (const w of WAREHOUSE_BI_WRITES) {
+  test("every connector write tool id (incl. GitOps/ML) is HITL-gated via its action type (local path)", () => {
+    for (const w of CONNECTOR_WRITES) {
       expect(HITL_REQUIRED.has(w.actionType)).toBe(true);
     }
   });
 
-  test("D20 confines warehouse write tool ids to the SSoT + connector + transport/dispatch sites", async () => {
+  test("D20 confines connector write tool ids to the SSoT + connector + transport/dispatch sites", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
-    expect(audit).toContain("D20-warehouse-write");
+    expect(audit).toContain("D20-connector-write");
     expect(audit).toContain("D20-invoke-gate-predicate");
   });
 });

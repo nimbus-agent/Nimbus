@@ -31,9 +31,9 @@ export interface InvokeGateCtx {
   readonly now?: () => number;
   /** I18: when identity is enabled, the anchor operator must be valid to serve a team credential. */
   readonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };
-  /** I26: confines warehouse/BI write tool ids to the local executor I2 path — when this returns
-   *  true for the requested toolId, the federated peer invoke is rejected fail-closed (opaque),
-   *  before grant/quorum. Omitted → no write confinement (back-compat). */
+  /** I26: confines connector write tool ids (warehouse/BI ∪ GitOps/ML) to the local executor I2 path
+   *  — when this returns true for the requested toolId, the federated peer invoke is rejected
+   *  fail-closed (opaque), before grant/quorum. Omitted → no write confinement (back-compat). */
   readonly isWriteForbiddenToolId?: (toolId: string) => boolean;
   /** Wave 7b deferral: when identity is enabled, returns the resolved identity subject for audit
    *  enrichment. Omitted → the audit row carries no identity_subject (no sentinel). */
@@ -198,7 +198,7 @@ export async function answerLocalOperatorList(
 }
 
 // ---------------------------------------------------------------------------
-// Local-operator single-tool invoke path (Wave 7c — data-warehouse/BI writes)
+// Local-operator single-tool invoke path (connector writes — warehouse/BI ∪ GitOps/ML)
 // ---------------------------------------------------------------------------
 
 export interface LocalOperatorInvokeCtx {
@@ -230,9 +230,9 @@ export type LocalOperatorInvokeResult =
   | { readonly kind: "error"; readonly error: "no_grant" | "identity_invalid" };
 
 /**
- * I19 — local-operator single-tool variant of the team-vault gate (Wave 7c writes). The local owner
- * runs ONE team-credentialed tool (a warehouse/BI write) after clearing the executor I2 HITL gate
- * upstream. Unlike `answerFederatedInvoke`, no `isWriteForbiddenToolId` confinement applies — write
+ * I19 — local-operator single-tool variant of the team-vault gate (connector writes). The local owner
+ * runs ONE team-credentialed tool (a connector write — warehouse/BI ∪ GitOps/ML) after clearing the
+ * executor I2 HITL gate upstream. Unlike `answerFederatedInvoke`, no `isWriteForbiddenToolId` confinement applies — write
  * tool ids ARE allowed here (this is the sanctioned local write path). Identity failures return a
  * DISTINCT `identity_invalid` (no cross-principal leak on the owner's own machine).
  */

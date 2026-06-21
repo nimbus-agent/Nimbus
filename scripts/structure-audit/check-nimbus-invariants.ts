@@ -398,25 +398,30 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
   return out;
 }
 
-// D20 (I26): warehouse/BI write tool ids may be NAMED only in the SSoT, the connector servers, and
-// the gateway transport/dispatch sites. Any other reference could route a write outside the local
-// executor I2 gate. Also requires answerFederatedInvoke (federation/invoke-gate.ts) to consult the
-// write-id predicate (isWriteForbiddenToolId) so a federated peer can never trigger a warehouse write.
-const WAREHOUSE_WRITE_ALLOWED = [
+// D20 (I26): connector write tool ids (warehouse/BI ∪ GitOps/ML) may be NAMED only in the SSoT
+// modules, the connector servers, and the gateway transport/dispatch sites. Any other reference could
+// route a write outside the local executor I2 gate. Also requires answerFederatedInvoke
+// (federation/invoke-gate.ts) to consult the write-id predicate (isWriteForbiddenToolId) so a
+// federated peer can never trigger a connector write.
+const CONNECTOR_WRITE_ALLOWED = [
   "packages/gateway/src/connectors/warehouse-write-tools.ts",
-  "packages/gateway/src/connectors/warehouse-write-transport.ts",
-  "packages/gateway/src/connectors/warehouse-write-dispatch.ts",
+  "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
+  "packages/gateway/src/connectors/connector-write-transport.ts",
+  "packages/gateway/src/connectors/connector-write-dispatch.ts",
   "packages/mcp-connectors/snowflake/src/server.ts",
   "packages/mcp-connectors/tableau/src/server.ts",
   "packages/mcp-connectors/looker/src/server.ts",
   "packages/mcp-connectors/powerbi/src/server.ts",
   "packages/mcp-connectors/monte-carlo/src/server.ts",
   "packages/mcp-connectors/bigeye/src/server.ts",
+  "packages/mcp-connectors/argocd/src/server.ts",
+  "packages/mcp-connectors/flux/src/server.ts",
+  "packages/mcp-connectors/mlflow/src/server.ts",
 ];
-const WAREHOUSE_WRITE_RE =
-  /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve)\b/;
+const CONNECTOR_WRITE_RE =
+  /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve|argocd_app_sync|argocd_app_rollback|flux_kustomization_reconcile|flux_helmrelease_reconcile|mlflow_model_promote|mlflow_model_transition_stage)\b/;
 
-export function checkWarehouseWriteConfinement(files: readonly FileEntry[]): Violation[] {
+export function checkConnectorWriteConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
     if (f.relPath.endsWith(".test.ts")) continue;
@@ -431,13 +436,13 @@ export function checkWarehouseWriteConfinement(files: readonly FileEntry[]): Vio
       }
       continue;
     }
-    if (WAREHOUSE_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;
+    if (CONNECTOR_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;
     const strippedLines = stripComments(f.contents).split("\n");
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {
-      if (WAREHOUSE_WRITE_RE.test(strippedLines[i] ?? "")) {
+      if (CONNECTOR_WRITE_RE.test(strippedLines[i] ?? "")) {
         out.push({
-          rule: "D20-warehouse-write",
+          rule: "D20-connector-write",
           file: f.relPath,
           line: i + 1,
           snippet: (originalLines[i] ?? "").trim(),
@@ -758,10 +763,10 @@ async function run(): Promise<void> {
     if (v.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
-    const v = checkWarehouseWriteConfinement(files);
+    const v = checkConnectorWriteConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D20 warehouse write tool referenced/wired outside allowed sites — bypasses I26: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D20 connector write tool referenced/wired outside allowed sites — bypasses I26: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

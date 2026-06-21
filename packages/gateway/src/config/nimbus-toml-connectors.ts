@@ -10,6 +10,11 @@ export const TEAM_CREDENTIAL_CONNECTORS = [
   "powerbi",
   "montecarlo",
   "bigeye",
+  // Phase 6 Slice 9 W1 — the GitOps/ML write connectors support `[connectors.<name>] credential = "team"`
+  // so their HITL-gated writes can run on a team-vault credential via the I19 localOperator rail.
+  "argocd",
+  "flux",
+  "mlflow",
 ] as const;
 export type TeamCredentialConnector = (typeof TEAM_CREDENTIAL_CONNECTORS)[number];
 

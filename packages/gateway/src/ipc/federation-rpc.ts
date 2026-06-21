@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { isWarehouseWriteToolId } from "../connectors/warehouse-write-tools.ts";
+import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
@@ -489,10 +489,11 @@ export async function dispatchFederationRpc(
               windowMs: rule.windowSeconds * 1000,
             }),
           runTool: tv.runTool,
-          // I26/D20: a federated peer can NEVER trigger a warehouse/BI write — the invoke gate
-          // fail-closed rejects any write-classified tool id. Warehouse writes execute only behind
-          // the LOCAL owner's executor HITL gate (I2); they have no over-the-wire entry point.
-          isWriteForbiddenToolId: isWarehouseWriteToolId,
+          // I26/D20: a federated peer can NEVER trigger a connector write (warehouse/BI ∪ GitOps/ML)
+          // — the invoke gate fail-closed rejects any write-classified tool id. Connector writes
+          // execute only behind the LOCAL owner's executor HITL gate (I2); they have no over-the-wire
+          // entry point.
+          isWriteForbiddenToolId: isConnectorWriteToolId,
           ...(ctx.identityGuard === undefined ? {} : { identity: ctx.identityGuard }),
         },
         {
