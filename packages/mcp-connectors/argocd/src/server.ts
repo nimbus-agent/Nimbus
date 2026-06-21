@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
 import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
-import { runReadOnlyMcpConnector } from "../../shared/run-read-only-mcp-connector.ts";
+import {
+  runReadOnlyMcpConnector,
+  type ZodToolRegistrar,
+} from "../../shared/run-read-only-mcp-connector.ts";
 import { filterArgocdApplications } from "./search-filter.ts";
 
 function trimTrailingSlash(s: string): string {
@@ -33,6 +36,19 @@ async function agGet(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
+async function agPost(path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "POST",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`ArgoCD ${path} ${String(res.status)}: ${text.slice(0, 400)}`);
+  }
+  return text === "" ? {} : (JSON.parse(text) as unknown);
+}
+
 function applicationsFrom(root: unknown): unknown[] {
   if (Array.isArray(root)) {
     return root;
@@ -41,7 +57,7 @@ function applicationsFrom(root: unknown): unknown[] {
   return Array.isArray(items) ? items : [];
 }
 
-await runReadOnlyMcpConnector("nimbus-argocd", (reg) => {
+export function registerArgocdTools(reg: ZodToolRegistrar): void {
   reg(
     "argocd_list",
     "List ArgoCD applications. Optionally filter by `project` (passes `?projects=<project>` to the API). ArgoCD returns the full list in one response; `limit` (default 200) caps the returned `items` client-side.",
@@ -87,4 +103,35 @@ await runReadOnlyMcpConnector("nimbus-argocd", (reg) => {
       return jsonResult({ matches });
     },
   );
-});
+
+  reg(
+    "argocd_app_sync",
+    "Trigger a sync for an ArgoCD application (`POST /api/v1/applications/{name}/sync`, requires HITL argocd.app.sync). Async — the sync is requested; verify via the next metadata sync (sync_status/health_status). Recommend /schedule to re-check.",
+    z.object({
+      name: z.string().min(1),
+      prune: z.boolean().optional(),
+      revision: z.string().optional(),
+    }),
+    async (p) => {
+      await agPost(`/applications/${encodeURIComponent(p.name)}/sync`, {
+        ...(p.prune === undefined ? {} : { prune: p.prune }),
+        ...(p.revision === undefined ? {} : { revision: p.revision }),
+      });
+      return jsonResult({ status: "requested", name: p.name });
+    },
+  );
+
+  reg(
+    "argocd_app_rollback",
+    "Roll back an ArgoCD application to a prior deployment history id (`POST /api/v1/applications/{name}/rollback`, requires HITL argocd.app.rollback). Async — verify via the next metadata sync.",
+    z.object({ name: z.string().min(1), id: z.number().int().nonnegative() }),
+    async (p) => {
+      await agPost(`/applications/${encodeURIComponent(p.name)}/rollback`, { id: p.id });
+      return jsonResult({ status: "requested", name: p.name });
+    },
+  );
+}
+
+if (import.meta.main) {
+  await runReadOnlyMcpConnector("nimbus-argocd", registerArgocdTools);
+}
