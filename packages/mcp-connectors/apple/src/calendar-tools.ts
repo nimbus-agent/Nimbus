@@ -6,7 +6,7 @@
  * depends only on the injectable interface, making it fully unit-testable.
  */
 
-import { buildVEvent, parseICalendar } from "@nimbus-dev/sdk";
+import { buildVEvent } from "@nimbus-dev/sdk";
 import { z } from "zod";
 import { createRegisterSimpleTool, mcpJsonResult } from "../../shared/mcp-tool-kit.ts";
 import { capPreview } from "./apple-mail-core.ts";
@@ -194,12 +194,16 @@ export function registerAppleCalendarTools(
         }
       }
 
-      // Determine UID: caller may supply one (for deterministic tests); otherwise
-      // derive one from the injected now() + summary to avoid non-pure Date.now().
+      // Capture a single timestamp so the derived UID and the DTSTAMP never
+      // diverge (the injected now() returns a fresh value on each call).
+      const stamp = now();
+      // Determine UID: caller may supply one (for deterministic tests; Zod
+      // rejects ""); otherwise derive from the captured stamp + summary to
+      // avoid a non-pure Date.now().
       const uid =
-        parsed.data.uid !== undefined && parsed.data.uid !== ""
+        parsed.data.uid !== undefined
           ? parsed.data.uid
-          : `nimbus-${now()}-${parsed.data.summary.slice(0, 40).replace(/\s+/g, "-")}`;
+          : `nimbus-${stamp}-${parsed.data.summary.slice(0, 40).replace(/\s+/g, "-")}`;
 
       // Build the VEVENT ICS string
       const buildInput: {
@@ -226,7 +230,7 @@ export function registerAppleCalendarTools(
         buildInput.attendees = parsed.data.attendees;
       }
 
-      const ics = buildVEvent(buildInput, now());
+      const ics = buildVEvent(buildInput, stamp);
 
       // PUT the event to the CalDAV server
       const { href } = await calendar.putEvent(targetCal, uid, ics);
@@ -258,4 +262,3 @@ export function registerAppleCalendarTools(
 
 // Re-export the types needed by tests and tools.ts
 export type { CalDavClient, CalendarRef };
-export { parseICalendar };
