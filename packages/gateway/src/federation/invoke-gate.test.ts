@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { isConnectorWriteToolId } from "../connectors/connector-write-registry.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
 import {
@@ -265,6 +266,32 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
     expect(result).toEqual({ kind: "error", error: "no_grant" });
     expect(ran).toBe(false);
     // M3: audit log must record write_forbidden
+    const audited = db
+      .query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`)
+      .get() as { action_type: string };
+    expect(audited.action_type).toBe("teamvault.invoke.write_forbidden");
+  });
+
+  it("the REAL isConnectorWriteToolId predicate rejects a granted GitOps write id fail-closed", async () => {
+    let ran = false;
+    const { db, ctx } = freshI26Ctx({
+      runTool: async () => {
+        ran = true;
+        return { ok: true };
+      },
+      isWriteForbiddenToolId: isConnectorWriteToolId,
+    });
+    // Grant the gitops write id so the rejection is unambiguously the write predicate, not a missing grant.
+    ctx.store.grant("warehouse", "peer-1", "flux_kustomization_reconcile", 1000);
+    const result = await answerFederatedInvoke(ctx, {
+      peerId: "peer-1",
+      entry: "warehouse",
+      toolId: "flux_kustomization_reconcile",
+      purpose: "p",
+      args: {},
+    });
+    expect(result).toEqual({ kind: "error", error: "no_grant" });
+    expect(ran).toBe(false);
     const audited = db
       .query(`SELECT action_type FROM audit_log ORDER BY id DESC LIMIT 1`)
       .get() as { action_type: string };
