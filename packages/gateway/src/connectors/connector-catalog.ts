@@ -328,8 +328,6 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   montecarlo:
     "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
   bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
-  workday:
-    "uses OAuth2 authorization-code flow against the tenant-specific /ccx/oauth2/<tenant>/token endpoint (connector.auth workday) — no PKCE flow",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
@@ -455,6 +453,8 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
         provider: "salesforce",
         defaultScopes: ["api", "refresh_token"],
       };
+    case "workday":
+      return { provider: "workday", defaultScopes: ["system"] };
     default:
       return oauthUnsupported(
         serviceId,
