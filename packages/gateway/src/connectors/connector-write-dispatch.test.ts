@@ -1,10 +1,10 @@
-// packages/gateway/src/connectors/warehouse-write-dispatch.test.ts
+// packages/gateway/src/connectors/connector-write-dispatch.test.ts
 import { describe, expect, test } from "bun:test";
 import type { ConnectorDispatcher } from "../engine/types.ts";
-import { createWarehouseWriteDispatcher } from "./warehouse-write-dispatch.ts";
+import { createConnectorWriteDispatcher } from "./connector-write-dispatch.ts";
 
-describe("createWarehouseWriteDispatcher", () => {
-  test("delegates non-warehouse actions to the inner dispatcher", async () => {
+describe("createConnectorWriteDispatcher", () => {
+  test("delegates non-write actions to the inner dispatcher", async () => {
     let innerCalled = false;
     const inner: ConnectorDispatcher = {
       dispatch: async () => {
@@ -12,7 +12,7 @@ describe("createWarehouseWriteDispatcher", () => {
         return { inner: true };
       },
     };
-    const d = createWarehouseWriteDispatcher(inner, {
+    const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
       sandboxCwd: "/tmp",
       credentialFor: () => ({ credential: "personal" }),
@@ -26,7 +26,7 @@ describe("createWarehouseWriteDispatcher", () => {
   test("routes a warehouse-write action to invokeConnectorWrite with extracted args", async () => {
     let seen: unknown;
     const inner: ConnectorDispatcher = { dispatch: async () => ({ inner: true }) };
-    const d = createWarehouseWriteDispatcher(inner, {
+    const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
       sandboxCwd: "/tmp",
       credentialFor: () => ({ credential: "team", teamEntry: "wh" }),
@@ -45,6 +45,31 @@ describe("createWarehouseWriteDispatcher", () => {
       service: "tableau",
       toolId: "tableau_datasource_refresh",
       args: { id: "ds-1" },
+    });
+  });
+
+  test("routes a GitOps write action (argocd.app.sync) to the right service/toolId", async () => {
+    let seen: unknown;
+    const inner: ConnectorDispatcher = { dispatch: async () => ({ inner: true }) };
+    const d = createConnectorWriteDispatcher(inner, {
+      vault: {} as never,
+      sandboxCwd: "/tmp",
+      credentialFor: () => ({ credential: "team", teamEntry: "argo" }),
+      runTeamInvoke: async (req) => {
+        seen = req;
+        return { ok: true };
+      },
+    });
+    const out = await d.dispatch({
+      type: "argocd.app.sync",
+      payload: { mcpToolId: "argocd_app_sync", name: "web" },
+    });
+    expect(out).toEqual({ ok: true });
+    expect(seen).toEqual({
+      entry: "argo",
+      service: "argocd",
+      toolId: "argocd_app_sync",
+      args: { name: "web" },
     });
   });
 });
