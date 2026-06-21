@@ -86,16 +86,28 @@ pure logic is unit-tested, its browser-integration parts are dev-loaded.
 
 ### Pairing flow
 
-1. Owner runs `nimbus clip pair` on the trusted CLI.
+1. Owner runs `nimbus clip pair --label <device>` on the trusted CLI (label
+   defaults to a generated name, e.g. `device-1`). The label is supplied on the
+   **trusted side** — the browser never names itself.
 2. Gateway opens an **in-memory pairing window**: a single-use code, TTL ~120s,
-   attempt cap (e.g. 5). The code is printed on the CLI (never over the wire).
+   attempt cap (e.g. 5), carrying the chosen label. The code is printed on the
+   CLI (never over the wire).
 3. User enters the code in the extension options page.
 4. Extension POSTs `{ code }` to `POST /v1/clips/pair/confirm`.
 5. Gateway constant-time-compares the code (I10); on match it mints a token,
-   persists it to Vault (`http_api.web_clipper_token`), closes the window, and
-   returns the token to the extension (stored in extension storage).
+   stores it under the window's label in the Vault token map
+   (`http_api.web_clipper_tokens`, a `{ label: token }` JSON map), closes the
+   window, and returns the token to the extension (stored in extension storage).
+   Re-pairing with an existing label **replaces** that label's token (rotation);
+   a new label **adds** a concurrently-valid token — so Chrome and Firefox can be
+   paired at the same time.
 6. **Fail-closed:** no active, unexpired, attempts-remaining window → no mint
    (HTTP 403), regardless of input.
+
+**Pairing-window lifecycle:** the window is **strictly in-memory** (a singleton
+controller + timer). A gateway restart or crash invalidates any open window —
+the owner simply re-runs `nimbus clip pair`. *Minted tokens*, by contrast, live
+in Vault and **persist** across restarts; only `nimbus clip revoke` removes them.
 
 ### Sidecar flow (on-demand)
 
@@ -103,8 +115,17 @@ pure logic is unit-tested, its browser-integration parts are dev-loaded.
 2. Content script collects page `title` + `canonicalUrl` + any selection.
 3. Service worker POSTs to `POST /v1/clips/related` (bearer-authed, **read-only**,
    no DB mutation), which runs the existing hybrid search over the local index.
-4. Extension renders an overlay panel in a **Shadow DOM** (so page CSS can't
-   bleed in) listing related local items: title, service badge, snippet, link.
+   **Signal-combining rule:** when a selection is present it is the **primary
+   semantic query**; otherwise the `title` is. The `canonicalUrl` host is used to
+   **de-prioritize the page's own domain** so a page never just returns itself.
+   URL/title keywords ride the existing hybrid (FTS + vector) blend — no new
+   ranking machinery.
+4. Extension renders an overlay panel in a **Shadow DOM** listing related local
+   items: title, service badge, snippet, link. Shadow DOM blocks selector
+   matching but **inherited** properties (`font-family`, `color`, `line-height`,
+   `:root` custom properties) still cross the boundary, so the sidecar root
+   applies an `all: initial` reset and sets its own typography/colors — the host
+   page cannot distort the panel.
 
 ## Data Model
 
@@ -137,7 +158,9 @@ vector path and the FTS5 `item_fts` path.
   rejection, performs no DB mutation) and must not be added to the write
   allowlist — its read-only nature is asserted by test.
 - **I10** — constant-time compare for both the pairing code and the bearer token
-  (reuse `util/timing-safe-compare.ts`).
+  (reuse `util/timing-safe-compare.ts`). With a multi-token map, the bearer check
+  iterates **all** stored tokens with a constant-time compare each and accepts on
+  any match — never short-circuiting in a way that leaks the active token count.
 - **No HITL on clip ingest** — clipping is *inbound* (writes into the local
   index, produces no outbound egress), consistent with the deployment / SCIM /
   Teams inbound routes, none of which are HITL-gated. It is **not**
@@ -150,17 +173,19 @@ vector path and the FTS5 `item_fts` path.
   `docs/SECURITY-INVARIANTS.md` row + the enforcement test in
   `security-invariants.test.ts` land in the same commit. (I28 remains reserved;
   I29 is the current max → next free is I30.)
-- **Threat-model note (documented, not solved):** the minted token lives in
-  browser extension storage, outside the Vault boundary. It is local-scope
-  (localhost-only, clip + related-read) and rotatable by re-pairing; a fresh pair
-  supersedes the prior token.
+- **Threat-model note (documented, not solved):** each minted token lives in
+  browser extension storage, outside the Vault boundary. Tokens are local-scope
+  (localhost-only, clip + related-read). Because the gateway cannot reach into
+  browser storage, **`nimbus clip revoke` is the cut-off mechanism** for a lost or
+  compromised extension: revoking a label (or `--all`) deletes the token(s) from
+  the Vault map so any browser still holding them gets a 401.
 
 ## Error Handling
 
 | Condition                       | Behavior                                              |
 | ------------------------------- | ---------------------------------------------------- |
 | Gateway unreachable             | Extension shows "Can't reach Nimbus" + retry         |
-| Expired / invalid bearer token  | HTTP 401 → extension prompts re-pair                 |
+| Expired / invalid / revoked token | HTTP 401 → extension prompts re-pair                |
 | Wrong / expired pairing code    | HTTP 403; window survives to TTL / attempt cap       |
 | Readability finds no article    | Fall back to a title + URL bookmark with a notice    |
 | Oversized body                  | Body capped (preview 512; stored body truncated)     |
@@ -185,9 +210,18 @@ vector path and the FTS5 `item_fts` path.
 
 ## CLI Surface
 
-- `nimbus clip pair` — open a pairing window, print the one-time code, wait for
-  confirm (or timeout). Prints success/failure.
+- `nimbus clip pair [--label <device>]` — open a pairing window, print the
+  one-time code, wait for confirm (or timeout). Prints success/failure and the
+  label the token was stored under.
+- `nimbus clip status` — list paired devices (labels + token fingerprints, never
+  the raw token) and a count; reports "no clipper tokens registered" when empty.
+- `nimbus clip revoke [<label> | --all]` — delete one label's token (or every
+  token) from the Vault map, immediately cutting off any browser holding it.
 - (Reads/searches reuse existing `nimbus search`; no new search command.)
+
+All three are CLI → gateway over the local IPC socket (JSON-RPC), **not** HTTP —
+so they add no entries to the HTTP write allowlist. Only the browser-facing
+`/v1/clips` and `/v1/clips/pair/confirm` do.
 
 ## Open Decisions (resolved at brainstorm)
 
@@ -200,6 +234,23 @@ vector path and the FTS5 `item_fts` path.
 7. **`/v1/clips/related`:** POST-but-read endpoint (vs. reusing `GET /v1/items`) — adopt the dedicated read endpoint.
 8. **Distribution:** dev-loadable builds now; store submission deferred.
 
+### Resolved at design review (2026-06-21)
+
+See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-review.md).
+
+9. **Multi-token:** adopt a labeled token map (`http_api.web_clipper_tokens`)
+   instead of a single key — required because Chrome + Firefox are both targeted
+   and must pair concurrently. Bearer check accepts any active token
+   (constant-time per entry).
+10. **Sidecar CSS:** the Shadow DOM root applies an `all: initial` reset to block
+    inherited typography/color from the host page.
+11. **Pairing window:** strictly in-memory; a gateway restart invalidates it
+    (minted tokens persist in Vault).
+12. **`/v1/clips/related` ranking:** selection-primary (else title) semantic
+    query, with the page's own host de-prioritized; no new ranking machinery.
+13. **Token management:** add `nimbus clip status` + `nimbus clip revoke
+    [<label>|--all]` — revoke is the security cut-off for browser-stored tokens.
+
 ## Files Touched (anticipated)
 
 | Area                  | Path                                                          |
@@ -209,10 +260,11 @@ vector path and the FTS5 `item_fts` path.
 | HTTP server dispatch  | `packages/gateway/src/ipc/http-server.ts`                    |
 | Related-read endpoint | `packages/gateway/src/ipc/http-server.ts` (read path)        |
 | Pairing window        | new `packages/gateway/src/clips/pairing-window.ts`           |
+| Token map (Vault)     | new `packages/gateway/src/clips/clip-token-store.ts` (`http_api.web_clipper_tokens` map: pair/list/revoke/verify) |
 | Clip ingest handler   | new `packages/gateway/src/clips/clip-ingest.ts`              |
 | Item upsert           | `packages/gateway/src/index/item-store.ts` (reuse)           |
 | Embedding routing     | `packages/gateway/src/embedding/routing.ts`                  |
 | Security invariants   | `packages/gateway/src/security-invariants.test.ts`, `docs/SECURITY-INVARIANTS.md` |
-| CLI                   | `packages/cli/src/commands/clip.ts` (`nimbus clip pair`)     |
+| CLI                   | `packages/cli/src/commands/clip.ts` (`nimbus clip pair` / `status` / `revoke`) |
 | Extension             | new `packages/browser-extension/` (MV3, Chrome + Firefox)    |
 | Roadmap / CHANGELOG   | `docs/roadmap.md`, `docs/CHANGELOG.md`                       |
