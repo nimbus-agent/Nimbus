@@ -34,8 +34,8 @@ export interface PlatformServices {
   sessionMemoryStore?: SessionMemoryStore;
   llmRegistry: LlmRegistry;
   sandboxRunner: SandboxRunner;
-  /** Wave 7c — credential-aware deps for the warehouse/BI write dispatcher (wrapped in index.ts). */
-  warehouseWriteDeps: ConnectorWriteContext;
+  /** Credential-aware deps for the connector write dispatcher (warehouse/BI ∪ GitOps/ML; wrapped in index.ts). */
+  connectorWriteDeps: ConnectorWriteContext;
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate
   // routes a HITL action's approval to an active in-scope delegate before the local owner prompt.
   executorDelegation?: ExecutorDelegationDep;

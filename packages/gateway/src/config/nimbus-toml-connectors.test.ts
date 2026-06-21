@@ -46,11 +46,23 @@ describe("parseNimbusConnectorsToml", () => {
     );
   });
 
-  it("throws when the connector name is not one of the six warehouse/BI services", () => {
+  it("throws when the connector name is not a supported team-credential connector", () => {
     const raw = ["[connectors.github]", 'credential = "team"', 'team_entry = "x"'].join("\n");
     expect(() => parseNimbusConnectorsToml(raw)).toThrow(
       /connectors\.github is not a supported team-credential connector/,
     );
+  });
+
+  it("accepts the W1 GitOps/ML write connectors (argocd/flux/mlflow) with a team credential", () => {
+    for (const svc of ["argocd", "flux", "mlflow"] as const) {
+      const raw = [`[connectors.${svc}]`, 'credential = "team"', `team_entry = "prod-${svc}"`].join(
+        "\n",
+      );
+      expect(parseNimbusConnectorsToml(raw).get(svc)).toEqual({
+        credential: "team",
+        teamEntry: `prod-${svc}`,
+      });
+    }
   });
 
   it("implicit personal default — no credential key yields { credential: 'personal' }", () => {

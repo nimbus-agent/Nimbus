@@ -47,7 +47,7 @@ async function main(): Promise<void> {
   };
   const dispatcher = createConnectorWriteDispatcher(
     createConnectorDispatcher(dispatcherClient),
-    platform.warehouseWriteDeps,
+    platform.connectorWriteDeps,
   );
   const engine = createNimbusEngineAgent({
     localIndex: platform.localIndex,
