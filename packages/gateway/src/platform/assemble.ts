@@ -56,6 +56,7 @@ import {
   migrateToPerServiceOAuthKeys,
   readConnectorSecret,
 } from "../connectors/connector-vault.ts";
+import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { createConnectorDispatcher } from "../connectors/index.ts";
@@ -69,7 +70,6 @@ import {
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
-import type { WarehouseWriteContext } from "../connectors/warehouse-write-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import { readToolCallLog } from "../db/tool-call-log.ts";
@@ -1290,7 +1290,7 @@ function buildTeamCredentialContexts(deps: {
   identityBootRefHolder: { current: ReturnType<typeof buildIdentityBoot> | undefined };
 }): {
   teamCredentialExtras: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList">;
-  warehouseWriteDeps: WarehouseWriteContext;
+  warehouseWriteDeps: ConnectorWriteContext;
 } {
   const { db, vault, paths, connectorsConfig, identityEnabled, identityBootRefHolder } = deps;
   // Shared by the list + invoke ctxs (previously duplicated): the late-bound operator-validity guard.
@@ -1366,7 +1366,7 @@ function buildTeamCredentialContexts(deps: {
     ...identitySpread,
   };
 
-  const warehouseWriteDeps: WarehouseWriteContext = {
+  const warehouseWriteDeps: ConnectorWriteContext = {
     vault,
     sandboxCwd: paths.dataDir,
     credentialFor: (service: string) =>

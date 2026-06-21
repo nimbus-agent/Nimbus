@@ -1,14 +1,14 @@
-// packages/gateway/src/connectors/warehouse-write-transport.test.ts
+// packages/gateway/src/connectors/connector-write-transport.test.ts
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   __setPersonalInvokeForTest,
+  type ConnectorWriteContext,
   invokeConnectorWrite,
-  type WarehouseWriteContext,
-} from "./warehouse-write-transport.ts";
+} from "./connector-write-transport.ts";
 
 afterEach(() => __setPersonalInvokeForTest(undefined));
 
-function ctx(over: Partial<WarehouseWriteContext>): WarehouseWriteContext {
+function ctx(over: Partial<ConnectorWriteContext>): ConnectorWriteContext {
   return {
     vault: {} as never,
     sandboxCwd: "/tmp",

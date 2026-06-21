@@ -1,9 +1,9 @@
-// packages/gateway/src/connectors/warehouse-write-transport.ts
+// packages/gateway/src/connectors/connector-write-transport.ts
 import { withConnectorSession } from "../teamvault/connector-session.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createServiceScopedVaultView } from "./service-scoped-vault-view.ts";
 
-export interface WarehouseWriteContext {
+export interface ConnectorWriteContext {
   readonly vault: NimbusVault;
   readonly sandboxCwd: string;
   /** Per-connector credential selection from [connectors.<name>]; defaults to personal. */
@@ -21,7 +21,7 @@ export interface WarehouseWriteContext {
 }
 
 type PersonalInvoke = (
-  ctx: WarehouseWriteContext,
+  ctx: ConnectorWriteContext,
   service: string,
   writeToolId: string,
   args: unknown,
@@ -45,13 +45,13 @@ export function __setPersonalInvokeForTest(fn: PersonalInvoke | undefined): void
 }
 
 /**
- * Run a warehouse/BI write tool with the connector's configured credential. Mirrors
+ * Run a connector write tool with the connector's configured credential. Mirrors
  * {@link listConnectorItems}: personal → spawn once with a service-scoped vault view and call the
  * write tool; team → the I19 localOperator invoke gate. The HITL (I2) check is upstream in the
  * executor — this transport is reached only after `gate()` returns "proceed".
  */
 export async function invokeConnectorWrite(
-  ctx: WarehouseWriteContext,
+  ctx: ConnectorWriteContext,
   req: { service: string; writeToolId: string; args: unknown },
 ): Promise<unknown> {
   const cfg = ctx.credentialFor(req.service);

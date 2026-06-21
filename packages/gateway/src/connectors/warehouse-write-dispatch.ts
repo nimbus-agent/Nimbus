@@ -1,8 +1,8 @@
 // packages/gateway/src/connectors/warehouse-write-dispatch.ts
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
+import { type ConnectorWriteContext, invokeConnectorWrite } from "./connector-write-transport.ts";
 import { extractToolInput } from "./registry.ts";
 import { warehouseWriteByActionType } from "./warehouse-write-tools.ts";
-import { invokeConnectorWrite, type WarehouseWriteContext } from "./warehouse-write-transport.ts";
 
 /**
  * Wraps the base connector dispatcher: a warehouse/BI write action.type is routed to the
@@ -12,7 +12,7 @@ import { invokeConnectorWrite, type WarehouseWriteContext } from "./warehouse-wr
  */
 export function createWarehouseWriteDispatcher(
   inner: ConnectorDispatcher,
-  deps: WarehouseWriteContext,
+  deps: ConnectorWriteContext,
 ): ConnectorDispatcher {
   return {
     dispatch(action: PlannedAction): Promise<unknown> {
