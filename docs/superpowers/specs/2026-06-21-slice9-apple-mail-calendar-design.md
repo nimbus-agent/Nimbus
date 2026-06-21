@@ -52,7 +52,7 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 - **Endpoints are fixed constants** in the connector (not config):
   - IMAP `imap.mail.me.com:993` (implicit TLS).
   - SMTP `smtp.mail.me.com:587` (STARTTLS).
-  - CalDAV bootstrap `https://caldav.icloud.com` → principal discovery (`current-user-principal` → `calendar-home-set`); iCloud redirects to a per-account `p##-caldav.icloud.com` host, which the client follows automatically.
+  - CalDAV bootstrap `https://caldav.icloud.com` → principal discovery (`current-user-principal` → `calendar-home-set`), which returns a per-account `p##-caldav.icloud.com` calendar-home host. The client issues subsequent **authenticated** requests directly to that discovered host and **re-applies the `Authorization: Basic` header on every request** — it does not rely on transparent 30x redirect-following (many HTTP clients strip auth headers on a cross-host redirect). See §12.
 - Credentials are injected into the connector process as env vars by the lazy-mesh credential orchestrator (no plaintext on disk / IPC / logs — Non-Negotiable #3).
 
 ---
@@ -69,7 +69,8 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 - `external_id` = iCalendar `UID` (stable across syncs and across the create/delete write path).
 - `title` = `SUMMARY`; `bodyPreview` = ≤2000-char `DESCRIPTION`/notes preview; `modifiedAt` from `DTSTAMP`/`LAST-MODIFIED` else event start.
 - `metadata` (flat): `{ uid, calendar, start, end, allDay, location, organizer, status, recurrence, attendees[] }` where `attendees[]` carries email + (optional) display name + partstat.
-- **Config** `[connectors.apple]`: `calendars` include/exclude selector (default = all calendars under the principal); `window_past_days` (default 90) + `window_future_days` (default 365); recurrence expansion within-window with a `max_recurring_instances` guard (default e.g. 100) to bound fan-out.
+- **Config** `[connectors.apple]`: `calendars` include/exclude selector (default = all calendars under the principal); `window_past_days` (default 90) + `window_future_days` (default 365); `max_instances_per_calendar` safety cap (default e.g. 1000) bounding returned events per sync.
+- **Recurrence handling (server-side expansion).** The connector requests expanded occurrences from iCloud via the CalDAV `calendar-query` REPORT with `<C:time-range>` + `<C:expand>`, so the server returns concrete per-occurrence VEVENTs with `RRULE`/`EXDATE`/`RECURRENCE-ID` overrides **already applied** (modified instances reflect their new time; deleted instances are absent). This deliberately avoids a client-side RRULE/timezone engine (see §11). `external_id` for an expanded occurrence is `<UID>` for a single event and `<UID>:<RECURRENCE-ID>` for a specific occurrence, so an overridden instance is a distinct, stable item. **Fallback:** if `<C:expand>` proves unreliable for a given calendar, index the master VEVENT once with its `RRULE`/`EXDATE` preserved verbatim in `metadata.recurrence` (unexpanded) and parse any server-returned override VEVENTs (those carrying `RECURRENCE-ID`) as distinct `<UID>:<RECURRENCE-ID>` items.
 
 ---
 
@@ -86,6 +87,7 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 
 - **No new I2 frozen-set entries.** All four action types already exist in `engine/executor.ts` `HITL_REQUIRED_BACKING` (added earlier for Gmail/Outlook/IMAP + Google/Outlook Calendar). The executor consent gate fires on `action.type` only (I3); `apple_*` tool ids never appear in the gate.
 - `apple_mail_send` reuses the exact HITL path the existing `imap_mail_send` uses (`email.send`).
+- **Forced sender.** iCloud SMTP rejects a `From` that does not match the authenticated account (`554 5.7.1 …`). `apple_mail_send` therefore **forces the envelope/`From` sender to `apple.icloud_email`** and ignores any caller-supplied `From` — mirroring the existing `NodemailerMailer` (`from = this.from = authenticated user`). Same for the `apple_mail_draft_create` APPEND (the drafted message's `From` is set to the authenticated address).
 
 ### 6.2 I26 extension (federated-peer write confinement)
 
@@ -157,6 +159,8 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 - Attachment bytes; full message bodies.
 - Native EventKit / Mail.app / local-store access (the IMAP/CalDAV transport is deliberate).
 - Non-iCloud IMAP/CalDAV hosts (the generic `imap` connector already covers arbitrary IMAP).
+- **A client-side RRULE/timezone recurrence engine** — recurrence is expanded server-side via CalDAV `<C:expand>` (§5.2); the connector does not synthesize occurrences itself.
+- **Real-time push (IMAP IDLE / CalDAV push).** Sync is periodic pull on the `MIN5` interval (§9); the lazy-mesh idle-disconnect model makes a persistent IDLE socket impractical.
 
 ---
 
@@ -164,11 +168,13 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 
 | Risk | Mitigation |
 |---|---|
-| First CalDAV/ICS code in the repo; correctness of recurrence handling | Keep ICS build/parse pure + heavily unit-tested; bound recurrence expansion with `max_recurring_instances`; inject the CalDAV transport so tests never hit a socket. |
+| First CalDAV/ICS code in the repo; correctness of recurrence handling | Offload recurrence to iCloud via CalDAV `<C:expand>` (no client-side RRULE engine — §5.2); keep ICS build/parse pure + heavily unit-tested with override/EXDATE fixtures; bound results with `max_instances_per_calendar`; inject the CalDAV transport so tests never hit a socket. |
+| CalDAV auth dropped on the cross-host redirect to `p##-caldav.icloud.com` | Re-apply `Authorization: Basic` on every request to the discovered calendar-home host; do not depend on transparent redirect-following (§4). |
+| iCloud SMTP rejects a mismatched `From` | Force the sender to the authenticated `apple.icloud_email` in send + draft (§6.1). |
 | New npm dep(s) for CalDAV transport / ICS parsing | Run the `bun add` dependency-safety pre-flight in planning; prefer a small, maintained lib for transport and keep parse/build logic in-repo (testable, fewer surprises). |
 | Coverage floor on a network-heavy connector | Real clients confined to coverage-excluded `server.ts`; all logic in tested modules (the proven imap pattern). |
 | Merge conflicts on the 9 shared sites with Workday | Rebase after Workday lands; resolve sites last. |
-| iCloud per-account CalDAV host redirect | Use principal discovery from the `caldav.icloud.com` bootstrap; follow the returned calendar-home host. |
+| iCloud per-account CalDAV host redirect | Resolve the calendar-home host via principal discovery from the `caldav.icloud.com` bootstrap, then address that host directly (see the auth row above). |
 
 ---
 
@@ -179,3 +185,14 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 - `apple:email` routed 1536-dim; `apple:event` 384-dim.
 - Cross-platform; full `preflight` + Docker coverage-floor + `/code-review` clean before first push.
 - `docs/CHANGELOG.md` entry; roadmap row checked with the macOS-only-relaxed note.
+
+---
+
+## 14. Review resolutions (2026-06-21)
+
+From `2026-06-21-slice9-apple-mail-calendar-design-review.md` — all four **fixed** inline:
+
+1. **iCloud SMTP `From` validation** → **Fixed (§6.1).** `apple_mail_send` (and the draft APPEND) force the sender to the authenticated `apple.icloud_email`, ignoring any caller `From`. This is already the existing `NodemailerMailer` behavior; the spec now makes it explicit.
+2. **Auth propagation across the CalDAV cross-host redirect** → **Fixed (§4, §12).** The client addresses the discovered `p##-caldav.icloud.com` host directly and re-applies `Authorization: Basic` on every request rather than relying on transparent 30x following (which can strip auth headers).
+3. **Recurrence exceptions (`RECURRENCE-ID` / `EXDATE`)** → **Fixed by design change (§5.2, §11, §12).** Adopted **server-side `<C:expand>`** so iCloud applies overrides/exclusions and returns concrete occurrences; a client-side RRULE/timezone engine is explicitly out of scope. Overridden occurrences key on `<UID>:<RECURRENCE-ID>`. A documented fallback indexes the unexpanded master + server-returned override VEVENTs.
+4. **IMAP IDLE vs pull** → **Fixed (§11).** Real-time IMAP IDLE / CalDAV push is explicitly out of scope; sync is periodic pull on `MIN5`.
