@@ -82,7 +82,8 @@ export type Provider =
   | "powerbi"
   | "montecarlo"
   | "bigeye"
-  | "workday";
+  | "workday"
+  | "apple";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -174,6 +175,9 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   montecarlo: { requestsPerMinute: 60, burstSize: 10 },
   bigeye: { requestsPerMinute: 60, burstSize: 10 },
   workday: { requestsPerMinute: 60, burstSize: 10 },
+  // iCloud IMAP: Apple imposes no documented rate limit; 60 rpm / burst 10 is
+  // conservative and consistent with the other IMAP-family connectors.
+  apple: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

@@ -185,6 +185,12 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // /ccx/oauth2/<tenant>/token endpoint; only the token bundle is vaulted.
   // Tenant host/name + client id/secret are env vars (see config.ts).
   workday: ["workday.oauth"],
+  // Apple iCloud Mail + iCloud Calendar. The single app-specific password
+  // (generated under Apple ID → Sign-In & Security → App-Specific Passwords)
+  // authenticates IMAP + SMTP + CalDAV. Endpoints are fixed constants.
+  // `apple.mailbox` is an OPTIONAL non-secret config key (default INBOX); listed
+  // so it is a known/allowed vault key (D11) and is cleared on connector removal.
+  apple: ["apple.icloud_email", "apple.icloud_app_password", "apple.mailbox"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

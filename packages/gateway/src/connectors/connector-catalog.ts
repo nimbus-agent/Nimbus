@@ -93,6 +93,10 @@ export const CONNECTOR_SERVICE_IDS = [
   "montecarlo",
   "bigeye",
   "workday",
+  // Apple iCloud Mail (IMAP) + iCloud Calendar (CalDAV). Uses an Apple ID
+  // e-mail address + app-specific password (not the Apple ID password) stored
+  // under `apple.icloud_email` + `apple.icloud_app_password`.
+  "apple",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -211,6 +215,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   montecarlo: MIN10,
   bigeye: MIN10,
   workday: MIN10,
+  apple: MIN5,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -328,6 +333,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   montecarlo:
     "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
   bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
+  apple:
+    "uses an Apple ID + app-specific password for iCloud Mail (IMAP) + Calendar (CalDAV); set via connector.auth apple",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
