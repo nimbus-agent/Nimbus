@@ -12,8 +12,8 @@ One-liner that downloads the verify helper, verifies the binary, strips the quar
 
 ```bash
 # Replace <ver> and <arch> (x64 or arm64 — run `uname -m` to check)
-curl -LO https://github.com/asafgolombek/Nimbus/releases/download/v<ver>/nimbus-headless-macos-<arch>.tar.gz
-curl -LO https://github.com/asafgolombek/Nimbus/releases/download/v<ver>/nimbus-verify.sh
+curl -LO https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-headless-macos-<arch>.tar.gz
+curl -LO https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-verify.sh
 bash nimbus-verify.sh --version <ver>                         # ✅ signature + hash
 tar -xzf nimbus-headless-macos-<arch>.tar.gz                  # extracts nimbus-gateway-macos-<arch>, nimbus-cli-macos-<arch>, README, LICENSE
 xattr -d com.apple.quarantine ./nimbus-gateway-macos-<arch>   # remove the Gatekeeper quarantine bit
@@ -33,7 +33,7 @@ Run `uname -m` in a terminal: `arm64` → arm64 archive; `x86_64` → x64 archiv
 
 If you prefer clicking through the UI:
 
-1. Download the archive from the [GitHub Release page](https://github.com/asafgolombek/Nimbus/releases).
+1. Download the archive from the [GitHub Release page](https://github.com/nimbus-agent/Nimbus/releases).
 2. Double-click the `.tar.gz` in Finder — macOS extracts it automatically.
 3. Open Terminal (Spotlight → "Terminal").
 4. `cd Downloads` (or wherever the archive extracted).

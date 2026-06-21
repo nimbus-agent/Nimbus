@@ -1415,6 +1415,78 @@ nimbus verify-share ./received.share
 
 ---
 
+## Egress Ledger & Provenance
+
+Prove what (if anything) a query sent off your machine, and inspect the append-only egress ledger — Phase 6 / S1 (PR #698), behind invariant `I29`. Every gated action appends exactly one `egress_ledger` row at the executor chokepoint **before** the connector dispatch (a `blocked` row on a denied action; an append failure aborts the dispatch). The ledger is BLAKE3-hash-chained and append-only; its head advances if — and only if — a real outbound action ran. Verification is offline and timing-safe (invariant `I10`). The only mutation of `egress_ledger` is the owner-HITL-gated `nimbus egress prune`, which writes a continuing tombstone rather than rewriting history.
+
+### `nimbus prove "<query>"`
+
+Run a query and prove its outbound footprint. The command snapshots the ledger head **before** the query, runs it through the same blocking agent path as `nimbus ask`, snapshots the head **after**, and prints the delta:
+
+```text
+outbound egress events during this query: N
+```
+
+`0 ✓` means the query was answered entirely from the local index — nothing left the machine. A non-zero count is followed by the per-event egress report (see `nimbus egress` below) so you can see exactly what went where.
+
+| Flag | Effect |
+| --- | --- |
+| `--receipt` / `--sign` | Sign the printed egress report with the gateway's egress-attestation key (prints a `receipt: digest=… sig=…` line) when the count is non-zero. |
+
+```bash
+nimbus prove "what did Alice say about the launch?"
+# outbound egress events during this query: 0 ✓   (answered from the local index)
+
+nimbus prove "open a GitHub issue for the flaky test" --receipt
+# outbound egress events during this query: 1
+#   2026-06-21 14:03:11  github.issues.create         ok
+# receipt: digest=… sig=…
+```
+
+The first positional non-flag argument is the query; flags may appear in any position.
+
+### `nimbus egress` / `nimbus egress verify`
+
+`nimbus egress` (no subcommand) prints the egress report: the outbound-event count, the completeness tier, and one line per ledger row (`timestamp`, `method`, `result status`). Before printing, the chain is verified offline; if the chain is **degraded/unverifiable** the report prints `indeterminate` and exits non-zero — it never reports a false `0` (a broken chain is unverifiable, not proof of no egress).
+
+`nimbus egress verify` runs the standalone offline integrity check and prints `[ok]` with the verified row count, or `[FAIL]` with the row index of the chain break (timing-safe comparison, invariant `I10`).
+
+| Flag | Effect |
+| --- | --- |
+| `--since <dur>` | Restrict the report to events newer than the duration (`24h` / `30m` / `7d` — same grammar as `nimbus audit --since`). |
+| `--json` | Emit the full result (rows, completeness, verify status, receipt) as JSON. |
+| `--sign` | Attach a signed attestation receipt to the report. |
+
+```bash
+nimbus egress
+# outbound egress events: 3 (tier: complete)
+#   2026-06-21 09:12:04  slack.messages.send          ok
+#   ...
+
+nimbus egress --since 24h --json
+nimbus egress verify
+# [ok]   egress chain integrity — 128 rows verified
+```
+
+### `nimbus egress prune (--before <ISO|epoch> | --older-than <duration>)`
+
+Trim old ledger rows under retention. This is the **sole** mutation of `egress_ledger` and is gated by the LOCAL owner's HITL approval (it prompts inline; deny removes nothing). Rather than rewriting the hash chain, prune writes a **continuing tombstone** so verification of the remaining chain still holds. Provide the cutoff in exactly one of two **mutually exclusive** forms — supplying both is an error:
+
+| Flag | Effect |
+| --- | --- |
+| `--before <ISO\|epoch>` | Absolute cutoff: an ISO date (`2026-01-01`) or an epoch-millisecond integer. Rows at/after the cutoff are kept. |
+| `--older-than <duration>` | Relative cutoff: `now − duration` (`7d` / `24h` / `30m`), reusing the shared `--since` duration grammar. |
+
+```bash
+nimbus egress prune --older-than 30d
+# [ok] pruned 42 egress rows (tombstone written)
+
+nimbus egress prune --before 2026-01-01
+# [denied] prune not approved — nothing removed   (HITL deny)
+```
+
+---
+
 ## Admin Console
 
 Local-only helpers for the admin read-surface (Phase 6 Slice 4). The read-surface bearer is the Vault credential `http_api.deployment_token` — the same bearer that protects the `I13` HTTP write surface. The CLI talks to the gateway IPC-only and never holds the Vault, so `console` and `token` print a resolver command rather than echoing the secret; both are local-only (no gateway round-trip).

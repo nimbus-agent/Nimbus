@@ -12,8 +12,8 @@ One-liner that downloads the verify helper, **unblocks the Zone.Identifier** (se
 
 ```powershell
 # Replace <ver>
-Invoke-WebRequest -Uri https://github.com/asafgolombek/Nimbus/releases/download/v<ver>/nimbus-headless-windows-x64.zip -OutFile nimbus-headless.zip
-Invoke-WebRequest -Uri https://github.com/asafgolombek/Nimbus/releases/download/v<ver>/nimbus-verify.ps1       -OutFile nimbus-verify.ps1
+Invoke-WebRequest -Uri https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-headless-windows-x64.zip -OutFile nimbus-headless.zip
+Invoke-WebRequest -Uri https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-verify.ps1       -OutFile nimbus-verify.ps1
 Unblock-File -Path .\nimbus-verify.ps1                              # removes the Zone.Identifier marker from the downloaded .ps1
 .\nimbus-verify.ps1 -Version <ver>                                  # ✅ signature + hash
 Expand-Archive -Path nimbus-headless.zip -DestinationPath .\nimbus  # extract binaries + README + LICENSE
@@ -31,7 +31,7 @@ PowerShell 7 ships with `Expand-Archive`. On older Windows with only Windows Pow
 
 If you prefer clicking through the UI:
 
-1. Download the `.zip` from the [GitHub Release page](https://github.com/asafgolombek/Nimbus/releases).
+1. Download the `.zip` from the [GitHub Release page](https://github.com/nimbus-agent/Nimbus/releases).
 2. Right-click the downloaded `.zip` → **Extract All…** → pick a destination → **Extract**.
 3. In the extracted folder, **double-click** `nimbus-gateway-windows-x64.exe`.
 4. SmartScreen shows: *"Windows protected your PC. Microsoft Defender SmartScreen prevented an unrecognized app from starting."* → **More info** → **Run anyway**.

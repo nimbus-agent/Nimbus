@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V34** (identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V44** (`egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -297,6 +297,193 @@ CREATE TABLE federation_grants (
     revoked_at       INTEGER              -- NULL = active; set on revoke
     , PRIMARY KEY (namespace_id, peer_id)
 );
+
+-- Team Vault + multi-user/quorum HITL (Phase 6 Slice 2) — V35.
+-- Metadata + RBAC only. Secret bytes live in the OS Vault under `teamvault.<entry>.<key>`,
+-- NEVER in these tables. Quorum/delegation in-flight state is session-only. (I19, I20, I21.)
+CREATE TABLE team_vault_entries (
+    entry      TEXT PRIMARY KEY,
+    service    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL
+);
+-- Per-(entry, peer, tool) "use" grant; revocation is live-checked on every team-credentialed invoke.
+CREATE TABLE team_vault_grants (
+    entry      TEXT NOT NULL,
+    peer_id    TEXT NOT NULL,
+    tool_id    TEXT NOT NULL,
+    mode       TEXT NOT NULL CHECK(mode IN ('use')),
+    granted_at INTEGER NOT NULL,
+    revoked_at INTEGER,                 -- NULL = active; set on revoke
+    PRIMARY KEY (entry, peer_id, tool_id)
+);
+CREATE INDEX idx_tv_grants_peer ON team_vault_grants(peer_id);
+-- Delegated-HITL grants: a live, in-scope, identity-valid delegate may approve on the owner's behalf (I20).
+CREATE TABLE hitl_delegations (
+    delegation_id TEXT PRIMARY KEY,
+    delegate_peer TEXT NOT NULL,
+    scope_kind    TEXT NOT NULL CHECK(scope_kind IN ('action_type','service')),
+    scope_value   TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    revoked_at    INTEGER
+);
+CREATE INDEX idx_hitl_deleg_peer ON hitl_delegations(delegate_peer);
+
+-- Signature-verified org policy + pinned trust anchor (Phase 6 — policy) — V36.
+-- Singleton rows (id = 1). Enforcement reads the resolved `EnforcedPolicy`, never raw `toml` (I22).
+CREATE TABLE org_policy_state (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    toml       TEXT NOT NULL,
+    sig        TEXT NOT NULL,
+    org        TEXT NOT NULL,
+    version    INTEGER NOT NULL,
+    issued_at  TEXT,
+    fetched_at INTEGER NOT NULL,
+    source     TEXT NOT NULL
+);
+CREATE TABLE policy_anchor_pin (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    pubkey    TEXT NOT NULL,
+    pinned_at INTEGER NOT NULL,
+    source    TEXT NOT NULL
+);
+
+-- GDPR purge ledger (Phase 6 — federation right-to-erasure) — V37.
+-- A purge job fans a delete request out to each peer; per-peer rows track retry + completion.
+CREATE TABLE gdpr_purge_job (
+    job_id         TEXT PRIMARY KEY,
+    external_id    TEXT NOT NULL,
+    opened_at      INTEGER NOT NULL,
+    closed_at      INTEGER,
+    completion_sig TEXT
+);
+CREATE TABLE gdpr_purge_request (
+    job_id          TEXT NOT NULL,
+    peer_id         TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_ms INTEGER,
+    deletion_record TEXT,
+    PRIMARY KEY (job_id, peer_id)
+);
+CREATE INDEX idx_gdpr_request_pending ON gdpr_purge_request(status);
+
+-- Asker-side known-namespaces cache (Phase 6 Slice 6a — cross-colleague agents) — V38.
+-- Remote namespaces this gateway has successfully queried, so ghost/conflicts/huddle can fan out
+-- ambiently without a namespace-discovery primitive. Append-only; keyed on the stable peer_id.
+CREATE TABLE federation_known_namespaces (
+    peer_id       TEXT NOT NULL,
+    namespace     TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_used_at  INTEGER NOT NULL,
+    PRIMARY KEY (peer_id, namespace)
+);
+
+-- Tribal-knowledge cluster ledger (Phase 6 Slice 6c) — V39.
+-- One row per detected repeated-question cluster; survives restarts, dedups suggestions, and
+-- tracks capture/dismiss + cooldown. The HITL-gated capture write itself is governed by I25.
+CREATE TABLE tribal_clusters (
+    cluster_id              TEXT PRIMARY KEY,
+    representative_question TEXT NOT NULL,
+    representative_vec      BLOB,
+    occurrence_count        INTEGER NOT NULL DEFAULT 1,
+    first_seen              INTEGER NOT NULL,
+    last_seen               INTEGER NOT NULL,
+    status                  TEXT NOT NULL DEFAULT 'pending',
+    channel_id              TEXT NOT NULL,
+    platform                TEXT NOT NULL,
+    suggested_at            INTEGER,
+    cooldown_until          INTEGER,
+    captured_page_ref       TEXT
+);
+CREATE INDEX idx_tribal_clusters_status  ON tribal_clusters(status);
+CREATE INDEX idx_tribal_clusters_channel ON tribal_clusters(channel_id);
+
+-- Data-warehouse / BI lineage relation types (Phase 6 Slice 7) — V40.
+-- Not a new table: seeds three directed edge types into graph_relation_type (the V12 vocab table),
+-- which graph_relation.type is FK-constrained to. These back the cross-warehouse lineage graph
+-- (`upstream_refs` aligns with the path vocabulary agents/impact.ts already uses).
+INSERT OR IGNORE INTO graph_relation_type (name, directed) VALUES
+    ('upstream_refs', 1),
+    ('derived_from', 1),
+    ('monitors', 1);
+
+-- Share & Virality ledger (Phase 6 Slice 8) — V41.
+-- Persists redacted, signed shareable artifacts (transcripts / `--as-recipe` DAGs) with their
+-- redaction set + provenance so a share can be listed, re-fetched by content hash, and pruned.
+-- No row-level cloud data — only the share envelope. Outbound emit is gated by I27 (share-gate);
+-- the body is signed with the Vault-only `share.signing.privkey`.
+CREATE TABLE share_records (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash       TEXT NOT NULL UNIQUE,
+    kind               TEXT NOT NULL,         -- "transcript" | "recipe"
+    session_id         TEXT,
+    created_at         INTEGER NOT NULL,
+    expires_at         INTEGER,
+    redaction_set_json TEXT NOT NULL,         -- the applied redaction set (audit-logged)
+    provenance_json    TEXT NOT NULL,
+    body_json          TEXT NOT NULL,         -- the redacted, shareable body
+    sig_json           TEXT NOT NULL,         -- Ed25519 signature over the body
+    sink               TEXT NOT NULL
+);
+CREATE INDEX idx_share_records_session ON share_records(session_id);
+CREATE INDEX idx_share_records_created ON share_records(created_at);
+
+-- Recipe params capture (Phase 6 Slice 8b) — V42.
+-- Adds the SECRET-redacted JSON of each tool call's input params to tool_call_log (V29), so a
+-- session can be reconstructed as a declarative recipe DAG with real per-step params. Nullable +
+-- no backfill: rows logged before V42 read back NULL. Secrets stripped at write via redactAuditPayload.
+ALTER TABLE tool_call_log ADD COLUMN params_json TEXT;
+
+-- Sovereign-mesh share inbox (Phase 6 Slice 8d) — V43.
+-- One dual-purpose table keyed by recipient pubkey. `direction='pending'` = a sender-side forward
+-- queued for a not-yet-paired recipient (drained on first pair); `direction='received'` = an inbound,
+-- INERT forwarded share (viewable/replayable; never merged into the index, never executed — no HITL).
+-- `share_json` is the full signed ShareFile (body + sig + forwarding envelope). Forwarding reuses I27.
+-- Append-only; manual prune only.
+CREATE TABLE share_inbox (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipient_pubkey TEXT NOT NULL,
+    content_hash     TEXT NOT NULL,
+    direction        TEXT NOT NULL,        -- "pending" | "received"
+    share_json       TEXT NOT NULL,        -- full signed ShareFile (self-contained artifact)
+    origin_label     TEXT NOT NULL,        -- denormalized for the attribution chip
+    hops             INTEGER NOT NULL,     -- denormalized hop count for the attribution chip
+    received_at      INTEGER NOT NULL,
+    status           TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_share_inbox_unique
+    ON share_inbox(recipient_pubkey, content_hash, direction);
+CREATE INDEX idx_share_inbox_recipient ON share_inbox(recipient_pubkey);
+CREATE INDEX idx_share_inbox_status    ON share_inbox(status);
+
+-- Egress ledger (S1 "Local Brain" — provable-locality primitive) — V44.
+-- An always-on, append-only, BLAKE3-chained ledger of every outbound action the executor
+-- AUTHORIZES. Written from `engine/executor.ts` `gate()` BEFORE `connectors.dispatch` — a denied
+-- gate records a `result_status='blocked'` row; an append failure aborts the action (fail-closed,
+-- never dispatches). `destination` is the `serviceOf()` action-type prefix (NEVER a raw URL with a
+-- query-string secret); `payload_summary` is `redactAuditPayload(action.payload)` capped at 256
+-- bytes (a debugging aid, not the security boundary). `source_type='prune'` is the single tombstone
+-- row class (the only sanctioned mutation — HITL-gated `egress.prune` — continues the chain rather
+-- than leaving a silent gap). Chain reuses db/audit-chain.ts genesis + BLAKE3; offline verify is
+-- timing-safe (I10). Append-only; manual prune only. See I29 / static D22.
+CREATE TABLE egress_ledger (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       INTEGER NOT NULL,
+    source_type     TEXT NOT NULL,          -- "agent" | "chatops" | "tribal" | "prune" | ...
+    source_id       TEXT,
+    destination     TEXT NOT NULL,          -- serviceOf() action-type prefix (e.g. "github")
+    method          TEXT NOT NULL,          -- the action type
+    payload_summary TEXT NOT NULL,          -- redactAuditPayload, capped 256 bytes
+    hitl_status     TEXT NOT NULL CHECK(hitl_status IN ('approved','not_required','rejected')),
+    result_status   TEXT NOT NULL CHECK(result_status IN ('authorized','blocked')),
+    row_hash        TEXT NOT NULL,          -- BLAKE3(prev_hash || canonical_row_bytes)
+    prev_hash       TEXT NOT NULL           -- chain link to previous row (genesis = 64×'0')
+);
+CREATE INDEX idx_egress_ledger_ts     ON egress_ledger(timestamp);
+CREATE INDEX idx_egress_ledger_source ON egress_ledger(source_type, source_id);
+CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

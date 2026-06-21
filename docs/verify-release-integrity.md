@@ -34,14 +34,14 @@ Every GitHub Release page carries `nimbus-verify.sh` (Linux + macOS) and `nimbus
 ### Linux + macOS
 
 ```bash
-curl -LO https://github.com/nimbus-dev/Nimbus/releases/download/v<ver>/nimbus-verify.sh
+curl -LO https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-verify.sh
 bash nimbus-verify.sh --version <ver>
 ```
 
 ### Windows (PowerShell 7+)
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/nimbus-dev/Nimbus/releases/download/v<ver>/nimbus-verify.ps1 -OutFile nimbus-verify.ps1
+Invoke-WebRequest -Uri https://github.com/nimbus-agent/Nimbus/releases/download/v<ver>/nimbus-verify.ps1 -OutFile nimbus-verify.ps1
 .\nimbus-verify.ps1 -Version <ver>
 ```
 
