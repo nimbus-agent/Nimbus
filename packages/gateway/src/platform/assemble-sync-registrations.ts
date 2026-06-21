@@ -1,6 +1,8 @@
 import type { NimbusWorkdayToml } from "../config/nimbus-toml-workday.ts";
+import { fetchAppleCalendarEvents } from "../connectors/_lib/apple-caldav-fetch.ts";
 import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
 import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
+import { createAppleSyncable } from "../connectors/apple-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAthenaSyncable } from "../connectors/athena-sync.ts";
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
@@ -521,6 +523,13 @@ export function registerConnectorMeshSyncables(
     createProtonmailSyncable({
       ensureProtonmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
       fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createAppleSyncable({
+      ensureAppleMcpRunning: () => connectorMesh.ensureAppleRunning(),
+      fetchMessages: fetchImapMessages,
+      fetchEvents: fetchAppleCalendarEvents,
     }),
   );
   syncScheduler.register(
