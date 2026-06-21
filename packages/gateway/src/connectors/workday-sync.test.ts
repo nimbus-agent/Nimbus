@@ -127,6 +127,75 @@ describe("createWorkdaySyncable", () => {
     expect(r.cursor).toMatch(/^nimbus-workday1:/);
   });
 
+  test("a domain that throws does not abort the others (outer catch)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+    // /timeOff throws a network error; /workers and /jobRequisitions succeed
+    const throwingFetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/timeOff")) throw new Error("network down");
+      if (u.includes("/workers"))
+        return new Response(JSON.stringify({ data: [{ id: "w1", name: "Ada" }] }), { status: 200 });
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => DEFAULT_NIMBUS_WORKDAY_TOML,
+      fetchFn: throwingFetchFn,
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    // Sync must NOT throw, and the worker from /workers must be upserted
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "workday", 1);
+  });
+
+  test("decodeCursor resume: a non-null cursor resumes the workers walk at a non-zero offset", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+    // First pass returns a full page of 50 workers (advancing the worker offset),
+    // then an empty page to terminate. Capture every fetched URL, tagged by pass.
+    const fiftyWorkers = Array.from({ length: 50 }, (_, i) => ({ id: `w${i}`, name: `W${i}` }));
+    let firstWorkersServed = false;
+    const urls: string[] = [];
+    const captureFetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.includes("/workers") && !firstWorkersServed) {
+        firstWorkersServed = true;
+        return new Response(JSON.stringify({ data: fiftyWorkers }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => DEFAULT_NIMBUS_WORKDAY_TOML,
+      fetchFn: captureFetchFn,
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r1 = await syncable.sync(ctx as any, null);
+    expect(r1.itemsUpserted).toBe(50);
+    expect(r1.cursor).toMatch(/^nimbus-workday1:/);
+
+    // Second sync with the non-null cursor exercises the decodeCursor branch and
+    // must resume the workers walk at the stored (non-zero) offset.
+    urls.length = 0;
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    await syncable.sync(ctx as any, r1.cursor);
+    const resumedWorkersUrl = urls.find((u) => u.includes("/workers"));
+    expect(resumedWorkersUrl).toBeDefined();
+    expect(resumedWorkersUrl).toContain("offset=");
+    expect(resumedWorkersUrl).not.toContain("offset=0");
+  });
+
   test("serviceId, defaultIntervalMs, initialSyncDepthDays are correct", () => {
     const syncable = createWorkdaySyncable({
       ensureWorkdayMcpRunning: async () => {},

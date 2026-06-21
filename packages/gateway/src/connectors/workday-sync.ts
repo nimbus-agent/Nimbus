@@ -91,6 +91,7 @@ async function fetchDomainPage(
   token: string,
   fetchFn: FetchFn,
 ): Promise<{ rows: unknown[]; bytes: number; ok: boolean }> {
+  await ctx.rateLimiter.acquire(SERVICE_ID);
   const res = await fetchFn(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
