@@ -34,11 +34,13 @@
 ### Task A1: Scaffold the `apple` connector package
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/package.json`
 - Create: `packages/mcp-connectors/apple/tsconfig.json`
 - Modify: root `package.json` (workspaces array)
 
 **Interfaces:**
+
 - Produces: a buildable workspace package `@nimbus-dev/mcp-apple` (name mirrors siblings — verify the exact `name` convention from `packages/mcp-connectors/imap/package.json`).
 
 - [ ] **Step 1: Copy the imap package manifest as the template.** Read `packages/mcp-connectors/imap/package.json` and `tsconfig.json`. Create `packages/mcp-connectors/apple/package.json` with the same shape, changing only `name` (→ the apple equivalent, e.g. `@nimbus-dev/mcp-apple`), `description` ("iCloud Mail (IMAP) + iCloud Calendar (CalDAV) connector"), and keeping `imapflow` + `nodemailer` deps (mail reuse). Create `tsconfig.json` identical to imap's.
@@ -60,10 +62,12 @@ git commit -m "feat(apple): scaffold iCloud Mail+Calendar connector package"
 ### Task A2: Mail core re-exports + Drafts APPEND interface
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/src/apple-mail-core.ts`
 - Test: `packages/mcp-connectors/apple/test/apple-mail-core.test.ts`
 
 **Interfaces:**
+
 - Consumes: `packages/mcp-connectors/shared/imap-mail-core.ts` (`capPreview`, `clampLimit`, `formatAddress`, `PREVIEW_MAX_CHARS`, `PREVIEW_FETCH_BYTES`, `MailAddress`) and `packages/mcp-connectors/imap/src/imap-core.ts` types (`ImapClient`, `SmtpMailer`, `ImapMessageMeta`, `SendMailInput`, `SendMailResult`).
 - Produces:
   - re-exports of the shared mail types/helpers under this module (so connector files import from one place);
@@ -140,10 +144,12 @@ export interface DraftAppender {
 ### Task A3: Register mail read tools + send via the shared kit, + the draft tool
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/src/tools.ts`
 - Test: `packages/mcp-connectors/apple/test/tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: `registerEmailConnectorTools`, `EmailReadClient`, `EmailSendMailer` from `packages/mcp-connectors/shared/imap-tool-kit.ts`; `DraftAppender`, `formatAddress` from `./apple-mail-core.ts`. (Apple's `client`/`mailer` are typed as `EmailReadClient`/`EmailSendMailer` — no imap-package import.)
 - Produces:
   - `registerAppleTools(server, { client, mailer, draftAppender, calendar }): void` — registers mail tools (prefix `apple`) + the draft tool + (Phase C) calendar tools.
@@ -204,11 +210,13 @@ describe("registerAppleTools (mail)", () => {
 ### Task B1: SDK `icalendar.ts` — line unfolding + VEVENT property parse (server-expanded objects)
 
 **Files:**
+
 - Create: `packages/sdk/src/icalendar.ts`
 - Test: `packages/sdk/src/icalendar.test.ts` (or `packages/sdk/test/…` — match the SDK's existing test location)
 - Modify: `packages/sdk/src/index.ts` (export the new module per the SDK convention)
 
 **Interfaces:**
+
 - Produces:
   - `export interface ParsedEvent { readonly uid: string; readonly recurrenceId: string | null; readonly summary: string | null; readonly description: string | null; readonly location: string | null; readonly start: string | null; readonly end: string | null; readonly allDay: boolean; readonly status: string | null; readonly organizer: string | null; readonly attendees: readonly string[]; readonly rrule: string | null; readonly dtstamp: string | null; }`
   - `export function parseICalendar(ics: string): ParsedEvent[]` — unfolds folded lines (RFC 5545 §3.1: a CRLF followed by space/tab continues the previous line), splits VEVENT blocks, extracts properties. Multiple VEVENTs (master + RECURRENCE-ID overrides, or expanded occurrences) → one `ParsedEvent` each. Attendees: collect every `ATTENDEE` line's `mailto:` value. `allDay` = `DTSTART;VALUE=DATE`. Unknown/malformed block → skipped (never throws).
@@ -250,10 +258,12 @@ describe("parseICalendar", () => {
 ### Task B2: SDK `icalendar.ts` — VEVENT builder for writes
 
 **Files:**
+
 - Modify: `packages/sdk/src/icalendar.ts`, `packages/sdk/src/index.ts`
 - Test: `packages/sdk/src/icalendar.test.ts`
 
 **Interfaces:**
+
 - Produces: `export interface BuildEventInput { readonly uid: string; readonly summary: string; readonly start: string; readonly end: string; readonly description?: string; readonly location?: string; readonly attendees?: readonly string[]; }` and `export function buildVEvent(input: BuildEventInput, now: string): string` — emits a valid `VCALENDAR>VEVENT` string: required `UID`/`DTSTAMP`(=`now`)/`DTSTART`/`DTEND`/`SUMMARY`, optional `DESCRIPTION`/`LOCATION`/`ATTENDEE` (each `mailto:`), with proper escaping (`,`→`\,`, `;`→`\;`, newline→`\n`) and CRLF line endings. `now` injected (no `Date.now()` in the pure module).
 - Consumed by: the apple connector's calendar create tool (Task C2) via `import { buildVEvent } from "@nimbus-dev/sdk"`.
 
@@ -270,10 +280,12 @@ describe("parseICalendar", () => {
 ### Task C1: `caldav-core.ts` — `CalDavClient` interface + pure selection/normalization
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/src/caldav-core.ts`
 - Test: `packages/mcp-connectors/apple/test/caldav-core.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ParsedEvent` from `@nimbus-dev/sdk` (Task B1).
 - Produces:
   - `export interface CalendarRef { readonly url: string; readonly displayName: string; }`
@@ -291,10 +303,12 @@ describe("parseICalendar", () => {
 ### Task C2: Calendar tool handlers (read + write) over an injected `CalDavClient`
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/src/calendar-tools.ts`
 - Test: `packages/mcp-connectors/apple/test/calendar-tools.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CalDavClient`, `selectCalendars`, `clampInstances` from `./caldav-core.ts`; `buildVEvent` from `@nimbus-dev/sdk` (Task B2).
 - Produces: `registerAppleCalendarTools(server, { calendar: CalDavClient, now: () => string, config }): void` registering:
   - `apple_calendar_list` (read): list events across selected calendars within a window arg → returns `{ items: ViewEvent[] }` (capped notes preview ≤2000, attendee emails included).
@@ -310,6 +324,7 @@ describe("parseICalendar", () => {
 ### Task C3: Wire calendar tools into `registerAppleTools`
 
 **Files:**
+
 - Modify: `packages/mcp-connectors/apple/src/tools.ts`
 - Test: `packages/mcp-connectors/apple/test/tools.test.ts`
 
@@ -326,6 +341,7 @@ describe("parseICalendar", () => {
 ### Task D1: `server.ts` — real IMAP/SMTP/Drafts + real CalDAV via tsdav
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/src/server.ts`
 - Modify: `packages/mcp-connectors/apple/package.json` (add `tsdav` dep)
 
@@ -346,6 +362,7 @@ describe("parseICalendar", () => {
 ### Task D2: Extension manifest + README (public-tier sections)
 
 **Files:**
+
 - Create: `packages/mcp-connectors/apple/nimbus.extension.json`
 - Create: `packages/mcp-connectors/apple/README.md`
 
@@ -361,10 +378,12 @@ describe("parseICalendar", () => {
 ### Task E1: `apple-sync.ts` mail half via the reused imap engine
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/apple-sync.ts`
 - Test: `packages/gateway/src/connectors/apple-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `createImapSyncable`/`runImapLikeSync` building blocks, `ImapConnectionConfig`, `ImapMessageFetcher`, `fetchImapMessages` (`_lib/imap-client.ts`), `mapImapLikeMessageToItem` (`imap-email-mapping.ts`), `Syncable`/`SyncContext`/`SyncResult`.
 - Produces: `export type AppleSyncableOptions = { ensureAppleMcpRunning: () => Promise<void>; fetchMessages: ImapMessageFetcher; fetchEvents: AppleEventFetcher; };` and `export function createAppleSyncable(options): Syncable` with `serviceId: "apple"`. This task wires the **mail** half only; calendar is added in Task F3.
 - `loadMailConfig(ctx): Promise<ImapConnectionConfig | null>` — reads vault `apple.icloud_email` + `apple.icloud_app_password`, returns config with fixed host `imap.mail.me.com`, port 993, `secure:true`, `mailbox` from config (default INBOX). Returns null when creds absent.
@@ -386,13 +405,15 @@ describe("parseICalendar", () => {
 ### Task F2: `apple-event-mapping.ts` — `ParsedEvent` → `MappedRow<"apple","event">`
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/apple-event-mapping.ts`
 - Test: `packages/gateway/src/connectors/apple-event-mapping.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ParsedEvent` from `@nimbus-dev/sdk` (Task B1); `MappedRow` (`mapped-row.ts`).
 - Produces: `export function mapAppleEventToItem(ev: ParsedEvent, ctx: { calendar: string; syncedAt: number }): MappedRow<"apple","event"> | null`.
-  - `externalId` = `ev.recurrenceId ? \`${ev.uid}:${ev.recurrenceId}\` : ev.uid`; null when `uid` empty.
+  - `externalId` = `ev.recurrenceId ? \`${ev.uid}:${ev.recurrenceId}\` : ev.uid`; null when`uid` empty.
   - `type:"event"`, `title` = summary (clamped 256) or `"(untitled event)"`, `bodyPreview` = `capPreview(description ?? "")` (≤2000 — gateway has its own `capPreview` in `_lib/imap-client.ts`; reuse or replicate), `modifiedAt` = parse `dtstamp`→`start`→`syncedAt`, `url:null`, `canonicalUrl:null`, `metadata` = `{ uid, calendar, start, end, allDay, location, organizer, status, recurrence: rrule, attendees }`, `syncedAt`.
 
 - [ ] **Step 1: Write failing tests** — a timed event → correct row + metadata incl. attendees; an override event → `external_id` `uid:recurrenceId`; a no-UID event → null; a 5000-char description → 2000-char preview.
@@ -404,11 +425,13 @@ describe("parseICalendar", () => {
 ### Task F3: Calendar fetch (injectable transport) + wire into `createAppleSyncable`
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/_lib/apple-caldav-fetch.ts`
 - Modify: `packages/gateway/src/connectors/apple-sync.ts`
 - Test: `packages/gateway/src/connectors/_lib/apple-caldav-fetch.test.ts`, extend `apple-sync.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `export type AppleEventFetcher = (config: AppleCalConfig, window: { startUtc: string; endUtc: string }) => Promise<{ ok: true; events: { calendar: string; ics: string }[] } | { ok: false; error: string }>;`
   - `export function fetchAppleCalendarEvents(config, window, transport = defaultCalDavTransport): Promise<...>` — `transport` is the injectable network seam (returns raw expanded ICS per calendar); the function never throws (catch → `{ok:false}`), mirroring `fetchImapMessages`. The real `defaultCalDavTransport` (tsdav, network) is the only thin uncovered bit; tests inject a fake transport returning fixture ICS.
@@ -427,6 +450,7 @@ describe("parseICalendar", () => {
 ### Task G1: Route `apple:email` to 1536-dim
 
 **Files:**
+
 - Modify: `packages/gateway/src/embedding/routing.ts`
 - Test: `packages/gateway/src/embedding/routing.test.ts` (or the existing PROSE_HEAVY test)
 
@@ -445,6 +469,7 @@ describe("parseICalendar", () => {
 ### Task H1: Catalog + secrets manifest + rate-limiter + keys
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts` (`CONNECTOR_SERVICE_IDS` += `"apple"`; `CONNECTOR_SYNC_INTERVAL_MS` += `apple: MIN5`; `OAUTH_UNSUPPORTED_DETAILS` += `apple: "uses an Apple ID + app-specific password for iCloud Mail (IMAP/SMTP) + Calendar (CalDAV); set via connector.auth apple"`)
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts` (`apple: ["apple.icloud_email", "apple.icloud_app_password"]`)
 - Modify: `packages/gateway/src/sync/rate-limiter.ts` (`Provider` union += `"apple"`; `DEFAULT_QUOTAS` += `apple: { requestsPerMinute: 60, burstSize: 10 }`)
@@ -457,6 +482,7 @@ describe("parseICalendar", () => {
 ### Task H2: Spawn + mesh + credential orchestration (standalone connector)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts` — add `export async function ensureAppleMcp(ctx)` mirroring `ensureMendeleyMcp`, but gated on the app-password secret and injecting BOTH env vars:
 
 ```ts
@@ -489,6 +515,7 @@ export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
 ### Task H3: Sync registration
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts` — import `createAppleSyncable` + the real fetchers (`fetchImapMessages`, `fetchAppleCalendarEvents`); register:
 
 ```ts
@@ -512,6 +539,7 @@ syncScheduler.register(
 ### Task I1: Executor-level HITL test for the four apple write actions
 
 **Files:**
+
 - Test: `packages/gateway/src/engine/executor-apple-writes.test.ts` (or extend `executor.test.ts`)
 
 > No production code — this proves the **existing** I2 gate covers apple's writes on the generic path (spec §6.3).
@@ -527,6 +555,7 @@ syncScheduler.register(
 ### Task I2: Connector contract test (tool surface + no-body invariant)
 
 **Files:**
+
 - Test: `packages/mcp-connectors/apple/test/contract.test.ts`
 
 - [ ] **Step 1: Write the test** — register all tools against a stub server with fake clients; assert the registered tool names exactly equal `APPLE_TOOL_NAMES`; assert `apple_list`/`apple_get` outputs contain only headers + attachment metadata + a ≤2000 preview (never a `body`/bytes field); assert `apple_calendar_list` caps notes at 2000 and includes attendee emails.
@@ -540,6 +569,7 @@ syncScheduler.register(
 ### Task J1: CHANGELOG + roadmap row
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md` (dated entry: apple connector — iCloud Mail+Calendar, 4 HITL writes, cross-platform; per the `connector-docs-changelog-convention`, log here, NOT the CLAUDE.md/GEMINI.md status line)
 - Modify: `docs/roadmap.md` — check the "Apple Mail + macOS Calendar" row `[x]`, with the dated delivered note + the macOS-only-relaxed annotation.
 

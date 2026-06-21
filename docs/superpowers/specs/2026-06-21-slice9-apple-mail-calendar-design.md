@@ -38,6 +38,7 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 - **Coverage-floor structural rule:** the real socket clients (`ImapFlow`, `nodemailer` transport, the CalDAV transport) live in `server.ts` (coverage-excluded, exactly like `imap/server.ts`). All pure logic — ICS build/parse, item mapping, mailbox/calendar selection, window/recurrence math, address formatting — lives in separately-testable modules that must clear **≥85% line / ≥80% branch**.
 
 ### Module sketch (`packages/mcp-connectors/apple/src/`)
+
 - `server.ts` — MCP bootstrap + real `ImapFlow`/`nodemailer`/CalDAV-transport clients (coverage-excluded).
 - `apple-mail-core.ts` — IMAP/SMTP client interface + `formatAddress` (thin; mirrors `imap-core.ts`; may largely reuse `shared/imap-mail-core.ts`).
 - `caldav-core.ts` — `CalDavClient` interface (list calendars, list events in window, put event, delete event) + result types.
@@ -60,11 +61,13 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 ## 5. Read / sync scope & item types
 
 ### 5.1 Mail → `apple:email`
+
 - Reuses the imap email IndexItem shape (`imap-email-mapping.ts` is the reference): `type` `"email"`; `external_id` = RFC `message-id` when present, else `<mailbox>:<uidValidity>:<uid>`; `title` = subject (clamped); `bodyPreview` = ≤2000-char plain-text preview; `metadata` = `{ mailbox, uid, uidValidity, messageId, from[], to[], cc[], participants[], attachments[{filename,sizeBytes,mimeType}], attachmentCount }`.
 - **Config** `[connectors.apple]`: `mailboxes` (string[], default `["INBOX"]`); per-mailbox recent-N cap (mirrors imap `clampLimit`, 1–200).
 - **Privacy contract (unchanged from imap):** headers + attachment **metadata** + capped preview only. Never the full body, never attachment bytes.
 
 ### 5.2 Calendar → `apple:event`
+
 - New item type `apple:event` (item `type` `"event"`). The index is type-agnostic, so **no migration** — registration is limited to the type union / embedding routing / any read allowlists. *(Planning will confirm whether an `event` type already exists from a Google/Outlook Calendar connector and reuse it if so.)*
 - `external_id` = iCalendar `UID` (stable across syncs and across the create/delete write path).
 - `title` = `SUMMARY`; `bodyPreview` = ≤2000-char `DESCRIPTION`/notes preview; `modifiedAt` from `DTSTAMP`/`LAST-MODIFIED` else event start.
@@ -197,4 +200,4 @@ From `2026-06-21-slice9-apple-mail-calendar-design-review.md` — all four **fix
 
 ### Planning-phase correction (2026-06-21, before plan authoring)
 
-5. **Dropped the I26 connector-write-registry extension** that the approved spec's §6.2 had prescribed. Grounding the write path in the real call sites showed the registry dispatches by *action type*, and apple's action types are generic + shared with five sibling email connectors (so a registry row would hijack their dispatch), while `federation.invoke` is structurally unreachable for personal connectors (no team-vault entry). Apple writes therefore ride the existing generic email/calendar path like `imap_mail_send`, protected by the I2 HITL gate — no `apple-write-tools.ts`, no registry/D20/`SECURITY-INVARIANTS.md` edits. Decision confirmed with the user. §1, §6.2, §6.3, §10, §13 updated accordingly. This is the `plan-template-codebase-verification` discipline catching an over-engineered design before code.
+1. **Dropped the I26 connector-write-registry extension** that the approved spec's §6.2 had prescribed. Grounding the write path in the real call sites showed the registry dispatches by *action type*, and apple's action types are generic + shared with five sibling email connectors (so a registry row would hijack their dispatch), while `federation.invoke` is structurally unreachable for personal connectors (no team-vault entry). Apple writes therefore ride the existing generic email/calendar path like `imap_mail_send`, protected by the I2 HITL gate — no `apple-write-tools.ts`, no registry/D20/`SECURITY-INVARIANTS.md` edits. Decision confirmed with the user. §1, §6.2, §6.3, §10, §13 updated accordingly. This is the `plan-template-codebase-verification` discipline catching an over-engineered design before code.
