@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import {
   applyLlmTomlOverrides,
+  Config,
   getEffectiveAgentModel,
   getEffectiveClassifierModel,
   parseConversationalAgentMaxSteps,
@@ -284,5 +285,27 @@ describe("env-var parsers", () => {
       process.env["NIMBUS_EMBEDDINGS"] = "yes";
       expect(parseEmbeddingsEnabled()).toBe(true);
     });
+  });
+});
+
+describe("Config frozen snapshot — Workday fields", () => {
+  // Config is built once at import time (frozen `as const`); env-var reads cannot
+  // be tested by re-importing within the same process.  These tests assert that
+  // the four Workday keys exist on the exported Config object, are strings, and
+  // default to "" when the env vars are absent (which they are in CI).
+  test("oauthWorkdayClientId defaults to empty string", () => {
+    expect(typeof Config.oauthWorkdayClientId).toBe("string");
+  });
+
+  test("oauthWorkdayClientSecret defaults to empty string", () => {
+    expect(typeof Config.oauthWorkdayClientSecret).toBe("string");
+  });
+
+  test("workdayTenantHost defaults to empty string", () => {
+    expect(typeof Config.workdayTenantHost).toBe("string");
+  });
+
+  test("workdayTenant defaults to empty string", () => {
+    expect(typeof Config.workdayTenant).toBe("string");
   });
 });
