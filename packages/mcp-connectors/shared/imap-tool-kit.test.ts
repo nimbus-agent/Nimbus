@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import {
   type EmailMessageMeta,
+  type EmailReadClient,
+  type EmailSendMailer,
   emailToolSchemas,
   envInt,
   previewFromParts,
+  registerEmailConnectorTools,
   viewEmailMessage,
 } from "./imap-tool-kit.ts";
 
@@ -285,5 +288,136 @@ describe("previewFromParts", () => {
     const m = new Map<string, Buffer>([["1", Buffer.from(longText)]]);
     const result = previewFromParts(m, "1");
     expect(result.length).toBeLessThanOrEqual(2000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// registerEmailConnectorTools
+// ---------------------------------------------------------------------------
+
+type RecordedTool = {
+  name: string;
+  description: string;
+  handler: (args: unknown) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
+};
+
+function fakeServer(recorded: RecordedTool[]): { tool: (...args: never) => unknown } {
+  return {
+    tool: ((
+      name: string,
+      description: string,
+      _shape: unknown,
+      handler: RecordedTool["handler"],
+    ) => {
+      recorded.push({ name, description, handler });
+    }) as unknown as (...args: never) => unknown,
+  };
+}
+
+function stubMeta(uid: number): EmailMessageMeta {
+  return {
+    uid,
+    mailbox: "INBOX",
+    uidValidity: "1",
+    envelope: { subject: `s${uid}`, from: [{ address: "a@b.com" }] },
+    attachments: [],
+    preview: `p${uid}`,
+  };
+}
+
+describe("registerEmailConnectorTools", () => {
+  function setup(prefix: string) {
+    const recorded: RecordedTool[] = [];
+    const calls: { list: number; get: number; search: number; send: number } = {
+      list: 0,
+      get: 0,
+      search: 0,
+      send: 0,
+    };
+    const client: EmailReadClient = {
+      list: async () => {
+        calls.list += 1;
+        return [stubMeta(1)];
+      },
+      get: async (uid) => {
+        calls.get += 1;
+        return uid === 999 ? null : stubMeta(uid);
+      },
+      search: async () => {
+        calls.search += 1;
+        return [stubMeta(2)];
+      },
+    };
+    const mailer: EmailSendMailer = {
+      send: async () => {
+        calls.send += 1;
+        return { messageId: "<mid>", accepted: ["a@b.com"], rejected: [] };
+      },
+    };
+    registerEmailConnectorTools({
+      server: fakeServer(recorded),
+      toolPrefix: prefix,
+      descriptions: { list: "L", get: "G", search: "Se", send: "Sd" },
+      client,
+      mailer,
+      formatAddr: fmtAddr,
+    });
+    return { recorded, calls };
+  }
+
+  test("registers the 4 prefixed tools with the supplied descriptions", () => {
+    const { recorded } = setup("imap");
+    expect(recorded.map((r) => r.name)).toEqual([
+      "imap_list",
+      "imap_get",
+      "imap_search",
+      "imap_mail_send",
+    ]);
+    expect(recorded.map((r) => r.description)).toEqual(["L", "G", "Se", "Sd"]);
+  });
+
+  test("honours the toolPrefix", () => {
+    const { recorded } = setup("protonmail");
+    expect(recorded[0]!.name).toBe("protonmail_list");
+    expect(recorded[3]!.name).toBe("protonmail_mail_send");
+  });
+
+  test("list handler calls client.list and wraps items", async () => {
+    const { recorded, calls } = setup("imap");
+    const res = await recorded[0]!.handler({});
+    expect(calls.list).toBe(1);
+    const body = JSON.parse(res.content[0]!.text) as { items: unknown[] };
+    expect(body.items).toHaveLength(1);
+  });
+
+  test("get handler returns item:null when client.get returns null", async () => {
+    const { recorded } = setup("imap");
+    const res = await recorded[1]!.handler({ uid: 999 });
+    expect(JSON.parse(res.content[0]!.text)).toEqual({ item: null });
+  });
+
+  test("search handler calls client.search and wraps matches", async () => {
+    const { recorded, calls } = setup("imap");
+    const res = await recorded[2]!.handler({ query: "x" });
+    expect(calls.search).toBe(1);
+    const body = JSON.parse(res.content[0]!.text) as { matches: unknown[] };
+    expect(body.matches).toHaveLength(1);
+  });
+
+  test("send handler calls mailer.send and returns the result", async () => {
+    const { recorded, calls } = setup("imap");
+    const res = await recorded[3]!.handler({ to: "a@b.com", subject: "S", body: "B" });
+    expect(calls.send).toBe(1);
+    expect(JSON.parse(res.content[0]!.text)).toEqual({
+      messageId: "<mid>",
+      accepted: ["a@b.com"],
+      rejected: [],
+    });
+  });
+
+  test("handler throws on invalid args (zod message)", async () => {
+    const { recorded } = setup("imap");
+    await expect(recorded[0]!.handler({ limit: 0 })).rejects.toThrow();
+    await expect(recorded[1]!.handler({ uid: 0 })).rejects.toThrow();
   });
 });

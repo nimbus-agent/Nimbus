@@ -1,14 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
-import {
-  createRegisterSimpleTool,
-  type McpListResult,
-  mcpJsonResult,
-  requireProcessEnv,
-} from "../../shared/mcp-tool-kit.ts";
-import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
+import { headerLine } from "../../shared/header-safe.ts";
+import { createRegisterSimpleTool, createZodToolRegistrar } from "../../shared/mcp-tool-kit.ts";
+import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -45,7 +40,16 @@ function toRawBase64Url(rfc822: string): string {
 
 const server = new McpServer({ name: "nimbus-gmail", version: "0.1.0" });
 
-const registerSimpleTool = createRegisterSimpleTool(server);
+const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
+
+/** Standard Gmail tool: token → gmailFetch(buildPath[, buildInit]) → mcpJsonResultIfOk("Gmail API", …, 200). */
+const registerGmailTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "GOOGLE_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Gmail API",
+  fetch: gmailFetch,
+  snippetMax: 200,
+});
 
 const gmailMessageListArgs = z.object({
   maxResults: z.number().int().min(1).max(100).optional(),
@@ -55,37 +59,28 @@ const gmailMessageListArgs = z.object({
   includeSpamTrash: z.boolean().optional(),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_message_list",
   "List Gmail message ids (metadata). Optional Gmail search query `q` (same syntax as Gmail UI).",
-  gmailMessageListArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailMessageListArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  gmailMessageListArgs,
+  (data) => {
     const u = new URL(`${GMAIL_BASE}/messages`);
-    u.searchParams.set("maxResults", String(parsed.data.maxResults ?? 25));
-    if (parsed.data.pageToken !== undefined && parsed.data.pageToken !== "") {
-      u.searchParams.set("pageToken", parsed.data.pageToken);
+    u.searchParams.set("maxResults", String(data.maxResults ?? 25));
+    if (data.pageToken !== undefined && data.pageToken !== "") {
+      u.searchParams.set("pageToken", data.pageToken);
     }
-    if (parsed.data.q !== undefined && parsed.data.q !== "") {
-      u.searchParams.set("q", parsed.data.q);
+    if (data.q !== undefined && data.q !== "") {
+      u.searchParams.set("q", data.q);
     }
-    if (parsed.data.labelIds !== undefined) {
-      for (const lid of parsed.data.labelIds) {
+    if (data.labelIds !== undefined) {
+      for (const lid of data.labelIds) {
         u.searchParams.append("labelIds", lid);
       }
     }
-    if (parsed.data.includeSpamTrash === true) {
+    if (data.includeSpamTrash === true) {
       u.searchParams.set("includeSpamTrash", "true");
     }
-    const r = await gmailFetch(token, u.toString());
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    return u.toString();
   },
 );
 
@@ -94,18 +89,13 @@ const gmailMessageReadArgs = z.object({
   format: z.enum(["minimal", "full", "metadata", "raw"]).optional(),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_message_read",
   "Read a single Gmail message (format minimal | metadata | full | raw).",
-  gmailMessageReadArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailMessageReadArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const fmt = parsed.data.format ?? "metadata";
-    const u = new URL(`${GMAIL_BASE}/messages/${encodeURIComponent(parsed.data.messageId)}`);
+  gmailMessageReadArgs,
+  (data) => {
+    const fmt = data.format ?? "metadata";
+    const u = new URL(`${GMAIL_BASE}/messages/${encodeURIComponent(data.messageId)}`);
     u.searchParams.set("format", fmt);
     if (fmt === "metadata") {
       u.searchParams.append("metadataHeaders", "Subject");
@@ -113,11 +103,7 @@ registerSimpleTool(
       u.searchParams.append("metadataHeaders", "To");
       u.searchParams.append("metadataHeaders", "Date");
     }
-    const r = await gmailFetch(token, u.toString());
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    return u.toString();
   },
 );
 
@@ -126,82 +112,58 @@ const gmailThreadReadArgs = z.object({
   format: z.enum(["minimal", "full", "metadata"]).optional(),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_thread_read",
   "Read a Gmail thread and its messages.",
-  gmailThreadReadArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailThreadReadArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const fmt = parsed.data.format ?? "metadata";
-    const u = new URL(`${GMAIL_BASE}/threads/${encodeURIComponent(parsed.data.threadId)}`);
+  gmailThreadReadArgs,
+  (data) => {
+    const fmt = data.format ?? "metadata";
+    const u = new URL(`${GMAIL_BASE}/threads/${encodeURIComponent(data.threadId)}`);
     u.searchParams.set("format", fmt);
-    const r = await gmailFetch(token, u.toString());
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    return u.toString();
   },
 );
 
 const gmailLabelListArgs = z.object({});
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_label_list",
   "List all Gmail labels.",
-  gmailLabelListArgs.shape,
-  async (_args: unknown): Promise<McpListResult> => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const r = await gmailFetch(token, `${GMAIL_BASE}/labels`);
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
-  },
+  gmailLabelListArgs,
+  () => `${GMAIL_BASE}/labels`,
 );
 
 const gmailDraftCreateArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
+  to: headerLine({ min: 1 }),
+  subject: headerLine({ min: 1, max: 998 }),
   body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: headerLine().optional(),
+  bcc: headerLine().optional(),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_draft_create",
   "Create a Gmail draft. Requires Gateway HITL email.draft.create.",
-  gmailDraftCreateArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailDraftCreateArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  gmailDraftCreateArgs,
+  () => `${GMAIL_BASE}/drafts`,
+  (data) => {
     const msgParams: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
-      to: parsed.data.to,
-      subject: parsed.data.subject,
-      body: parsed.data.body,
+      to: data.to,
+      subject: data.subject,
+      body: data.body,
     };
-    if (parsed.data.cc !== undefined && parsed.data.cc !== "") {
-      msgParams.cc = parsed.data.cc;
+    if (data.cc !== undefined && data.cc !== "") {
+      msgParams.cc = data.cc;
     }
-    if (parsed.data.bcc !== undefined && parsed.data.bcc !== "") {
-      msgParams.bcc = parsed.data.bcc;
+    if (data.bcc !== undefined && data.bcc !== "") {
+      msgParams.bcc = data.bcc;
     }
     const raw = toRawBase64Url(buildRfc822Message(msgParams));
-    const r = await gmailFetch(token, `${GMAIL_BASE}/drafts`, {
+    return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: { raw } }),
-    });
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    };
   },
 );
 
@@ -209,67 +171,49 @@ const gmailDraftSendArgs = z.object({
   draftId: z.string().min(1),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_draft_send",
   "Send an existing Gmail draft by id. Requires Gateway HITL email.draft.send.",
-  gmailDraftSendArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailDraftSendArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const r = await gmailFetch(token, `${GMAIL_BASE}/drafts/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: parsed.data.draftId }),
-    });
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
-  },
+  gmailDraftSendArgs,
+  () => `${GMAIL_BASE}/drafts/send`,
+  (data) => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: data.draftId }),
+  }),
 );
 
 const gmailMessageSendArgs = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1).max(998),
+  to: headerLine({ min: 1 }),
+  subject: headerLine({ min: 1, max: 998 }),
   body: z.string().max(1_000_000),
-  cc: z.string().optional(),
-  bcc: z.string().optional(),
+  cc: headerLine().optional(),
+  bcc: headerLine().optional(),
 });
 
-registerSimpleTool(
+registerGmailTool(
   "gmail_message_send",
   "Send a new Gmail message (not a draft). Requires Gateway HITL email.send.",
-  gmailMessageSendArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gmailMessageSendArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  gmailMessageSendArgs,
+  () => `${GMAIL_BASE}/messages/send`,
+  (data) => {
     const sendParams: { to: string; subject: string; body: string; cc?: string; bcc?: string } = {
-      to: parsed.data.to,
-      subject: parsed.data.subject,
-      body: parsed.data.body,
+      to: data.to,
+      subject: data.subject,
+      body: data.body,
     };
-    if (parsed.data.cc !== undefined && parsed.data.cc !== "") {
-      sendParams.cc = parsed.data.cc;
+    if (data.cc !== undefined && data.cc !== "") {
+      sendParams.cc = data.cc;
     }
-    if (parsed.data.bcc !== undefined && parsed.data.bcc !== "") {
-      sendParams.bcc = parsed.data.bcc;
+    if (data.bcc !== undefined && data.bcc !== "") {
+      sendParams.bcc = data.bcc;
     }
     const raw = toRawBase64Url(buildRfc822Message(sendParams));
-    const r = await gmailFetch(token, `${GMAIL_BASE}/messages/send`, {
+    return {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ raw }),
-    });
-    if (!r.ok) {
-      throw new Error(`Gmail API ${String(r.status)}: ${r.text.slice(0, 200)}`);
-    }
-    return mcpJsonResult(r.json);
+    };
   },
 );
 

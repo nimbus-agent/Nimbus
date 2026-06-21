@@ -70,15 +70,18 @@ export function imapExternalId(input: {
 }
 
 /**
- * Pure mapper: an IMAP message header/attachment-metadata/preview view → an
- * `imap:email` IndexedItem. Stores HEADERS, a capped plain-text PREVIEW, and
- * attachment METADATA (filename/size/mimetype) ONLY. NEVER attachment bytes and
- * NEVER a full message body. Returns null when the message carries no id basis.
+ * Pure mapper core shared by the IMAP and ProtonMail-Bridge connectors (both
+ * speak plain IMAP, so the message-input shape, id basis, and metadata are
+ * identical — only the `service` literal differs). Stores HEADERS, a capped
+ * plain-text PREVIEW, and attachment METADATA (filename/size/mimetype) ONLY.
+ * NEVER attachment bytes and NEVER a full message body. Returns null when the
+ * message carries no id basis.
  */
-export function mapImapMessageToItem(
+export function mapImapLikeMessageToItem<S extends string>(
+  service: S,
   input: ImapMessageInput,
   ctx: ImapMappingContext,
-): ImapMappedRow | null {
+): MappedRow<S, "email"> | null {
   if (
     (input.messageId === null || input.messageId.trim() === "") &&
     (!Number.isFinite(input.uid) || input.uid <= 0)
@@ -121,7 +124,7 @@ export function mapImapMessageToItem(
   };
 
   return {
-    service: SERVICE,
+    service,
     type: TYPE,
     externalId,
     title,
@@ -132,4 +135,15 @@ export function mapImapMessageToItem(
     metadata,
     syncedAt: ctx.syncedAt,
   };
+}
+
+/**
+ * Pure mapper: an IMAP message header/attachment-metadata/preview view → an
+ * `imap:email` IndexedItem. Thin wrapper over {@link mapImapLikeMessageToItem}.
+ */
+export function mapImapMessageToItem(
+  input: ImapMessageInput,
+  ctx: ImapMappingContext,
+): ImapMappedRow | null {
+  return mapImapLikeMessageToItem(SERVICE, input, ctx);
 }

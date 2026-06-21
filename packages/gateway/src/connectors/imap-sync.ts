@@ -1,6 +1,5 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
-import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
+import { parsePortSecret, runImapLikeSync } from "./_lib/imap-sync-core.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { type ImapMessageInput, mapImapMessageToItem } from "./imap-email-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -62,15 +61,6 @@ export type ImapSyncableOptions = {
   fetchMessages: ImapMessageFetcher;
 };
 
-function intFromSecret(raw: string | null | undefined, fallback: number): number {
-  const t = raw?.trim() ?? "";
-  if (t === "") {
-    return fallback;
-  }
-  const n = Number(t);
-  return Number.isFinite(n) && n > 0 && n <= 65535 ? Math.trunc(n) : fallback;
-}
-
 async function loadConfig(ctx: SyncContext): Promise<ImapConnectionConfig | null> {
   const host = (await readConnectorSecret(ctx.vault, "imap", "host"))?.trim() ?? "";
   const username = (await readConnectorSecret(ctx.vault, "imap", "username"))?.trim() ?? "";
@@ -78,7 +68,7 @@ async function loadConfig(ctx: SyncContext): Promise<ImapConnectionConfig | null
   if (host === "" || username === "" || password === "") {
     return null;
   }
-  const port = intFromSecret(await readConnectorSecret(ctx.vault, "imap", "port"), 993);
+  const port = parsePortSecret(await readConnectorSecret(ctx.vault, "imap", "port"), 993);
   const mailbox =
     (await readConnectorSecret(ctx.vault, "imap", "mailbox"))?.trim() || DEFAULT_MAILBOX;
   return { host, port, username, password, mailbox };
@@ -89,61 +79,16 @@ export function createImapSyncable(options: ImapSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 5 * 60 * 1000,
     initialSyncDepthDays: 30,
-    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
-      const t0 = performance.now();
-      await options.ensureImapMcpRunning();
-
-      const config = await loadConfig(ctx);
-      if (config === null) {
-        return syncNoopResult(cursor, t0);
-      }
-
-      await ctx.rateLimiter.acquire(SERVICE_ID);
-
-      let outcome: ImapFetchOutcome;
-      try {
-        outcome = await options.fetchMessages(config, MAX_MESSAGES);
-      } catch (err) {
-        // Defence-in-depth: even if a fetcher throws, the scheduler must not
-        // crash. Treat as a transient failure and preserve the cursor.
-        ctx.logger.warn(
-          { serviceId: SERVICE_ID, err: err instanceof Error ? err.message : String(err) },
-          "imap sync: fetch threw; treating as transient failure",
-        );
-        return {
-          cursor: cursor ?? pass1Cursor(),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-        };
-      }
-
-      if (!outcome.ok) {
-        ctx.logger.warn(
-          { serviceId: SERVICE_ID, error: outcome.error },
-          "imap sync: connection/fetch failed; preserving cursor",
-        );
-        return {
-          cursor: cursor ?? pass1Cursor(),
-          itemsUpserted: 0,
-          itemsDeleted: 0,
-          hasMore: false,
-          durationMs: Math.round(performance.now() - t0),
-        };
-      }
-
-      const now = Date.now();
-      let upserted = 0;
-      for (const msg of outcome.messages) {
-        const mapped = mapImapMessageToItem(msg, { syncedAt: now });
-        if (mapped !== null) {
-          upsertIndexedItemForSync(ctx, mapped);
-          upserted += 1;
-        }
-      }
-
-      return syncPassCursorSuccess(t0, 0, pass1Cursor(), upserted);
+    sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      return runImapLikeSync(ctx, cursor, {
+        serviceId: SERVICE_ID,
+        ensureRunning: options.ensureImapMcpRunning,
+        loadConfig,
+        fetchMessages: options.fetchMessages,
+        maxMessages: MAX_MESSAGES,
+        pass1Cursor,
+        mapMessage: (msg, syncedAt) => mapImapMessageToItem(msg, { syncedAt }),
+      });
     },
   };
 }

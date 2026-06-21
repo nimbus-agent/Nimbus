@@ -8,18 +8,54 @@ import type { Embedder, EmbeddingPipeline, IndexedItem } from "./types.ts";
 
 const DEFAULT_BACKFILL_BATCH = 50;
 
+// How many items within a fetched batch embed concurrently. Deliberately a
+// small constant decoupled from `backfillBatchSize`: the batch size is a SQLite
+// pagination knob, whereas this caps how hard we hit the embedding provider at
+// once. The provider has no internal rate-limit/backoff (a 429 just throws), so
+// firing a whole 50-item batch at once risks a 429 storm — and because a failed
+// item is left un-embedded and re-selected by the surrounding loop, that storm
+// would immediately retry. A modest cap keeps the latency win while staying well
+// under typical provider concurrency limits.
+const DEFAULT_BACKFILL_CONCURRENCY = 8;
+
 export type SqliteEmbeddingPipelineOptions = {
   db: Database;
   embedder: Embedder;
   backfillBatchSize?: number;
+  /** Max items embedded concurrently within a batch (default 8, clamped to >= 1). */
+  backfillConcurrency?: number;
   logger?: Logger;
   chunkOptions?: Partial<ChunkOptions>;
 };
+
+/**
+ * Run `fn` over `items` with at most `limit` invocations in flight at once.
+ * Order of completion is not guaranteed; `fn` is responsible for its own error
+ * handling (a rejected `fn` rejects the whole run). Single-threaded JS makes the
+ * cursor read-then-increment atomic, so no item is processed twice.
+ */
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  let cursor = 0;
+  const runWorker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await fn(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+}
 
 export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
   private readonly db: Database;
   private readonly embedder: Embedder;
   private readonly backfillBatchSize: number;
+  private readonly backfillConcurrency: number;
   private readonly logger: Logger | undefined;
   private readonly chunkOptions: Partial<ChunkOptions> | undefined;
   private readonly vecTable: string;
@@ -28,6 +64,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     this.db = options.db;
     this.embedder = options.embedder;
     this.backfillBatchSize = Math.max(1, options.backfillBatchSize ?? DEFAULT_BACKFILL_BATCH);
+    this.backfillConcurrency = Math.max(
+      1,
+      options.backfillConcurrency ?? DEFAULT_BACKFILL_CONCURRENCY,
+    );
     this.logger = options.logger;
     this.chunkOptions = options.chunkOptions;
     if (!SUPPORTED_EMBEDDING_DIMS.has(this.embedder.dims)) {
@@ -109,6 +149,23 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);
   }
 
+  /**
+   * Embed one fetched batch with bounded concurrency. A per-item failure is
+   * logged and swallowed (the item stays un-embedded and is retried by the
+   * caller's drain loop on the next pass), matching the prior sequential
+   * behaviour — only the in-flight count is now capped at `backfillConcurrency`.
+   */
+  private async embedBatch(rows: readonly IndexedItem[], reportOne: () => void): Promise<void> {
+    await mapWithConcurrency(rows, this.backfillConcurrency, async (row) => {
+      try {
+        await this.embedItem(row);
+      } catch (err) {
+        this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
+      }
+      reportOne();
+    });
+  }
+
   async backfillAll(onProgress?: (done: number, total: number) => void): Promise<void> {
     const model = this.embedder.model;
     const totalRow = this.db
@@ -139,15 +196,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      for (const row of rows) {
-        try {
-          await this.embedItem(row);
-        } catch (err) {
-          this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
-        }
+      await this.embedBatch(rows, () => {
         done += 1;
         onProgress?.(done, total);
-      }
+      });
     }
   }
 
@@ -195,15 +247,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       if (rows.length === 0) {
         break;
       }
-      for (const row of rows) {
-        try {
-          await this.embedItem(row);
-        } catch (err) {
-          this.logger?.warn({ err, itemId: row.id }, "embedding backfill item failed");
-        }
+      await this.embedBatch(rows, () => {
         done += 1;
         onProgress?.(done, total);
-      }
+      });
     }
   }
 }

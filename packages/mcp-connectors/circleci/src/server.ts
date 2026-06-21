@@ -6,9 +6,9 @@ import {
   createRegisterSimpleTool,
   createZodToolRegistrar,
   mcpJsonResult as jsonResult,
-  mcpJsonResultIfOk,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
+import { makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const CCI_API = "https://circleci.com/api/v2";
 
@@ -45,14 +45,16 @@ async function circleciFetch(
   return { ok: res.ok, status: res.status, json, text };
 }
 
-async function circleciAuthorizedJsonResult(path: string) {
-  const token = requireProcessEnv("CIRCLECI_API_TOKEN");
-  const res = await circleciFetch(token, path);
-  return mcpJsonResultIfOk("CircleCI", res);
-}
-
 const mcp = new McpServer({ name: "nimbus-circleci", version: "0.1.0" });
 const reg = createZodToolRegistrar(createRegisterSimpleTool(mcp));
+
+/** Standard CircleCI read tool: token → circleciFetch(buildPath) → mcpJsonResultIfOk("CircleCI"). */
+const registerCciTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "CIRCLECI_API_TOKEN",
+  serviceLabel: "CircleCI",
+  fetch: circleciFetch,
+});
 
 const projectSlugSchema = z.object({
   projectSlug: z
@@ -61,62 +63,51 @@ const projectSlugSchema = z.object({
     .describe("CircleCI project slug, e.g. gh/org/repo or bb/workspace/repo"),
 });
 
-reg(
+registerCciTool(
   "circleci_pipeline_list",
   "List pipelines for a CircleCI project.",
   projectSlugSchema.extend({
     pageToken: z.string().min(1).optional(),
   }),
-  async (parsed) => {
+  (parsed) => {
     const base = `/project/${projectPathSegments(parsed.projectSlug)}/pipeline`;
     const u = new URL(`${CCI_API}${base}`);
     if (parsed.pageToken !== undefined) {
       u.searchParams.set("page-token", parsed.pageToken);
     }
-    return circleciAuthorizedJsonResult(`${u.pathname}${u.search}`);
+    return `${u.pathname}${u.search}`;
   },
 );
 
-reg(
+registerCciTool(
   "circleci_pipeline_get",
   "Get a pipeline by UUID.",
   z.object({ pipelineId: z.uuid() }),
-  async (parsed) => {
-    const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}`;
-    return circleciAuthorizedJsonResult(path);
-  },
+  (parsed) => `/pipeline/${encodeURIComponent(parsed.pipelineId)}`,
 );
 
-reg(
+registerCciTool(
   "circleci_workflow_list",
   "List workflows for a pipeline.",
   z.object({ pipelineId: z.uuid() }),
-  async (parsed) => {
-    const path = `/pipeline/${encodeURIComponent(parsed.pipelineId)}/workflow`;
-    return circleciAuthorizedJsonResult(path);
-  },
+  (parsed) => `/pipeline/${encodeURIComponent(parsed.pipelineId)}/workflow`,
 );
 
-reg(
+registerCciTool(
   "circleci_job_list",
   "List jobs for a workflow.",
   z.object({ workflowId: z.uuid() }),
-  async (parsed) => {
-    const path = `/workflow/${encodeURIComponent(parsed.workflowId)}/job`;
-    return circleciAuthorizedJsonResult(path);
-  },
+  (parsed) => `/workflow/${encodeURIComponent(parsed.workflowId)}/job`,
 );
 
-reg(
+registerCciTool(
   "circleci_job_artifacts",
   "List artifact metadata for a job number under a project.",
   projectSlugSchema.extend({
     jobNumber: z.number().int().min(1),
   }),
-  async (parsed) => {
-    const path = `/project/${projectPathSegments(parsed.projectSlug)}/job/${String(parsed.jobNumber)}/artifacts`;
-    return circleciAuthorizedJsonResult(path);
-  },
+  (parsed) =>
+    `/project/${projectPathSegments(parsed.projectSlug)}/job/${String(parsed.jobNumber)}/artifacts`,
 );
 
 reg(

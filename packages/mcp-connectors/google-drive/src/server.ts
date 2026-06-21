@@ -5,9 +5,10 @@ import { z } from "zod";
 
 import {
   createRegisterSimpleTool,
-  type McpListResult,
+  createZodToolRegistrar,
   mcpJsonResult,
   requireProcessEnv,
+  type ZodObjectSchema,
 } from "../../shared/mcp-tool-kit.ts";
 import { escapeDriveQueryLiteral } from "./drive-query.ts";
 
@@ -319,46 +320,49 @@ async function driveListParents(token: string, fileId: string): Promise<string[]
 
 const server = new McpServer({ name: "nimbus-google-drive", version: "0.1.0" });
 
-const registerSimpleTool = createRegisterSimpleTool(server);
+const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
+
+/**
+ * Register a Drive tool whose body is the repeated shape `parse → token →
+ * data = await drive<X>(token, …) → mcpJsonResult(data)`. The parse + the
+ * `throw new Error(parsed.error.message)` live once in the shared registrar; the
+ * handler receives the validated args + the OAuth token and returns the value to
+ * wrap. Handlers needing a pre-wrap check (e.g. download's `!result.ok` throw)
+ * do it inside the handler and return the payload.
+ */
+function registerDriveTool<T>(
+  name: string,
+  description: string,
+  schema: ZodObjectSchema<T>,
+  handler: (args: T, token: string) => Promise<unknown>,
+): void {
+  reg(name, description, schema, async (parsed) => {
+    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+    return mcpJsonResult(await handler(parsed, token));
+  });
+}
 
 const gdriveFileListArgs = z.object({
   pageSize: z.number().int().min(1).max(100).optional(),
   pageToken: z.string().optional(),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_list",
   "List Google Drive files (metadata only). Supports pagination via pageToken from the previous response.",
-  gdriveFileListArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileListArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const pageSize = parsed.data.pageSize ?? 25;
-    const data = await driveListFiles(token, pageSize, parsed.data.pageToken, "trashed = false");
-    return mcpJsonResult(data);
-  },
+  gdriveFileListArgs,
+  (args, token) => driveListFiles(token, args.pageSize ?? 25, args.pageToken, "trashed = false"),
 );
 
 const gdriveFileMetadataArgs = z.object({
   fileId: z.string().min(1),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_metadata",
   "Get metadata for a single Drive file or folder (owners, parents, links, mimeType, description).",
-  gdriveFileMetadataArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileMetadataArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const data = await driveGetFileMetadata(token, parsed.data.fileId);
-    return mcpJsonResult(data);
-  },
+  gdriveFileMetadataArgs,
+  (args, token) => driveGetFileMetadata(token, args.fileId),
 );
 
 const gdriveFileSearchArgs = z.object({
@@ -367,21 +371,14 @@ const gdriveFileSearchArgs = z.object({
   pageToken: z.string().optional(),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_search",
   "Full-text search over Drive using the Drive search API (fullText contains your phrase). Non-trashed files only.",
-  gdriveFileSearchArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileSearchArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const escaped = escapeDriveQueryLiteral(parsed.data.query);
+  gdriveFileSearchArgs,
+  (args, token) => {
+    const escaped = escapeDriveQueryLiteral(args.query);
     const q = `fullText contains '${escaped}' and trashed = false`;
-    const pageSize = parsed.data.pageSize ?? 25;
-    const data = await driveListFiles(token, pageSize, parsed.data.pageToken, q);
-    return mcpJsonResult(data);
+    return driveListFiles(token, args.pageSize ?? 25, args.pageToken, q);
   },
 );
 
@@ -395,22 +392,16 @@ const gdriveFileDownloadArgs = z.object({
     .optional(),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_download",
   "Download file bytes (base64) or text (utf-8 for text/*). Google Docs → plain text export; Sheets → CSV. Capped by maxBytes (default 256 KiB, max 16 MiB).",
-  gdriveFileDownloadArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileDownloadArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const maxBytes = parsed.data.maxBytes ?? 256 * 1024;
-    const result = await driveDownloadFile(token, parsed.data.fileId, maxBytes);
+  gdriveFileDownloadArgs,
+  async (args, token) => {
+    const result = await driveDownloadFile(token, args.fileId, args.maxBytes ?? 256 * 1024);
     if (!result.ok) {
       throw new Error(result.message);
     }
-    return mcpJsonResult(result.payload);
+    return result.payload;
   },
 );
 
@@ -421,31 +412,23 @@ const gdriveFileCreateArgs = z.object({
   content: z.string().max(4_000_000).optional(),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_create",
   "Create a Google Drive file. Optional text `content` uses multipart upload. Empty file if content omitted. Requires Gateway HITL file.create.",
-  gdriveFileCreateArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileCreateArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const mime = parsed.data.mimeType ?? "text/plain";
+  gdriveFileCreateArgs,
+  (args, token) => {
+    const mime = args.mimeType ?? "text/plain";
     const meta: { name: string; mimeType: string; parents?: string[] } = {
-      name: parsed.data.name,
+      name: args.name,
       mimeType: mime,
     };
-    if (parsed.data.parentId !== undefined) {
-      meta.parents = [parsed.data.parentId];
+    if (args.parentId !== undefined) {
+      meta.parents = [args.parentId];
     }
-    let data: unknown;
-    if (parsed.data.content !== undefined && parsed.data.content !== "") {
-      data = await driveMultipartCreate(token, meta, parsed.data.content, mime);
-    } else {
-      data = await drivePostCreateMetadata(token, meta);
+    if (args.content !== undefined && args.content !== "") {
+      return driveMultipartCreate(token, meta, args.content, mime);
     }
-    return mcpJsonResult(data);
+    return drivePostCreateMetadata(token, meta);
   },
 );
 
@@ -453,19 +436,11 @@ const gdriveFileTrashArgs = z.object({
   fileId: z.string().min(1),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_trash",
   "Move a Drive file or folder to trash (recoverable). Requires Gateway HITL file.delete.",
-  gdriveFileTrashArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileTrashArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const data = await drivePatchJson(token, parsed.data.fileId, { trashed: true });
-    return mcpJsonResult(data);
-  },
+  gdriveFileTrashArgs,
+  (args, token) => drivePatchJson(token, args.fileId, { trashed: true }),
 );
 
 const gdriveFileMoveArgs = z.object({
@@ -474,19 +449,14 @@ const gdriveFileMoveArgs = z.object({
   removeParentId: z.string().min(1).optional(),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_move",
   "Move a file or folder to another parent folder (Drive parents). If removeParentId is omitted, the first current parent is used. Requires Gateway HITL file.move.",
-  gdriveFileMoveArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileMoveArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    let remove = parsed.data.removeParentId;
+  gdriveFileMoveArgs,
+  async (args, token) => {
+    let remove = args.removeParentId;
     if (remove === undefined) {
-      const parents = await driveListParents(token, parsed.data.fileId);
+      const parents = await driveListParents(token, args.fileId);
       const first = parents[0];
       if (first === undefined) {
         throw new Error("Cannot infer removeParentId: file has no parents (may be root-only)");
@@ -494,11 +464,10 @@ registerSimpleTool(
       remove = first;
     }
     const q = new URLSearchParams({
-      addParents: parsed.data.newParentId,
+      addParents: args.newParentId,
       removeParents: remove,
     });
-    const data = await drivePatchJson(token, parsed.data.fileId, {}, q);
-    return mcpJsonResult(data);
+    return drivePatchJson(token, args.fileId, {}, q);
   },
 );
 
@@ -507,19 +476,11 @@ const gdriveFileRenameArgs = z.object({
   newName: z.string().min(1).max(500),
 });
 
-registerSimpleTool(
+registerDriveTool(
   "gdrive_file_rename",
   "Rename a Drive file or folder. Requires Gateway HITL file.rename.",
-  gdriveFileRenameArgs.shape,
-  async (args: unknown): Promise<McpListResult> => {
-    const parsed = gdriveFileRenameArgs.safeParse(args);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const data = await drivePatchJson(token, parsed.data.fileId, { name: parsed.data.newName });
-    return mcpJsonResult(data);
-  },
+  gdriveFileRenameArgs,
+  (args, token) => drivePatchJson(token, args.fileId, { name: args.newName }),
 );
 
 await server.connect(new StdioServerTransport());

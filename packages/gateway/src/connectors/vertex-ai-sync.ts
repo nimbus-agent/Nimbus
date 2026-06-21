@@ -1,6 +1,6 @@
-import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import type { Syncable, SyncContext, SyncResult } from "../sync/types.ts";
 import { isSafeCliArg, runSinglePassCliShellSync } from "./_lib/cli-shell-sync.ts";
+import { runGcloudCommand } from "./_lib/gcloud-runner.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { mapVertexAiModelToItem } from "./vertex-ai-model-mapping.ts";
@@ -30,7 +30,7 @@ function pass1Cursor(): string {
  * boundary), mirroring cloud-logging-sync's posture. The `<region>` is guarded
  * by the caller before this runs.
  */
-async function gcloudAiModelsList(
+function gcloudAiModelsList(
   credPath: string,
   project: string,
   region: string,
@@ -47,18 +47,7 @@ async function gcloudAiModelsList(
     "--format",
     "json",
   ];
-  try {
-    const proc = Bun.spawn(argv, {
-      env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: credPath }),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const code = await proc.exited;
-    const out = await new Response(proc.stdout).text();
-    return { ok: code === 0, text: out };
-  } catch {
-    return { ok: false, text: "" };
-  }
+  return runGcloudCommand(argv, credPath);
 }
 
 /**

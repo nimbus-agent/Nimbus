@@ -10,14 +10,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
+import { headerLine } from "../../shared/header-safe.ts";
 import {
   createRegisterSimpleTool,
-  type McpListResult,
+  createZodToolRegistrar,
   mcpJsonResult,
   requireProcessEnv,
 } from "../../shared/mcp-tool-kit.ts";
-import { makeRestFetcher } from "../../shared/rest-tool-kit.ts";
+import { makeRestFetcher, makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 import {
   outlookToolShouldRegister,
   parseMicrosoftOAuthScopesFromEnv,
@@ -35,8 +35,17 @@ function graphRequest(
 
 const server = new McpServer({ name: "nimbus-outlook", version: "0.1.0" });
 
-const registerSimpleTool = createRegisterSimpleTool(server);
+const reg = createZodToolRegistrar(createRegisterSimpleTool(server));
 const grantedOutlookScopes = parseMicrosoftOAuthScopesFromEnv();
+
+/** Standard Graph read tool: token → graphRequest(buildPath[, buildInit]) → mcpJsonResultIfOk("Graph", …, 200). */
+const registerOutlookTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "MICROSOFT_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Graph",
+  fetch: graphRequest,
+  snippetMax: 200,
+});
 
 const outlookMailFoldersArgs = z.object({
   top: z.number().int().min(1).max(200).optional(),
@@ -44,28 +53,16 @@ const outlookMailFoldersArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_folders", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_mail_folders",
     "List mail folders (pagination via nextLink).",
-    outlookMailFoldersArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookMailFoldersArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
+    outlookMailFoldersArgs,
+    (data) => {
+      if (data.nextLink !== undefined && data.nextLink !== "") {
+        return data.nextLink;
       }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
-      if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-        path = parsed.data.nextLink;
-      } else {
-        const top = parsed.data.top ?? 50;
-        path = `/me/mailFolders?$top=${String(top)}`;
-      }
-      const r = await graphRequest(token, path);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+      const top = data.top ?? 50;
+      return `/me/mailFolders?$top=${String(top)}`;
     },
   );
 }
@@ -79,43 +76,28 @@ const outlookMailListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_list", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_mail_list",
     "List mail messages (default folder inbox if folderId omitted). Pagination via nextLink.",
-    outlookMailListArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookMailListArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
+    outlookMailListArgs,
+    (data) => {
+      if (data.nextLink !== undefined && data.nextLink !== "") {
+        return data.nextLink;
       }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const top = parsed.data.top ?? 25;
-      let path: string;
-      if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-        path = parsed.data.nextLink;
-      } else {
-        const fid =
-          parsed.data.folderId !== undefined && parsed.data.folderId !== ""
-            ? parsed.data.folderId
-            : "inbox";
-        const skip = parsed.data.skip ?? 0;
-        const u = new URL(`${GRAPH}/me/mailFolders/${encodeURIComponent(fid)}/messages`);
-        u.searchParams.set("$top", String(top));
-        u.searchParams.set("$skip", String(skip));
-        u.searchParams.set(
-          "$select",
-          "id,subject,bodyPreview,receivedDateTime,lastModifiedDateTime,hasAttachments,webLink",
-        );
-        if (parsed.data.filter !== undefined && parsed.data.filter !== "") {
-          u.searchParams.set("$filter", parsed.data.filter);
-        }
-        path = `${u.pathname}${u.search}`;
+      const top = data.top ?? 25;
+      const fid = data.folderId !== undefined && data.folderId !== "" ? data.folderId : "inbox";
+      const skip = data.skip ?? 0;
+      const u = new URL(`${GRAPH}/me/mailFolders/${encodeURIComponent(fid)}/messages`);
+      u.searchParams.set("$top", String(top));
+      u.searchParams.set("$skip", String(skip));
+      u.searchParams.set(
+        "$select",
+        "id,subject,bodyPreview,receivedDateTime,lastModifiedDateTime,hasAttachments,webLink",
+      );
+      if (data.filter !== undefined && data.filter !== "") {
+        u.searchParams.set("$filter", data.filter);
       }
-      const r = await graphRequest(token, path);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+      return `${u.pathname}${u.search}`;
     },
   );
 }
@@ -125,63 +107,45 @@ const outlookMailReadArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_mail_read", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_mail_read",
     "Read a single message (body, headers, attachments metadata).",
-    outlookMailReadArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookMailReadArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(
-        token,
-        `/me/messages/${encodeURIComponent(parsed.data.messageId)}?$expand=attachments`,
-      );
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
-    },
+    outlookMailReadArgs,
+    (data) => `/me/messages/${encodeURIComponent(data.messageId)}?$expand=attachments`,
   );
 }
 
 const outlookMailSendArgs = z.object({
-  to: z.string().min(1).max(2000),
-  subject: z.string().min(1).max(500),
+  to: headerLine({ min: 1, max: 2000 }),
+  subject: headerLine({ min: 1, max: 500 }),
   body: z.string().min(1).max(1_000_000),
   contentType: z.enum(["text", "html"]).optional(),
-  cc: z.string().max(2000).optional(),
+  cc: headerLine({ max: 2000 }).optional(),
 });
 
 if (outlookToolShouldRegister("outlook_mail_send", grantedOutlookScopes)) {
-  registerSimpleTool(
+  reg(
     "outlook_mail_send",
     "Send an email via Microsoft Graph. Requires Gateway HITL email.send.",
-    outlookMailSendArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookMailSendArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    outlookMailSendArgs,
+    async (data) => {
       const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const toList = parsed.data.to
+      const toList = data.to
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
       const message: Record<string, unknown> = {
-        subject: parsed.data.subject,
+        subject: data.subject,
         body: {
-          contentType: (parsed.data.contentType ?? "text") === "html" ? "HTML" : "Text",
-          content: parsed.data.body,
+          contentType: (data.contentType ?? "text") === "html" ? "HTML" : "Text",
+          content: data.body,
         },
         toRecipients: toList.map((addr) => ({
           emailAddress: { address: addr },
         })),
       };
-      if (parsed.data.cc !== undefined && parsed.data.cc !== "") {
-        const ccList = parsed.data.cc
+      if (data.cc !== undefined && data.cc !== "") {
+        const ccList = data.cc
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
@@ -210,30 +174,18 @@ const outlookCalendarListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_list", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_calendar_list",
     "List calendar events in a time window (ISO 8601 startDateTime / endDateTime).",
-    outlookCalendarListArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookCalendarListArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
+    outlookCalendarListArgs,
+    (data) => {
+      if (data.nextLink !== undefined && data.nextLink !== "") {
+        return data.nextLink;
       }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
-      if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-        path = parsed.data.nextLink;
-      } else {
-        const top = parsed.data.top ?? 50;
-        const s = encodeURIComponent(parsed.data.startDateTime);
-        const e = encodeURIComponent(parsed.data.endDateTime);
-        path = `/me/calendarView?startDateTime=${s}&endDateTime=${e}&$top=${String(top)}`;
-      }
-      const r = await graphRequest(token, path);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+      const top = data.top ?? 50;
+      const s = encodeURIComponent(data.startDateTime);
+      const e = encodeURIComponent(data.endDateTime);
+      return `/me/calendarView?startDateTime=${s}&endDateTime=${e}&$top=${String(top)}`;
     },
   );
 }
@@ -243,56 +195,41 @@ const outlookCalendarGetArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_get", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_calendar_get",
     "Get a single calendar event by id.",
-    outlookCalendarGetArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookCalendarGetArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(token, `/me/events/${encodeURIComponent(parsed.data.eventId)}`);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
-    },
+    outlookCalendarGetArgs,
+    (data) => `/me/events/${encodeURIComponent(data.eventId)}`,
   );
 }
 
 const outlookCalendarCreateArgs = z.object({
-  subject: z.string().min(1).max(500),
+  subject: headerLine({ min: 1, max: 500 }),
   startDateTime: z.string().min(1),
   endDateTime: z.string().min(1),
   timeZone: z.string().min(1).max(100).optional(),
   body: z.string().max(50_000).optional(),
-  attendees: z.string().max(4000).optional(),
+  attendees: headerLine({ max: 4000 }).optional(),
 });
 
 if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_calendar_create",
     "Create a calendar event. Requires Gateway HITL calendar.event.create.",
-    outlookCalendarCreateArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookCalendarCreateArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const tz = parsed.data.timeZone ?? "UTC";
+    outlookCalendarCreateArgs,
+    () => "/me/events",
+    (data) => {
+      const tz = data.timeZone ?? "UTC";
       const body: Record<string, unknown> = {
-        subject: parsed.data.subject,
-        start: { dateTime: parsed.data.startDateTime, timeZone: tz },
-        end: { dateTime: parsed.data.endDateTime, timeZone: tz },
+        subject: data.subject,
+        start: { dateTime: data.startDateTime, timeZone: tz },
+        end: { dateTime: data.endDateTime, timeZone: tz },
       };
-      if (parsed.data.body !== undefined && parsed.data.body !== "") {
-        body["body"] = { contentType: "Text", content: parsed.data.body };
+      if (data.body !== undefined && data.body !== "") {
+        body["body"] = { contentType: "Text", content: data.body };
       }
-      if (parsed.data.attendees !== undefined && parsed.data.attendees !== "") {
-        const addrs = parsed.data.attendees
+      if (data.attendees !== undefined && data.attendees !== "") {
+        const addrs = data.attendees
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
@@ -301,15 +238,11 @@ if (outlookToolShouldRegister("outlook_calendar_create", grantedOutlookScopes)) 
           type: "required",
         }));
       }
-      const r = await graphRequest(token, "/me/events", {
+      return {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+      };
     },
   );
 }
@@ -319,17 +252,13 @@ const outlookCalendarDeleteArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_calendar_delete", grantedOutlookScopes)) {
-  registerSimpleTool(
+  reg(
     "outlook_calendar_delete",
     "Delete a calendar event. Requires Gateway HITL calendar.event.delete.",
-    outlookCalendarDeleteArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookCalendarDeleteArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
+    outlookCalendarDeleteArgs,
+    async (data) => {
       const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(token, `/me/events/${encodeURIComponent(parsed.data.eventId)}`, {
+      const r = await graphRequest(token, `/me/events/${encodeURIComponent(data.eventId)}`, {
         method: "DELETE",
       });
       if (!r.ok && r.status !== 204) {
@@ -347,29 +276,17 @@ const outlookContactListArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_contact_list", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_contact_list",
     "List contacts from the default folder.",
-    outlookContactListArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookContactListArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
+    outlookContactListArgs,
+    (data) => {
+      if (data.nextLink !== undefined && data.nextLink !== "") {
+        return data.nextLink;
       }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      let path: string;
-      if (parsed.data.nextLink !== undefined && parsed.data.nextLink !== "") {
-        path = parsed.data.nextLink;
-      } else {
-        const top = parsed.data.top ?? 50;
-        const skip = parsed.data.skip ?? 0;
-        path = `/me/contacts?$top=${String(top)}&$skip=${String(skip)}`;
-      }
-      const r = await graphRequest(token, path);
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
+      const top = data.top ?? 50;
+      const skip = data.skip ?? 0;
+      return `/me/contacts?$top=${String(top)}&$skip=${String(skip)}`;
     },
   );
 }
@@ -379,25 +296,11 @@ const outlookContactGetArgs = z.object({
 });
 
 if (outlookToolShouldRegister("outlook_contact_get", grantedOutlookScopes)) {
-  registerSimpleTool(
+  registerOutlookTool(
     "outlook_contact_get",
     "Get a single contact by id.",
-    outlookContactGetArgs.shape,
-    async (args: unknown): Promise<McpListResult> => {
-      const parsed = outlookContactGetArgs.safeParse(args);
-      if (!parsed.success) {
-        throw new Error(parsed.error.message);
-      }
-      const token = requireProcessEnv("MICROSOFT_OAUTH_ACCESS_TOKEN");
-      const r = await graphRequest(
-        token,
-        `/me/contacts/${encodeURIComponent(parsed.data.contactId)}`,
-      );
-      if (!r.ok) {
-        throw new Error(`Graph ${String(r.status)}: ${r.text.slice(0, 200)}`);
-      }
-      return mcpJsonResult(r.json);
-    },
+    outlookContactGetArgs,
+    (data) => `/me/contacts/${encodeURIComponent(data.contactId)}`,
   );
 }
 

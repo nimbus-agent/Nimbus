@@ -546,4 +546,64 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     expect(result[0]).toBeInstanceOf(Float32Array);
     expect(result[0]?.length).toBe(384);
   });
+
+  test("constructor clamps backfillConcurrency to 1 when given 0", async () => {
+    const db = freshDb();
+    // Math.max(1, 0) = 1 — exercises the concurrency clamping branch
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+      backfillConcurrency: 0,
+    });
+    expect(pipeline.embeddingDims).toBe(384);
+  });
+
+  test("backfillAll caps in-flight embeds at backfillConcurrency", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    const ITEMS = 12;
+    for (let i = 0; i < ITEMS; i++) {
+      db.run(
+        `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+         VALUES (?, 'github', 'issue', ?, ?, ?, ?, ?)`,
+        [`github:c${i}`, `c${i}`, `title ${i}`, `body ${i}`, now - i, now],
+      );
+    }
+
+    // An embedder that reports how many embed() calls overlap. With the whole
+    // set in a single fetched batch, a naive Promise.all(rows.map(...)) would
+    // drive this to ITEMS; the bounded runner must hold it at the cap.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const CONCURRENCY = 3;
+    const trackingEmbedder: Embedder = {
+      model: "Xenova/all-MiniLM-L6-v2",
+      dims: 384,
+      async embed(texts) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Bun.sleep(5); // hold the slot so concurrent calls actually overlap
+        inFlight -= 1;
+        return texts.map(() => new Float32Array(384));
+      },
+    };
+
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: trackingEmbedder,
+      backfillBatchSize: ITEMS, // whole set fetched as one batch
+      backfillConcurrency: CONCURRENCY,
+    });
+
+    await pipeline.backfillAll();
+
+    // Never exceeded the cap, and actually reached it (proves real parallelism,
+    // not an accidental serialization).
+    expect(maxInFlight).toBeLessThanOrEqual(CONCURRENCY);
+    expect(maxInFlight).toBe(CONCURRENCY);
+    const embedded = (
+      db.query("SELECT COUNT(DISTINCT item_id) AS c FROM embedding_chunk").get() as { c: number }
+    ).c;
+    expect(embedded).toBe(ITEMS);
+  });
 });

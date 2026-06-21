@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -17,7 +17,9 @@
     "form-data": "4.0.6",
     "hono": "4.12.25",
     "@mastra/core": "1.43.0",
-    "@mastra/mcp": "1.10.0"
+    "@mastra/mcp": "1.10.0",
+    "nodemailer": "9.0.1",
+    "undici": "7.28.0"
   },
   "workspaces": [
     "packages/admin-console",

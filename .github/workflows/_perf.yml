@@ -153,19 +153,47 @@ jobs:
           esac
           echo "id=${runner_id}" >> "$GITHUB_OUTPUT"
 
-      - name: Run bench
+      - name: Run bench (retry once on a crashed run)
         if: |
           matrix.os == 'ubuntu-24.04' ||
           github.event_name != 'schedule' ||
           github.event.schedule == '0 4 * * 0'
         shell: bash
+        # The whole bench is one long-lived `bun` process. On the shared GHA
+        # runners it intermittently dies with a SIGSEGV (exit 139) inside the
+        # `bun:sqlite` Worker / `dlopen(sqlite-vec.dylib)` path the S8/S10
+        # surfaces spawn — the same exit-139 class the quarantine-strip step
+        # above guards against, but the surviving residue is transient runtime
+        # jitter, not a deterministic dlopen block (run 27756789856 segfaulted on
+        # macos-15 at SHA 5613f7d3, yet that identical SHA re-ran green twice).
+        # A crashed run yields no measurement at all, so it is never a perf
+        # signal on any OS; retry once on a warm process. Attempt 2's exit code
+        # MUST propagate so two genuine failures still red the leg (no silent
+        # flake-hiding). Mirrors the retry-once shape in `_test-suite.yml` and
+        # `ci.yml`'s `pr-quality-cross-platform`.
         run: |
-          set -euo pipefail
+          set +e
           mkdir -p "${RUNNER_TEMP}/perf-fixtures"
-          bun packages/gateway/src/perf/bench-runner.ts \
-            --all --gha --runs 5 --corpus small \
-            --history "${RUNNER_TEMP}/run-history.jsonl" \
-            --fixture-cache "${RUNNER_TEMP}/perf-fixtures"
+          for attempt in 1 2; do
+            # Each attempt writes the single aggregate history line only on a
+            # clean finish (bench-cli.ts), and a SIGSEGV is uncatchable so it
+            # appends nothing — a retry starts from an empty history, no dupes.
+            : > "${RUNNER_TEMP}/run-history.jsonl"
+            bun packages/gateway/src/perf/bench-runner.ts \
+              --all --gha --runs 5 --corpus small \
+              --history "${RUNNER_TEMP}/run-history.jsonl" \
+              --fixture-cache "${RUNNER_TEMP}/perf-fixtures"
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "Both bench attempts failed with exit code $code"
+              exit "$code"
+            fi
+            echo "Bench attempt $attempt failed (exit $code), retrying in 5 s..."
+            sleep 5
+          done
 
       - name: Upload run history artifact
         if: |

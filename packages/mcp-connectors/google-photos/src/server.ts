@@ -3,12 +3,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { fetchBearerAuthorizedJson, resolveUrlWithBase } from "../../shared/fetch-bearer-json.ts";
-import {
-  createRegisterSimpleTool,
-  createZodToolRegistrar,
-  mcpJsonResultIfOk,
-  requireProcessEnv,
-} from "../../shared/mcp-tool-kit.ts";
+import { createRegisterSimpleTool, createZodToolRegistrar } from "../../shared/mcp-tool-kit.ts";
+import { makeRestToolRegistrar } from "../../shared/rest-tool-kit.ts";
 
 const PHOTOS_BASE = "https://photoslibrary.googleapis.com/v1";
 
@@ -26,24 +22,30 @@ const server = new McpServer({ name: "nimbus-google-photos", version: "0.1.0" })
 const registerSimpleTool = createRegisterSimpleTool(server);
 const reg = createZodToolRegistrar(registerSimpleTool);
 
+/** Standard Photos tool: token → photosFetch(buildPath[, buildInit]) → mcpJsonResultIfOk("Google Photos API"). */
+const registerPhotosTool = makeRestToolRegistrar({
+  registrar: reg,
+  tokenEnv: "GOOGLE_OAUTH_ACCESS_TOKEN",
+  serviceLabel: "Google Photos API",
+  fetch: photosFetch,
+});
+
 const gphotosAlbumListArgs = z.object({
   pageSize: z.number().int().min(1).max(50).optional(),
   pageToken: z.string().optional(),
 });
 
-reg(
+registerPhotosTool(
   "gphotos_album_list",
   "List Google Photos albums (metadata). Pagination via pageToken.",
   gphotosAlbumListArgs,
-  async (parsed) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  (parsed) => {
     const u = new URL(`${PHOTOS_BASE}/albums`);
     u.searchParams.set("pageSize", String(parsed.pageSize ?? 25));
     if (parsed.pageToken !== undefined && parsed.pageToken !== "") {
       u.searchParams.set("pageToken", parsed.pageToken);
     }
-    const r = await photosFetch(token, `${u.pathname}${u.search}`);
-    return mcpJsonResultIfOk("Google Photos API", r);
+    return `${u.pathname}${u.search}`;
   },
 );
 
@@ -51,15 +53,11 @@ const gphotosAlbumGetArgs = z.object({
   albumId: z.string().min(1),
 });
 
-reg(
+registerPhotosTool(
   "gphotos_album_get",
   "Get a single album by id (title, mediaItemsCount, coverPhotoBaseUrl).",
   gphotosAlbumGetArgs,
-  async (parsed) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const r = await photosFetch(token, `/albums/${encodeURIComponent(parsed.albumId)}`);
-    return mcpJsonResultIfOk("Google Photos API", r);
-  },
+  (parsed) => `/albums/${encodeURIComponent(parsed.albumId)}`,
 );
 
 const gphotosMediaListArgs = z.object({
@@ -68,12 +66,12 @@ const gphotosMediaListArgs = z.object({
   pageToken: z.string().optional(),
 });
 
-reg(
+registerPhotosTool(
   "gphotos_media_list",
   "List media items (metadata + baseUrl/productUrl only). Optional albumId scopes to one album.",
   gphotosMediaListArgs,
-  async (parsed) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  () => "/mediaItems:search",
+  (parsed) => {
     const body: Record<string, unknown> = {
       pageSize: parsed.pageSize ?? 50,
     };
@@ -83,11 +81,7 @@ reg(
     if (parsed.albumId !== undefined && parsed.albumId !== "") {
       body["albumId"] = parsed.albumId;
     }
-    const r = await photosFetch(token, "/mediaItems:search", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return mcpJsonResultIfOk("Google Photos API", r);
+    return { method: "POST", body: JSON.stringify(body) };
   },
 );
 
@@ -95,15 +89,11 @@ const gphotosMediaGetArgs = z.object({
   mediaItemId: z.string().min(1),
 });
 
-reg(
+registerPhotosTool(
   "gphotos_media_get",
   "Get a single media item metadata by id.",
   gphotosMediaGetArgs,
-  async (parsed) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
-    const r = await photosFetch(token, `/mediaItems/${encodeURIComponent(parsed.mediaItemId)}`);
-    return mcpJsonResultIfOk("Google Photos API", r);
-  },
+  (parsed) => `/mediaItems/${encodeURIComponent(parsed.mediaItemId)}`,
 );
 
 const gphotosMediaSearchArgs = z.object({
@@ -114,12 +104,12 @@ const gphotosMediaSearchArgs = z.object({
   excludeNonAppCreatedData: z.boolean().optional(),
 });
 
-reg(
+registerPhotosTool(
   "gphotos_media_search",
   "Search media items (metadata only). Optional album filter; supports pagination.",
   gphotosMediaSearchArgs,
-  async (parsed) => {
-    const token = requireProcessEnv("GOOGLE_OAUTH_ACCESS_TOKEN");
+  () => "/mediaItems:search",
+  (parsed) => {
     const body: Record<string, unknown> = {
       pageSize: parsed.pageSize ?? 50,
     };
@@ -139,11 +129,7 @@ reg(
     if (Object.keys(filters).length > 0) {
       body["filters"] = filters;
     }
-    const r = await photosFetch(token, "/mediaItems:search", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return mcpJsonResultIfOk("Google Photos API", r);
+    return { method: "POST", body: JSON.stringify(body) };
   },
 );
 
