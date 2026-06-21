@@ -2,7 +2,7 @@
 
 This document provides a detailed review of the following two implementation plans:
 
-1. [Egress Ledger & nimbus prove Plan](./2026-06-20-egress-ledger-nimbus-prove.md)
+1. Egress Ledger & `nimbus prove` Plan — shipped as PR #698 (I29/D22/V44); the plan artifact was removed in the 2026-06-21 docs cleanup
 2. [Standup Generator Plan](./2026-06-20-standup-generator.md)
 
 ---
