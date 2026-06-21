@@ -34,6 +34,10 @@ describe("TEAM_SECRET_ANYOF_GROUPS", () => {
   });
 });
 
+test("workday declares only the oauth vault key", () => {
+  expect(CONNECTOR_VAULT_SECRET_KEYS.workday).toEqual(["workday.oauth"]);
+});
+
 describe("clearConnectorVaultSecretKeys", () => {
   test("deletes all keys for github", async () => {
     const deleted: string[] = [];

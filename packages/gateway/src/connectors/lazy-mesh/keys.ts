@@ -20,6 +20,7 @@ export const LAZY_MESH = {
   jira: "mesh:jira",
   notion: "mesh:notion",
   mendeley: "mesh:mendeley",
+  workday: "mesh:workday",
   confluence: "mesh:confluence",
   discord: "mesh:discord",
   jenkins: "mesh:jenkins",

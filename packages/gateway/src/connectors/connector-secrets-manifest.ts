@@ -181,6 +181,10 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // data-quality issues as data_quality_test items with monitoredDataModelKeys
   // lineage edges. base_url is per-tenant (like Looker/Tableau).
   bigeye: ["bigeye.base_url", "bigeye.api_key"],
+  // Workday HR. OAuth2 authorization-code flow against the tenant-specific
+  // /ccx/oauth2/<tenant>/token endpoint; only the token bundle is vaulted.
+  // Tenant host/name + client id/secret are env vars (see config.ts).
+  workday: ["workday.oauth"],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

@@ -81,7 +81,8 @@ export type Provider =
   | "looker"
   | "powerbi"
   | "montecarlo"
-  | "bigeye";
+  | "bigeye"
+  | "workday";
 
 export interface ProviderQuota {
   requestsPerMinute: number;
@@ -172,6 +173,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   powerbi: { requestsPerMinute: 60, burstSize: 10 },
   montecarlo: { requestsPerMinute: 60, burstSize: 10 },
   bigeye: { requestsPerMinute: 60, burstSize: 10 },
+  workday: { requestsPerMinute: 60, burstSize: 10 },
 };
 
 type BucketState = {

@@ -92,6 +92,7 @@ export const CONNECTOR_SERVICE_IDS = [
   "powerbi",
   "montecarlo",
   "bigeye",
+  "workday",
 ] as const;
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
@@ -209,6 +210,7 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   powerbi: MIN10,
   montecarlo: MIN10,
   bigeye: MIN10,
+  workday: MIN10,
 };
 
 export function normalizeConnectorServiceId(raw: string): ConnectorServiceId | null {
@@ -326,6 +328,8 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   montecarlo:
     "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
   bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
+  workday:
+    "uses OAuth2 authorization-code flow against the tenant-specific /ccx/oauth2/<tenant>/token endpoint (connector.auth workday) — no PKCE flow",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
