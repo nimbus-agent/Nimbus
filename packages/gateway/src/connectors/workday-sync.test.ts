@@ -310,4 +310,106 @@ describe("createWorkdaySyncable", () => {
     expect(r.itemsUpserted).toBe(0);
     expectServiceItemCount(db, "workday", 0);
   });
+
+  test("falls back to DEFAULT config + globalThis.fetch when neither is injected", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [] }), { status: 200 })) as unknown as typeof fetch;
+    try {
+      // No loadWorkdayConfig, no fetchFn → exercise the `?? DEFAULT` and `?? globalThis.fetch` arms.
+      const syncable = createWorkdaySyncable({
+        ensureWorkdayMcpRunning: async () => {},
+        loadAccessToken: async () => "tok",
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+      const r = await syncable.sync(ctx as any, null);
+      expect(r.itemsUpserted).toBe(0);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test("skips rows that map to null (worker without an id)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => DEFAULT_NIMBUS_WORKDAY_TOML,
+      fetchFn: fetchStub({
+        "/workers": { data: [{ name: "No Id Here" }] }, // mapWorkerToItem → null (no id)
+        "/timeOff": { data: [] },
+        "/jobRequisitions": { data: [] },
+      }),
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    expect(r.itemsUpserted).toBe(0);
+    expectServiceItemCount(db, "workday", 0);
+  });
+
+  test("tolerates malformed domain payloads (bare array + non-array data field)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const malformedFetch = (async (url: string | URL) => {
+      const u = String(url);
+      // /workers: a BARE array (no {data} wrapper) → exercises the "no data key → parsed" arm.
+      if (u.includes("/workers")) {
+        return new Response(JSON.stringify([{ id: "w1", name: "Ada" }]), { status: 200 });
+      }
+      // /timeOff: data is not an array → exercises the "non-array data → []" arm.
+      if (u.includes("/timeOff")) {
+        return new Response(JSON.stringify({ data: "not-an-array" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => DEFAULT_NIMBUS_WORKDAY_TOML,
+      fetchFn: malformedFetch,
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    // The bare-array worker is still mapped + upserted; the non-array time-off yields nothing.
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "workday", 1);
+  });
+
+  test("reportRowsFrom handles a bare-array report and a non-array report body", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+    const reportFetch = (async (url: string | URL) => {
+      const u = String(url);
+      // bare array report (no Report_Entry wrapper) → reportRowsFrom returns the array
+      if (u.includes("/BARE")) {
+        return new Response(JSON.stringify([{ org: "Eng", headcount: 3 }]), { status: 200 });
+      }
+      // non-array, non-Report_Entry object → reportRowsFrom returns []
+      if (u.includes("/EMPTY")) {
+        return new Response(JSON.stringify({ unexpected: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => ({
+        timeOffHistoryDays: 365,
+        reports: [
+          { label: "bare", url: "https://wd5.workday.com/ccx/service/customreport2/x/BARE" },
+          { label: "empty", url: "https://wd5.workday.com/ccx/service/customreport2/x/EMPTY" },
+        ],
+      }),
+      tenantHost: "https://wd5.workday.com",
+      fetchFn: reportFetch,
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    // bare report → 1 row upserted; empty report → 0
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "workday", 1);
+  });
 });
