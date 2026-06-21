@@ -25,7 +25,10 @@ export function makeWorkdayDescriptor(args: {
   const base = `${host}/ccx/oauth2/${encodeURIComponent(tenant)}`;
   return {
     id: "workday",
-    vaultKey: "workday.oauth",
+    // Reference the allow-listed literal from the OAUTH_PROVIDERS registry rather than
+    // constructing a new vault-key literal here (static D11 — vault keys live in the
+    // registry's allow-listed site, not in per-connector factories).
+    vaultKey: OAUTH_PROVIDERS.workday.vaultKey,
     authorizeUrl: `${base}/authorize`,
     tokenUrl: `${base}/token`,
     usesPkce: false,
