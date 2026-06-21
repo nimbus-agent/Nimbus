@@ -77,4 +77,10 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("slack", "channel")).toBe(false);
     expect(isProseHeavy("", "")).toBe(false);
   });
+
+  test("workday item types are not prose-heavy (384-dim default)", () => {
+    for (const t of ["worker", "time_off", "job_posting", "report"]) {
+      expect(isProseHeavy("workday", t)).toBe(false);
+    }
+  });
 });
