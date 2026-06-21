@@ -90,6 +90,7 @@
     "packages/mcp-connectors/stackoverflow",
     "packages/mcp-connectors/zotero",
     "packages/mcp-connectors/mendeley",
+    "packages/mcp-connectors/workday",
     "packages/mcp-connectors/dependencytrack",
     "packages/mcp-connectors/airflow",
     "packages/mcp-connectors/prefect",

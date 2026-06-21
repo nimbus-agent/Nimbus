@@ -1251,6 +1251,18 @@
         "@types/bun": "latest",
       },
     },
+    "packages/mcp-connectors/workday": {
+      "name": "nimbus-mcp-workday",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/mcp-connectors/zendesk": {
       "name": "nimbus-mcp-zendesk",
       "version": "0.1.0",
@@ -3593,6 +3605,8 @@
     "nimbus-mcp-vertex-ai": ["nimbus-mcp-vertex-ai@workspace:packages/mcp-connectors/vertex-ai"],
 
     "nimbus-mcp-wiz": ["nimbus-mcp-wiz@workspace:packages/mcp-connectors/wiz"],
+
+    "nimbus-mcp-workday": ["nimbus-mcp-workday@workspace:packages/mcp-connectors/workday"],
 
     "nimbus-mcp-zendesk": ["nimbus-mcp-zendesk@workspace:packages/mcp-connectors/zendesk"],
 
