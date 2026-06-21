@@ -241,6 +241,17 @@ describe("mapReportRowToItem", () => {
     expect(r?.type).toBe("report");
   });
 
+  test("a key_field pointing at a PII column falls back to the content hash (no PII in id/title)", () => {
+    const r = mapReportRowToItem(
+      { ssn: "123-45-6789", org: "Eng" },
+      { ...rpt, keyField: "ssn" },
+      ctx,
+    );
+    expect(r?.externalId.startsWith("headcount:")).toBe(true);
+    // The SSN value must not surface in the id or title.
+    expect(JSON.stringify(r)).not.toContain("123-45-6789");
+  });
+
   test("hashes the row content when no key_field — same content yields same id (position-independent)", () => {
     const a = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);
     const b = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);

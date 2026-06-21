@@ -5,6 +5,7 @@ import type { MappedRow } from "./mapped-row.ts";
 import { asRecord } from "./unknown-record.ts";
 import {
   applyReportFieldPolicy,
+  isPiiKey,
   JOB_POSTING_ALLOWED_FIELDS,
   pickAllowed,
   TIME_OFF_ALLOWED_FIELDS,
@@ -121,7 +122,9 @@ export function mapReportRowToItem(
   if (row === undefined) return null;
   const filtered = applyReportFieldPolicy(row, report.fields);
   const keyVal =
-    report.keyField !== undefined && typeof row[report.keyField] === "string"
+    report.keyField !== undefined &&
+    typeof row[report.keyField] === "string" &&
+    !isPiiKey(report.keyField)
       ? (row[report.keyField] as string)
       : stableRowKey(filtered);
   const externalId = `${report.label}:${keyVal}`;

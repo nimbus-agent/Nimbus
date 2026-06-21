@@ -91,6 +91,13 @@ requires HITL (read-only connector).
 PII is filtered to directory-safe fields only — compensation, SSN, home address,
 and leave reasons are never indexed.
 
+> **Scope of the allowlist:** the PII allowlist governs what is written to the
+> local **index** (and embeddings) by the background sync. The three live MCP
+> read tools (`workday_list`/`get`/`search`) call the Workday API directly and
+> return its raw response to the agent (envelope-wrapped), so they are bounded
+> by what the Workday API itself exposes for the authenticated client, not by
+> this index-side allowlist.
+
 ## See also
 
 - [Nimbus Connectors Overview](https://nimbus-agent.dev/user-guide/connectors/)

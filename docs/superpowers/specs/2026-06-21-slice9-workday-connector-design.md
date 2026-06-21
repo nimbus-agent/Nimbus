@@ -284,6 +284,12 @@ set never gains a write/mutate tool (mirrors the warehouse `assertNoRowDataTools
   emit **none** of them — and that the worker mapper's emitted key set is a subset of the
   allowlist. Fails CI if a future change adds a forbidden field. The RaaS denylist heuristic
   has its own unit test.
+- **Boundary scope:** the allowlist governs what the background sync writes to the local
+  **index** (and embeddings). The live MCP read tools (`workday_list`/`get`/`search`) call the
+  Workday API directly and return its raw response to the agent (envelope-wrapped, I11) — they
+  are bounded by what the API exposes for the authenticated client, not by the index-side
+  allowlist (same posture as every other read connector). A future hardening could route the
+  live tools through the mappers.
 
 ---
 
