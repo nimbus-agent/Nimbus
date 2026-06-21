@@ -204,4 +204,110 @@ describe("createWorkdaySyncable", () => {
     expect(syncable.defaultIntervalMs).toBe(10 * 60 * 1000);
     expect(syncable.initialSyncDepthDays).toBe(30);
   });
+
+  test("indexes RaaS report rows from a same-host report url", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => ({
+        timeOffHistoryDays: 365,
+        reports: [
+          {
+            label: "headcount",
+            url: "https://wd5.workday.com/ccx/service/customreport2/acme/ISU/HC?format=json",
+          },
+        ],
+      }),
+      // tenantHost injected so sameTenantHost can compare without relying on Config (frozen at import)
+      tenantHost: "https://wd5.workday.com",
+      fetchFn: fetchStub({
+        "/workers": { data: [] },
+        "/timeOff": { data: [] },
+        "/jobRequisitions": { data: [] },
+        "/customreport2/acme/ISU/HC": { Report_Entry: [{ org: "Eng", headcount: 12 }] },
+      }),
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    expect(r.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "workday", 1);
+
+    const rows = db
+      .prepare("SELECT type, metadata FROM item WHERE service = 'workday'")
+      .all() as Array<{ type: string; metadata: string }>;
+    expect(rows.length).toBe(1);
+    const first = rows[0];
+    expect(first).toBeDefined();
+    expect(first?.type).toBe("report");
+    const meta = JSON.parse(first?.metadata ?? "{}") as { reportLabel?: string };
+    expect(meta.reportLabel).toBe("headcount");
+  });
+
+  test("rejects a report url whose host != tenant host (no fetch, no upsert)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+    let evilFetched = false;
+    const guardedFetch = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("evil.example.com")) {
+        evilFetched = true;
+        return new Response("{}", { status: 200 });
+      }
+      // REST domains return empty data
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => ({
+        timeOffHistoryDays: 365,
+        reports: [{ label: "evil", url: "https://evil.example.com/report?format=json" }],
+      }),
+      tenantHost: "https://wd5.workday.com",
+      fetchFn: guardedFetch,
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    await syncable.sync(ctx as any, null);
+    expect(evilFetched).toBe(false);
+    expectServiceItemCount(db, "workday", 0);
+  });
+
+  test("a report fetch that returns non-ok skips that report but continues sync", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+    const syncable = createWorkdaySyncable({
+      ensureWorkdayMcpRunning: async () => {},
+      loadAccessToken: async () => "tok",
+      loadWorkdayConfig: () => ({
+        timeOffHistoryDays: 365,
+        reports: [
+          {
+            label: "bad",
+            url: "https://wd5.workday.com/ccx/service/customreport2/acme/ISU/BAD?format=json",
+          },
+        ],
+      }),
+      tenantHost: "https://wd5.workday.com",
+      fetchFn: fetchStub({
+        "/workers": { data: [] },
+        "/timeOff": { data: [] },
+        "/jobRequisitions": { data: [] },
+        // /BAD not in map → 404 from fetchStub
+      }),
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
+    const r = await syncable.sync(ctx as any, null);
+    // Must not throw; no report item upserted
+    expect(r.itemsUpserted).toBe(0);
+    expectServiceItemCount(db, "workday", 0);
+  });
 });

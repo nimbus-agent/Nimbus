@@ -10,6 +10,7 @@ import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import {
   mapJobPostingToItem,
+  mapReportRowToItem,
   mapTimeOffToItem,
   mapWorkerToItem,
   type WorkdayMapContext,
@@ -83,6 +84,21 @@ function restBase(tenantHost: string, tenant: string): string {
 function daysAgoIso(days: number): string {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function sameTenantHost(reportUrl: string, tenantHost: string): boolean {
+  try {
+    return new URL(reportUrl).host === new URL(tenantHost).host;
+  } catch {
+    return false;
+  }
+}
+
+function reportRowsFrom(root: unknown): unknown[] {
+  // Workday RaaS JSON wraps rows under "Report_Entry"; fall back to a bare array.
+  const entry = (root as { Report_Entry?: unknown })?.Report_Entry;
+  if (Array.isArray(entry)) return entry;
+  return Array.isArray(root) ? root : [];
 }
 
 async function fetchDomainPage(
@@ -167,6 +183,8 @@ export type WorkdaySyncableOptions = {
   loadWorkdayConfig?: () => NimbusWorkdayToml;
   fetchFn?: FetchFn;
   loadAccessToken?: (vault: SyncContext["vault"]) => Promise<string>;
+  /** Override the tenant host used for same-host egress enforcement (tests only). */
+  tenantHost?: string;
 };
 
 export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable {
@@ -194,10 +212,11 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
       const fetchFn: FetchFn = options.fetchFn ?? (globalThis.fetch as FetchFn);
 
       const prev = decodeCursor(cursor);
-      const base = restBase(Config.workdayTenantHost, Config.workdayTenant);
+      const effectiveTenantHost = options.tenantHost ?? Config.workdayTenantHost;
+      const base = restBase(effectiveTenantHost, Config.workdayTenant);
       const mapCtx: WorkdayMapContext = {
         syncedAt: Date.now(),
-        tenantHost: Config.workdayTenantHost,
+        tenantHost: effectiveTenantHost,
         tenant: Config.workdayTenant,
       };
 
@@ -274,9 +293,52 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
         );
       }
 
-      // TODO(Task 15): RaaS reports
-      for (const _report of workdayConfig.reports) {
-        // Task 15 fills this walk
+      // RaaS reports: one fetch per report URL, same-host egress enforcement
+      for (const report of workdayConfig.reports) {
+        if (!sameTenantHost(report.url, effectiveTenantHost)) {
+          ctx.logger.warn(
+            { serviceId: SERVICE_ID, reportLabel: report.label, url: report.url },
+            "workday report url host does not match tenant host; skipping",
+          );
+          continue;
+        }
+        try {
+          await ctx.rateLimiter.acquire(SERVICE_ID);
+          const res = await fetchFn(report.url, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const text = await res.text();
+          totalBytes += text.length;
+          if (!res.ok) {
+            ctx.logger.warn(
+              { serviceId: SERVICE_ID, reportLabel: report.label, status: res.status },
+              "workday report fetch failed; skipping",
+            );
+            continue;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text) as unknown;
+          } catch {
+            ctx.logger.warn(
+              { serviceId: SERVICE_ID, reportLabel: report.label },
+              "workday report response is not valid JSON; skipping",
+            );
+            continue;
+          }
+          for (const row of reportRowsFrom(parsed)) {
+            const mapped = mapReportRowToItem(row, report, mapCtx);
+            if (mapped !== null) {
+              upsertIndexedItemForSync(ctx, mapped);
+              totalUpserted += 1;
+            }
+          }
+        } catch (err) {
+          ctx.logger.warn(
+            { serviceId: SERVICE_ID, reportLabel: report.label, err },
+            "workday report fetch error; skipping",
+          );
+        }
       }
 
       const nextCursor = buildNextCursor(
