@@ -111,6 +111,7 @@
     "packages/mcp-connectors/elasticsearch",
     "packages/mcp-connectors/great-expectations",
     "packages/mcp-connectors/imap",
+    "packages/mcp-connectors/apple",
     "packages/mcp-connectors/fastmail",
     "packages/mcp-connectors/protonmail",
     "packages/mcp-connectors/localdb",
