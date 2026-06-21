@@ -199,6 +199,7 @@ mock.module("../../../../src/auth/salesforce-access-token.ts", () => ({
 }));
 
 const {
+  ensureAppleMcp,
   ensureBitbucketMcp,
   ensureCanvaMcp,
   ensureCircleciMcp,
@@ -531,6 +532,72 @@ describe("ensureBitbucketMcp", () => {
     await vault.set("bitbucket.app_password", "bb_secret");
     await ensureBitbucketMcp(ctx);
     expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureAppleMcp (iCloud Mail+Calendar, two-key gate)", () => {
+  test("missing both → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("missing icloud_app_password → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("missing icloud_email → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("blank icloud_email → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("both present → spawn apple with scoped env + iCloud host:port manifest", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(1);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.apple);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.apple);
+
+    const spec = capturedClients[0]?.servers["apple"];
+    expect(spec?.command).toBe(process.execPath);
+    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]apple[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["APPLE_ICLOUD_EMAIL"]).toBe("me@icloud.com");
+    expect(spec?.env["APPLE_ICLOUD_APP_PASSWORD"]).toBe("abcd-efgh-ijkl-mnop");
+    // The fixed iCloud IMAP/SMTP host:port endpoints are folded into the sandbox manifest.
+    const manifestJson = spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"] ?? "";
+    expect(manifestJson).toContain("imap.mail.me.com:993");
+    expect(manifestJson).toContain("smtp.mail.me.com:587");
+    expect(manifestJson).toContain("caldav.icloud.com");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, calls, vault } = makeCtx({ existingClient: true });
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.apple);
   });
 });
 

@@ -519,6 +519,21 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // iCloud Mail (IMAP/SMTP) + iCloud Calendar (CalDAV) (Tier-4 EMAIL). The IMAP
+  // (993) + SMTP (587) hosts are on non-443 ports, so their concrete
+  // imap.mail.me.com:993 / smtp.mail.me.com:587 host:port entries are added at
+  // spawn time by ensureAppleMcp via manifestWithExtraNetworkHosts (host:port
+  // syntax, same as imap). caldav.icloud.com is the fixed 443 CalDAV bootstrap
+  // host declared statically here. NOTE: principal discovery redirects to a
+  // per-account p##-caldav.icloud.com partition host that cannot be enumerated
+  // statically; under strict per-host gating (the rarely-available sandbox
+  // helper) CalDAV reads degrade — in the common fallback (all-or-nothing) mode
+  // the declared hosts enable the connector. See README "Network sandbox".
+  apple: baseManifest("com.nimbus.apple", {
+    network: ["caldav.icloud.com"],
+    filesystem: { read: [], write: [] },
+  }),
+
   // Local DB Schema Indexing (Tier-5 local). No network; reads saved `.sql`
   // files from the configured scripts dir, which is added to filesystem.read at
   // spawn time by phase3AddLocaldbMcp (mirroring Great Expectations / Obsidian).

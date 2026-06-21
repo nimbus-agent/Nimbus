@@ -1144,3 +1144,57 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.bumpToolsEpoch();
   ctx.scheduleLazyDisconnect(slotKey);
 }
+
+/**
+ * Starts the iCloud Mail (IMAP/SMTP) + iCloud Calendar (CalDAV) MCP when BOTH
+ * `apple.icloud_email` AND `apple.icloud_app_password` are present in the Vault
+ * (the single app-specific password authenticates all three protocols). The
+ * iCloud IMAP (993) / SMTP (587) hosts are on non-443 ports, so their concrete
+ * `imap.mail.me.com:993` / `smtp.mail.me.com:587` host:port entries are added to
+ * the sandbox network allow-list at spawn (mirroring phase3AddImapMcp);
+ * `caldav.icloud.com` is declared statically in the apple manifest. (The
+ * per-account `p##-caldav.icloud.com` partition host is resolved at runtime
+ * inside server.ts; under strict per-host gating CalDAV degrades — see the apple
+ * manifest note.)
+ */
+export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.apple;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const email = await readConnectorSecret(ctx.vault, "apple", "icloud_email");
+  const appPw = await readConnectorSecret(ctx.vault, "apple", "icloud_app_password");
+  if (email === null || email === "" || appPw === null || appPw === "") {
+    return;
+  }
+  // iCloud IMAP/SMTP are fixed, non-443 host:port endpoints (993 / 587); add
+  // them to the apple manifest's network allow-list at spawn.
+  const appleManifest = manifestWithExtraNetworkHosts("apple", [
+    "imap.mail.me.com:993",
+    "smtp.mail.me.com:587",
+  ]);
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-apple-${randomUUID()}`,
+      servers: {
+        apple: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("apple")],
+            env: extensionProcessEnv({
+              APPLE_ICLOUD_EMAIL: email,
+              APPLE_ICLOUD_APP_PASSWORD: appPw,
+            }),
+          },
+          appleManifest,
+          ctx.sandboxCwd,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}

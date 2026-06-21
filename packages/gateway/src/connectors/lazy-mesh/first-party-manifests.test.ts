@@ -53,6 +53,22 @@ describe("manifestForFirstParty", () => {
     expect(m.permissions.filesystem.write).toEqual([]);
   });
 
+  test("apple manifest declares the static caldav.icloud.com host (imap/smtp host:port added at spawn)", () => {
+    const m = manifestForFirstParty("apple");
+    expect(m.id).toBe("com.nimbus.apple");
+    expect(m.permissions.network).toEqual(["caldav.icloud.com"]);
+    expect(m.permissions.filesystem.read).toEqual([]);
+    expect(m.permissions.filesystem.write).toEqual([]);
+    // The non-443 IMAP/SMTP host:port endpoints are folded in at spawn.
+    const spawned = manifestWithExtraNetworkHosts("apple", [
+      "imap.mail.me.com:993",
+      "smtp.mail.me.com:587",
+    ]);
+    expect(spawned.permissions.network).toContain("caldav.icloud.com");
+    expect(spawned.permissions.network).toContain("imap.mail.me.com:993");
+    expect(spawned.permissions.network).toContain("smtp.mail.me.com:587");
+  });
+
   test("FIRST_PARTY_MANIFESTS contains the spec's enumerated connectors", () => {
     const expected = [
       "filesystem",

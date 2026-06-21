@@ -34,6 +34,7 @@ export const LAZY_MESH = {
   canva: "mesh:canva",
   figma: "mesh:figma",
   salesforce: "mesh:salesforce",
+  apple: "mesh:apple",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

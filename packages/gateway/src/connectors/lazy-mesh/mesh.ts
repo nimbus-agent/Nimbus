@@ -9,6 +9,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { CONNECTOR_SERVICE_IDS } from "../connector-catalog.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
+  ensureAppleMcp,
   ensureBitbucketMcp,
   ensureCanvaMcp,
   ensureCircleciMcp,
@@ -283,6 +284,10 @@ export class LazyConnectorMesh {
     return ensureWorkdayMcp(this.spawnContext);
   }
 
+  async ensureAppleRunning(): Promise<void> {
+    return ensureAppleMcp(this.spawnContext);
+  }
+
   async ensureObsidianRunning(): Promise<void> {
     return ensureObsidianMcp(this.spawnContext);
   }
@@ -354,6 +359,7 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.notion), name: "notion" },
       { map: await list(LAZY_MESH.mendeley), name: "mendeley" },
       { map: await list(LAZY_MESH.workday), name: "workday" },
+      { map: await list(LAZY_MESH.apple), name: "apple" },
       { map: await list(LAZY_MESH.confluence), name: "confluence" },
       { map: await list(LAZY_MESH.discord), name: "discord" },
       { map: await list(LAZY_MESH.jenkins), name: "jenkins" },

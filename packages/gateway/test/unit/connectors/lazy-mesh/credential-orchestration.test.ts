@@ -16,6 +16,7 @@ function makeRecorderSpawners(): CredentialSpawners {
       spawnCalls.push(name);
     };
   return {
+    ensureAppleMcp: make("apple"),
     ensureBitbucketMcp: make("bitbucket"),
     ensureCircleciMcp: make("circleci"),
     ensureConfluenceMcp: make("confluence"),
@@ -313,6 +314,30 @@ describe("single-secret connectors", () => {
       await runOrchestration(ctx);
       expectRanToCompletion();
       expect(spawnCalls).not.toContain("canva");
+    });
+  });
+
+  describe("apple — apple.icloud_app_password", () => {
+    it("spawns apple when apple.icloud_app_password is set", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+      await runOrchestration(ctx);
+      expect(spawnCalls).toContain("apple");
+    });
+
+    it("does not spawn apple when vault is empty", async () => {
+      const { ctx } = makeCtx();
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("apple");
+    });
+
+    it("does not spawn apple when icloud_app_password is empty string", async () => {
+      const { ctx, vault } = makeCtx();
+      await vault.set("apple.icloud_app_password", "");
+      await runOrchestration(ctx);
+      expectRanToCompletion();
+      expect(spawnCalls).not.toContain("apple");
     });
   });
 });

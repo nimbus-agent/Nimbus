@@ -10,6 +10,7 @@ import * as defaultSpawners from "./connector-spawns.ts";
 import type { MeshSpawnContext } from "./slot.ts";
 
 export type CredentialSpawners = {
+  readonly ensureAppleMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureBitbucketMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureCircleciMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureConfluenceMcp: (ctx: MeshSpawnContext) => Promise<void>;
@@ -192,6 +193,9 @@ export async function ensureCredentialConnectorsRunning(
   await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "mendeley", "oauth", () => spawners.ensureMendeleyMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "workday", "oauth", () => spawners.ensureWorkdayMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "apple", "icloud_app_password", () =>
+    spawners.ensureAppleMcp(ctx),
+  );
   await ensureIfConnectorSecretSet(ctx, "zoom", "oauth", () => spawners.ensureZoomMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "hubspot", "oauth", () => spawners.ensureHubspotMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "miro", "oauth", () => spawners.ensureMiroMcp(ctx));
