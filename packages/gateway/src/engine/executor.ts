@@ -119,6 +119,14 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "montecarlo.incident.resolve",
   "bigeye.issue.acknowledge",
   "bigeye.issue.resolve",
+  // Phase 6 Slice 9 W1 — GitOps + ML writes (kept in sync with GITOPS_ML_WRITES; see
+  // connectors/gitops-ml-write-tools.ts; drift asserted in connector-write-registry.test.ts).
+  "argocd.app.sync",
+  "argocd.app.rollback",
+  "flux.kustomization.reconcile",
+  "flux.helmrelease.reconcile",
+  "mlflow.model.promote",
+  "mlflow.model.transition_stage",
   // Phase 6 Slice 8 — outbound share publish is owner-HITL-gated (I27); the share-gate
   // (share/share-gate.ts) redacts → owner HITL → signs → persists → audits.
   "share.publish",

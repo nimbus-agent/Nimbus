@@ -1,5 +1,6 @@
 // packages/gateway/src/connectors/connector-write-registry.test.ts
 import { describe, expect, test } from "bun:test";
+import { HITL_REQUIRED } from "../engine/executor.ts";
 import {
   CONNECTOR_WRITES,
   connectorWriteByActionType,
@@ -29,5 +30,20 @@ describe("connector-write-registry — union of all connector writes", () => {
       "flux_helmrelease_reconcile",
     );
     expect(connectorWriteByActionType("nope.nope")).toBeUndefined();
+  });
+});
+
+describe("connector writes are all HITL-gated (I26 ↔ I2 completeness)", () => {
+  test("every connector-write action type is in HITL_REQUIRED", () => {
+    for (const x of CONNECTOR_WRITES) {
+      expect(HITL_REQUIRED.has(x.actionType)).toBe(true);
+    }
+  });
+
+  test("every tool id flagged by isConnectorWriteToolId maps to a HITL action type", () => {
+    for (const x of CONNECTOR_WRITES) {
+      expect(isConnectorWriteToolId(x.toolId)).toBe(true);
+      expect(HITL_REQUIRED.has(x.actionType)).toBe(true);
+    }
   });
 });
