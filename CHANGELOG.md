@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.16.0](https://github.com/nimbus-agent/Nimbus/compare/v0.15.0...v0.16.0) (2026-06-21)
+
+
+### Features
+
+* **slice9:** Workday connector (read-only) — workers/time-off/job-postings + RaaS reports ([#709](https://github.com/nimbus-agent/Nimbus/issues/709)) ([2646918](https://github.com/nimbus-agent/Nimbus/commit/2646918570aaa52e1477765fe169df3433bdba25))
+
 ## [0.15.0](https://github.com/nimbus-agent/Nimbus/compare/v0.14.0...v0.15.0) (2026-06-21)
 
 
