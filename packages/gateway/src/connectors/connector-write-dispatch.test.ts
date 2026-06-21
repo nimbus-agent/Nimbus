@@ -1,7 +1,12 @@
 // packages/gateway/src/connectors/connector-write-dispatch.test.ts
+
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
+import path from "node:path";
 import type { ConnectorDispatcher } from "../engine/types.ts";
 import { createConnectorWriteDispatcher } from "./connector-write-dispatch.ts";
+
+const SANDBOX_CWD = path.join(os.tmpdir(), "nimbus-test");
 
 describe("createConnectorWriteDispatcher", () => {
   test("delegates non-write actions to the inner dispatcher", async () => {
@@ -14,7 +19,7 @@ describe("createConnectorWriteDispatcher", () => {
     };
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
-      sandboxCwd: "/tmp",
+      sandboxCwd: SANDBOX_CWD,
       credentialFor: () => ({ credential: "personal" }),
       runTeamInvoke: async () => ({}),
     });
@@ -28,7 +33,7 @@ describe("createConnectorWriteDispatcher", () => {
     const inner: ConnectorDispatcher = { dispatch: async () => ({ inner: true }) };
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
-      sandboxCwd: "/tmp",
+      sandboxCwd: SANDBOX_CWD,
       credentialFor: () => ({ credential: "team", teamEntry: "wh" }),
       runTeamInvoke: async (req) => {
         seen = req;
@@ -53,7 +58,7 @@ describe("createConnectorWriteDispatcher", () => {
     const inner: ConnectorDispatcher = { dispatch: async () => ({ inner: true }) };
     const d = createConnectorWriteDispatcher(inner, {
       vault: {} as never,
-      sandboxCwd: "/tmp",
+      sandboxCwd: SANDBOX_CWD,
       credentialFor: () => ({ credential: "team", teamEntry: "argo" }),
       runTeamInvoke: async (req) => {
         seen = req;

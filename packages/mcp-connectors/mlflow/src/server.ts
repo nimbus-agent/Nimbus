@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { searchToolInputSchema } from "../../shared/mcp-search-tool.ts";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
   type ZodToolRegistrar,
@@ -28,7 +28,7 @@ function authHeader(): Record<string, string> {
 }
 
 async function mlflowGet(path: string): Promise<unknown> {
-  const res = await fetch(`${apiBase()}${path}`, { headers: authHeader() });
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, { headers: authHeader() });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`MLflow ${String(res.status)}: ${text.slice(0, 400)}`);
@@ -37,7 +37,7 @@ async function mlflowGet(path: string): Promise<unknown> {
 }
 
 async function mlflowPost(path: string, body: unknown): Promise<unknown> {
-  const res = await fetch(`${apiBase()}${path}`, {
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, {
     method: "POST",
     headers: { ...authHeader(), "Content-Type": "application/json" },
     body: JSON.stringify(body),

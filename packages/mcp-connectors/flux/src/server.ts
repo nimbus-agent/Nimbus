@@ -1,6 +1,6 @@
 import { FLUX_KINDS, type FluxKindEntry, trimTrailingSlash } from "@nimbus-dev/sdk";
 import { z } from "zod";
-import { mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
+import { fetchWithTimeout, mcpJsonResult as jsonResult } from "../../shared/mcp-tool-kit.ts";
 import {
   runReadOnlyMcpConnector,
   type ZodToolRegistrar,
@@ -34,7 +34,7 @@ function authHeader(): Record<string, string> {
 }
 
 async function agGet(path: string): Promise<unknown> {
-  const res = await fetch(`${apiBase()}${path}`, { headers: authHeader() });
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, { headers: authHeader() });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Flux ${String(res.status)}: ${text.slice(0, 400)}`);
@@ -65,7 +65,7 @@ async function fluxReconcile(kind: string, namespace: string, name: string): Pro
   const entry = kindEntry(kind);
   const path = `${listPath(entry, namespace)}/${encodeURIComponent(name)}`;
   const requestedAt = new Date().toISOString();
-  const res = await fetch(`${apiBase()}${path}`, {
+  const res = await fetchWithTimeout(`${apiBase()}${path}`, {
     method: "PATCH",
     headers: { ...authHeader(), "Content-Type": "application/merge-patch+json" },
     body: JSON.stringify({
