@@ -75,17 +75,19 @@ Vault keys:
 | --- | --- | --- |
 | `workday.oauth` | yes (after auth) | Workday OAuth2 token bundle (access + refresh), stored in the Vault after `nimbus connector auth workday`. |
 
-Tools exposed:
+Tools exposed (live, read-only — workers only):
 
 | Tool | Purpose |
 | --- | --- |
-| `workday_workers_list` | List workers from the Workday org directory. |
-| `workday_worker_get` | Fetch one worker by ID. |
-| `workday_time_off_list` | List time-off requests (current and upcoming). |
-| `workday_job_postings_list` | List open job requisitions. |
-| `workday_report_get` | Fetch a configured RaaS report by label. |
+| `workday_list` | List Workday workers (`GET /workers?limit=100`). |
+| `workday_get` | Fetch one worker by ID (`GET /workers/{id}`). |
+| `workday_search` | Substring search across the first page of workers. |
 
-All tools are read-only; `hitlRequired` is intentionally empty.
+Time-off, job postings, and admin-configured RaaS reports are **indexed by the
+Gateway sync** (and surfaced via `nimbus search`), not exposed as separate MCP
+tools — so the four `workday:*` item types above come from the sync, while the
+connector's live tool surface is the three worker tools listed here. No tool
+requires HITL (read-only connector).
 PII is filtered to directory-safe fields only — compensation, SSN, home address,
 and leave reasons are never indexed.
 
