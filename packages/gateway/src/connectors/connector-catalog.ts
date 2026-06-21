@@ -334,7 +334,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
     "uses an API key pair (api_id + api_token) against the Monte Carlo GraphQL API (connector.auth montecarlo) — no PKCE flow",
   bigeye: "uses a Bearer API key + per-tenant base URL (connector.auth bigeye) — no PKCE flow",
   apple:
-    "uses an Apple ID + app-specific password for iCloud Mail (IMAP) + Calendar (CalDAV); set via connector.auth apple",
+    "uses an Apple ID + app-specific password for iCloud Mail (IMAP/SMTP) + Calendar (CalDAV); set via connector.auth apple",
 };
 
 export function oauthProfileForService(serviceId: ConnectorServiceId): ConnectorOAuthProfile {
