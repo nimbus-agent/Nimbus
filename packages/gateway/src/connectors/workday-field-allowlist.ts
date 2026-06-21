@@ -53,6 +53,16 @@ export function pickAllowed<T extends Record<string, unknown>>(
   return out;
 }
 
+/**
+ * Apply the RaaS report field policy to a single row.
+ *
+ * - When `fields` is provided and non-empty, ONLY those keys are emitted — this is
+ *   an explicit admin-supplied allowlist and it INTENTIONALLY BYPASSES the
+ *   {@link isPiiKey} denylist. The caller (the report config author) is responsible
+ *   for the contents of `fields`; if they list a PII key it will be indexed.
+ * - Otherwise (no `fields`, or empty), every non-PII key is emitted, with the
+ *   {@link isPiiKey} denylist applied as a defense-in-depth backstop.
+ */
 export function applyReportFieldPolicy(
   row: Record<string, unknown>,
   fields?: readonly string[],
