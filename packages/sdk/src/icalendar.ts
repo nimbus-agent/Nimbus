@@ -56,12 +56,28 @@ function unfoldLines(ics: string): string {
  *   \n / \N → newline
  */
 function unescapeValue(value: string): string {
-  return value
-    .replace(/\\N/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\,/g, ",")
-    .replace(/\\;/g, ";")
-    .replace(/\\\\/g, "\\");
+  // Single left-to-right pass. Sequential global replaces cannot decode
+  // correctly at any ordering: e.g. the wire value `\\n` (escaped backslash
+  // then a literal `n`) must yield the two chars `\n`, but a `\\\\`→`\` pass
+  // followed by a `\\n`→newline pass would collapse it to a newline. Scanning
+  // char-by-char and consuming the escaped char fixes this.
+  let out = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\\" && i + 1 < value.length) {
+      const next = value[i + 1];
+      i++; // consume the escaped character
+      if (next === "n" || next === "N") {
+        out += "\n";
+      } else {
+        // \\ → \, \, → ,, \; → ;, and any other escape → the literal char
+        out += next;
+      }
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 /**

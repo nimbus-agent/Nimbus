@@ -183,6 +183,25 @@ describe("parseICalendar", () => {
     expect(e?.summary).toBe("path\\to\\file");
   });
 
+  // Combined escape: wire `\\n` (escaped backslash + literal n) must decode to
+  // the two literal chars `\n`, NOT a newline. Guards the unescape pass order.
+  it("decodes an escaped backslash followed by 'n' as literal \\n, not a newline", () => {
+    const src = ics(
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:bsn-1",
+      // JS "\\\\n" → wire `\\n` (backslash, backslash, n)
+      "SUMMARY:path\\\\nfile",
+      "DTSTART:20260601T090000Z",
+      "DTEND:20260601T091500Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    );
+    const [e] = parseICalendar(src);
+    expect(e?.summary).toBe("path\\nfile"); // backslash + n, two literal chars
+    expect(e?.summary).not.toContain("\n"); // definitely not a newline
+  });
+
   // ORGANIZER without mailto → organizer should be null
   it("returns null organizer when ORGANIZER has no mailto", () => {
     const src = ics(
