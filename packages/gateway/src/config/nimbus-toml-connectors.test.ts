@@ -91,4 +91,10 @@ describe("parseNimbusConnectorsToml", () => {
     const cfg = parseNimbusConnectorsToml(raw);
     expect(cfg.get("snowflake")).toEqual({ credential: "team", teamEntry: "prod-snowflake" });
   });
+
+  it("ignores a [connectors.workday] table that has no credential key", () => {
+    const src = ["[connectors.workday]", "time_off_history_days = 90"].join("\n");
+    expect(() => parseNimbusConnectorsToml(src)).not.toThrow();
+    expect(parseNimbusConnectorsToml(src).size).toBe(0);
+  });
 });

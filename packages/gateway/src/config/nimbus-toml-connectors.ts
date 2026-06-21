@@ -98,6 +98,13 @@ function resolveConnectorConfig(
 export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
   const out = new Map<TeamCredentialConnector, ConnectorCredentialConfig>();
   for (const [name, kv] of accumulateConnectorTables(source)) {
+    // Skip config-only tables (no `credential` key) for connectors not in the team-credential list
+    // (e.g. [connectors.workday] is a RaaS-reports section, not a team-credential entry).
+    if (
+      !(TEAM_CREDENTIAL_CONNECTORS as readonly string[]).includes(name) &&
+      kv["credential"] === undefined
+    )
+      continue;
     out.set(name as TeamCredentialConnector, resolveConnectorConfig(name, kv));
   }
   return out;
