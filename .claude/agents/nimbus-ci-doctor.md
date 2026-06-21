@@ -26,7 +26,7 @@ Logs are only retrievable once the run COMPLETES: `gh run view --job <jobId> --l
 - **Unit + Coverage / Static red on coverage** → the coverage ratchet; delegate to the `nimbus-coverage-floor` agent (Docker-Linux-authoritative).
 
 ## Step 3 — verify the fix the right way
-- Static/lint/typecheck/markdown failures → `bun run preflight:fast` (memory-safe, all 16 static gates) reproduces them locally.
+- Static/lint/typecheck/markdown failures → `bun run preflight:fast` (memory-safe, all 18 static gates) reproduces them locally.
 - Coverage / Linux-only test failures → `audit:coverage-floor` is **CI-Linux-authoritative**; verify via Docker (`oven/bun:latest`), not local scoped coverage. (See the `nimbus-coverage-floor` agent for the Docker recipe.)
 - NEVER run the full suite / `bun run test` / `test:coverage` / `preflight` locally for iteration — scoped `bun test <files>` only.
 

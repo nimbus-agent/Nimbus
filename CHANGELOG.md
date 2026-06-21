@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.14.0](https://github.com/nimbus-agent/Nimbus/compare/v0.13.1...v0.14.0) (2026-06-21)
+
+
+### Features
+
+* **egress:** Egress Ledger & nimbus prove (S1 Local Brain — I29/D22/V44) ([#698](https://github.com/nimbus-agent/Nimbus/issues/698)) ([34fb594](https://github.com/nimbus-agent/Nimbus/commit/34fb5942fd536981f58405a8e4904529addd40a3))
+
 ## [0.13.1](https://github.com/nimbus-agent/Nimbus/compare/v0.13.0...v0.13.1) (2026-06-20)
 
 

@@ -346,6 +346,19 @@ nimbus chatops stop
 nimbus chatops test "<message>"                       # post a test message through the reply dispatcher (I23)
 ```
 
+### Phase 6 Slice 8 + S1 — Share, recipes, and the egress ledger
+
+```bash
+nimbus share <session-id> [--as-recipe]               # redacted, owner-HITL-gated, signed outbound share (I27)
+nimbus share list | prune                             # list / prune share records
+nimbus share inbox [--all]                            # inbound forwarded shares (8d)
+nimbus share forward <contentHash> --to-peer <id>     # forward a received share to a peer (8d)
+nimbus verify-share <file|url> [--replay]             # verify signature/hash; --replay re-runs read-only tool calls (8c)
+nimbus prove "<query>"                                # run a query + prove its outbound egress count is 0 (I29)
+nimbus egress [verify] [--since <dur>] [--json] [--sign]            # egress report / offline BLAKE3-chain verify
+nimbus egress prune (--before <ISO|epoch> | --older-than <dur>)    # HITL-gated retention; the sole egress_ledger mutation
+```
+
 ### MCP server mode
 
 ```bash

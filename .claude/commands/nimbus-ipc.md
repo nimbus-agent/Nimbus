@@ -327,6 +327,38 @@ SCIM v2 user-provisioning admin surface. The two read methods are renderer-calla
 
 ---
 
+### `share.*` — Outbound share (Phase 6 Slice 8)
+
+The one deliberate outbound-share path — invariant `I27`. `share.create` is the sole `createShare()` emit path (redact → owner-HITL `share.publish` → sign → persist → emit); emit-class methods are kept off the Tauri allowlist, read verbs are renderer-callable. See the `nimbus-share-virality` skill.
+
+| Method | Type | Description |
+|---|---|---|
+| `share.create` | request | Create a redacted, signed share (CLI-only; `FORBIDDEN_OVER_LAN`) |
+| `share.list` / `share.get` | request | List / fetch share records (read; renderer-exposed) |
+| `share.pubkey` | request | Gateway share-signing pubkey (read; renderer-exposed) |
+| `share.verify` | request | Verify a share file/URL signature (read; renderer-exposed) |
+| `share.replay` | request | Re-run a share's read-only tool calls locally; divergence report (8c) |
+| `share.inbox` | request | List inbound forwarded shares from `share_inbox` (read; renderer-exposed; 8d) |
+| `share.prune` | request | Prune expired share records (CLI-only) |
+| `share.approvalRespond` | request | Owner HITL response for `share.publish` |
+| `federation.shareForward` / `federation.shareReceive` | request | Forward to a peer (local-only) / receive inbound (LAN-answerable; 8d) |
+
+---
+
+### `egress.*` — Egress ledger (provable locality, Phase 6 / S1)
+
+The append-only, BLAKE3-chained egress ledger — invariant `I29` / static `D22`. Four read verbs are renderer-callable; `egress.prune` is the sole mutation (HITL-gated, CLI-only). See the `nimbus-egress` skill.
+
+| Method | Type | Description |
+|---|---|---|
+| `egress.head` | request | Ledger head hash + row count (read; renderer-exposed) |
+| `egress.list` | request | List ledger rows, clamped (read; renderer-exposed) |
+| `egress.verify` | request | Offline BLAKE3-chain verify, timing-safe (I10) (read; renderer-exposed) |
+| `egress.proveWindow` | request | Rows + completeness tier for `nimbus prove` (read; renderer-exposed) |
+| `egress.prune` | request | Sole mutation: HITL-gated continuing tombstone (I2). **CLI-only** |
+
+---
+
 ### `audit.*` — Audit log (read-only; CLI-only)
 
 | Method | Type | Description |

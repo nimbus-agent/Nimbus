@@ -57,7 +57,7 @@ The backup lives at:
 
 ## Migration File Structure
 
-Each migration step is a function added to `INDEXED_SCHEMA_STEPS` in `runner.ts`. The pattern follows:
+Each migration step is a function added to `INDEXED_SCHEMA_STEPS` in `runner.ts`. **Preferred shape:** for a straight `CREATE TABLE` / `ALTER TABLE` step with no conditional probe, use the declarative `simpleStep(from, to, description, sqlConstOrArray)` helper — e.g. the V44 egress step is `simpleStep(43, 44, "egress_ledger (provable-locality primitive v44)", EGRESS_LEDGER_V44_SQL)` (see `runner-v44.test.ts`). The hand-written `migrateIndexedV<N>ToV<M>(db, now)` form below remains the escape hatch for steps that need a conditional probe or a batched backfill. The pattern follows:
 
 ```typescript
 // In packages/gateway/src/index/<topic>-v<N>-sql.ts
