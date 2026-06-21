@@ -197,6 +197,12 @@ export const TEAM_SECRET_ANYOF_GROUPS: Partial<
   Record<ConnectorServiceId, readonly (readonly string[])[]>
 > = {
   snowflake: [["snowflake.oauth_token", "snowflake.key_pair_jwt"]],
+  // Phase 6 Slice 9 W1 — the bearer token is the team-shareable auth secret for the GitOps/ML write
+  // connectors (the endpoint url/host stays AND-required alongside it). Enrolling marks the token as
+  // the credential a team entry must carry for the I19 team-write path.
+  argocd: [["argocd.token"]],
+  flux: [["flux.token"]],
+  mlflow: [["mlflow.token"]],
 };
 
 export async function clearConnectorVaultSecretKeys(
