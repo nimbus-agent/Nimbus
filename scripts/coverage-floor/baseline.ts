@@ -186,8 +186,8 @@ export function computeBaselineDiff(
     } else if (
       // Only a genuinely SUB-FLOOR stored watermark is ratchetable. A satisfied
       // axis is pinned at the floor by computeUpdatedBaseline (e.g. a 95%-line /
-      // 55%-branch file stores {line: 80, branch: 55}); its actual sits above 80
-      // by design, so it must NOT trigger must_raise — otherwise the gate could
+      // 55%-branch file stores {line: 85, branch: 55}); its actual sits above the
+      // line floor by design, so it must NOT trigger must_raise — otherwise the gate could
       // never be green right after a reseed (every mixed file would loop).
       (floor.line < FLOOR_PCT && lineActual > floor.line) ||
       (floor.branch < BRANCH_FLOOR_PCT && branchActual > floor.branch)

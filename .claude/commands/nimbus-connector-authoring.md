@@ -130,7 +130,7 @@ Then add the sync handler and register in the connector registry at `packages/ga
 - [ ] Item IDs follow `"<service>:<native_id>"` — no UUIDs.
 - [ ] `nimbus test` passes (contract tests green).
 - [ ] Connector registered in `packages/gateway/src/connectors/registry.ts`.
-- [ ] Line coverage ≥ 80%.
+- [ ] Line coverage ≥ 85% and branch coverage ≥ 80%.
 
 ## Signing your extension (T2 PR 2)
 
