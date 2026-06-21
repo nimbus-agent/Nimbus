@@ -903,7 +903,7 @@ Ordered for time-to-value × moat. Each increment cuts across today's phase numb
 | **S1** | **Local Brain** | `nimbus why`/`glossary`/`decisions`/`pre-mortem`/`negotiate` [↑P7 W5]; devil's-advocate, agent personas, first-class negation + aggregation queries [↑P7 W6]; ownership graph from already-indexed GitHub/PagerDuty (IDP connectors deferred [↓demote]); **elevate the egress ledger (P8 M7 substrate) + `nimbus prove` (P7 W6) to an always-on S1 primitive** [↑P8 / P7 W6] | Highest stickiness, mostly cheap, **no new connectors**; anchors the provable-boundary moat early and co-locates the ledger with its `prove` surface (removing the pre-existing P7-reads-P8 ordering oddity). P22's portable per-answer receipts sit on top later. |
 | **S2** | **Local Compute Fleet** | Sandboxed code execution, local computer-use loop (HITL-gated, screenshots never leave), runtime tool generation, multimodal I/O [↑P14]; **[NEW] overnight sub-agent fleets on zero-marginal local compute** [↑P27]; **[NEW] bring-your-own-frontier-model routing with local fallback** | The biggest 2026-model lever; local computer-use + free local compute are both high-TTV *and* unfakeable by metered clouds |
 | **S3** | **Open Surface** | **[NEW] Nimbus as a local MCP *server*** — expose the private index as an MCP endpoint Claude Code / Cursor / other agents connect *to*. **Defaults to stdio transport (no network port);** any HTTP/SSE variant must honor I6 loopback bind + I5 `LanServer` method checks + I10 constant-time pairing-token auth (write surface stays I13-gated). Marketplace registry [↑P9.5] + extension maturity | Ecosystem whitespace: makes Nimbus the private-context backend for the user's whole agent stack |
-| **S4** | **Autonomous Agent** | Watch → learn → act loop, proactive SRE automation, `incident-brief` [≈P10]; fold in the On-Call Copilot (predict/mitigate/coordinate) [↑P17] | Natural capstone of the spine; the interactive + standing halves of one loop |
+| **S4** | **Autonomous Agent** | **[NEW] Connector Write-Enablement [P9.7]** — the HITL-gated write surface the act-loop consumes (rides `I26`/`I29`/`I2`; framework-first, then productivity → code → infra by blast radius); watch → learn → act loop, proactive SRE automation, `incident-brief` [≈P10]; fold in the On-Call Copilot (predict/mitigate/coordinate) [↑P17] | Natural capstone of the spine; the interactive + standing halves of one loop — **inert without writes, so P9.7 is its foundation.** |
 | **S5** | **Engineering Excellence breadth** | DORA/metrics connectors, feature-flag connectors [↓P7 W2–3]; security tooling + agents [↓P8]; ML/AI tooling [↓P9]; the deferred IDP/ownership connectors from S1 | Commodity, API-fakeable → **not a moat**; community/marketplace-leaning, demoted behind the spine |
 
 **Shape:** S1–S3 are moat + 2026 levers (mostly cheap or model-driven); S4 is the capstone; S5 is fakeable commodity breadth that can lean on the community.
@@ -1338,6 +1338,64 @@ User-facing trust surfaces. "AI safety" as a product feature, not a marketing wo
 - Installing an extension that declares `*` network access surfaces an interactive over-request warning in both the CLI and Tauri install flow, and its registry Quality Score shows the least-privilege penalty.
 - `nimbus extension clone <id>` on an MIT/AGPL-licensed published extension round-trips to an editable local development extension that spawns in the sandbox without a signature error.
 - An extension installed from a configured private registry verifies its signature against that registry's own publisher trust root with no call to `registry.nimbus-agent.dev`.
+
+---
+
+### Phase 9.7 — Connector Write-Enablement (The Acting Roster)
+
+> **Sequencing (overlay):** **Track 1 — spine.** The write-substrate the autonomy arc assumes: Phase 10 (standing approvals / scheduled write-workflows), Phase 16 (team writes / runbook-as-agent), and Phase 17 (mitigation actions) all *consume* a broad write surface that no phase currently delivers. Numbered 9.7 (fractional insert — no renumber) so it lands immediately before Phase 10: build it before, or in lockstep with, the autonomy work that depends on it. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
+
+**Goal:** Promote the connector roster from a read-only *index* into an *acting* agent. Today ~88 first-party connectors index data but only a handful can write (Looker datagroup/schedule triggers, ArgoCD `app_sync`, Flux, MLflow). The write *machinery* already exists — the `I26` write-registry (`connector-write-registry.ts`), the `I29` egress ledger, and the executor HITL chokepoint (`I2`) — but is barely exercised. This phase systematically builds HITL-gated write tools across the existing roster on that machinery, ordered by blast radius, so every new write is **gated, previewed, ledgered, and peer-unreachable by construction.**
+
+#### Dependencies
+
+- `I26` connector-write registry + the per-group write-tool SSoTs (`warehouse-write-tools.ts`, `gitops-ml-write-tools.ts`) — generalized in Wave 1
+- `I29` egress ledger (every write appends one row before `connectors.dispatch`)
+- `I2` HITL frozen-set gate (every write action type is gated in the executor)
+- Phase 10 standing-approval **taint barrier** (attacker-influenceable tool output can never satisfy a standing rule) — co-designed; any write that auto-fires must respect it
+- Phase 3 connector mesh + each target connector's existing read-side sync
+
+#### Non-negotiable guardrails
+
+- Every write tool id is confined to the `I26` SSoTs and the connector/transport sites — the `D20` static audit fails on any leak.
+- The federated peer invoke gate (`answerFederatedInvoke`) fail-closed rejects every write-classified tool id (`isWriteForbiddenToolId`): a peer can never trigger a connector write.
+- Every gated write appends exactly one `egress_ledger` row before dispatch; an append failure aborts the action (fail-closed; `I29`).
+- Infra/production writes (Wave 4) are preview-mandatory and excluded from standing-approval auto-fire by default.
+
+#### Structure — four waves, ordered by blast radius
+
+#### Wave 1 — Write-Authoring Framework *(prerequisite substrate)*
+
+- [ ] **Generalized connector-write contract** — promote the per-group `I26` registries into one authoring path so a connector can declare write tools without bespoke wiring at each coupling site.
+- [ ] **HITL consent preview renderer** — the consent dialog renders a before/after diff (action target + payload summary) so the owner approves the *exact* change, not just an action name.
+- [ ] **Egress-ledger coverage proof** — a contract test asserts every registered write tool id appends an `egress_ledger` row on the gated path (extends `I29`).
+- [ ] **Standing-approval + taint integration** — write tools become eligible for Phase 10 standing rules only behind the taint barrier; an untrusted-tainted trigger falls back to HITL.
+
+#### Wave 2 — Productivity Writes *(low blast radius, reversible)*
+
+- [ ] **Drafting & comments** — Gmail/Outlook create-draft; GitHub/GitLab issue + PR comment; Jira/Linear comment.
+- [ ] **Item create + transition** — Jira/Linear issue create + status transition; GitHub/GitLab issue create + label/assign.
+- [ ] **Knowledge writes** — Notion/Confluence page append (composes with the `I25` tribal-knowledge write-gate).
+- [ ] **Messaging** — Slack/Teams/Discord post (already HITL via the `*.message.post` action types; folded in for completeness).
+
+#### Wave 3 — Code & Change Writes *(medium blast radius)*
+
+- [ ] **VCS changes** — GitHub/GitLab branch create, commit, PR create/update; HITL preview shows the diff + target branch.
+- [ ] **Incident ops** — PagerDuty / OpsGenie acknowledge + resolve.
+- [ ] **Feature-flag writes** — flag toggle / rollout update; supplies the shared write-authoring path Phase 7 Wave 3's flag-write surface consumes (not duplicated).
+
+#### Wave 4 — Infra & Production Writes *(high blast radius — strictest gating)*
+
+- [ ] **Orchestration & IaC** — Kubernetes apply; Terraform/IaC plan→apply (preview shows the plan); generalizes the existing ArgoCD/Flux GitOps writes.
+- [ ] **Deploy triggers** — Vercel / Netlify deploy; CI pipeline trigger (Jenkins / CircleCI / Bitrise).
+- [ ] **Data & ML writes** — generalizes the existing warehouse (`looker_*`) and ML (`mlflow`) write surface under the Wave 1 contract.
+
+#### Acceptance Criteria
+
+- A representative write in each of Waves 2–4 executes only behind the `I2` HITL gate, renders a before/after preview, and appends exactly one `egress_ledger` row before dispatch.
+- The same write, requested by a federated peer via `answerFederatedInvoke`, is rejected fail-closed by `isWriteForbiddenToolId` — no dispatch, and a `blocked` ledger row.
+- The `D20` static audit passes with every new write tool id confined to the `I26` SSoTs.
+- A Wave 4 (infra/production) write cannot be auto-fired by a standing rule without an explicit preview, and an untrusted-tainted trigger falls back to HITL.
 
 ---
 
@@ -2049,7 +2107,17 @@ The flagship ambient surface. Promoted from Phase 13.5 stretch to Phase 19 core 
 - Phase 6 Slice 1 — Federation Core (E2EE peer pairing, scoped namespaces, the consent-scoped federated query primitive, audit integration)
 - Phase 6 federation protocol-layer RBAC + the narrowest-export-shape privacy contract (professional form)
 
-#### Personal & Household Federation
+#### Wave 0 — Personal Data Sources *(read-only ingestion; prerequisite for the federation modes below)*
+
+Phase 20 federates household data but assumes it is *already indexed* — yet nothing ingests it today. This wave builds the personal data-source connectors that *feed* the household federation. This is the data class where local-first is a genuine moat: no one pastes their bank login or health history into a cloud AI, but a machine-local index that never leaves the device is exactly the trust model that fits. All Wave 0 sources are read-only and default to **non-federatable**.
+
+- [ ] **Finance** — Plaid / SimpleFIN aggregator; read-only `account` + `transaction` item types; local-only, never exposed through a household namespace unless explicitly added to its shape.
+- [ ] **Health & wearables** — Apple Health export / Google Fit / Oura / Whoop; `health_metric` item type.
+- [ ] **Home** — Home Assistant; `home_device` + `home_event` item types.
+- [ ] **Media / memories** — Plex / Jellyfin / local photo library (`media_item`); composes with the existing `google_photos` connector.
+- [ ] **Wave-0 privacy default** — Wave 0 sources are non-federatable by default; a `health_metric` / `transaction` / `home_event` is exposable through a household namespace only when explicitly declared in that namespace shape. Extends the narrowest-export-shape contract (household variant) below.
+
+#### Wave 1 — Personal & Household Federation
 
 The federation primitive is intentionally general — once two Gateways can share a scoped namespace, the same mesh primitive serves use cases that cloud agents cannot legally or commercially handle.
 
