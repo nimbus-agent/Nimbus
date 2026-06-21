@@ -853,7 +853,7 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 ##### HR
 
-- [ ] **Workday** — time off, headcount, org chart, job postings; read-only where API access allows. Lifted to Phase 6 because typical Workday tenancy is org-wide and pairs naturally with team identity / SSO already landing in this phase
+- [x] **Workday** — time off, headcount, org chart, job postings; read-only where API access allows. Lifted to Phase 6 because typical Workday tenancy is org-wide and pairs naturally with team identity / SSO already landing in this phase (✅ delivered 2026-06-21; read-only; REST workers/time-off/job-postings + RaaS reports; directory-safe PII allowlist; no migration/HITL/invariant)
 
 ##### GitOps (Write Tools)
 
