@@ -550,7 +550,12 @@ In `oauth-registry.ts`: add `| "workday"` to the `OAuthProvider` union; add a ba
 
 Add `export` to `standardAuthorizeParams` and `parseStandardTokenResponse` declarations.
 
-- [ ] **Step 5: Route the descriptor-resolution sites through `resolveOAuthDescriptor`**
+- [ ] **Step 5a: Enumerate every descriptor lookup site first (review point 4)**
+
+Run: `git grep -n "OAUTH_PROVIDERS\[" packages/gateway/src/auth/`
+Inspect each hit and classify it: a site that **builds a descriptor for an authorize / code-exchange / refresh** must move to `resolveOAuthDescriptor(provider)`; a site that only **reads a static field** (`.clientSecret`, `.vaultKey`) may stay on the static map. Record the list before editing so none is missed.
+
+- [ ] **Step 5b: Route the descriptor-resolution sites through `resolveOAuthDescriptor`**
 
 Replace `OAUTH_PROVIDERS[provider]` with `resolveOAuthDescriptor(provider)` at the descriptor-build sites:
 - `auth/pkce.ts` `refreshAccessToken` (~line 251): `descriptor: resolveOAuthDescriptor(provider),`
@@ -1127,7 +1132,13 @@ All four mappers live in `packages/gateway/src/connectors/workday-mappers.ts` (t
 **Shared types (define once, in Task 10's first edit):**
 
 ```ts
-import { blake3Hex } from "../db/audit-chain.ts"; // confirm the exported BLAKE3 helper name via: rg "blake3" packages/gateway/src/db/audit-chain.ts
+// BLAKE3 — the established gateway pattern (audit-chain.ts / egress-ledger.ts / share-format.ts
+// all do this; there is NO blake3Hex helper to import). Used by stableRowKey in Task 13.
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+// Gateway-local object guard (NEVER import from mcp-connectors — gateway must not depend on
+// connector packages; see Non-Negotiables / Dependency rules).
+import { asRecord } from "./unknown-record.ts";
 import type { MappedRow } from "./mapped-row.ts"; // confirm path used by mendeley-reference-mapping.ts: rg "MappedRow" packages/gateway/src/connectors/mendeley-reference-mapping.ts
 
 export interface WorkdayMapContext {
@@ -1184,7 +1195,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement `mapWorkerToItem`**
 
 ```ts
-import { asObjectish } from "../../mcp-connectors/shared/search-filter.ts"; // OR a gateway-local object guard; confirm a gateway util exists, else inline the guard
+// asRecord + blake3/bytesToHex are imported once in the shared-types block above.
 import { pickAllowed, WORKER_ALLOWED_FIELDS } from "./workday-field-allowlist.ts";
 
 function str(v: unknown): string | undefined {
@@ -1195,7 +1206,7 @@ function workerCanonicalUrl(ctx: WorkdayMapContext, id: string): string {
 }
 
 export function mapWorkerToItem(raw: unknown, ctx: WorkdayMapContext): WorkdayMappedRow | null {
-  const row = asObjectish(raw);
+  const row = asRecord(raw);
   if (row === undefined) return null;
   const id = str(row["id"]) ?? str(row["workerId"]);
   if (id === undefined) return null;
@@ -1280,7 +1291,7 @@ Expected: FAIL.
 
 ### Task 13: `mapReportRowToItem` (stable id + field policy)
 
-**Interfaces:** `export function mapReportRowToItem(row: unknown, report: WorkdayReport, index: number, ctx: WorkdayMapContext): WorkdayMappedRow | null;`
+**Interfaces:** `export function mapReportRowToItem(raw: unknown, report: WorkdayReport, ctx: WorkdayMapContext): WorkdayMappedRow | null;` (no index param — the id is content-derived, so position is irrelevant; review point 3).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1289,18 +1300,20 @@ import type { WorkdayReport } from "../config/nimbus-toml-workday.ts";
 const rpt: WorkdayReport = { label: "headcount", url: "https://wd5.workday.com/x" };
 
 test("uses key_field for a stable external id", () => {
-  const r = mapReportRowToItem({ employee_id: "e1", org: "Eng" }, { ...rpt, keyField: "employee_id" }, 0, ctx);
+  const r = mapReportRowToItem({ employee_id: "e1", org: "Eng" }, { ...rpt, keyField: "employee_id" }, ctx);
   expect(r?.externalId).toBe("headcount:e1");
   expect(r?.type).toBe("report");
 });
-test("hashes the row when no key_field (NOT the index); reorder-invariant", () => {
-  const a = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, 0, ctx);
-  const b = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, 5, ctx); // different index, same content
-  expect(a?.externalId).toBe(b?.externalId); // index must not affect id
+test("hashes the row content when no key_field — same content → same id (position-independent)", () => {
+  const a = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);
+  const b = mapReportRowToItem({ org: "Eng", headcount: 12 }, rpt, ctx);
+  const c = mapReportRowToItem({ org: "Sales", headcount: 7 }, rpt, ctx);
+  expect(a?.externalId).toBe(b?.externalId); // identical content → identical id
+  expect(a?.externalId).not.toBe(c?.externalId); // different content → different id
   expect(a?.externalId.startsWith("headcount:")).toBe(true);
 });
 test("applies fields allowlist / denylist", () => {
-  const r = mapReportRowToItem({ employee_id: "e1", salary: 9, ssn: "x" }, rpt, 0, ctx);
+  const r = mapReportRowToItem({ employee_id: "e1", salary: 9, ssn: "x" }, rpt, ctx);
   expect(JSON.stringify(r)).not.toContain("salary");
   expect(JSON.stringify(r)).not.toContain("\"x\"");
 });
@@ -1316,16 +1329,15 @@ import type { WorkdayReport } from "../config/nimbus-toml-workday.ts";
 
 function stableRowKey(row: Record<string, unknown>): string {
   const sorted = Object.keys(row).sort().map((k) => `${k}=${String(row[k])}`).join("");
-  return blake3Hex(new TextEncoder().encode(sorted)).slice(0, 32);
+  return bytesToHex(blake3(new TextEncoder().encode(sorted))).slice(0, 32);
 }
 
 export function mapReportRowToItem(
   raw: unknown,
   report: WorkdayReport,
-  _index: number,
   ctx: WorkdayMapContext,
 ): WorkdayMappedRow | null {
-  const row = asObjectish(raw);
+  const row = asRecord(raw);
   if (row === undefined) return null;
   const filtered = applyReportFieldPolicy(row, report.fields);
   const keyVal =
@@ -1348,7 +1360,7 @@ export function mapReportRowToItem(
 }
 ```
 
-> `blake3Hex` name is a guess — confirm the exact export from `db/audit-chain.ts` (`rg "export (function|const) .*[Bb]lake3" packages/gateway/src/db/audit-chain.ts`). If it returns a hex string already, drop the `.slice` only if you want full length; 32 hex chars is plenty.
+> BLAKE3 uses the established gateway pattern `bytesToHex(blake3(...))` imported directly from `@noble/hashes` (verified: `audit-chain.ts`, `egress-ledger.ts`, `share-format.ts` all do this — there is no `blake3Hex` helper). 32 hex chars of the digest is plenty for a row surrogate key.
 
 - [ ] **Step 4: Run (PASS)** — `bun test packages/gateway/src/connectors/workday-mappers.test.ts`
 
@@ -1540,7 +1552,7 @@ function reportRowsFrom(root: unknown): unknown[] {
 In the sync pass, after the REST domains, for each `report` in `loadWorkdayConfig().reports`:
 - skip + warn if `!sameTenantHost(report.url, Config.workdayTenantHost)`;
 - else fetch with the bearer token (try/catch per report — a 401/non-ok is logged and skipped);
-- map each row via `mapReportRowToItem(row, report, i, mapCtx)` and upsert.
+- map each row via `mapReportRowToItem(row, report, mapCtx)` and upsert.
 
 - [ ] **Step 4: Run the test**
 
@@ -1772,6 +1784,19 @@ git push -u origin dev/asafgolombek/phase6-slice9-workday
 
 **Spec coverage:** Hybrid REST+RaaS → Tasks 7/14/15; workers/time-off/job-postings/report types → Tasks 10–13; directory-safe allowlist + contract test → Tasks 9/10–13; standalone items (no people-graph) → no person-store touch; tenant OAuth (review #1) → Task 4; stable RaaS ids (review #2) → Task 13; same-host egress (review #3) → Task 15; expanded denylist + per-report fields (review #4) → Task 9; time-off window (review #5) → Tasks 2/14; job-posting routing decline (review #6) → Task 12/17. ✅ all covered.
 
-**Placeholder scan:** No "TBD"/"implement later". Several steps say "confirm exact name/path against reference file X" — these are verification instructions with the reference named, not missing content (the reference code was extracted during planning and the adaptation is fully specified). The two genuinely reference-dependent shapes (`MappedRow`/`Syncable` field names, `blake3Hex` export name) are flagged with the exact `rg` command to confirm.
+**Placeholder scan:** No "TBD"/"implement later". Several steps say "confirm exact name/path against reference file X" — these are verification instructions with the reference named, not missing content (the reference code was extracted during planning and the adaptation is fully specified). The one genuinely reference-dependent shape (`MappedRow`/`Syncable` field names) is flagged with the exact `rg` command to confirm. BLAKE3 + `asRecord` imports are verified against the live codebase (review fixes).
 
 **Type consistency:** `WorkdayMapContext`, `WorkdayReport`, `NimbusWorkdayToml`, `WORKDAY_TOOL_NAMES`, `makeWorkdayDescriptor`/`resolveOAuthDescriptor`/`getValidWorkdayAccessToken`, the mapper signatures, and `createWorkdaySyncable`'s options are used consistently across tasks.
+
+---
+
+## Review resolutions (2026-06-21)
+
+Responses to `2026-06-21-slice9-workday-connector-review.md` (all verified against the live codebase):
+
+| # | Topic | Resolution |
+| --- | --- | --- |
+| 1 | BLAKE3 import (Tasks 10, 13) | **Fixed** — `audit-chain.ts` exports no `blake3Hex`; switched to the established `import { blake3 } from "@noble/hashes/blake3.js"` + `bytesToHex` pattern used by `audit-chain.ts`/`egress-ledger.ts`/`share-format.ts`. |
+| 2 | Gateway importing from `mcp-connectors` (Task 10) | **Fixed** — dependency-rule violation. Use the existing gateway-local guard `asRecord` from `connectors/unknown-record.ts` instead of `asObjectish` from the connector package. |
+| 3 | Dead `_index` param in `mapReportRowToItem` (Task 13) | **Fixed** — removed from the signature, tests, and the Task 15 call site (the id is content-hashed, so position is irrelevant). |
+| 4 | Exhaustive OAuth descriptor-lookup audit (Task 4) | **Fixed** — added explicit Step 5a: run `git grep -n "OAUTH_PROVIDERS\[" packages/gateway/src/auth/` and classify every hit before editing. |
