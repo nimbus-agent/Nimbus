@@ -9,6 +9,8 @@ import {
   type EmailSendMailer,
   formatAddress,
 } from "./apple-mail-core.ts";
+import type { CalDavClient } from "./caldav-core.ts";
+import { type CalendarToolConfig, registerAppleCalendarTools } from "./calendar-tools.ts";
 
 // ---------------------------------------------------------------------------
 // Zod schema for the draft tool
@@ -35,26 +37,31 @@ const descriptions = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Connector params type (mail half; calendar params added in Task C3)
+// Connector params type (mail + calendar)
 // ---------------------------------------------------------------------------
 
 export interface AppleToolsParams {
   readonly client: EmailReadClient;
   readonly mailer: EmailSendMailer;
   readonly draftAppender: DraftAppender;
+  readonly calendar: CalDavClient;
+  readonly now: () => string;
+  readonly calendarConfig?: CalendarToolConfig;
 }
 
 /**
- * Register the Apple Mail read tools + send tool (via the shared kit) plus the
- * iCloud-specific draft-create tool onto an MCP server. Calendar tools are wired
- * in Task C3 by extending this function with a `calendar` param — the structure
- * is intentionally open for that addition.
+ * Register all Apple connector tools onto an MCP server:
+ * - Mail read tools (list/get/search) via the shared kit
+ * - Mail write tools (mail_send, mail_draft_create)
+ * - Calendar tools (calendar_list, calendar_event_create, calendar_event_delete)
+ *
+ * All three calendar tools are registered via registerAppleCalendarTools (Task C3).
  */
 export function registerAppleTools(
   server: { tool: (...args: never) => unknown },
   params: AppleToolsParams,
 ): void {
-  const { client, mailer, draftAppender } = params;
+  const { client, mailer, draftAppender, calendar, now, calendarConfig } = params;
 
   // The four shared email tools (list/get/search/mail_send) via the shared kit.
   registerEmailConnectorTools({
@@ -100,9 +107,12 @@ export function registerAppleTools(
     },
   );
 
-  // Placeholder stubs for calendar tools registered in Task C3.
   // apple_calendar_list, apple_calendar_event_create, apple_calendar_event_delete
-  // are intentionally absent here and added when the CalDavClient is wired in.
+  registerAppleCalendarTools(server, {
+    calendar,
+    now,
+    config: calendarConfig,
+  });
 }
 
 /** Tool names exposed by this connector — for contract/introspection tests. */

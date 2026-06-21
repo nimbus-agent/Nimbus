@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { registerAppleTools } from "../src/tools.ts";
+import type { CalDavClient } from "../src/caldav-core.ts";
+import { APPLE_TOOL_NAMES, registerAppleTools } from "../src/tools.ts";
 
 /**
  * Minimal stub MCP server that captures registered tool handlers keyed by name.
@@ -39,11 +40,37 @@ function parseResult(result: unknown): unknown {
   return result;
 }
 
+/** Minimal fake CalDavClient for tool-registration tests. */
+function fakeCalendar(overrides?: Partial<CalDavClient>): {
+  client: CalDavClient;
+  putCalls: { uid: string; ics: string }[];
+  deleteCalls: string[];
+} {
+  const putCalls: { uid: string; ics: string }[] = [];
+  const deleteCalls: string[] = [];
+  const client: CalDavClient = {
+    listCalendars: async () => [
+      { url: "https://caldav.icloud.com/calendars/work", displayName: "Work" },
+    ],
+    listEvents: async () => [],
+    putEvent: async (_cal, uid, ics) => {
+      putCalls.push({ uid, ics });
+      return { href: `/calendars/work/${uid}.ics` };
+    },
+    deleteEvent: async (href) => {
+      deleteCalls.push(href);
+    },
+    ...overrides,
+  };
+  return { client, putCalls, deleteCalls };
+}
+
 describe("registerAppleTools (mail)", () => {
   it("registers mail tools + draft tool and routes to injected client/mailer/draftAppender", async () => {
     const { server, tools } = stubServer();
     const sent: unknown[] = [];
     const drafted: unknown[] = [];
+    const { client: calClient } = fakeCalendar();
 
     registerAppleTools(server as never, {
       client: {
@@ -63,6 +90,8 @@ describe("registerAppleTools (mail)", () => {
           return { uid: 3, mailbox: "Drafts" };
         },
       },
+      calendar: calClient,
+      now: () => "20260601T000000Z",
     });
 
     // The four shared email tools must be registered.
@@ -91,6 +120,7 @@ describe("registerAppleTools (mail)", () => {
   it("apple_mail_draft_create passes cc/bcc when provided", async () => {
     const { server, tools } = stubServer();
     const drafted: unknown[] = [];
+    const { client: calClient } = fakeCalendar();
 
     registerAppleTools(server as never, {
       client: { list: async () => [], get: async () => null, search: async () => [] },
@@ -103,6 +133,8 @@ describe("registerAppleTools (mail)", () => {
           return { uid: 5, mailbox: "Drafts" };
         },
       },
+      calendar: calClient,
+      now: () => "20260601T000000Z",
     });
 
     await tools.apple_mail_draft_create({
@@ -120,5 +152,75 @@ describe("registerAppleTools (mail)", () => {
       cc: "cc@b.c",
       bcc: "bcc@b.c",
     });
+  });
+});
+
+describe("registerAppleTools (all 8 tools — Task C3)", () => {
+  it("registers all APPLE_TOOL_NAMES when calendar + now are provided", () => {
+    const { server, tools } = stubServer();
+    const { client: calClient } = fakeCalendar();
+
+    registerAppleTools(server as never, {
+      client: { list: async () => [], get: async () => null, search: async () => [] },
+      mailer: { send: async () => ({ messageId: null, accepted: [], rejected: [] }) },
+      draftAppender: { appendDraft: async () => ({ uid: null, mailbox: "Drafts" }) },
+      calendar: calClient,
+      now: () => "20260601T000000Z",
+    });
+
+    for (const name of APPLE_TOOL_NAMES) {
+      expect(typeof tools[name]).toBe("function");
+    }
+    expect(Object.keys(tools)).toHaveLength(APPLE_TOOL_NAMES.length);
+  });
+
+  it("apple_calendar_event_create routes to the fake CalDavClient.putEvent", async () => {
+    const { server, tools } = stubServer();
+    const { client: calClient, putCalls } = fakeCalendar();
+
+    registerAppleTools(server as never, {
+      client: { list: async () => [], get: async () => null, search: async () => [] },
+      mailer: { send: async () => ({ messageId: null, accepted: [], rejected: [] }) },
+      draftAppender: { appendDraft: async () => ({ uid: null, mailbox: "Drafts" }) },
+      calendar: calClient,
+      now: () => "20260601T000000Z",
+    });
+
+    const result = parseResult(
+      await tools.apple_calendar_event_create({
+        summary: "Integration check",
+        start: "20260601T100000Z",
+        end: "20260601T110000Z",
+        uid: "c3-uid-001",
+      }),
+    ) as { uid: string; href: string };
+
+    expect(result.uid).toBe("c3-uid-001");
+    expect(result.href).toBeTruthy();
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0]?.uid).toBe("c3-uid-001");
+  });
+
+  it("apple_calendar_event_delete routes to the fake CalDavClient.deleteEvent", async () => {
+    const { server, tools } = stubServer();
+    const { client: calClient, deleteCalls } = fakeCalendar();
+
+    registerAppleTools(server as never, {
+      client: { list: async () => [], get: async () => null, search: async () => [] },
+      mailer: { send: async () => ({ messageId: null, accepted: [], rejected: [] }) },
+      draftAppender: { appendDraft: async () => ({ uid: null, mailbox: "Drafts" }) },
+      calendar: calClient,
+      now: () => "20260601T000000Z",
+    });
+
+    const result = parseResult(
+      await tools.apple_calendar_event_delete({
+        href: "/calendars/work/c3-uid-001.ics",
+      }),
+    ) as { deleted: boolean };
+
+    expect(result.deleted).toBe(true);
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]).toBe("/calendars/work/c3-uid-001.ics");
   });
 });
