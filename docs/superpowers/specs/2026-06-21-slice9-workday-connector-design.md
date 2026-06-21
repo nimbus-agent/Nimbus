@@ -23,6 +23,7 @@ safety mechanism.
 strings). **No HITL** (read-only). **No team-credential rail** (read-only → no write).
 
 ### Decisions locked in brainstorm
+
 - **Access model:** Hybrid — REST + OAuth 2.0 for the well-known worker/time-off/job-posting
   endpoints, plus an **optional** list of RaaS (Report-as-a-Service) report URLs as an
   escape hatch. Both paths use the **same `workday.oauth` bearer token** (ISU basic-auth
@@ -39,7 +40,7 @@ strings). **No HITL** (read-only). **No team-credential rail** (read-only → no
 
 ## 2. Architecture & package layout
 
-```
+```text
 packages/mcp-connectors/workday/src/
   server.ts          # stdio MCP entry; registers read tools behind an import.meta.main guard
   tools.ts           # workday_list / workday_get / workday_search (coverage-floor excluded)
@@ -49,6 +50,7 @@ packages/mcp-connectors/workday/src/
 ```
 
 Gateway-side wiring reuses the existing connector subsystem:
+
 - **Sync handler** (`packages/gateway/src/connectors/...`) — the `MappedRow`-returning sync
   function that fetches REST endpoints + configured RaaS reports and maps to items.
 - **Lazy-mesh spawn** — `phase<…>AddWorkdayMcp` / `ensureWorkdayMcp` + `ensureWorkdayRunning`,
@@ -70,6 +72,7 @@ Gateway-side wiring reuses the existing connector subsystem:
 ## 3. Configuration & credentials
 
 ### Vault (secret)
+
 - `workday.oauth` — the OAuth access/refresh token bundle (the **only** Workday vault key).
   Added to `CONNECTOR_VAULT_SECRET_KEYS.workday` + `connector-secrets-manifest.ts`.
 - Confidential OAuth client credentials are **user-supplied env vars**, never in Vault and
@@ -109,6 +112,7 @@ exchange/refresh logic. Because `tenant_host` is configured directly, Workday ne
 `instance_url` discovery (the REST/RaaS API host is already known).
 
 ### Tenant + client config (env vars)
+
 Workday's OAuth descriptor is built **at authorize/refresh time** and must know the tenant
 host + tenant name then (review point 1), exactly when the client id/secret are needed.
 Following the established `NIMBUS_OAUTH_<X>_CLIENT_ID` env-var pattern, tenant config is env
@@ -129,6 +133,7 @@ factory, the lazy-mesh spawn, and the sync handler.
 > only the optional RaaS `reports[]` stays in `nimbus.toml`.
 
 ### Non-secret structured config (`nimbus.toml`)
+
 ```toml
 [connectors.workday]
 time_off_history_days = 365                                  # optional; default 365 (review point 5)
@@ -169,6 +174,7 @@ url   = "https://wd5-services1.workday.com/ccx/service/customreport2/acme/ISU/Op
 not in the allowlist is dropped before reaching the index or embeddings.
 
 ### `workday:worker` (REST — Staffing/Workers)
+
 - **Allowed:** `external_id` (worker id) · `name` (preferred/display) · `title` ·
   `manager` (name + id) · `team`/`supervisory_org` · `department` · `location` ·
   `work_email` · `work_phone` · `hire_date` · `employment_status` · `canonical_url`.
@@ -176,11 +182,13 @@ not in the allowlist is dropped before reaching the index or embeddings.
   personal email/phone, date of birth, gender/ethnicity, performance ratings, photo.
 
 ### `workday:time_off` (REST — Absence)
+
 - **Allowed:** `external_id` · `worker` (name + id) · `type` (category label only) ·
   `start_date` · `end_date` · `units` (days/hours) · `status` · `canonical_url`.
 - **Forbidden:** free-text leave reason, medical/FMLA detail, comments.
 
 ### `workday:job_posting` (REST — Recruiting)
+
 - **Allowed:** `external_id` (requisition id) · `title` · `team`/`dept` · `location` ·
   `status` · `posted_date` · `canonical_url`.
 - **Note (review point 6):** the job *description / qualifications / responsibilities body is
@@ -189,6 +197,7 @@ not in the allowlist is dropped before reaching the index or embeddings.
   re-route `workday:job_posting` to 1536-dim per `nimbus-embedding-routing` at that time.
 
 ### `workday:report` (RaaS — generic)
+
 - **`external_id` (review point 2 — stable, never the array index):** resolved as
   `<report_label>:<key>` where `key` is, in order: (1) the value of the configured per-report
   `key_field`; else (2) a **BLAKE3 content hash** of the row's sorted key/value pairs (reusing
@@ -208,6 +217,7 @@ not in the allowlist is dropped before reaching the index or embeddings.
     report design; this is a backstop, not the primary boundary.
 
 ### Embedding routing
+
 Workers, time-off, job-postings, and reports are short structured records → MiniLM (384-dim).
 None are added to `PROSE_HEAVY_TYPES` (no 1536-dim OpenAI routing). To be confirmed against
 `nimbus-embedding-routing` during planning.
@@ -233,6 +243,7 @@ The sync handler runs each enabled domain sequentially and concatenates `MappedR
   RaaS report 401) is logged and skipped; it does not abort the other domains.
 
 ### Error handling
+
 - Token refresh handled by `getValidWorkdayAccessToken` (shared dedup wrapper).
 - 401 after refresh → surfaced as an auth error for that domain.
 - 403/404 for an unlicensed module → treated as "domain unavailable", logged, skipped
@@ -279,6 +290,7 @@ set never gains a write/mutate tool (mirrors the warehouse `assertNoRowDataTools
 ## 8. Registration sites (type-coupled — must all be touched)
 
 Mirrors the Mendeley sub-project A checklist:
+
 1. `packages/mcp-connectors/workday/` — new connector package.
 2. Root `package.json` `workspaces` — add `packages/mcp-connectors/workday` (individual,
    no glob) **before** `bun install`.
@@ -290,7 +302,7 @@ Mirrors the Mendeley sub-project A checklist:
    (`getValidWorkdayAccessToken(vault, cfg)`); add the `workday` case to the
    `oauthProfileForService` switch (NOT `OAUTH_UNSUPPORTED_DETAILS`).
 5. Lazy-mesh spawn registry — `ensureWorkdayMcp`/`ensureWorkdayRunning` + the spawner bundle
-   + `CredentialSpawners` slot.
+   - `CredentialSpawners` slot.
 6. Sync-handler registration + the connector's item-type registration (no migration).
 7. Config: add `Config.oauthWorkdayClientId`/`ClientSecret` + `Config.workdayTenantHost`/
    `workdayTenant` (env reads) in `config.ts`. Add a `parseNimbusWorkdayToml` for

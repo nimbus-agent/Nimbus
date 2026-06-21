@@ -34,6 +34,7 @@
 ## File Structure
 
 **New — connector package** `packages/mcp-connectors/workday/`:
+
 - `package.json`, `nimbus.extension.json`, `tsconfig.json`
 - `src/server.ts` — stdio entry; `registerWorkdayTools(reg)` + `import.meta.main` guard. (coverage-excluded)
 - `src/tools.ts` — `WORKDAY_TOOL_NAMES` constant. (coverage-excluded)
@@ -41,6 +42,7 @@
 - `test/server.test.ts`, `test/no-write-tools.test.ts`
 
 **New — gateway** `packages/gateway/src/`:
+
 - `connectors/workday-field-allowlist.ts` — directory-safe allowlists + RaaS denylist/fields.
 - `connectors/workday-mappers.ts` — `mapWorkerToItem` / `mapTimeOffToItem` / `mapJobPostingToItem` / `mapReportRowToItem`.
 - `connectors/workday-sync.ts` — `createWorkdaySyncable`.
@@ -50,6 +52,7 @@
 - matching `*.test.ts` for each.
 
 **Modified — gateway** (registration sites, exact edits in tasks):
+
 - `connectors/connector-catalog.ts` (service id, sync interval, `oauthProfileForService`)
 - `connectors/connector-secrets-manifest.ts` (`workday: ["workday.oauth"]`)
 - `auth/oauth-registry.ts` (`OAuthProvider` union, `OAUTH_PROVIDERS.workday`, descriptor resolution)
@@ -70,6 +73,7 @@
 Adds `workday` to the `ConnectorServiceId`-keyed sites that the type system forces to be exhaustive. Must land together to keep the build green.
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts` (`CONNECTOR_SERVICE_IDS` ~line 63; `CONNECTOR_SYNC_INTERVAL_MS` ~line 180)
 - Modify: `packages/gateway/src/connectors/connector-secrets-manifest.ts` (~line 70)
 - Modify: `packages/gateway/src/sync/rate-limiter.ts` (service union ~line 56)
@@ -77,6 +81,7 @@ Adds `workday` to the `ConnectorServiceId`-keyed sites that the type system forc
 - Test: `packages/gateway/src/connectors/connector-secrets-manifest.test.ts` (existing — add a case, or create if absent)
 
 **Interfaces:**
+
 - Produces: `ConnectorServiceId` now includes `"workday"`; `LAZY_MESH.workday === "mesh:workday"`; `CONNECTOR_VAULT_SECRET_KEYS.workday === ["workday.oauth"]`.
 
 - [ ] **Step 1: Write the failing test**
@@ -141,13 +146,16 @@ git commit -m "feat(workday): register service id + oauth vault key + lazy-mesh 
 ## Task 2: nimbus.toml RaaS reports parser + team-parser guard
 
 **Files:**
+
 - Create: `packages/gateway/src/config/nimbus-toml-workday.ts`
 - Create: `packages/gateway/src/config/nimbus-toml-workday.test.ts`
 - Modify: `packages/gateway/src/config/nimbus-toml-connectors.ts` (guard non-credential tables)
 - Test: `packages/gateway/src/config/nimbus-toml-connectors.test.ts` (existing — add a guard case)
 
 **Interfaces:**
+
 - Produces:
+
   ```ts
   export interface WorkdayReport { label: string; url: string; keyField?: string; fields?: string[]; }
   export interface NimbusWorkdayToml { timeOffHistoryDays: number; reports: WorkdayReport[]; }
@@ -357,11 +365,13 @@ git commit -m "feat(workday): nimbus.toml RaaS reports parser + non-credential t
 ## Task 3: Config env vars + OAuth help messages
 
 **Files:**
+
 - Modify: `packages/gateway/src/config.ts` (~line 120, after the mendeley entries)
 - Modify: `packages/gateway/src/auth/oauth-env-help-messages.ts` (after the MENDELEY help block)
 - Test: `packages/gateway/src/config.test.ts` (existing — add a case)
 
 **Interfaces:**
+
 - Produces: `Config.oauthWorkdayClientId`, `Config.oauthWorkdayClientSecret`, `Config.workdayTenantHost`, `Config.workdayTenant` (all `string`, `""` when unset); `WORKDAY_OAUTH_CLIENT_ID_HELP`, `WORKDAY_OAUTH_CLIENT_SECRET_HELP`, `WORKDAY_TENANT_HELP`.
 
 - [ ] **Step 1: Write the failing test** (`config.test.ts`)
@@ -428,6 +438,7 @@ git commit -m "feat(workday): env-var tenant/client config + oauth help messages
 ## Task 4: Tenant-specific OAuth descriptor factory + resolution indirection
 
 **Files:**
+
 - Create: `packages/gateway/src/auth/workday-oauth-descriptor.ts`
 - Create: `packages/gateway/src/auth/workday-oauth-descriptor.test.ts`
 - Create: `packages/gateway/src/auth/workday-access-token.ts`
@@ -436,8 +447,10 @@ git commit -m "feat(workday): env-var tenant/client config + oauth help messages
 - Modify: `packages/gateway/src/auth/pkce.ts` + `packages/gateway/src/auth/oauth-vault-tokens.ts` (descriptor resolution indirection)
 
 **Interfaces:**
+
 - Consumes: `OAuthProviderDescriptor`, `getValidVaultAccessToken`, `OAUTH_PROVIDERS` (Task in oauth-registry.ts); `Config.workdayTenantHost`/`workdayTenant`/`oauthWorkdayClientId`/`oauthWorkdayClientSecret` (Task 3).
 - Produces:
+
   ```ts
   export function makeWorkdayDescriptor(args: { tenantHost: string; tenant: string }): OAuthProviderDescriptor;
   export function resolveOAuthDescriptor(provider: OAuthProvider): OAuthProviderDescriptor; // workday → factory(Config), else OAUTH_PROVIDERS[provider]
@@ -558,6 +571,7 @@ Inspect each hit and classify it: a site that **builds a descriptor for an autho
 - [ ] **Step 5b: Route the descriptor-resolution sites through `resolveOAuthDescriptor`**
 
 Replace `OAUTH_PROVIDERS[provider]` with `resolveOAuthDescriptor(provider)` at the descriptor-build sites:
+
 - `auth/pkce.ts` `refreshAccessToken` (~line 251): `descriptor: resolveOAuthDescriptor(provider),`
 - `auth/pkce.ts` `runPKCEFlow` — grep for `OAUTH_PROVIDERS[` in this file; route the authorize/exchange descriptor build through `resolveOAuthDescriptor(provider)` too.
 - `auth/oauth-vault-tokens.ts` (~line 28): `descriptor: resolveOAuthDescriptor(args.provider),`
@@ -657,11 +671,13 @@ git commit -m "feat(workday): tenant-specific OAuth descriptor factory + resolut
 ## Task 5: Wire the `nimbus connector auth workday` flow
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/connector-catalog.ts` (`oauthProfileForService` switch, before `default`)
 - Modify: `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts` (import help strings; `oauthClientConfigForProvider` case)
 - Test: `packages/gateway/src/connectors/connector-catalog.test.ts` (existing — add a case)
 
 **Interfaces:**
+
 - Consumes: `WORKDAY_OAUTH_CLIENT_ID_HELP`/`_SECRET_HELP` (Task 3), `Config.oauthWorkday*` (Task 3).
 - Produces: `oauthProfileForService("workday") === { provider: "workday", defaultScopes: [...] }`.
 
@@ -726,6 +742,7 @@ git commit -m "feat(workday): wire nimbus connector auth workday oauth flow"
 ## Task 6: Scaffold the connector package
 
 **Files:**
+
 - Create: `packages/mcp-connectors/workday/package.json`
 - Create: `packages/mcp-connectors/workday/nimbus.extension.json`
 - Create: `packages/mcp-connectors/workday/tsconfig.json`
@@ -778,12 +795,14 @@ git commit -m "chore(workday): scaffold connector package + workspace entry"
 ## Task 7: Connector server (live REST read tools) + search filter
 
 **Files:**
+
 - Create: `packages/mcp-connectors/workday/src/search-filter.ts`
 - Create: `packages/mcp-connectors/workday/src/server.ts`
 - Create: `packages/mcp-connectors/workday/src/tools.ts`
 - Create: `packages/mcp-connectors/workday/test/server.test.ts`
 
 **Interfaces:**
+
 - Produces: `registerWorkdayTools(reg: ZodToolRegistrar): void`; `WORKDAY_TOOL_NAMES = ["workday_list","workday_get","workday_search"] as const`; `filterWorkdayWorkers`.
 - Reads env: `WORKDAY_ACCESS_TOKEN`, `WORKDAY_TENANT_HOST`, `WORKDAY_TENANT` (injected at spawn, Task 16).
 
@@ -953,6 +972,7 @@ git commit -m "feat(workday): connector server with live REST read tools"
 ## Task 8: no-row-data + no-write-tools contract test
 
 **Files:**
+
 - Create: `packages/mcp-connectors/workday/test/no-write-tools.test.ts`
 
 **Interfaces:** Consumes `WORKDAY_TOOL_NAMES` (Task 7), `assertNoRowDataTools` from `@nimbus-dev/sdk`.
@@ -998,11 +1018,14 @@ git commit -m "test(workday): no-row-data + read-only contract"
 ## Task 9: Directory-safe field allowlist
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/workday-field-allowlist.ts`
 - Create: `packages/gateway/src/connectors/workday-field-allowlist.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
   ```ts
   export const WORKER_ALLOWED_FIELDS: readonly string[];
   export const TIME_OFF_ALLOWED_FIELDS: readonly string[];
@@ -1371,12 +1394,15 @@ export function mapReportRowToItem(
 ## Task 14: Sync handler — REST domains (workers / time-off / job-postings)
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/workday-sync.ts`
 - Create: `packages/gateway/src/connectors/workday-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: the four mappers (Tasks 10–13), `getValidWorkdayAccessToken` (Task 4), `Config.workdayTenantHost`/`workdayTenant`, the cursor helpers + `Syncable`/`SyncResult` types.
 - Produces:
+
   ```ts
   export function createWorkdaySyncable(options: {
     ensureWorkdayMcpRunning: () => Promise<void>;
@@ -1484,6 +1510,7 @@ git commit -m "feat(workday): REST sync (workers/time-off/job-postings) with per
 ## Task 15: Sync handler — RaaS reports with same-host enforcement
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/workday-sync.ts` (fill the report walk)
 - Modify: `packages/gateway/src/connectors/workday-sync.test.ts` (add report cases)
 
@@ -1550,6 +1577,7 @@ function reportRowsFrom(root: unknown): unknown[] {
 ```
 
 In the sync pass, after the REST domains, for each `report` in `loadWorkdayConfig().reports`:
+
 - skip + warn if `!sameTenantHost(report.url, Config.workdayTenantHost)`;
 - else fetch with the bearer token (try/catch per report — a 401/non-ok is logged and skipped);
 - map each row via `mapReportRowToItem(row, report, mapCtx)` and upsert.
@@ -1571,6 +1599,7 @@ git commit -m "feat(workday): RaaS report indexing with same-host egress enforce
 ## Task 16: Lazy-mesh spawn (token + tenant host into the sandbox)
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/lazy-mesh/workday-spawn.ts` (or add `ensureWorkdayMcp` to `connector-spawns.ts` — match where Mendeley's lives; agent confirms `connector-spawns.ts`)
 - Modify: `packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts` (import + `ensureWorkdayMcp`)
 - Modify: `packages/gateway/src/connectors/lazy-mesh/mesh.ts` (`ensureWorkdayRunning` + `collectBuiltInToolMaps` entry)
@@ -1578,6 +1607,7 @@ git commit -m "feat(workday): RaaS report indexing with same-host egress enforce
 - Test: `packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts` (existing — add a workday case mirroring the mendeley one)
 
 **Interfaces:**
+
 - Produces: `ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void>`; `mesh.ensureWorkdayRunning()`.
 
 `ensureWorkdayMcp` mirrors `ensureMendeleyMcp` (agent-confirmed, `connector-spawns.ts:493`) with two Workday-specific differences: (1) it injects three env vars, and (2) it adds the tenant host to the sandbox network allowlist via `manifestWithExtraNetworkHosts` (argocd/mlflow pattern).
@@ -1670,6 +1700,7 @@ git commit -m "feat(workday): lazy-mesh spawn with tenant host sandbox allowlist
 ## Task 17: Register the syncable + confirm embedding routing
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble-sync-registrations.ts` (import + register)
 - Test: `packages/gateway/src/embedding/routing.test.ts` (existing — add a workday default-routing case)
 
@@ -1720,6 +1751,7 @@ git commit -m "feat(workday): register sync handler + lock 384-dim routing"
 ## Task 18: Docs (README, CHANGELOG, roadmap)
 
 **Files:**
+
 - Create: `packages/mcp-connectors/workday/README.md` (public-tier H2 sections — `audit:package-readmes` enforces)
 - Modify: `docs/CHANGELOG.md` (connector-delivery entry — NOT the CLAUDE.md/GEMINI.md status line)
 - Modify: `docs/roadmap.md` (check the Workday box in "Deferred from Phase 5")
