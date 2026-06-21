@@ -111,4 +111,61 @@ describe("VoiceService microphone arbiter", () => {
     await expect(svc.transcribe("/x")).rejects.toThrow("not enabled");
     await expect(svc.speak("hi")).rejects.toThrow("not enabled");
   });
+
+  test("getStatus reports unavailable when isAvailable rejects", async () => {
+    const stt: SttProvider = {
+      isAvailable: async () => {
+        throw new Error("stt boom");
+      },
+      transcribe: async (_p) => ({ text: "hello", durationMs: 1 }),
+    };
+    const tts: TtsProvider = {
+      isAvailable: async () => {
+        throw new Error("tts boom");
+      },
+      speak: async (_t) => undefined,
+    };
+    const svc = new VoiceService({ enabled: true, stt, tts });
+    const status = await svc.getStatus();
+    expect(status.sttAvailable).toBe(false);
+    expect(status.ttsAvailable).toBe(false);
+    expect(status.enabled).toBe(true);
+    expect(status.wakeWordActive).toBe(false);
+  });
+
+  test("startWakeWord starts the detector when one is configured", () => {
+    const det = makeFakeDetector();
+    const svc = new VoiceService({
+      enabled: true,
+      stt: makeFakeStt(),
+      tts: makeFakeTts(),
+      wakeWord: det,
+    });
+    svc.startWakeWord();
+    expect(det.startCalls).toBe(1);
+    expect(det.isRunning).toBe(true);
+  });
+
+  test("startWakeWord is a no-op when no detector is configured", () => {
+    const svc = new VoiceService({
+      enabled: true,
+      stt: makeFakeStt(),
+      tts: makeFakeTts(),
+    });
+    expect(() => svc.startWakeWord()).not.toThrow();
+  });
+
+  test("stopWakeWord stops the detector when one is configured", () => {
+    const det = makeFakeDetector();
+    det.start();
+    const svc = new VoiceService({
+      enabled: true,
+      stt: makeFakeStt(),
+      tts: makeFakeTts(),
+      wakeWord: det,
+    });
+    svc.stopWakeWord();
+    expect(det.stopCalls).toBe(1);
+    expect(det.isRunning).toBe(false);
+  });
 });

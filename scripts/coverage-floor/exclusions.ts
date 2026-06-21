@@ -42,6 +42,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
   { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
   { kind: "exact", path: "packages/client/src/index.ts" },
+  // `client/src/ipc-transport.ts`: the typed IPC client's unix-socket transport — connect/reconnect,
+  // framed read loop, socket-error/close handling. No in-process seam (it speaks to a real gateway
+  // socket); its reachable logic is exercised indirectly by the CLI/e2e suites, but the socket
+  // error/reconnect arms have no unit seam. Same untestable-socket-shell class as the already-exempt
+  // `client/src/stream-events.ts`. Held below the line floor (85) raise; clears the branch floor (80).
+  { kind: "exact", path: "packages/client/src/ipc-transport.ts" },
 
   // ── mock.module-shadowed (real logic tested via the gateway-process.ts twin) ──
   // `gateway-process.ts` is imported by 40+ CLI modules and is `mock.module`'d process-global in
@@ -109,6 +115,14 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // real `IPCClient`, and call `process.exit`, with no injection seam. Same exemption class as
   // chatops.ts / policy.ts. The full create→verify path is proven by `gateway/test/e2e/share-e2e`.
   { kind: "exact", path: "packages/cli/src/commands/share.ts" },
+  // `tribal.ts` / `telemetry.ts`: same CLI IPC-shell class as share/policy/admin/chatops. The
+  // testable cores (`parseTribalArgs` + `runTribalCommand(client, …)`; `runTelemetryShow` /
+  // `runTelemetryDisable(dataDir)`) are injected-client/pure and covered by their `.test.ts`. The
+  // residual uncovered lines are the `runTribal` / `runTelemetry` dispatch wrappers — they read
+  // gateway state, construct a real `IPCClient`, resolve `getCliPlatformPaths()`, and `process.exit`,
+  // with no injection seam. Excluded at the line floor (85) raise, same precedent as the siblings.
+  { kind: "exact", path: "packages/cli/src/commands/tribal.ts" },
+  { kind: "exact", path: "packages/cli/src/commands/telemetry.ts" },
 
   // ── Env-gated production-imported mock ──
   // `chatops-tool-runner-e2e-sink.ts` (Phase 6 Slice 5): env-gated by `NIMBUS_CHATOPS_E2E_SINK_DIR`
@@ -161,6 +175,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/connectors/lazy-mesh/slot.ts" },
   { kind: "exact", path: "packages/gateway/src/chatops/transport/transport.ts" },
   { kind: "exact", path: "packages/gateway/src/ipc/server/options.ts" },
+  // `ipc/server/server.ts`: the JSON-RPC server's socket-listener / connection-lifecycle / error
+  // shell (its 645-line `server.test.ts` already drives the dispatch + handler logic to ~83% line;
+  // the residual uncovered lines are unix-socket `listen`/`close` callbacks and connection-error
+  // handlers with no in-process seam). Same untestable-socket-shell class as `socket-listeners.ts`.
+  // Held below the line floor (85) raise; not relaxed for the branch floor (80, which it clears).
+  { kind: "exact", path: "packages/gateway/src/ipc/server/server.ts" },
   { kind: "exact", path: "packages/client/src/stream-events.ts" },
   // ──────────────────────────────────────────────────────────────────────────────────────────────
 ]);

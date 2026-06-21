@@ -14,7 +14,7 @@ Security scans: `bun audit`, `trivy`, CodeQL on every PR; Dependabot for depende
 
 - `bun run audit:invariants` — runtime-test complement: static checks for `I1` (`spawn` under `connectors/` uses `extensionProcessEnv()`), the vault-key allow-list, `I14` (`D12` — direct `db.run` / `db.exec` outside `db/write.ts`), and `I15` (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` routes through `wrapServerSpec(...)`).
 - `bun run audit:openapi-drift` — fails if `packages/gateway/openapi/v1.yaml` and `READ_ONLY_HTTP_ROUTES` disagree.
-- `bun run audit:coverage-floor` — per-file ≥80% line-coverage floor with a ratcheting baseline; prevents new files from landing under-tested.
+- `bun run audit:coverage-floor` — per-file coverage floor (≥85% line, ≥80% branch) with a ratcheting baseline; prevents new files from landing under-tested.
 - `bun run audit:boundaries`, `audit:dead-code`, `audit:duplication`, `audit:any` — package-boundary / unused-export / token-duplication / `any`-usage gates (Phase 4 B3 structure audit).
 
 For the full per-subsystem coverage-gate table (`test:coverage:engine` / `agents` / `vault` / `sandbox` / `embedding` / `metrics` / `preflight` / `deployment` and a dozen more) and the environment-variable overrides each gate respects, see the [`nimbus-commands`](../.claude/commands/nimbus-commands.md) skill / reference file.

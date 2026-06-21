@@ -33,8 +33,8 @@ export interface BaselineDiff {
   readonly missingFromActual: ReadonlyArray<string>;
 }
 
-export const FLOOR_PCT = 80; // line floor
-export const BRANCH_FLOOR_PCT = 80; // branch floor (separate constant so it can diverge)
+export const FLOOR_PCT = 85; // line floor
+export const BRANCH_FLOOR_PCT = 80; // branch floor (separate constant; line floor raised to 85 ahead of branch)
 
 function assertPct(label: string, v: unknown): number {
   if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) {

@@ -6,6 +6,7 @@ import {
   microsoftOAuthAccessFromConfig,
   type ParseStoredOAuthErrors,
   parseStoredOAuthTokens,
+  readMicrosoftOAuthScopesForOutlookEnv,
 } from "./oauth-vault-tokens.ts";
 
 const ERRS: ParseStoredOAuthErrors = {
@@ -209,5 +210,42 @@ describe("getValidVaultOAuthAccessToken", () => {
     });
     expect(tok).toBe("refreshed-access");
     expect(calls).toBe(1);
+  });
+});
+
+describe("readMicrosoftOAuthScopesForOutlookEnv", () => {
+  let vault: MockVault;
+
+  beforeEach(() => {
+    vault = new MockVault();
+  });
+
+  it("returns undefined when the vault key is absent", async () => {
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBeUndefined();
+  });
+
+  it("returns undefined when the payload is not valid JSON (line 81 catch path)", async () => {
+    await vault.set("microsoft.oauth", "{not-json");
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBeUndefined();
+  });
+
+  it("returns undefined when the JSON root is an array (line 84)", async () => {
+    await vault.set("microsoft.oauth", JSON.stringify(["User.Read"]));
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBeUndefined();
+  });
+
+  it("returns undefined when the JSON root is null (line 84)", async () => {
+    await vault.set("microsoft.oauth", "null");
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBeUndefined();
+  });
+
+  it("returns undefined when scopes contains no non-empty strings (line 92)", async () => {
+    await vault.set("microsoft.oauth", JSON.stringify({ scopes: ["", "   ", 42] }));
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBeUndefined();
+  });
+
+  it("returns the space-joined scopes when present", async () => {
+    await vault.set("microsoft.oauth", JSON.stringify({ scopes: ["User.Read", "Mail.Read"] }));
+    expect(await readMicrosoftOAuthScopesForOutlookEnv(vault)).toBe("User.Read Mail.Read");
   });
 });

@@ -219,10 +219,10 @@ describe("computeBaselineDiff (dual-axis, file-level)", () => {
     ]);
   });
 
-  test("flags must-remove only when BOTH axes clear the floor (>=80)", () => {
+  test("flags must-remove only when BOTH axes clear their floors (line>=85, branch>=80)", () => {
     const diff = computeBaselineDiff(
       base(50, 40),
-      new Map([["a.ts", 81]]),
+      new Map([["a.ts", 86]]),
       new Map([["a.ts", 85]]),
     );
     expect(diff.mustRemove).toEqual([{ path: "a.ts" }]);
@@ -240,14 +240,14 @@ describe("computeBaselineDiff (dual-axis, file-level)", () => {
   });
 
   test("does NOT flag must-raise for a satisfied axis pinned at the floor (idempotent after a reseed)", () => {
-    // computeUpdatedBaseline pins a satisfied axis (>=80) down to the floor (80)
+    // computeUpdatedBaseline pins a satisfied line axis (>=85) down to the line floor (85)
     // while retaining a file for its other, sub-floor axis — e.g. a 95%-line /
-    // 55%-branch file is stored as {line: 80, branch: 55}. Re-checking the SAME
+    // 55%-branch file is stored as {line: 85, branch: 55}. Re-checking the SAME
     // actuals must be a no-op: the pinned line axis sitting at 95 (> the stored
-    // 80) must NOT demand a raise, or the gate could never be green right after
+    // 85) must NOT demand a raise, or the gate could never be green right after
     // `update-baseline` (every mixed file would loop forever on must_raise).
     const diff = computeBaselineDiff(
-      base(80, 55),
+      base(85, 55),
       new Map([["a.ts", 95]]),
       new Map([["a.ts", 55]]),
     );
@@ -256,9 +256,9 @@ describe("computeBaselineDiff (dual-axis, file-level)", () => {
 
   test("still flags must-raise when a genuinely sub-floor axis improves above its watermark", () => {
     // The branch watermark (55) is below the floor, so a real improvement to 60
-    // must still ratchet — the pinned line axis (80) is untouched.
+    // must still ratchet — the pinned line axis (85) is untouched.
     const diff = computeBaselineDiff(
-      base(80, 55),
+      base(85, 55),
       new Map([["a.ts", 95]]),
       new Map([["a.ts", 60]]),
     );

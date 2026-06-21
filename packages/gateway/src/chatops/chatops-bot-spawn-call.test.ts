@@ -1,9 +1,47 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
+import type { ServerSpec } from "../connectors/lazy-mesh/slot.ts";
 import type { LazyMeshToolMap } from "../connectors/lazy-mesh/tool-map.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+
+// The success path of `spawnChatopsBotToolAndCall` constructs a REAL `MCPClient` (no injection
+// seam by design). To cover that construction + the `runBotToolCall` hand-off WITHOUT opening a
+// connector subprocess, mock `@mastra/mcp` — the same canonical pattern used by
+// `test/unit/connectors/lazy-mesh/connector-spawns.test.ts`. The mock captures the constructor
+// args (so the spawned id can be asserted) and serves a fixed tool map through `listTools`.
+const capturedClients: Array<{ id: string; servers: Record<string, ServerSpec> }> = [];
+
+mock.module("@mastra/mcp", () => ({
+  MCPClient: class MockMCPClient {
+    readonly id: string;
+    readonly servers: Record<string, ServerSpec>;
+    constructor(args: { id: string; servers: Record<string, ServerSpec> }) {
+      this.id = args.id;
+      this.servers = args.servers;
+      capturedClients.push({ id: args.id, servers: args.servers });
+    }
+    listTools(): Promise<LazyMeshToolMap> {
+      return Promise.resolve({
+        slack_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
+        teams_chat_post: { execute: (a: unknown) => Promise.resolve({ posted: a }) },
+      });
+    }
+    // Superset surface so this process-global mock is also safe for any sibling SUT that only
+    // constructs/connects an MCPClient (mirrors the connector-spawns canonical mock).
+    getTools(): Promise<Record<string, unknown>> {
+      return Promise.resolve({});
+    }
+    connect(): Promise<void> {
+      return Promise.resolve();
+    }
+    disconnect(): Promise<void> {
+      return Promise.resolve();
+    }
+  },
+}));
+
 import {
   type ChatopsBotToolRequest,
   runBotToolCall,
@@ -133,5 +171,48 @@ describe("runBotToolCall — post-spawn tool dispatch (fake client, no subproces
     );
     expect(await runBotToolCall(client, "slack", "slack_chat_post", {})).toBe("done");
     expect(disconnected).toBe(1);
+  });
+});
+
+describe("spawnChatopsBotToolAndCall — success path (mocked MCPClient, no subprocess)", () => {
+  test("slack: with bot credentials present, constructs the client and dispatches the tool", async () => {
+    capturedClients.length = 0;
+    const result = await spawnChatopsBotToolAndCall(
+      req({
+        platform: "slack",
+        toolId: "slack_chat_post",
+        args: { text: "hello" },
+        vaultView: fakeVault({ "slack.bot_token": "xoxb-1", "slack.app_token": "xapp-1" }),
+      }),
+    );
+    // The dispatch returned the mocked tool's result → lines 67 (new MCPClient) + 68
+    // (return runBotToolCall(...)) both executed.
+    expect(result).toEqual({ posted: { text: "hello" } });
+    // The constructed client id is the platform-scoped, per-spawn nimbus id.
+    expect(capturedClients).toHaveLength(1);
+    const captured = capturedClients[0];
+    expect(captured?.id).toMatch(/^nimbus-chatops-slack-/);
+    expect(captured?.servers).toHaveProperty("slack");
+  });
+
+  test("teams: with bot credentials present (graph-token seam), constructs the client and dispatches", async () => {
+    capturedClients.length = 0;
+    const result = await spawnChatopsBotToolAndCall(
+      req({
+        platform: "teams",
+        toolId: "teams_chat_post",
+        args: { text: "hi-teams" },
+        vaultView: fakeVault({
+          "teams.bot_app_id": "app-id-1",
+          "teams.bot_app_password": "app-pw-1",
+        }),
+        // Inject the graph-token resolver so the real Microsoft OAuth machinery is never touched.
+        teams: { graphTokenResolver: () => Promise.resolve("") },
+      }),
+    );
+    expect(result).toEqual({ posted: { text: "hi-teams" } });
+    expect(capturedClients).toHaveLength(1);
+    expect(capturedClients[0]?.id).toMatch(/^nimbus-chatops-teams-/);
+    expect(capturedClients[0]?.servers).toHaveProperty("teams");
   });
 });

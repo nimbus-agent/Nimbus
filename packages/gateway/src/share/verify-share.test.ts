@@ -69,6 +69,18 @@ describe("verifyShareFromBytes", () => {
     }
   });
 
+  test("input that is neither JSON nor YAML falls through to the base not-ok report", () => {
+    // `{ unterminated` is invalid JSON (parse throws) AND an unterminated YAML flow mapping
+    // (yamlParse throws) — so toJsonShareBytes returns the bytes unchanged, verifyShareBytes
+    // reports malformed json, and the inner origin/forwarding JSON.parse throws → outer catch
+    // returns `base`.
+    const bytes = new TextEncoder().encode("{ unterminated");
+    const r = verifyShareFromBytes(bytes);
+    expect(r.ok).toBe(false);
+    expect(r.origin).toBeUndefined();
+    expect(r.forwarding).toBeUndefined();
+  });
+
   test("a tampered body fails verification but still surfaces origin", () => {
     const kp = generateEd25519Keypair();
     const body: ShareBody = {
@@ -252,6 +264,12 @@ describe("parseShareFile", () => {
     expect(parseShareFile(new TextEncoder().encode(JSON.stringify({ hi: 1 })))).toBeNull();
   });
 
+  test("parseShareFile returns null when the bytes parse as neither JSON nor YAML", () => {
+    // `{ unterminated` throws in both JSON.parse and yamlParse, so toJsonShareBytes returns the
+    // raw bytes and parseShareFile's JSON.parse throws → the catch returns null.
+    expect(parseShareFile(new TextEncoder().encode("{ unterminated"))).toBeNull();
+  });
+
   test("parseShareFile returns null when sig is null (typeof null === 'object' trap)", () => {
     const withNullSig = { body: { kind: "recipe", sessionId: "s" }, sig: null };
     expect(parseShareFile(new TextEncoder().encode(JSON.stringify(withNullSig)))).toBeNull();
@@ -293,6 +311,20 @@ describe("loadShareBytes", () => {
     const path = join(tmpDir, `share-${share.contentHash}.json`);
     writeFileSync(path, JSON.stringify(share));
     const bytes = await loadShareBytes(path);
+    expect(parseShareFile(bytes)?.contentHash).toBe(share.contentHash);
+  });
+
+  test("loadShareBytes fetches an http(s) input via the injected SSRF-safe fetch seam", async () => {
+    const share = signedRecipeShare();
+    const json = JSON.stringify(share);
+    let requested: string | undefined;
+    const bytes = await loadShareBytes("https://example.com/share.json", {
+      safeFetchFn: (async (input: string) => {
+        requested = input;
+        return new Response(json);
+      }) as never,
+    });
+    expect(requested).toBe("https://example.com/share.json");
     expect(parseShareFile(bytes)?.contentHash).toBe(share.contentHash);
   });
 });

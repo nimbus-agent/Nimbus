@@ -24,4 +24,9 @@ describe("trustAnchorPubkey", () => {
   test("rejects a valid-base64 key of the wrong length", () => {
     expect(() => trustAnchorPubkey(freshStore(), encodeBase64(new Uint8Array(16)), 5)).toThrow();
   });
+  test("rejects a key the base64 decoder throws on", () => {
+    expect(() => trustAnchorPubkey(freshStore(), undefined as unknown as string, 5)).toThrow(
+      "policy trust: pubkey is not valid base64",
+    );
+  });
 });

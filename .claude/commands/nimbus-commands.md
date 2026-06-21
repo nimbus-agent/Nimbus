@@ -111,7 +111,7 @@ bun run audit:high              # same; root script alias
 ```bash
 bun run audit:structure                 # full pack via orchestrator → run-<ts>.json
 bun run audit:boundaries                # dep-cruiser: D1 cross-pkg / D2 cycles / D3 PAL leakage
-bun run audit:coverage-floor                 # per-file 80% line-coverage floor (with ratcheting baseline)
+bun run audit:coverage-floor                 # per-file floor: ≥85% line / ≥80% branch (with ratcheting baseline)
 bun run audit:coverage-floor:build-lcov      # per-package bun test + lcov merge (reproduces CI input for the floor gate)
 bun run audit:coverage-floor:update-baseline # raise must-raise watermarks + drop must-remove entries
 bun run audit:dead-code                 # knip unused exports / orphan files (D7)

@@ -107,7 +107,7 @@ Run `nimbus test` from the connector directory before submitting. This executes 
 
 ## Coverage Gate
 
-MCP connectors: **≥ 80% line coverage** (tracked in `docs/structure-audit/coverage-baseline.json`). Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
+MCP connectors: **≥ 85% line + ≥ 80% branch coverage** (the per-file floor; tracked in `docs/structure-audit/coverage-baseline.json`). Integration tests use a fresh temp dir and real SQLite — no mocking the DB layer.
 
 ## Scaffold
 

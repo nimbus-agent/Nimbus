@@ -172,7 +172,7 @@ describe("evaluateCheck — flagship 100% targets overlay", () => {
   });
 
   test("a passing target sits ABOVE the floor pass — no below_floor, no must_* churn", () => {
-    // The same file clears the 80 floor AND its 100 target: exactly zero violations, proving the
+    // The same file clears the 85 floor AND its 100 target: exactly zero violations, proving the
     // overlay is purely additive (it never double-reports or interferes with the ratchet).
     const r = evaluateCheck({
       sourceFiles: [FLAGSHIP],
@@ -203,7 +203,7 @@ describe("computeUpdatedBaseline (dual-axis)", () => {
       ["packages/gateway/src/a.ts"],
       "now",
     );
-    expect(next.files.get("packages/gateway/src/a.ts")).toEqual({ line: 80, branch: 55 });
+    expect(next.files.get("packages/gateway/src/a.ts")).toEqual({ line: 85, branch: 55 });
   });
 
   test("drops a file once BOTH axes clear the floor", () => {

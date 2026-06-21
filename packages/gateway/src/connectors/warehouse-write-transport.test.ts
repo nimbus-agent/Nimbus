@@ -1,12 +1,17 @@
 // packages/gateway/src/connectors/warehouse-write-transport.test.ts
 import { afterEach, describe, expect, test } from "bun:test";
+import { __setSessionSpawnerForTest } from "../teamvault/connector-session.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   __setPersonalInvokeForTest,
   invokeConnectorWrite,
   type WarehouseWriteContext,
 } from "./warehouse-write-transport.ts";
 
-afterEach(() => __setPersonalInvokeForTest(undefined));
+afterEach(() => {
+  __setPersonalInvokeForTest(undefined);
+  __setSessionSpawnerForTest(undefined);
+});
 
 function ctx(over: Partial<WarehouseWriteContext>): WarehouseWriteContext {
   return {
@@ -36,6 +41,32 @@ describe("invokeConnectorWrite", () => {
       toolId: "tableau_datasource_refresh",
       args: { id: "ds-1" },
     });
+  });
+
+  test("default personal path spawns a session and calls the write tool", async () => {
+    let executedArgs: unknown;
+    let disconnected = false;
+    __setSessionSpawnerForTest(async () => ({
+      listTools: async () => ({
+        looker_dashboard_run: {
+          execute: async (input: unknown) => {
+            executedArgs = input;
+            return { ran: true };
+          },
+        },
+      }),
+      disconnect: async () => {
+        disconnected = true;
+      },
+    }));
+    const out = await invokeConnectorWrite(ctx({ vault: {} as unknown as NimbusVault }), {
+      service: "looker",
+      writeToolId: "looker_dashboard_run",
+      args: { dashboardId: "d-1" },
+    });
+    expect(out).toEqual({ ran: true });
+    expect(executedArgs).toEqual({ dashboardId: "d-1" });
+    expect(disconnected).toBe(true);
   });
 
   test("team path routes through runTeamInvoke with the configured entry", async () => {

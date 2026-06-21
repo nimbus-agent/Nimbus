@@ -1,5 +1,13 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { CatchupBrief, ExpertBrief, ImpactBrief } from "./findings.ts";
+import type {
+  CatchupBrief,
+  ConflictBrief,
+  ExpertBrief,
+  HuddleBrief,
+  ImpactBrief,
+  JanitorBrief,
+  PreflightBrief,
+} from "./findings.ts";
 import { synthesize } from "./synthesize.ts";
 
 const EXPERT_FIXTURE: ExpertBrief = {
@@ -160,6 +168,121 @@ describe("synthesize(CatchupBrief)", () => {
     expect(md).toBe("# LLM-rewritten Catchup Markdown");
     expect(seenPrompt[0]).toMatch(
       /<tool_output service="nimbus" tool="agents\.catchup">[^<]*"kind":"catchup"[^<]*<\/tool_output>/,
+    );
+  });
+});
+
+const CONFLICT_FIXTURE: ConflictBrief = {
+  kind: "conflict",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { file: "src/x.ts" },
+  startEntityId: null,
+  collisions: [],
+};
+
+describe("synthesize(ConflictBrief)", () => {
+  test("wraps ConflictBrief payload with tool name agents.conflicts (I11)", async () => {
+    const seenPrompt: string[] = [];
+    const llm = {
+      generateMarkdown: mock(async (prompt: string) => {
+        seenPrompt.push(prompt);
+        return "# LLM-rewritten Conflict Markdown";
+      }),
+    };
+    const md = await synthesize(CONFLICT_FIXTURE, { llm });
+    expect(md).toBe("# LLM-rewritten Conflict Markdown");
+    expect(seenPrompt[0]).toMatch(
+      /<tool_output service="nimbus" tool="agents\.conflicts">[^<]*"kind":"conflict"[^<]*<\/tool_output>/,
+    );
+  });
+});
+
+const JANITOR_FIXTURE: JanitorBrief = {
+  kind: "janitor",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { resourceRef: "i-12345", idleDays: 30 },
+  idle: false,
+  proposalSuppressed: false,
+  cleanupAction: null,
+  peersClear: 0,
+  peersTouched: [],
+};
+
+describe("synthesize(JanitorBrief)", () => {
+  test("wraps JanitorBrief payload with tool name agents.janitor (I11)", async () => {
+    const seenPrompt: string[] = [];
+    const llm = {
+      generateMarkdown: mock(async (prompt: string) => {
+        seenPrompt.push(prompt);
+        return "# LLM-rewritten Janitor Markdown";
+      }),
+    };
+    const md = await synthesize(JANITOR_FIXTURE, { llm });
+    expect(md).toBe("# LLM-rewritten Janitor Markdown");
+    expect(seenPrompt[0]).toMatch(
+      /<tool_output service="nimbus" tool="agents\.janitor">[^<]*"kind":"janitor"[^<]*<\/tool_output>/,
+    );
+  });
+});
+
+const PREFLIGHT_FIXTURE: PreflightBrief = {
+  kind: "preflight",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { ref: "main", namespace: "default" },
+  downstreams: [],
+  anyFailed: false,
+  anyIncomplete: false,
+};
+
+describe("synthesize(PreflightBrief)", () => {
+  test("wraps PreflightBrief payload with tool name agents.preflight (I11)", async () => {
+    const seenPrompt: string[] = [];
+    const llm = {
+      generateMarkdown: mock(async (prompt: string) => {
+        seenPrompt.push(prompt);
+        return "# LLM-rewritten Preflight Markdown";
+      }),
+    };
+    const md = await synthesize(PREFLIGHT_FIXTURE, { llm });
+    expect(md).toBe("# LLM-rewritten Preflight Markdown");
+    expect(seenPrompt[0]).toMatch(
+      /<tool_output service="nimbus" tool="agents\.preflight">[^<]*"kind":"preflight"[^<]*<\/tool_output>/,
+    );
+  });
+});
+
+const HUDDLE_FIXTURE: HuddleBrief = {
+  kind: "huddle",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { sinceMs: 1_000 },
+  contributions: [],
+};
+
+describe("synthesize(HuddleBrief)", () => {
+  test("wraps HuddleBrief payload with default tool name agents.huddle (I11)", async () => {
+    const seenPrompt: string[] = [];
+    const llm = {
+      generateMarkdown: mock(async (prompt: string) => {
+        seenPrompt.push(prompt);
+        return "# LLM-rewritten Huddle Markdown";
+      }),
+    };
+    const md = await synthesize(HUDDLE_FIXTURE, { llm });
+    expect(md).toBe("# LLM-rewritten Huddle Markdown");
+    expect(seenPrompt[0]).toMatch(
+      /<tool_output service="nimbus" tool="agents\.huddle">[^<]*"kind":"huddle"[^<]*<\/tool_output>/,
     );
   });
 });
