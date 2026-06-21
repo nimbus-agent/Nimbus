@@ -8,6 +8,7 @@ import {
   type PKCEResult,
   refreshViaRegistry,
 } from "./oauth-registry.ts";
+import { resolveOAuthDescriptor } from "./workday-oauth-descriptor.ts";
 
 export type { OAuthProvider, PKCEResult };
 
@@ -146,7 +147,7 @@ async function runOnLocalPort(
   bindPort: number,
   fetchFn: PKCEFetch,
 ): Promise<PKCEResult> {
-  const descriptor = OAUTH_PROVIDERS[options.provider];
+  const descriptor = resolveOAuthDescriptor(options.provider);
   const usePkce = descriptor.usesPkce;
   const codeVerifier = usePkce ? randomUrlSafeString(32) : undefined;
   const codeChallenge =
@@ -204,7 +205,7 @@ async function runOnLocalPort(
 }
 
 export async function runPKCEFlow(options: PKCEOptions): Promise<PKCEResult> {
-  const descriptor = OAUTH_PROVIDERS[options.provider];
+  const descriptor = resolveOAuthDescriptor(options.provider);
   if (descriptor.clientSecret === "required") {
     const secret = options.oauthClientSecret?.trim();
     if (secret === undefined || secret === "") {
@@ -248,7 +249,7 @@ export async function refreshAccessToken(
   ctx: RefreshAccessTokenContext,
 ): Promise<PKCEResult> {
   return refreshViaRegistry({
-    descriptor: OAUTH_PROVIDERS[provider],
+    descriptor: resolveOAuthDescriptor(provider),
     refreshToken,
     clientId,
     vault: ctx.vault,

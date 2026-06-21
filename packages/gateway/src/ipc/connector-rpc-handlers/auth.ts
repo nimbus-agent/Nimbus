@@ -16,6 +16,8 @@ import {
   SALESFORCE_OAUTH_CLIENT_ID_HELP,
   SALESFORCE_OAUTH_CLIENT_SECRET_HELP,
   SLACK_OAUTH_CLIENT_ID_HELP,
+  WORKDAY_OAUTH_CLIENT_ID_HELP,
+  WORKDAY_OAUTH_CLIENT_SECRET_HELP,
   ZOOM_OAUTH_CLIENT_ID_HELP,
   ZOOM_OAUTH_CLIENT_SECRET_HELP,
 } from "../../auth/oauth-env-help-messages.ts";
@@ -624,6 +626,13 @@ function oauthClientConfigForProvider(
         emptyClientIdMessage: MENDELEY_OAUTH_CLIENT_ID_HELP,
         clientSecret: Config.oauthMendeleyClientSecret,
         clientSecretMissingHelp: MENDELEY_OAUTH_CLIENT_SECRET_HELP,
+      };
+    case "workday":
+      return {
+        clientId: Config.oauthWorkdayClientId,
+        emptyClientIdMessage: WORKDAY_OAUTH_CLIENT_ID_HELP,
+        clientSecret: Config.oauthWorkdayClientSecret,
+        clientSecretMissingHelp: WORKDAY_OAUTH_CLIENT_SECRET_HELP,
       };
     default: {
       const _ex: never = profile.provider;
