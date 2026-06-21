@@ -155,6 +155,14 @@ nimbus
 
 # Per-run audit-orchestrator output (committed artifacts are tracked separately)
 docs/structure-audit/run-*.json
+# Regenerable audit report dumps — overwritten by audit:structure / audit:invariants on every run.
+# (The ratchet baselines coverage-baseline.json / any-baseline.json and the *.md docs stay tracked.)
+docs/structure-audit/jscpd-report.json
+docs/structure-audit/churn-90d.json
+docs/structure-audit/knip-report.json
+docs/structure-audit/risky-assertions.json
+docs/structure-audit/file-loc.json
+docs/structure-audit/db-run-census.json
 
 packages/docs/src/assets/nimbus-wordmark-*.svg
 packages/docs/src/assets/architecture-*.svg

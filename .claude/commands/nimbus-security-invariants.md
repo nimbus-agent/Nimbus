@@ -86,6 +86,10 @@ Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invarian
 
 **Anti-pattern:** constructing a `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)`. Caught by both the runtime I15 test in `security-invariants.test.ts` and the static `D10` rule in `check-nimbus-invariants.ts`.
 
+## I29 — Egress Ledger Chokepoint (latest)
+
+The most recently added structural defense (`I28` is reserved for the in-flight MCP-server owner-sink branch). Same static+runtime shape as `I15`: every gated action appends exactly one `egress_ledger` row from `engine/executor.ts` `ToolExecutor.gate()` **before** `connectors.dispatch` (a denied gate writes a `result_status='blocked'` row; an append failure aborts the dispatch, fail-closed) — a textbook triple (production wiring + a `SECURITY-INVARIANTS.md` row + the `I29` block in `security-invariants.test.ts`). Static `D22` in `check-nimbus-invariants.ts` confines every `connectors.dispatch` to `executor.ts` and `appendEgressEntry` to `egress/*`, so a bypass fails before the suite runs. Deep dive: the `nimbus-egress` skill.
+
 ## When to Create a New Invariant Entry
 
 Add an invariant entry (`I<N>` row in `SECURITY-INVARIANTS.md` + test assertion) when you add:
