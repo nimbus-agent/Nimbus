@@ -58,6 +58,7 @@ describe("appendEgressEntry", () => {
       sourceId: "s",
       destination: "email",
       method: "email.send",
+      hitlStatus: "approved",
       resultStatus: "authorized",
     };
     expect(computeEgressRowHash(i)).toBe(computeEgressRowHash(i));
@@ -71,6 +72,15 @@ describe("appendEgressEntry", () => {
     };
     expect(row.result_status).toBe("blocked");
     expect(row.hitl_status).toBe("rejected");
+  });
+
+  test("append fails closed when the existing head row_hash is malformed", () => {
+    appendEgressEntry(db, entry());
+    // Corrupt the head row's hash to a non-64-char value, simulating ledger corruption.
+    db.run(
+      `UPDATE egress_ledger SET row_hash = 'deadbeef' WHERE id = (SELECT MAX(id) FROM egress_ledger)`,
+    );
+    expect(() => appendEgressEntry(db, entry({ timestamp: 200 }))).toThrow(/malformed/);
   });
 
   test("camelCase fields map to correct snake_case columns (round-trip)", () => {

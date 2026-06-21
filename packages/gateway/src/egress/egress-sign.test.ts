@@ -1,19 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { decodeBase64 } from "@nimbus-dev/sdk";
 import nacl from "tweetnacl";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { digestEgressWindow, signWindowDigest } from "./egress-sign.ts";
 
-/** A minimal in-memory NimbusVault stand-in (only get/set are exercised). */
-function fakeVault(): {
-  get: (k: string) => Promise<string | null>;
-  set: (k: string, v: string) => Promise<void>;
-} {
+/** A complete in-memory NimbusVault implementation for testing. */
+function fakeVault(): NimbusVault {
   const m = new Map<string, string>();
   return {
     get: async (k) => m.get(k) ?? null,
     set: async (k, v) => {
       m.set(k, v);
     },
+    delete: async (k) => {
+      m.delete(k);
+    },
+    listKeys: async (prefix) =>
+      [...m.keys()].filter((k) => prefix === undefined || k.startsWith(prefix)),
   };
 }
 
@@ -28,8 +31,7 @@ describe("digestEgressWindow", () => {
 
 describe("signWindowDigest", () => {
   test("produces a signature that verifies against the returned pubkey", async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: test stand-in for NimbusVault
-    const vault = fakeVault() as any;
+    const vault = fakeVault();
     const digest = digestEgressWindow([{ rowHash: "c".repeat(64) }]);
     const { sigB64, pubkeyB64 } = await signWindowDigest(vault, digest);
     const ok = nacl.sign.detached.verify(
@@ -41,8 +43,7 @@ describe("signWindowDigest", () => {
   });
 
   test("never returns the private key material", async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: test stand-in for NimbusVault
-    const vault = fakeVault() as any;
+    const vault = fakeVault();
     const out = await signWindowDigest(vault, digestEgressWindow([{ rowHash: "d".repeat(64) }]));
     expect(Object.keys(out).sort()).toEqual(["pubkeyB64", "sigB64"]);
     expect(JSON.stringify(out)).not.toContain("privkey");

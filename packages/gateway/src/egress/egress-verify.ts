@@ -3,6 +3,9 @@ import { GENESIS_HASH } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
 
+/** Hard ceiling on `listEgress` rows — bounds the cost of an IPC-supplied `limit`. */
+const MAX_EGRESS_LIST_LIMIT = 5000;
+
 export type EgressRow = {
   id: number;
   timestamp: number;
@@ -126,6 +129,7 @@ export function verifyEgressChain(db: Database, fromId = 0): EgressVerifyResult 
       sourceId: r.source_id,
       destination: r.destination,
       method: r.method,
+      hitlStatus: r.hitl_status,
       resultStatus: r.result_status,
     });
     if (!sha256HexEqualConstantTime(expected, r.row_hash)) {
@@ -160,7 +164,10 @@ export function listEgress(
 ): EgressRow[] {
   const since = opts.since ?? 0;
   const until = opts.until ?? Number.MAX_SAFE_INTEGER;
-  const limit = opts.limit !== undefined && opts.limit > 0 ? Math.floor(opts.limit) : 1000;
+  // Clamp to a hard ceiling: `egress.list` flows from IPC, so an arbitrarily large positive limit
+  // could force an expensive scan/allocation on a large ledger.
+  const requested = opts.limit !== undefined && opts.limit > 0 ? Math.floor(opts.limit) : 1000;
+  const limit = Math.min(requested, MAX_EGRESS_LIST_LIMIT);
   const rows = db
     .query(
       `SELECT id, timestamp, source_type, source_id, destination, method, payload_summary,

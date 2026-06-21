@@ -51,6 +51,18 @@ describe("verifyEgressChain", () => {
     expect(r.brokenAt).toBe(id);
     expect(r.reason).toMatch(/row_hash mismatch/);
   });
+  test("a post-write hitl_status flip is detected via row_hash mismatch", () => {
+    appendEgressEntry(db, e({ method: "a.x", timestamp: 1, hitlStatus: "rejected" }));
+    const id = (
+      db.query(`SELECT id FROM egress_ledger ORDER BY id ASC LIMIT 1`).get() as { id: number }
+    ).id;
+    // Flip the persisted consent decision without touching any other field.
+    db.run(`UPDATE egress_ledger SET hitl_status = 'approved' WHERE id = ?`, [id]);
+    const r = verifyEgressChain(db);
+    expect(r.ok).toBe(false);
+    expect(r.brokenAt).toBe(id);
+    expect(r.reason).toMatch(/row_hash mismatch/);
+  });
   test("a tampered prev_hash is detected via linkage check", () => {
     appendEgressEntry(db, e({ method: "a.x", timestamp: 1 }));
     appendEgressEntry(db, e({ method: "b.y", timestamp: 2 }));

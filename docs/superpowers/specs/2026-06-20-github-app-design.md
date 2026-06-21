@@ -3,7 +3,7 @@
 **Date:** 2026-06-20
 **Status:** Design — pending user review
 **Roadmap home:** Track 2 — Scale & Surface (Phase 12 Enterprise commercial-anchor surface; reuses Phase 5 T4 DORA data layer). Resequence reference: `docs/superpowers/specs/2026-06-17-roadmap-phase7-plus-resequence-design.md` §Track 2.
-**Scope:** New `packages/github-pr-check/` (a third first-party GitHub Action, AGPL — sibling of the two existing actions) + a thin composite-action wrapper. Extends `packages/github-actions/shared/gha-io.ts` (reuse). **No `packages/gateway` source changes for the MVP** (it consumes only the already-shipped read-only HTTP API). Docs: `packages/docs/`. Optional later: one new read RPC handler in `packages/gateway/src/ipc/http-server.ts` (Wave 2, blast-radius) — additive, no write surface.
+**Scope:** New `packages/github-actions/pr-check/` (a third first-party GitHub Action, AGPL — sibling of the two existing actions) + a thin composite-action wrapper. Extends `packages/github-actions/shared/gha-io.ts` (reuse). **No `packages/gateway` source changes for the MVP** (it consumes only the already-shipped read-only HTTP API). Docs: `packages/docs/`. Optional later: one new read RPC handler in `packages/gateway/src/ipc/http-server.ts` (Wave 2, blast-radius) — additive, no write surface.
 
 ---
 
@@ -30,7 +30,7 @@ Make Nimbus's existing analysis visible *where engineers already are* — the pu
 
 - No PR-comment posting surface — the existing actions write *annotations*, never a PR comment.
 - No one-click install / composite-action wrapper.
-- No `packages/github-pr-check/` (confirmed: `ls packages/` shows `github-actions`, no `github-app`/`github-pr-check`).
+- No `packages/github-actions/pr-check/` (confirmed: `ls packages/` shows `github-actions`, no `github-app`; `ls packages/github-actions/` has no `pr-check`).
 - No `GET /v1/preflight/deploy`-equivalent for blast-radius over HTTP (impact is IPC/CLI-only today).
 
 So the gap is **a posting surface + zero-config wrapper**, not new analysis. YAGNI says: reuse the analysis, add only the comment.
@@ -41,11 +41,11 @@ So the gap is **a posting surface + zero-config wrapper**, not new analysis. YAG
 
 ### Approach A — **GitHub Action that posts the PR comment from inside the user's CI job** (recommended)
 
-A new `packages/github-pr-check/` action runs *inside the customer's workflow*, on their **self-hosted runner** (same model as `preflight-query`). It:
+A new `packages/github-actions/pr-check/` action runs *inside the customer's workflow*, on their **self-hosted runner** (same model as `preflight-query`). It:
 
 1. Calls the local Gateway's **read-only** HTTP API (`GET /v1/preflight/deploy`, `GET /v1/metrics/dora`) — exactly the existing pattern.
 2. Renders a single Markdown comment.
-3. Posts/updates the comment via the **GitHub REST API using the job's own ephemeral `GITHUB_TOKEN`** (the `secrets.GITHUB_TOKEN` GitHub injects per-run; scope `pull-requests: write`). Find-and-update by a hidden marker so re-runs edit one comment instead of spamming.
+3. Posts/updates the comment via the **GitHub REST API using the job's own ephemeral `GITHUB_TOKEN`** (the `secrets.GITHUB_TOKEN` GitHub injects per-run; scope `pull-requests: write`). Upserts by a deterministic hidden marker so re-runs edit one comment instead of spamming — race-safe under concurrent runs (see §Race-free comment upsert).
 
 - **Trade-offs:** + No Nimbus cloud service, no relay, no webhook receiver — the user's index never leaves their network; the GitHub token is GitHub's own per-job token (never stored in Vault, never in Nimbus). + Reuses `gha-io.ts` and the read-only API verbatim — near-zero Gateway change. + "One-click" is delivered as a published **composite action** (`nimbus-agent/pr-check@v1`) a team pastes into `.github/workflows`. − Requires the team to add a workflow file (one-time, ~8 lines) and a self-hosted runner with the Gateway reachable — *not* literally a Marketplace "Install" button. − Doesn't run for forks without the self-hosted runner.
 
@@ -71,17 +71,17 @@ Use a GitHub App purely to mint a short-lived **installation token** (so comment
 
 ### Architecture & components
 
-New package **`packages/github-pr-check/`** (AGPL; structurally a clone of `preflight-query/` — `node20`, bundled standalone with `bun build` to `dist/index.js`):
+New package **`packages/github-actions/pr-check/`** (AGPL; structurally a clone of `preflight-query/` — `node20`, bundled standalone with `bun build` to `dist/index.js`):
 
 ```text
-packages/github-pr-check/
+packages/github-actions/pr-check/
   action.yml            # inputs: service, gateway-url, github-token, pr-number, mode, include-dora, timeout-ms, allow-gateway-failure
   package.json
   src/
     main.ts             # orchestrate: fetch → render → post
     fetch.ts            # GET /v1/preflight/deploy (+ /v1/metrics/dora) via the read-only API
     render.ts           # build the single Markdown comment (summary table + collapsible details + hidden marker)
-    comment.ts          # find-or-update PR comment via GitHub REST (Octokit-free: bare fetch, GITHUB_TOKEN)
+    comment.ts          # race-safe find-then-update PR comment via GitHub REST (Octokit-free: bare fetch, GITHUB_TOKEN; reconciles create-races to one comment)
     output.ts           # setOutput(verdict, comment-id) via makeSetOutput allow-list
     *.test.ts           # bun tests per file (≥80% line+branch)
   README.md             # public-tier H2 sections (audit:package-readmes)
@@ -89,7 +89,7 @@ packages/github-pr-check/
 
 Reuse `packages/github-actions/shared/gha-io.ts` for `safeString`, `writeJobSummary`, `makeSetOutput`, and the `::`-injection-safe escaping (the same relative-import-inlined-at-build pattern the other two actions use — no workspace dep introduced).
 
-A thin **composite action** (`packages/github-pr-check/composite/action.yml` or a top-level `action.yml`) chains `preflight-query` (already exists) → `github-pr-check`, so a team references one action.
+A thin **composite action** (`packages/github-actions/pr-check/composite/action.yml` or a top-level `action.yml`) chains `preflight-query` (already exists) → `pr-check`, so a team references one action.
 
 ### Data flow
 
@@ -97,16 +97,37 @@ A thin **composite action** (`packages/github-pr-check/composite/action.yml` or 
 PR opened / pushed
   → customer workflow (self-hosted runner)
      → [existing] preflight-query  → GET http://localhost:7474/v1/preflight/deploy   (read-only)
-     → [new] github-pr-check
+     → [new] pr-check
           → GET /v1/preflight/deploy  (+ optional GET /v1/metrics/dora)              (read-only, local Gateway)
           → render single Markdown comment (verdict + table + <details>)
           → GitHub REST: list PR comments → find hidden marker
                → PATCH existing comment  OR  POST new comment
+                 → on POST create-race (a concurrent run inserted first):
+                      re-list, find the marker, PATCH the existing comment (never a 2nd POST)
                  (auth: secrets.GITHUB_TOKEN, never Vault, never Nimbus cloud)
+       (workflow-level `concurrency:` group keyed on the PR number serializes/cancels in-flight runs)
   → comment visible to repo members only (private repo → private; never a public wiki/discussion)
 ```text
 
 The user's private index never leaves the machine: every Gateway call is `GET` to `localhost`. The only outbound call is `GitHub REST → github.com`, carrying *only the rendered verdict text the action computed from already-public-to-the-team CI signals*, authenticated by GitHub's own job token.
+
+### Race-free comment upsert (exactly-one guarantee)
+
+**Guarantee:** for a given PR there is **exactly one** Nimbus comment, no matter how many runs fire concurrently (a fast push-push-push, a manual re-run overlapping the push run, or a matrix that accidentally invokes the action twice). A hidden marker alone is *not* sufficient — two runs can both list-and-miss and both `POST`. The design therefore combines a concurrency guard with a race-tolerant upsert:
+
+1. **Concurrency guard (first line of defence).** The documented workflow snippet sets a job/workflow-level `concurrency:` group keyed on the PR number, so GitHub serializes (and cancels superseded) in-flight runs for the same PR:
+
+   ```yaml
+   concurrency:
+     group: nimbus-pr-check-${{ github.event.pull_request.number }}
+     cancel-in-progress: true
+   ```
+
+   This makes the common case (rapid pushes to the same PR) strictly single-flight, so the simple find-then-update never even sees a competitor.
+
+1. **Idempotent, race-tolerant upsert (fail-safe even without the guard).** The marker is a deterministic, PR-scoped HTML comment (e.g. `<!-- nimbus-pr-check:pr=<number> -->`). `comment.ts` does **find-then-update**: list PR comments, match the marker, and `PATCH` the existing one. On a *create-race* — where the find missed but a concurrent run has since inserted the comment, surfaced as a duplicate the next list would show — the action **re-queries after its `POST`/before finalizing, and if it now finds another marker-bearing comment, it keeps the lowest comment-id, `PATCH`es that one to the final body, and deletes its own extra** rather than leaving two. The marker is deterministic so every run computes the same identity; the reconcile step (re-list → keep-one → patch) means even two simultaneous `POST`s converge to a single comment.
+
+The marker is computed purely from the PR number (stable across runs), so it is the idempotency key; the `concurrency:` group is the serializing guard. Either alone narrows the window; together they make the "exactly one comment" promise hold under concurrent push/re-run races.
 
 ### Forked PRs / `pull_request_target` (security-caveated)
 
@@ -128,7 +149,7 @@ Public-repo / fork-PR comment posting is possible only via a `pull_request_targe
 3. **No plaintext credentials** — ✅ Preserved. The GitHub auth is `secrets.GITHUB_TOKEN`, GitHub's per-job ephemeral token, supplied by GitHub Actions to the job env — it is **never stored in Nimbus Vault, never in nimbus.toml, never logged**. `gha-io.ts` already strips control chars; `render.ts`/`comment.ts` MUST NOT echo the token (test asserts the token string never appears in any annotation/summary/output). The Gateway read API needs no credential for `localhost` reads (same as `preflight-query` today).
 4. **MCP as connector standard** — ✅ Preserved. The action calls the Gateway HTTP API, not any cloud API on the engine's behalf; the engine still reaches GitHub only through the existing first-party GitHub MCP connector. The action is an *external CI consumer*, not part of the engine.
 5. **Platform equality** — ✅ The action is `node20` + bare `fetch` (no native deps), identical to `preflight-query`; runs on any self-hosted runner OS. Tests run on the Ubuntu PR gate + 3-OS push matrix.
-6. **AGPL-3.0 core / MIT sdk** — ✅ `packages/github-pr-check/` is a core action → **AGPL-3.0** (matches the existing `github-actions/*`). No license field changes.
+6. **AGPL-3.0 core / MIT sdk** — ✅ `packages/github-actions/pr-check/` is a core action → **AGPL-3.0** (matches the existing `github-actions/*`). No license field changes.
 7. **No `any`** — ✅ TS 6 strict; GitHub REST responses + Gateway JSON typed as `unknown` then validated/narrowed (reuse `safeString`/`safeInt` from `gha-io.ts`).
 
 **Numbering note:** I28 is reserved for the MCP-server owner-sink (branch `dev/asafgolombek/phase7-mcp-gateway-server`). The I29/D22/V44-style numbers here follow the *proposed* global sequence in `2026-06-20-superpowers-specs-consolidated-review.md` §1 — these family ideas are mutually exclusive, so the actual number is the next-free at this spec's own merge time, reconciled by build order. (The MVP itself adds **no** new invariant/D/migration; the I29 below is only the *if-webhook-receiver* future reservation.)
@@ -150,7 +171,7 @@ Public-repo / fork-PR comment posting is possible only via a `pull_request_targe
 
 ### Testing
 
-- **Layer:** unit (`bun test`) per the existing GHA-action convention — `fetch.test.ts` (mock the read API at the HTTP boundary with a fetch fake), `render.test.ts` (golden Markdown + marker + injection escaping), `comment.test.ts` (find-or-update logic against a faked GitHub REST), `output.test.ts` (allow-listed outputs). Mirrors `preflight-query/src/*.test.ts`. **Coverage gate ≥80% line+branch per file** (baseline `{}` for new files — must clear on first add; verify with the coverage-floor build before first push).
+- **Layer:** unit (`bun test`) per the existing GHA-action convention — `fetch.test.ts` (mock the read API at the HTTP boundary with a fetch fake), `render.test.ts` (golden Markdown + marker + injection escaping), `comment.test.ts` (find-then-update logic against a faked GitHub REST, **including the create-race reconcile**: a fake whose first list misses but whose post-`POST` re-list returns two marker-bearing comments must converge to a single `PATCH`ed comment, never two), `output.test.ts` (allow-listed outputs). Mirrors `preflight-query/src/*.test.ts`. **Coverage gate ≥80% line+branch per file** (baseline `{}` for new files — must clear on first add; verify with the coverage-floor build before first push).
 - **Security tests (mandatory):** (a) the `GITHUB_TOKEN` value never appears in any emitted annotation, job summary, output, or thrown error message; (b) `render.ts` escapes `::`/CR/LF so a Gateway-supplied incident title cannot inject a workflow command (reuse `emitAnnotation`'s contract); (c) fail-closed: unreachable Gateway never produces an "ok" comment.
 - **No new Gateway tests for MVP** (no Gateway code changes). Wave 2's `/v1/impact` handler would add a read-route test next to the existing `handleDeployPreflight` tests.
 - Cross-platform: `bun run audit:cross-platform` clean (no hardcoded path separators); README passes `audit:package-readmes`.
@@ -177,19 +198,19 @@ Public-repo / fork-PR comment posting is possible only via a `pull_request_targe
 3. **Bot identity.** `GITHUB_TOKEN` posts as `github-actions[bot]`. Is that acceptable for v1, or is "Nimbus[bot]" (Approach C, Vault-held App key) needed for the commercial feel? (Recommendation: ship as `github-actions[bot]`; offer Approach C as a Wave-2 opt-in.)
 4. **Forked PRs. — RESOLVED.** `GITHUB_TOKEN` on `pull_request` from forks is read-only by default; the comment post will 403. **v1 stays internal-PRs-only** (the comment posts on same-repo PRs; fork PRs are skipped with a documented note, never a 403-failed step). Public-repo / fork-PR comment posting requires a `pull_request_target` workflow (which runs with the *base* repo's write-scoped token); this is offered only as an **opt-in, documented, caveated** pattern, **not** the default. **SECURITY WARNING:** a `pull_request_target` workflow runs with elevated, write-scoped credentials in the context of the base repo — checking out and executing untrusted fork code *in the same job that queries the local Gateway* (read-only API on `localhost`) is dangerous: the fork code could exfiltrate the elevated token or probe the Gateway. The opt-in `pull_request_target` recipe MUST therefore **never check out or run fork code in the posting job** — it posts only the verdict text the action rendered from the Gateway's read-only response, and runs no fork-supplied build/test step. See §Design data-flow + §Forked PRs.
 5. **Licensing gate.** If this is the paid anchor, where does tier enforcement live — in the action (checks a Vault `license.tier`?) or purely honor-system at MVP? (Recommendation: honor-system + read-only at MVP; tier gate lands with Enterprise Phase 12, not here.)
-6. **Package name.** `packages/github-pr-check/` vs folding under `packages/github-actions/pr-check/` (sibling of the other two). Recommendation: **`packages/github-actions/pr-check/`** for consistency — keeps the shared `gha-io.ts` relative import trivial and groups all three actions.
+6. **Package name. — RESOLVED.** The action lives at **`packages/github-actions/pr-check/`** (sibling of the other two), used consistently throughout this spec — it keeps the shared `gha-io.ts` relative import trivial and groups all three actions under one package.
 
 ---
 
 ## Acceptance criteria
 
 1. A new action under `packages/github-actions/pr-check/` (AGPL, `node20`, bundled to `dist/index.js`) with `action.yml` inputs `service`, `gateway-url` (default `http://localhost:7474`), `github-token` (default `${{ github.token }}`), `pr-number` (default `${{ github.event.pull_request.number }}`), `mode` (`warn|block|off`), `include-dora` (default `true`), `timeout-ms` (default `10000`), `allow-gateway-failure` (default `false`); outputs `verdict`, `comment-id`.
-2. On a PR, the action calls **only** `GET /v1/preflight/deploy` (+ optional `GET /v1/metrics/dora`) on the local Gateway and posts **exactly one** Markdown comment (summary table + `<details>` drill-down + hidden marker); a re-run **edits** that comment, never adds a second.
+2. On a PR, the action calls **only** `GET /v1/preflight/deploy` (+ optional `GET /v1/metrics/dora`) on the local Gateway and posts **exactly one** Markdown comment (summary table + `<details>` drill-down + deterministic PR-scoped hidden marker); a re-run **edits** that comment, never adds a second. **Race-safe under concurrency:** the documented workflow sets a `concurrency:` group keyed on the PR number, and `comment.ts` does an idempotent find-then-update that reconciles a create-race (re-list → keep the lowest comment-id → `PATCH` it → delete any extra), so two overlapping runs converge to one comment instead of both `POST`ing (test-enforced — see §Race-free comment upsert).
 3. The comment renders a clear `ok | warn | block` verdict from the preflight envelope; `mode: block` + `verdict: block` exits non-zero *after* posting.
 4. Fail-closed proven: unreachable Gateway with `allow-gateway-failure: false` fails the step with a `nimbus start` hint and posts **no** comment; with `true`/`mode: off` it posts nothing and exits 0; the action never hangs past `timeout-ms`.
 5. The `GITHUB_TOKEN` value never appears in any annotation, job summary, output, or error (test-enforced). Gateway-supplied text cannot inject a workflow command (escaping test passes).
 6. **No** change to `WRITE_ROUTE_ALLOWLIST`, **no** new Vault key, **no** schema migration, **no** new invariant for the MVP (I13 frozen-list drift test + `security-invariants.test.ts` stay green; `nimbus run preflight` passes).
 7. Per-file coverage ≥80% line+branch on every new file (coverage-floor build green on Linux). `audit:package-readmes` and `audit:cross-platform` pass.
 8. The 7 Non-Negotiables hold as documented in §Security; the spec records I28 as reserved and I29 as the *only-if-webhook-receiver* future invariant (explicitly not built here).
-9. A composite action chains the existing `preflight-query` with `pr-check`, and `packages/docs/` documents the ~8-line workflow snippet (self-hosted runner + reachable Gateway).
+9. A composite action chains the existing `preflight-query` with `pr-check`, and `packages/docs/` documents the workflow snippet (self-hosted runner + reachable Gateway) — including the PR-number-keyed `concurrency:` group that guards the exactly-one-comment promise.
 10. **Forked PRs:** v1 is internal-PRs-only — a fork PR (read-only `GITHUB_TOKEN`) is **skipped with a documented note, never a 403-failed step**. The `pull_request_target` opt-in is documented **only** as a caveated pattern whose recipe never checks out or runs fork code in the posting job and carries the inline SECURITY WARNING (docs-reviewed).

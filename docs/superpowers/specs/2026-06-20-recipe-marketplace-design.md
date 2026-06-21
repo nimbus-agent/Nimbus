@@ -7,7 +7,7 @@
 
 - New: `packages/gateway/src/recipes/` (registry client, install gate, recipe-manifest types, recipe store)
 - Extend: `packages/gateway/src/ipc/share-rpc.ts` (recipe RPC handlers) or a sibling `recipe-rpc.ts`; `packages/cli/src/commands/` (new `recipes.ts`)
-- Extend: `packages/gateway/src/engine/executor.ts` (`HITL_REQUIRED_BACKING` adds `recipe.publish`)
+- Extend: `packages/gateway/src/engine/executor.ts` (`HITL_REQUIRED_BACKING` adds `recipe.install` and `recipe.publish` — both gate through `executor.gate()`)
 - Reuse (no change): `share/share-keypair.ts`, `share/share-format.ts`, `share/recipe.ts`, `share/recipe-runner.ts`, `share/recipe-yaml.ts`, `extensions/registry-client.ts`, `extensions/verify-signature.ts`
 - New migration: **V46** (`recipe_index` cache table — see Schema)
 

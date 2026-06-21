@@ -12,27 +12,36 @@ export interface EgressRowHashInput {
   readonly sourceId: string | null;
   readonly destination: string;
   readonly method: string;
+  readonly hitlStatus: string;
   readonly resultStatus: string;
 }
 
 /**
  * BLAKE3 row hash over `prev_hash | timestamp | source_type | source_id | destination | method |
- * result_status`. Mirrors `db/audit-chain.ts`'s `computeAuditRowHash` exactly (same blake3 +
- * bytesToHex primitive). `payload_summary` is intentionally NOT hashed: it is redacted/lossy and
+ * hitl_status | result_status`. Mirrors `db/audit-chain.ts`'s `computeAuditRowHash` exactly (same
+ * blake3 + bytesToHex primitive). `hitl_status` IS committed: it is the consent decision that
+ * authorized (or blocked) the egress, so a post-write flip (`approved`/`rejected`/`not_required`)
+ * must break verification. `payload_summary` is intentionally NOT hashed: it is redacted/lossy and
  * a debugging aid, not part of the tamper-evident commitment.
  */
 export function computeEgressRowHash(input: EgressRowHashInput): string {
   const encoder = new TextEncoder();
-  const base = `${input.prevHash}|${String(input.timestamp)}|${input.sourceType}|${input.sourceId ?? ""}|${input.destination}|${input.method}|${input.resultStatus}`;
+  const base = `${input.prevHash}|${String(input.timestamp)}|${input.sourceType}|${input.sourceId ?? ""}|${input.destination}|${input.method}|${input.hitlStatus}|${input.resultStatus}`;
   return bytesToHex(blake3(encoder.encode(base)));
 }
 
 function readHeadHash(db: Database): string {
   const raw = db.query(`SELECT row_hash FROM egress_ledger ORDER BY id DESC LIMIT 1`).get() as
     | { row_hash: string | null }
+    | null
     | undefined;
-  const h = raw?.row_hash;
-  return typeof h === "string" && h.length === 64 ? h : GENESIS_HASH;
+  // No head row yet → genesis (bun:sqlite `.get()` returns null for an empty result). But a
+  // present-yet-malformed head hash means corruption: fail closed rather than silently re-rooting
+  // new rows onto genesis (which would mask the broken chain).
+  if (raw == null) return GENESIS_HASH;
+  const h = raw.row_hash;
+  if (typeof h === "string" && h.length === 64) return h;
+  throw new Error("egress_ledger head row_hash is malformed");
 }
 
 /**
@@ -51,6 +60,7 @@ export function appendEgressEntry(db: Database, entry: EgressEntry): void {
     sourceId: entry.sourceId,
     destination: entry.destination,
     method: entry.method,
+    hitlStatus: entry.hitlStatus,
     resultStatus: entry.resultStatus,
   });
   dbRun(

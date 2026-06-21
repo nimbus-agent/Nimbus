@@ -2,8 +2,8 @@
 
 This document provides a detailed review of the following two implementation plans:
 
-1. [Egress Ledger & nimbus prove Plan](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-06-20-egress-ledger-nimbus-prove.md)
-2. [Standup Generator Plan](file:///C:/gitrep/Nimbus/docs/superpowers/plans/2026-06-20-standup-generator.md)
+1. [Egress Ledger & nimbus prove Plan](./2026-06-20-egress-ledger-nimbus-prove.md)
+2. [Standup Generator Plan](./2026-06-20-standup-generator.md)
 
 ---
 
