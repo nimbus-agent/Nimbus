@@ -123,7 +123,7 @@ export function mapReportRowToItem(
   const keyVal =
     report.keyField !== undefined && typeof row[report.keyField] === "string"
       ? (row[report.keyField] as string)
-      : stableRowKey(row);
+      : stableRowKey(filtered);
   const externalId = `${report.label}:${keyVal}`;
   const bodyPreview = Object.entries(filtered)
     .slice(0, 4)
