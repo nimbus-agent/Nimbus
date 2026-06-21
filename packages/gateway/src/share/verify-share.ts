@@ -1,7 +1,6 @@
 import { load as yamlParse } from "js-yaml";
 import { safeFetch } from "./safe-fetch.ts";
-import type { ShareFile } from "./share-format.ts";
-import { type VerifyResult, verifyShareBytes } from "./share-format.ts";
+import { type ShareFile, type VerifyResult, verifyShareBytes } from "./share-format.ts";
 import { verifyForwardingChain } from "./share-forwarding.ts";
 
 /**
@@ -118,8 +117,8 @@ export function verifyShareFromBytes(
 
     const report: VerifyShareReport = {
       ...base,
-      ...(originField !== undefined ? { origin: originField } : {}),
-      ...(forwardingField !== undefined ? { forwarding: forwardingField } : {}),
+      ...(originField === undefined ? {} : { origin: originField }),
+      ...(forwardingField === undefined ? {} : { forwarding: forwardingField }),
     };
     return report;
   } catch {

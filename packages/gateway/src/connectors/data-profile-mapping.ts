@@ -1,13 +1,4 @@
-import {
-  type DataColumn,
-  firstLineAndRows,
-  jsKind,
-  type ParquetMetadataLike,
-  parquetColumnsFromMetadata,
-  parseCsvHeader,
-  parseJsonColumns,
-  parseJsonlColumns,
-} from "@nimbus-dev/sdk";
+import type { DataColumn } from "@nimbus-dev/sdk";
 import type { MappedRow } from "./mapped-row.ts";
 
 /**
@@ -31,7 +22,7 @@ import type { MappedRow } from "./mapped-row.ts";
 
 export type DataFileFormat = "parquet" | "csv" | "jsonl" | "json";
 
-export type { DataColumn, ParquetMetadataLike };
+export type { ParquetMetadataLike } from "@nimbus-dev/sdk";
 export {
   firstLineAndRows,
   jsKind,
@@ -39,7 +30,8 @@ export {
   parseCsvHeader,
   parseJsonColumns,
   parseJsonlColumns,
-};
+} from "@nimbus-dev/sdk";
+export type { DataColumn };
 
 export interface DataModelProfile {
   readonly relativePath: string;

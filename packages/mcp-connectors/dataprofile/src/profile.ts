@@ -4,7 +4,6 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type DataColumn,
   firstLineAndRows,
-  jsKind,
   type ParquetMetadataLike,
   parquetColumnsFromMetadata,
   parseCsvHeader,
@@ -40,8 +39,9 @@ const EXT_FORMAT: Record<string, DataFileFormat> = {
   ".json": "json",
 };
 
+export { jsKind } from "@nimbus-dev/sdk";
 export type { DataColumn, ParquetMetadataLike };
-export { jsKind, parquetColumnsFromMetadata, parseCsvHeader, parseJsonColumns, parseJsonlColumns };
+export { parquetColumnsFromMetadata, parseCsvHeader, parseJsonColumns, parseJsonlColumns };
 
 export interface DataModel {
   readonly relativePath: string;

@@ -79,7 +79,7 @@ async function handleProveWindow(
     until: optInt(params, "until"),
   });
   const rec = asRecord(params);
-  const sign = rec !== undefined && rec["sign"] === true;
+  const sign = rec?.["sign"] === true;
   if (!sign) return window;
   const digest = digestEgressWindow(window.rows);
   const { sigB64, pubkeyB64 } = await signWindowDigest(ctx.vault, digest);

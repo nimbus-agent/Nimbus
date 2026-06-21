@@ -127,7 +127,7 @@ export interface BaseWalkState {
 export interface AwsPaginatedWalkSpec<S extends BaseWalkState> {
   readonly ensureRunning: () => Promise<void>;
   /** Resolve credentials (or null → noop). Typically {@link awsCredentialsExtra}. */
-  readonly loadCreds: () => Promise<unknown | null>;
+  readonly loadCreds: () => Promise<unknown>;
   readonly pass1Cursor: () => string;
   readonly maxItems: number;
   readonly pageSize: number;

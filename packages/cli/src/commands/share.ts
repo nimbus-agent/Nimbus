@@ -95,119 +95,126 @@ interface ShareRecordRow {
   readonly createdAt: number;
 }
 
+async function runShareCreate(rest: string[]): Promise<void> {
+  const a = parseShareCreateArgs(rest);
+  if (a.sessionId.length === 0) {
+    console.error(
+      "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  await withIpc(async (c) => {
+    const r = await c.call<{ status: string; contentHash?: string }>("share.create", {
+      sessionId: a.sessionId,
+      kind: a.asRecipe ? "recipe" : "transcript",
+      sink: a.sink,
+      expiresMs: a.expiresMs,
+      redact: a.redact,
+    });
+    if (r.status === "ok") {
+      console.log(`Shared: ${r.contentHash ?? "(no content hash)"}`);
+    } else {
+      console.log(`Share ${r.status}`);
+      process.exitCode = 1;
+    }
+  });
+}
+
+async function runShareList(rest: string[]): Promise<void> {
+  await withIpc(async (c) => {
+    const { shares } = await c.call<{ shares: ShareRecordRow[] }>("share.list", {
+      includeExpired: rest.includes("--all"),
+    });
+    for (const row of shares) {
+      console.log(`${row.contentHash}  ${row.kind}  ${new Date(row.createdAt).toISOString()}`);
+    }
+  });
+}
+
+async function runSharePrune(): Promise<void> {
+  await withIpc(async (c) => {
+    const r = await c.call<{ removed: number }>("share.prune", {});
+    console.log(`Pruned ${r.removed}`);
+  });
+}
+
+async function runSharePubkey(): Promise<void> {
+  await withIpc(async (c) => {
+    const r = await c.call<{ pubkey: string }>("share.pubkey", {});
+    console.log(r.pubkey);
+  });
+}
+
+async function runShareApproval(sub: "approve" | "reject", rest: string[]): Promise<void> {
+  const requestId = rest[0];
+  if (requestId === undefined || requestId.startsWith("--")) {
+    console.error(`Usage: nimbus share ${sub} <request-id>`);
+    process.exitCode = 1;
+    return;
+  }
+  await withIpc(async (c) => {
+    const r = await c.call<{ matched: boolean }>("share.approvalRespond", {
+      requestId,
+      approved: sub === "approve",
+    });
+    const verb = sub === "approve" ? "approved" : "rejected";
+    console.log(r.matched ? `${verb} ${requestId}` : "no pending share request with that id");
+  });
+}
+
+async function runShareForward(rest: string[]): Promise<void> {
+  const contentHash = rest[0];
+  if (contentHash === undefined || contentHash.startsWith("--")) {
+    console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+    process.exitCode = 1;
+    return;
+  }
+  const peerIdx = rest.indexOf("--to-peer");
+  const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
+  if (peerId === undefined || peerId.startsWith("--")) {
+    console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
+    process.exitCode = 1;
+    return;
+  }
+  await withIpc(async (c) => {
+    const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
+      contentHash,
+      recipient: peerId,
+    });
+    if (r.status === "rejected") {
+      console.log(`rejected ${contentHash} (owner did not approve the forward)`);
+    } else {
+      console.log(
+        r.delivered
+          ? `delivered ${contentHash}`
+          : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
+      );
+    }
+  });
+}
+
+async function runShareInbox(rest: string[]): Promise<void> {
+  await withIpc(async (c) => {
+    const { inbox } = await c.call<{
+      inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
+    }>("share.inbox", { all: rest.includes("--all") });
+    for (const row of inbox) {
+      const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
+      console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
+    }
+  });
+}
+
 export async function runShare(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
-  if (sub === "create") {
-    const a = parseShareCreateArgs(rest);
-    if (a.sessionId.length === 0) {
-      console.error(
-        "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]",
-      );
-      process.exitCode = 1;
-      return;
-    }
-    await withIpc(async (c) => {
-      const r = await c.call<{ status: string; contentHash?: string }>("share.create", {
-        sessionId: a.sessionId,
-        kind: a.asRecipe ? "recipe" : "transcript",
-        sink: a.sink,
-        expiresMs: a.expiresMs,
-        redact: a.redact,
-      });
-      if (r.status === "ok") {
-        console.log(`Shared: ${r.contentHash ?? "(no content hash)"}`);
-      } else {
-        console.log(`Share ${r.status}`);
-        process.exitCode = 1;
-      }
-    });
-    return;
-  }
-  if (sub === "list") {
-    await withIpc(async (c) => {
-      const { shares } = await c.call<{ shares: ShareRecordRow[] }>("share.list", {
-        includeExpired: rest.includes("--all"),
-      });
-      for (const row of shares) {
-        console.log(`${row.contentHash}  ${row.kind}  ${new Date(row.createdAt).toISOString()}`);
-      }
-    });
-    return;
-  }
-  if (sub === "prune") {
-    await withIpc(async (c) => {
-      const r = await c.call<{ removed: number }>("share.prune", {});
-      console.log(`Pruned ${r.removed}`);
-    });
-    return;
-  }
-  if (sub === "pubkey") {
-    await withIpc(async (c) => {
-      const r = await c.call<{ pubkey: string }>("share.pubkey", {});
-      console.log(r.pubkey);
-    });
-    return;
-  }
-  if (sub === "approve" || sub === "reject") {
-    const requestId = rest[0];
-    if (requestId === undefined || requestId.startsWith("--")) {
-      console.error(`Usage: nimbus share ${sub} <request-id>`);
-      process.exitCode = 1;
-      return;
-    }
-    await withIpc(async (c) => {
-      const r = await c.call<{ matched: boolean }>("share.approvalRespond", {
-        requestId,
-        approved: sub === "approve",
-      });
-      const verb = sub === "approve" ? "approved" : "rejected";
-      console.log(r.matched ? `${verb} ${requestId}` : "no pending share request with that id");
-    });
-    return;
-  }
-  if (sub === "forward") {
-    const contentHash = rest[0];
-    if (contentHash === undefined || contentHash.startsWith("--")) {
-      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
-      process.exitCode = 1;
-      return;
-    }
-    const peerIdx = rest.indexOf("--to-peer");
-    const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
-    if (peerId === undefined || peerId.startsWith("--")) {
-      console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
-      process.exitCode = 1;
-      return;
-    }
-    await withIpc(async (c) => {
-      const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
-        contentHash,
-        recipient: peerId,
-      });
-      if (r.status === "rejected") {
-        console.log(`rejected ${contentHash} (owner did not approve the forward)`);
-      } else {
-        console.log(
-          r.delivered
-            ? `delivered ${contentHash}`
-            : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
-        );
-      }
-    });
-    return;
-  }
-  if (sub === "inbox") {
-    await withIpc(async (c) => {
-      const { inbox } = await c.call<{
-        inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
-      }>("share.inbox", { all: rest.includes("--all") });
-      for (const row of inbox) {
-        const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
-        console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
-      }
-    });
-    return;
-  }
+  if (sub === "create") return runShareCreate(rest);
+  if (sub === "list") return runShareList(rest);
+  if (sub === "prune") return runSharePrune();
+  if (sub === "pubkey") return runSharePubkey();
+  if (sub === "approve" || sub === "reject") return runShareApproval(sub, rest);
+  if (sub === "forward") return runShareForward(rest);
+  if (sub === "inbox") return runShareInbox(rest);
   console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject|forward|inbox> ...");
   process.exitCode = 1;
 }

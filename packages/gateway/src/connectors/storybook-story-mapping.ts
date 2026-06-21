@@ -1,4 +1,4 @@
-import { parseStorybookIndex, type StorybookStory } from "@nimbus-dev/sdk";
+import type { StorybookStory } from "@nimbus-dev/sdk";
 import type { MappedRow } from "./mapped-row.ts";
 
 /**
@@ -10,7 +10,7 @@ import type { MappedRow } from "./mapped-row.ts";
 /** @deprecated Use `StorybookStory` from `@nimbus-dev/sdk` instead. */
 export type StorybookStoryInput = StorybookStory;
 
-export { parseStorybookIndex };
+export { parseStorybookIndex } from "@nimbus-dev/sdk";
 
 export interface StorybookMappingContext {
   readonly syncedAt: number;
@@ -34,7 +34,7 @@ function clamp(s: string, max: number): string {
  * tags, type). Returns null when the entry has no id.
  */
 export function mapStorybookStoryToItem(
-  input: StorybookStoryInput,
+  input: StorybookStory,
   ctx: StorybookMappingContext,
 ): StorybookMappedRow | null {
   const id = input.id.trim();

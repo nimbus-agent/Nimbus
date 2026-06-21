@@ -75,11 +75,11 @@ export async function forwardShare(
 
   const peer = deps.lookupPeer(req.recipientPubkey);
   let delivered = false;
-  if (peer !== undefined) {
+  if (peer === undefined) {
+    deps.queuePending(req.recipientPubkey, forwarded);
+  } else {
     await deps.deliver(forwarded, peer);
     delivered = true;
-  } else {
-    deps.queuePending(req.recipientPubkey, forwarded);
   }
 
   deps.recordAudit({

@@ -66,7 +66,9 @@ export function resolvePruneBeforeTs(args: string[], now: number): number {
       ? Number.parseInt(beforeRaw, 10)
       : Date.parse(beforeRaw);
     if (Number.isNaN(asEpoch)) {
-      throw new Error(`Invalid --before value: ${beforeRaw} (expected an ISO date or epoch ms)`);
+      throw new TypeError(
+        `Invalid --before value: ${beforeRaw} (expected an ISO date or epoch ms)`,
+      );
     }
     return asEpoch;
   }

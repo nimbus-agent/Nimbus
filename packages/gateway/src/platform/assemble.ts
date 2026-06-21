@@ -798,7 +798,7 @@ async function bootFederationIntoIpcOpts(
     label: os.hostname(),
     loadShare: (h) => {
       const r = getShareRecord(db, h);
-      return r !== undefined ? shareFileFromRecord(r) : undefined;
+      return r === undefined ? undefined : shareFileFromRecord(r);
     },
     shareKeypair: () => ensureShareKeypair(vault),
     // SAME owner consent broker as createShare (D21 extension: second outbound-share chokepoint).

@@ -72,14 +72,14 @@ export function pruneEgress(
       .query(`SELECT prev_hash FROM egress_ledger ORDER BY id ASC LIMIT 1`)
       .get() as { prev_hash: string } | null | undefined;
 
-    if (firstSurvivor != null) {
-      // Partial prune: boundary = prev_hash of the first surviving row.
-      boundaryHash = firstSurvivor.prev_hash;
-    } else {
+    if (firstSurvivor == null) {
       // Full prune: no survivors — boundary = last-deleted row's row_hash (monotonic id order).
       const lastDeleted = toDelete.at(-1);
       if (lastDeleted === undefined) return; // unreachable; guarded by prunedCount > 0
       boundaryHash = lastDeleted.row_hash;
+    } else {
+      // Partial prune: boundary = prev_hash of the first surviving row.
+      boundaryHash = firstSurvivor.prev_hash;
     }
 
     // 5. Append the tombstone. appendEgressEntry calls readHeadHash() internally, which will see
@@ -98,5 +98,5 @@ export function pruneEgress(
     });
   })();
 
-  return boundaryHash !== undefined ? { prunedCount, boundaryHash } : { prunedCount };
+  return boundaryHash === undefined ? { prunedCount } : { prunedCount, boundaryHash };
 }
