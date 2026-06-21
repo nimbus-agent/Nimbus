@@ -17,7 +17,9 @@ import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
 import { getValidSalesforceAuth } from "../../auth/salesforce-access-token.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
+import { getValidWorkdayAccessToken } from "../../auth/workday-access-token.ts";
 import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
+import { Config } from "../../config.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -1072,6 +1074,65 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
             env: extensionProcessEnv({
               SALESFORCE_ACCESS_TOKEN: auth.accessToken,
               SALESFORCE_INSTANCE_URL: auth.instanceUrl,
+            }),
+          },
+          manifest,
+          ctx.sandboxCwd,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Workday MCP when `workday.oauth` is present, a valid access token can
+ * be resolved, and the tenant host + tenant name are configured. The per-tenant
+ * host is added to the sandbox manifest at spawn via the Salesforce-style
+ * extra-hosts pattern (direct wrapServerSpec, not wrap()).
+ */
+export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.workday;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "workday", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  const tenantHost = Config.workdayTenantHost.trim();
+  const tenant = Config.workdayTenant.trim();
+  if (tenantHost === "" || tenant === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidWorkdayAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  const host = hostnameFromUrl(tenantHost);
+  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host]);
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-workday-${randomUUID()}`,
+      servers: {
+        workday: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("workday")],
+            env: extensionProcessEnv({
+              WORKDAY_ACCESS_TOKEN: accessToken,
+              WORKDAY_TENANT_HOST: tenantHost,
+              WORKDAY_TENANT: tenant,
             }),
           },
           manifest,

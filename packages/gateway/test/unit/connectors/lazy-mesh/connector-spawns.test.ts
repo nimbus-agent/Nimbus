@@ -80,11 +80,22 @@ mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
   getValidMicrosoftAccessToken: async (): Promise<string> => "fake-microsoft-access-token",
 }));
 
+// Workday requires tenant host + tenant in Config (read at module-init from env).
+// Set them before connector-spawns.ts is imported so Config captures the values.
+process.env.NIMBUS_WORKDAY_TENANT_HOST = "https://acme.workday.com";
+process.env.NIMBUS_WORKDAY_TENANT = "acme";
+
 type AuthBehaviour = "ok" | "empty" | "throw";
-const authBehaviour: { slack: AuthBehaviour; notion: AuthBehaviour; mendeley: AuthBehaviour } = {
+const authBehaviour: {
+  slack: AuthBehaviour;
+  notion: AuthBehaviour;
+  mendeley: AuthBehaviour;
+  workday: AuthBehaviour;
+} = {
   slack: "ok",
   notion: "ok",
   mendeley: "ok",
+  workday: "ok",
 };
 
 mock.module("../../../../src/auth/slack-access-token.ts", () => ({
@@ -106,6 +117,13 @@ mock.module("../../../../src/auth/mendeley-access-token.ts", () => ({
     if (authBehaviour.mendeley === "throw") throw new Error("test-injected-failure");
     if (authBehaviour.mendeley === "empty") return "";
     return "fake-mendeley-access-token";
+  },
+}));
+mock.module("../../../../src/auth/workday-access-token.ts", () => ({
+  getValidWorkdayAccessToken: async (): Promise<string> => {
+    if (authBehaviour.workday === "throw") throw new Error("test-injected-failure");
+    if (authBehaviour.workday === "empty") return "";
+    return "fake-workday-access-token";
   },
 }));
 
@@ -197,6 +215,7 @@ const {
   ensurePhase3BundleMcp,
   ensureSalesforceMcp,
   ensureSlackMcp,
+  ensureWorkdayMcp,
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
 const { LAZY_MESH } = await import("../../../../src/connectors/lazy-mesh/keys.ts");
@@ -239,6 +258,7 @@ beforeEach(() => {
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
   authBehaviour.mendeley = "ok";
+  authBehaviour.workday = "ok";
   oauthBehaviour.hubspot = "ok";
   oauthBehaviour.miro = "ok";
   oauthBehaviour.canva = "ok";
@@ -1209,6 +1229,65 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
     const { ctx, vault } = makeCtx({ existingClient: true });
     await vault.set("salesforce.oauth", '{"access_token":"raw"}');
     await ensureSalesforceMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)", () => {
+  test("missing workday.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+    expect(calls.bumpToolsEpoch).toBe(0);
+  });
+
+  test("oauth present + valid token → spawn workday with scoped env + tenant host in manifest", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(1);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.workday);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.workday);
+
+    expect(capturedClients).toHaveLength(1);
+    const spec = capturedClients[0]?.servers["workday"];
+    expect(spec?.command).toBe(process.execPath);
+    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]workday[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["WORKDAY_ACCESS_TOKEN"]).toBe("fake-workday-access-token");
+    expect(spec?.env["WORKDAY_TENANT_HOST"]).toBe("https://acme.workday.com");
+    expect(spec?.env["WORKDAY_TENANT"]).toBe("acme");
+    // The per-tenant host is folded into the sandbox manifest.
+    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toContain("acme.workday.com");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+    expectBaselineHostEnv(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed by try/catch)", async () => {
+    authBehaviour.workday = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("auth helper returns empty string → no spawn", async () => {
+    authBehaviour.workday = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
 });

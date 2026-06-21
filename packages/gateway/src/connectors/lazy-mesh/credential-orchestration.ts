@@ -24,6 +24,7 @@ export type CredentialSpawners = {
   readonly ensureMicrosoftBundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureNotionMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureMendeleyMcp: (ctx: MeshSpawnContext) => Promise<void>;
+  readonly ensureWorkdayMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensureObsidianMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensurePagerdutyMcp: (ctx: MeshSpawnContext) => Promise<void>;
   readonly ensurePhase3BundleMcp: (ctx: MeshSpawnContext) => Promise<void>;
@@ -190,6 +191,7 @@ export async function ensureCredentialConnectorsRunning(
   await ensureJiraIfVaultCreds(ctx, spawners);
   await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "mendeley", "oauth", () => spawners.ensureMendeleyMcp(ctx));
+  await ensureIfConnectorSecretSet(ctx, "workday", "oauth", () => spawners.ensureWorkdayMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "zoom", "oauth", () => spawners.ensureZoomMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "hubspot", "oauth", () => spawners.ensureHubspotMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "miro", "oauth", () => spawners.ensureMiroMcp(ctx));
