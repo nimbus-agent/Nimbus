@@ -135,6 +135,12 @@ describe("oauthProfileForService — supported providers", () => {
     expect(profile.provider).toBe("mendeley");
     expect(profile.defaultScopes).toEqual(["all"]);
   });
+
+  test("returns Workday provider profile with system scope", () => {
+    const profile = oauthProfileForService("workday");
+    expect(profile.provider).toBe("workday");
+    expect(profile.defaultScopes).toEqual(["system"]);
+  });
 });
 
 describe("oauthProfileForService — unsupported providers throw structured errors", () => {

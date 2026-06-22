@@ -43,6 +43,7 @@ import {
   resolveNimbusTomlForProfile,
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
+import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
 import {
@@ -408,6 +409,7 @@ async function createSchedulerWithMesh(
     isConnectorAllowed,
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
+  const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
   // Policy connector-allowlist (I22): a blocked connector must never SYNC, not just be hidden from
   // tool exposure. Filter at the single mesh/user-MCP registration seam so blocked syncables are
   // never registered with the scheduler. fs/openapi/obsidian syncables are not policy connectors and
@@ -422,6 +424,7 @@ async function createSchedulerWithMesh(
   };
   registerConnectorMeshSyncables(policyFilteredRegistrar, connectorMesh, {
     pagerdutyMaxPagesPerSync: pagerdutyCfg.maxPagesPerSync,
+    workdayConfig: workdayCfg,
   });
   registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
   syncScheduler.start();

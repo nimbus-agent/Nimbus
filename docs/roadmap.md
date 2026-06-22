@@ -849,11 +849,11 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 ##### Email & Calendar (macOS-only)
 
-- [ ] **Apple Mail + macOS Calendar** — Apple Mail via local IMAP (no Bridge required); macOS Calendar via CalDAV (`caldav.apple.com`); macOS only; credentials in Vault; calendar events indexed as `event` items; mail indexed as `email` items with body preview; create/delete calendar event and draft send behind HITL
+- [x] **Apple Mail + iCloud Calendar** — ✅ **delivered 2026-06-21** (Slice 9 Wave E, connector `apple`; originally scoped as "macOS Calendar", delivered as iCloud Calendar over CalDAV — cross-platform). iCloud Mail via IMAP (`imap.mail.me.com:993`); iCloud Calendar via CalDAV (`caldav.icloud.com` → per-account `p##-caldav.icloud.com`); calendar events indexed as `apple:event` items, mail as `apple:email` items with a ≤2000-char preview (metadata-only — no bodies/attachment bytes); `apple_calendar_event_create` / `apple_calendar_event_delete` + `apple_mail_send` / `apple_mail_draft_create` behind the executor I2 HITL gate (forced `From`); two Vault keys (`apple.icloud_email` / `apple.icloud_app_password`). **macOS-only label relaxed → cross-platform** — the IMAP/CalDAV transport has no native macOS dependency, so the connector ships and is tested on Windows/macOS/Linux. See [`CHANGELOG`](./CHANGELOG.md#2026-06-21).
 
 ##### HR
 
-- [ ] **Workday** — time off, headcount, org chart, job postings; read-only where API access allows. Lifted to Phase 6 because typical Workday tenancy is org-wide and pairs naturally with team identity / SSO already landing in this phase
+- [x] **Workday** — time off, headcount, org chart, job postings; read-only where API access allows. Lifted to Phase 6 because typical Workday tenancy is org-wide and pairs naturally with team identity / SSO already landing in this phase (✅ delivered 2026-06-21; read-only; REST workers/time-off/job-postings + RaaS reports; directory-safe PII allowlist; no migration/HITL/invariant)
 
 ##### GitOps (Write Tools)
 

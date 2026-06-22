@@ -9,10 +9,17 @@
 // into any real-resolver twin in the same process and make ensureSlackMcp spawn
 // despite an absent/malformed token — green on the src-only PR gate, red on the
 // combined push run. One such twin was removed for exactly this reason.
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+import { Config } from "../../../../src/config.ts";
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { createMockVault } from "../../../../src/vault/mock.ts";
+
+// Config is `as const` (mutable at runtime, not Object.frozen). ensureWorkdayMcp reads the
+// tenant host/name from Config; set them deterministically per-test rather than relying on
+// env-vars-before-import (which is order-dependent and fails in the combined `bun test` run
+// once another file has already imported + frozen config.ts). Mirrors workday-access-token.test.ts.
+const mutableWorkdayConfig = Config as { workdayTenantHost: string; workdayTenant: string };
 
 type CapturedClientArgs = {
   readonly id: string;
@@ -80,11 +87,22 @@ mock.module("../../../../src/auth/microsoft-access-token.ts", () => ({
   getValidMicrosoftAccessToken: async (): Promise<string> => "fake-microsoft-access-token",
 }));
 
+// Workday requires tenant host + tenant in Config (read at module-init from env).
+// Set them before connector-spawns.ts is imported so Config captures the values.
+process.env.NIMBUS_WORKDAY_TENANT_HOST = "https://acme.workday.com";
+process.env.NIMBUS_WORKDAY_TENANT = "acme";
+
 type AuthBehaviour = "ok" | "empty" | "throw";
-const authBehaviour: { slack: AuthBehaviour; notion: AuthBehaviour; mendeley: AuthBehaviour } = {
+const authBehaviour: {
+  slack: AuthBehaviour;
+  notion: AuthBehaviour;
+  mendeley: AuthBehaviour;
+  workday: AuthBehaviour;
+} = {
   slack: "ok",
   notion: "ok",
   mendeley: "ok",
+  workday: "ok",
 };
 
 mock.module("../../../../src/auth/slack-access-token.ts", () => ({
@@ -106,6 +124,13 @@ mock.module("../../../../src/auth/mendeley-access-token.ts", () => ({
     if (authBehaviour.mendeley === "throw") throw new Error("test-injected-failure");
     if (authBehaviour.mendeley === "empty") return "";
     return "fake-mendeley-access-token";
+  },
+}));
+mock.module("../../../../src/auth/workday-access-token.ts", () => ({
+  getValidWorkdayAccessToken: async (): Promise<string> => {
+    if (authBehaviour.workday === "throw") throw new Error("test-injected-failure");
+    if (authBehaviour.workday === "empty") return "";
+    return "fake-workday-access-token";
   },
 }));
 
@@ -174,6 +199,7 @@ mock.module("../../../../src/auth/salesforce-access-token.ts", () => ({
 }));
 
 const {
+  ensureAppleMcp,
   ensureBitbucketMcp,
   ensureCanvaMcp,
   ensureCircleciMcp,
@@ -197,6 +223,7 @@ const {
   ensurePhase3BundleMcp,
   ensureSalesforceMcp,
   ensureSlackMcp,
+  ensureWorkdayMcp,
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
 const { LAZY_MESH } = await import("../../../../src/connectors/lazy-mesh/keys.ts");
@@ -239,6 +266,7 @@ beforeEach(() => {
   authBehaviour.slack = "ok";
   authBehaviour.notion = "ok";
   authBehaviour.mendeley = "ok";
+  authBehaviour.workday = "ok";
   oauthBehaviour.hubspot = "ok";
   oauthBehaviour.miro = "ok";
   oauthBehaviour.canva = "ok";
@@ -504,6 +532,72 @@ describe("ensureBitbucketMcp", () => {
     await vault.set("bitbucket.app_password", "bb_secret");
     await ensureBitbucketMcp(ctx);
     expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureAppleMcp (iCloud Mail+Calendar, two-key gate)", () => {
+  test("missing both → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("missing icloud_app_password → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("missing icloud_email → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("blank icloud_email → no spawn", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+  });
+
+  test("both present → spawn apple with scoped env + iCloud host:port manifest", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(1);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.apple);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.apple);
+
+    const spec = capturedClients[0]?.servers["apple"];
+    expect(spec?.command).toBe(process.execPath);
+    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]apple[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["APPLE_ICLOUD_EMAIL"]).toBe("me@icloud.com");
+    expect(spec?.env["APPLE_ICLOUD_APP_PASSWORD"]).toBe("abcd-efgh-ijkl-mnop");
+    // The fixed iCloud IMAP/SMTP host:port endpoints are folded into the sandbox manifest.
+    const manifestJson = spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"] ?? "";
+    expect(manifestJson).toContain("imap.mail.me.com:993");
+    expect(manifestJson).toContain("smtp.mail.me.com:587");
+    expect(manifestJson).toContain("caldav.icloud.com");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, calls, vault } = makeCtx({ existingClient: true });
+    await vault.set("apple.icloud_email", "me@icloud.com");
+    await vault.set("apple.icloud_app_password", "abcd-efgh-ijkl-mnop");
+    await ensureAppleMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.apple);
   });
 });
 
@@ -1209,6 +1303,74 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
     const { ctx, vault } = makeCtx({ existingClient: true });
     await vault.set("salesforce.oauth", '{"access_token":"raw"}');
     await ensureSalesforceMcp(ctx);
+    expect(capturedClients).toHaveLength(0);
+  });
+});
+
+describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)", () => {
+  beforeEach(() => {
+    mutableWorkdayConfig.workdayTenantHost = "https://acme.workday.com";
+    mutableWorkdayConfig.workdayTenant = "acme";
+  });
+  afterEach(() => {
+    mutableWorkdayConfig.workdayTenantHost = "";
+    mutableWorkdayConfig.workdayTenant = "";
+  });
+
+  test("missing workday.oauth → no spawn", async () => {
+    const { ctx, calls } = makeCtx();
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+    expect(calls.bumpToolsEpoch).toBe(0);
+  });
+
+  test("oauth present + valid token → spawn workday with scoped env + tenant host in manifest", async () => {
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+
+    expect(calls.setLazyClient).toHaveLength(1);
+    expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.workday);
+    expect(calls.bumpToolsEpoch).toBe(1);
+    expect(calls.scheduleLazyDisconnect).toContain(LAZY_MESH.workday);
+
+    expect(capturedClients).toHaveLength(1);
+    const spec = capturedClients[0]?.servers["workday"];
+    expect(spec?.command).toBe(process.execPath);
+    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]workday[\\/]src[\\/]server\.ts$/);
+    expect(spec?.env["WORKDAY_ACCESS_TOKEN"]).toBe("fake-workday-access-token");
+    expect(spec?.env["WORKDAY_TENANT_HOST"]).toBe("https://acme.workday.com");
+    expect(spec?.env["WORKDAY_TENANT"]).toBe("acme");
+    // The per-tenant host is folded into the sandbox manifest.
+    expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toContain("acme.workday.com");
+    expectNoProcessEnvLeak(spec?.env ?? {});
+    expectBaselineHostEnv(spec?.env ?? {});
+  });
+
+  test("auth helper throws → no spawn (swallowed by try/catch)", async () => {
+    authBehaviour.workday = "throw";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("auth helper returns empty string → no spawn", async () => {
+    authBehaviour.workday = "empty";
+    const { ctx, calls, vault } = makeCtx();
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("already running → no double-spawn", async () => {
+    const { ctx, vault } = makeCtx({ existingClient: true });
+    await vault.set("workday.oauth", '{"access_token":"raw"}');
+    await ensureWorkdayMcp(ctx);
     expect(capturedClients).toHaveLength(0);
   });
 });

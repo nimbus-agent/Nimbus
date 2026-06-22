@@ -17,7 +17,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (20 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (21 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -38,6 +38,7 @@ describe("embedding/routing", () => {
       "imap:email",
       "fastmail:email",
       "protonmail:email",
+      "apple:email",
       "nimbus:web_clip",
     ]);
     expect(PROSE_HEAVY_TYPES.size).toBe(expected.size);
@@ -61,6 +62,11 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("imap", "email")).toBe(true);
   });
 
+  test("isProseHeavy: apple:email is prose-heavy, apple:event is not", () => {
+    expect(isProseHeavy("apple", "email")).toBe(true);
+    expect(isProseHeavy("apple", "event")).toBe(false);
+  });
+
   test("routingKey formats correctly", () => {
     expect(routingKey("slack", "message")).toBe("slack:message");
     expect(routingKey("a", "b")).toBe("a:b");
@@ -77,6 +83,12 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("aws", "lambda_function")).toBe(false);
     expect(isProseHeavy("slack", "channel")).toBe(false);
     expect(isProseHeavy("", "")).toBe(false);
+  });
+
+  test("workday item types are not prose-heavy (384-dim default)", () => {
+    for (const t of ["worker", "time_off", "job_posting", "report"]) {
+      expect(isProseHeavy("workday", t)).toBe(false);
+    }
   });
 });
 

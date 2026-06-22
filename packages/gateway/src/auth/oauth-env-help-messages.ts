@@ -216,3 +216,17 @@ https://dev.mendeley.com/myapps.html → your application → copy the secret.
 
 PowerShell:
   $env:NIMBUS_OAUTH_MENDELEY_CLIENT_SECRET = "..."`;
+
+export const WORKDAY_OAUTH_CLIENT_ID_HELP = `Set NIMBUS_OAUTH_WORKDAY_CLIENT_ID to your Workday API client ID (register an API Client for Integrations in your Workday tenant with the authorization-code grant).
+
+You must also set NIMBUS_OAUTH_WORKDAY_CLIENT_SECRET, NIMBUS_WORKDAY_TENANT_HOST (e.g. https://wd5-services1.workday.com) and NIMBUS_WORKDAY_TENANT (your tenant name).
+
+PowerShell:
+  $env:NIMBUS_OAUTH_WORKDAY_CLIENT_ID = "..."
+  $env:NIMBUS_OAUTH_WORKDAY_CLIENT_SECRET = "..."
+  $env:NIMBUS_WORKDAY_TENANT_HOST = "https://wd5-services1.workday.com"
+  $env:NIMBUS_WORKDAY_TENANT = "acme"`;
+
+export const WORKDAY_OAUTH_CLIENT_SECRET_HELP = `Set NIMBUS_OAUTH_WORKDAY_CLIENT_SECRET to your Workday API client secret (Workday's token endpoint requires it in the request body). It is not stored in the Nimbus vault.`;
+
+export const WORKDAY_TENANT_HELP = `Set NIMBUS_WORKDAY_TENANT_HOST (your tenant API host, e.g. https://wd5-services1.workday.com) and NIMBUS_WORKDAY_TENANT (your tenant name) — Workday's OAuth + REST endpoints are tenant-specific.`;

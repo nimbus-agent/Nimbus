@@ -1,5 +1,12 @@
 # @nimbus-dev/sdk — Changelog
 
+## [1.2.0](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.2...sdk-v1.2.0) (2026-06-22)
+
+
+### Features
+
+* **apple:** iCloud Mail + Calendar connector (Phase 6 Slice 9-E) ([#711](https://github.com/nimbus-agent/Nimbus/issues/711)) ([58c69e0](https://github.com/nimbus-agent/Nimbus/commit/58c69e09fba285b03b94eed60f69751103da1bf3))
+
 ## [1.1.2](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.1...sdk-v1.1.2) (2026-06-14)
 
 

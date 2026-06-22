@@ -2,6 +2,15 @@
 
 All notable changes to `@nimbus-dev/client` are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.2.4](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.3...client-v0.2.4) (2026-06-22)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @nimbus-dev/sdk bumped to 1.2.0
+
 ## [0.2.3](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.2...client-v0.2.3) (2026-06-15)
 
 

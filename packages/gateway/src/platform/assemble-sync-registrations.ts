@@ -1,5 +1,8 @@
+import type { NimbusWorkdayToml } from "../config/nimbus-toml-workday.ts";
+import { fetchAppleCalendarEvents } from "../connectors/_lib/apple-caldav-fetch.ts";
 import { fetchImapMessages } from "../connectors/_lib/imap-client.ts";
 import { createAirflowSyncable } from "../connectors/airflow-sync.ts";
+import { createAppleSyncable } from "../connectors/apple-sync.ts";
 import { createArgocdSyncable } from "../connectors/argocd-sync.ts";
 import { createAthenaSyncable } from "../connectors/athena-sync.ts";
 import { createAwsSyncable } from "../connectors/aws-sync.ts";
@@ -88,6 +91,7 @@ import { createTestflightSyncable } from "../connectors/testflight-sync.ts";
 import { createVercelSyncable } from "../connectors/vercel-sync.ts";
 import { createVertexAiSyncable } from "../connectors/vertex-ai-sync.ts";
 import { createWizSyncable } from "../connectors/wiz-sync.ts";
+import { createWorkdaySyncable } from "../connectors/workday-sync.ts";
 import { createZendeskSyncable } from "../connectors/zendesk-sync.ts";
 import { createZoomSyncable } from "../connectors/zoom-sync.ts";
 import { createZoteroSyncable } from "../connectors/zotero-sync.ts";
@@ -95,6 +99,7 @@ import type { SyncScheduler } from "../sync/scheduler.ts";
 
 export type ConnectorMeshSyncableOptions = {
   pagerdutyMaxPagesPerSync: number;
+  workdayConfig: NimbusWorkdayToml;
 };
 
 export function registerConnectorMeshSyncables(
@@ -180,6 +185,12 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMendeleySyncable({
       ensureMendeleyMcpRunning: () => connectorMesh.ensureMendeleyRunning(),
+    }),
+  );
+  syncScheduler.register(
+    createWorkdaySyncable({
+      ensureWorkdayMcpRunning: () => connectorMesh.ensureWorkdayRunning(),
+      loadWorkdayConfig: () => options.workdayConfig,
     }),
   );
   syncScheduler.register(
@@ -512,6 +523,13 @@ export function registerConnectorMeshSyncables(
     createProtonmailSyncable({
       ensureProtonmailMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
       fetchMessages: fetchImapMessages,
+    }),
+  );
+  syncScheduler.register(
+    createAppleSyncable({
+      ensureAppleMcpRunning: () => connectorMesh.ensureAppleRunning(),
+      fetchMessages: fetchImapMessages,
+      fetchEvents: fetchAppleCalendarEvents,
     }),
   );
   syncScheduler.register(

@@ -13,7 +13,8 @@ export type OAuthProvider =
   | "canva"
   | "figma"
   | "salesforce"
-  | "mendeley";
+  | "mendeley"
+  | "workday";
 
 export interface PKCEResult {
   accessToken: string;
@@ -78,7 +79,7 @@ function scopesFromTokenResponse(scopeField: string | undefined, requested: stri
   return requested;
 }
 
-function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
+export function parseStandardTokenResponse(json: unknown, requested: string[]): PKCEResult {
   if (json === null || typeof json !== "object") {
     throw new Error("Token response was not valid JSON");
   }
@@ -204,7 +205,7 @@ function parseSalesforceTokenResponse(json: unknown, requested: string[]): PKCER
 }
 
 /** Common `response_type=code` authorize params shared by every standard OAuth provider. */
-function standardAuthorizeParams(a: AuthorizeArgs): Record<string, string> {
+export function standardAuthorizeParams(a: AuthorizeArgs): Record<string, string> {
   return {
     client_id: a.clientId,
     redirect_uri: a.redirectUri,
@@ -399,6 +400,21 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderDescriptor> = {
     usesPkce: false,
     clientSecret: "required",
     secretPlacement: "basic_header",
+    bodyFormat: "form",
+    mirrorPerService: false,
+    buildAuthorizeParams: standardAuthorizeParams,
+    parseTokenResponse: parseStandardTokenResponse,
+  },
+  workday: {
+    id: "workday",
+    vaultKey: "workday.oauth",
+    // Placeholder URLs — Workday endpoints are tenant-specific; the real
+    // descriptor is built per-request by makeWorkdayDescriptor / resolveOAuthDescriptor.
+    authorizeUrl: "https://workday.invalid/ccx/oauth2/authorize",
+    tokenUrl: "https://workday.invalid/ccx/oauth2/token",
+    usesPkce: false,
+    clientSecret: "required",
+    secretPlacement: "body",
     bodyFormat: "form",
     mirrorPerService: false,
     buildAuthorizeParams: standardAuthorizeParams,

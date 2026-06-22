@@ -108,6 +108,7 @@
         "semver": "^7.8.3",
         "sqlite-vec": "^0.1.6",
         "tar": "^7.5.16",
+        "tsdav": "^2.2.2",
         "tweetnacl": "^1.0.3",
         "zod": "^4.4.2",
       },
@@ -132,6 +133,22 @@
       },
       "devDependencies": {
         "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/apple": {
+      "name": "nimbus-mcp-apple",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "imapflow": "^1.3.5",
+        "nodemailer": "^9.0.0",
+        "tsdav": "^2.2.2",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/nodemailer": "^8.0.0",
       },
     },
     "packages/mcp-connectors/argocd": {
@@ -1241,6 +1258,18 @@
     },
     "packages/mcp-connectors/wiz": {
       "name": "nimbus-mcp-wiz",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@nimbus-dev/sdk": "workspace:*",
+        "zod": "^4.4.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
+    "packages/mcp-connectors/workday": {
+      "name": "nimbus-mcp-workday",
       "version": "0.1.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -2470,6 +2499,8 @@
 
     "balanced-match": ["balanced-match@4.0.4", "", {}, "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA=="],
 
+    "base-64": ["base-64@1.0.0", "", {}, "sha512-kwDPIFCGx0NZHog36dj+tHiwP4QMzsZ3AgMViUBKI0+V5n4U0ufTCUMhnQ04diaRI8EX/QcPfql7zlhZ7j4zgg=="],
+
     "base-x": ["base-x@5.0.1", "", {}, "sha512-M7uio8Zt++eg3jPj+rHMfCC+IuygQHHCOU+IYsVtik6FWjuYpVt/+MRKcgsAMHh8mMFAwnB+Bs+mTrFiXjMzKg=="],
 
     "base64-js": ["base64-js@1.5.1", "", {}, "sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA=="],
@@ -3418,6 +3449,8 @@
 
     "nimbus-mcp-airflow": ["nimbus-mcp-airflow@workspace:packages/mcp-connectors/airflow"],
 
+    "nimbus-mcp-apple": ["nimbus-mcp-apple@workspace:packages/mcp-connectors/apple"],
+
     "nimbus-mcp-argocd": ["nimbus-mcp-argocd@workspace:packages/mcp-connectors/argocd"],
 
     "nimbus-mcp-athena": ["nimbus-mcp-athena@workspace:packages/mcp-connectors/athena"],
@@ -3593,6 +3626,8 @@
     "nimbus-mcp-vertex-ai": ["nimbus-mcp-vertex-ai@workspace:packages/mcp-connectors/vertex-ai"],
 
     "nimbus-mcp-wiz": ["nimbus-mcp-wiz@workspace:packages/mcp-connectors/wiz"],
+
+    "nimbus-mcp-workday": ["nimbus-mcp-workday@workspace:packages/mcp-connectors/workday"],
 
     "nimbus-mcp-zendesk": ["nimbus-mcp-zendesk@workspace:packages/mcp-connectors/zendesk"],
 
@@ -4182,6 +4217,8 @@
 
     "tsconfig-paths-webpack-plugin": ["tsconfig-paths-webpack-plugin@4.2.0", "", { "dependencies": { "chalk": "^4.1.0", "enhanced-resolve": "^5.7.0", "tapable": "^2.2.1", "tsconfig-paths": "^4.1.2" } }, "sha512-zbem3rfRS8BgeNK50Zz5SIQgXzLafiHjOwUAvk/38/o1jHn/V5QAgVUcz884or7WYcPaH3N2CIfUc2u0ul7UcA=="],
 
+    "tsdav": ["tsdav@2.2.2", "", { "dependencies": { "base-64": "1.0.0", "debug": "4.4.3", "xml-js": "1.6.11" } }, "sha512-/uC/RItcdYVxUj8b2gT4CorAkUmDFUuzhgS4XVT+OVzGRE80hH5ldubcWH13dHa2T9rNaXu6UIEWHlQ1UL7H1Q=="],
+
     "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "tsx": ["tsx@4.22.4", "", { "dependencies": { "esbuild": "~0.28.0" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "bin": { "tsx": "dist/cli.mjs" } }, "sha512-X8EX+XV4QR5xCsrgxaED954zTDfY8KqlDtskKEL0cHhyS/P8b4IFOvGDQpsC9Q1XnLq915wEfwwY/zzskCtmhg=="],
@@ -4359,6 +4396,8 @@
     "ws": ["ws@8.21.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g=="],
 
     "wsl-utils": ["wsl-utils@0.1.0", "", { "dependencies": { "is-wsl": "^3.1.0" } }, "sha512-h3Fbisa2nKGPxCpm89Hk33lBLsnaGBvctQopaBSOW/uIs6FTe1ATyAnKFJrzVs9vpGdsTe73WF3V4lIsk4Gacw=="],
+
+    "xml-js": ["xml-js@1.6.11", "", { "dependencies": { "sax": "^1.2.4" }, "bin": { "xml-js": "./bin/cli.js" } }, "sha512-7rVi2KMfwfWFl+GpPg6m80IVMWXLRjO+PxTq7V2CDhoGak0wzYzFgUY2m4XJ47OGdXd8eLE8EmwfAmdjw7lC1g=="],
 
     "xml-name-validator": ["xml-name-validator@5.0.0", "", {}, "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg=="],
 

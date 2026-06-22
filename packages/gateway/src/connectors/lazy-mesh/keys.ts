@@ -20,6 +20,7 @@ export const LAZY_MESH = {
   jira: "mesh:jira",
   notion: "mesh:notion",
   mendeley: "mesh:mendeley",
+  workday: "mesh:workday",
   confluence: "mesh:confluence",
   discord: "mesh:discord",
   jenkins: "mesh:jenkins",
@@ -33,6 +34,7 @@ export const LAZY_MESH = {
   canva: "mesh:canva",
   figma: "mesh:figma",
   salesforce: "mesh:salesforce",
+  apple: "mesh:apple",
   phase3Bundle: "mesh:phase3-bundle",
 } as const;
 

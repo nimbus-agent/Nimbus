@@ -1,8 +1,9 @@
 import { Config } from "../config.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MICROSOFT_OAUTH_CLIENT_ID_HELP } from "./oauth-env-help-messages.ts";
-import { getValidVaultAccessToken, OAUTH_PROVIDERS } from "./oauth-registry.ts";
+import { getValidVaultAccessToken } from "./oauth-registry.ts";
 import type { ParseStoredOAuthErrors } from "./oauth-vault-payload.ts";
+import { resolveOAuthDescriptor } from "./workday-oauth-descriptor.ts";
 
 export {
   type ParseStoredOAuthErrors,
@@ -25,7 +26,7 @@ export async function getValidVaultOAuthAccessToken(args: {
       ? Config.oauthGoogleClientSecret
       : undefined;
   return getValidVaultAccessToken({
-    descriptor: OAUTH_PROVIDERS[args.provider],
+    descriptor: resolveOAuthDescriptor(args.provider),
     vault: args.vault,
     vaultKey: args.vaultKey,
     clientId: args.getClientId(),

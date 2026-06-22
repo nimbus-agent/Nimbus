@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import {
   applyLlmTomlOverrides,
+  Config,
   getEffectiveAgentModel,
   getEffectiveClassifierModel,
   parseConversationalAgentMaxSteps,
@@ -284,5 +285,30 @@ describe("env-var parsers", () => {
       process.env["NIMBUS_EMBEDDINGS"] = "yes";
       expect(parseEmbeddingsEnabled()).toBe(true);
     });
+  });
+});
+
+describe("Config frozen snapshot — Workday fields", () => {
+  // Config is built once at import time (frozen `as const`); env-var reads cannot
+  // be tested by re-importing within the same process. The client id/secret are
+  // never mutated by any other test, so we assert the exact "" default (env vars
+  // absent in CI). workdayTenantHost/workdayTenant ARE mutated by sibling tests
+  // (connector-spawns / workday-access-token via a mutableConfig cast) within the
+  // shared process, so for those we assert the type only — a stricter toBe("")
+  // would be order-dependent on a sibling file's afterEach reset.
+  test("oauthWorkdayClientId defaults to empty string", () => {
+    expect(Config.oauthWorkdayClientId).toBe("");
+  });
+
+  test("oauthWorkdayClientSecret defaults to empty string", () => {
+    expect(Config.oauthWorkdayClientSecret).toBe("");
+  });
+
+  test("workdayTenantHost is a string", () => {
+    expect(typeof Config.workdayTenantHost).toBe("string");
+  });
+
+  test("workdayTenant is a string", () => {
+    expect(typeof Config.workdayTenant).toBe("string");
   });
 });

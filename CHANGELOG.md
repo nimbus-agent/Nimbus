@@ -2,6 +2,37 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.17.0](https://github.com/nimbus-agent/Nimbus/compare/v0.16.0...v0.17.0) (2026-06-22)
+
+
+### Features
+
+* **apple:** iCloud Mail + Calendar connector (Phase 6 Slice 9-E) ([#711](https://github.com/nimbus-agent/Nimbus/issues/711)) ([58c69e0](https://github.com/nimbus-agent/Nimbus/commit/58c69e09fba285b03b94eed60f69751103da1bf3))
+
+
+### Bug Fixes
+
+* **client:** pin internal deps on publish so the tarball installs standalone ([#716](https://github.com/nimbus-agent/Nimbus/issues/716)) ([1ab1b5c](https://github.com/nimbus-agent/Nimbus/commit/1ab1b5c7912948394c51142519b0d2698447caf6))
+
+## [0.16.0](https://github.com/nimbus-agent/Nimbus/compare/v0.15.0...v0.16.0) (2026-06-21)
+
+
+### Features
+
+* **slice9:** Workday connector (read-only) — workers/time-off/job-postings + RaaS reports ([#709](https://github.com/nimbus-agent/Nimbus/issues/709)) ([2646918](https://github.com/nimbus-agent/Nimbus/commit/2646918570aaa52e1477765fe169df3433bdba25))
+
+## [0.15.0](https://github.com/nimbus-agent/Nimbus/compare/v0.14.0...v0.15.0) (2026-06-21)
+
+
+### Features
+
+* **slice9-w1:** HITL-gated GitOps + ML writes (ArgoCD/Flux/MLflow), generalize I26 ([#700](https://github.com/nimbus-agent/Nimbus/issues/700)) ([bccab8b](https://github.com/nimbus-agent/Nimbus/commit/bccab8bf9e8f34fabed47afff3619bf6dc6802ff))
+
+
+### Bug Fixes
+
+* **test:** resolve LanServer gate test flake ([#705](https://github.com/nimbus-agent/Nimbus/issues/705)) ([2e757e8](https://github.com/nimbus-agent/Nimbus/commit/2e757e8143045963ba7c78cb58bcb4806071fdd9))
+
 ## [0.14.0](https://github.com/nimbus-agent/Nimbus/compare/v0.13.1...v0.14.0) (2026-06-21)
 
 

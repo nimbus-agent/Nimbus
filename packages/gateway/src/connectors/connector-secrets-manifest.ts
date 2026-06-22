@@ -181,6 +181,26 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // data-quality issues as data_quality_test items with monitoredDataModelKeys
   // lineage edges. base_url is per-tenant (like Looker/Tableau).
   bigeye: ["bigeye.base_url", "bigeye.api_key"],
+  // Workday HR. OAuth2 authorization-code flow against the tenant-specific
+  // /ccx/oauth2/<tenant>/token endpoint; only the token bundle is vaulted.
+  // Tenant host/name + client id/secret are env vars (see config.ts).
+  workday: ["workday.oauth"],
+  // Apple iCloud Mail + iCloud Calendar. The single app-specific password
+  // (generated under Apple ID → Sign-In & Security → App-Specific Passwords)
+  // authenticates IMAP + SMTP + CalDAV. Endpoints are fixed constants.
+  // `apple.mailbox` + the `apple.cal_*` keys are OPTIONAL non-secret config keys
+  // (mailbox default INBOX; calendar window/selection defaults in apple-caldav-fetch.ts);
+  // listed so they are known/allowed vault keys (D11) and are cleared on connector removal.
+  apple: [
+    "apple.icloud_email",
+    "apple.icloud_app_password",
+    "apple.mailbox",
+    "apple.cal_window_past_days",
+    "apple.cal_window_future_days",
+    "apple.cal_max_instances",
+    "apple.cal_include_calendars",
+    "apple.cal_exclude_calendars",
+  ],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };

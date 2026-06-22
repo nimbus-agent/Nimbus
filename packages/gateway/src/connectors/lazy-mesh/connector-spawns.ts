@@ -17,7 +17,9 @@ import { getValidNotionAccessToken } from "../../auth/notion-access-token.ts";
 import { readMicrosoftOAuthScopesForOutlookEnv } from "../../auth/oauth-vault-tokens.ts";
 import { getValidSalesforceAuth } from "../../auth/salesforce-access-token.ts";
 import { getValidSlackAccessToken } from "../../auth/slack-access-token.ts";
+import { getValidWorkdayAccessToken } from "../../auth/workday-access-token.ts";
 import { getValidZoomAccessToken } from "../../auth/zoom-access-token.ts";
+import { Config } from "../../config.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -1075,6 +1077,119 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
             }),
           },
           manifest,
+          ctx.sandboxCwd,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * audit-ignore-next-line D11-vault-key (JSDoc reference, not vault-key construction)
+ * Starts Workday MCP when `workday.oauth` is present, a valid access token can
+ * be resolved, and the tenant host + tenant name are configured. The per-tenant
+ * host is added to the sandbox manifest at spawn via the Salesforce-style
+ * extra-hosts pattern (direct wrapServerSpec, not wrap()).
+ */
+export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.workday;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const raw = await readConnectorSecret(ctx.vault, "workday", "oauth");
+  if (raw === null || raw === "") {
+    return;
+  }
+  const tenantHost = Config.workdayTenantHost.trim();
+  const tenant = Config.workdayTenant.trim();
+  if (tenantHost === "" || tenant === "") {
+    return;
+  }
+  let accessToken: string;
+  try {
+    accessToken = await getValidWorkdayAccessToken(ctx.vault);
+  } catch {
+    return;
+  }
+  if (accessToken === "") {
+    return;
+  }
+  const host = hostnameFromUrl(tenantHost);
+  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host]);
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-workday-${randomUUID()}`,
+      servers: {
+        workday: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("workday")],
+            env: extensionProcessEnv({
+              WORKDAY_ACCESS_TOKEN: accessToken,
+              WORKDAY_TENANT_HOST: tenantHost,
+              WORKDAY_TENANT: tenant,
+            }),
+          },
+          manifest,
+          ctx.sandboxCwd,
+        ),
+      },
+    }),
+  );
+  ctx.bumpToolsEpoch();
+  ctx.scheduleLazyDisconnect(slotKey);
+}
+
+/**
+ * Starts the iCloud Mail (IMAP/SMTP) + iCloud Calendar (CalDAV) MCP when BOTH
+ * `apple.icloud_email` AND `apple.icloud_app_password` are present in the Vault
+ * (the single app-specific password authenticates all three protocols). The
+ * iCloud IMAP (993) / SMTP (587) hosts are on non-443 ports, so their concrete
+ * `imap.mail.me.com:993` / `smtp.mail.me.com:587` host:port entries are added to
+ * the sandbox network allow-list at spawn time, mirroring phase3AddImapMcp;
+ * `caldav.icloud.com` is declared statically in the apple manifest. (The
+ * per-account `p##-caldav.icloud.com` partition host is resolved at runtime
+ * inside server.ts; under strict per-host gating CalDAV degrades — see the apple
+ * manifest note.)
+ */
+export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
+  const slotKey = LAZY_MESH.apple;
+  ctx.clearLazyIdle(slotKey);
+  if (ctx.getLazyClient(slotKey) !== undefined) {
+    ctx.scheduleLazyDisconnect(slotKey);
+    return;
+  }
+  const email = await readConnectorSecret(ctx.vault, "apple", "icloud_email");
+  const appPw = await readConnectorSecret(ctx.vault, "apple", "icloud_app_password");
+  if (email === null || email === "" || appPw === null || appPw === "") {
+    return;
+  }
+  // iCloud IMAP/SMTP are fixed, non-443 host:port endpoints (993 / 587); add
+  // them to the apple manifest's network allow-list at spawn.
+  const appleManifest = manifestWithExtraNetworkHosts("apple", [
+    "imap.mail.me.com:993",
+    "smtp.mail.me.com:587",
+  ]);
+  ctx.setLazyClient(
+    slotKey,
+    new MCPClient({
+      id: `nimbus-apple-${randomUUID()}`,
+      servers: {
+        apple: wrapServerSpec(
+          {
+            command: "bun",
+            args: [mcpConnectorServerScript("apple")],
+            env: extensionProcessEnv({
+              APPLE_ICLOUD_EMAIL: email,
+              APPLE_ICLOUD_APP_PASSWORD: appPw,
+            }),
+          },
+          appleManifest,
           ctx.sandboxCwd,
         ),
       },
