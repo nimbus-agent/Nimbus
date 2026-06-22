@@ -72,8 +72,9 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - `packages/sdk` — `@nimbus-dev/sdk` for extensions (MIT)
 - `packages/client` — `@nimbus-dev/client` typed IPC wrapper (MIT)
 - `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
-- `packages/vscode-extension` — `nimbus-vscode` (Marketplace + Open VSX)
 - `packages/docs` — Astro Starlight documentation site
+
+The VS Code / Open VSX extension is a standalone repo: [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) — it consumes the published `@nimbus-dev/client` and releases independently of the Gateway.
 
 **PAL:** OS-specific logic lives under `packages/gateway/src/platform/`, accessed via `PlatformServices` — never import `win32`/`darwin`/`linux` from business logic.
 

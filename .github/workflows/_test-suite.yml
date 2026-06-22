@@ -65,10 +65,10 @@ jobs:
       - name: Setup Bun and install dependencies
         uses: ./.github/actions/setup-nimbus-ci
 
-      # Required before Typecheck — vscode-extension imports @nimbus-dev/client
+      # Required before Typecheck — cli imports @nimbus-dev/client
       # whose exports field points at dist/index.d.ts. Without an explicit build
       # the workspace symlink resolves but the type declarations don't exist.
-      - name: Build @nimbus-dev/client (for vscode-extension typecheck)
+      - name: Build @nimbus-dev/client (for cli typecheck)
         run: cd packages/client && bun run build
 
       - name: Typecheck

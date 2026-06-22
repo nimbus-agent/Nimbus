@@ -687,12 +687,6 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/ui/src/components/hitl/StructuredPreview.tsx:6` | I2 | StructuredPreview component renders HITL consent payload safely (XSS-protected) |
 | `packages/ui/src/components/PendingUpdates.tsx:9` | I7 | PendingUpdates only calls updater.checkNow (read-only); applyUpdate requires separate user action |
 | `packages/ui/src-tauri/src/gateway_bridge.rs:152` | I7 | NO_TIMEOUT_METHODS sub-list (data.export, data.import, llm.pullModel, updater.applyUpdate) and size assertion |
-| `packages/vscode-extension/src/chat/webview/render.ts:88` | I7 | VS Code webview uses DOMPurify to sanitize tool results before display (defense-in-depth for I11) |
-| `packages/vscode-extension/src/extension.ts:248` | I7 | VS Code extension proxies IPC directly over domain socket (not via Tauri bridge); ALLOWED_METHODS is irrelevant for this surface |
-| `packages/vscode-extension/src/extension.ts:260` | I7 | VS Code extension confirms write-class methods are still HITL-gated regardless of IPC surface |
-| `packages/vscode-extension/src/extension.ts:490` | I7 | VS Code extension IPC channel does not expose vault.* methods |
-| `packages/vscode-extension/src/extension.ts:515` | I7 | VS Code extension sends only allowlisted read-only methods without gateway auth bypass |
-| `packages/vscode-extension/src/extension.ts:520` | I7 | VS Code extension IPC session lifecycle respects disconnect on deactivate |
 | `packages/cli/src/commands/deploy-annotate.ts:14` | I13 | nimbus deploy annotate is the only CLI command that uses the HTTP write surface (not IPC) |
 | `packages/gateway/src/agents/_lib/synthesize.ts:42` | I11 | Synthesis layer receives already-wrapped tool results; must not re-wrap |
 | `packages/gateway/src/automation/extension-store.ts:40` | I14 | Extension auto-update state writes go through dbRun (I14 compliant) |

@@ -1458,7 +1458,6 @@ nimbus/
 │   │       ├── ipc/            ← Gateway IPC client for WebView
 │   │       └── pages/          ← Dashboard, Search, Marketplace, Settings, AuditLog
 │   │
-│   ├── vscode-extension/       ← `nimbus-vscode` (Phase 4) — VS Code extension
 │   │   │                            (displayName "Nimbus Agent"); published to
 │   │   │                            VS Code Marketplace + Open VSX under tag
 │   │   │                            `vscode-v0.1.x`

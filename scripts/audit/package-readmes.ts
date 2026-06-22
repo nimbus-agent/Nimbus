@@ -4,7 +4,6 @@ import { join } from "node:path";
 const SCOPE: readonly { path: string; tier: "public" | "internal" }[] = [
   { path: "packages/client", tier: "public" },
   { path: "packages/sdk", tier: "public" },
-  { path: "packages/vscode-extension", tier: "public" },
   { path: "packages/docs", tier: "internal" },
   { path: "installers", tier: "internal" },
   { path: "packages/gateway/src/perf/fixtures", tier: "internal" },

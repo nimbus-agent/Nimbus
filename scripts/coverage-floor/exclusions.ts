@@ -78,7 +78,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // and the admin-console renderer run against editor/Electron host APIs and a DOM that the
   // in-process bun:test layer cannot drive — same untestable-UI-shell class as `cli/src/commands/
   // tui.tsx`. Their pure helpers live in sibling modules that ARE covered.
-  { kind: "dirPrefix", prefix: "packages/vscode-extension/src/" },
   { kind: "dirPrefix", prefix: "packages/admin-console/src/" },
 
   // ── Build / release entry scripts (top-level await; run by `bun run`, not importable cleanly) ──

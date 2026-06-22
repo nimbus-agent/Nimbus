@@ -12,7 +12,7 @@ Phase 0 covers the bun-tested packages only:
 - `packages/client`
 - `packages/mcp-connectors/*`
 
-UI (`packages/ui`) and the VS Code extension (`packages/vscode-extension`) use Vitest, which emits its own `coverage/lcov.info`. Those lcov files are not yet merged into the gate's input; the existing Vitest `>=80% lines / >=75% branches` thresholds keep that surface honest. A future phase can extend the floor to UI by merging the Vitest lcov into `coverage/lcov.info` before the gate runs.
+UI (`packages/ui`) uses Vitest, which emits its own `coverage/lcov.info`. That file is not yet merged into the gate's input; the existing Vitest `>=80% lines / >=75% branches` thresholds keep that surface honest. A future phase can extend the floor to UI by merging the Vitest lcov into `coverage/lcov.info` before the gate runs.
 
 `packages/docs` has no tests; it is out of scope by construction.
 

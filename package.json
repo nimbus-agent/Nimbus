@@ -122,8 +122,7 @@
     "packages/mcp-connectors/monte-carlo",
     "packages/mcp-connectors/powerbi",
     "packages/mcp-connectors/snowflake",
-    "packages/mcp-connectors/tableau",
-    "packages/vscode-extension"
+    "packages/mcp-connectors/tableau"
   ],
   "scripts": {
     "dev": "bun run --filter './packages/gateway' dev & bun run --filter './packages/cli' dev",
@@ -205,7 +204,6 @@
     "test:coverage:lan": "bun test packages/gateway/src/ipc/lan-crypto.test.ts packages/gateway/src/ipc/lan-pairing.test.ts packages/gateway/src/ipc/lan-rate-limit.test.ts packages/gateway/src/ipc/lan-rpc.test.ts packages/gateway/src/ipc/lan-server.test.ts packages/gateway/test/integration/lan/ --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:perf": "bun test packages/gateway/src/perf packages/cli/src/commands/bench.test.ts --coverage --coverage-threshold-lines=80 --timeout 30000",
     "test:coverage:sdk": "bun test packages/sdk --coverage --coverage-threshold-lines=80 --timeout 30000",
-    "test:coverage:vscode-extension": "cd packages/vscode-extension && bunx vitest run --coverage",
     "record-casts": "bun scripts/cast-driver/run.ts",
     "render:og-card": "bun scripts/render-og-card.ts",
     "render:hero-cast": "bun scripts/render-hero-cast.ts",
