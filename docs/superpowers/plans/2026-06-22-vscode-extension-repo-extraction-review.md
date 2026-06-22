@@ -9,16 +9,20 @@
 ## 1. Git History Preservation vs. Flat Import
 
 ### Context
+
 In **Task 3**, the plan uses `git archive` to package `packages/vscode-extension` into a tarball and unpack it in the new repo root, followed by a flat initial commit:
+
 ```bash
 git -C /c/gitrep/Nimbus archive HEAD packages/vscode-extension \
   | tar -x --strip-components=2 -C /c/gitrep/nimbus-vscode
 ```
 
 ### Suggestions / Open Questions
+
 1. **Loss of Commit History:**
    - Starting the standalone repository with a flat import discards years of historical context, authorship information, and git blames, which are highly valuable for maintenance and debugging.
    - **Recommendation:** Query if the team prefers to preserve the revision history. If history preservation is desired, use `git-filter-repo` or a `git subtree split` workflow to extract the subdirectory history into a clean repository before pushing to the new remote:
+
      ```bash
      # Example alternative history-preserving extraction workflow:
      git clone /c/gitrep/Nimbus /c/gitrep/nimbus-vscode-temp
@@ -32,9 +36,11 @@ git -C /c/gitrep/Nimbus archive HEAD packages/vscode-extension \
 ## 2. Webview Bundling & Transitive Dependency Check
 
 ### Context
+
 In **Task 3** and **Task 6 (Step 5)**, the source files are ported, and `bun run build` runs `esbuild.mjs` to produce `dist/extension.js`, `media/webview.js`, and `media/webview.css`.
 
 ### Suggestions / Open Questions
+
 1. **Shared Build Dependencies:**
    - Some monorepo webview setups rely on devDependencies (such as React, TailwindCSS, PostCSS, or bundler plugins) located in the monorepo root `package.json` rather than the package-specific `package.json`.
    - **Recommendation:** Verify that the ported `package.json` contains all necessary devDependencies to compile the webview files (e.g., UI libraries, bundler plugins, and PostCSS configurations) to ensure that `esbuild.mjs` builds successfully in a completely isolated environment without failing on missing node module imports.
@@ -44,9 +50,11 @@ In **Task 3** and **Task 6 (Step 5)**, the source files are ported, and `bun run
 ## 3. GitHub CLI Auth and Member Permissions
 
 ### Context
+
 In **Task 2**, the plan issues `gh repo create` under the `nimbus-agent` org namespace.
 
 ### Suggestions / Open Questions
+
 1. **CLI Auth Status:**
    - The command assumes the local machine is logged into a GitHub account with write/create permissions under the `nimbus-agent` organization.
    - **Recommendation:** Add a diagnostic check step (`gh auth status`) before attempting to create the repository, and specify a fallback instruction if the user does not have organization repository creation permissions (e.g., instructing them to create the empty repository via the GitHub Web UI and then manually configuring the local remote URL).
@@ -56,16 +64,18 @@ In **Task 2**, the plan issues `gh repo create` under the `nimbus-agent` org nam
 ## 4. Release Please Configurations
 
 ### Context
+
 In **Task 16 (Step 3)**, the plan checks for references in `release-please` configurations.
 
 ### Suggestions / Open Questions
+
 1. **Updating Monorepo Releases:**
    - If `packages/vscode-extension` was previously released via Release Please in the monorepo, its deletion will require updating `release-please-config.json` to remove the package path entry, and `.release-please-manifest.json` to remove its corresponding version.
    - **Recommendation:** Explicitly document the exact JSON blocks to delete from these files (e.g., removing the `"packages/vscode-extension"` key from both files) to make the step easily executable by automated agents.
 
 ---
 
-# Second-pass review (Claude, 2026-06-22) — empirically verified
+## Second-pass review (Claude, 2026-06-22) — empirically verified
 
 The review above is reasonable but **missed a release blocker** and includes one point that doesn't apply to this extension. This pass adds an empirically-verified blocker plus reconciles the points above. **All points below are now folded into the v2 plan.**
 
@@ -73,7 +83,7 @@ The review above is reasonable but **missed a release blocker** and includes one
 
 The plan's original premise — that `@nimbus-dev/client@0.2.3` can be consumed from npm — is **false**. Verified by actually running it:
 
-```
+```text
 $ bun add @nimbus-dev/client@0.2.3      # in a throwaway dir
 error: Workspace dependency "@nimbus-dev/sdk" not found
 error: @nimbus-dev/sdk@workspace:* failed to resolve   (exit 1)
