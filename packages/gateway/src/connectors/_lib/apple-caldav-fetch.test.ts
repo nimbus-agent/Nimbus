@@ -20,7 +20,10 @@ import {
 } from "../connector-sync-test-helpers.ts";
 import {
   type AppleCalConfig,
+  type CalDavBootstrap,
+  type CalDavObject,
   type CalDavTransport,
+  collectCalDavEvents,
   computeCalWindow,
   fetchAppleCalendarEvents,
   loadCalConfig,
@@ -96,7 +99,7 @@ describe("fetchAppleCalendarEvents", () => {
 
   test("transport throwing a non-Error object → ok:false with stringified error", async () => {
     const throwingTransport: CalDavTransport = async () => {
-      // biome-ignore lint/complexity/noUselessThisAlias: intentional non-Error throw
+      // Intentionally throw a non-Error to exercise the String(err) catch arm.
       throw "network timeout";
     };
 
@@ -112,6 +115,117 @@ describe("fetchAppleCalendarEvents", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.events).toHaveLength(0);
+  });
+});
+
+// ─── collectCalDavEvents (orchestration over an injected bootstrap) ───────────
+
+describe("collectCalDavEvents", () => {
+  /** Build a fake bootstrap that records login + serves per-calendar objects. */
+  function fakeBootstrap(
+    calendars: { url: string; displayName?: string }[],
+    objectsByCal: Record<string, CalDavObject[]>,
+  ): CalDavBootstrap & { loggedIn: boolean; windows: { start: string; end: string }[] } {
+    const recorder = {
+      loggedIn: false,
+      windows: [] as { start: string; end: string }[],
+      login: async (): Promise<void> => {
+        recorder.loggedIn = true;
+      },
+      fetchCalendars: async () => calendars,
+      fetchCalendarObjects: async ({
+        calendar,
+        timeRange,
+        expand,
+      }: {
+        calendar: { url: string; displayName?: string };
+        timeRange: { start: string; end: string };
+        expand: boolean;
+      }): Promise<CalDavObject[]> => {
+        expect(expand).toBe(true);
+        recorder.windows.push(timeRange);
+        return objectsByCal[calendar.displayName ?? calendar.url] ?? [];
+      },
+    };
+    return recorder;
+  }
+
+  test("logs in, selects calendars, and returns expanded ICS per calendar", async () => {
+    const boot = fakeBootstrap(
+      [
+        { url: "https://c/work", displayName: "Work" },
+        { url: "https://c/personal", displayName: "Personal" },
+      ],
+      {
+        Work: [{ url: "https://c/work/1.ics", data: FIXTURE_ICS_WORK }],
+        Personal: [{ url: "https://c/personal/1.ics", data: FIXTURE_ICS_PERSONAL }],
+      },
+    );
+    const events = await collectCalDavEvents(boot, BASE_CONFIG, WINDOW);
+    expect(boot.loggedIn).toBe(true);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({ calendar: "Work", ics: FIXTURE_ICS_WORK });
+    expect(events[1]).toEqual({ calendar: "Personal", ics: FIXTURE_ICS_PERSONAL });
+    expect(boot.windows[0]).toEqual({ start: WINDOW.startUtc, end: WINDOW.endUtc });
+  });
+
+  test("honours the include selection (skips unselected calendars)", async () => {
+    const boot = fakeBootstrap(
+      [
+        { url: "https://c/work", displayName: "Work" },
+        { url: "https://c/personal", displayName: "Personal" },
+      ],
+      {
+        Work: [{ url: "https://c/work/1.ics", data: FIXTURE_ICS_WORK }],
+        Personal: [{ url: "https://c/personal/1.ics", data: FIXTURE_ICS_PERSONAL }],
+      },
+    );
+    const events = await collectCalDavEvents(
+      boot,
+      { ...BASE_CONFIG, includeCalendars: ["Work"] },
+      WINDOW,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]?.calendar).toBe("Work");
+  });
+
+  test("falls back to calendar.url when displayName is absent", async () => {
+    const boot = fakeBootstrap([{ url: "https://c/unnamed" }], {
+      "https://c/unnamed": [{ url: "https://c/unnamed/1.ics", data: FIXTURE_ICS_WORK }],
+    });
+    const events = await collectCalDavEvents(boot, BASE_CONFIG, WINDOW);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.calendar).toBe("https://c/unnamed");
+  });
+
+  test("skips objects with empty / non-string data", async () => {
+    const boot = fakeBootstrap([{ url: "https://c/work", displayName: "Work" }], {
+      Work: [
+        { url: "https://c/work/1.ics", data: "   " },
+        { url: "https://c/work/2.ics", data: 42 },
+        { url: "https://c/work/3.ics" },
+        { url: "https://c/work/4.ics", data: FIXTURE_ICS_WORK },
+      ],
+    });
+    const events = await collectCalDavEvents(boot, BASE_CONFIG, WINDOW);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.ics).toBe(FIXTURE_ICS_WORK);
+  });
+
+  test("caps returned objects at maxInstancesPerCalendar", async () => {
+    const boot = fakeBootstrap([{ url: "https://c/work", displayName: "Work" }], {
+      Work: [
+        { url: "https://c/work/1.ics", data: FIXTURE_ICS_WORK },
+        { url: "https://c/work/2.ics", data: FIXTURE_ICS_WORK },
+        { url: "https://c/work/3.ics", data: FIXTURE_ICS_WORK },
+      ],
+    });
+    const events = await collectCalDavEvents(
+      boot,
+      { ...BASE_CONFIG, maxInstancesPerCalendar: 2 },
+      WINDOW,
+    );
+    expect(events).toHaveLength(2);
   });
 });
 

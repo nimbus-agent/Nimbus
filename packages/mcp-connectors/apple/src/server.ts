@@ -31,7 +31,12 @@ import {
   type EmailSendMailer,
   PREVIEW_FETCH_BYTES,
 } from "./apple-mail-core.ts";
-import type { CalDavClient, CalendarRef, EventWindow } from "./caldav-core.ts";
+import {
+  type CalDavClient,
+  type CalendarRef,
+  caldavObjectFilename,
+  type EventWindow,
+} from "./caldav-core.ts";
 import { registerAppleTools } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
@@ -311,9 +316,13 @@ function buildRfc822Message(from: string, input: DraftInput): string {
   lines.push(`Subject: ${input.subject}`);
   lines.push("MIME-Version: 1.0");
   lines.push("Content-Type: text/plain; charset=UTF-8");
-  lines.push("Content-Transfer-Encoding: 7bit");
+  // The body may contain non-ASCII (UTF-8) characters, so it cannot be declared
+  // 7bit. Base64-encode it (wrapped at 76 chars per RFC 2045) so the APPENDed
+  // message is well-formed regardless of content.
+  lines.push("Content-Transfer-Encoding: base64");
   lines.push("");
-  lines.push(input.body);
+  const encoded = Buffer.from(input.body, "utf8").toString("base64");
+  lines.push(encoded.replace(/.{76}/g, "$&\r\n"));
   // RFC 5322 uses CRLF line endings.
   return lines.join("\r\n");
 }
@@ -458,7 +467,9 @@ class TsdavCalDavClient implements CalDavClient {
 
   async putEvent(cal: CalendarRef, uid: string, ics: string): Promise<{ href: string }> {
     const davCal = this.toDavCalendar(cal);
-    const filename = `${uid}.ics`;
+    // The UID is embedded into the object URL path segment; sanitize it so a
+    // summary-derived UID with `/`, `#`, `%`, etc. cannot corrupt the href.
+    const filename = caldavObjectFilename(uid);
     await this.davClient.createCalendarObject({
       calendar: davCal,
       iCalString: ics,

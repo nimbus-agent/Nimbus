@@ -89,3 +89,23 @@ export function clampInstances<T>(rows: readonly T[], max: number): T[] {
   }
   return rows.slice(0, max);
 }
+
+// ---------------------------------------------------------------------------
+// caldavObjectFilename — derive a URL-path-safe .ics filename from a UID
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a CalDAV object filename (`<safe-uid>.ics`) from an event UID.
+ *
+ * The UID is embedded verbatim into the CalDAV object URL path segment, so any
+ * character that is unsafe in a path segment — `/`, `\`, `?`, `#`, `%`, `:`,
+ * whitespace, control chars — must be stripped to avoid a malformed/ambiguous
+ * URL (e.g. a summary-derived UID containing `/` would split the path) or path
+ * traversal (`../`). Allowed: URL-unreserved chars plus `@` (RFC 3986 §2.3 +
+ * the common `uid@host` form). A UID that sanitizes to empty falls back to
+ * `event` so a usable filename is always produced.
+ */
+export function caldavObjectFilename(uid: string): string {
+  const safe = uid.replace(/[^A-Za-z0-9\-_.~@]/g, "");
+  return `${safe === "" ? "event" : safe}.ics`;
+}

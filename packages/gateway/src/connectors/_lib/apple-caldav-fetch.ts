@@ -10,8 +10,11 @@
  * Architecture notes:
  *  - The gateway must NOT import from packages/mcp-connectors.
  *  - parseICalendar / ParsedEvent come from @nimbus-dev/sdk.
- *  - The real defaultCalDavTransport is excluded from coverage via
- *    c8 ignore start/stop because it opens real network sockets.
+ *  - The fetch ORCHESTRATION (login → discover → select → expand) lives in
+ *    `collectCalDavEvents`, which runs against an injected `CalDavBootstrap` so it
+ *    is unit-tested with a fake (no sockets). The real `defaultCalDavTransport` is
+ *    a thin shell that constructs the tsdav `DAVClient` — the only genuinely
+ *    untestable network bit — and delegates; it is excluded from coverage.
  */
 import type { SyncContext } from "../../sync/types.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -75,18 +78,42 @@ export type AppleEventFetcher = (
 
 // ─── Real transport (coverage-excluded) ──────────────────────────────────────
 
-/* c8 ignore start */
-const defaultCalDavTransport: CalDavTransport = async (config, window) => {
-  const { DAVClient } = await import("tsdav");
-  const bootstrap = new DAVClient({
-    serverUrl: "https://caldav.icloud.com",
-    credentials: { username: config.email, password: config.appPw },
-    authMethod: "Basic",
-    defaultAccountType: "caldav",
-  });
+/** A single raw calendar object as returned by the CalDAV `calendar-query` REPORT. */
+export interface CalDavObject {
+  readonly url?: string;
+  readonly data?: unknown;
+}
+
+/**
+ * The minimal subset of tsdav's `DAVClient` the fetch orchestration depends on.
+ * Injecting this (rather than reaching for `tsdav` directly) keeps the discover →
+ * select → expand loop unit-testable with a fake — no sockets in the test path.
+ */
+export interface CalDavBootstrap {
+  login(): Promise<unknown>;
+  fetchCalendars(): Promise<{ url: string; displayName?: string }[]>;
+  fetchCalendarObjects(params: {
+    calendar: { url: string; displayName?: string };
+    timeRange: { start: string; end: string };
+    expand: boolean;
+  }): Promise<CalDavObject[]>;
+}
+
+/**
+ * Run the CalDAV fetch cycle against an injected bootstrap client: log in,
+ * discover calendars, filter to the configured selection, then fetch the
+ * server-expanded ICS objects per calendar (capped at maxInstancesPerCalendar).
+ * No socket construction here — the real `DAVClient` is built by
+ * `defaultCalDavTransport` and passed in — so this is the unit-tested core.
+ */
+export async function collectCalDavEvents(
+  bootstrap: CalDavBootstrap,
+  config: AppleCalConfig,
+  window: { startUtc: string; endUtc: string },
+): Promise<CalendarIcsEntry[]> {
   await bootstrap.login();
   const allCalendars = await bootstrap.fetchCalendars();
-  const selected = selectCalendars(allCalendars as { url: string; displayName?: string }[], {
+  const selected = selectCalendars(allCalendars, {
     include: config.includeCalendars,
     exclude: config.excludeCalendars,
   });
@@ -97,16 +124,31 @@ const defaultCalDavTransport: CalDavTransport = async (config, window) => {
       timeRange: { start: window.startUtc, end: window.endUtc },
       expand: true,
     });
+    let pushed = 0;
     for (const obj of objects) {
+      if (pushed >= config.maxInstancesPerCalendar) break;
       if (typeof obj.data === "string" && obj.data.trim() !== "") {
-        results.push({
-          calendar: (cal as { displayName?: string }).displayName ?? cal.url,
-          ics: obj.data,
-        });
+        results.push({ calendar: cal.displayName ?? cal.url, ics: obj.data });
+        pushed++;
       }
     }
   }
   return results;
+}
+
+// ─── Real transport (thin network shell, coverage-excluded) ───────────────────
+
+/* c8 ignore start -- constructs the real tsdav DAVClient (sockets); the
+   testable orchestration lives in collectCalDavEvents above. */
+const defaultCalDavTransport: CalDavTransport = async (config, window) => {
+  const { DAVClient } = await import("tsdav");
+  const bootstrap = new DAVClient({
+    serverUrl: "https://caldav.icloud.com",
+    credentials: { username: config.email, password: config.appPw },
+    authMethod: "Basic",
+    defaultAccountType: "caldav",
+  });
+  return collectCalDavEvents(bootstrap as unknown as CalDavBootstrap, config, window);
 };
 /* c8 ignore stop */
 
@@ -211,11 +253,18 @@ export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | 
     return null;
   }
 
-  const pastRaw = (await ctx.vault.get("apple.cal_window_past_days"))?.trim() ?? "";
-  const futureRaw = (await ctx.vault.get("apple.cal_window_future_days"))?.trim() ?? "";
-  const maxRaw = (await ctx.vault.get("apple.cal_max_instances"))?.trim() ?? "";
-  const includeRaw = (await ctx.vault.get("apple.cal_include_calendars"))?.trim() ?? "";
-  const excludeRaw = (await ctx.vault.get("apple.cal_exclude_calendars"))?.trim() ?? "";
+  // Optional calendar config keys. Read via readConnectorSecret (the approved
+  // allow-list path) — they are listed in CONNECTOR_VAULT_SECRET_KEYS["apple"] so
+  // they are cleared on connector removal and pass the D11 vault-key audit.
+  const pastRaw =
+    (await readConnectorSecret(ctx.vault, "apple", "cal_window_past_days"))?.trim() ?? "";
+  const futureRaw =
+    (await readConnectorSecret(ctx.vault, "apple", "cal_window_future_days"))?.trim() ?? "";
+  const maxRaw = (await readConnectorSecret(ctx.vault, "apple", "cal_max_instances"))?.trim() ?? "";
+  const includeRaw =
+    (await readConnectorSecret(ctx.vault, "apple", "cal_include_calendars"))?.trim() ?? "";
+  const excludeRaw =
+    (await readConnectorSecret(ctx.vault, "apple", "cal_exclude_calendars"))?.trim() ?? "";
 
   function parsePositiveInt(raw: string, fallback: number): number {
     if (raw === "") return fallback;

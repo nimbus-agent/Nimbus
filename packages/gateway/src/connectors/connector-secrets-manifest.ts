@@ -188,9 +188,19 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   // Apple iCloud Mail + iCloud Calendar. The single app-specific password
   // (generated under Apple ID → Sign-In & Security → App-Specific Passwords)
   // authenticates IMAP + SMTP + CalDAV. Endpoints are fixed constants.
-  // `apple.mailbox` is an OPTIONAL non-secret config key (default INBOX); listed
-  // so it is a known/allowed vault key (D11) and is cleared on connector removal.
-  apple: ["apple.icloud_email", "apple.icloud_app_password", "apple.mailbox"],
+  // `apple.mailbox` + the `apple.cal_*` keys are OPTIONAL non-secret config keys
+  // (mailbox default INBOX; calendar window/selection defaults in apple-caldav-fetch.ts);
+  // listed so they are known/allowed vault keys (D11) and are cleared on connector removal.
+  apple: [
+    "apple.icloud_email",
+    "apple.icloud_app_password",
+    "apple.mailbox",
+    "apple.cal_window_past_days",
+    "apple.cal_window_future_days",
+    "apple.cal_max_instances",
+    "apple.cal_include_calendars",
+    "apple.cal_exclude_calendars",
+  ],
 } as const satisfies {
   readonly [K in ConnectorServiceId]: readonly string[];
 };
