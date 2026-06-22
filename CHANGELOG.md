@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.17.0](https://github.com/nimbus-agent/Nimbus/compare/v0.16.0...v0.17.0) (2026-06-22)
+
+
+### Features
+
+* **apple:** iCloud Mail + Calendar connector (Phase 6 Slice 9-E) ([#711](https://github.com/nimbus-agent/Nimbus/issues/711)) ([58c69e0](https://github.com/nimbus-agent/Nimbus/commit/58c69e09fba285b03b94eed60f69751103da1bf3))
+
+
+### Bug Fixes
+
+* **client:** pin internal deps on publish so the tarball installs standalone ([#716](https://github.com/nimbus-agent/Nimbus/issues/716)) ([1ab1b5c](https://github.com/nimbus-agent/Nimbus/commit/1ab1b5c7912948394c51142519b0d2698447caf6))
+
 ## [0.16.0](https://github.com/nimbus-agent/Nimbus/compare/v0.15.0...v0.16.0) (2026-06-21)
 
 
