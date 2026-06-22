@@ -23,7 +23,12 @@ export const VAULT_KEY_ALLOW_LIST = [
  * material). Registered here so the keyspace is documented in one place; these live in the
  * Vault only and never appear in logs/IPC/config (Non-Negotiable #3).
  */
-export const PLATFORM_VAULT_KEYS = ["policy.signing.privkey", "policy.signing.pubkey"] as const;
+export const PLATFORM_VAULT_KEYS = [
+  "policy.signing.privkey",
+  "policy.signing.pubkey",
+  "http_api.deployment_token",
+  "http_api.web_clipper_tokens",
+] as const;
 
 const SPAWN_RE = /\b(?:Bun\.spawn|Bun\.spawnSync|child_process\.spawn|spawn)\s*\(/;
 
