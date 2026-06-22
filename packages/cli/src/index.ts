@@ -8,6 +8,7 @@ import {
   runBench,
   runCatchupCli,
   runChatops,
+  runClip,
   runConfig,
   runConflictsCli,
   runConnector,
@@ -127,6 +128,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   "mcp-server": runMcpServer,
   prove: runProve,
   egress: runEgress,
+  clip: runClip,
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);

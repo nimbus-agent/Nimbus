@@ -28,6 +28,9 @@ Usage:
   nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]   Pre-deploy index check
   nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env> --status <success|failure|cancelled|in_progress> --started-at <ms> [--provider P] [--run-id R] [--job-id J] [--workflow-url U] [--finished-at <ms>] [--json]
       Record a completed deployment for DORA + agent correlation.
+  nimbus clip pair [--label <device>]   open a pairing window and print the one-time code
+  nimbus clip status                    list paired browsers (labels + token fingerprints)
+  nimbus clip revoke <label|--all>      revoke a paired browser's token
   nimbus vault set <k> <v>  Store a secret
   nimbus vault get <k>      Read a secret (prompts first)
   nimbus vault delete <k>    Remove a secret

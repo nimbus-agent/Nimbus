@@ -2086,6 +2086,40 @@ nimbus people link person:abc123 person:def456
 
 ---
 
+## Clip (Web Clipper)
+
+### `nimbus clip pair [--label <device>]`
+
+Open a browser-extension pairing session and print the one-time code. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
+
+```bash
+nimbus clip pair
+nimbus clip pair --label work-chrome
+```
+
+---
+
+### `nimbus clip status`
+
+List all paired browser devices — shows each device's label and its token fingerprint (never the raw token).
+
+```bash
+nimbus clip status
+```
+
+---
+
+### `nimbus clip revoke <label|--all>`
+
+Revoke a specific paired device's token by label, or revoke all paired devices with `--all`.
+
+```bash
+nimbus clip revoke work-chrome
+nimbus clip revoke --all
+```
+
+---
+
 ## Vault
 
 ### `nimbus vault set <key> <value>`
