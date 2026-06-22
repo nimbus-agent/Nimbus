@@ -1,0 +1,153 @@
+/**
+ * E2E: pair → POST /v1/clips → search
+ *
+ * Boots a REAL HTTP server (startReadOnlyHttpServer) on 127.0.0.1 with a
+ * fresh SQLite DB (real schema migrations), a real pairing controller, and an
+ * in-memory vault (same pattern as clip-rpc.test.ts / clip-token-store.test.ts).
+ * No OS keychain is needed — the vault is a plain Map, which satisfies the
+ * NimbusVault interface and is safe for tests.
+ *
+ * Harness source: packages/gateway/src/ipc/http-server.test.ts
+ *   - Fresh temp dir + real SQLite DB created in beforeAll
+ *   - startReadOnlyHttpServer(dbPath, 0, opts) — port 0 → OS-assigned
+ *   - handle.stop() in afterAll
+ *
+ * Pairing: direct PairingWindowController.open() (no IPC needed).
+ * Search assertion: direct FTS query on the writable DB (same pattern as
+ * clip-ingest.test.ts line 88–94 `item i INNER JOIN item_fts` WHERE MATCH).
+ */
+
+import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
+import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { PairingWindowController } from "./pairing-window.ts";
+
+// ---------------------------------------------------------------------------
+// In-memory vault (satisfies NimbusVault; avoids OS keychain dependency)
+// ---------------------------------------------------------------------------
+function makeInMemoryVault(): NimbusVault {
+  const store = new Map<string, string>();
+  return {
+    get: async (k: string) => store.get(k) ?? null,
+    set: async (k: string, v: string) => void store.set(k, v),
+    delete: async (k: string) => void store.delete(k),
+    listKeys: async (prefix?: string) => {
+      const keys = [...store.keys()];
+      return prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared test state
+// ---------------------------------------------------------------------------
+let tmpDir: string;
+let dbPath: string;
+let handle: ReadOnlyHttpServerHandle;
+let pairing: PairingWindowController;
+
+beforeAll(() => {
+  // 1. Fresh temp dir + real SQLite DB at the latest schema version (V44).
+  tmpDir = mkdtempSync(join(tmpdir(), "nimbus-clip-e2e-"));
+  dbPath = join(tmpDir, "nimbus.db");
+  const db = new Database(dbPath);
+  runIndexedSchemaMigrations(db, 44);
+  db.close();
+
+  // 2. Pairing controller (singleton; shared with the HTTP server seam).
+  pairing = new PairingWindowController({ nowMs: () => Date.now() });
+
+  // 3. In-memory vault for clip tokens.
+  const vault = makeInMemoryVault();
+
+  // 4. Boot the real HTTP server with the clips surface enabled.
+  //    Port 0 → OS picks a free port.
+  handle = startReadOnlyHttpServer(dbPath, 0, {
+    clipsVault: vault,
+    pairingController: pairing,
+    // scheduleEmbedding is optional; omit it — FTS search does not need embeddings.
+  });
+});
+
+afterAll(() => {
+  try {
+    handle.stop();
+  } catch {
+    /* ignore */
+  }
+  try {
+    rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E2E flow
+// ---------------------------------------------------------------------------
+describe("web clipper E2E", () => {
+  test("pair → POST /v1/clips → the clip is FTS-searchable", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+
+    // ── Step 1: open the pairing window directly (no IPC needed) ────────────
+    const { code } = pairing.open("e2e-browser");
+
+    // ── Step 2: POST /v1/clips/pair/confirm { code } → { token, label } ────
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    expect(confirmRes.status).toBe(200);
+    const { token, label } = (await confirmRes.json()) as { token: string; label: string };
+    expect(typeof token).toBe("string");
+    expect(token.length).toBeGreaterThan(0);
+    expect(label).toBe("e2e-browser");
+
+    // ── Step 3: POST /v1/clips with Bearer <token> ───────────────────────────
+    const clipBody = {
+      url: "https://example.com/e2e-article",
+      title: "NimbusClipE2ETitle",
+      mode: "article",
+      body: "The quick brown fox jumps over the lazy dog.",
+      capturedAt: Date.now(),
+    };
+    const clipRes = await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(clipBody),
+    });
+    expect(clipRes.status).toBe(200);
+    const clipJson = (await clipRes.json()) as { id: string; status: string };
+    expect(clipJson.status).toBe("created");
+    expect(clipJson.id).toMatch(/^nimbus:clip:/);
+
+    // ── Step 4: FTS search — open the DB directly and run the same query ───
+    // used in clip-ingest.test.ts to prove the clip is indexed.
+    // The server holds a read-only handle; we open a separate readable handle.
+    const readDb = new Database(dbPath, { readonly: true, create: false });
+    try {
+      // Search for a distinctive word in the title
+      const rows = readDb
+        .query(
+          "SELECT i.id FROM item i INNER JOIN item_fts ON i.rowid = item_fts.rowid WHERE item_fts MATCH ?",
+        )
+        .all("NimbusClipE2ETitle") as Array<{ id: string }>;
+
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.some((r) => r.id === clipJson.id)).toBe(true);
+      expect(clipJson.id.startsWith("nimbus:clip:")).toBe(true);
+    } finally {
+      readDb.close();
+    }
+  });
+});
