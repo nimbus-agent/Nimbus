@@ -1,5 +1,9 @@
 import { Database } from "bun:sqlite";
 import { join, resolve } from "node:path";
+import { ingestClip, validateClipInput } from "../clips/clip-ingest.ts";
+import { type RelatedHit, type RelatedInput, runClipRelated } from "../clips/clip-related.ts";
+import { addClipToken, generateClipToken, verifyClipToken } from "../clips/clip-token-store.ts";
+import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { dbRun } from "../db/write.ts";
@@ -7,7 +11,9 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
+import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
 import { requireBearer } from "./http-auth.ts";
@@ -41,6 +47,15 @@ export type ReadOnlyHttpServerOptions = {
   // mounted on the I13 write dispatcher; auth is the Bot Framework JWT (validated in-route), not a
   // static bearer. The surface (validateBotJwt + onActivity) is built by the ChatOps service.
   readonly resolveTeamsEventsSurface?: () => Promise<TeamsEventsSurface | undefined>;
+  // Web-clipper surface (Task 6). When BOTH clipsVault and pairingController are present:
+  //   - POST /v1/clips/related (bearer-authed read route) is mounted directly in the fetch handler.
+  //   - The clips write seam (POST /v1/clips + POST /v1/clips/pair/confirm) is enabled in the I13
+  //     write dispatcher. pairingController is a SINGLETON created at assemble time (Task 7) and
+  //     shared with the clip-rpc IPC handler — http-server never constructs one per-request.
+  readonly clipsVault?: NimbusVault;
+  readonly pairingController?: PairingWindowController;
+  // When present, called after each successful clip ingest to schedule embedding generation.
+  readonly scheduleEmbedding?: (id: string) => void;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -443,6 +458,65 @@ async function resolvePolicyWriteDeps(
   };
 }
 
+// POST /v1/clips/related — bearer-authed read route (no DB mutation). Uses FTS-only search over
+// the read-only DB so no embedding pipeline is required. The query is sanitized via ftsMatchQuery
+// (the same escaping used by the hybrid-search BM25 path) to prevent FTS5 syntax injection.
+async function handleClipRelated(
+  req: Request,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const { clipsVault } = opts;
+  if (clipsVault === undefined) {
+    return new Response("Not Found", { status: 404 });
+  }
+  const raw = req.headers.get("authorization");
+  const presented = raw?.startsWith("Bearer ") === true ? raw.slice(7) : undefined;
+  if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  let body: RelatedInput;
+  try {
+    body = (await req.json()) as RelatedInput;
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const out = await runClipRelated(
+    {
+      search: async (query: string, limit: number): Promise<RelatedHit[]> => {
+        const fts = ftsMatchQuery(query);
+        if (fts === "") return [];
+        const rows = db
+          .query(
+            `SELECT i.id, i.title, i.service, i.url,
+                    snippet(item_fts, 0, '', '', '…', 10) AS snippet
+             FROM item i
+             INNER JOIN item_fts ON i.rowid = item_fts.rowid
+             WHERE item_fts MATCH ?
+             ORDER BY rank
+             LIMIT ?`,
+          )
+          .all(fts, limit) as Array<{
+          id: string;
+          title: string;
+          service: string;
+          url: string | null;
+          snippet: string;
+        }>;
+        return rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          service: r.service,
+          snippet: r.snippet,
+          url: r.url,
+        }));
+      },
+    },
+    body,
+  );
+  return json(out);
+}
+
 // Assembles the full I13 dispatcher dependency set. Each write seam (deployment token, SCIM,
 // policy, messaging) is resolved independently — a gateway can enable any surface alone.
 async function resolveWriteRouteDeps(
@@ -463,6 +537,26 @@ async function resolveWriteRouteDeps(
     opts.resolveTeamsEventsSurface === undefined
       ? undefined
       : await opts.resolveTeamsEventsSurface();
+  // Web-clipper write seam — present only when BOTH clipsVault AND pairingController are wired.
+  // pairingController is a singleton from assemble.ts (Task 7); http-server never constructs one.
+  // Capture into locals so TS narrows them inside the closures (avoids non-null assertions).
+  const clipsVault = opts.clipsVault;
+  const pairingController = opts.pairingController;
+  const scheduleEmbedding = opts.scheduleEmbedding;
+  const clips =
+    clipsVault === undefined || pairingController === undefined
+      ? undefined
+      : {
+          pairing: pairingController,
+          verifyToken: (t: string) => verifyClipToken(clipsVault, t),
+          mintToken: async (label: string): Promise<string> => {
+            const token = generateClipToken();
+            await addClipToken(clipsVault, label, token);
+            return token;
+          },
+          ingest: (input: unknown) =>
+            ingestClip(writeDb, validateClipInput(input), scheduleEmbedding),
+        };
   return {
     writeDb,
     expectedToken,
@@ -472,6 +566,7 @@ async function resolveWriteRouteDeps(
     ...(scim === undefined ? {} : { scim }),
     ...(policy === undefined ? {} : { policy }),
     ...(messaging === undefined ? {} : { messaging }),
+    ...(clips === undefined ? {} : { clips }),
   };
 }
 
@@ -531,6 +626,7 @@ export function startReadOnlyHttpServer(
     opts.resolveDeploymentToken === undefined &&
     opts.resolveScimToken === undefined &&
     opts.resolveTeamsEventsSurface === undefined &&
+    opts.clipsVault === undefined &&
     (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
       : new Database(dbPath, { create: false, readwrite: true });
@@ -550,6 +646,11 @@ export function startReadOnlyHttpServer(
       ) {
         const scimToken = await opts.resolveScimToken();
         return dispatchScimRead(req, { identity: new IdentityStore(writeDb), scimToken });
+      }
+      // POST /v1/clips/related — bearer-authed read route (no mutation); intercept before the
+      // I13 write dispatcher so it never appears on the write surface allowlist.
+      if (req.method === "POST" && url.pathname === "/v1/clips/related") {
+        return handleClipRelated(req, db, opts);
       }
       // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
       if (
