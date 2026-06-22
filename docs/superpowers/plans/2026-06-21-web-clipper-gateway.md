@@ -1912,7 +1912,7 @@ git commit -m "test(clips): E2E pair → clip → search round-trip"
 In `docs/roadmap.md` § Phase 6 → Deferred from Phase 5 → Browser & Reading, change the Web clipper row from `- [ ]` to `- [x]` with a dated delivered note, mirroring the ArgoCD/Flux/MLflow style on lines 860–865:
 
 ```markdown
-- [x] **Web clipper** ✅ delivered 2026-06-21 (gateway side) — Chrome+Firefox MV3 extension clips the readable article or selection into the local index as `nimbus:web_clip` items via `POST /v1/clips` (I13); on-demand sidecar of related items; pairing-handshake auth (`nimbus clip pair`) behind new invariant **I30** (fail-closed pairing window). Browser extension (`packages/browser-extension/`) ships in Plan B.
+- [x] **Web clipper** ✅ delivered 2026-06-21 (gateway side) — Chrome+Firefox MV3 extension clips the readable article or selection into the local index as `nimbus:web_clip` items via `POST /v1/clips` (I13); on-demand sidecar of related items; pairing-handshake auth (`nimbus clip pair`) behind new invariant **I30** (fail-closed pairing window). Browser extension ships in Plan B as a separate repo `nimbus-agent/nimbus-web-clipper` (mirrors the `nimbus-vscode` satellite repo).
 ```
 
 - [ ] **Step 2: Add a CHANGELOG entry**

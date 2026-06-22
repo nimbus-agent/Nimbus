@@ -56,9 +56,10 @@ Three independently-testable units:
      owner runs `nimbus clip pair` → opens pairing window + prints code
 ```
 
-New package: `packages/browser-extension/` (MV3 source, esbuild/vite build,
-separate Chrome + Firefox manifests). Lives outside the bun coverage floor; its
-pure logic is unit-tested, its browser-integration parts are dev-loaded.
+Separate repo `nimbus-agent/nimbus-web-clipper` (MV3 source, esbuild build,
+separate Chrome + Firefox manifests; mirrors the `nimbus-vscode` satellite-repo
+template). Outside the monorepo entirely — its pure logic is unit-tested in that
+repo's own CI, its browser-integration parts are dev-loaded.
 
 ## Components & Data Flow
 
@@ -259,15 +260,20 @@ See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-re
 
 ### Resolved post-plan (2026-06-22)
 
-1. **Repository home:** the whole feature stays in the Nimbus **monorepo** — Plan A
-    in `packages/gateway` + `packages/cli` (it is gateway internals: I13 routes, I30,
-    IPC, the `web_clip` type — physically inseparable), Plan B in
-    `packages/browser-extension/` (matches the `packages/vscode-extension` precedent;
-    keeps the HTTP wire contract atomic with the gateway). Promotion to a standalone
-    repo under the `nimbus-agent` org is deferred until store submission, when the
-    contract is stable and the store-release lifecycle benefits from separation. A
-    separate repo was rejected now because it would turn the wire contract into a
-    hand-synced cross-repo coupling.
+1. **Repository home:** Plan A (gateway) stays in the Nimbus **monorepo** —
+    `packages/gateway` + `packages/cli` — because it is gateway internals (I13 routes,
+    I30, IPC, the `web_clip` type) and physically inseparable. **Plan B (the browser
+    extension) lives in its OWN repo: `nimbus-agent/nimbus-web-clipper`**, mirroring the
+    `nimbus-vscode` satellite-repo template (standalone `.github` CI, `biome.json`,
+    `esbuild`, `CLAUDE.md`, `LICENSE`, `sonar-project.properties`, `src/` + `test/`,
+    MV3 Chrome + Firefox manifests). This follows the org's move to extract first-party
+    clients into satellite repos (`nimbus-vscode` was the first). **Supersedes** the
+    earlier "monorepo `packages/browser-extension/`, promote-later" call (2026-06-22).
+    The tradeoff — the HTTP wire contract becomes a cross-repo coupling — is accepted:
+    Plan A (PR #718) locks that contract (`/v1/clips`, `/v1/clips/pair/confirm`,
+    `/v1/clips/related`), so the extension builds against a stable, versioned surface.
+    The repo is created when Plan B is built (not yet — Plan B gets its own
+    spec → plan → execute cycle in that repo).
 
 ## Files Touched (anticipated)
 
@@ -284,5 +290,5 @@ See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-re
 | Embedding routing     | `packages/gateway/src/embedding/routing.ts`                  |
 | Security invariants   | `packages/gateway/src/security-invariants.test.ts`, `docs/SECURITY-INVARIANTS.md` |
 | CLI                   | `packages/cli/src/commands/clip.ts` (`nimbus clip pair` / `status` / `revoke`) |
-| Extension             | new `packages/browser-extension/` (MV3, Chrome + Firefox)    |
+| Extension             | new repo `nimbus-agent/nimbus-web-clipper` (MV3, Chrome + Firefox) |
 | Roadmap / CHANGELOG   | `docs/roadmap.md`, `docs/CHANGELOG.md`                       |
