@@ -860,7 +860,7 @@ test("clip routes are 404 when the clips seam is absent", async () => {
     headers: { authorization: "Bearer good-token" },
     body: "{}",
   });
-  const res = await dispatchWriteRoute(req, clipCtx({ clips: undefined }));
+  const res = await dispatchWriteRoute(req, baseWriteCtx());
   expect(res.status).toBe(404);
 });
 

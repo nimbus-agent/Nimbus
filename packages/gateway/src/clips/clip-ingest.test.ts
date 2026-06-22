@@ -83,9 +83,9 @@ describe("ingestClip", () => {
     const res = ingestClip(db, base);
     expect(res.status).toBe("created");
     const row = getItem(res.id);
-    expect(row?.service).toBe("nimbus");
-    expect(row?.type).toBe("web_clip");
-    expect(row?.canonical_url).toBe("https://ex.com/p");
+    expect(row?.["service"]).toBe("nimbus");
+    expect(row?.["type"]).toBe("web_clip");
+    expect(row?.["canonical_url"]).toBe("https://ex.com/p");
     const fts = db
       .query(
         "SELECT i.id FROM item i INNER JOIN item_fts ON i.rowid = item_fts.rowid WHERE item_fts MATCH ?",
@@ -99,7 +99,7 @@ describe("ingestClip", () => {
     const b = ingestClip(db, { ...base, title: "Hello v2" });
     expect(b.id).toBe(a.id);
     expect(b.status).toBe("updated");
-    expect(getItem(a.id)?.title).toBe("Hello v2");
+    expect(getItem(a.id)?.["title"]).toBe("Hello v2");
   });
 
   test("two distinct selections on the same page get distinct ids", () => {
@@ -116,21 +116,21 @@ describe("ingestClip", () => {
 
   test("tags + mode + wordCount land in metadata JSON", () => {
     const res = ingestClip(db, base);
-    const meta = JSON.parse(String(getItem(res.id)?.metadata)) as Record<string, unknown>;
-    expect(meta.tags).toEqual(["research"]);
-    expect(meta.mode).toBe("article");
-    expect(meta.wordCount).toBe(3);
+    const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
+    expect(meta["tags"]).toEqual(["research"]);
+    expect(meta["mode"]).toBe("article");
+    expect(meta["wordCount"]).toBe(3);
   });
 
   test("whitespace-only body → wordCount 0", () => {
     const res = ingestClip(db, { ...base, body: "   " });
-    const meta = JSON.parse(String(getItem(res.id)?.metadata)) as Record<string, unknown>;
-    expect(meta.wordCount).toBe(0);
+    const meta = JSON.parse(String(getItem(res.id)?.["metadata"])) as Record<string, unknown>;
+    expect(meta["wordCount"]).toBe(0);
   });
 
   test("caller-supplied canonicalUrl is canonicalized and used", () => {
     const res = ingestClip(db, { ...base, canonicalUrl: "https://other.com/x/?utm_source=q" });
-    expect(getItem(res.id)?.canonical_url).toBe("https://other.com/x");
+    expect(getItem(res.id)?.["canonical_url"]).toBe("https://other.com/x");
   });
 
   test("rejects non-finite capturedAt", () => {
