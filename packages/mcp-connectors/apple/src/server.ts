@@ -259,8 +259,11 @@ class AppleSmtpMailer implements EmailSendMailer {
     this.transport = createTransport({
       host: ICLOUD_SMTP_HOST,
       port: ICLOUD_SMTP_PORT,
-      // STARTTLS — secure:false, port 587 (not 465).
+      // STARTTLS — secure:false, port 587 (not 465). requireTLS forbids the
+      // plaintext fallback if the server fails to advertise STARTTLS (the
+      // credentials must never travel in the clear; iCloud always advertises it).
       secure: false,
+      requireTLS: true,
       auth: { user, pass },
     });
   }
