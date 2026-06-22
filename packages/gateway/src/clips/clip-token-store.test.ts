@@ -95,4 +95,40 @@ describe("clip-token-store", () => {
     await v.set(CLIP_TOKENS_VAULT_KEY, "{not json");
     expect(await loadClipTokens(v)).toEqual({});
   });
+
+  test("stored empty object → empty map (isStringMap vacuous-true)", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, "{}");
+    expect(await loadClipTokens(v)).toEqual({});
+  });
+
+  test("stored non-object JSON (number) → empty map", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, "42");
+    expect(await loadClipTokens(v)).toEqual({});
+  });
+
+  test("stored JSON array → empty map (Array rejected)", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, '["a","b"]');
+    expect(await loadClipTokens(v)).toEqual({});
+  });
+
+  test("stored null JSON → empty map", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, "null");
+    expect(await loadClipTokens(v)).toEqual({});
+  });
+
+  test("object with a non-string value → empty map (every→false)", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, '{"chrome":5}');
+    expect(await loadClipTokens(v)).toEqual({});
+  });
+
+  test("empty-string vault value → empty map", async () => {
+    const v = fakeVault();
+    await v.set(CLIP_TOKENS_VAULT_KEY, "");
+    expect(await loadClipTokens(v)).toEqual({});
+  });
 });
