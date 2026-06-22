@@ -1,11 +1,14 @@
 import type { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
+import { ClipValidationError } from "../clips/clip-ingest.ts";
+import { PairingWindowController } from "../clips/pairing-window.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { ScimError } from "../identity/scim-service.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
+import type { ClipsWriteSurface, WriteRouteContext } from "./http-write-routes.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
 function freshContext(): {
@@ -102,7 +105,7 @@ describe("dispatchWriteRoute", () => {
   });
 
   it("keeps the I13 allowlist at the deployment + 3 SCIM + admin-policy + teams-events routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(6);
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -110,6 +113,8 @@ describe("dispatchWriteRoute", () => {
       "DELETE /scim/v2/Users/{id}",
       "PUT /v1/admin/policy",
       "POST /v1/messaging/teams/events",
+      "POST /v1/clips",
+      "POST /v1/clips/pair/confirm",
     ]);
   });
 });
@@ -734,4 +739,210 @@ describe("dispatchWriteRoute — runScimRoute ScimError / generic-error branches
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("internal_error");
   });
+});
+
+// ── Web clipper routes (POST /v1/clips, POST /v1/clips/pair/confirm) ─────────────────────────
+
+function baseWriteCtx(): WriteRouteContext {
+  return {
+    writeDb: openSeededInMemoryDb(28),
+    expectedToken: "",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1000,
+    knownServices: () => [],
+  };
+}
+
+function clipsSurface(over: Partial<ClipsWriteSurface> = {}): ClipsWriteSurface {
+  const pairing = new PairingWindowController({ nowMs: () => 1000, genCode: () => "123456" });
+  return {
+    pairing,
+    verifyToken: async (t) => (t === "good-token" ? { label: "chrome" } : null),
+    mintToken: async () => "minted-token",
+    ingest: () => ({ id: "nimbus:clip:abc", status: "created" }),
+    ...over,
+  };
+}
+
+function clipCtx(over: Partial<WriteRouteContext> = {}): WriteRouteContext {
+  return { ...baseWriteCtx(), clips: clipsSurface(), ...over };
+}
+
+test("WRITE_ROUTE_ALLOWLIST now includes the two clip write routes (length 8)", () => {
+  expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
+  expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
+    "POST /v1/deployments",
+    "POST /scim/v2/Users",
+    "PATCH /scim/v2/Users/{id}",
+    "DELETE /scim/v2/Users/{id}",
+    "PUT /v1/admin/policy",
+    "POST /v1/messaging/teams/events",
+    "POST /v1/clips",
+    "POST /v1/clips/pair/confirm",
+  ]);
+});
+
+test("POST /v1/clips with a valid token ingests and returns 200 created", async () => {
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: JSON.stringify({
+      url: "https://ex.com/p",
+      title: "T",
+      mode: "article",
+      body: "b",
+      capturedAt: 1750000000000,
+    }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ id: "nimbus:clip:abc", status: "created" });
+});
+
+test("POST /v1/clips with a bad token → 401 (no ingest)", async () => {
+  let ingested = false;
+  const ctx = clipCtx({
+    clips: clipsSurface({
+      ingest: () => {
+        ingested = true;
+        return { id: "x", status: "created" };
+      },
+    }),
+  });
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer WRONG", "content-type": "application/json" },
+    body: JSON.stringify({ url: "u", title: "t", mode: "article", body: "b", capturedAt: 1 }),
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(401);
+  expect(ingested).toBe(false);
+});
+
+test("POST /v1/clips with invalid payload → 400 with field", async () => {
+  const ctx = clipCtx({
+    clips: clipsSurface({
+      ingest: () => {
+        throw new ClipValidationError("mode required", "mode");
+      },
+    }),
+  });
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: JSON.stringify({ url: "u", title: "t", mode: "x", body: "b", capturedAt: 1 }),
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(400);
+});
+
+test("pair/confirm with the right code mints a token (window open)", async () => {
+  const surface = clipsSurface();
+  surface.pairing.open("chrome-work");
+  const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "123456" }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ token: "minted-token", label: "chrome-work" });
+});
+
+test("pair/confirm fail-closed: no window open → 403, no mint", async () => {
+  let minted = false;
+  const surface = clipsSurface({
+    mintToken: async () => {
+      minted = true;
+      return "x";
+    },
+  });
+  // window NOT opened
+  const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "123456" }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
+  expect(res.status).toBe(403);
+  expect(minted).toBe(false);
+});
+
+test("clip routes are 404 when the clips seam is absent", async () => {
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token" },
+    body: "{}",
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: undefined }));
+  expect(res.status).toBe(404);
+});
+
+test("POST /v1/clips with no Authorization header → 401", async () => {
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: "u", title: "t", mode: "article", body: "b", capturedAt: 1 }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(401);
+});
+
+test("POST /v1/clips → 500 when ingest throws a non-validation error", async () => {
+  const ctx = clipCtx({
+    clips: clipsSurface({
+      ingest: () => {
+        throw new Error("boom");
+      },
+    }),
+  });
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: JSON.stringify({ url: "u", title: "t", mode: "article", body: "b", capturedAt: 1 }),
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(500);
+});
+
+test("POST /v1/clips → 400 without a field key when the validation error has no field", async () => {
+  const ctx = clipCtx({
+    clips: clipsSurface({
+      ingest: () => {
+        throw new ClipValidationError("body must be an object");
+      },
+    }),
+  });
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: JSON.stringify({ url: "u", title: "t", mode: "article", body: "b", capturedAt: 1 }),
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: "invalid_request" });
+});
+
+test("pair/confirm with a non-string code → 403", async () => {
+  const surface = clipsSurface();
+  surface.pairing.open("dev");
+  const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: 123456 }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
+  expect(res.status).toBe(403);
+});
+
+test("pair/confirm with no code field → 403", async () => {
+  const surface = clipsSurface();
+  surface.pairing.open("dev");
+  const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
+  expect(res.status).toBe(403);
 });

@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { ClipValidationError } from "../clips/clip-ingest.ts";
+import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NamespaceStore } from "../federation/namespace-store.ts";
 import type { IdentityStore } from "../identity/identity-store.ts";
@@ -17,6 +19,8 @@ const ROUTE_SCIM_PATCH = "PATCH /scim/v2/Users/{id}";
 const ROUTE_SCIM_DELETE = "DELETE /scim/v2/Users/{id}";
 const ROUTE_ADMIN_POLICY = "PUT /v1/admin/policy";
 const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
+const ROUTE_CLIPS = "POST /v1/clips";
+const ROUTE_CLIPS_PAIR_CONFIRM = "POST /v1/clips/pair/confirm";
 
 /**
  * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
@@ -25,7 +29,9 @@ const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
  * (own bearer = `identity.scim.bearer`); `PUT /v1/admin/policy` is the admin-console anchor policy
  * write surface (own bearer = the admin token; signs the org policy with the Vault-only anchor key);
  * `POST /v1/messaging/teams/events` is the ChatOps Teams inbound surface (auth = a Bot Framework
- * JWT validated in-route, not a static bearer). No other HTTP method may write.
+ * JWT validated in-route, not a static bearer). `POST /v1/clips` is the web-clipper ingest surface
+ * (auth = a labeled clip token validated in-route); `POST /v1/clips/pair/confirm` is the pairing
+ * confirm surface (gated by a short-lived pairing code). No other HTTP method may write.
  */
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_DEPLOY,
@@ -34,6 +40,8 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_SCIM_DELETE,
   ROUTE_ADMIN_POLICY,
   ROUTE_TEAMS_EVENTS,
+  ROUTE_CLIPS,
+  ROUTE_CLIPS_PAIR_CONFIRM,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
@@ -51,6 +59,9 @@ const POLICY_REJECT_ACTION = "policy.applied_rejected";
 const TEAMS_EVENTS_DISABLED_HINT =
   "ChatOps Teams surface disabled — enable [chatops].teams_enabled";
 const TEAMS_EVENTS_REJECT_ACTION = "messaging.teams.inbound_rejected";
+const CLIP_DISABLED_HINT = "web clipper disabled — pair a browser with 'nimbus clip pair'";
+const CLIP_REJECT_ACTION = "clip.ingest_rejected";
+const CLIP_PAIR_REJECT_ACTION = "clip.pair_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
@@ -86,6 +97,17 @@ export interface TeamsEventsSurface {
   readonly onActivity: (activity: unknown) => Promise<void>;
 }
 
+/**
+ * Web-clipper seam — present only when the clip surface is enabled. Token verification and minting
+ * are injected so this route layer never touches the Vault or token store directly.
+ */
+export interface ClipsWriteSurface {
+  readonly pairing: PairingWindowController;
+  readonly verifyToken: (presented: string) => Promise<{ label: string } | null>;
+  readonly mintToken: (label: string) => Promise<string>;
+  readonly ingest: (input: unknown) => { id: string; status: "created" | "updated" };
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -96,9 +118,16 @@ export interface WriteRouteContext {
   readonly scim?: ScimWriteSurface;
   readonly policy?: PolicyWriteSurface;
   readonly messaging?: TeamsEventsSurface;
+  readonly clips?: ClipsWriteSurface;
 }
 
-type RouteKind = "deployment" | "scim" | "policy" | "teamsEvents";
+type RouteKind =
+  | "deployment"
+  | "scim"
+  | "policy"
+  | "teamsEvents"
+  | "clipIngest"
+  | "clipPairConfirm";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -245,6 +274,37 @@ function resolveScimItemRoute(
   };
 }
 
+/** `POST /v1/clips` (404 unless the clips seam is enabled). */
+function resolveClipIngestRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.clips === undefined) return notFound();
+  return {
+    key: ROUTE_CLIPS,
+    kind: "clipIngest",
+    expectedToken: "", // verified in-route against the labeled token map (teamsEvents precedent)
+    disabledHint: CLIP_DISABLED_HINT,
+    rejectAction: CLIP_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
+/** `POST /v1/clips/pair/confirm` (404 unless the clips seam is enabled). */
+function resolveClipPairConfirmRoute(
+  method: string,
+  ctx: WriteRouteContext,
+): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.clips === undefined) return notFound();
+  return {
+    key: ROUTE_CLIPS_PAIR_CONFIRM,
+    kind: "clipPairConfirm",
+    expectedToken: "", // gated by the pairing code, not a bearer
+    disabledHint: CLIP_DISABLED_HINT,
+    rejectAction: CLIP_PAIR_REJECT_ACTION,
+    hasBody: true,
+  };
+}
+
 /** Resolves the request to an allowlisted route, or a 404/405 Response. Does NOT consult auth. */
 function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedRoute | Response {
   const { method } = req;
@@ -253,6 +313,8 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
   if (path === "/v1/admin/policy") return resolvePolicyRoute(method, ctx);
   if (path === "/scim/v2/Users") return resolveScimCreateRoute(method, ctx);
   if (path === "/v1/messaging/teams/events") return resolveTeamsEventsRoute(method, ctx);
+  if (path === "/v1/clips") return resolveClipIngestRoute(method, ctx);
+  if (path === "/v1/clips/pair/confirm") return resolveClipPairConfirmRoute(method, ctx);
   const item = SCIM_ITEM_RE.exec(path);
   if (item !== null) return resolveScimItemRoute(method, item[1] as string, ctx);
   return notFound();
@@ -263,8 +325,12 @@ type AuthOk = { fingerprint: string };
 function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): Response | AuthOk {
   // The Teams inbound route authenticates with a Bot Framework JWT (validated in-route), not a
   // static bearer — skip requireBearer here; body-cap, rate-limit, and audit still apply.
-  if (route.kind === "teamsEvents") {
-    return { fingerprint: "teams-bot" };
+  if (route.kind === "teamsEvents" || route.kind === "clipPairConfirm") {
+    return { fingerprint: route.kind === "teamsEvents" ? "teams-bot" : "clip-pair" };
+  }
+  // Clip ingest uses a labeled token verified inside runClipIngestRoute (same pattern as teamsEvents).
+  if (route.kind === "clipIngest") {
+    return { fingerprint: "clip" };
   }
   const auth = requireBearer(req, { expectedToken: route.expectedToken });
   if (auth.surfaceDisabled === true) {
@@ -607,6 +673,87 @@ async function runTeamsEventsRoute(
   }
 }
 
+function bearerToken(req: Request): string | undefined {
+  const raw = req.headers.get("authorization");
+  return raw?.startsWith("Bearer ") === true ? raw.slice("Bearer ".length) : undefined;
+}
+
+async function runClipIngestRoute(
+  ctx: WriteRouteContext,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  const clips = ctx.clips as ClipsWriteSurface;
+  const presented = bearerToken(req);
+  const verdict = presented === undefined ? null : await clips.verifyToken(presented);
+  if (verdict === null) {
+    recordRejection(ctx, {
+      actionType: CLIP_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 401,
+      reason: "unauthorized",
+    });
+    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
+  }
+  try {
+    const out = clips.ingest(parsed);
+    return jsonResponse(out, 200, rateLimitHeaders(limit));
+  } catch (e) {
+    if (e instanceof ClipValidationError) {
+      recordRejection(ctx, {
+        actionType: CLIP_REJECT_ACTION,
+        tokenFingerprint: fingerprint,
+        resultCode: 400,
+        reason: e.field === undefined ? "invalid_request" : `invalid_${e.field}`,
+      });
+      return jsonResponse(
+        { error: "invalid_request", ...(e.field === undefined ? {} : { field: e.field }) },
+        400,
+        rateLimitHeaders(limit),
+      );
+    }
+    recordRejection(ctx, {
+      actionType: CLIP_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+}
+
+function extractCode(parsed: unknown): string | undefined {
+  if (parsed !== null && typeof parsed === "object" && "code" in parsed) {
+    const c = (parsed as { code?: unknown }).code;
+    return typeof c === "string" ? c : undefined;
+  }
+  return undefined;
+}
+
+async function runClipPairConfirmRoute(
+  ctx: WriteRouteContext,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  parsed: unknown,
+): Promise<Response> {
+  const clips = ctx.clips as ClipsWriteSurface;
+  const code = extractCode(parsed);
+  const confirmed = code === undefined ? null : clips.pairing.confirm(code);
+  if (confirmed === null) {
+    recordRejection(ctx, {
+      actionType: CLIP_PAIR_REJECT_ACTION,
+      tokenFingerprint: fingerprint,
+      resultCode: 403,
+      reason: "no_active_window_or_bad_code",
+    });
+    return jsonResponse({ error: "pairing_failed" }, 403, rateLimitHeaders(limit));
+  }
+  const token = await clips.mintToken(confirmed.label);
+  return jsonResponse({ token, label: confirmed.label }, 200, rateLimitHeaders(limit));
+}
+
 export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): Promise<Response> {
   const url = new URL(req.url);
   const route = resolveRoute(req, url, ctx);
@@ -646,6 +793,12 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   }
   if (route.kind === "teamsEvents") {
     return runTeamsEventsRoute(ctx, auth.fingerprint, limit, req, parsed);
+  }
+  if (route.kind === "clipIngest") {
+    return runClipIngestRoute(ctx, auth.fingerprint, limit, req, parsed);
+  }
+  if (route.kind === "clipPairConfirm") {
+    return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
   }
   return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }
