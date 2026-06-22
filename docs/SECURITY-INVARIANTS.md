@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I29 (static rules D10–D22). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` — the I27→I29 gap is documented intent, reconciled at that branch's merge.
+**Current ceiling:** invariants I1–I30 (static rules D10–D22). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` — the I27→I29 gap is documented intent, reconciled at that branch's merge.
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -542,6 +542,18 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 **Anti-pattern:** inserting a `try/catch` around the egress append that swallows the error and allows dispatch to proceed; calling `connectors.dispatch` from any site other than `executor.ts`; calling `appendEgressEntry` from any file outside `egress/*`; a production boot that wires a no-op or always-succeeding sink (the sink is optional for tests only — production must inject `makeEgressSink(db)`).
 
 **How to comply:** `EgressSink` is the only DI seam for the ledger write — inject `makeEgressSink(db)` at boot. Every new action type that reaches `connectors.dispatch` will automatically be ledgered. If you add a new chokepoint around `connectors.dispatch`, you must run it through the existing executor gate (not bypass it); the D22 static check will catch any bypass immediately.
+
+---
+
+## I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window
+
+**Statement:** A web-clipper bearer token is minted only behind a live, owner-opened, unexpired, single-use, attempts-remaining pairing window (opened via `nimbus clip pair`). Absent such a window the `POST /v1/clips/pair/confirm` route mints nothing (HTTP 403, fail-closed). The window is strictly in-memory; a gateway restart drops it. Minted tokens live in the Vault map `http_api.web_clipper_tokens` and are revocable via `nimbus clip revoke`.
+
+**Wired at:** `packages/gateway/src/clips/pairing-window.ts` (the controller), `packages/gateway/src/ipc/http-write-routes.ts` (`runClipPairConfirmRoute`), `packages/gateway/src/clips/clip-token-store.ts` (mint/verify/revoke).
+
+**Anti-pattern:** minting a token on caller assertion, persisting the pairing window to disk, early-returning out of the multi-token verify (leaks token count), or echoing a raw token in audit/CLI output.
+
+**How to comply:** every new clipper-token path routes through `verifyClipToken` (constant-time) and only mints after `PairingWindowController.confirm` returns a label.
 
 ---
 

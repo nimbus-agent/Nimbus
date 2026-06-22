@@ -3,14 +3,26 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { PairingWindowController } from "./clips/pairing-window.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
+import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
 import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
 import { TribalClusterStore } from "./tribal/cluster-store.ts";
 import { captureToKnowledgeBase } from "./tribal/tribal-write-gate.ts";
+
+function baseInvariantWriteCtx() {
+  return {
+    writeDb: new Database(":memory:"),
+    expectedToken: "",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1000,
+    knownServices: () => [] as readonly string[],
+  };
+}
 
 const SRC_ROOT = import.meta.dir;
 const REPO_ROOT = resolve(SRC_ROOT, "..", "..", "..");
@@ -309,8 +321,9 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
     // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
     // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b) +
-    // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT).
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(6);
+    // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT) +
+    // 2 web-clipper routes (POST /v1/clips + POST /v1/clips/pair/confirm, I30).
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -318,6 +331,8 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
       "DELETE /scim/v2/Users/{id}",
       "PUT /v1/admin/policy",
       "POST /v1/messaging/teams/events",
+      "POST /v1/clips",
+      "POST /v1/clips/pair/confirm",
     ]);
   });
 });
@@ -1109,5 +1124,45 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
     const exec = await read("packages/gateway/src/engine/executor.ts");
     expect(exec).toContain("EgressSink");
+  });
+});
+
+describe("I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window", () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the 8 sanctioned write routes (adds the 2 clip routes)", async () => {
+    const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
+    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
+    expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips");
+    expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips/pair/confirm");
+  });
+
+  test("confirm with no open window mints nothing (fail-closed)", () => {
+    const ctl = new PairingWindowController({ nowMs: () => 0, genCode: () => "111111" });
+    expect(ctl.confirm("111111")).toBeNull(); // never opened
+  });
+
+  test("an expired window does not mint", () => {
+    let now = 0;
+    const ctl = new PairingWindowController({ nowMs: () => now, genCode: () => "111111" });
+    ctl.open("dev");
+    now = 200_000; // past the 120s TTL
+    expect(ctl.confirm("111111")).toBeNull();
+  });
+
+  test("the pairing confirm route returns 403 (not 500/200) when no window is open", async () => {
+    // mirror the http-write-routes.test.ts fail-closed case to prove the wiring, not just the unit
+    const { dispatchWriteRoute } = await import("./ipc/http-write-routes.ts");
+    const surface = {
+      pairing: new PairingWindowController({ nowMs: () => 0, genCode: () => "111111" }),
+      verifyToken: async () => null,
+      mintToken: async () => "SHOULD-NOT-BE-CALLED",
+      ingest: () => ({ id: "x", status: "created" as const }),
+    };
+    const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "111111" }),
+    });
+    const res = await dispatchWriteRoute(req, { ...baseInvariantWriteCtx(), clips: surface });
+    expect(res.status).toBe(403);
   });
 });
