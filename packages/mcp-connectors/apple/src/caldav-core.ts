@@ -84,6 +84,11 @@ export function selectCalendars(
  * returns the original array reference unchanged (zero allocation).
  */
 export function clampInstances<T>(rows: readonly T[], max: number): T[] {
+  // A non-positive cap (e.g. when an earlier calendar already filled the budget)
+  // means "take nothing" — `slice(0, -n)` would otherwise drop from the end.
+  if (max <= 0) {
+    return [];
+  }
   if (rows.length <= max) {
     return rows as T[];
   }

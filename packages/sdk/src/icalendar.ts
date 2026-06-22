@@ -103,14 +103,20 @@ function extractName(line: string): string {
 }
 
 /**
- * Check whether a content line has a given parameter (e.g. VALUE=DATE).
- * Inspects the param portion (between first `;` and the value-starting `:`).
+ * Check whether a content line carries an exact `NAME=VALUE` parameter token
+ * (e.g. `VALUE=DATE`). Inspects the param portion (between the property name's
+ * first `;` and the value-starting `:`) and matches a whole `;`-delimited token
+ * so `VALUE=DATE` does NOT spuriously match `VALUE=DATE-TIME`.
  */
 function hasParam(line: string, param: string): boolean {
   const colonIdx = line.indexOf(":");
   if (colonIdx === -1) return false;
-  const paramSection = line.slice(0, colonIdx).toUpperCase();
-  return paramSection.includes(param.toUpperCase());
+  const nameEnd = line.indexOf(";");
+  // No params (`;` absent or after the value separator) → nothing to match.
+  if (nameEnd === -1 || nameEnd > colonIdx) return false;
+  const paramSection = line.slice(nameEnd + 1, colonIdx).toUpperCase();
+  const target = param.toUpperCase();
+  return paramSection.split(";").some((tok) => tok === target);
 }
 
 /**

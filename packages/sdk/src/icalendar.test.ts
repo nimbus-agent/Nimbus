@@ -72,6 +72,35 @@ describe("parseICalendar", () => {
     expect(e?.allDay).toBe(false);
   });
 
+  it("does NOT treat DTSTART;VALUE=DATE-TIME as all-day (exact param token)", () => {
+    const src = ics(
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:datetime-1",
+      "SUMMARY:Explicitly typed timed event",
+      "DTSTART;VALUE=DATE-TIME:20260601T090000Z",
+      "DTEND;VALUE=DATE-TIME:20260601T100000Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    );
+    const [e] = parseICalendar(src);
+    expect(e?.allDay).toBe(false);
+  });
+
+  it("detects all-day when VALUE=DATE rides alongside another param", () => {
+    const src = ics(
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:allday-2",
+      "SUMMARY:Tz-tagged all-day",
+      "DTSTART;TZID=UTC;VALUE=DATE:20260601",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    );
+    const [e] = parseICalendar(src);
+    expect(e?.allDay).toBe(true);
+  });
+
   // (c) Folded DESCRIPTION spanning 3 physical lines → unfolded to one string
   it("unfolds a DESCRIPTION that spans 3 physical lines", () => {
     const src = ics(

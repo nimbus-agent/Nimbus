@@ -100,6 +100,11 @@ describe("clampInstances", () => {
     expect(result).toHaveLength(0);
   });
 
+  it("returns an empty array when max is negative (not a from-the-end slice)", () => {
+    const result = clampInstances([1, 2, 3], -1);
+    expect(result).toHaveLength(0);
+  });
+
   it("returns an empty array when input is empty", () => {
     const result = clampInstances([], 5);
     expect(result).toHaveLength(0);
@@ -127,6 +132,7 @@ describe("caldavObjectFilename", () => {
 
   it("strips path separators that would corrupt the href", () => {
     expect(caldavObjectFilename("Q2/Q3-Review")).toBe("Q2Q3-Review.ics");
+    // The backslash is test INPUT (a char to strip), not a path assertion. // cross-platform-ok
     expect(caldavObjectFilename("a\\b")).toBe("ab.ics");
   });
 

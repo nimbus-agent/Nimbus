@@ -456,6 +456,44 @@ describe("createAppleSyncable (calendar path)", () => {
     expect(meta["calendar"]).toBe("Work");
   });
 
+  test("per-calendar cap accumulates across ICS entries for the same calendar", async () => {
+    const db = createMemoryIndexDb();
+    // Two single-event ICS blobs, same calendar, distinct UIDs (so they don't dedup).
+    const evt = (uid: string) =>
+      [
+        "BEGIN:VCALENDAR",
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        "SUMMARY:Capped event",
+        "DTSTART:20260601T090000Z",
+        "DTEND:20260601T093000Z",
+        "DTSTAMP:20260531T080000Z",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n");
+    const syncable = createAppleSyncable({
+      ensureAppleMcpRunning: async () => {},
+      fetchMessages: fakeFetcher([]),
+      fetchEvents: fakeEventFetcher([
+        { calendar: "Work", ics: evt("cap-1") },
+        { calendar: "Work", ics: evt("cap-2") },
+      ]),
+    });
+    // cal_max_instances=1 → only the first event of "Work" may be indexed, even
+    // though it arrives across two separate entries (regression: per-entry reset).
+    const vault = createStubVault({
+      "apple.icloud_email": "user@icloud.com",
+      "apple.icloud_app_password": "xxxx-yyyy-zzzz-aaaa",
+      "apple.cal_max_instances": "1",
+    });
+    await syncable.sync(syncTestContext(db, vault), null);
+
+    const eventRows = db
+      .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'event'")
+      .all();
+    expect(eventRows.length).toBe(1);
+  });
+
   test("CalDAV fetch error: mail result is preserved, calendar rows absent", async () => {
     const db = createMemoryIndexDb();
     const syncable = createAppleSyncable({

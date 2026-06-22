@@ -127,9 +127,12 @@ async function runCalendarPass(
   const syncedAt = Date.now();
   let upserted = 0;
 
+  // The same calendar can span multiple ICS entries (one per expanded object),
+  // so the per-calendar cap must accumulate across entries — not reset per entry.
+  const perCalendarCounts = new Map<string, number>();
   for (const { calendar, ics } of outcome.events) {
     const events = parseICalendar(ics);
-    let calCount = 0;
+    let calCount = perCalendarCounts.get(calendar) ?? 0;
     for (const ev of events) {
       if (calCount >= config.maxInstancesPerCalendar) {
         break;
@@ -141,6 +144,7 @@ async function runCalendarPass(
         calCount += 1;
       }
     }
+    perCalendarCounts.set(calendar, calCount);
   }
 
   return upserted;

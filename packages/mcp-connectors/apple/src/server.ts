@@ -176,13 +176,18 @@ class AppleImapClient implements EmailReadClient {
   ): Promise<T> {
     const flow = this.newFlow();
     await flow.connect();
-    const lock = await flow.getMailboxLock(mailbox);
+    // logout in an OUTER finally so the connection is always closed even if
+    // getMailboxLock() throws (the lock is acquired after connect()).
     try {
-      const mb = flow.mailbox;
-      const uidValidity = mb === false ? null : String(mb.uidValidity);
-      return await fn(flow, uidValidity);
+      const lock = await flow.getMailboxLock(mailbox);
+      try {
+        const mb = flow.mailbox;
+        const uidValidity = mb === false ? null : String(mb.uidValidity);
+        return await fn(flow, uidValidity);
+      } finally {
+        lock.release();
+      }
     } finally {
-      lock.release();
       await flow.logout();
     }
   }
