@@ -53,6 +53,36 @@ jobs:
         env:
           CI: "true"
 
+      # npm publish does NOT rewrite the workspace: protocol, so a published
+      # tarball that declares `@nimbus-dev/sdk: workspace:*` is uninstallable by
+      # any consumer outside this monorepo (`bun add @nimbus-dev/client` fails to
+      # resolve the workspace dep). Rewrite internal workspace deps to the
+      # concrete published sdk version before publishing. The committed
+      # package.json keeps `workspace:*` for local monorepo development; only the
+      # published tarball carries the concrete pin.
+      - name: Pin internal workspace deps to concrete versions
+        working-directory: packages/client
+        run: |
+          node -e '
+            const fs = require("fs");
+            let sdkVer;
+            try {
+              sdkVer = require("../sdk/package.json").version;
+            } catch (err) {
+              throw new Error("cannot read ../sdk/package.json: " + err.message);
+            }
+            if (typeof sdkVer !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+/.test(sdkVer)) {
+              throw new Error("@nimbus-dev/sdk version is missing or not semver: " + JSON.stringify(sdkVer));
+            }
+            const pkg = require("./package.json");
+            if (pkg.dependencies?.["@nimbus-dev/sdk"] === undefined) {
+              throw new Error("client package.json has no @nimbus-dev/sdk dependency to rewrite");
+            }
+            pkg.dependencies["@nimbus-dev/sdk"] = "^" + sdkVer;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            console.log("rewritten @nimbus-dev/sdk ->", pkg.dependencies["@nimbus-dev/sdk"]);
+          '
+
       # Use `npm publish --provenance` (not `bun publish`) so the published tarball
       # carries an npm provenance attestation. Bun's publish does not yet emit one.
       #
