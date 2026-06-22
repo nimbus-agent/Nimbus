@@ -251,6 +251,18 @@ See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-re
 13. **Token management:** add `nimbus clip status` + `nimbus clip revoke
     [<label>|--all]` — revoke is the security cut-off for browser-stored tokens.
 
+### Resolved post-plan (2026-06-22)
+
+14. **Repository home:** the whole feature stays in the Nimbus **monorepo** — Plan A
+    in `packages/gateway` + `packages/cli` (it is gateway internals: I13 routes, I30,
+    IPC, the `web_clip` type — physically inseparable), Plan B in
+    `packages/browser-extension/` (matches the `packages/vscode-extension` precedent;
+    keeps the HTTP wire contract atomic with the gateway). Promotion to a standalone
+    repo under the `nimbus-agent` org is deferred until store submission, when the
+    contract is stable and the store-release lifecycle benefits from separation. A
+    separate repo was rejected now because it would turn the wire contract into a
+    hand-synced cross-repo coupling.
+
 ## Files Touched (anticipated)
 
 | Area                  | Path                                                          |
