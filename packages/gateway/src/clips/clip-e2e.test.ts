@@ -149,5 +149,41 @@ describe("web clipper E2E", () => {
     } finally {
       readDb.close();
     }
+
+    // ── Step 5: POST /v1/clips/related (bearer read) finds the clip ──────────
+    const relRes = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "NimbusClipE2ETitle" }),
+    });
+    expect(relRes.status).toBe(200);
+    const rel = (await relRes.json()) as { items: Array<{ id: string }> };
+    expect(rel.items.some((i) => i.id === clipJson.id)).toBe(true);
+  });
+
+  test("POST /v1/clips/related without a token → 401", async () => {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "anything" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("POST /v1/clips/related with malformed JSON → 400", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-badjson");
+    const confirm = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const { token } = (await confirm.json()) as { token: string };
+    const res = await fetch(`${base}/v1/clips/related`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
   });
 });
