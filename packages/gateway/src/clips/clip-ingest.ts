@@ -112,9 +112,8 @@ export function ingestClip(
   const canonical = canonicalizeUrl(input.canonicalUrl ?? input.url);
   const externalId = externalIdFor(input, canonical);
   const id = itemPrimaryKey("nimbus", externalId);
-  const existed =
-    db.query("SELECT 1 FROM item WHERE id = ?").get(id) !== null &&
-    db.query("SELECT 1 FROM item WHERE id = ?").get(id) !== undefined;
+  // `get` returns null (never undefined) when no row matches — one read suffices.
+  const existed = db.query("SELECT 1 FROM item WHERE id = ?").get(id) !== null;
   upsertIndexedItem(db, {
     service: "nimbus",
     type: "web_clip",
