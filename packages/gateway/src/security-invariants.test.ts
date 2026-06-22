@@ -1151,10 +1151,14 @@ describe("I30 — web-clipper token minting is fail-closed behind an owner-opene
   test("the pairing confirm route returns 403 (not 500/200) when no window is open", async () => {
     // mirror the http-write-routes.test.ts fail-closed case to prove the wiring, not just the unit
     const { dispatchWriteRoute } = await import("./ipc/http-write-routes.ts");
+    let mintCalled = false;
     const surface = {
       pairing: new PairingWindowController({ nowMs: () => 0, genCode: () => "111111" }),
       verifyToken: async () => null,
-      mintToken: async () => "SHOULD-NOT-BE-CALLED",
+      mintToken: async () => {
+        mintCalled = true;
+        return "SHOULD-NOT-BE-CALLED";
+      },
       ingest: () => ({ id: "x", status: "created" as const }),
     };
     const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
@@ -1164,5 +1168,7 @@ describe("I30 — web-clipper token minting is fail-closed behind an owner-opene
     });
     const res = await dispatchWriteRoute(req, { ...baseInvariantWriteCtx(), clips: surface });
     expect(res.status).toBe(403);
+    // The fail-closed witness: no token was minted (I30 is a security regression detector).
+    expect(mintCalled).toBe(false);
   });
 });
