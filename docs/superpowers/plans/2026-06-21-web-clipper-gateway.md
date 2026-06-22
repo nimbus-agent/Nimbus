@@ -14,7 +14,7 @@
 - **No plaintext credentials** — tokens live in Vault only; never in logs/IPC/config (#3). Token values never appear in audit rows, CLI output (`status` prints fingerprints only), or error bodies.
 - **Constant-time compare** for the pairing code and every bearer-token comparison — reuse `constantTimeStringEqual` from `packages/gateway/src/util/timing-safe-compare.ts` (I10).
 - **LAN bind stays `127.0.0.1`** — no change to bind config (I6); the extension only ever talks to localhost.
-- **Coverage floor** — every new source file under `packages/gateway/src` and `packages/cli/src` must hit ≥80% line **and** branch (`audit:coverage-floor`, Linux-authoritative; verify via Docker before pushing per the `nimbus-preflight` skill).
+- **Coverage floor** — every new source file under `packages/gateway/src` and `packages/cli/src` must hit **≥85% line AND ≥85% branch** (per `AGENTS.md` lines 9–10; `audit:coverage-floor`, Linux-authoritative; verify via Docker before pushing per the `nimbus-preflight` skill). Fix-not-exclude: never add a baseline/exclusion entry to clear the floor. If a provably-dead branch blocks ≥85%, leave the file and flag `blocked: unreachable branch at <file>:<line>` rather than editing source.
 - **Cross-platform paths** — `path.join()` / `os.tmpdir()` in tests; never hardcoded separators.
 - **Item primary key** is `service:externalId`; clips use `service = "nimbus"`, `type = "web_clip"`.
 - **Pre-flight before push:** `bun run preflight:fast` after every task; full `bun run preflight` before the PR.
@@ -243,7 +243,11 @@ export async function verifyClipToken(
   presented: string,
 ): Promise<{ label: string } | null> {
   const map = await loadClipTokens(vault);
-  // Constant-time across every entry; never short-circuit (would leak token count / presence).
+  // Constant-time across EVERY entry; never short-circuit/break (a break would leak token
+  // count/presence via loop timing). `constantTimeStringEqual` is length-safe: on a length
+  // mismatch it runs a dummy timingSafeEqual and returns false (no throw, no early-exit within
+  // an equal-length compare), so a wrong-length presented token leaks nothing of consequence —
+  // and tokens are fixed 64-hex (generateClipToken) anyway.
   let matched: string | null = null;
   for (const [label, token] of Object.entries(map)) {
     if (constantTimeStringEqual(presented, token)) {
@@ -520,6 +524,12 @@ describe("canonicalizeUrl", () => {
   test("idempotent on a clean URL", () => {
     expect(canonicalizeUrl("https://ex.com/a")).toBe("https://ex.com/a");
   });
+  test("root URL keeps its slash (no truncation)", () => {
+    expect(canonicalizeUrl("https://ex.com/")).toBe("https://ex.com/");
+  });
+  test("root URL with and without slash canonicalize identically", () => {
+    expect(canonicalizeUrl("https://ex.com")).toBe(canonicalizeUrl("https://ex.com/"));
+  });
   test("non-URL string passes through unchanged", () => {
     expect(canonicalizeUrl("not a url")).toBe("not a url");
   });
@@ -663,10 +673,12 @@ export function canonicalizeUrl(raw: string): string {
       u.searchParams.delete(key);
     }
   }
-  let out = u.toString();
-  // drop a trailing slash on the path (but keep "https://host/")
-  out = out.replace(/\/(\?|$)/, "$1");
-  return out;
+  // Strip a trailing slash on NON-root paths only — keep the root "https://host/" intact
+  // (truncating it to "https://host" trips some URL parsers and risks dedup mismatch).
+  if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
+    u.pathname = u.pathname.slice(0, -1);
+  }
+  return u.toString();
 }
 
 function sha256(s: string): string {
@@ -725,7 +737,9 @@ export function ingestClip(
   input: ClipInput,
   scheduleEmbedding?: (id: string) => void,
 ): ClipResult {
-  const canonical = input.canonicalUrl ?? canonicalizeUrl(input.url);
+  // Always canonicalize — even a caller-supplied canonicalUrl — so re-clip dedup is consistent
+  // regardless of what the extension sends (it might send a raw or partially-normalized URL).
+  const canonical = canonicalizeUrl(input.canonicalUrl ?? input.url);
   const externalId = externalIdFor(input, canonical);
   const id = itemPrimaryKey("nimbus", externalId);
   const existed =
@@ -1516,6 +1530,7 @@ Expected: FAIL — module not found.
 
 ```typescript
 // packages/gateway/src/ipc/clip-rpc.ts
+import { randomBytes } from "node:crypto";
 import { listClipFingerprints, revokeClipToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -1531,8 +1546,6 @@ function asRecord(p: unknown): Record<string, unknown> {
   return p !== null && typeof p === "object" ? (p as Record<string, unknown>) : {};
 }
 
-let deviceCounter = 0;
-
 export async function dispatchClipRpc(
   method: string,
   params: unknown,
@@ -1541,10 +1554,12 @@ export async function dispatchClipRpc(
   const rec = asRecord(params);
   switch (method) {
     case "clip.pair": {
+      // Random suffix, NOT a memory-only counter: a counter resets to 0 on gateway restart and a
+      // fresh "device-1" would overwrite an existing "device-1" token in the Vault map.
       const label =
         typeof rec["label"] === "string" && rec["label"].length > 0
           ? (rec["label"] as string)
-          : `device-${(deviceCounter += 1)}`;
+          : `device-${randomBytes(3).toString("hex")}`;
       const { code, expiresAtMs } = deps.pairing.open(label);
       return { kind: "hit", value: { code, expiresAtMs, label } };
     }
@@ -1901,7 +1916,7 @@ Expected: PASS (all-package tsc, Biome, tests, static invariant audit).
 
 - [ ] **Step 2: Verify the coverage floor (Linux-authoritative)**
 
-Per the `nimbus-preflight` skill, build the lcov in Docker (`oven/bun:latest`) and run `audit:coverage-floor`. Every new `packages/gateway/src/clips/*.ts` and `packages/cli/src/commands/clip.ts` must be ≥80% line + branch. Add targeted tests for any uncovered branch before pushing.
+Per the `nimbus-preflight` skill, build the lcov in Docker (`oven/bun:latest`) and run `audit:coverage-floor`. Every new `packages/gateway/src/clips/*.ts` and `packages/cli/src/commands/clip.ts` must be **≥85% line AND ≥85% branch** (AGENTS.md). Add targeted tests for any uncovered branch before pushing; fix-not-exclude.
 
 Run (host or Docker per the skill): `bun run audit:coverage-floor`
 Expected: PASS — no file below the floor.
