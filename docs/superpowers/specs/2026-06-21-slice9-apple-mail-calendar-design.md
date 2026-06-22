@@ -42,7 +42,7 @@ The connector is **cross-platform**: although the roadmap labels the item "macOS
 - `server.ts` — MCP bootstrap + real `ImapFlow`/`nodemailer`/CalDAV-transport clients (coverage-excluded).
 - `apple-mail-core.ts` — IMAP/SMTP client interface + `formatAddress` (thin; mirrors `imap-core.ts`; may largely reuse `shared/imap-mail-core.ts`).
 - `caldav-core.ts` — `CalDavClient` interface (list calendars, list events in window, put event, delete event) + result types.
-- `ics.ts` — pure VEVENT build (`buildVEvent`) and parse (`parseVEvent` → normalized event record); the only genuinely new building block.
+- *iCalendar build/parse* — the only genuinely new building block. **Relocated at plan time** to `packages/sdk/src/icalendar.ts` (`buildVEvent` + `parseICalendar`) so the connector AND the gateway sync share one parser (see plan-review resolution #4); NOT a connector-local `ics.ts`.
 - `tools.ts` — registers the mail tools (via shared kit) + the calendar read tools + the four write tools; exports `APPLE_TOOL_NAMES`.
 
 ---
@@ -146,7 +146,7 @@ Each grounded by reading the live `imap` / `mendeley` registration during planni
 ## 10. Testing
 
 - **Connector contract tests:** tool surface (`APPLE_TOOL_NAMES`), preview ≤2000 cap, no-full-body / no-attachment-bytes invariant, ICS build/parse round-trip.
-- **Pure-logic unit tests:** `ics.ts`, mapping, mailbox/calendar selection, window + recurrence-expansion math, address formatting — to clear the coverage floor.
+- **Pure-logic unit tests:** the SDK `icalendar.ts` (build/parse), mapping, mailbox/calendar selection, window + recurrence-expansion math, address formatting — to clear the coverage floor.
 - **HITL enforcement test (executor-level):** `executor.execute` triggers the consent gate before dispatch for all four apple write actions (`email.send`, `email.draft.create`, `calendar.event.create`, `calendar.event.delete`) — mirrors `executor.test.ts`. (No I26 test — apple is not a connector-write-registry write; see §6.2.)
 - **Sync integration test:** real SQLite + injected `ImapClient`/`CalDavClient` (no sockets), asserting `apple:email` + `apple:event` items land with the right shapes and embedding routing.
 - **Pre-first-push gate (no push-and-see):** full `bun run preflight` + the Docker-Linux coverage-floor check (authoritative for new non-`server.ts`/`tools.ts` files) + a whole-branch `/code-review` + `audit:package-readmes` (public-tier README sections).
