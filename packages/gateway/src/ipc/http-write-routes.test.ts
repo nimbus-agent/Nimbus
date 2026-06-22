@@ -104,7 +104,7 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at the deployment + 3 SCIM + admin-policy + teams-events routes", () => {
+  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip routes", () => {
     expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
@@ -767,20 +767,6 @@ function clipsSurface(over: Partial<ClipsWriteSurface> = {}): ClipsWriteSurface 
 function clipCtx(over: Partial<WriteRouteContext> = {}): WriteRouteContext {
   return { ...baseWriteCtx(), clips: clipsSurface(), ...over };
 }
-
-test("WRITE_ROUTE_ALLOWLIST now includes the two clip write routes (length 8)", () => {
-  expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
-  expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
-    "POST /v1/deployments",
-    "POST /scim/v2/Users",
-    "PATCH /scim/v2/Users/{id}",
-    "DELETE /scim/v2/Users/{id}",
-    "PUT /v1/admin/policy",
-    "POST /v1/messaging/teams/events",
-    "POST /v1/clips",
-    "POST /v1/clips/pair/confirm",
-  ]);
-});
 
 test("POST /v1/clips with a valid token ingests and returns 200 created", async () => {
   const req = new Request("http://127.0.0.1/v1/clips", {

@@ -685,6 +685,7 @@ async function runClipIngestRoute(
   req: Request,
   parsed: unknown,
 ): Promise<Response> {
+  // resolveRoute guarantees ctx.clips is defined for every clip-kind route.
   const clips = ctx.clips as ClipsWriteSurface;
   const presented = bearerToken(req);
   const verdict = presented === undefined ? null : await clips.verifyToken(presented);
@@ -738,6 +739,7 @@ async function runClipPairConfirmRoute(
   limit: RateLimitCheck,
   parsed: unknown,
 ): Promise<Response> {
+  // resolveRoute guarantees ctx.clips is defined for every clip-kind route.
   const clips = ctx.clips as ClipsWriteSurface;
   const code = extractCode(parsed);
   const confirmed = code === undefined ? null : clips.pairing.confirm(code);
