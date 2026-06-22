@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildRelatedQuery, runClipRelated } from "./clip-related.ts";
+import {
+  buildRelatedQuery,
+  type RelatedHit,
+  type RelatedInput,
+  runClipRelated,
+} from "./clip-related.ts";
 
 describe("buildRelatedQuery", () => {
   test("selection present → selection is the query", () => {
@@ -64,5 +69,37 @@ describe("runClipRelated", () => {
       { title: "x", canonicalUrl: "https://ex.com/p" },
     );
     expect(out.items.map((i) => i.id)).toEqual(["b"]);
+  });
+
+  test("non-string title/selection are coerced (no throw, empty query)", async () => {
+    let called = false;
+    const search = async (): Promise<RelatedHit[]> => {
+      called = true;
+      return [];
+    };
+    const out = await runClipRelated({ search }, {
+      title: 123,
+      selection: { x: 1 },
+    } as unknown as RelatedInput);
+    expect(called).toBe(false);
+    expect(out.items).toEqual([]);
+  });
+
+  test("non-number limit falls back to the default (no NaN to search)", async () => {
+    const seen: number[] = [];
+    const search = async (_q: string, limit: number): Promise<RelatedHit[]> => {
+      seen.push(limit);
+      return [];
+    };
+    await runClipRelated({ search }, {
+      title: "hi",
+      limit: "abc",
+    } as unknown as RelatedInput);
+    expect(seen).toEqual([10]);
+  });
+
+  test("null input → empty, no throw", async () => {
+    const out = await runClipRelated({ search: async () => [] }, null as unknown as RelatedInput);
+    expect(out.items).toEqual([]);
   });
 });

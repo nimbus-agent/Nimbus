@@ -844,7 +844,7 @@ Items moved here from Phase 5 per the T1 sequencing spec. Read-only counterparts
 
 ##### Browser & Reading
 
-- [x] **Web clipper (gateway side)** ✅ delivered 2026-06-22 — the Chrome+Firefox MV3 extension (Plan B, separate) clips the readable article or a text selection into the local index as `nimbus:web_clip` items via `POST /v1/clips` (I13); an on-demand "sidecar" reads related local items via `POST /v1/clips/related`; pairing-handshake auth (`nimbus clip pair`/`status`/`revoke`) mints a labeled Vault token behind new invariant **I30** (fail-closed pairing window). Clips surface in `nimbus search` alongside Drive files and emails. The browser extension itself ships as the follow-on Plan B (`packages/browser-extension/`)
+- [x] **Web clipper (gateway side)** ✅ delivered 2026-06-22 — the Chrome+Firefox MV3 extension (Plan B, separate) clips the readable article or a text selection into the local index as `nimbus:web_clip` items via `POST /v1/clips` (I13); the extension's on-demand "sidecar" overlay (Plan B) reads related local items via the gateway route `POST /v1/clips/related`; pairing-handshake auth (`nimbus clip pair`/`status`/`revoke`) mints a labeled Vault token behind new invariant **I30** (fail-closed pairing window). Clips surface in `nimbus search` alongside Drive files and emails. The browser extension itself ships as the follow-on Plan B (`packages/browser-extension/`)
 - [x] **Mendeley** — index whitepapers, PDFs, and citations alongside technical docs; `reference` item type; read-only (✅ delivered 2026-06-14; reuses the `reference` item type, read-only)
 
 ##### Email & Calendar (macOS-only)

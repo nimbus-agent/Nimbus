@@ -475,12 +475,16 @@ async function handleClipRelated(
   if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
     return json({ error: "unauthorized" }, 401);
   }
-  let body: RelatedInput;
+  let parsed: unknown;
   try {
-    body = (await req.json()) as RelatedInput;
+    parsed = await req.json();
   } catch {
     return json({ error: "invalid_json" }, 400);
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return json({ error: "invalid_request", detail: "body must be a JSON object" }, 400);
+  }
+  const body = parsed as RelatedInput;
   const out = await runClipRelated(
     {
       search: async (query: string, limit: number): Promise<RelatedHit[]> => {

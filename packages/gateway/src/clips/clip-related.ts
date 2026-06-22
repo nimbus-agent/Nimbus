@@ -30,9 +30,17 @@ function hostOf(url: string | null | undefined): string | undefined {
   }
 }
 
+/** Coerce an untrusted field to a string, or undefined when it isn't one (req.json() is unknown). */
+function asStr(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
 export function buildRelatedQuery(input: RelatedInput): { query: string; excludeHost?: string } {
-  const query = (input.selection ?? input.title ?? "").trim();
-  const excludeHost = hostOf(input.canonicalUrl);
+  // `input` arrives from req.json() — fields may be any type; coerce defensively so a non-string
+  // title/selection can't throw (TypeError → 500) at `.trim()`.
+  const o = (input ?? {}) as RelatedInput;
+  const query = (asStr(o.selection) ?? asStr(o.title) ?? "").trim();
+  const excludeHost = hostOf(asStr(o.canonicalUrl));
   return excludeHost === undefined ? { query } : { query, excludeHost };
 }
 
@@ -42,7 +50,9 @@ export async function runClipRelated(
 ): Promise<{ items: RelatedHit[] }> {
   const { query, excludeHost } = buildRelatedQuery(input);
   if (query === "") return { items: [] };
-  const limit = Math.min(MAX_LIMIT, Math.max(1, input.limit ?? DEFAULT_LIMIT));
+  const rawLimit =
+    typeof input?.limit === "number" && Number.isFinite(input.limit) ? input.limit : DEFAULT_LIMIT;
+  const limit = Math.min(MAX_LIMIT, Math.max(1, rawLimit));
   const hits = await deps.search(query, limit);
   const items =
     excludeHost === undefined ? hits : hits.filter((h) => hostOf(h.url) !== excludeHost);

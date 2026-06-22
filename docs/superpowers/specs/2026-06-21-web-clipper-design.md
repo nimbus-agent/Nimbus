@@ -123,10 +123,13 @@ in Vault and **persist** across restarts; only `nimbus clip revoke` removes them
    ranking machinery.
 4. Extension renders an overlay panel in a **Shadow DOM** listing related local
    items: title, service badge, snippet, link. Shadow DOM blocks selector
-   matching but **inherited** properties (`font-family`, `color`, `line-height`,
-   `:root` custom properties) still cross the boundary, so the sidecar root
-   applies an `all: initial` reset and sets its own typography/colors — the host
-   page cannot distort the panel.
+   matching but **inherited** normal properties (`font-family`, `color`,
+   `line-height`) still cross the boundary, so the sidecar root applies an
+   `all: initial` reset and sets its own typography/colors. Note `all: initial`
+   does **not** reset CSS custom properties (`--*`), which still pierce the
+   boundary — so the sidecar additionally only references its **own** namespaced
+   custom properties (it never `var()`s a host `:root` token), leaving no path
+   for the host page to distort the panel.
 
 ## Data Model
 
@@ -243,8 +246,10 @@ See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-re
    instead of a single key — required because Chrome + Firefox are both targeted
    and must pair concurrently. Bearer check accepts any active token
    (constant-time per entry).
-2. **Sidecar CSS:** the Shadow DOM root applies an `all: initial` reset to block
-    inherited typography/color from the host page.
+2. **Sidecar CSS:** the Shadow DOM root applies an `all: initial` reset for
+    inherited typography/color; since `all: initial` does not reset CSS custom
+    properties, the sidecar also references only its own namespaced `--*` tokens
+    (never a host `:root` token) so the host page cannot distort the panel.
 3. **Pairing window:** strictly in-memory; a gateway restart invalidates it
     (minted tokens persist in Vault).
 4. **`/v1/clips/related` ranking:** selection-primary (else title) semantic

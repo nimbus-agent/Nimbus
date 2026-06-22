@@ -185,5 +185,15 @@ describe("web clipper E2E", () => {
       body: "{not json",
     });
     expect(res.status).toBe(400);
+
+    // valid JSON but not an object → 400 invalid_request (not a 500), all three guard arms
+    for (const bad of ["[]", "123", "null"]) {
+      const r = await fetch(`${base}/v1/clips/related`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: bad,
+      });
+      expect(r.status).toBe(400);
+    }
   });
 });
