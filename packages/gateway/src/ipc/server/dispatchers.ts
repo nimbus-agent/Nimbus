@@ -19,6 +19,7 @@ import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
 import { dispatchChatopsRpc } from "../chatops-rpc.ts";
+import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
@@ -880,6 +881,22 @@ export function tryDispatchAdminRpc(ctx: ServerCtx, method: string, _params: unk
   return buildStatus(ctx.options.statusReaders);
 }
 
+export async function tryDispatchClipRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("clip.") || ctx.options.clipPairingController === undefined) {
+    return phase4RpcSkipped;
+  }
+  const out = await dispatchClipRpc(method, params, {
+    pairing: ctx.options.clipPairingController,
+    vault: ctx.options.vault,
+  });
+  if (out.kind === "hit") return out.value;
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 /** First group of the phase-4 chain: llm → agents → voice → updater → audit → security → federation. */
 async function dispatchPhase4CoreGroup(
   ctx: ServerCtx,
@@ -927,7 +944,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → policy → chatops → tribal → share → admin. */
+/** Third group: lan → profile → index-reembed → policy → chatops → tribal → share → egress → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -950,6 +967,8 @@ async function dispatchPhase4PlatformGroup(
   if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
   const egressOutcome = await tryDispatchEgressRpc(ctx, method, params, clientId);
   if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
+  const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
+  if (clipOutcome !== phase4RpcSkipped) return clipOutcome;
   return tryDispatchAdminRpc(ctx, method, params);
 }
 

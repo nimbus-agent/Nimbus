@@ -16,6 +16,7 @@ import {
   buildE2eSinkRunChatopsTool,
 } from "../chatops/chatops-tool-runner-e2e-sink.ts";
 import type { ChatMessage, ReplyTarget } from "../chatops/types.ts";
+import { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   type ConnectorsConfig,
@@ -434,6 +435,11 @@ interface HttpSidecarOpts {
   resolveAdminToken?: () => Promise<string>;
   authorPolicy?: (toml: string) => Promise<AuthorResult>;
   resolveTeamsEventsSurface?: () => Promise<TeamsEventsSurface | undefined>;
+  // Web-clipper (Task 7): clipsVault + pairingController + scheduleEmbedding are threaded into
+  // ReadOnlyHttpServerOptions. pairingController is the SINGLETON also injected into clip.* IPC.
+  clipsVault?: NimbusVault;
+  pairingController?: PairingWindowController;
+  scheduleEmbedding?: (id: string) => void;
 }
 
 /** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
@@ -463,6 +469,13 @@ function buildReadOnlyHttpServerOpts(
     ...(httpOpts.resolveTeamsEventsSurface === undefined
       ? {}
       : { resolveTeamsEventsSurface: httpOpts.resolveTeamsEventsSurface }),
+    ...(httpOpts.clipsVault === undefined ? {} : { clipsVault: httpOpts.clipsVault }),
+    ...(httpOpts.pairingController === undefined
+      ? {}
+      : { pairingController: httpOpts.pairingController }),
+    ...(httpOpts.scheduleEmbedding === undefined
+      ? {}
+      : { scheduleEmbedding: httpOpts.scheduleEmbedding }),
   };
 }
 
@@ -1667,7 +1680,16 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     policyGate,
   });
 
-  const httpSidecarOpts: HttpSidecarOpts = {};
+  // Web-clipper (Task 7): create the SINGLETON PairingWindowController once here and inject it into
+  // BOTH consumers so the IPC clip.pair and the HTTP /v1/clips/pair/confirm share the same window.
+  const pairingController = new PairingWindowController({ nowMs: () => Date.now() });
+  ipcOpts.clipPairingController = pairingController;
+
+  const httpSidecarOpts: HttpSidecarOpts = {
+    clipsVault: vault,
+    pairingController,
+    ...(scheduleItemEmbedding === undefined ? {} : { scheduleEmbedding: scheduleItemEmbedding }),
+  };
   const identityBoot = bootIdentityIntoIpcOpts({
     configDir: paths.configDir,
     localIndex,

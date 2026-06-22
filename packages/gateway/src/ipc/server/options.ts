@@ -1,6 +1,8 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
+
+import type { PairingWindowController } from "../../clips/pairing-window.ts";
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
@@ -131,4 +133,8 @@ export type CreateIpcServerOptions = {
   // (resolve peerId→pubkey→reachable peer→federation.shareReceive). Present only when federation is
   // enabled; share.create --to-peer reports delivered:false when unset/unreachable (share stays local).
   shareDeliverToPeer?: (share: ShareFile, peerId: string) => Promise<boolean>;
+  // Web-clipper clip.* IPC namespace (Task 7). The SINGLETON PairingWindowController shared with
+  // the read-only HTTP server's /v1/clips/pair/confirm route (Task 6). Present only when assembled
+  // at boot; the clip.* dispatcher skips cleanly when unset.
+  clipPairingController?: PairingWindowController;
 };
