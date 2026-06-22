@@ -40,7 +40,7 @@ engine never pulls; the browser pushes.
 
 Three independently-testable units:
 
-```
+```text
 ┌─────────────────────────┐         ┌──────────────────────────────────┐
 │  Browser Extension (MV3) │  HTTP   │  Gateway (127.0.0.1, I13 surface) │
 │  Chrome + Firefox        │ ──────► │                                   │
@@ -81,6 +81,7 @@ pure logic is unit-tested, its browser-integration parts are dev-loaded.
      "capturedAt":   1750000000000
    }
    ```
+
 4. Gateway validates, upserts a `web_clip` item, routes it through the embedding
    pipeline, and returns `{ id, status: "created" | "updated" }`.
 
@@ -238,22 +239,22 @@ so they add no entries to the HTTP write allowlist. Only the browser-facing
 
 See [2026-06-21-web-clipper-design-review.md](./2026-06-21-web-clipper-design-review.md).
 
-9. **Multi-token:** adopt a labeled token map (`http_api.web_clipper_tokens`)
+1. **Multi-token:** adopt a labeled token map (`http_api.web_clipper_tokens`)
    instead of a single key — required because Chrome + Firefox are both targeted
    and must pair concurrently. Bearer check accepts any active token
    (constant-time per entry).
-10. **Sidecar CSS:** the Shadow DOM root applies an `all: initial` reset to block
+2. **Sidecar CSS:** the Shadow DOM root applies an `all: initial` reset to block
     inherited typography/color from the host page.
-11. **Pairing window:** strictly in-memory; a gateway restart invalidates it
+3. **Pairing window:** strictly in-memory; a gateway restart invalidates it
     (minted tokens persist in Vault).
-12. **`/v1/clips/related` ranking:** selection-primary (else title) semantic
+4. **`/v1/clips/related` ranking:** selection-primary (else title) semantic
     query, with the page's own host de-prioritized; no new ranking machinery.
-13. **Token management:** add `nimbus clip status` + `nimbus clip revoke
+5. **Token management:** add `nimbus clip status` + `nimbus clip revoke
     [<label>|--all]` — revoke is the security cut-off for browser-stored tokens.
 
 ### Resolved post-plan (2026-06-22)
 
-14. **Repository home:** the whole feature stays in the Nimbus **monorepo** — Plan A
+1. **Repository home:** the whole feature stays in the Nimbus **monorepo** — Plan A
     in `packages/gateway` + `packages/cli` (it is gateway internals: I13 routes, I30,
     IPC, the `web_clip` type — physically inseparable), Plan B in
     `packages/browser-extension/` (matches the `packages/vscode-extension` precedent;

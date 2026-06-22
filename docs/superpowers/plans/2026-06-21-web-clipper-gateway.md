@@ -45,11 +45,13 @@
 ## Task 1: Vault token store + key allowlist
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/clip-token-store.ts`
 - Test: `packages/gateway/src/clips/clip-token-store.test.ts`
 - Modify: the vault-key allowlist (locate first — see Step 0)
 
 **Interfaces:**
+
 - Consumes: `NimbusVault` from `../vault/nimbus-vault.ts` (`get`/`set`/`delete`); `constantTimeStringEqual` from `../util/timing-safe-compare.ts`; `tokenFingerprint` from `../ipc/http-auth.ts`.
 - Produces:
   - `CLIP_TOKENS_VAULT_KEY = "http_api.web_clipper_tokens"` (const string)
@@ -290,10 +292,12 @@ git commit -m "feat(clips): labeled Vault token map for web-clipper auth"
 ## Task 2: In-memory pairing window
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/pairing-window.ts`
 - Test: `packages/gateway/src/clips/pairing-window.test.ts`
 
 **Interfaces:**
+
 - Consumes: `constantTimeStringEqual` from `../util/timing-safe-compare.ts`; `node:crypto` `randomInt`.
 - Produces:
   - `interface PairingWindowDeps { nowMs: () => number; genCode?: () => string }`
@@ -477,10 +481,12 @@ git commit -m "feat(clips): in-memory single-use pairing window (I30 substrate)"
 ## Task 3: Clip ingest (validation + canonicalization + upsert)
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/clip-ingest.ts`
 - Test: `packages/gateway/src/clips/clip-ingest.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Database` from `bun:sqlite`; `upsertIndexedItem` from `../index/item-store.ts`.
 - Produces:
   - `interface ClipInput { url: string; canonicalUrl?: string; title: string; mode: "article" | "selection"; body: string; tags?: string[]; capturedAt: number }`
@@ -789,10 +795,12 @@ git commit -m "feat(clips): web_clip ingest — validate, canonicalize, upsert, 
 ## Task 4: Embedding routing — `nimbus:web_clip` is prose-heavy
 
 **Files:**
+
 - Modify: `packages/gateway/src/embedding/routing.ts`
 - Test: `packages/gateway/src/embedding/routing.test.ts` (existing — add a case; if absent, create it)
 
 **Interfaces:**
+
 - Consumes: `isProseHeavy`, `PROSE_HEAVY_TYPES` from `./routing.ts`.
 - Produces: no new symbols — `nimbus:web_clip` joins the set.
 
@@ -845,10 +853,12 @@ git commit -m "feat(clips): route nimbus:web_clip embeddings prose-heavy"
 ## Task 5: HTTP write routes — clip ingest + pairing confirm
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-write-routes.ts`
 - Modify: `packages/gateway/src/ipc/http-write-routes.test.ts` (allowlist count 6→8 + new-route cases)
 
 **Interfaces:**
+
 - Consumes: `PairingWindowController` (Task 2); `verifyClipToken`, `addClipToken`, `generateClipToken` (Task 1); `ingestClip`, `validateClipInput`, `ClipValidationError` (Task 3); existing `WriteRouteContext` plumbing.
 - Produces (added to `http-write-routes.ts`):
   - `ROUTE_CLIPS = "POST /v1/clips"`, `ROUTE_CLIPS_PAIR_CONFIRM = "POST /v1/clips/pair/confirm"` in `WRITE_ROUTE_ALLOWLIST` (now length 8)
@@ -1194,11 +1204,13 @@ git commit -m "feat(clips): POST /v1/clips + pairing-confirm write routes (I13)"
 ## Task 6: Related-items read route + http-server seam wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/clip-related.ts`
 - Test: `packages/gateway/src/clips/clip-related.test.ts`
 - Modify: `packages/gateway/src/ipc/http-server.ts` (mount `POST /v1/clips/related`; build the `clips` write-route seam)
 
 **Interfaces:**
+
 - Consumes: the existing hybrid-search entry — confirm its name with `grep -rn "export .*function .*search" packages/gateway/src/search` (the spec's exploration named `hybrid-internal.ts` / `dual-search.ts`). Use the function that takes a text query + limit and returns ranked items.
 - Produces:
   - `interface RelatedInput { title?: string; canonicalUrl?: string; selection?: string; limit?: number }`
@@ -1442,11 +1454,13 @@ git commit -m "feat(clips): related-items read route + http-server clip seam"
 ## Task 7: Clip IPC dispatcher + assemble wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/clip-rpc.ts`
 - Test: `packages/gateway/src/ipc/clip-rpc.test.ts`
 - Modify: the IPC dispatcher registry (locate — Step 0) + the assemble/boot site that constructs the HTTP server (to create + share the singleton `PairingWindowController`)
 
 **Interfaces:**
+
 - Consumes: `PairingWindowController` (Task 2); `listClipFingerprints`, `revokeClipToken` (Task 1); `NimbusVault`.
 - Produces:
   - `interface ClipRpcDeps { pairing: PairingWindowController; vault: NimbusVault }`
@@ -1611,11 +1625,13 @@ git commit -m "feat(clips): clip.pair/status/revoke IPC + shared pairing control
 ## Task 8: `nimbus clip` CLI
 
 **Files:**
+
 - Create: `packages/cli/src/commands/clip.ts`
 - Test: `packages/cli/src/commands/clip.test.ts`
 - Modify: the CLI command router (locate — Step 0)
 
 **Interfaces:**
+
 - Consumes: the CLI's `withIpc` + `IPCClient` pattern (mirror `packages/cli/src/commands/vault.ts`).
 - Produces: `runClip(args: string[]): Promise<void>` dispatching `pair` / `status` / `revoke`; pure helpers `formatStatus(devices)` and the usage string for unit testing.
 
@@ -1741,10 +1757,12 @@ git commit -m "feat(clips): nimbus clip pair/status/revoke CLI"
 ## Task 9: Invariant I30 + allowlist count + docs
 
 **Files:**
+
 - Modify: `packages/gateway/src/security-invariants.test.ts`
 - Modify: `docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`, `GEMINI.md`
 
 **Interfaces:**
+
 - Consumes: `PairingWindowController`, `dispatchWriteRoute`, the `clips` seam factory from the tests above.
 - Produces: an I30 `describe` block; the allowlist-length assertion updated to 8.
 
@@ -1839,9 +1857,11 @@ git commit -m "feat(clips): invariant I30 — fail-closed web-clipper pairing wi
 ## Task 10: End-to-end — pair → clip → search
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/clip-e2e.test.ts`
 
 **Interfaces:**
+
 - Consumes: the real gateway subprocess harness used by other E2E tests (find one with `grep -rn "spawn.*gateway\|startGateway\|e2e" packages/gateway/src --include=*.test.ts -l`). Mirror its setup (fresh temp configDir, real Vault, real HTTP server).
 
 - [ ] **Step 1: Write the E2E test**
@@ -1884,6 +1904,7 @@ git commit -m "test(clips): E2E pair → clip → search round-trip"
 ## Task 11: Docs — roadmap + CHANGELOG
 
 **Files:**
+
 - Modify: `docs/roadmap.md`, `docs/CHANGELOG.md`
 
 - [ ] **Step 1: Update the roadmap row**
