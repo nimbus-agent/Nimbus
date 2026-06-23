@@ -6,6 +6,7 @@
 //   FUNCTION REFERENCES (string names crash under Bun's ESM interop), and only
 //   first-party src is transformed (a broad filter crashes Babel internals).
 import { transformSync } from "@babel/core";
+import jsxSyntax from "@babel/plugin-syntax-jsx";
 import presetTypescript from "@babel/preset-typescript";
 import babelPluginIstanbul from "babel-plugin-istanbul";
 import { readFileSync } from "node:fs";
@@ -29,8 +30,12 @@ plugin({
         configFile: false,
         retainLines: true,
         sourceMaps: "inline",
-        presets: [[presetTypescript, { allExtensions: true, isTSX: isTsx, allowDeclareFields: true }]],
-        plugins: [[babelPluginIstanbul, {}]],
+        // @babel/preset-typescript 8 removed allExtensions/isTSX/allowDeclareFields.
+        // The old `isTSX: true` is now expressed by adding @babel/plugin-syntax-jsx
+        // (parse-only; bun's jsx loader still does the actual transform) for .tsx files.
+        // It must NOT be added for .ts, where `<T>` is a type assertion, not JSX.
+        presets: [[presetTypescript, {}]],
+        plugins: isTsx ? [jsxSyntax, [babelPluginIstanbul, {}]] : [[babelPluginIstanbul, {}]],
       });
       const code = result?.code ?? source;
       // Instrumented output is plain JS(X); JSX must keep the jsx loader.
