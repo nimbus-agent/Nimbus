@@ -2,6 +2,20 @@
 
 All notable changes to `@nimbus-dev/client` are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.2.5](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.4...client-v0.2.5) (2026-06-23)
+
+
+### Bug Fixes
+
+* **sonar:** clear the SonarCloud board — S5906 sweep + long-tail code smells ([#731](https://github.com/nimbus-agent/Nimbus/issues/731)) ([3a87e54](https://github.com/nimbus-agent/Nimbus/commit/3a87e54a7335c1be87ecb582673183b242b97c88))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @nimbus-dev/sdk bumped to 1.2.1
+
 ## [0.2.4](https://github.com/nimbus-agent/Nimbus/compare/client-v0.2.3...client-v0.2.4) (2026-06-22)
 
 
