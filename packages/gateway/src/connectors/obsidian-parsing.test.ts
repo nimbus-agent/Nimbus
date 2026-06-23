@@ -50,8 +50,8 @@ body`;
 
 test("parseNote detects daily-note date when filename matches YYYY-MM-DD.md", () => {
   expect(parseNote("Daily/2026-05-10.md", "").dailyNoteDate).toBe("2026-05-10");
-  expect(parseNote("notes/MyNote.md", "").dailyNoteDate).toBe(undefined);
-  expect(parseNote("Daily/2026-13-99.md", "").dailyNoteDate).toBe(undefined);
+  expect(parseNote("notes/MyNote.md", "").dailyNoteDate).toBeUndefined();
+  expect(parseNote("Daily/2026-13-99.md", "").dailyNoteDate).toBeUndefined();
 });
 
 test("resolveWikilinks resolves by exact filename (case-insensitive), then by title; preserves unresolved as raw strings", () => {
@@ -225,11 +225,11 @@ describe("extractWikilinks — edge cases", () => {
 describe("extractDailyNoteDate — boundary values", () => {
   test("month=0 (< 1) → undefined", () => {
     // DAILY_NOTE_RE requires two digits but 00 is a real match for the regex
-    expect(parseNote("Daily/2026-00-15.md", "").dailyNoteDate).toBe(undefined);
+    expect(parseNote("Daily/2026-00-15.md", "").dailyNoteDate).toBeUndefined();
   });
 
   test("day=0 (< 1) → undefined", () => {
-    expect(parseNote("Daily/2026-06-00.md", "").dailyNoteDate).toBe(undefined);
+    expect(parseNote("Daily/2026-06-00.md", "").dailyNoteDate).toBeUndefined();
   });
 
   test("month=12 and day=31 (boundary) → valid", () => {

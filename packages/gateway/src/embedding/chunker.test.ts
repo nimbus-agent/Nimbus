@@ -99,7 +99,7 @@ describe("chunkText", () => {
     expect(chunks.length).toBeGreaterThan(1);
     // The long word slices should appear in the chunks
     const allText = chunks.join("");
-    expect(allText.includes("y")).toBe(true);
+    expect(allText).toContain("y");
   });
 
   // overlapPrefixFromPrevious: prevChunk.length === 0

@@ -495,7 +495,7 @@ describe("extension.list", () => {
       db,
     });
     expect(out.kind).toBe("hit");
-    expect((out as { value: { extensions: Array<{ id: string }> } }).value.extensions.length).toBe(
+    expect((out as { value: { extensions: Array<{ id: string }> } }).value.extensions).toHaveLength(
       1,
     );
   });

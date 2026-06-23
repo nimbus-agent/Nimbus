@@ -371,7 +371,7 @@ test("buildFederationLanServer threads explicit discovery + pairing into ctx (??
   )) as { rank: string };
 
   // At least one item matched → rank is not "none"
-  expect(res.rank).not.toBe(undefined);
+  expect(res.rank).toBeDefined();
   expect(["none", "low", "medium", "high"].includes(res.rank)).toBe(true);
 
   await cleanup();

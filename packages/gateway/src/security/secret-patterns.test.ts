@@ -219,7 +219,7 @@ describe("pattern tiers", () => {
   });
 
   test("effectivePatterns(true) is base + extended", () => {
-    expect(effectivePatterns(true).length).toBe(
+    expect(effectivePatterns(true)).toHaveLength(
       SECRET_PATTERNS.length + EXTENDED_SECRET_PATTERNS.length,
     );
   });
