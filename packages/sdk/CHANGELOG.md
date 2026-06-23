@@ -1,5 +1,12 @@
 # @nimbus-dev/sdk — Changelog
 
+## [1.2.1](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.2.0...sdk-v1.2.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **sonar:** clear the SonarCloud board — S5906 sweep + long-tail code smells ([#731](https://github.com/nimbus-agent/Nimbus/issues/731)) ([3a87e54](https://github.com/nimbus-agent/Nimbus/commit/3a87e54a7335c1be87ecb582673183b242b97c88))
+
 ## [1.2.0](https://github.com/nimbus-agent/Nimbus/compare/sdk-v1.1.2...sdk-v1.2.0) (2026-06-22)
 
 
