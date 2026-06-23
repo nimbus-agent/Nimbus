@@ -18,7 +18,7 @@ A local-first, HITL-gated AI agent over your dev tools — it builds a private i
 ---
 
 > [!NOTE]
-> Nimbus is a **headless Gateway + CLI** (plus a VS Code extension). It runs on your machine and talks to ~80 cloud services through first-party MCP connectors. Nothing about your data — the index, your credentials, the audit log — leaves your box.
+> Nimbus is a **headless Gateway + CLI** (plus a VS Code extension and a browser web clipper). It runs on your machine and talks to ~80 cloud services through first-party MCP connectors. Nothing about your data — the index, your credentials, the audit log — leaves your box.
 
 ## What it does
 
@@ -98,7 +98,7 @@ See [Local & air-gapped LLM setup](https://nimbus-agent.dev/user-guide/first-run
                                                           │
                               your question ─▶ engine ─▶ HITL consent gate ─▶ action
                                                           │
-                                              CLI · VS Code · (desktop, coming)
+                                       CLI · VS Code · web clipper · (desktop, coming)
 ```
 
 A headless **Bun Gateway** maintains the private index and runs the agent; clients talk to it only over local JSON-RPC IPC. Credentials live in the OS keystore (DPAPI / Keychain / libsecret) — never in logs, config, or IPC. Full design: [Architecture](https://nimbus-agent.dev/architecture-overview/).

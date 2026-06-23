@@ -2088,6 +2088,11 @@ nimbus people link person:abc123 person:def456
 
 ## Clip (Web Clipper)
 
+> The browser extension that pairs with these commands ships from its own repo,
+> [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper)
+> (Chrome + Firefox, MV3). The `nimbus clip …` commands below manage the gateway-side
+> pairing tokens it uses.
+
 ### `nimbus clip pair [--label <device>]`
 
 Open a browser-extension pairing session and print the one-time code. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.

@@ -232,13 +232,15 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/cli/src/tui/App.tsx` | TUI root — state machine + Option-1 layout |
 | `packages/cli/src/tui/state.ts` | Reducer: `idle` / `streaming` / `awaiting-hitl` / `disconnected` |
 
-## SDK / Client / VS Code
+## SDK / Client / Standalone client repos
 
 | File | Purpose |
 |---|---|
 | `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
 | `packages/client/src/index.ts` | `@nimbus-dev/client` — `NimbusClient`, `MockClient` |
+| `packages/gateway/src/clips/*` | Gateway web-clip surface — `PairingWindowController` (I30) + `clip-token-store.ts`; ingest via `POST /v1/clips` (the browser extension itself is the standalone repo below) |
 | _(standalone repo)_ | VS Code extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) (Marketplace + Open VSX) |
+| _(standalone repo)_ | Web clipper — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) (Chrome + Firefox MV3) |
 
 ## Tauri UI (frontend + Rust bridge)
 

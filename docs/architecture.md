@@ -1458,13 +1458,11 @@ nimbus/
 │   │       ├── ipc/            ← Gateway IPC client for WebView
 │   │       └── pages/          ← Dashboard, Search, Marketplace, Settings, AuditLog
 │   │
-│   │   │                            (displayName "Nimbus Agent"); published to
-│   │   │                            VS Code Marketplace + Open VSX under tag
-│   │   │                            `vscode-v0.1.x`
-│   │   └── src/
-│   │       ├── extension.ts    ← activation, command registration
-│   │       ├── gateway-client.ts ← @nimbus-dev/client IPC wrapper
-│   │       └── hitl-provider.ts  ← HITL consent via VS Code notification API
+│   │   (the VS Code / Open VSX extension was extracted to its own repo,
+│   │    nimbus-agent/nimbus-vscode — it consumes the published
+│   │    @nimbus-dev/client; the browser web clipper likewise lives in its own
+│   │    repo, nimbus-agent/nimbus-web-clipper, talking to the gateway web-clip
+│   │    HTTP surface. Both release independently of the Gateway.)
 │   │
 │   ├── mcp-connectors/         ← First-party MCP servers (workspace packages)
 │   │   ├── google-drive/       ← Phase 1–2 (productivity / collaboration)

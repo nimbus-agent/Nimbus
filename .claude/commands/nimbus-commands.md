@@ -418,9 +418,9 @@ cd packages/docs && bunx astro dev              # local dev server
 # @nimbus-dev/client → npm
 git tag client-v0.1.0 && git push origin client-v0.1.0
 
-# Nimbus VS Code extension → Marketplace + Open VSX + GitHub Release
-# Requires repo secrets VSCE_PAT (Marketplace) + OVSX_PAT (Open VSX)
-git tag vscode-v0.1.0 && git push origin vscode-v0.1.0
+# The VS Code extension (nimbus-agent/nimbus-vscode) and the browser web clipper
+# (nimbus-agent/nimbus-web-clipper) now release from their OWN standalone repos,
+# each with its own CI + publish secrets — NOT from a monorepo tag.
 ```
 
 Extension author CI template: `docs/templates/nimbus-extension-ci.yml`.

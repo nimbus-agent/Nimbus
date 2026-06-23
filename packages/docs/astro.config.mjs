@@ -29,6 +29,7 @@ export default defineConfig({
             { label: "Profiles", link: "/user-guide/profiles/" },
             { label: "Voice", link: "/user-guide/voice/" },
             { label: "VS Code extension", link: "/user-guide/vscode-extension/" },
+            { label: "Web clipper", link: "/user-guide/web-clipper/" },
             { label: "Connectors", link: "/user-guide/connectors/" },
             { label: "Troubleshooting", link: "/user-guide/troubleshooting/" },
             { label: "FAQ", link: "/faq/" },

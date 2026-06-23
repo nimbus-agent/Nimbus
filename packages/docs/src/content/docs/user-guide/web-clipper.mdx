@@ -1,0 +1,136 @@
+---
+title: Web clipper
+description: Clip the readable article or your current selection straight into your private Nimbus index, from Chrome or Firefox.
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The Nimbus **web clipper** is a Chrome + Firefox (MV3) browser extension that
+saves what you read into your private, local-first Nimbus index — straight from
+the browser. A clipped article or selection becomes a `nimbus:web_clip` item,
+searchable alongside your Drive files, email, and bookmarks.
+
+Everything stays on your machine: the extension talks **only** to a Nimbus
+Gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
+no cloud calls.
+
+<Aside type="note">
+The extension is developed in its own repository,
+[nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper),
+and releases independently of the Gateway. It is a **developer preview** today —
+dev-loadable in both Chrome and Firefox; store submission is a follow-on.
+</Aside>
+
+---
+
+## What it does
+
+- **Clip an article** — extracts the readable content of the current page and
+  sends it to your local index.
+- **Clip a selection** — highlight text and clip just that.
+- **Related items** — an on-demand panel surfaces related things already in your
+  index, without leaving the tab.
+
+Clipped pages are *inbound* — they write your local index, they do not send
+anything out — so clipping is not gated by the human-in-the-loop consent flow
+that protects outbound actions.
+
+---
+
+## Prerequisites
+
+A running Nimbus Gateway with the web-clip surface (shipped in the Gateway). See
+[Install](/user-guide/install/) for setup, then confirm the gateway is reachable
+with `nimbus doctor`.
+
+---
+
+## Pairing
+
+Pairing is owner-consented: a token is minted **only** while you have explicitly
+opened a one-time pairing window on the machine running the gateway
+(invariant `I30` — no window, no token).
+
+1. On the gateway machine, open a pairing window and read the one-time code:
+
+   ```bash
+   nimbus clip pair --label work-chrome
+   ```
+
+   The code expires after two minutes. `--label` names the paired device; omit
+   it and the gateway assigns one.
+
+2. Open the extension's **options** page and enter the code. The extension
+   redeems it for a long-lived bearer token, stored in the browser's extension
+   storage — the only secret the extension holds.
+
+3. List paired devices (label + token fingerprint, never the raw token):
+
+   ```bash
+   nimbus clip status
+   ```
+
+4. Revoke a lost or unwanted device at any time:
+
+   ```bash
+   nimbus clip revoke work-chrome   # or: nimbus clip revoke --all
+   ```
+
+<Aside type="caution">
+The pairing window is in-memory only — restarting the gateway drops any open
+window (already-minted tokens persist and keep working). If a confirmation fails
+with a `403`, open a fresh window with `nimbus clip pair` and try again.
+</Aside>
+
+The `nimbus clip pair`, `nimbus clip status`, and `nimbus clip revoke` commands
+above are the full gateway-side pairing surface.
+
+---
+
+## Install (developer preview)
+
+The extension is dev-loadable today; build it from the
+[nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) repo:
+
+```bash
+bun install
+bun run build      # → dist/chrome and dist/firefox
+```
+
+- **Chrome:** `chrome://extensions` → enable Developer mode → **Load unpacked** →
+  pick `dist/chrome`.
+- **Firefox:** `about:debugging#/runtime/this-firefox` → **Load Temporary
+  Add-on** → pick `dist/firefox/manifest.json`.
+
+---
+
+## Where clips show up
+
+A clip is a first-class index item, so it surfaces in ordinary search:
+
+```bash
+nimbus ask "what was that article about WAL checkpointing I read last week?"
+nimbus search "WAL checkpointing"
+```
+
+---
+
+## Where to next
+
+<CardGrid>
+  <LinkCard
+    title="HITL & safety"
+    href="/user-guide/hitl-and-safety/"
+    description="How the consent gate works and which actions require approval."
+  />
+  <LinkCard
+    title="VS Code extension"
+    href="/user-guide/vscode-extension/"
+    description="The sibling editor client — ask and search from inside VS Code."
+  />
+  <LinkCard
+    title="nimbus-web-clipper on GitHub"
+    href="https://github.com/nimbus-agent/nimbus-web-clipper"
+    description="Source, design docs, and the implementation plan."
+  />
+</CardGrid>

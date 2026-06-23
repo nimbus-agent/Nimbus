@@ -74,7 +74,10 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
 - `packages/docs` — Astro Starlight documentation site
 
-The VS Code / Open VSX extension is a standalone repo: [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) — it consumes the published `@nimbus-dev/client` and releases independently of the Gateway.
+Two client surfaces live in their own standalone repos and release independently of the Gateway:
+
+- The VS Code / Open VSX extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode); consumes the published `@nimbus-dev/client`.
+- The browser **web clipper** (Chrome + Firefox MV3) — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper); talks to the gateway's web-clip HTTP surface (`POST /v1/clips`, invariant I30). The gateway-side surface itself stays here (`packages/gateway/src/clips/`).
 
 **PAL:** OS-specific logic lives under `packages/gateway/src/platform/`, accessed via `PlatformServices` — never import `win32`/`darwin`/`linux` from business logic.
 
