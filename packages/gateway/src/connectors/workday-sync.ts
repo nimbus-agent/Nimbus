@@ -197,6 +197,73 @@ async function runDomain(args: WalkDomainArgs, domain: string): Promise<DomainRe
   }
 }
 
+interface RaasReportsArgs {
+  ctx: SyncContext;
+  reports: NimbusWorkdayToml["reports"];
+  tenantHost: string;
+  token: string;
+  fetchFn: FetchFn;
+  mapCtx: WorkdayMapContext;
+}
+
+// Fetch each configured RaaS report (one request per URL) under same-host egress enforcement,
+// upserting its rows. A skipped/failed report is logged+swallowed so one bad report does not abort
+// the rest. Extracted to keep `sync` under the cognitive-complexity budget (S3776).
+async function syncRaasReports(
+  args: RaasReportsArgs,
+): Promise<{ bytes: number; upserted: number }> {
+  const { ctx, reports, tenantHost, token, fetchFn, mapCtx } = args;
+  let bytes = 0;
+  let upserted = 0;
+  for (const report of reports) {
+    if (!sameTenantHost(report.url, tenantHost)) {
+      ctx.logger.warn(
+        { serviceId: SERVICE_ID, reportLabel: report.label, url: report.url },
+        "workday report url host does not match tenant host; skipping",
+      );
+      continue;
+    }
+    try {
+      await ctx.rateLimiter.acquire(SERVICE_ID);
+      const res = await fetchFn(report.url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const text = await res.text();
+      bytes += text.length;
+      if (!res.ok) {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID, reportLabel: report.label, status: res.status },
+          "workday report fetch failed; skipping",
+        );
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        ctx.logger.warn(
+          { serviceId: SERVICE_ID, reportLabel: report.label },
+          "workday report response is not valid JSON; skipping",
+        );
+        continue;
+      }
+      for (const row of reportRowsFrom(parsed)) {
+        const mapped = mapReportRowToItem(row, report, mapCtx);
+        if (mapped !== null) {
+          upsertIndexedItemForSync(ctx, mapped);
+          upserted += 1;
+        }
+      }
+    } catch (err) {
+      ctx.logger.warn(
+        { serviceId: SERVICE_ID, reportLabel: report.label, err },
+        "workday report fetch error; skipping",
+      );
+    }
+  }
+  return { bytes, upserted };
+}
+
 export type WorkdaySyncableOptions = {
   ensureWorkdayMcpRunning: () => Promise<void>;
   loadWorkdayConfig?: () => NimbusWorkdayToml;
@@ -306,52 +373,16 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
       }
 
       // RaaS reports: one fetch per report URL, same-host egress enforcement
-      for (const report of workdayConfig.reports) {
-        if (!sameTenantHost(report.url, effectiveTenantHost)) {
-          ctx.logger.warn(
-            { serviceId: SERVICE_ID, reportLabel: report.label, url: report.url },
-            "workday report url host does not match tenant host; skipping",
-          );
-          continue;
-        }
-        try {
-          await ctx.rateLimiter.acquire(SERVICE_ID);
-          const res = await fetchFn(report.url, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          const text = await res.text();
-          totalBytes += text.length;
-          if (!res.ok) {
-            ctx.logger.warn(
-              { serviceId: SERVICE_ID, reportLabel: report.label, status: res.status },
-              "workday report fetch failed; skipping",
-            );
-            continue;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(text) as unknown;
-          } catch {
-            ctx.logger.warn(
-              { serviceId: SERVICE_ID, reportLabel: report.label },
-              "workday report response is not valid JSON; skipping",
-            );
-            continue;
-          }
-          for (const row of reportRowsFrom(parsed)) {
-            const mapped = mapReportRowToItem(row, report, mapCtx);
-            if (mapped !== null) {
-              upsertIndexedItemForSync(ctx, mapped);
-              totalUpserted += 1;
-            }
-          }
-        } catch (err) {
-          ctx.logger.warn(
-            { serviceId: SERVICE_ID, reportLabel: report.label, err },
-            "workday report fetch error; skipping",
-          );
-        }
-      }
+      const reports = await syncRaasReports({
+        ctx,
+        reports: workdayConfig.reports,
+        tenantHost: effectiveTenantHost,
+        token: accessToken,
+        fetchFn,
+        mapCtx,
+      });
+      totalBytes += reports.bytes;
+      totalUpserted += reports.upserted;
 
       const nextCursor = buildNextCursor(
         domainState.worker.offset,

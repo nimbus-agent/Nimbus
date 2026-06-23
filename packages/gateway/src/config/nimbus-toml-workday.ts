@@ -40,7 +40,7 @@ function finalizeReport(r: ReportAccum): WorkdayReport | null {
     ...(r.keyField === undefined || r.keyField === "" ? {} : { keyField: r.keyField }),
     // Preserve a present-but-empty `fields` (e.g. it parsed to []) so applyReportFieldPolicy
     // fails closed (emit nothing) instead of dropping to undefined and widening to the denylist.
-    ...(r.fields !== undefined ? { fields: r.fields } : {}),
+    ...(r.fields === undefined ? {} : { fields: r.fields }),
   };
 }
 
@@ -50,6 +50,12 @@ function parseMainSectionKv(key: string, valRaw: string, current: number): numbe
     if (Number.isFinite(n) && n > 0) return n;
   }
   return current;
+}
+
+function sectionForHeader(t: string): "main" | "report" | "other" {
+  if (t === "[connectors.workday]") return "main";
+  if (t === "[[connectors.workday.reports]]") return "report";
+  return "other";
 }
 
 function parseReportEntryKv(key: string, valRaw: string, cur: ReportAccum): void {
@@ -87,11 +93,8 @@ export function parseNimbusWorkdayToml(
     if (t === "") continue;
     if (isTableHeader(t)) {
       flush();
-      if (t === "[connectors.workday]") section = "main";
-      else if (t === "[[connectors.workday.reports]]") {
-        section = "report";
-        cur = {};
-      } else section = "other";
+      section = sectionForHeader(t);
+      if (section === "report") cur = {};
       continue;
     }
     const kv = splitKeyValue(t);

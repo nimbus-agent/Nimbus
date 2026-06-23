@@ -1,5 +1,6 @@
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
+import { BODY_MAX, clamp, parseTimestampMs, TITLE_MAX } from "./warehouse-mapping-primitives.ts";
 
 export interface AthenaMappingContext {
   readonly catalog: string;
@@ -8,36 +9,6 @@ export interface AthenaMappingContext {
 }
 
 export type AthenaMappedRow = MappedRow<"athena", "table">;
-
-const TITLE_MAX = 256;
-const BODY_MAX = 512;
-
-/**
- * Athena `list-table-metadata` timestamps arrive as either ISO-8601 strings or
- * epoch SECONDS (the AWS CLI may render `CreateTime` as a unix-seconds number).
- * Parse defensively to unix MILLIS, else null. A bare number < 1e12 is treated
- * as seconds; a larger number is assumed to already be millis.
- */
-/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
-function epochToMs(n: number): number {
-  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-}
-
-function parseTimestampMs(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) {
-    return epochToMs(v);
-  }
-  if (typeof v === "string" && v.trim() !== "") {
-    const trimmed = v.trim();
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
-      const n = Number(trimmed);
-      return Number.isFinite(n) ? epochToMs(n) : null;
-    }
-    const parsed = Date.parse(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
 
 /**
  * Extract the column name/type pairs — SCHEMA metadata only, NO row/cell data.
@@ -65,10 +36,6 @@ function extractColumns(raw: unknown): Array<{ name: string; type: string }> {
 /** Partition keys mirror column shape (name + type). */
 function extractPartitionKeys(raw: unknown): Array<{ name: string; type: string }> {
   return extractColumns(raw);
-}
-
-function clamp(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
 /**

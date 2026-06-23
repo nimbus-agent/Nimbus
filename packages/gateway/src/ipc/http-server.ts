@@ -541,6 +541,26 @@ function buildClipsSeam(writeDb: Database, opts: ReadOnlyHttpServerOptions) {
   };
 }
 
+// The deployment-annotation bearer token, or "" when that seam is unwired.
+async function resolveExpectedToken(opts: ReadOnlyHttpServerOptions): Promise<string> {
+  return opts.resolveDeploymentToken === undefined ? "" : await opts.resolveDeploymentToken();
+}
+
+// Lazily lists the configured service ids (empty when no config dir is wired).
+function resolveKnownServices(opts: ReadOnlyHttpServerOptions): () => readonly string[] {
+  const cfgDir = opts.configDir;
+  return cfgDir === undefined
+    ? (): readonly string[] => []
+    : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
+}
+
+// The Teams events messaging surface, or undefined when that seam is unwired.
+async function resolveMessagingSurface(opts: ReadOnlyHttpServerOptions) {
+  return opts.resolveTeamsEventsSurface === undefined
+    ? undefined
+    : await opts.resolveTeamsEventsSurface();
+}
+
 // Assembles the full I13 dispatcher dependency set. Each write seam (deployment token, SCIM,
 // policy, messaging) is resolved independently — a gateway can enable any surface alone.
 async function resolveWriteRouteDeps(
@@ -548,26 +568,16 @@ async function resolveWriteRouteDeps(
   rateLimiter: HttpWriteRateLimiter,
   opts: ReadOnlyHttpServerOptions,
 ): Promise<WriteRouteDeps> {
-  const expectedToken =
-    opts.resolveDeploymentToken === undefined ? "" : await opts.resolveDeploymentToken();
-  const cfgDir = opts.configDir;
-  const knownServices =
-    cfgDir === undefined
-      ? (): readonly string[] => []
-      : (): readonly string[] => Array.from(loadNimbusServiceConfigsFromConfigDir(cfgDir).keys());
   const scim = await resolveScimWriteDeps(writeDb, opts);
   const policy = await resolvePolicyWriteDeps(opts);
-  const messaging =
-    opts.resolveTeamsEventsSurface === undefined
-      ? undefined
-      : await opts.resolveTeamsEventsSurface();
+  const messaging = await resolveMessagingSurface(opts);
   const clips = buildClipsSeam(writeDb, opts);
   return {
     writeDb,
-    expectedToken,
+    expectedToken: await resolveExpectedToken(opts),
     rateLimiter,
     nowMs: opts.nowMs ?? ((): number => Date.now()),
-    knownServices,
+    knownServices: resolveKnownServices(opts),
     ...(scim === undefined ? {} : { scim }),
     ...(policy === undefined ? {} : { policy }),
     ...(messaging === undefined ? {} : { messaging }),

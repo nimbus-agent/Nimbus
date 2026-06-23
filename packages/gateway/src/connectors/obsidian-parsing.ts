@@ -3,7 +3,10 @@ import yaml from "js-yaml";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const H1_RE = /^#\s+(\S.*)$/m;
-const WIKILINK_RE = /\[\[([^\]\n]+)\]\]/g;
+// Content excludes `[` (as well as `]`/newline) so the engine fails fast instead of
+// re-scanning `[`-heavy input from every position — keeps matching linear (S8786). A valid
+// Obsidian wikilink target never contains a bare `[`.
+const WIKILINK_RE = /\[\[([^[\]\n]+)\]\]/g;
 const DAILY_NOTE_RE = /^(\d{4})-(\d{2})-(\d{2})\.md$/;
 
 export type ParsedNote = {

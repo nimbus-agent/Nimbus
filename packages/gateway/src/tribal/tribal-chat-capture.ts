@@ -17,7 +17,9 @@ export function parseTribalCaptureCommand(text: string): ParsedTribalCaptureComm
     .replace(/<@[^<>]+>/g, " ")
     .replace(/@\w+/g, " ")
     .trim();
-  const m = /^tribal\s+capture\s+(\S+)(.*)$/i.exec(cleaned);
+  // `(\S+)(?:\s+(.*))?` keeps the cluster id and the optional remainder disjoint (separated by
+  // whitespace) rather than letting `\S+` and `.*` compete over the same chars (S8786 backtracking).
+  const m = /^tribal\s+capture\s+(\S+)(?:\s+(.*))?$/i.exec(cleaned);
   if (m === null) return undefined;
   const clusterId = m[1] ?? "";
   if (clusterId === "" || clusterId.startsWith("--")) return undefined;

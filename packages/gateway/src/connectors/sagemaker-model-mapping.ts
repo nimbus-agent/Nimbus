@@ -1,5 +1,6 @@
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
+import { BODY_MAX, clamp, parseTimestampMs, TITLE_MAX } from "./warehouse-mapping-primitives.ts";
 
 export interface SagemakerMappingContext {
   readonly syncedAt: number;
@@ -12,40 +13,6 @@ export interface SagemakerMappingContext {
 }
 
 export type SagemakerMappedRow = MappedRow<"sagemaker", "model">;
-
-const TITLE_MAX = 256;
-const BODY_MAX = 512;
-
-/**
- * SageMaker `CreationTime` arrives as either an ISO-8601 string or epoch SECONDS
- * (the AWS CLI may render it as a unix-seconds float). Parse defensively to unix
- * MILLIS, else null. A bare number < 1e12 is treated as seconds; a larger number
- * is assumed to already be millis.
- */
-/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
-function epochToMs(n: number): number {
-  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-}
-
-function parseTimestampMs(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) {
-    return epochToMs(v);
-  }
-  if (typeof v === "string" && v.trim() !== "") {
-    const trimmed = v.trim();
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
-      const n = Number(trimmed);
-      return Number.isFinite(n) ? epochToMs(n) : null;
-    }
-    const parsed = Date.parse(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function clamp(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
 
 /**
  * Pure mapper: SageMaker `list-models` entry → IndexedItem. Stores model-REGISTRY

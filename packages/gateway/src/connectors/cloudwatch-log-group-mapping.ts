@@ -1,5 +1,6 @@
 import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
+import { BODY_MAX, clamp, parseTimestampMs, TITLE_MAX } from "./warehouse-mapping-primitives.ts";
 
 export interface CloudwatchMappingContext {
   readonly syncedAt: number;
@@ -10,40 +11,6 @@ export interface CloudwatchMappingContext {
 }
 
 export type CloudwatchMappedRow = MappedRow<"cloudwatch", "log_group">;
-
-const TITLE_MAX = 256;
-const BODY_MAX = 512;
-
-/**
- * CloudWatch Logs timestamps (`creationTime`, `lastEventTimestamp`) arrive as
- * epoch MILLIS numbers from the AWS CLI. Parse defensively to unix millis, else
- * null. A bare number < 1e12 is treated as seconds (defensive); larger numbers
- * are assumed to already be millis.
- */
-/** Normalise a finite epoch number to millis: a value < 1e12 is seconds. */
-function epochToMs(n: number): number {
-  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-}
-
-function parseTimestampMs(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) {
-    return epochToMs(v);
-  }
-  if (typeof v === "string" && v.trim() !== "") {
-    const trimmed = v.trim();
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
-      const n = Number(trimmed);
-      return Number.isFinite(n) ? epochToMs(n) : null;
-    }
-    const parsed = Date.parse(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function clamp(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
 
 /**
  * Pure mapper: CloudWatch `describe-log-groups` entry → IndexedItem. Stores
