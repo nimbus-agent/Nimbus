@@ -67,6 +67,26 @@ describe("Phase 6 Slice 4 acceptance — policy authoring, peer refresh, allowli
   const anchorPrivB64 = encodeBase64(anchorPriv);
   const anchorPubB64 = encodeBase64(anchorPub);
 
+  // ---- HTTP admin surface (scenarios 5 + 6): real read-only server on a temp db file ----
+  let tmpDir: string;
+  let dbPath: string;
+  let handle: { port: number; stop: () => void } | undefined;
+
+  beforeAll(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "nimbus-slice4-"));
+    dbPath = join(tmpDir, "index.db");
+    const fileDb = new Database(dbPath, { create: true });
+    runIndexedSchemaMigrations(fileDb, 37);
+    fileDb.close();
+  });
+
+  afterAll(() => {
+    handle?.stop();
+    anchorDb.close();
+    peerDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   test("(1) anchor authors a signed policy and enforces it locally", () => {
     const res = authorPolicy(
       {
@@ -146,26 +166,6 @@ describe("Phase 6 Slice 4 acceptance — policy authoring, peer refresh, allowli
     );
     expect(part.permitted).toEqual(["github"]);
     expect(part.blocked).toEqual(["slack", "jira"]);
-  });
-
-  // ---- HTTP admin surface (scenarios 5 + 6): real read-only server on a temp db file ----
-  let tmpDir: string;
-  let dbPath: string;
-  let handle: { port: number; stop: () => void } | undefined;
-
-  beforeAll(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "nimbus-slice4-"));
-    dbPath = join(tmpDir, "index.db");
-    const fileDb = new Database(dbPath, { create: true });
-    runIndexedSchemaMigrations(fileDb, 37);
-    fileDb.close();
-  });
-
-  afterAll(() => {
-    handle?.stop();
-    anchorDb.close();
-    peerDb.close();
-    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   test("(5/6) admin status + metrics enforce the bearer and emit Prometheus exposition", async () => {

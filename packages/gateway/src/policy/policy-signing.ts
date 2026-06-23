@@ -1,6 +1,15 @@
 import { decodeBase64, encodeBase64 } from "@nimbus-dev/sdk";
 import nacl from "tweetnacl";
 
+// Linear (no-regex) trailing strip. Replaces trailing `[...]+$` / `\n+$` regexes
+// whose unanchored start scan is O(n²) on adversarial input (S8786). Exact-match
+// the original char sets so the signed canonical bytes never change.
+function stripTrailing(s: string, isStrippable: (ch: string) => boolean): string {
+  let end = s.length;
+  while (end > 0 && isStrippable(s.charAt(end - 1))) end--;
+  return s.slice(0, end);
+}
+
 /** Canonical byte form for signing/verifying (CRLF/BOM/trailing-ws/EOF-newline stable). */
 export function canonicalize(toml: string): string {
   let s = toml;
@@ -11,9 +20,9 @@ export function canonicalize(toml: string): string {
   s = s.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   s = s
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .map((line) => stripTrailing(line, (c) => c === " " || c === "\t"))
     .join("\n");
-  s = `${s.replace(/\n+$/g, "")}\n`;
+  s = `${stripTrailing(s, (c) => c === "\n")}\n`;
   return s;
 }
 

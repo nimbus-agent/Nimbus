@@ -20,7 +20,7 @@ export function parseSimpleMarkdown(md: string): KbLine[] {
   for (const raw of md.split("\n")) {
     const line = raw.trim();
     if (line === "") continue;
-    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    const bullet = /^[-*]\s+(\S.*)?$/.exec(line);
     if (bullet === null) {
       out.push({ kind: "paragraph", text: line });
     } else {

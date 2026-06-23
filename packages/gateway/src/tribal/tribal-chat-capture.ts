@@ -14,7 +14,7 @@ export interface ParsedTribalCaptureCommand {
 export function parseTribalCaptureCommand(text: string): ParsedTribalCaptureCommand | undefined {
   // strip a leading mention token (e.g. "<@U123>" / "@nimbus") then normalize whitespace
   const cleaned = text
-    .replace(/<@[^>]+>/g, " ")
+    .replace(/<@[^<>]+>/g, " ")
     .replace(/@\w+/g, " ")
     .trim();
   const m = /^tribal\s+capture\s+(\S+)(.*)$/i.exec(cleaned);

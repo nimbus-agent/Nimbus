@@ -133,16 +133,21 @@ async function fetchDomainPage(
   return { rows: Array.isArray(data) ? data : [], bytes, ok: true };
 }
 
-async function walkDomain(
-  ctx: SyncContext,
-  baseUrl: string,
-  token: string,
-  fetchFn: FetchFn,
-  startOffset: number,
-  mapper: (raw: unknown, mapCtx: WorkdayMapContext) => ReturnType<typeof mapWorkerToItem>,
-  mapCtx: WorkdayMapContext,
-  extraParams?: Record<string, string>,
-): Promise<{ upserted: number; totalBytes: number; nextOffset: number; hasMore: boolean }> {
+interface WalkDomainArgs {
+  ctx: SyncContext;
+  baseUrl: string;
+  token: string;
+  fetchFn: FetchFn;
+  startOffset: number;
+  mapper: (raw: unknown, mapCtx: WorkdayMapContext) => ReturnType<typeof mapWorkerToItem>;
+  mapCtx: WorkdayMapContext;
+  extraParams?: Record<string, string>;
+}
+
+type DomainResult = { upserted: number; totalBytes: number; nextOffset: number; hasMore: boolean };
+
+async function walkDomain(args: WalkDomainArgs): Promise<DomainResult> {
+  const { ctx, baseUrl, token, fetchFn, startOffset, mapper, mapCtx, extraParams } = args;
   let upserted = 0;
   let totalBytes = 0;
   let offset = startOffset;
@@ -176,6 +181,20 @@ async function walkDomain(
   }
 
   return { upserted, totalBytes, nextOffset: offset, hasMore };
+}
+
+// Walk a single Workday domain, logging+swallowing its errors so one domain's failure does not
+// abort the others (returns null on failure). Keeps `sync` flat (cognitive complexity).
+async function runDomain(args: WalkDomainArgs, domain: string): Promise<DomainResult | null> {
+  try {
+    return await walkDomain(args);
+  } catch (err) {
+    args.ctx.logger.warn(
+      { serviceId: SERVICE_ID, domain, err },
+      `${domain} domain error; continuing`,
+    );
+    return null;
+  }
 }
 
 export type WorkdaySyncableOptions = {
@@ -229,68 +248,61 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
       };
 
       // Domain 1: /workers
-      try {
-        const result = await walkDomain(
+      const worker = await runDomain(
+        {
           ctx,
-          `${base}/workers`,
-          accessToken,
+          baseUrl: `${base}/workers`,
+          token: accessToken,
           fetchFn,
-          domainState.worker.offset,
-          mapWorkerToItem,
+          startOffset: domainState.worker.offset,
+          mapper: mapWorkerToItem,
           mapCtx,
-        );
-        totalUpserted += result.upserted;
-        totalBytes += result.totalBytes;
-        domainState.worker = { offset: result.nextOffset, hasMore: result.hasMore };
-      } catch (err) {
-        ctx.logger.warn(
-          { serviceId: SERVICE_ID, domain: "workers", err },
-          "workers domain error; continuing",
-        );
+        },
+        "workers",
+      );
+      if (worker !== null) {
+        totalUpserted += worker.upserted;
+        totalBytes += worker.totalBytes;
+        domainState.worker = { offset: worker.nextOffset, hasMore: worker.hasMore };
       }
 
       // Domain 2: /timeOff (bounded by timeOffHistoryDays)
-      try {
-        const fromDate = daysAgoIso(workdayConfig.timeOffHistoryDays);
-        const result = await walkDomain(
+      const timeOff = await runDomain(
+        {
           ctx,
-          `${base}/timeOff`,
-          accessToken,
+          baseUrl: `${base}/timeOff`,
+          token: accessToken,
           fetchFn,
-          domainState.timeOff.offset,
-          mapTimeOffToItem,
+          startOffset: domainState.timeOff.offset,
+          mapper: mapTimeOffToItem,
           mapCtx,
-          { from: fromDate },
-        );
-        totalUpserted += result.upserted;
-        totalBytes += result.totalBytes;
-        domainState.timeOff = { offset: result.nextOffset, hasMore: result.hasMore };
-      } catch (err) {
-        ctx.logger.warn(
-          { serviceId: SERVICE_ID, domain: "timeOff", err },
-          "timeOff domain error; continuing",
-        );
+          extraParams: { from: daysAgoIso(workdayConfig.timeOffHistoryDays) },
+        },
+        "timeOff",
+      );
+      if (timeOff !== null) {
+        totalUpserted += timeOff.upserted;
+        totalBytes += timeOff.totalBytes;
+        domainState.timeOff = { offset: timeOff.nextOffset, hasMore: timeOff.hasMore };
       }
 
       // Domain 3: /jobRequisitions
-      try {
-        const result = await walkDomain(
+      const jobPosting = await runDomain(
+        {
           ctx,
-          `${base}/jobRequisitions`,
-          accessToken,
+          baseUrl: `${base}/jobRequisitions`,
+          token: accessToken,
           fetchFn,
-          domainState.jobPosting.offset,
-          mapJobPostingToItem,
+          startOffset: domainState.jobPosting.offset,
+          mapper: mapJobPostingToItem,
           mapCtx,
-        );
-        totalUpserted += result.upserted;
-        totalBytes += result.totalBytes;
-        domainState.jobPosting = { offset: result.nextOffset, hasMore: result.hasMore };
-      } catch (err) {
-        ctx.logger.warn(
-          { serviceId: SERVICE_ID, domain: "jobRequisitions", err },
-          "jobRequisitions domain error; continuing",
-        );
+        },
+        "jobRequisitions",
+      );
+      if (jobPosting !== null) {
+        totalUpserted += jobPosting.upserted;
+        totalBytes += jobPosting.totalBytes;
+        domainState.jobPosting = { offset: jobPosting.nextOffset, hasMore: jobPosting.hasMore };
       }
 
       // RaaS reports: one fetch per report URL, same-host egress enforcement

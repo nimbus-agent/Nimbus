@@ -29,7 +29,7 @@ function readOverride(specPath: string): string | undefined {
   try {
     const raw = readFileSync(sib, "utf8");
     for (const line of raw.split(/\r?\n/)) {
-      const t = line.replace(/#.*$/, "").trim();
+      const t = line.replace(/#.*/, "").trim();
       const m = /^service\s*=\s*"([^"]*)"\s*$/.exec(t);
       if (m !== null) {
         const v = m[1]?.trim();
