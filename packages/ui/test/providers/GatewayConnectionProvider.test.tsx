@@ -100,7 +100,7 @@ describe("GatewayConnectionProvider", () => {
     const callCountAfterFirst = callMock.mock.calls.length;
     connectionHandlers[0]?.("connected");
     await new Promise((r) => setTimeout(r, 50));
-    expect(callMock.mock.calls.length).toBe(callCountAfterFirst);
+    expect(callMock.mock.calls).toHaveLength(callCountAfterFirst);
     rerender(<div />);
   });
 

@@ -88,7 +88,7 @@ describe("install-from-local", () => {
     ).toContain("export {}");
 
     const rows = listExtensions(db);
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe("test.ext.sample");
     expect(rows[0]?.install_path).toBe(join(extensionsDir, "test.ext.sample"));
     expect(rows[0]?.manifest_hash.length).toBe(64);
@@ -108,7 +108,7 @@ describe("install-from-local", () => {
     writeFileSync(join(src, "dist", "index.js"), "1\n", "utf8");
 
     await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
-    expect(listExtensions(db).length).toBe(1);
+    expect(listExtensions(db)).toHaveLength(1);
   });
 
   test("installExtensionFromLocalDirectory accepts .tar.gz bundle", async () => {
@@ -136,7 +136,7 @@ describe("install-from-local", () => {
         sourcePath: archive,
       });
       expect(r.id).toBe("bundle.tar.ext");
-      expect(listExtensions(db).length).toBe(1);
+      expect(listExtensions(db)).toHaveLength(1);
     } finally {
       try {
         rmSync(archive, { force: true });
@@ -351,7 +351,7 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     expect(result.id).toBe("closure.root.b");
     expect(result.version).toBe("1.0.0");
 
-    expect(result.installed.length).toBe(2);
+    expect(result.installed).toHaveLength(2);
 
     const depNode = result.installed.find((n) => n.id === "closure.dep.a");
     const rootNode = result.installed.find((n) => n.id === "closure.root.b");
@@ -432,7 +432,7 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     const { existsSync } = await import("node:fs");
     expect(existsSync(join(extensionsDir, "rollback.root"))).toBe(false);
 
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
   });
 });
 
@@ -639,7 +639,7 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
         sourcePath: archive,
       });
       expect(r.id).toBe("one.deep.ext");
-      expect(listExtensions(db).length).toBe(1);
+      expect(listExtensions(db)).toHaveLength(1);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -792,7 +792,7 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
       registryClient,
     });
     expect(r.id).toBe("root.with.dep");
-    expect(r.installed.length).toBe(2);
+    expect(r.installed).toHaveLength(2);
     expect(listExtensions(db).find((e) => e.id === "dep.fetched")).toBeDefined();
     expect(listExtensions(db).find((e) => e.id === "root.with.dep")).toBeDefined();
   });
@@ -1125,19 +1125,19 @@ describe("verifyAndRecordSignature — I16 audit assertions (Tier C-3)", () => {
       // I16: row must be inserted
       expect(result.id).toBe("audit.verified.ext");
       const rows = listExtensions(db);
-      expect(rows.length).toBe(1);
+      expect(rows).toHaveLength(1);
       expect(rows[0]?.id).toBe("audit.verified.ext");
 
       // I16: extension.signature_verified audit must be present
       const verifiedRows = getAuditRows(db, "extension.signature_verified");
-      expect(verifiedRows.length).toBe(1);
+      expect(verifiedRows).toHaveLength(1);
       const parsed = JSON.parse(verifiedRows[0]?.action_json ?? "{}") as Record<string, unknown>;
       expect(parsed["id"]).toBe("audit.verified.ext");
       expect(parsed["publisher_id"]).toBe("test-pub");
 
       // I16: extension.signature_failed must NOT be present
       const failedRows = getAuditRows(db, "extension.signature_failed");
-      expect(failedRows.length).toBe(0);
+      expect(failedRows).toHaveLength(0);
     } finally {
       try {
         rmSync(keyDir, { recursive: true, force: true });
@@ -1174,11 +1174,11 @@ describe("verifyAndRecordSignature — I16 audit assertions (Tier C-3)", () => {
     ).rejects.toThrow();
 
     // I16: NO extension row inserted
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
 
     // I16: extension.signature_failed must be present with error info
     const failedRows = getAuditRows(db, "extension.signature_failed");
-    expect(failedRows.length).toBe(1);
+    expect(failedRows).toHaveLength(1);
     const failedParsed = JSON.parse(failedRows[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(failedParsed["id"]).toBe("audit.failed.ext");
     expect(failedParsed["publisher_id"]).toBe("test-pub");
@@ -1186,7 +1186,7 @@ describe("verifyAndRecordSignature — I16 audit assertions (Tier C-3)", () => {
     expect(typeof failedParsed["message"]).toBe("string");
 
     // I16: extension.signature_verified must NOT be present
-    expect(getAuditRows(db, "extension.signature_verified").length).toBe(0);
+    expect(getAuditRows(db, "extension.signature_verified")).toHaveLength(0);
   });
 
   test("publisher present but vault/fetcher undefined throws 'signed-extension install requires vault'", async () => {
@@ -1204,7 +1204,7 @@ describe("verifyAndRecordSignature — I16 audit assertions (Tier C-3)", () => {
     ).rejects.toThrow(/signed-extension install requires vault/i);
 
     // No row inserted
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
   });
 });
 
@@ -1591,7 +1591,7 @@ describe("buildRootInstallResult — entry hash path (Tier C-12b)", () => {
       "utf8",
     );
     const result = await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
-    expect(result.entryHash.length).toBe(64);
+    expect(result.entryHash).toHaveLength(64);
   });
 });
 
@@ -1637,11 +1637,11 @@ describe("installExtensionFromLocalDirectory — archive path optional spreads (
           publisherKeyPath: keyFile,
         });
         expect(result.id).toBe("tgz.signed.ext");
-        expect(listExtensions(db).length).toBe(1);
+        expect(listExtensions(db)).toHaveLength(1);
 
         // I16: signature_verified audit present
         const verifiedRows = getAuditRows(db, "extension.signature_verified");
-        expect(verifiedRows.length).toBe(1);
+        expect(verifiedRows).toHaveLength(1);
       } finally {
         try {
           rmSync(keyDir, { recursive: true, force: true });
@@ -1692,7 +1692,7 @@ describe("verifyAndRecordSignature — enforceAirGap defined-arm (Tier C-14)", (
       expect(result.id).toBe("airgap.true.ext");
       // I16: verified audit present
       const verifiedRows = getAuditRows(db, "extension.signature_verified");
-      expect(verifiedRows.length).toBe(1);
+      expect(verifiedRows).toHaveLength(1);
     } finally {
       try {
         rmSync(keyDir, { recursive: true, force: true });
@@ -1870,13 +1870,13 @@ describe("installDependencyNode — vault/fetcher/enforceAirGap optional spreads
     });
 
     expect(r.id).toBe("root.vault.ext");
-    expect(r.installed.length).toBe(2);
+    expect(r.installed).toHaveLength(2);
     expect(listExtensions(db).find((e) => e.id === "dep.vault.ext")).toBeDefined();
     expect(listExtensions(db).find((e) => e.id === "root.vault.ext")).toBeDefined();
 
     // install_complete audit must be present
     const auditRows = getAuditRows(db, "extension.install_complete");
-    expect(auditRows.length).toBe(1);
+    expect(auditRows).toHaveLength(1);
   });
 });
 
@@ -2379,7 +2379,7 @@ describe("verifyAndRecordSignature — signed manifest without vault/fetcher fai
     ).rejects.toThrow(/requires vault and publisher key fetcher/i);
 
     // Fail-closed: nothing recorded.
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
   });
 
   test("signed manifest with a vault but NO fetcher throws the wiring error", async () => {
@@ -2395,7 +2395,7 @@ describe("verifyAndRecordSignature — signed manifest without vault/fetcher fai
       installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src, vault }),
     ).rejects.toThrow(/requires vault and publisher key fetcher/i);
 
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
   });
 });
 
@@ -2429,7 +2429,7 @@ describe("verifyAndRecordSignature — enforceAirGap omitted defaults to false (
       });
       expect(result.id).toBe("airgap.default.ext");
       const verifiedRows = getAuditRows(db, "extension.signature_verified");
-      expect(verifiedRows.length).toBe(1);
+      expect(verifiedRows).toHaveLength(1);
     } finally {
       try {
         rmSync(keyDir, { recursive: true, force: true });

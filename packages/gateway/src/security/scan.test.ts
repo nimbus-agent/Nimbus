@@ -22,7 +22,7 @@ describe("scanItemsForSecrets — empty input", () => {
   test("empty iterable yields zero findings, zero items_scanned", () => {
     const r = scanItemsForSecrets([], SECRET_PATTERNS, NOW);
     expect(r.findings_count).toBe(0);
-    expect(r.findings.length).toBe(0);
+    expect(r.findings).toHaveLength(0);
     expect(r.items_scanned).toBe(0);
     expect(r.items_skipped_depth).toBe(0);
     expect(r.scanned_at_ms).toBe(NOW);

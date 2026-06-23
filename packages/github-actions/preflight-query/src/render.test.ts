@@ -70,19 +70,19 @@ describe("renderJobSummary", () => {
 describe("renderAnnotations", () => {
   it("returns one ::warning per finding when verdict=warn", () => {
     const annotations = renderAnnotations(envWarn, "warn");
-    expect(annotations.length).toBe(1);
+    expect(annotations).toHaveLength(1);
     expect(annotations[0]?.level).toBe("warning");
     expect(annotations[0]?.message).toContain("DB connection pool exhausted");
   });
 
   it("returns one ::error per finding when mode=block (escalates level)", () => {
     const annotations = renderAnnotations(envWarn, "block");
-    expect(annotations.length).toBe(1);
+    expect(annotations).toHaveLength(1);
     expect(annotations[0]?.level).toBe("error");
   });
 
   it("returns no annotations when verdict=ok and no gaps", () => {
     const annotations = renderAnnotations(envOk, "warn");
-    expect(annotations.length).toBe(0);
+    expect(annotations).toHaveLength(0);
   });
 });

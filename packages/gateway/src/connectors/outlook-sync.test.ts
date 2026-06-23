@@ -121,7 +121,7 @@ describe("createOutlookSyncable", () => {
 
     // No row should exist for the no-id message (no externalId to key on)
     const allRows = db.query("SELECT id FROM item").all() as { id: string }[];
-    expect(allRows.length).toBe(1);
+    expect(allRows).toHaveLength(1);
   });
 
   // ── L43: message with empty-string id is skipped (id === "") ─────────────
@@ -144,7 +144,7 @@ describe("createOutlookSyncable", () => {
 
     // Only valid2 should be in the DB
     const allRows = db.query("SELECT id FROM item").all() as { id: string }[];
-    expect(allRows.length).toBe(1);
+    expect(allRows).toHaveLength(1);
     expect(allRows[0]?.id).toBe(itemPrimaryKey("outlook", "valid2"));
   });
 
@@ -562,7 +562,7 @@ describe("createOutlookSyncable", () => {
     expect(r.itemsDeleted).toBe(0);
     // No rows should be in the DB (upsertMessage returns early for undefined id)
     const allRows = db.query("SELECT id FROM item").all() as { id: string }[];
-    expect(allRows.length).toBe(0);
+    expect(allRows).toHaveLength(0);
   });
 
   // ── pagination: nextLink present → hasMore = true, cursor stored ──────────

@@ -23,7 +23,7 @@ describe("Logger", () => {
     log.warn("w");
     log.info("i");
     log.debug("d");
-    expect(lines.length).toBe(4);
+    expect(lines).toHaveLength(4);
   });
 
   test("info level suppresses debug only", () => {
@@ -33,7 +33,7 @@ describe("Logger", () => {
     log.warn("w");
     log.info("i");
     log.debug("d");
-    expect(lines.length).toBe(3);
+    expect(lines).toHaveLength(3);
     expect(lines.some((l) => l.includes("[debug]"))).toBe(false);
   });
 
@@ -44,7 +44,7 @@ describe("Logger", () => {
     log.warn("w");
     log.info("i");
     log.debug("d");
-    expect(lines.length).toBe(1);
+    expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("[error]");
   });
 });

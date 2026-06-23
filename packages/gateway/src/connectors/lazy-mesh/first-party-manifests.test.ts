@@ -207,17 +207,17 @@ describe("manifestWithExtraNetworkHosts", () => {
     const out = manifestWithExtraNetworkHosts("github", ["enterprise.github.example.com"]);
     expect(out.permissions.network).toContain("api.github.com");
     expect(out.permissions.network).toContain("enterprise.github.example.com");
-    expect(out.permissions.network.length).toBe(4);
+    expect(out.permissions.network).toHaveLength(4);
   });
 
   test("dedupes against existing entries", () => {
     const out = manifestWithExtraNetworkHosts("github", ["api.github.com", "uploads.github.com"]);
-    expect(out.permissions.network.length).toBe(3);
+    expect(out.permissions.network).toHaveLength(3);
   });
 
   test("dedupes case-insensitively + trims whitespace", () => {
     const out = manifestWithExtraNetworkHosts("github", ["  API.GITHUB.COM  ", "api.github.com"]);
-    expect(out.permissions.network.length).toBe(3);
+    expect(out.permissions.network).toHaveLength(3);
   });
 
   test("drops empty / whitespace-only entries", () => {

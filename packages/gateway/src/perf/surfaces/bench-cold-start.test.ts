@@ -27,7 +27,7 @@ describe("runColdStartOnce (S1)", () => {
       { runs: 1, runner: "local-dev" },
       { spawn: fakeSpawn(["[gateway] ready (0.1.0) IPC /tmp/sock\n"]) },
     );
-    expect(samples.length).toBe(COLD_START_SAMPLES_PER_RUN);
+    expect(samples).toHaveLength(COLD_START_SAMPLES_PER_RUN);
     for (const s of samples) {
       expect(Number.isFinite(s)).toBe(true);
       expect(s).toBeGreaterThanOrEqual(0);

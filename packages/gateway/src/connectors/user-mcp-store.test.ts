@@ -65,7 +65,7 @@ describe("user-mcp-store", () => {
       ["mcp_x", "echo", "[]", Date.now()],
     );
     const rows = listUserMcpConnectors(db);
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.service_id).toBe("mcp_x");
   });
 
@@ -160,7 +160,7 @@ describe("user-mcp-store", () => {
       ["mcp_a", "bun", "[]", now],
     );
     const rows = listUserMcpConnectors(db);
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     expect(rows[0]?.service_id).toBe("mcp_a");
     expect(rows[1]?.service_id).toBe("mcp_z");
   });

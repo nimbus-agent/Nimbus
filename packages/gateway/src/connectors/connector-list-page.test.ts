@@ -89,7 +89,7 @@ describe("drainPagedList", () => {
     try {
       const items = await drainPagedList(session, "snowflake_list", 1);
       expect(callCount).toBe(1000);
-      expect(items.length).toBe(1000);
+      expect(items).toHaveLength(1000);
     } finally {
       process.stderr.write = origWrite;
     }

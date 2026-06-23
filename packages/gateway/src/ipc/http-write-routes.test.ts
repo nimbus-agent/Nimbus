@@ -105,7 +105,7 @@ describe("dispatchWriteRoute", () => {
   });
 
   it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",

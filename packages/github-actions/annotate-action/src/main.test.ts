@@ -157,7 +157,7 @@ describe("annotate-action main()", () => {
     });
 
     expect(res.exitCode).toBe(0);
-    expect(mock.requests.length).toBe(1);
+    expect(mock.requests).toHaveLength(1);
     const req = mock.requests[0];
     expect(req?.authorization).toBe("Bearer deploy-token-secret");
     expect(req?.contentType).toContain("application/json");

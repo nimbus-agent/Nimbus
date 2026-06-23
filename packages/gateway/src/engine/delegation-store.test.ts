@@ -63,7 +63,7 @@ describe("DelegationStore", () => {
       expiresAt: 10_000,
       nowMs: 1000,
     });
-    expect(store.listActive(5000).length).toBe(1);
+    expect(store.listActive(5000)).toHaveLength(1);
   });
 
   it("activeDelegateePeer resolves via action_type OR service scope", () => {

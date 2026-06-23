@@ -74,7 +74,7 @@ describe("runWorkflowExecution (agent path)", () => {
       },
     });
 
-    expect(r.stepResults.length).toBe(2);
+    expect(r.stepResults).toHaveLength(2);
     expect(r.stepResults[0]?.status).toBe("done");
     expect(r.stepResults[1]?.status).toBe("error");
     expect(r.stepResults[1]?.error).toContain("boom");

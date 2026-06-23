@@ -3,7 +3,7 @@ import { capPreview, type DraftAppender } from "../src/apple-mail-core.ts";
 
 describe("apple-mail-core", () => {
   it("re-exports capPreview (caps at 2000)", () => {
-    expect(capPreview("a".repeat(5000)).length).toBe(2000);
+    expect(capPreview("a".repeat(5000))).toHaveLength(2000);
   });
   it("DraftAppender shape is implementable", async () => {
     const fake: DraftAppender = {

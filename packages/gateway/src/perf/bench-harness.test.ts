@@ -130,6 +130,6 @@ describe("poolTrimmedSamples", () => {
     const runs = [calm, calm, calm, calm, Array(100).fill(100_000)];
     const pooled = poolTrimmedSamples(runs);
     expect(pooled).not.toContain(100_000);
-    expect(pooled.length).toBe(400);
+    expect(pooled).toHaveLength(400);
   });
 });

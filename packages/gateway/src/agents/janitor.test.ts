@@ -71,7 +71,7 @@ test("a peer touched within idleDays → not idle", async () => {
     baseCtx(db, async () => ({ touched: true, lastSeenDaysAgo: 2 })),
   );
   expect(brief.idle).toBe(false);
-  expect(brief.peersTouched.length).toBe(1);
+  expect(brief.peersTouched).toHaveLength(1);
   expect(brief.peersTouched[0]?.who).toBe("Alice");
 });
 

@@ -323,7 +323,7 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b) +
     // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT) +
     // 2 web-clipper routes (POST /v1/clips + POST /v1/clips/pair/confirm, I30).
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -1130,7 +1130,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 describe("I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window", () => {
   test("WRITE_ROUTE_ALLOWLIST is exactly the 8 sanctioned write routes (adds the 2 clip routes)", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST.length).toBe(8);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(8);
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips");
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips/pair/confirm");
   });

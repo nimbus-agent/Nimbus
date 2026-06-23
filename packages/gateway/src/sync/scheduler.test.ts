@@ -265,7 +265,7 @@ describe("SyncScheduler", () => {
     await sleep(150);
     sched.stop();
     expect(n).toBe(2);
-    expect(times.length).toBe(2);
+    expect(times).toHaveLength(2);
     const t0 = times[0];
     const t1 = times[1];
     if (t0 === undefined || t1 === undefined) {
@@ -518,7 +518,7 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     const ctx = testContext(db);
     const sched = new SyncScheduler(ctx);
     sched.register(okSyncable("temp"));
-    expect(sched.getStatus("temp").length).toBe(1);
+    expect(sched.getStatus("temp")).toHaveLength(1);
     sched.unregister("temp");
     expect(sched.getStatus("temp")).toEqual([]);
     await sched.stop();

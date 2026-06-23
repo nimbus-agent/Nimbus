@@ -18,7 +18,7 @@ max_walk_depth = 6
 `,
   );
   const roots = loadNimbusFilesystemRootsFromConfigDir(cfgDir);
-  expect(roots.length).toBe(1);
+  expect(roots).toHaveLength(1);
   const cfg = parseOpenapiToml(
     `[openapi]
 max_walk_depth = 6`,

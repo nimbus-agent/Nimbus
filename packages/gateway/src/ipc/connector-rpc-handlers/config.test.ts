@@ -222,6 +222,6 @@ describe("handleConnectorSetInterval", () => {
       buildCtx({ rec: { serviceId: "github", intervalMs: 90_000 } }),
     );
     expect(r.kind).toBe("hit");
-    expect(fixture.notifications.payloadsFor("connector.configChanged").length).toBe(1);
+    expect(fixture.notifications.payloadsFor("connector.configChanged")).toHaveLength(1);
   });
 });

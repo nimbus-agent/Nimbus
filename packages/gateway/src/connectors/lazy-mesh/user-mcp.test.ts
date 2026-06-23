@@ -113,7 +113,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
 
     recordArgsJsonFailure(ctx, "broken-svc", "expected string array");
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("broken-svc");
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
     expect(warns[0]?.msg).toMatch(/args_json/);
@@ -134,7 +134,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
 
     recordArgsJsonFailure(ctx, "no-db-svc", "JSON parse failed");
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("no-db-svc");
     expect(warns[0]?.bindings["reason"]).toBe("JSON parse failed");
     expect(healthDb).toBeUndefined();
@@ -149,7 +149,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
     expect(() => {
       recordArgsJsonFailure(ctx, "silent-svc", "JSON parse failed");
     }).not.toThrow();
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
     expect(healthDb).toBeUndefined();
   });
 
@@ -161,7 +161,7 @@ describe("recordArgsJsonFailure — branch coverage", () => {
 
     recordArgsJsonFailure(ctx, "db-only-svc", "expected string array");
 
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
     if (healthDb === undefined) throw new Error("healthDb should be defined");
     const snap = getConnectorHealth(healthDb, "db-only-svc");
     expect(snap.state).toBe("error");
@@ -180,18 +180,18 @@ describe("ensureUserMcpClient — args_json failures", () => {
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["serviceId"]).toBe("mcp_parse_fail");
     expect(warns[0]?.bindings["reason"]).toBe("JSON parse failed");
 
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.bumpToolsEpoch).toBe(0);
 
-    expect(calls.clearLazyIdle.length).toBe(1);
+    expect(calls.clearLazyIdle).toHaveLength(1);
     expect(calls.clearLazyIdle[0]).toBe("mesh:user:mcp_parse_fail");
-    expect(calls.getLazyClient.length).toBe(1);
+    expect(calls.getLazyClient).toHaveLength(1);
 
-    expect(calls.scheduleLazyDisconnect.length).toBe(0);
+    expect(calls.scheduleLazyDisconnect).toHaveLength(0);
 
     if (healthDb === undefined) throw new Error("healthDb should be defined");
     const snap = getConnectorHealth(healthDb, "mcp_parse_fail");
@@ -211,9 +211,9 @@ describe("ensureUserMcpClient — args_json failures", () => {
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.bumpToolsEpoch).toBe(0);
 
     if (healthDb === undefined) throw new Error("healthDb should be defined");
@@ -234,9 +234,9 @@ describe("ensureUserMcpClient — args_json failures", () => {
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.bumpToolsEpoch).toBe(0);
   });
 
@@ -252,9 +252,9 @@ describe("ensureUserMcpClient — args_json failures", () => {
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
   });
 
   test("args_json parses to {} object → records 'expected string array'", async () => {
@@ -269,9 +269,9 @@ describe("ensureUserMcpClient — args_json failures", () => {
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(warns[0]?.bindings["reason"]).toBe("expected string array");
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
   });
 });
 
@@ -293,10 +293,10 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
     expect(calls.clearLazyIdle).toEqual(["mesh:user:mcp_exists"]);
     expect(calls.getLazyClient).toEqual(["mesh:user:mcp_exists"]);
     expect(calls.scheduleLazyDisconnect).toEqual(["mesh:user:mcp_exists"]);
-    expect(calls.setLazyClient.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.bumpToolsEpoch).toBe(0);
 
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
   });
 
   test("existing client + malformed args_json → STILL returns early (early-return precedes parse)", async () => {
@@ -314,8 +314,8 @@ describe("ensureUserMcpClient — early-return when client already exists", () =
     await ensureUserMcpClient(ctx, row);
 
     expect(calls.scheduleLazyDisconnect).toEqual(["mesh:user:mcp_exists_broken"]);
-    expect(calls.setLazyClient.length).toBe(0);
-    expect(warns.length).toBe(0);
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(warns).toHaveLength(0);
     if (healthDb === undefined) throw new Error("healthDb should be defined");
     const snap = getConnectorHealth(healthDb, "mcp_exists_broken");
     expect(snap.state).toBe("healthy");
@@ -337,13 +337,13 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(calls.setLazyClient.length).toBe(1);
+    expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_ok");
     expect(calls.setLazyClient[0]?.client).toBeDefined();
     expect(calls.bumpToolsEpoch).toBe(1);
     expect(calls.scheduleLazyDisconnect).toEqual(["mesh:user:mcp_ok"]);
 
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
   });
 
   test("service_id with non-alphanumeric chars gets sanitized to MCP server key", async () => {
@@ -359,9 +359,9 @@ describe("ensureUserMcpClient — successful path (constructs MCPClient lazily)"
 
     await ensureUserMcpClient(ctx, row);
 
-    expect(calls.setLazyClient.length).toBe(1);
+    expect(calls.setLazyClient).toHaveLength(1);
     expect(calls.setLazyClient[0]?.key).toBe("mesh:user:mcp_with.dots+plus");
     expect(calls.bumpToolsEpoch).toBe(1);
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
   });
 });

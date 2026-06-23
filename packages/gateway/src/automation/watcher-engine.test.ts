@@ -148,7 +148,7 @@ describe("watcher-engine", () => {
       expect(evDuring.c).toBe(1);
       bodies.push(body);
     });
-    expect(bodies.length).toBe(1);
+    expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain("High CPU");
     expect(bodies[0]).toContain("pagerduty");
 
@@ -180,7 +180,7 @@ describe("watcher-engine", () => {
     evaluateWatchersAfterSync(db, "sentry", t0 + 2000, (_t, b) => {
       bodies.push(b);
     });
-    expect(bodies.length).toBe(1);
+    expect(bodies).toHaveLength(1);
   });
 
   test("startup catch-up evaluates without a prior sync event", () => {
@@ -199,7 +199,7 @@ describe("watcher-engine", () => {
     evaluateWatchersStartupCatchUp(db, t0 + 5000, (_t, b) => {
       bodies.push(b);
     });
-    expect(bodies.length).toBe(1);
+    expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain("Regression");
   });
 

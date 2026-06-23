@@ -89,7 +89,7 @@ describe("createMendeleySyncable", () => {
     // biome-ignore lint/suspicious/noExplicitAny: minimal fake context
     const r = await syncable.sync(ctx as any, null);
     expect(r.itemsUpserted).toBe(2);
-    expect(calls.length).toBe(2);
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toContain("/documents?view=all&limit=100");
     expect(calls[0]).not.toContain("modified_since");
   });

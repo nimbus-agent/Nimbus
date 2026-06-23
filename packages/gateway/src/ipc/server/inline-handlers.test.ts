@@ -221,7 +221,7 @@ describe("dispatchAgentInvoke", () => {
 
     const sendChunk = captured?.["sendChunk"] as (text: string) => void;
     sendChunk("chunk-1");
-    expect(notifications.length).toBe(1);
+    expect(notifications).toHaveLength(1);
     expect((notifications[0] as { method: string }).method).toBe("agent.chunk");
   });
 

@@ -49,7 +49,7 @@ describe("identity resolution (local people + index)", () => {
     });
 
     const candidates = searchPersons(db, "Jordan", 3);
-    expect(candidates.length).toBe(1);
+    expect(candidates).toHaveLength(1);
     const c = candidates[0];
     expect(c).toBeDefined();
     expect(c?.githubLogin).toBe("jordan-r");

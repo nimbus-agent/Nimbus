@@ -91,7 +91,7 @@ describe("looker-sync (unified spawn transport)", () => {
     const rows = db.prepare("SELECT * FROM item WHERE service = 'looker'").all() as Array<
       Record<string, unknown>
     >;
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     for (const row of rows) {
       for (const v of Object.values(row)) {
         expect(String(v)).not.toContain(SECRET);

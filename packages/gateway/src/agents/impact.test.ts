@@ -41,7 +41,7 @@ describe("runImpact", () => {
     );
     expect(brief.startEntityId).toBe("graph:pr:1");
     const serviceFindings = brief.affected.filter((f) => f.category === "service");
-    expect(serviceFindings.length).toBe(1);
+    expect(serviceFindings).toHaveLength(1);
     expect(serviceFindings[0]?.affectedItemId).toBe("graph:repo:1");
   });
 
@@ -62,7 +62,7 @@ describe("runImpact", () => {
     for (let i = 0; i < 20 && received.length === 0; i += 1) {
       await new Promise<void>((r) => setTimeout(r, 5));
     }
-    expect(received.length).toBe(1);
+    expect(received).toHaveLength(1);
     const evt = received[0];
     expect(evt?.method).toBe("impact.briefReady");
     const params = evt?.params as { sessionId: string; brief: string };
@@ -86,7 +86,7 @@ describe("runImpact", () => {
       { db, sessionId: "t-2", notify: () => {} },
     );
     const missingEntityGaps = brief.gaps.filter((g) => g.category === "missing_entity_type");
-    expect(missingEntityGaps.length).toBe(1);
+    expect(missingEntityGaps).toHaveLength(1);
     expect(missingEntityGaps[0]?.detail).toMatch(/categories blocked/);
   });
 
@@ -113,7 +113,7 @@ describe("runImpact", () => {
       { db, sessionId: "t-dc", notify: () => {} },
     );
     const downstreamCode = brief.affected.filter((f) => f.category === "downstream_repo");
-    expect(downstreamCode.length).toBe(1);
+    expect(downstreamCode).toHaveLength(1);
     expect(downstreamCode[0]?.affectedItemId).toBe("graph:symbol:consumer");
     expect(downstreamCode[0]?.pathSummary).toContain("depends_on");
   });
@@ -165,7 +165,7 @@ describe("runImpact", () => {
       { db, sessionId: "t-oc-hit", notify: () => {} },
     );
     const oncallFindings = brief.affected.filter((f) => f.category === "oncall_rotation");
-    expect(oncallFindings.length).toBe(1);
+    expect(oncallFindings).toHaveLength(1);
     expect(oncallFindings[0]?.affectedItemId).toBe("graph:oncall:r1");
     expect(oncallFindings[0]?.serviceId).toBe("pagerduty");
   });
@@ -196,7 +196,7 @@ describe("runImpact", () => {
       { db, sessionId: "t-dash", notify: () => {} },
     );
     const dashFindings = brief.affected.filter((f) => f.category === "dashboard");
-    expect(dashFindings.length).toBe(1);
+    expect(dashFindings).toHaveLength(1);
     expect(dashFindings[0]?.affectedItemId).toBe("graph:dash:1");
     expect(dashFindings[0]?.pathSummary).toContain("upstream_refs");
   });
@@ -232,7 +232,7 @@ describe("runImpact", () => {
     for (let i = 0; i < 40 && received.length === 0; i += 1) {
       await new Promise<void>((r) => setTimeout(r, 5));
     }
-    expect(received.length).toBe(1);
+    expect(received).toHaveLength(1);
     const evt = received[0];
     expect(evt?.method).toBe("impact.briefError");
     const params = evt?.params as { sessionId: string; error: string };
@@ -361,7 +361,7 @@ describe("runImpact", () => {
     );
 
     const pipeFindings = brief.affected.filter((f) => f.category === "pipeline");
-    expect(pipeFindings.length).toBe(1);
+    expect(pipeFindings).toHaveLength(1);
     expect(pipeFindings[0]?.hops).toBe(2);
     expect(pipeFindings[0]?.pathSummary).toContain("in_repo");
     expect(pipeFindings[0]?.affectedItemId).toBe("graph:ci:run1");
@@ -395,12 +395,12 @@ describe("runImpact", () => {
 
     // pipeline category should not appear in affected (empty {} from subPipelines).
     const pipeFindings = brief.affected.filter((f) => f.category === "pipeline");
-    expect(pipeFindings.length).toBe(0);
+    expect(pipeFindings).toHaveLength(0);
     // And no pipeline_run missing_entity_type gap either.
     const pipeGap = brief.gaps.filter(
       (g) => g.category === "missing_entity_type" && g.detail.includes("pipeline_run"),
     );
-    expect(pipeGap.length).toBe(0);
+    expect(pipeGap).toHaveLength(0);
   });
 
   test("subOncall — null start with pagerduty configured produces missing_relation_emit gap", async () => {
@@ -527,7 +527,7 @@ describe("runImpact", () => {
       { db, sessionId: "t-dr-found", notify: () => {} },
     );
     const serviceFindings = brief.affected.filter((f) => f.category === "service");
-    expect(serviceFindings.length).toBe(1);
+    expect(serviceFindings).toHaveLength(1);
     expect(serviceFindings[0]?.affectedItemId).toBe("graph:repo:mrepo");
     expect(serviceFindings[0]?.pathSummary).toContain("in_repo");
   });
@@ -555,7 +555,7 @@ describe("runImpact", () => {
     for (let i = 0; i < 40 && received.length === 0; i += 1) {
       await new Promise<void>((r) => setTimeout(r, 5));
     }
-    expect(received.length).toBe(1);
+    expect(received).toHaveLength(1);
     const evt = received[0];
     // It should emit briefReady (LLM synthesis may produce its own markdown or fall back).
     expect(evt?.method === "impact.briefReady" || evt?.method === "impact.briefError").toBe(true);

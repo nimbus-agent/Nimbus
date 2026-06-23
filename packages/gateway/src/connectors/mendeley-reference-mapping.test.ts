@@ -71,9 +71,9 @@ describe("mapMendeleyDocumentToItem", () => {
     });
     if (row === null) throw new Error("expected row");
     expect((row.metadata["abstract"] as string).endsWith("…")).toBe(true);
-    expect((row.metadata["abstract"] as string).length).toBe(501);
+    expect(row.metadata["abstract"] as string).toHaveLength(501);
     expect(row.title.endsWith("…")).toBe(true);
-    expect(row.title.length).toBe(121);
+    expect(row.title).toHaveLength(121);
   });
 
   test("tolerates non-object authors and a non-array keywords field", () => {

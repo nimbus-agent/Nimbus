@@ -542,7 +542,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
       embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
     });
     const result = await pipeline.embedTexts(["hello", "world"]);
-    expect(result.length).toBe(2);
+    expect(result).toHaveLength(2);
     expect(result[0]).toBeInstanceOf(Float32Array);
     expect(result[0]?.length).toBe(384);
   });

@@ -25,7 +25,7 @@ describe("runSyncThroughputGithubOnce", () => {
         },
       },
     );
-    expect(samples.length).toBe(5);
+    expect(samples).toHaveLength(5);
     for (const s of samples) expect(s).toBeGreaterThan(0);
   });
 });

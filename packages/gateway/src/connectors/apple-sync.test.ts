@@ -313,7 +313,7 @@ describe("createAppleSyncable (mail path)", () => {
     const rows = db.prepare("SELECT service FROM item WHERE service = 'apple'").all() as {
       service: string;
     }[];
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.service).toBe("apple");
   });
 
@@ -395,12 +395,12 @@ describe("createAppleSyncable (calendar path)", () => {
     const emailRows = db
       .prepare("SELECT * FROM item WHERE service = 'apple' AND type = 'email'")
       .all();
-    expect(emailRows.length).toBe(1);
+    expect(emailRows).toHaveLength(1);
 
     const eventRows = db
       .prepare("SELECT * FROM item WHERE service = 'apple' AND type = 'event'")
       .all();
-    expect(eventRows.length).toBe(3);
+    expect(eventRows).toHaveLength(3);
   });
 
   test("override occurrence has external_id of uid:recurrenceId", async () => {
@@ -491,7 +491,7 @@ describe("createAppleSyncable (calendar path)", () => {
     const eventRows = db
       .prepare("SELECT external_id FROM item WHERE service = 'apple' AND type = 'event'")
       .all();
-    expect(eventRows.length).toBe(1);
+    expect(eventRows).toHaveLength(1);
   });
 
   test("CalDAV fetch error: mail result is preserved, calendar rows absent", async () => {
@@ -511,7 +511,7 @@ describe("createAppleSyncable (calendar path)", () => {
     const eventRows = db
       .prepare("SELECT * FROM item WHERE service = 'apple' AND type = 'event'")
       .all();
-    expect(eventRows.length).toBe(0);
+    expect(eventRows).toHaveLength(0);
   });
 
   test("calendar pass skipped when creds absent (noop vault)", async () => {

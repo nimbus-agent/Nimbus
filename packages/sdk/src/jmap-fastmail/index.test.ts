@@ -253,7 +253,7 @@ describe("capPreview", () => {
 
   test("truncates at PREVIEW_MAX_CHARS", () => {
     const long = "x".repeat(2500);
-    expect(capPreview(long).length).toBe(2000);
+    expect(capPreview(long)).toHaveLength(2000);
   });
 
   test("does not truncate text shorter than limit", () => {

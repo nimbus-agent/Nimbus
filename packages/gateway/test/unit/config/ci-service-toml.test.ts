@@ -132,7 +132,7 @@ repos = ["gitlab:org/ci-version"]
     } finally {
       process.stderr.write = orig;
     }
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/svc-a/);
     expect(warnings[0]).toMatch(/ci\.service/);
   });

@@ -10,7 +10,7 @@ import {
 
 describe("SECRET_PATTERNS — set integrity", () => {
   test("v1 set has 21 patterns", () => {
-    expect(SECRET_PATTERNS.length).toBe(21);
+    expect(SECRET_PATTERNS).toHaveLength(21);
   });
 
   test("names are unique", () => {

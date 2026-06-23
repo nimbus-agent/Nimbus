@@ -318,7 +318,7 @@ describeWithFetchRestore("confluence-sync", () => {
     const row = ctx.db
       .prepare("SELECT title FROM item WHERE service = 'confluence' LIMIT 1")
       .get() as { title: string } | undefined;
-    expect((row?.title ?? "").length).toBe(512);
+    expect(row?.title ?? "").toHaveLength(512);
   });
 
   // -------------------------------------------------------------------------

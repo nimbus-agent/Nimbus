@@ -47,7 +47,7 @@ describe("createAskStreamHandler", () => {
     expect(result).toEqual({ streamId: "stream-test-1" });
     await new Promise((r) => setTimeout(r, 10));
     const tokens = notifications.filter((n) => n.method === "engine.streamToken");
-    expect(tokens.length).toBe(2);
+    expect(tokens).toHaveLength(2);
     expect(tokens[0]?.params).toMatchObject({ streamId: "stream-test-1", text: "hello" });
     const done = notifications.find((n) => n.method === "engine.streamDone");
     expect(done).toBeDefined();

@@ -122,7 +122,7 @@ describe("GhCli", () => {
       limit: 5,
     });
     expect(out).toEqual([{ databaseId: 999, headSha: "z" }]);
-    expect(calls.length).toBe(3);
+    expect(calls).toHaveLength(3);
   });
 
   test("rethrows after 3 failed attempts", async () => {

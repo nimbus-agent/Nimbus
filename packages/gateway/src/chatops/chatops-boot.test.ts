@@ -195,7 +195,7 @@ describe("buildChatopsBoot — full production graph", () => {
     await until(() => h.posts.some((p) => p.text.includes("Approval needed")));
     h.socket.emit(mention("C0", "U_ALICE", "@nimbus reject", "5"));
     await until(() => h.audits.some((a) => a.actionType === "deployment.rollback"));
-    expect(h.dispatched.length).toBe(0);
+    expect(h.dispatched).toHaveLength(0);
     expect(h.audits.find((a) => a.actionType === "deployment.rollback")?.hitlStatus).toBe(
       "rejected",
     );
@@ -214,7 +214,7 @@ describe("buildChatopsBoot — full production graph", () => {
     // default local-consent fallback (no approver bound) fails closed.
     h.socket.emit(mention("C0", "U_BOB", "@nimbus approve", "7"));
     await until(() => h.audits.some((a) => a.actionType === "deployment.rollback"));
-    expect(h.dispatched.length).toBe(0);
+    expect(h.dispatched).toHaveLength(0);
     expect(h.audits.find((a) => a.actionType === "deployment.rollback")?.hitlStatus).toBe(
       "rejected",
     );
@@ -239,8 +239,8 @@ describe("buildChatopsBoot — full production graph", () => {
     h.socket.emit(mention("C_UNBOUND", "U_BOB", "@nimbus hello", "9"));
     // Give the pipeline a beat; nothing may be posted or audited.
     await new Promise((r) => setTimeout(r, 50));
-    expect(h.posts.length).toBe(0);
-    expect(h.audits.length).toBe(0);
+    expect(h.posts).toHaveLength(0);
+    expect(h.audits).toHaveLength(0);
     await h.boot.service.stop();
   });
 
@@ -478,7 +478,7 @@ describe("buildChatopsBoot — full production graph", () => {
     );
     // Unmapped requester under refuse mode → refusal, never a card / dispatch.
     await until(() => audits.some((a) => a.actionType === "chatops.refusal"));
-    expect(dispatched.length).toBe(0);
+    expect(dispatched).toHaveLength(0);
     await boot.service.stop();
   });
 

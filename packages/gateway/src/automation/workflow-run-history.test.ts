@@ -27,7 +27,7 @@ function insertRun(id: string, startedAt: number, dryRun = 0, status = "done"): 
 test("listWorkflowRuns returns the last N runs newest-first", () => {
   for (let i = 0; i < 5; i++) insertRun(`r${i}`, 100 + i);
   const out = listWorkflowRuns(db, { workflowName: "alpha", limit: 3 });
-  expect(out.runs.length).toBe(3);
+  expect(out.runs).toHaveLength(3);
   expect(out.runs[0]?.id).toBe("r4");
   expect(out.runs[2]?.id).toBe("r2");
   expect(out.runs[0]?.durationMs).toBe(10);
@@ -60,7 +60,7 @@ test("listWorkflowRuns clamps limit to 1..500", () => {
   const out0 = listWorkflowRuns(db, { workflowName: "alpha", limit: 0 });
   expect(out0.runs).toEqual([]);
   const outBig = listWorkflowRuns(db, { workflowName: "alpha", limit: 10000 });
-  expect(outBig.runs.length).toBe(500);
+  expect(outBig.runs).toHaveLength(500);
 });
 
 test("listWorkflowRuns handles null finished_at (durationMs = null)", () => {

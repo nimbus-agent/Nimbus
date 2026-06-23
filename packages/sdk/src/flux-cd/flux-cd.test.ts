@@ -3,7 +3,7 @@ import { FLUX_KINDS, trimTrailingSlash } from "./index.ts";
 
 describe("FLUX_KINDS", () => {
   it("has exactly 9 entries", () => {
-    expect(FLUX_KINDS.length).toBe(9);
+    expect(FLUX_KINDS).toHaveLength(9);
   });
 
   it("every entry has non-empty kind, group, version, plural", () => {

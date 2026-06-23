@@ -168,7 +168,7 @@ describe("bigquery-sync — datasets→tables walk", () => {
 
     await createBigquerySyncable(makeOptions()).sync(fx.createSyncContext(), null);
     const datasetCalls = fx.fetchMock.calls.filter((c) => /\/datasets\?/.test(c.url));
-    expect(datasetCalls.length).toBe(2);
+    expect(datasetCalls).toHaveLength(2);
   });
 
   test("HTTP error on first datasets page → http-empty pass cursor (preserves cursor)", async () => {

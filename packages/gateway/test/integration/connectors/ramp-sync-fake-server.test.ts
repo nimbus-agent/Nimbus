@@ -188,7 +188,7 @@ describe("ramp-sync against Bun.serve fake API", () => {
 
     const gets = h.fake.requests.filter((r) => r.path === "/developer/v1/transactions");
     // page.next cursor → two pages followed
-    expect(gets.length).toBe(2);
+    expect(gets).toHaveLength(2);
     for (const r of gets) {
       expect(r.auth).toBe("Bearer tok");
     }

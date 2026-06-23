@@ -86,7 +86,7 @@ describe("LocalIndex upsert + delete", () => {
     const idx = makeIndex();
     idx.upsert(makeItem({ id: "u1", name: "unique name alpha" }));
     const hits = idx.search({ name: "unique name alpha" });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.id).toBe("u1");
   });
 
@@ -94,7 +94,7 @@ describe("LocalIndex upsert + delete", () => {
     const scheduled: string[] = [];
     const idx = makeIndex({ scheduleItemEmbedding: (id) => scheduled.push(id) });
     idx.upsert(makeItem({ id: "emb1", name: "embed me" }));
-    expect(scheduled.length).toBe(1);
+    expect(scheduled).toHaveLength(1);
     expect(scheduled[0]).toContain("emb1");
   });
 
@@ -219,7 +219,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "i1", name: "Alpha", modifiedAt: now }));
     idx.upsert(makeItem({ id: "i2", name: "Beta", modifiedAt: now - 1000 }));
     const results = idx.searchRanked({}, {});
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
   });
 
   test("searchRanked with name uses FTS and returns ranked items", () => {
@@ -228,7 +228,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "r2", name: "Rain forecast nimbus" }));
     idx.upsert(makeItem({ id: "r3", name: "Unrelated document" }));
     const results = idx.searchRanked({ name: "nimbus" }, {});
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
     const ids = results.map((r) => r.id);
     expect(ids).toContain("r1");
     expect(ids).toContain("r2");
@@ -240,7 +240,7 @@ describe("LocalIndex.searchRanked", () => {
     // "   ".trim() = "" → nameQ="" → useFts=false → returns all items (browse mode)
     const results = idx.searchRanked({ name: "   " }, {});
     // Falls into non-FTS path which returns all items
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("s1");
   });
 
@@ -249,7 +249,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "sf1", service: "drive", name: "Drive file" }));
     idx.upsert(makeItem({ id: "sf2", service: "slack", name: "Slack message" }));
     const results = idx.searchRanked({ service: "drive" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("sf1");
   });
 
@@ -258,7 +258,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "it1", itemType: "file", name: "A file" }));
     idx.upsert(makeItem({ id: "it2", itemType: "email", name: "An email" }));
     const results = idx.searchRanked({ itemType: "email" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("it2");
   });
 
@@ -267,7 +267,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "c1", service: "drive", name: "Report doc" }));
     idx.upsert(makeItem({ id: "c2", service: "slack", name: "Report message" }));
     const results = idx.searchRanked({ name: "report", service: "slack" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("c2");
   });
 
@@ -276,7 +276,7 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "c3", service: "drive", itemType: "file", name: "alpha" }));
     idx.upsert(makeItem({ id: "c4", service: "drive", itemType: "email", name: "beta" }));
     const results = idx.searchRanked({ service: "drive", itemType: "file" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("c3");
   });
 
@@ -304,7 +304,7 @@ describe("LocalIndex.searchRanked", () => {
       canonicalUrl: canon,
     });
     const results = idx.searchRanked({ name: "shared document" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.canonicalUrl).toBe(canon);
     expect(results[0]?.duplicates).toContain("github");
   });
@@ -366,21 +366,21 @@ describe("LocalIndex.searchRanked", () => {
     idx.upsert(makeItem({ id: "e1", service: "svc", name: "Empty filter" }));
     // service="" means no filter applied
     const results = idx.searchRanked({ service: "" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   test("searchRanked with empty itemType filter string uses no filter", () => {
     const idx = makeIndex();
     idx.upsert(makeItem({ id: "e2", itemType: "file", name: "Empty type filter" }));
     const results = idx.searchRanked({ itemType: "" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   test("search() strips ranked fields and returns NimbusItem", () => {
     const idx = makeIndex();
     idx.upsert(makeItem({ id: "strip1", name: "Strip test" }));
     const results = idx.search({ name: "strip test" });
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     const item = results[0];
     expect(item).toBeDefined();
     // NimbusItem should not have ranked fields
@@ -399,7 +399,7 @@ describe("LocalIndex.searchRankedAsync fallback path", () => {
     const idx = makeIndex(); // no semanticSearch
     idx.upsert(makeItem({ id: "async1", name: "Async search test" }));
     const results = await idx.searchRankedAsync({ name: "async search test" });
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("async1");
   });
 
@@ -411,7 +411,7 @@ describe("LocalIndex.searchRankedAsync fallback path", () => {
       { name: "Explicit no semantic" },
       { semantic: false },
     );
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   test("falls back when nameQ is empty (semantic requires a name query)", async () => {
@@ -419,7 +419,7 @@ describe("LocalIndex.searchRankedAsync fallback path", () => {
     idx.upsert(makeItem({ id: "async3", name: "Browse all" }));
     // no name = nameQ is "" → canHybrid = false → fallback
     const results = await idx.searchRankedAsync({});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 });
 
@@ -904,7 +904,7 @@ describe("dedupeRankedByCanonicalUrl edge cases", () => {
     idx.upsert(makeItem({ id: "nocanon2", name: "No canon beta" }));
     // Search without name to avoid FTS
     const results = idx.searchRanked({}, {});
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
   });
 
   test("items with different canonical URLs are not merged", () => {
@@ -930,7 +930,7 @@ describe("dedupeRankedByCanonicalUrl edge cases", () => {
       canonicalUrl: "https://b.example.com/2",
     });
     const results = idx.searchRanked({ name: "Dedupe test doc" }, {});
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
   });
 
   test("empty-string canonical_url is treated as no canonical", () => {
@@ -957,7 +957,7 @@ describe("dedupeRankedByCanonicalUrl edge cases", () => {
       ],
     );
     const results = idx.searchRanked({}, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.canonicalUrl).toBeUndefined();
   });
 
@@ -985,7 +985,7 @@ describe("dedupeRankedByCanonicalUrl edge cases", () => {
       canonicalUrl: "  https://canon.example.com/trimmed  ",
     });
     const results = idx.searchRanked({ name: "Trim canon doc" }, {});
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.duplicates).toContain("svc2");
   });
 });
@@ -1053,7 +1053,7 @@ describe("LocalIndex.persistedConnectorStatuses status branches", () => {
     insertSchedulerRow(db, { serviceId: "svc-a" });
     insertSchedulerRow(db, { serviceId: "svc-b" });
     const statuses = idx.persistedConnectorStatuses();
-    expect(statuses.length).toBe(2);
+    expect(statuses).toHaveLength(2);
   });
 
   test("serviceIdFilter='' → returns all connector statuses", () => {
@@ -1062,7 +1062,7 @@ describe("LocalIndex.persistedConnectorStatuses status branches", () => {
     const idx = new LocalIndex(db);
     insertSchedulerRow(db, { serviceId: "svc-c" });
     const statuses = idx.persistedConnectorStatuses("");
-    expect(statuses.length).toBe(1);
+    expect(statuses).toHaveLength(1);
   });
 
   test("serviceIdFilter with unknown connector → returns []", () => {
@@ -1116,7 +1116,7 @@ describe("LocalIndex.ensureGithubActionsSchedulerCompanionIfNeeded", () => {
       intervalMs: 60000,
     });
     const statuses = idx.persistedConnectorStatuses("github_actions");
-    expect(statuses.length).toBe(1); // still only 1
+    expect(statuses).toHaveLength(1); // still only 1
   });
 
   test("registers github_actions when github is present and actions not yet registered", () => {
@@ -1129,7 +1129,7 @@ describe("LocalIndex.ensureGithubActionsSchedulerCompanionIfNeeded", () => {
       intervalMs: 60000,
     });
     const statuses = idx.persistedConnectorStatuses("github_actions");
-    expect(statuses.length).toBe(1);
+    expect(statuses).toHaveLength(1);
     expect(statuses[0]?.serviceId).toBe("github_actions");
   });
 });
@@ -1170,7 +1170,7 @@ describe("LocalIndex.ensureCircleciSchedulerCompanionIfNeeded", () => {
       intervalMs: 60000,
     });
     const statuses = idx.persistedConnectorStatuses("circleci");
-    expect(statuses.length).toBe(1);
+    expect(statuses).toHaveLength(1);
   });
 
   test("registers circleci when github present and circleci not yet registered", () => {
@@ -1183,7 +1183,7 @@ describe("LocalIndex.ensureCircleciSchedulerCompanionIfNeeded", () => {
       intervalMs: 60000,
     });
     const statuses = idx.persistedConnectorStatuses("circleci");
-    expect(statuses.length).toBe(1);
+    expect(statuses).toHaveLength(1);
     expect(statuses[0]?.serviceId).toBe("circleci");
   });
 });
@@ -1437,7 +1437,7 @@ describe("LocalIndex.listItemsForAuthor", () => {
       ],
     );
     const results = idx.listItemsForAuthor("person-42", 10);
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]?.name).toBe("Authored item");
   });
 
@@ -1468,7 +1468,7 @@ describe("LocalIndex.listItemsForAuthor", () => {
       );
     }
     const results = idx.listItemsForAuthor("person-99", 999);
-    expect(results.length).toBe(5); // only 5 exist
+    expect(results).toHaveLength(5); // only 5 exist
   });
 
   test("limit=0 is clamped to 1", () => {
@@ -1496,7 +1496,7 @@ describe("LocalIndex.listItemsForAuthor", () => {
     );
     // limit=0 → Math.max(1, 0)=1 → returns 1 result
     const results = idx.listItemsForAuthor("person-zero", 0);
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 });
 
@@ -1516,15 +1516,15 @@ describe("LocalIndex.fetchMoreItems", () => {
       });
     }
     const page1 = idx.fetchMoreItems("slack", "message", 0, 3);
-    expect(page1.length).toBe(3);
+    expect(page1).toHaveLength(3);
     const page2 = idx.fetchMoreItems("slack", "message", 3, 3);
-    expect(page2.length).toBe(2);
+    expect(page2).toHaveLength(2);
   });
 
   test("limit > 100 is clamped to 100", () => {
     const idx = makeIndex();
     const results = idx.fetchMoreItems("unknown-svc", "message", 0, 9999);
-    expect(results.length).toBe(0); // no items, no throw
+    expect(results).toHaveLength(0); // no items, no throw
   });
 
   test("limit=0 is clamped to 1", () => {
@@ -1540,7 +1540,7 @@ describe("LocalIndex.fetchMoreItems", () => {
       syncedAt: now,
     });
     const results = idx.fetchMoreItems("svc-fetch", "file", 0, 0);
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   test("offset < 0 is clamped to 0", () => {
@@ -1556,7 +1556,7 @@ describe("LocalIndex.fetchMoreItems", () => {
       syncedAt: now,
     });
     const results = idx.fetchMoreItems("svc-neg", "file", -5, 10);
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 });
 
@@ -1620,7 +1620,7 @@ describe("LocalIndex audit methods", () => {
     idx.recordAudit({ actionType: "x", hitlStatus: "approved", actionJson: "{}", timestamp: 1 });
     // limit=0 → clamped to 1
     const entries = idx.listAudit(0);
-    expect(entries.length).toBe(1);
+    expect(entries).toHaveLength(1);
   });
 
   test("listAuditWithChain includes rowHash and prevHash", () => {
@@ -1669,7 +1669,7 @@ describe("LocalIndex audit methods", () => {
     const idx = makeIndex();
     const summary = idx.getAuditSummary();
     expect(summary.total).toBe(0);
-    expect(Object.keys(summary.byOutcome).length).toBe(0);
+    expect(Object.keys(summary.byOutcome)).toHaveLength(0);
   });
 });
 
@@ -1808,7 +1808,7 @@ describe("LocalIndex LAN peer write grant/revoke/remove", () => {
       direction: "outbound",
     });
     const peers = idx.listLanPeers();
-    expect(peers.length).toBe(2);
+    expect(peers).toHaveLength(2);
   });
 
   test("addLanPeer with all optional fields populates them", () => {

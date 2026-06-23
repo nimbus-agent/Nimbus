@@ -69,7 +69,7 @@ describe("hardDisablePreT2Extensions", () => {
     const { logger, warns } = memoryLogger();
     const disabled = hardDisablePreT2Extensions({ db, logger });
 
-    expect(disabled.length).toBe(1);
+    expect(disabled).toHaveLength(1);
     expect(disabled[0]?.id).toBe("legacy.ext");
     expect(preT2DisabledCount()).toBe(1);
     expect(preT2DisabledIds()).toEqual(["legacy.ext"]);
@@ -78,7 +78,7 @@ describe("hardDisablePreT2Extensions", () => {
       enabled: number;
     };
     expect(row.enabled).toBe(0);
-    expect(warns.length).toBe(1);
+    expect(warns).toHaveLength(1);
     expect(JSON.stringify(warns[0])).toContain("hard-disabled pre-T2");
   });
 
@@ -95,7 +95,7 @@ describe("hardDisablePreT2Extensions", () => {
     const { logger } = memoryLogger();
     const disabled = hardDisablePreT2Extensions({ db, logger });
 
-    expect(disabled.length).toBe(0);
+    expect(disabled).toHaveLength(0);
     expect(preT2DisabledCount()).toBe(0);
     const row = db.query("SELECT enabled FROM extension WHERE id = ?").get("explicit.empty") as {
       enabled: number;
@@ -116,7 +116,7 @@ describe("hardDisablePreT2Extensions", () => {
     const { logger } = memoryLogger();
     const disabled = hardDisablePreT2Extensions({ db, logger });
 
-    expect(disabled.length).toBe(0);
+    expect(disabled).toHaveLength(0);
     expect(preT2DisabledCount()).toBe(0);
     expect(preT2DisabledIds()).toEqual([]);
     const row = db.query("SELECT enabled FROM extension WHERE id = ?").get("with.network") as {
@@ -137,7 +137,7 @@ describe("hardDisablePreT2Extensions", () => {
     const { logger } = memoryLogger();
     const disabled = hardDisablePreT2Extensions({ db, logger });
 
-    expect(disabled.length).toBe(0);
+    expect(disabled).toHaveLength(0);
     expect(preT2DisabledCount()).toBe(0);
   });
 
@@ -155,7 +155,7 @@ describe("hardDisablePreT2Extensions", () => {
     hardDisablePreT2Extensions({ db, logger });
     const second = hardDisablePreT2Extensions({ db, logger });
 
-    expect(second.length).toBe(1);
+    expect(second).toHaveLength(1);
     expect(preT2DisabledCount()).toBe(1);
     expect(preT2DisabledIds()).toEqual(["legacy.idem"]);
   });

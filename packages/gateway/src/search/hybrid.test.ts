@@ -33,7 +33,7 @@ describe("hybridSearch", () => {
       embeddingModel: "m1",
       semantic: true,
     });
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.item.id).toBe("s:a");
   });
 

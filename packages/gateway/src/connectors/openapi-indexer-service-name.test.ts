@@ -44,7 +44,7 @@ test("step 4: deterministic sha8 fallback when nothing else applies", () => {
     rootPath: root,
   });
   expect(out.startsWith("service-")).toBe(true);
-  expect(out.length).toBe("service-".length + 8);
+  expect(out).toHaveLength("service-".length + 8);
 });
 
 test("fallback is stable across calls for the same path", () => {

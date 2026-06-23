@@ -19,7 +19,7 @@ path = "~/other"
 git_aware = false
 `;
   const roots = parseNimbusTomlFilesystemRoots(src);
-  expect(roots.length).toBe(2);
+  expect(roots).toHaveLength(2);
   expect(roots[0]?.path).toContain("proj");
   expect(roots[0]?.gitAware).toBe(true);
   expect(roots[0]?.codeIndex).toBe(true);

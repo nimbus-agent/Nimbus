@@ -84,14 +84,14 @@ describe("buildDefaultSeccompFilter", () => {
       blockList: ["ptrace"],
     };
     const buf = buildDefaultSeccompFilter(overrides);
-    expect(buf.length).toBe(9 * 8);
+    expect(buf).toHaveLength(9 * 8);
   });
 
   it("produces a program with only the header+catch-all when both lists are empty", () => {
     // Header: 4 instrs, no allow, no block, catch-all: 1 => total 5 instrs => 40 bytes
     const overrides: SeccompFilterOverrides = { allowList: [], blockList: [] };
     const buf = buildDefaultSeccompFilter(overrides);
-    expect(buf.length).toBe(5 * 8);
+    expect(buf).toHaveLength(5 * 8);
     // Last instruction must still be SECCOMP_RET_KILL_PROCESS
     const lastInstr = buf.slice(-8);
     expect(lastInstr.readUInt16LE(0)).toBe(0x06);
@@ -180,6 +180,6 @@ describe("buildDefaultSeccompFilter", () => {
     const defaultBuf = buildDefaultSeccompFilter();
     // Expected size: 4 header + 2*SYS_ALLOW.length + 2*SYS_BLOCK_EPERM.length + 1 catch-all
     const expectedInstrs = 4 + 2 * SYS_ALLOW.length + 2 * SYS_BLOCK_EPERM.length + 1;
-    expect(defaultBuf.length).toBe(expectedInstrs * 8);
+    expect(defaultBuf).toHaveLength(expectedInstrs * 8);
   });
 });

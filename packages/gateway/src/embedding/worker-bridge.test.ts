@@ -112,7 +112,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     const bridge = makeBridge();
     try {
       const posted = currentHandle().posted();
-      expect(posted.length).toBe(1);
+      expect(posted).toHaveLength(1);
       expect(posted[0]?.["type"]).toBe("init");
       expect(posted[0]?.["dbPath"]).toBe(":memory:");
     } finally {
@@ -186,7 +186,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
         .posted()
         .slice(before)
         .filter((m) => m["type"] === "embed_texts");
-      expect(after.length).toBe(0);
+      expect(after).toHaveLength(0);
     } finally {
       bridge.terminate();
     }
@@ -207,7 +207,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       const embedItems = handle
         .posted()
         .filter((m): m is PostedMessage & { itemId: string } => m["type"] === "embed_item");
-      expect(embedItems.length).toBe(2);
+      expect(embedItems).toHaveLength(2);
       expect(embedItems[0]?.["itemId"]).toBe("item-post-1");
       expect(embedItems[1]?.["itemId"]).toBe("item-post-2");
     } finally {

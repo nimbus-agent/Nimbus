@@ -81,7 +81,7 @@ describe("vectorSearchChunks — dim awareness", () => {
       model: "openai:text-embedding-3-small",
       limit: 5,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:1");
   });
 
@@ -131,7 +131,7 @@ describe("vectorSearchChunks — optional filters", () => {
       model: "openai:text-embedding-3-small",
       limit: 5,
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("service filter — empty string is treated as no filter", () => {
@@ -155,7 +155,7 @@ describe("vectorSearchChunks — optional filters", () => {
       service: "",
     });
     // empty string → no service filter applied → item is returned
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("svc:1");
   });
 
@@ -188,7 +188,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       service: "github",
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("gh:1");
   });
 
@@ -212,7 +212,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       service: "notion",
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("itemType filter — empty string is treated as no filter", () => {
@@ -236,7 +236,7 @@ describe("vectorSearchChunks — optional filters", () => {
       itemType: "",
     });
     // empty string → no type filter applied → item is returned
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("gh:2");
   });
 
@@ -269,7 +269,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       itemType: "issue",
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("gh:3");
   });
 
@@ -293,7 +293,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       itemType: "pr",
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("since filter — since=0 is treated as no filter", () => {
@@ -317,7 +317,7 @@ describe("vectorSearchChunks — optional filters", () => {
       since: 0,
     });
     // since=0 → no filter applied (since > 0 is false) → item is returned
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("i:1");
   });
 
@@ -342,7 +342,7 @@ describe("vectorSearchChunks — optional filters", () => {
       since: -1,
     });
     // since=-1 → since > 0 is false → no filter applied → item returned
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("i:neg");
   });
 
@@ -376,7 +376,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       since: threshold,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("new:1");
   });
 
@@ -400,7 +400,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 10,
       since: now - 100_000, // threshold in the middle
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("combined filters — service + itemType + since all applied", () => {
@@ -457,7 +457,7 @@ describe("vectorSearchChunks — optional filters", () => {
       itemType: "issue",
       since: threshold,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("match:1");
   });
 
@@ -481,7 +481,7 @@ describe("vectorSearchChunks — optional filters", () => {
       model: "openai:text-embedding-3-small",
       limit: 0,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
   });
 
   test.skipIf(!VEC_AVAILABLE)("limit is clamped to maximum of 500", () => {
@@ -509,7 +509,7 @@ describe("vectorSearchChunks — optional filters", () => {
       limit: 99999,
     });
     // 501 rows available but the result is capped at the 500 ceiling.
-    expect(hits.length).toBe(500);
+    expect(hits).toHaveLength(500);
   });
 
   test.skipIf(!VEC_AVAILABLE)("hit shape exposes all VectorChunkHit fields", () => {
@@ -531,7 +531,7 @@ describe("vectorSearchChunks — optional filters", () => {
       model: "openai:text-embedding-3-small",
       limit: 5,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     const hit = hits[0];
     if (hit === undefined) throw new Error("expected a hit");
     expect(hit.itemId).toBe("shape:1");
@@ -562,7 +562,7 @@ describe("vectorSearchChunks — optional filters", () => {
       model: "local:minilm",
       limit: 5,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("local:1");
   });
 });

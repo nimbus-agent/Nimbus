@@ -192,7 +192,7 @@ describe("runConversationalAgent", () => {
     const arg: unknown = calls[0]?.[0];
     expect(Array.isArray(arg)).toBe(true);
     const messages = arg as Array<{ role: string; content: string }>;
-    expect(messages.length).toBe(3);
+    expect(messages).toHaveLength(3);
     expect(messages[0]).toEqual({
       role: "user",
       content: "draft a gmail to my own address summarising my week",

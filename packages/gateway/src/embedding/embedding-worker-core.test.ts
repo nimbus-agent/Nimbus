@@ -185,7 +185,7 @@ describe("EmbeddingWorkerCore", () => {
 
     expect(() => core.handleMessage({ type: "nope" } as unknown as InMsg)).not.toThrow();
     await core.idle();
-    expect(posts.length).toBe(before);
+    expect(posts).toHaveLength(before);
   });
 
   it("embed_texts ok posts embed_texts_result with plain number-array vectors", async () => {
@@ -366,7 +366,7 @@ describe("EmbeddingWorkerCore", () => {
 
     expect(() => core.handleMessage(null)).not.toThrow();
     await core.idle();
-    expect(posts.length).toBe(before);
+    expect(posts).toHaveLength(before);
   });
 
   it("handleMessage({type:'embed_item'}) missing itemId on a ready core posts nothing", async () => {
@@ -377,7 +377,7 @@ describe("EmbeddingWorkerCore", () => {
 
     expect(() => core.handleMessage({ type: "embed_item" })).not.toThrow();
     await core.idle();
-    expect(posts.length).toBe(before);
+    expect(posts).toHaveLength(before);
   });
 });
 

@@ -69,7 +69,7 @@ describe("mapReadwiseHighlightToItem", () => {
     const row = mapReadwiseHighlightToItem(makeHighlight({ text: long }), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe(`${"x".repeat(80)}…`);
-    expect(row.title.length).toBe(81);
+    expect(row.title).toHaveLength(81);
   });
 
   test("title trims whitespace before measuring", () => {

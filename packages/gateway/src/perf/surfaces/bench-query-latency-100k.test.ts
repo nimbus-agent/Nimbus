@@ -16,7 +16,7 @@ describe("runQueryLatency100kOnce (S2-b)", () => {
         { runs: 1, runner: "local-dev", corpus: "small" },
         { cacheDir: dir, overrideTier: "small" },
       );
-      expect(samples.length).toBe(100);
+      expect(samples).toHaveLength(100);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

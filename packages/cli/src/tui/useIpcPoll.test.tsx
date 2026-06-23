@@ -109,7 +109,7 @@ describe("useIpcPoll", () => {
     );
     await new Promise((r) => setTimeout(r, 200));
     unmount();
-    expect(stub.calls.length).toBe(0);
+    expect(stub.calls).toHaveLength(0);
   });
 
   test("exposes error state without crashing", async () => {
@@ -226,7 +226,7 @@ describe("useIpcPoll", () => {
     unmount();
     // Wait longer than two intervals — if timer was cleared, no new calls arrive
     await new Promise((r) => setTimeout(r, 150));
-    expect(stub.calls.length).toBe(callsAtUnmount);
+    expect(stub.calls).toHaveLength(callsAtUnmount);
   });
 
   test("unmount while in-flight success: setData is not called after unmount", async () => {

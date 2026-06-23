@@ -71,7 +71,7 @@ describe("appendQuery", () => {
       await appendQuery(historyPath, `q${String(i)}`);
     }
     const history = await readHistory(historyPath);
-    expect(history.length).toBe(QUERY_HISTORY_CAP);
+    expect(history).toHaveLength(QUERY_HISTORY_CAP);
     expect(history[0]).toBe("q10");
     expect(history.at(-1)).toBe(`q${String(QUERY_HISTORY_CAP + 9)}`);
   });

@@ -342,7 +342,7 @@ describe("excerptWithStartLine (pure)", () => {
     const body = Array.from({ length: 40 }, (_, i) => `  const v${i} = ${i};`).join("\n");
     const src = `export function big() {\n${body}\n}\n`;
     const { text, startLine } = excerptWithStartLine(src, "big", 20);
-    expect(text.length).toBe(20);
+    expect(text).toHaveLength(20);
     expect(startLine).not.toBeNull();
   });
 
@@ -350,7 +350,7 @@ describe("excerptWithStartLine (pure)", () => {
     const src = "const a = 1;\nfunction internal() { return a; }\n".repeat(10);
     const { text, startLine } = excerptWithStartLine(src, "doesNotExist", 15);
     expect(startLine).toBeNull();
-    expect(text.length).toBe(15); // flat.slice(0, maxChars)
+    expect(text).toHaveLength(15); // flat.slice(0, maxChars)
   });
 });
 

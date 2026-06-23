@@ -93,7 +93,7 @@ describe("projectRankedItem", () => {
       rawMeta: { status: "y".repeat(500), severity: "high" },
     });
     const meta = out["meta"] as Record<string, unknown>;
-    expect((meta["status"] as string).length).toBe(200);
+    expect(meta["status"] as string).toHaveLength(200);
     expect(meta["severity"]).toBe("high");
   });
 

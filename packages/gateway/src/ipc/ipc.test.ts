@@ -313,7 +313,7 @@ describe("ipc server integration", () => {
           sock.on("error", reject);
         });
         await new Promise<void>((r) => setImmediate(r));
-        expect(clientIds.length).toBe(1);
+        expect(clientIds).toHaveLength(1);
         const idA = clientIds[0];
         if (idA === undefined) {
           throw new Error("expected client id");
@@ -362,7 +362,7 @@ describe("ipc server integration", () => {
           },
         });
         await new Promise((r) => setTimeout(r, 0));
-        expect(clientIds.length).toBe(1);
+        expect(clientIds).toHaveLength(1);
         const idA = clientIds[0];
         if (idA === undefined) {
           throw new Error("expected client id");

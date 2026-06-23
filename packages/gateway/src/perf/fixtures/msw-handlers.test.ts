@@ -12,7 +12,7 @@ describe("driveHandlers", () => {
     const r = await fetch("https://www.googleapis.com/drive/v3/files");
     expect(r.status).toBe(200);
     const body = (await r.json()) as { files: unknown[]; nextPageToken?: string };
-    expect(body.files.length).toBe(50);
+    expect(body.files).toHaveLength(50);
     expect(body.nextPageToken).toBeUndefined();
   });
 });
@@ -53,6 +53,6 @@ describe("githubHandlers", () => {
     const r = await fetch("https://api.github.com/repos/example/repo/pulls?per_page=100&page=1");
     expect(r.status).toBe(200);
     const body = (await r.json()) as unknown[];
-    expect(body.length).toBe(50);
+    expect(body).toHaveLength(50);
   });
 });

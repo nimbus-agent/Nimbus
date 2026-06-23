@@ -121,7 +121,7 @@ describe("registerImapTools", () => {
   test("imap_search passes the query through and returns matches", async () => {
     const { handlers, client } = wire();
     const out = parse(await handlers.get("imap_search")!({ query: "hello", limit: 5 }));
-    expect((out.matches as unknown[]).length).toBe(1);
+    expect(out.matches as unknown[]).toHaveLength(1);
     expect(client.lastSearch?.query).toBe("hello");
   });
 

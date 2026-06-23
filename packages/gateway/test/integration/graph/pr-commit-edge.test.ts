@@ -29,7 +29,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
          WHERE src.type = 'pr' AND dst.type = 'commit' AND r.type = 'merged_as'`,
       )
       .all() as Array<{ name: string }>;
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     db.close();
   });
 
@@ -50,7 +50,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
          WHERE r.type = 'merged_as'`,
       )
       .all();
-    expect(rows.length).toBe(0);
+    expect(rows).toHaveLength(0);
     db.close();
   });
 
@@ -71,7 +71,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
          WHERE r.type = 'merged_as'`,
       )
       .all();
-    expect(rows.length).toBe(0);
+    expect(rows).toHaveLength(0);
     db.close();
   });
 });

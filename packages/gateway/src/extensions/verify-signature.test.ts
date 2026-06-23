@@ -24,8 +24,8 @@ describe("generateEd25519Keypair", () => {
     const { privkey, pubkey } = generateEd25519Keypair();
     expect(privkey).toBeInstanceOf(Uint8Array);
     expect(pubkey).toBeInstanceOf(Uint8Array);
-    expect(privkey.length).toBe(32);
-    expect(pubkey.length).toBe(32);
+    expect(privkey).toHaveLength(32);
+    expect(pubkey).toHaveLength(32);
   });
 
   it("produces distinct keypairs", () => {

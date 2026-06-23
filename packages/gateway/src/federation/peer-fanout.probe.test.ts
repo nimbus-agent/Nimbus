@@ -72,7 +72,7 @@ describe("fanOutProbe", () => {
       { resourceRef: "i-12345", purpose: "janitor" },
     );
     expect(out.perPeer).toEqual([]);
-    expect(out.gaps.length).toBe(1);
+    expect(out.gaps).toHaveLength(1);
     expect(out.gaps[0]?.detail).toContain("timeout");
   });
 });

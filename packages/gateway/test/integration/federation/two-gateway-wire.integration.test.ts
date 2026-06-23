@@ -136,7 +136,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
     const disc = await dispatchFederationRpc("federation.discover", {}, aDiscCtx);
     expect(disc.kind).toBe("hit");
     if (disc.kind === "hit") {
-      expect((disc.value as { peers: unknown[] }).peers.length).toBe(1);
+      expect((disc.value as { peers: unknown[] }).peers).toHaveLength(1);
     }
 
     // -------------------------------------------------------------------------
@@ -201,7 +201,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
     )) as WireQueryResult;
     expect(res.kind).toBe("ok");
     if (res.kind !== "ok") throw new Error(`expected ok, got ${JSON.stringify(res)}`);
-    expect(res.response.items.length).toBe(2);
+    expect(res.response.items).toHaveLength(2);
     expect(
       res.response.items.map((i) => String(i["id"])).sort((a, b) => a.localeCompare(b)),
     ).toEqual(["github:pr1", "github:pr2"]);
@@ -232,7 +232,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
     )) as WireQueryResult;
     expect(undeclared.kind).toBe("ok");
     if (undeclared.kind !== "ok") throw new Error("expected ok");
-    expect(undeclared.response.items.length).toBe(0);
+    expect(undeclared.response.items).toHaveLength(0);
     expect(JSON.stringify(undeclared)).not.toContain("gmail");
 
     // -------------------------------------------------------------------------
@@ -329,7 +329,7 @@ test("payoff: two gateways over a real NaCl-box socket — discover → pair →
     )) as WireQueryResult;
     expect(spoofed.kind).toBe("ok");
     if (spoofed.kind !== "ok") throw new Error("expected ok — body peerId must be ignored");
-    expect(spoofed.response.items.length).toBe(2);
+    expect(spoofed.response.items).toHaveLength(2);
   } finally {
     await bBuilt.lanServer.stop();
     bIndex.close();

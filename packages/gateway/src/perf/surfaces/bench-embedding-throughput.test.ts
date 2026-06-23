@@ -39,7 +39,7 @@ describe("runEmbeddingThroughputOnce", () => {
       embedder,
       totalItems: 16,
     });
-    expect(samples.length).toBe(1);
+    expect(samples).toHaveLength(1);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0]?.beforeTimer).toBe(true);
     expect(calls[0]?.texts.length).toBe(1);
@@ -65,7 +65,7 @@ describe("runEmbeddingThroughputOnce", () => {
       embedder,
       totalItems: 32,
     });
-    expect(calls.length).toBe(5);
+    expect(calls).toHaveLength(5);
     expect(calls[0]?.texts.length).toBe(1);
     for (let i = 1; i < calls.length; i += 1) {
       expect(calls[i]?.texts.length).toBe(8);
@@ -80,7 +80,7 @@ describe("runEmbeddingThroughputOnce", () => {
       corpus: "small",
       embedder,
     });
-    expect(calls.length).toBe(11);
+    expect(calls).toHaveLength(11);
   });
 
   test("scales totalItems to 100 × batch when corpus is 'medium'", async () => {
@@ -91,7 +91,7 @@ describe("runEmbeddingThroughputOnce", () => {
       corpus: "medium",
       embedder,
     });
-    expect(calls.length).toBe(101);
+    expect(calls).toHaveLength(101);
   });
 
   test("preserves the canonical 1000 × batch default when corpus is unset", async () => {
@@ -101,7 +101,7 @@ describe("runEmbeddingThroughputOnce", () => {
       batch: 1,
       embedder,
     });
-    expect(calls.length).toBe(1001);
+    expect(calls).toHaveLength(1001);
   }, 30_000);
 
   test("explicit totalItems overrides the corpus-derived default", async () => {
@@ -113,6 +113,6 @@ describe("runEmbeddingThroughputOnce", () => {
       totalItems: 16,
       embedder,
     });
-    expect(calls.length).toBe(3);
+    expect(calls).toHaveLength(3);
   });
 });

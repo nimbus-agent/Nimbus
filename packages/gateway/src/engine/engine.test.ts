@@ -535,7 +535,7 @@ describe("ToolExecutor — HITL whitelist", () => {
       const m = createMocks(true);
       const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
       await exec.execute({ type: actionType });
-      expect(m.consentCalls.length).toBe(1);
+      expect(m.consentCalls).toHaveLength(1);
     }
   });
 
@@ -543,7 +543,7 @@ describe("ToolExecutor — HITL whitelist", () => {
     const m = createMocks(true);
     const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
     await exec.execute({ type: "filesystem.search" });
-    expect(m.consentCalls.length).toBe(0);
+    expect(m.consentCalls).toHaveLength(0);
   });
 
   test("rejected consent does not call the connector; audit shows rejected", async () => {
@@ -553,8 +553,8 @@ describe("ToolExecutor — HITL whitelist", () => {
     const action: PlannedAction = { type: "file.delete", payload: { path: HITL_TEST_TARGET_PATH } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "rejected", reason: "User declined consent gate." });
-    expect(m.dispatchCalls.length).toBe(0);
-    expect(m.auditCalls.length).toBe(1);
+    expect(m.dispatchCalls).toHaveLength(0);
+    expect(m.auditCalls).toHaveLength(1);
     expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
     expect(m.auditCalls[0]?.actionType).toBe("file.delete");
   });
@@ -574,7 +574,7 @@ describe("ToolExecutor — HITL whitelist", () => {
         },
       },
     });
-    expect(m.auditCalls.length).toBe(1);
+    expect(m.auditCalls).toHaveLength(1);
     const json = m.auditCalls[0]?.actionJson ?? "";
     expect(json.includes("SHOULD_NOT_LEAK")).toBe(false);
     expect(json.includes("SHOULD_NOT_LEAK_2")).toBe(false);
@@ -591,8 +591,8 @@ describe("ToolExecutor — rejected consent (email)", () => {
       const payload = hitlEmailRejectPayload(emailAction);
       const out = await exec.execute({ type: emailAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(emailAction);
     });
@@ -612,8 +612,8 @@ describe("ToolExecutor — rejected consent (slack)", () => {
       },
     });
     expect(out.status).toBe("rejected");
-    expect(m.dispatchCalls.length).toBe(0);
-    expect(m.auditCalls.length).toBe(1);
+    expect(m.dispatchCalls).toHaveLength(0);
+    expect(m.auditCalls).toHaveLength(1);
     expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
     expect(m.auditCalls[0]?.actionType).toBe("slack.message.post");
   });
@@ -628,8 +628,8 @@ describe("ToolExecutor — rejected consent (teams)", () => {
       const payload = hitlTeamsRejectPayload(teamsAction);
       const out = await exec.execute({ type: teamsAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(teamsAction);
     });
@@ -649,8 +649,8 @@ describe("ToolExecutor — rejected consent (linear)", () => {
       const payload = hitlLinearRejectPayload(linearAction);
       const out = await exec.execute({ type: linearAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(linearAction);
     });
@@ -670,8 +670,8 @@ describe("ToolExecutor — rejected consent (jira)", () => {
       const payload = hitlJiraRejectPayload(jiraAction);
       const out = await exec.execute({ type: jiraAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(jiraAction);
     });
@@ -692,8 +692,8 @@ describe("ToolExecutor — rejected consent (notion)", () => {
       const payload = hitlNotionRejectPayload(notionAction);
       const out = await exec.execute({ type: notionAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(notionAction);
     });
@@ -713,8 +713,8 @@ describe("ToolExecutor — rejected consent (confluence)", () => {
       const payload = hitlConfluenceRejectPayload(confluenceAction);
       const out = await exec.execute({ type: confluenceAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(confluenceAction);
     });
@@ -730,8 +730,8 @@ describe("ToolExecutor — rejected consent (jenkins)", () => {
       const payload = hitlJenkinsRejectPayload(jenkinsAction);
       const out = await exec.execute({ type: jenkinsAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(jenkinsAction);
     });
@@ -747,8 +747,8 @@ describe("ToolExecutor — rejected consent (github_actions)", () => {
       const payload = hitlGithubActionsRejectPayload(ghaAction);
       const out = await exec.execute({ type: ghaAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(ghaAction);
     });
@@ -764,8 +764,8 @@ describe("ToolExecutor — rejected consent (circleci)", () => {
       const payload = hitlCircleciRejectPayload(cciAction);
       const out = await exec.execute({ type: cciAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(cciAction);
     });
@@ -781,8 +781,8 @@ describe("ToolExecutor — rejected consent (gitlab)", () => {
       const payload = hitlGitlabCiRejectPayload(glAction);
       const out = await exec.execute({ type: glAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(glAction);
     });
@@ -802,8 +802,8 @@ describe("ToolExecutor — rejected consent (pagerduty)", () => {
       const payload = hitlPagerdutyRejectPayload(pdAction);
       const out = await exec.execute({ type: pdAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(pdAction);
     });
@@ -823,8 +823,8 @@ describe("ToolExecutor — rejected consent (kubernetes)", () => {
       const payload = hitlKubernetesRejectPayload(k8sAction);
       const out = await exec.execute({ type: k8sAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(k8sAction);
     });
@@ -845,8 +845,8 @@ describe("ToolExecutor — rejected consent (aws)", () => {
       const payload = hitlAwsRejectPayload(awsAction);
       const out = await exec.execute({ type: awsAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(awsAction);
     });
@@ -862,8 +862,8 @@ describe("ToolExecutor — rejected consent (azure)", () => {
       const payload = hitlAzureRejectPayload(azAction);
       const out = await exec.execute({ type: azAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(azAction);
     });
@@ -879,8 +879,8 @@ describe("ToolExecutor — rejected consent (gcp)", () => {
       const payload = hitlGcpRejectPayload(gcpAction);
       const out = await exec.execute({ type: gcpAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(gcpAction);
     });
@@ -901,8 +901,8 @@ describe("ToolExecutor — rejected consent (iac)", () => {
       const payload = hitlIacRejectPayload(iacAction);
       const out = await exec.execute({ type: iacAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(iacAction);
     });
@@ -918,8 +918,8 @@ describe("ToolExecutor — rejected consent (filesystem writes)", () => {
       const payload = hitlFileRejectPayload(fileAction);
       const out = await exec.execute({ type: fileAction, payload });
       expect(out.status).toBe("rejected");
-      expect(m.dispatchCalls.length).toBe(0);
-      expect(m.auditCalls.length).toBe(1);
+      expect(m.dispatchCalls).toHaveLength(0);
+      expect(m.auditCalls).toHaveLength(1);
       expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
       expect(m.auditCalls[0]?.actionType).toBe(fileAction);
     });
@@ -943,7 +943,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
     const action: PlannedAction = { type: "filesystem.search", payload: { q: "notes" } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "ok", result: { done: true } });
-    expect(m.consentCalls.length).toBe(0);
+    expect(m.consentCalls).toHaveLength(0);
     expect(m.auditCalls[0]?.hitlStatus).toBe("not_required");
   });
 
@@ -994,7 +994,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "rejected", reason: "client disconnected" });
     expect(dispatched).toBe(false);
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     expect(auditCalls[0]?.hitlStatus).toBe("rejected");
     const parsed: unknown = JSON.parse(auditCalls[0]?.actionJson ?? "{}");
     expect(parsed).toEqual(
@@ -1023,7 +1023,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
     };
     const exec = new ToolExecutor(consent, audit, connectors);
     await expect(exec.execute({ type: "file.delete" })).rejects.toThrow("network glitch");
-    expect(auditCalls.length).toBe(0);
+    expect(auditCalls).toHaveLength(0);
   });
 
   test("bindConsentChannel wires coordinator + clientId for requestApproval", async () => {
@@ -1061,7 +1061,7 @@ describe("ToolExecutor.gate()", () => {
     const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
     const result = await exec.gate({ type: "filesystem.search" });
     expect(result).toBe("proceed");
-    expect(m.consentCalls.length).toBe(0);
+    expect(m.consentCalls).toHaveLength(0);
     expect(m.auditCalls[0]?.hitlStatus).toBe("not_required");
   });
 
@@ -1070,9 +1070,9 @@ describe("ToolExecutor.gate()", () => {
     const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
     const result = await exec.gate({ type: "data.delete", payload: { service: "github" } });
     expect(result).toBe("proceed");
-    expect(m.consentCalls.length).toBe(1);
+    expect(m.consentCalls).toHaveLength(1);
     expect(m.auditCalls[0]?.hitlStatus).toBe("approved");
-    expect(m.dispatchCalls.length).toBe(0);
+    expect(m.dispatchCalls).toHaveLength(0);
   });
 
   test("gate() returns rejected ActionResult when user declines", async () => {
@@ -1082,7 +1082,7 @@ describe("ToolExecutor.gate()", () => {
     expect(result).not.toBe("proceed");
     expect((result as { status: string }).status).toBe("rejected");
     expect(m.auditCalls[0]?.hitlStatus).toBe("rejected");
-    expect(m.dispatchCalls.length).toBe(0);
+    expect(m.dispatchCalls).toHaveLength(0);
   });
 
   test("execute() does not dispatch when gate rejects", async () => {
@@ -1090,7 +1090,7 @@ describe("ToolExecutor.gate()", () => {
     const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
     const result = await exec.execute({ type: "data.delete", payload: { service: "github" } });
     expect(result.status).toBe("rejected");
-    expect(m.dispatchCalls.length).toBe(0);
+    expect(m.dispatchCalls).toHaveLength(0);
   });
 });
 

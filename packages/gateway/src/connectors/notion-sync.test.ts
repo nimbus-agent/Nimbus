@@ -764,7 +764,7 @@ describeWithFetchRestore("notion-sync", () => {
     const row = db.prepare("SELECT title FROM item WHERE service = 'notion' LIMIT 1").get() as {
       title: string;
     };
-    expect(row.title.length).toBe(512);
+    expect(row.title).toHaveLength(512);
     expect(row.title).toBe("A".repeat(512));
   });
 

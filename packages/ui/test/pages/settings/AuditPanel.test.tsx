@@ -90,7 +90,7 @@ afterEach(() => {
 
 async function renderAndWaitForRows(): Promise<void> {
   renderAt("/settings/audit");
-  await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(3));
+  await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(3));
 }
 
 describe("AuditPanel", () => {
@@ -105,7 +105,7 @@ describe("AuditPanel", () => {
     await renderAndWaitForRows();
     const select = screen.getByLabelText("Service filter") as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "github" } });
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(1));
     expect(screen.getByText("1 of 3 rows")).toBeTruthy();
   });
 
@@ -247,20 +247,20 @@ describe("AuditPanel runId deep-link", () => {
 
   test("filters rows by runId extracted from actionJson when ?runId=<id> is present", async () => {
     renderAt("/settings/audit?runId=run-abc");
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(1));
     expect(screen.getByText("1 of 2 rows")).toBeTruthy();
   });
 
   test("highlights the matched row with aria-current", async () => {
     renderAt("/settings/audit?runId=run-abc");
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(1));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(1));
     const rows = screen.getAllByTestId("audit-row");
     expect(rows[0]?.getAttribute("aria-current")).toBe("true");
   });
 
   test("shows the full list when no runId is provided", async () => {
     renderAt("/settings/audit");
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(2));
     expect(screen.getByText("2 of 2 rows")).toBeTruthy();
   });
 
@@ -274,13 +274,13 @@ describe("AuditPanel runId deep-link", () => {
 
   test("does not show the pruning banner when runId is absent", async () => {
     renderAt("/settings/audit");
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(2));
     expect(screen.queryByText(/no audit entries found/i)).toBeNull();
   });
 
   test("does not highlight rows when no runId is in the URL", async () => {
     renderAt("/settings/audit");
-    await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBe(2));
+    await waitFor(() => expect(screen.getAllByTestId("audit-row")).toHaveLength(2));
     const rows = screen.getAllByTestId("audit-row");
     for (const row of rows) {
       expect(row.getAttribute("aria-current")).toBeNull();

@@ -45,7 +45,7 @@ test("legacy + federation audit rows keep the Blake3 chain verifiable", () => {
   const fedRows = db
     .query(`SELECT federation_json FROM audit_log WHERE federation_json IS NOT NULL`)
     .all();
-  expect(fedRows.length).toBe(2);
+  expect(fedRows).toHaveLength(2);
 
   const legacyRow = db
     .query(`SELECT federation_json FROM audit_log ORDER BY id ASC LIMIT 1`)

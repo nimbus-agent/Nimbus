@@ -322,7 +322,7 @@ describe("loadBm25Hits", () => {
       since: 0,
     };
     const hits = loadBm25Hits(db, fts, 10, undefined, opts);
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     db.close();
   });
 
@@ -342,7 +342,7 @@ describe("loadBm25Hits", () => {
       itemType: "",
     };
     const hits = loadBm25Hits(db, fts, 10, undefined, opts);
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     db.close();
   });
 });
@@ -428,7 +428,7 @@ describe("runVectorSearch", () => {
       queryEmbedding: q384,
     };
     const hits = runVectorSearch(db, opts, 10, undefined, "test");
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:1");
     db.close();
   });
@@ -456,7 +456,7 @@ describe("runVectorSearch", () => {
       queryEmbedding1536: q1536,
     };
     const hits = runVectorSearch(db, opts, 10, undefined, "test");
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:2");
     db.close();
   });
@@ -536,7 +536,7 @@ describe("runVectorSearch", () => {
     const hits = runVectorSearch(db, opts, 10, "svc", "test");
     // Positive cardinality first — otherwise an empty result (a regression that drops all
     // vector hits) would still satisfy the per-hit id check below.
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     for (const h of hits) {
       expect(h.itemId).toBe("svc:1");
     }
@@ -572,7 +572,7 @@ describe("runVectorSearch", () => {
     };
     const hits = runVectorSearch(db, opts, 10, undefined, "test");
     // Positive cardinality first — `every` is vacuously true on an empty result.
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits.every((h) => h.itemId === "s:note")).toBe(true);
     db.close();
   });
@@ -644,7 +644,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
       { item: b, bm25Rank: 2, vectorRank: null, rrfScore: 0.4 },
     ];
     const out = dedupeHybridByCanonicalUrl(r);
-    expect(out.length).toBe(2);
+    expect(out).toHaveLength(2);
   });
 
   test("empty-string canonical_url is treated as no URL", () => {
@@ -656,7 +656,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
     ];
     const out = dedupeHybridByCanonicalUrl(r);
     // Both empty/whitespace canonical_url items fall through the null/empty branch
-    expect(out.length).toBe(2);
+    expect(out).toHaveLength(2);
   });
 
   test("duplicate canonical_url — second is recorded in duplicates", () => {
@@ -668,7 +668,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
       { item: b, bm25Rank: 2, vectorRank: null, rrfScore: 0.3 },
     ];
     const out = dedupeHybridByCanonicalUrl(r);
-    expect(out.length).toBe(1);
+    expect(out).toHaveLength(1);
     expect(out[0]?.duplicates).toEqual(["gitlab"]);
   });
 
@@ -683,7 +683,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
       { item: c, bm25Rank: 3, vectorRank: null, rrfScore: 0.3 },
     ];
     const out = dedupeHybridByCanonicalUrl(r);
-    expect(out.length).toBe(1);
+    expect(out).toHaveLength(1);
     expect(out[0]?.duplicates).toEqual(["svc2", "svc3"]);
   });
 
@@ -697,7 +697,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
       { item: b, bm25Rank: 2, vectorRank: null, rrfScore: 0.5 },
     ];
     const out = dedupeHybridByCanonicalUrl(r);
-    expect(out.length).toBe(1);
+    expect(out).toHaveLength(1);
     // duplicates should include both the pre-existing and the new one
     expect(out[0]?.duplicates).toContain("pre-existing");
     expect(out[0]?.duplicates).toContain("svc2");
@@ -711,7 +711,7 @@ describe("dedupeHybridByCanonicalUrl", () => {
       { item: b, bm25Rank: 2, vectorRank: null, rrfScore: 0.4 },
     ];
     const out = dedupeHybridByCanonicalUrl(r);
-    expect(out.length).toBe(2);
+    expect(out).toHaveLength(2);
   });
 });
 
@@ -742,7 +742,7 @@ describe("scoreHybridItems", () => {
     const item = makeItem({ id: "svc:x" });
     const bm25: Array<{ item: HybridIndexedItem; rank: number }> = [{ item, rank: 1 }];
     const result = scoreHybridItems(bm25, [], makeScoringParams(db));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.item.id).toBe("svc:x");
     expect(result[0]?.bm25Rank).toBe(1);
     expect(result[0]?.vectorRank).toBeNull();
@@ -757,7 +757,7 @@ describe("scoreHybridItems", () => {
 
     const vecHit = makeVecHit("svc:y");
     const result = scoreHybridItems([], [vecHit], makeScoringParams(db));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.item.id).toBe("svc:y");
     expect(result[0]?.bm25Rank).toBeNull();
     expect(result[0]?.vectorRank).toBe(1);
@@ -768,7 +768,7 @@ describe("scoreHybridItems", () => {
     const db = freshDb();
     const vecHit = makeVecHit("nonexistent:z");
     const result = scoreHybridItems([], [vecHit], makeScoringParams(db));
-    expect(result.length).toBe(0);
+    expect(result).toHaveLength(0);
     db.close();
   });
 
@@ -778,7 +778,7 @@ describe("scoreHybridItems", () => {
     const bm25: Array<{ item: HybridIndexedItem; rank: number }> = [{ item, rank: 2 }];
     const vecHit = makeVecHit("svc:both");
     const result = scoreHybridItems(bm25, [vecHit], makeScoringParams(db));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.bm25Rank).toBe(2);
     expect(result[0]?.vectorRank).toBe(1);
     const expected = rrfTerm(2, 60) + rrfTerm(1, 60);
@@ -795,7 +795,7 @@ describe("scoreHybridItems", () => {
       { item: itemB, rank: 1 }, // higher rank = higher score
     ];
     const result = scoreHybridItems(bm25, [], makeScoringParams(db));
-    expect(result.length).toBe(2);
+    expect(result).toHaveLength(2);
     expect(result[0]?.item.id).toBe("svc:b"); // rank 1 > rank 5 for RRF
     expect(result[1]?.item.id).toBe("svc:a");
     db.close();
@@ -812,7 +812,7 @@ describe("scoreHybridItems", () => {
       { item: itemNew, rank: 1 },
     ];
     const result = scoreHybridItems(bm25, [], makeScoringParams(db));
-    expect(result.length).toBe(2);
+    expect(result).toHaveLength(2);
     expect(result[0]?.item.id).toBe("svc:new"); // newer first
     expect(result[1]?.item.id).toBe("svc:old");
     db.close();
@@ -830,7 +830,7 @@ describe("scoreHybridItems", () => {
       distance: 0.1,
     };
     const result = scoreHybridItems(bm25, [vecHit], makeScoringParams(db, 0));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.semanticSnippet).toBe("my chunk text");
     db.close();
   });
@@ -864,7 +864,7 @@ describe("scoreHybridItems", () => {
       distance: 0.05,
     };
     const result = scoreHybridItems(bm25, [vecHit], makeScoringParams(db, 1));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     const snippet = result[0]?.semanticSnippet;
     expect(snippet).toBeDefined();
     expect(snippet).toContain("before");
@@ -881,7 +881,7 @@ describe("scoreHybridItems", () => {
     const vecHit2: VectorChunkHit = makeVecHit("svc:dup", 1);
     // vecHit1 is at position 0 (rank 1), vecHit2 at position 1 (rank 2)
     const result = scoreHybridItems(bm25, [vecHit1, vecHit2], makeScoringParams(db));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.vectorRank).toBe(1); // best rank wins
     db.close();
   });
@@ -891,7 +891,7 @@ describe("scoreHybridItems", () => {
     const item = makeItem({ id: "svc:novec" });
     const bm25: Array<{ item: HybridIndexedItem; rank: number }> = [{ item, rank: 1 }];
     const result = scoreHybridItems(bm25, [], makeScoringParams(db, 1));
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.semanticSnippet).toBeUndefined();
     db.close();
   });
@@ -902,7 +902,7 @@ describe("scoreHybridItems", () => {
     // at least one rank), so we verify via an empty itemIds union:
     const db = freshDb();
     const result = scoreHybridItems([], [], makeScoringParams(db));
-    expect(result.length).toBe(0);
+    expect(result).toHaveLength(0);
     db.close();
   });
 });

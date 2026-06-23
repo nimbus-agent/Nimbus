@@ -318,7 +318,7 @@ describe("SlackSocketAdapter", () => {
     sockets[0]?.closeCb?.();
     await Promise.resolve();
     expect(scheduled).toBe(1);
-    expect(sockets.length).toBe(2); // reconnected
+    expect(sockets).toHaveLength(2); // reconnected
     await adapter.stop();
   });
 });

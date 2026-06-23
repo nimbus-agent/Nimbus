@@ -34,14 +34,14 @@ describe("extension-store", () => {
       installed_at: t,
       last_verified_at: t,
     });
-    expect(listExtensions(db).length).toBe(1);
+    expect(listExtensions(db)).toHaveLength(1);
     expect(selectExtensionInstallPath(db, "ext.a")).toBe("/e/ext.a");
     expect(setExtensionEnabled(db, "ext.a", false)).toBe(true);
     expect(listExtensions(db)[0]?.enabled).toBe(0);
     touchExtensionVerifiedAt(db, "ext.a", t + 1);
     expect(listExtensions(db)[0]?.last_verified_at).toBe(t + 1);
     expect(deleteExtensionById(db, "ext.a")).toBe("/e/ext.a");
-    expect(listExtensions(db).length).toBe(0);
+    expect(listExtensions(db)).toHaveLength(0);
   });
 
   test("insertExtensionRow throws below v10", () => {

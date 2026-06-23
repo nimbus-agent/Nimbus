@@ -82,7 +82,7 @@ describe("askStream", () => {
     ipc.emit("engine.streamToken", { streamId: "stream-1", text: "yes" });
     ipc.emit("engine.streamDone", { streamId: "stream-1" });
     await drain;
-    expect(events.length).toBe(2);
+    expect(events).toHaveLength(2);
     expect((events[0] as { text: string }).text).toBe("yes");
   });
 

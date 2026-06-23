@@ -114,7 +114,7 @@ describe("chatops Slice 6c fan-out seam (real buildChatopsBoot)", () => {
     // stop() drains any in-flight handleMessage; the ambient path returns immediately after
     // onInboundMessage (no router call), so once drained an operational post can never appear.
     await h.boot.service.stop();
-    expect(h.posts.length).toBe(0);
+    expect(h.posts).toHaveLength(0);
   });
 
   test("addressed message: onInboundMessage fires AND the IntentRouter replies", async () => {

@@ -73,7 +73,7 @@ test("acceptance: discover → pair → publish → grant → scoped leak-proof 
   const disc = await dispatchFederationRpc("federation.discover", {}, c);
   expect(disc.kind).toBe("hit");
   if (disc.kind === "hit") {
-    expect((disc.value as { peers: unknown[] }).peers.length).toBe(1);
+    expect((disc.value as { peers: unknown[] }).peers).toHaveLength(1);
   }
 
   // (criterion) publish a named, filtered slice
@@ -97,7 +97,7 @@ test("acceptance: discover → pair → publish → grant → scoped leak-proof 
   const peers = await dispatchFederationRpc("federation.peers", {}, c);
   expect(peers.kind).toBe("hit");
   if (peers.kind === "hit") {
-    expect((peers.value as { peers: unknown[] }).peers.length).toBe(1);
+    expect((peers.value as { peers: unknown[] }).peers).toHaveLength(1);
   }
 
   // (criterion 1/2) a paired-but-ungranted query is rejected + audited

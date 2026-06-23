@@ -10,7 +10,7 @@ import type { PlatformServices } from "./types.ts";
 describe("assemblePlatformServices (smoke)", () => {
   it("is an async function with arity 1 (paths)", () => {
     expect(typeof assemblePlatformServices).toBe("function");
-    expect(assemblePlatformServices.length).toBe(1);
+    expect(assemblePlatformServices).toHaveLength(1);
     expect(assemblePlatformServices.constructor.name).toBe("AsyncFunction");
   });
 });

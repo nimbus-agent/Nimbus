@@ -51,7 +51,7 @@ describe("dispatchIdentityRpc", () => {
     expect(bind.kind).toBe("hit");
     expect(ctx.identityStore.activePeerIdsFor("u1")).toEqual(["peer:alice"]);
     const list = await dispatchIdentityRpc("scim.listUsers", {}, ctx);
-    if (list.kind === "hit") expect((list.value as { users: unknown[] }).users.length).toBe(1);
+    if (list.kind === "hit") expect((list.value as { users: unknown[] }).users).toHaveLength(1);
   });
   test("identity.login returns a jobId (long-running)", async () => {
     const out = await dispatchIdentityRpc("identity.login", {}, freshCtx());

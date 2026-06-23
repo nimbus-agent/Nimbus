@@ -39,7 +39,7 @@ describe("pass-cursor-sync-result", () => {
 
   test("clampSyncTitle truncates long strings", () => {
     const s = "x".repeat(600);
-    expect(clampSyncTitle(s).length).toBe(512);
+    expect(clampSyncTitle(s)).toHaveLength(512);
     expect(clampSyncTitle("short")).toBe("short");
   });
 });

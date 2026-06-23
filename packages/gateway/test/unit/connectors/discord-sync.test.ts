@@ -482,7 +482,7 @@ describe("discord-sync — phase machine transitions", () => {
     }>(res.cursor);
     expect(decoded.guildIds).toEqual(["g1"]);
     expect(decoded.guildIndex).toBe(0);
-    expect(decoded.channelIds.length).toBe(8);
+    expect(decoded.channelIds).toHaveLength(8);
     expect(decoded.channelIndex).toBe(6);
     expect(fixture.fetchMock.calls).toHaveLength(8);
   });

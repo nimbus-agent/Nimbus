@@ -373,7 +373,7 @@ describe("chatops e2e (real gateway subprocess + mock connector sink)", () => {
     );
     sendFrame(mention("C0", "U_ALICE", "<@UBOT> reject", "300.2"));
     await until(() => chatPosts().find((p) => p.text.includes("rejected")), "rejected reply");
-    expect(dispatches().length).toBe(before);
+    expect(dispatches()).toHaveLength(before);
     const rows = await auditRowsWhen(
       (rs) => rs.some((r) => r.actionType === "deployment.rollback" && r.hitlStatus === "rejected"),
       "rejected audit row",

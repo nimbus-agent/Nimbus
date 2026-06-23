@@ -27,7 +27,7 @@ describe("appendHistoryLine", () => {
       const content = readFileSync(path, "utf8");
       expect(content.endsWith("\n")).toBe(true);
       const lines = content.trim().split("\n");
-      expect(lines.length).toBe(1);
+      expect(lines).toHaveLength(1);
       const parsed = JSON.parse(lines[0] ?? "");
       expect(parsed.schema_version).toBe(2);
       expect(parsed.run_id).toBe("abc");
@@ -53,7 +53,7 @@ describe("appendHistoryLine", () => {
       appendHistoryLine(path, { ...base, run_id: "first" });
       appendHistoryLine(path, { ...base, run_id: "second" });
       const lines = readFileSync(path, "utf8").trim().split("\n");
-      expect(lines.length).toBe(2);
+      expect(lines).toHaveLength(2);
       expect(JSON.parse(lines[0] ?? "").run_id).toBe("first");
       expect(JSON.parse(lines[1] ?? "").run_id).toBe("second");
     } finally {

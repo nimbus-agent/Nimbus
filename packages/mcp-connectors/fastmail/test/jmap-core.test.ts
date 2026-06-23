@@ -95,7 +95,7 @@ describe("extractAttachments", () => {
 describe("capPreview", () => {
   test("normalizes whitespace + trims and truncates", () => {
     expect(capPreview("  a\r\n\r\n\r\nb   c ")).toBe("a\nb c");
-    expect(capPreview("x".repeat(2500)).length).toBe(2000);
+    expect(capPreview("x".repeat(2500))).toHaveLength(2000);
   });
 });
 

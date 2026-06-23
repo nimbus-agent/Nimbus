@@ -44,7 +44,7 @@ describe("runBench (CLI command)", () => {
       { spawn: spawnMock as unknown as typeof Bun.spawn },
     );
     expect(exit).toBe(0);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
     const cmd = calls[0]?.cmd ?? [];
     expect(cmd[0]).toMatch(/bun(?:\.exe)?$/);
     expect(cmd[1]).toMatch(/bench-runner\.ts$/);
