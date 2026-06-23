@@ -17,8 +17,7 @@
     "**/*.lock",
     "**/*.snap",
     "packages/docs/**",
-    "**/gw-state-helpers.ts",
-    "**/gateway-process.ts"
+    "**/gw-state-helpers.ts"
   ],
   "format": ["typescript", "tsx"],
   "absolute": false,
