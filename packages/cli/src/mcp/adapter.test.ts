@@ -132,7 +132,7 @@ describe("projectRankedItem", () => {
     const meta = out["meta"] as Record<string, unknown>;
     const labels = meta["labels"] as string[];
     expect(labels[0]).toBe("bug");
-    expect(labels[1]?.length).toBe(200);
+    expect(labels[1]).toHaveLength(200);
   });
 
   it("drops null-valued whitelisted keys but keeps false/zero", () => {

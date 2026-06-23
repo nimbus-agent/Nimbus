@@ -404,7 +404,7 @@ describe("createGooglePhotosSyncable", () => {
     const row = db
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("google_photos", "p-long")) as { title: string } | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
     expect(row?.title).toBe(longFilename.slice(0, 512));
   });
 

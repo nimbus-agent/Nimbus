@@ -448,7 +448,7 @@ describe("bitbucket-sync — indexing skip paths", () => {
         "SELECT title FROM item WHERE service = 'bitbucket' AND external_id = 'acme/app#12'",
       )
       .get();
-    expect(long?.title.length).toBe(512);
+    expect(long?.title).toHaveLength(512);
     expect(fallback?.title).toBe("PR #12");
   });
 

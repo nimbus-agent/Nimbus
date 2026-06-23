@@ -91,8 +91,8 @@ describe("install-from-local", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe("test.ext.sample");
     expect(rows[0]?.install_path).toBe(join(extensionsDir, "test.ext.sample"));
-    expect(rows[0]?.manifest_hash.length).toBe(64);
-    expect(rows[0]?.entry_hash.length).toBe(64);
+    expect(rows[0]?.manifest_hash).toHaveLength(64);
+    expect(rows[0]?.entry_hash).toHaveLength(64);
   });
 
   test("legacy nimbus-extension.json is accepted", async () => {
@@ -360,7 +360,7 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     expect(depNode?.newlyInstalled).toBe(false);
     expect(rootNode?.newlyInstalled).toBe(true);
 
-    expect(rootNode?.deps.length).toBe(1);
+    expect(rootNode?.deps).toHaveLength(1);
     expect(rootNode?.deps[0]?.id).toBe("closure.dep.a");
 
     const depIdx = result.installed.findIndex((n) => n.id === "closure.dep.a");

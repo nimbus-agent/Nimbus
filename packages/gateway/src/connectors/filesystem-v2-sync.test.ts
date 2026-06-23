@@ -626,7 +626,7 @@ test("git_commit title is truncated to 200 chars when subject is very long", asy
   const row = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'git_commit' LIMIT 1`)
     .get() as { title: string } | null;
-  expect(row?.title?.length).toBe(200);
+  expect(row?.title).toHaveLength(200);
 });
 
 // ── listPackageJsonFiles: maxFiles cap and non-package.json file ──────────────

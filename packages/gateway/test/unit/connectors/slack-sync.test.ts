@@ -839,7 +839,7 @@ describe("slack-sync — message indexing skip paths", () => {
       )
       .get();
     expect(row?.title.length).toBeLessThanOrEqual(120);
-    expect(row?.body_preview?.length).toBe(512);
+    expect(row?.body_preview).toHaveLength(512);
   });
 
   test("maxTs updated across batch -> stored as hwVal in next cursor", async () => {

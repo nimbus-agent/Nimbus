@@ -235,7 +235,7 @@ describe("setTomlValueInFile", () => {
     setTomlValueInFile(tomlPath, "llm.remote_model", "new");
     const contents = readFileSync(tomlPath, "utf8");
     expect(contents).toContain(`[other]`);
-    expect(contents.match(/remote_model = "keep"/g)?.length).toBe(1);
+    expect(contents.match(/remote_model = "keep"/g)).toHaveLength(1);
     expect(contents).toContain(`remote_model = "new"`);
   });
 

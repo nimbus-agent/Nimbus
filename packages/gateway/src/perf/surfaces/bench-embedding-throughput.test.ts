@@ -42,7 +42,7 @@ describe("runEmbeddingThroughputOnce", () => {
     expect(samples).toHaveLength(1);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0]?.beforeTimer).toBe(true);
-    expect(calls[0]?.texts.length).toBe(1);
+    expect(calls[0]?.texts).toHaveLength(1);
   });
 
   test("returns items/sec across the timed window", async () => {
@@ -66,9 +66,9 @@ describe("runEmbeddingThroughputOnce", () => {
       totalItems: 32,
     });
     expect(calls).toHaveLength(5);
-    expect(calls[0]?.texts.length).toBe(1);
+    expect(calls[0]?.texts).toHaveLength(1);
     for (let i = 1; i < calls.length; i += 1) {
-      expect(calls[i]?.texts.length).toBe(8);
+      expect(calls[i]?.texts).toHaveLength(8);
     }
   });
 

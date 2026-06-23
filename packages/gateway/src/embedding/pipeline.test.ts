@@ -544,7 +544,7 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     const result = await pipeline.embedTexts(["hello", "world"]);
     expect(result).toHaveLength(2);
     expect(result[0]).toBeInstanceOf(Float32Array);
-    expect(result[0]?.length).toBe(384);
+    expect(result[0]).toHaveLength(384);
   });
 
   test("constructor clamps backfillConcurrency to 1 when given 0", async () => {

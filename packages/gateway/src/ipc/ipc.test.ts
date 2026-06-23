@@ -217,7 +217,7 @@ describe("ipc server integration", () => {
       );
       const line = await rpcCall(listenPath, "people.search", { query: "ada", limit: 10 });
       const res = JSON.parse(line) as { result?: Array<{ id: string; canonicalEmail?: string }> };
-      expect(res.result?.length).toBe(1);
+      expect(res.result).toHaveLength(1);
       expect(res.result?.[0]?.id).toBe("p-test-1");
     });
   });
@@ -227,7 +227,7 @@ describe("ipc server integration", () => {
       async ({ listenPath }) => {
         const line = await rpcCall(listenPath, "connector.listStatus", {});
         const res = JSON.parse(line) as { result?: Array<{ serviceId: string }> };
-        expect(res.result?.length).toBe(1);
+        expect(res.result).toHaveLength(1);
         expect(res.result?.[0]?.serviceId).toBe("google_drive");
       },
       {

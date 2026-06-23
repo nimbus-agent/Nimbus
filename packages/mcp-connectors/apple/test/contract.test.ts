@@ -175,7 +175,7 @@ describe("apple connector contract — calendar privacy bounds", () => {
       await tools.apple_calendar_list({ startUtc: "20260601T000000Z", endUtc: "20260601T235959Z" }),
     ) as { items: { notes: string; attendees: string[] }[] };
     expect(res.items).toHaveLength(1);
-    expect(res.items[0]?.notes.length).toBe(2000);
+    expect(res.items[0]?.notes).toHaveLength(2000);
     expect(res.items[0]?.attendees).toEqual(["a@icloud.com", "b@icloud.com"]);
   });
 });

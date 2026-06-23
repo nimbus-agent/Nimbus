@@ -143,7 +143,7 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
       });
       const result = await pending;
       expect(result).not.toBeNull();
-      expect(result?.length).toBe(3);
+      expect(result).toHaveLength(3);
       expect(result?.[0]).toBeCloseTo(0.1, 5);
     } finally {
       bridge.terminate();

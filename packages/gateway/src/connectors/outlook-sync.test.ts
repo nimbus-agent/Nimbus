@@ -376,7 +376,7 @@ describe("createOutlookSyncable", () => {
     const row = db
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("outlook", "longsubj")) as { title: string } | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
     expect(row?.title).toBe("A".repeat(512));
   });
 

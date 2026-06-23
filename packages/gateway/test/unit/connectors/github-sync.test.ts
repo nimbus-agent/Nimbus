@@ -635,8 +635,8 @@ describe("github-sync — item indexing", () => {
         "SELECT title FROM item WHERE service = 'github' AND external_id = 'acme/app#issue-101'",
       )
       .get();
-    expect(pr?.title.length).toBe(512);
-    expect(iss?.title.length).toBe(512);
+    expect(pr?.title).toHaveLength(512);
+    expect(iss?.title).toHaveLength(512);
   });
 
   test("bodyPreview is truncated at 512 characters", async () => {
@@ -661,7 +661,7 @@ describe("github-sync — item indexing", () => {
         "SELECT body_preview FROM item WHERE service = 'github' AND external_id = 'acme/app#200'",
       )
       .get();
-    expect(row?.body_preview.length).toBe(512);
+    expect(row?.body_preview).toHaveLength(512);
   });
 
   test("missing updated_at and created_at on a PR → modifiedAt falls back to now()", async () => {

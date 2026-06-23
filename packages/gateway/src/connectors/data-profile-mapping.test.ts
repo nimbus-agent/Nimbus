@@ -38,7 +38,7 @@ describe("mapDataModelToItem", () => {
     const longName = `${"a".repeat(300)}.csv`;
     const row = mapDataModelToItem(profile({ relativePath: longName }), { syncedAt: 1 });
     expect(row?.title.endsWith("…")).toBe(true);
-    expect(row?.title.length).toBe(257); // 256 chars + the ellipsis
+    expect(row?.title).toHaveLength(257); // 256 chars + the ellipsis
   });
 
   test("falls back to the full path when the basename is empty (trailing slash)", () => {

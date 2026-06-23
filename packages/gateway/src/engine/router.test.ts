@@ -352,7 +352,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
     const longInput = "x".repeat(10_000);
     await classifyIntent(longInput);
     const body = JSON.parse(capturedBody) as { messages: Array<{ content: string }> };
-    expect(body.messages[0]?.content.length).toBe(8000);
+    expect(body.messages[0]?.content).toHaveLength(8000);
   });
 });
 

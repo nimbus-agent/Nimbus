@@ -228,7 +228,7 @@ describe("mapZoomTranscriptToItem", () => {
       plainText: oneBigWord,
       syncedAt: SYNCED_AT,
     });
-    expect(row?.bodyPreview.length).toBe(281); // 280 + …
+    expect(row?.bodyPreview).toHaveLength(281); // 280 + …
     expect(row?.bodyPreview.endsWith("…")).toBe(true);
   });
 

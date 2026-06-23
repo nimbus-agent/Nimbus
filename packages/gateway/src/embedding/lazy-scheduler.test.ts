@@ -193,7 +193,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         );
         const vec = await runtime.embedQuery("hello");
         expect(vec).toBeInstanceOf(Float32Array);
-        expect(vec?.length).toBe(384);
+        expect(vec).toHaveLength(384);
         expect(runtime.getEmbeddingModel()).toBe("local:test");
         expect(runtime.getEmbeddingDims()).toBe(384);
       } finally {
@@ -215,7 +215,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         );
         const dual = await runtime.embedQueryDual("hello");
         expect(dual.vec384).toBeInstanceOf(Float32Array);
-        expect(dual.vec384?.length).toBe(384);
+        expect(dual.vec384).toHaveLength(384);
         expect(dual.model384).toBe("local:test");
         expect(dual.vec1536).toBeNull();
         expect(dual.model1536).toBeNull();
@@ -236,7 +236,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         );
         const dual = await runtime.embedQueryDual("hello");
         expect(dual.vec1536).toBeInstanceOf(Float32Array);
-        expect(dual.vec1536?.length).toBe(1536);
+        expect(dual.vec1536).toHaveLength(1536);
         expect(dual.model1536).toBe("openai:big");
         expect(dual.vec384).toBeNull();
         expect(dual.model384).toBeNull();

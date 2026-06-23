@@ -324,7 +324,7 @@ describe("upsertGmailMessage", () => {
     const row = db
       .query("SELECT body_preview FROM item WHERE id = ?")
       .get(itemPrimaryKey("gmail", "m-longsnip")) as { body_preview: string | null } | null;
-    expect(row?.body_preview?.length).toBe(512);
+    expect(row?.body_preview).toHaveLength(512);
   });
 
   test("subject longer than 512 chars is sliced (L173 true branch)", async () => {
@@ -340,7 +340,7 @@ describe("upsertGmailMessage", () => {
     const row = db
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("gmail", "m-longsubj")) as { title: string } | null;
-    expect(row?.title.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 
   test("uses now when internalDate is undefined (L150 true branch)", async () => {

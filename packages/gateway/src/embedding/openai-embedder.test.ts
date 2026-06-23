@@ -174,7 +174,7 @@ describe("createOpenAIEmbedder", () => {
     const embedder = await createOpenAIEmbedder({ apiKey: "k" });
     const out = await embedder.embed(["x"]);
     expect(out[0]).toBeInstanceOf(Float32Array);
-    expect(out[0]?.length).toBe(384);
+    expect(out[0]).toHaveLength(384);
     expect(out[0]?.[383]).toBeCloseTo(383 / 384);
   });
 });
