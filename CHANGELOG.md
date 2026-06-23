@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.19.0](https://github.com/nimbus-agent/Nimbus/compare/v0.18.0...v0.19.0) (2026-06-23)
+
+
+### Features
+
+* **client:** add searchRanked to NimbusClient + MockClient ([#742](https://github.com/nimbus-agent/Nimbus/issues/742)) ([a378884](https://github.com/nimbus-agent/Nimbus/commit/a378884360c50b55f1d76bcd61492c1594327b86))
+
+
+### Bug Fixes
+
+* **sonar:** clear the board — S3776/S8786/S7735 sweep + warehouse-mapper dedup ([#743](https://github.com/nimbus-agent/Nimbus/issues/743)) ([2401330](https://github.com/nimbus-agent/Nimbus/commit/2401330932fa941bdf584c87bca88ea69167fa0c))
+* **sonar:** clear the SonarCloud board — S5906 sweep + long-tail code smells ([#731](https://github.com/nimbus-agent/Nimbus/issues/731)) ([3a87e54](https://github.com/nimbus-agent/Nimbus/commit/3a87e54a7335c1be87ecb582673183b242b97c88))
+
 ## [0.18.0](https://github.com/nimbus-agent/Nimbus/compare/v0.17.0...v0.18.0) (2026-06-23)
 
 
