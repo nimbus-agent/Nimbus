@@ -1,5 +1,6 @@
 import type { NimbusItem } from "@nimbus-dev/sdk";
 
+import type { RankedSearchItem, RankedSearchParams } from "./nimbus-client.js";
 import type {
   AskStreamHandle,
   AskStreamOptions,
@@ -9,6 +10,7 @@ import type {
 
 export type MockClientFixtures = {
   items?: NimbusItem[];
+  rankedItems?: RankedSearchItem[];
   streamTokens?: string[];
   reply?: string;
 };
@@ -89,6 +91,10 @@ export class MockClient {
   }): Promise<{ items: NimbusItem[]; meta: { limit: number; total: number } }> {
     const items = this.fixtures.items ?? [];
     return { items, meta: { limit: items.length, total: items.length } };
+  }
+
+  async searchRanked(_params?: RankedSearchParams): Promise<RankedSearchItem[]> {
+    return this.fixtures.rankedItems ?? [];
   }
 
   async querySql(_sql: string): Promise<{ rows: Record<string, unknown>[] }> {

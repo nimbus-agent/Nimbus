@@ -11,7 +11,13 @@ export {
 } from "./discovery.js";
 export { IPCClient } from "./ipc-transport.js";
 export { MockClient, type MockClientFixtures } from "./mock-client.js";
-export { NimbusClient, type NimbusClientOptions, type SessionTranscript } from "./nimbus-client.js";
+export {
+  NimbusClient,
+  type NimbusClientOptions,
+  type RankedSearchItem,
+  type RankedSearchParams,
+  type SessionTranscript,
+} from "./nimbus-client.js";
 export { getNimbusPaths, type NimbusPaths } from "./paths.js";
 export type {
   AskStreamHandle,

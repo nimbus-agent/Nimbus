@@ -1,9 +1,42 @@
+import type { NimbusItem } from "@nimbus-dev/sdk";
+
 import { createAskStream } from "./ask-stream.js";
 import { IPCClient } from "./ipc-transport.js";
 import type { AskStreamHandle, AskStreamOptions, HitlRequest } from "./stream-events.js";
 
 export type NimbusClientOptions = {
   socketPath: string;
+};
+
+/** Parameters for {@link NimbusClient.searchRanked}. */
+export type RankedSearchParams = {
+  /** Free-text name/title query. Empty/omitted returns the top-ranked items. */
+  name?: string;
+  /** Restrict results to a single connector/service id. */
+  service?: string;
+  /** Restrict results to a single item type (e.g. "file", "email"). */
+  itemType?: string;
+  /** Max results. The Gateway clamps to 1..500; default 20. */
+  limit?: number;
+  /** Blend semantic (vector) ranking with keyword search. Defaults to true on the Gateway. */
+  semantic?: boolean;
+  /** Neighbouring chunks to include per hit. The Gateway clamps to 0..8; default 2. */
+  contextChunks?: number;
+};
+
+/**
+ * A ranked index hit: a {@link NimbusItem} enriched with ranking metadata.
+ * Mirrors the Gateway's `index.searchRanked` result shape.
+ */
+export type RankedSearchItem = NimbusItem & {
+  score: number;
+  indexPrimaryKey: string;
+  indexedType: string;
+  canonicalUrl?: string;
+  duplicates?: readonly string[];
+  semanticSnippet?: string;
+  bm25Rank?: number | null;
+  vectorRank?: number | null;
 };
 
 export type SessionTranscript = {
@@ -97,6 +130,17 @@ export class NimbusClient {
       sinceMs: params.sinceMs,
       untilMs: params.untilMs,
       limit: params.limit,
+    });
+  }
+
+  async searchRanked(params: RankedSearchParams = {}): Promise<RankedSearchItem[]> {
+    return await this.ipc.call<RankedSearchItem[]>("index.searchRanked", {
+      name: params.name,
+      service: params.service,
+      itemType: params.itemType,
+      limit: params.limit,
+      semantic: params.semantic,
+      contextChunks: params.contextChunks,
     });
   }
 
