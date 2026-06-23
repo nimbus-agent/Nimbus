@@ -65,4 +65,24 @@ describe("MockClient", () => {
     const r = await new MockClient().queryItems({});
     expect(r).toEqual({ items: [], meta: { limit: 0, total: 0 } });
   });
+
+  test("searchRanked returns [] by default and ranked fixtures when configured", async () => {
+    expect(await new MockClient().searchRanked({ name: "x" })).toEqual([]);
+    const c = new MockClient({
+      rankedItems: [
+        {
+          id: "d1",
+          service: "drive",
+          itemType: "file",
+          name: "Plan",
+          score: 0.9,
+          indexPrimaryKey: "1",
+          indexedType: "file",
+        },
+      ],
+    });
+    const r = await c.searchRanked();
+    expect(r).toHaveLength(1);
+    expect(r[0]?.name).toBe("Plan");
+  });
 });

@@ -89,6 +89,35 @@ describe("NimbusClient method dispatch", () => {
     expect((ipc.calls[0]?.params as Record<string, unknown>)["services"]).toEqual(["github"]);
   });
 
+  test("searchRanked routes to index.searchRanked and returns the rows", async () => {
+    const ipc = new FakeIpc([[{ id: "x", score: 1 }]]);
+    const out = await makeClient(ipc).searchRanked({
+      name: "plan",
+      service: "drive",
+      itemType: "file",
+      limit: 5,
+      semantic: false,
+      contextChunks: 1,
+    });
+    expect(ipc.calls[0]?.method).toBe("index.searchRanked");
+    expect(ipc.calls[0]?.params).toMatchObject({
+      name: "plan",
+      service: "drive",
+      itemType: "file",
+      limit: 5,
+      semantic: false,
+      contextChunks: 1,
+    });
+    expect(out).toEqual([{ id: "x", score: 1 }]);
+  });
+
+  test("searchRanked tolerates being called with no params", async () => {
+    const ipc = new FakeIpc([[]]);
+    const out = await makeClient(ipc).searchRanked();
+    expect(ipc.calls[0]?.method).toBe("index.searchRanked");
+    expect(out).toEqual([]);
+  });
+
   test("askStream returns a handle with a string streamId", async () => {
     const ipc = new FakeIpc([{ streamId: "stream-1" }]);
     const h = makeClient(ipc).askStream("hi");
