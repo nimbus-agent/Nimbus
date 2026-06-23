@@ -200,9 +200,9 @@ export function createWorkdaySyncable(options: WorkdaySyncableOptions): Syncable
       let accessToken: string;
       try {
         accessToken =
-          options.loadAccessToken !== undefined
-            ? await options.loadAccessToken(ctx.vault)
-            : await getValidWorkdayAccessToken(ctx.vault);
+          options.loadAccessToken === undefined
+            ? await getValidWorkdayAccessToken(ctx.vault)
+            : await options.loadAccessToken(ctx.vault);
       } catch {
         return syncNoopResult(cursor, t0);
       }

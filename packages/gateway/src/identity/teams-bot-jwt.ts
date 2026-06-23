@@ -69,7 +69,7 @@ export function buildTeamsBotJwtValidator(
   return async (authorizationHeader, nowMs) => {
     if (authorizationHeader === null) return false;
     // RFC 7235: the auth scheme is case-insensitive (`Bearer` / `bearer`).
-    const match = /^Bearer\s+(.+)$/i.exec(authorizationHeader);
+    const match = /^Bearer\s+(\S.*)$/i.exec(authorizationHeader);
     if (match === null) return false;
     const token = (match[1] ?? "").trim();
     if (token === "") return false;

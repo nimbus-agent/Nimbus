@@ -38,14 +38,46 @@ export const JOB_POSTING_ALLOWED_FIELDS = [
 // Separator-free PII tokens. Matched against a normalized key (see isPiiKey) so the same
 // patterns catch snake_case, kebab-case, and camelCase (home_address / home-address /
 // homeAddress all normalize to "homeaddress").
-const PII_KEY_RE =
-  /(ssn|socialsecurity|nationalid|taxid|passport|salary|compensation|totalcomp|remuneration|dob|dateofbirth|birth|homeaddress|address|street|postal|zip|medical|fmla|disability|bank|accountnumber|routing|iban|swift|gender|ethnicity|race|religion|marital|personalemail|personalphone)/;
+const PII_KEY_TOKENS = [
+  "ssn",
+  "socialsecurity",
+  "nationalid",
+  "taxid",
+  "passport",
+  "salary",
+  "compensation",
+  "totalcomp",
+  "remuneration",
+  "dob",
+  "dateofbirth",
+  "birth",
+  "homeaddress",
+  "address",
+  "street",
+  "postal",
+  "zip",
+  "medical",
+  "fmla",
+  "disability",
+  "bank",
+  "accountnumber",
+  "routing",
+  "iban",
+  "swift",
+  "gender",
+  "ethnicity",
+  "race",
+  "religion",
+  "marital",
+  "personalemail",
+  "personalphone",
+] as const;
 
 export function isPiiKey(key: string): boolean {
   // Normalize separators + case so camelCase / snake_case / kebab-case PII keys all match.
   // Over-matching is the safe direction for a denylist backstop — it drops data, never leaks it.
   const normalized = key.toLowerCase().replace(/[\s._-]/g, "");
-  return PII_KEY_RE.test(normalized);
+  return PII_KEY_TOKENS.some((token) => normalized.includes(token));
 }
 
 export function pickAllowed<T extends Record<string, unknown>>(
