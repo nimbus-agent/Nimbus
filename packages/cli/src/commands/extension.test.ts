@@ -293,7 +293,7 @@ describe("runExtensionInstall", () => {
     });
     const { client, calls } = createMockIpcClient([{ id: "x", version: "1", installPath: "/p" }]);
     await runExtensionInstall(client, ["install", "./ext", "-y"], ["./ext"]);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 
   test("TTY mode with confirm-true completes install", async () => {
@@ -304,7 +304,7 @@ describe("runExtensionInstall", () => {
     setFixture({ clackAnswer: true });
     const { client, calls } = createMockIpcClient([{ id: "ext", version: "1", installPath: "/p" }]);
     await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 
   test("TTY mode with confirm-false aborts install (prints Cancelled)", async () => {
@@ -315,7 +315,7 @@ describe("runExtensionInstall", () => {
     setFixture({ clackAnswer: false });
     const { client, calls } = createMockIpcClient([]);
     await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
     expect(out.stdout).toContain("Cancelled.");
   });
 
@@ -327,7 +327,7 @@ describe("runExtensionInstall", () => {
     setFixture({ clackAnswer: CLACK_CANCEL });
     const { client, calls } = createMockIpcClient([]);
     await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -443,7 +443,7 @@ describe("runExtensionRemove", () => {
     });
     const { client, calls } = createMockIpcClient([{ ok: true }]);
     await runExtensionRemove(client, ["remove", "x", "-y"], ["x"]);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 
   test("TTY mode with confirm-true completes removal", async () => {
@@ -454,7 +454,7 @@ describe("runExtensionRemove", () => {
     setFixture({ clackAnswer: true });
     const { client, calls } = createMockIpcClient([{ ok: true }]);
     await runExtensionRemove(client, ["remove", "my.ext"], ["my.ext"]);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
   });
 
   test("TTY mode with confirm-false aborts removal (prints Cancelled)", async () => {
@@ -465,7 +465,7 @@ describe("runExtensionRemove", () => {
     setFixture({ clackAnswer: false });
     const { client, calls } = createMockIpcClient([]);
     await runExtensionRemove(client, ["remove", "my.ext"], ["my.ext"]);
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
     expect(out.stdout).toContain("Cancelled.");
   });
 });
@@ -1040,7 +1040,7 @@ describe("runExtensionList --tree (T2 PR 4)", () => {
       { extension: { forwardDeps: [] } },
     ]);
     await runExtensionList(client, ["list", "--tree"]);
-    expect(calls.length).toBe(3);
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.method).toBe("extension.list");
     expect(calls[1]?.method).toBe("extension.info");
     expect(calls[2]?.method).toBe("extension.info");

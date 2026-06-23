@@ -36,14 +36,14 @@ describe("V30 migration — vec_items_1536 + dim-aware triggers", () => {
     const tables = db
       .query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_items_1536'`)
       .all() as Array<{ name: string }>;
-    expect(tables.length).toBe(1);
+    expect(tables).toHaveLength(1);
     const triggers = db
       .query(
         `SELECT name, sql FROM sqlite_master WHERE type = 'trigger'
          AND name IN ('embedding_chunk_ad_delete_vec384', 'embedding_chunk_ad_delete_vec1536')`,
       )
       .all() as Array<{ name: string; sql: string }>;
-    expect(triggers.length).toBe(2);
+    expect(triggers).toHaveLength(2);
     const t384 = triggers.find((t) => t.name === "embedding_chunk_ad_delete_vec384");
     const t1536 = triggers.find((t) => t.name === "embedding_chunk_ad_delete_vec1536");
     expect(t384?.sql).toContain("WHEN OLD.dims = 384");

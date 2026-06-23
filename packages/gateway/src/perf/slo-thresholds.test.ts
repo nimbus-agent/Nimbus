@@ -4,7 +4,7 @@ import type { BenchSurfaceId } from "./types.ts";
 
 describe("SLO_THRESHOLDS — schema invariants", () => {
   test("contains exactly 29 rows", () => {
-    expect(SLO_THRESHOLDS.length).toBe(29);
+    expect(SLO_THRESHOLDS).toHaveLength(29);
   });
 
   test("every UX row carries a gateClass and has refMax populated", () => {

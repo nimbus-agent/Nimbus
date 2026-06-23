@@ -224,7 +224,7 @@ describe("G5 — production key guard + semver re-check", () => {
     process.env["NIMBUS_DEV_UPDATER_PUBLIC_KEY"] = "aHCEta3sioGdbjyRtS0TdSowop//jqaBr3MqDVb7nSc=";
     try {
       const key = loadUpdaterPublicKey();
-      expect(key.length).toBe(32);
+      expect(key).toHaveLength(32);
     } finally {
       if (prevEnv === undefined) delete process.env["NODE_ENV"];
       else process.env["NODE_ENV"] = prevEnv;
@@ -257,7 +257,7 @@ describe("G5 — production key guard + semver re-check", () => {
     });
     await updater.checkNow();
     await expect(updater.applyUpdate()).rejects.toThrow(/not newer than/);
-    expect(fetched.length).toBe(0);
+    expect(fetched).toHaveLength(0);
   });
 
   test("applyUpdate throws before download when manifest version is older than current", async () => {
@@ -284,7 +284,7 @@ describe("G5 — production key guard + semver re-check", () => {
     });
     await updater2.checkNow();
     await expect(updater2.applyUpdate()).rejects.toThrow(/not newer than/);
-    expect(installerCalls.length).toBe(0);
+    expect(installerCalls).toHaveLength(0);
   });
 });
 

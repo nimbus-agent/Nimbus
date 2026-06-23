@@ -406,7 +406,7 @@ describe("listTools wraps every result in the I11 envelope", () => {
       result_envelope: string;
     }>;
 
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     const [ok, err] = rows;
     if (ok === undefined || err === undefined) throw new Error("rows missing");
 

@@ -16,7 +16,7 @@ function stripHtml(raw: unknown): string {
     return "";
   }
   return raw
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<[^<>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

@@ -170,7 +170,7 @@ describe("LanServer gate (G4)", () => {
       method: "vault.list",
     });
     expect(resp.error?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
   });
 
   test("write method without write grant is rejected with ERR_LAN_WRITE_FORBIDDEN", async () => {
@@ -181,7 +181,7 @@ describe("LanServer gate (G4)", () => {
       method: "engine.ask",
     });
     expect(resp.error?.message).toMatch(/ERR_LAN_WRITE_FORBIDDEN/);
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -391,7 +391,7 @@ describe("LanServer oversized frame post-handshake", () => {
 
     expect(closed).toBe(true);
     // Rate-limit failure must NOT have been recorded (peerPubkey was set)
-    expect(recordedFailures.length).toBe(0);
+    expect(recordedFailures).toHaveLength(0);
   });
 });
 
@@ -544,7 +544,7 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
       JSON.stringify({ kind: "pair", client_pubkey: validPub, pairing_code: "wrong-code" }),
     );
     expect(reply?.kind).toBe("pair_err");
-    expect(failures.length).toBe(1);
+    expect(failures).toHaveLength(1);
   });
 });
 

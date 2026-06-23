@@ -42,7 +42,7 @@ describe("share-store", () => {
     insertShareRecord(db, rec({ contentHash: "live", expiresAt: null }));
     insertShareRecord(db, rec({ contentHash: "dead", expiresAt: 1 }));
     expect(listShareRecords(db, { now: 1000 }).map((r) => r.contentHash)).toEqual(["live"]);
-    expect(listShareRecords(db, { now: 1000, includeExpired: true }).length).toBe(2);
+    expect(listShareRecords(db, { now: 1000, includeExpired: true })).toHaveLength(2);
     db.close();
   });
 

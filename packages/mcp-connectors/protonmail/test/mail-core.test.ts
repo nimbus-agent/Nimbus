@@ -16,7 +16,7 @@ describe("clampLimit", () => {
 describe("capPreview", () => {
   test("normalizes whitespace + trims and truncates", () => {
     expect(capPreview("  hi\r\n\r\n\r\nthere   you  ")).toBe("hi\nthere you");
-    expect(capPreview("x".repeat(PREVIEW_MAX_CHARS + 500)).length).toBe(PREVIEW_MAX_CHARS);
+    expect(capPreview("x".repeat(PREVIEW_MAX_CHARS + 500))).toHaveLength(PREVIEW_MAX_CHARS);
     expect(capPreview("")).toBe("");
   });
 });

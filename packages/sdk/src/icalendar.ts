@@ -116,7 +116,7 @@ function hasParam(line: string, param: string): boolean {
   if (nameEnd === -1 || nameEnd > colonIdx) return false;
   const paramSection = line.slice(nameEnd + 1, colonIdx).toUpperCase();
   const target = param.toUpperCase();
-  return paramSection.split(";").some((tok) => tok === target);
+  return paramSection.split(";").includes(target);
 }
 
 /**
@@ -320,10 +320,10 @@ export interface BuildEventInput {
  */
 function escapeText(value: string): string {
   return value
-    .replace(/\\/g, "\\\\")
-    .replace(/;/g, "\\;")
-    .replace(/,/g, "\\,")
-    .replace(/\r?\n/g, "\\n");
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll(";", String.raw`\;`)
+    .replaceAll(",", String.raw`\,`)
+    .replaceAll(/\r?\n/g, String.raw`\n`);
 }
 
 const CRLF = "\r\n";

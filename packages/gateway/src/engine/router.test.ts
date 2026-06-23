@@ -352,7 +352,7 @@ describe("classifyIntent — Anthropic happy paths", () => {
     const longInput = "x".repeat(10_000);
     await classifyIntent(longInput);
     const body = JSON.parse(capturedBody) as { messages: Array<{ content: string }> };
-    expect(body.messages[0]?.content.length).toBe(8000);
+    expect(body.messages[0]?.content).toHaveLength(8000);
   });
 });
 
@@ -555,7 +555,7 @@ describe("classifyIntent — OpenAI happy paths", () => {
     expect(body.temperature).toBe(0);
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.model).not.toMatch(/^openai\//);
-    expect(body.messages.length).toBe(2);
+    expect(body.messages).toHaveLength(2);
     expect(body.messages[0]?.role).toBe("system");
     expect(body.messages[1]?.role).toBe("user");
   });

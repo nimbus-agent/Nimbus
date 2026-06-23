@@ -159,7 +159,7 @@ describe("optionalLimit — error paths", () => {
     const r = call("people.list", { limit: 1.9 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 });
 
@@ -233,7 +233,7 @@ describe("people.list", () => {
     const r = call("people.list", { unlinkedOnly: false });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("metadata defaults to {} when person.metadata is empty", () => {
@@ -268,7 +268,7 @@ describe("people.unlinked", () => {
     const r = call("people.unlinked", { limit: 2 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 });
 
@@ -289,7 +289,7 @@ describe("people.search", () => {
     const r = call("people.search", { query: "" });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("missing query is treated as empty", () => {
@@ -297,7 +297,7 @@ describe("people.search", () => {
     const r = call("people.search", {});
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 
   test("non-string query is treated as empty", () => {
@@ -305,7 +305,7 @@ describe("people.search", () => {
     const r = call("people.search", { query: 42 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 });
 
@@ -371,7 +371,7 @@ describe("people.items", () => {
     const r = call("people.items", { personId: "p1", limit: 2 });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 });
 

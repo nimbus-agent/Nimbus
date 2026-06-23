@@ -141,7 +141,7 @@ describe("writeJobSummary", () => {
       const huge = "A".repeat(70000);
       writeJobSummary(huge);
       const content = readFileSync(summaryFile, "utf8");
-      expect(content.length).toBe(12 + 65536 + 1); // "hello world\n" + 64kb + "\n"
+      expect(content).toHaveLength(12 + 65536 + 1); // "hello world\n" + 64kb + "\n"
     } finally {
       if (saved === undefined) delete process.env.GITHUB_STEP_SUMMARY;
       else process.env.GITHUB_STEP_SUMMARY = saved;

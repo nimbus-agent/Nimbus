@@ -27,5 +27,5 @@ test("TTL safety-net resolves false and purges if no response", async () => {
   b.setBroadcast(() => {});
   const p = b.request({ peerId: "p", namespace: "n", ref: "HEAD", purpose: "x" }, 20);
   expect(await p).toBe(false);
-  expect(b.pendingIds().length).toBe(0);
+  expect(b.pendingIds()).toHaveLength(0);
 });

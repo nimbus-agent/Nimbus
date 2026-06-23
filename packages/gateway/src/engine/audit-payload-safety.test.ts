@@ -69,7 +69,7 @@ describe("audit payload safety (§7.8)", () => {
         },
       },
     });
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     const json = auditCalls[0]?.actionJson ?? "";
     assertNoCredentialArtifacts(json, "approved file.move audit");
   });
@@ -80,7 +80,7 @@ describe("audit payload safety (§7.8)", () => {
       type: "slack.message.post",
       payload: { mcpToolId: "slack_post", input: { channel: "C1", text: "hi" } },
     });
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     const json = auditCalls[0]?.actionJson ?? "";
     assertNoCredentialArtifacts(json, "rejected slack.message.post audit");
   });
@@ -92,7 +92,7 @@ describe("audit payload safety (§7.8)", () => {
       type: "filesystem_search_files",
       payload: { input: { path: "/data", pattern: big } },
     });
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     const json = auditCalls[0]?.actionJson ?? "";
     expect(json.endsWith("…[truncated]")).toBe(true);
     expect(json.length).toBeLessThanOrEqual(4200);
@@ -104,7 +104,7 @@ describe("audit payload safety (§7.8)", () => {
       type: "filesystem_search_files",
       payload: { input: { path: "/data", pattern: "*.md" } },
     });
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     assertNoCredentialArtifacts(auditCalls[0]?.actionJson ?? "", "filesystem_search_files audit");
   });
 
@@ -159,7 +159,7 @@ describe("audit payload safety (§7.8)", () => {
       type: "linear.issue.create",
       payload: { mcpToolId: "x", input: { teamId: "t", title: "x" } },
     });
-    expect(auditCalls.length).toBe(1);
+    expect(auditCalls).toHaveLength(1);
     assertNoCredentialArtifacts(
       auditCalls[0]?.actionJson ?? "",
       "linear.issue.create via bindConsentChannel",

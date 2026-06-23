@@ -69,7 +69,7 @@ describe("handleConnectorListStatus", () => {
     registerConnector("github");
     const r = handleConnectorListStatus(buildCtx(undefined));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 
   test("empty-string serviceId filter is treated as no filter", () => {
@@ -77,14 +77,14 @@ describe("handleConnectorListStatus", () => {
     registerConnector("slack");
     const r = handleConnectorListStatus(buildCtx({ serviceId: "" }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("non-string serviceId is treated as no filter", () => {
     registerConnector("github");
     const r = handleConnectorListStatus(buildCtx({ serviceId: 42 }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 
   test("valid serviceId filter returns subset", () => {
@@ -182,7 +182,7 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 5);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 2 }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("limit < 1 is clamped to 1", () => {
@@ -190,7 +190,7 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 3);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 0 }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(1);
+    expect(r.value as unknown[]).toHaveLength(1);
   });
 
   test("limit > 500 is clamped to 500", () => {
@@ -198,7 +198,7 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 2);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 99_999 }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("limit float is floored", () => {
@@ -206,7 +206,7 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 4);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 2.9 }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(2);
+    expect(r.value as unknown[]).toHaveLength(2);
   });
 
   test("non-finite limit is ignored (default 100)", () => {
@@ -216,7 +216,7 @@ describe("handleConnectorHealthHistory", () => {
       buildCtx({ service: "github", limit: Number.POSITIVE_INFINITY }),
     );
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(3);
+    expect(r.value as unknown[]).toHaveLength(3);
   });
 
   test("non-number limit is ignored (default 100)", () => {
@@ -224,7 +224,7 @@ describe("handleConnectorHealthHistory", () => {
     seedHistory("github", 3);
     const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: "many" }));
     expect(r.kind).toBe("hit");
-    expect((r.value as unknown[]).length).toBe(3);
+    expect(r.value as unknown[]).toHaveLength(3);
   });
 
   test("missing service throws -32602", () => {

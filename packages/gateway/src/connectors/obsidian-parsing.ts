@@ -2,8 +2,8 @@ import { basename } from "node:path";
 import yaml from "js-yaml";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-const H1_RE = /^#\s+(.+)$/m;
-const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+const H1_RE = /^#\s+(\S.*)$/m;
+const WIKILINK_RE = /\[\[([^\]\n]+)\]\]/g;
 const DAILY_NOTE_RE = /^(\d{4})-(\d{2})-(\d{2})\.md$/;
 
 export type ParsedNote = {

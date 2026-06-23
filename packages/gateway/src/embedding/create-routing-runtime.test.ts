@@ -342,7 +342,7 @@ describe.skipIf(!VEC_AVAILABLE)(
         const runtime = await factory(h.db, h.paths, silentLogger, h.toml, h.vault);
         const vec = await runtime?.embedQuery("hello");
         expect(vec).toBeInstanceOf(Float32Array);
-        expect(vec?.length).toBe(384);
+        expect(vec).toHaveLength(384);
         expect(vec?.[0]).toBe(1);
       } finally {
         h.cleanup();
@@ -357,8 +357,8 @@ describe.skipIf(!VEC_AVAILABLE)(
         const out = await runtime?.embedQueryDual("hello");
         expect(out?.vec384).toBeInstanceOf(Float32Array);
         expect(out?.vec1536).toBeInstanceOf(Float32Array);
-        expect(out?.vec384?.length).toBe(384);
-        expect(out?.vec1536?.length).toBe(1536);
+        expect(out?.vec384).toHaveLength(384);
+        expect(out?.vec1536).toHaveLength(1536);
         expect(out?.model384).toBe("local:all-MiniLM-L6-v2");
         expect(out?.model1536).toBe("openai:text-embedding-3-small");
       } finally {

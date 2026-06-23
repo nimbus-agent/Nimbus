@@ -58,7 +58,7 @@ describe("verifyExtensionsBestEffort", () => {
     const db = new Database(":memory:");
     const { logger, warns } = memoryLogger();
     await verifyExtensionsBestEffort(db, logger);
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
   });
 
   test("manifest hash mismatch logs error and disables extension", async () => {
@@ -80,7 +80,7 @@ describe("verifyExtensionsBestEffort", () => {
     const { logger, warns, errors } = memoryLogger();
     await verifyExtensionsBestEffort(db, logger);
     expect(errors.some((w) => JSON.stringify(w).includes("manifest hash mismatch"))).toBe(true);
-    expect(warns.length).toBe(0);
+    expect(warns).toHaveLength(0);
     const row = db.query("SELECT enabled FROM extension WHERE id = ?").get("bad") as {
       enabled: number;
     };
@@ -820,7 +820,7 @@ describe("verifyExtensionsBestEffort — runHashVerification branch coverage", (
     try {
       await verifyExtensionsBestEffort(db, logger);
       expect(warns.some((w) => JSON.stringify(w).includes("manifest file missing"))).toBe(true);
-      expect(errors.length).toBe(0);
+      expect(errors).toHaveLength(0);
       // Extension must NOT be hard-disabled — manifest-missing is a warn path that returns false
       // without calling disableAndStopExtension
       const row = db
@@ -867,7 +867,7 @@ describe("verifyExtensionsBestEffort — runHashVerification branch coverage", (
     try {
       await verifyExtensionsBestEffort(db, logger);
       expect(warns.some((w) => JSON.stringify(w).includes("entry file missing"))).toBe(true);
-      expect(errors.length).toBe(0);
+      expect(errors).toHaveLength(0);
       const row = db.query("SELECT enabled FROM extension WHERE id = ?").get("ext.no-entry-rh") as {
         enabled: number;
       };

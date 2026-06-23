@@ -73,7 +73,7 @@ describe("invokeTeamTool (I19)", () => {
       args: { title: "x" },
     });
     expect(r).toEqual({ ok: true, tool: "github_create_issue" });
-    expect(spawnCalls.length).toBe(1);
+    expect(spawnCalls).toHaveLength(1);
     // The spawn seam receives a team-scoped view that reads the team secret, not an operator key.
     expect(await spawnCalls[0]!.vaultView.get("github.pat")).toBe("TEAMPAT");
   });
@@ -85,7 +85,7 @@ describe("invokeTeamTool (I19)", () => {
     await expect(
       invokeTeamTool(d, { entry: "prod-aws", service: "github", toolId: "t", args: {} }),
     ).rejects.toThrow(/missing required secret/);
-    expect(spawnCalls.length).toBe(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 
   it("never falls through to the operator's own credential", async () => {
@@ -94,7 +94,7 @@ describe("invokeTeamTool (I19)", () => {
     await expect(
       invokeTeamTool(d, { entry: "prod-aws", service: "github", toolId: "t", args: {} }),
     ).rejects.toThrow(/missing required secret/);
-    expect(spawnCalls.length).toBe(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 
   it("rejects an unknown / OAuth-only service (no static secret keys)", async () => {
@@ -102,7 +102,7 @@ describe("invokeTeamTool (I19)", () => {
     await expect(
       invokeTeamTool(d, { entry: "prod-aws", service: "google_drive", toolId: "t", args: {} }),
     ).rejects.toThrow(/no team-injectable secret keys/);
-    expect(spawnCalls.length).toBe(0);
+    expect(spawnCalls).toHaveLength(0);
   });
 
   it("does not expose the secret value in the returned result", async () => {

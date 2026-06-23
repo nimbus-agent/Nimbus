@@ -110,7 +110,7 @@ describe("LanServer.handleHandshake — S3-F4 / S3-F6", () => {
     const { port } = await startServer(makeRateLimit(calls), hostKp);
     const reply = await sendHandshake(port, "hello", new Uint8Array(32).fill(7));
     expect(reply?.kind).toBe("hello_err");
-    expect(calls.failures.length).toBe(1);
+    expect(calls.failures).toHaveLength(1);
     expect(calls.failures[0]).toBe("127.0.0.1");
   });
 
@@ -120,7 +120,7 @@ describe("LanServer.handleHandshake — S3-F4 / S3-F6", () => {
     const { port } = await startServer(makeRateLimit(calls), hostKp);
     const reply = await sendHandshake(port, "hello", new Uint8Array(32).fill(7));
     expect(reply?.kind).toBe("hello_err");
-    expect(calls.failures.length).toBe(0);
+    expect(calls.failures).toHaveLength(0);
   });
 
   test("S3-F6 — locked-out pair receives pair_err (not hello_err)", async () => {

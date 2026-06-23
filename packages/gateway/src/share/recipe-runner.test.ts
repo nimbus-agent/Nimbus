@@ -100,7 +100,7 @@ describe("stepsFromShare", () => {
       },
     } as unknown as ShareFile;
     const { steps } = stepsFromShare(share);
-    expect(steps.length).toBe(2);
+    expect(steps).toHaveLength(2);
     expect(steps[0]?.stepId).toBe("step-1");
     expect(steps[0]?.tool).toBe("gmail_get");
     expect(steps[1]?.stepId).toBe("step-2");

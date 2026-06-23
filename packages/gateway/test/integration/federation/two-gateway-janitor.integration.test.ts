@@ -96,7 +96,7 @@ test("payoff: janitor probes a downstream over the wire — touched reports rece
     await bBuilt.lanServer.stop();
     const offline = await fanOutProbe(deps, { resourceRef: "i-deadbeef", purpose: "janitor" });
     expect(offline.perPeer).toEqual([]);
-    expect(offline.gaps.length).toBe(1);
+    expect(offline.gaps).toHaveLength(1);
   } finally {
     await bBuilt.lanServer.stop();
     bIndex.close();

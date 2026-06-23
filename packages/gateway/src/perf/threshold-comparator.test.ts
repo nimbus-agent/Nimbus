@@ -25,7 +25,7 @@ describe("compareAgainstHistory", () => {
   test("returns one entry per gated SLO row even when missing from current", () => {
     const current = fakeLine("gha-ubuntu", {});
     const out = compareAgainstHistory(current, null, SLO_THRESHOLDS, "gha-ubuntu");
-    expect(out.length).toBe(SLO_THRESHOLDS.length);
+    expect(out).toHaveLength(SLO_THRESHOLDS.length);
   });
 
   test("first run on main: previous=null → gate-class row S2-a → no-baseline", () => {

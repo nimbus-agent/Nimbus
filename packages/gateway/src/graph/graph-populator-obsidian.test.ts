@@ -35,7 +35,7 @@ test("syncObsidianNoteGraph upserts an obsidian_note entity and backlink edges f
       "SELECT type, external_id, label FROM graph_entity WHERE type = 'obsidian_note' ORDER BY external_id",
     )
     .all() as Array<{ type: string; external_id: string; label: string }>;
-  expect(ents.length).toBe(2);
+  expect(ents).toHaveLength(2);
 
   const rels = db.query("SELECT type FROM graph_relation").all() as Array<{ type: string }>;
   expect(rels.some((r) => r.type === "backlinks")).toBe(true);
@@ -79,5 +79,5 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
   const rels = db
     .query("SELECT from_id, to_id, type FROM graph_relation WHERE type = 'backlinks'")
     .all() as Array<{ from_id: string; to_id: string; type: string }>;
-  expect(rels.length).toBe(1);
+  expect(rels).toHaveLength(1);
 });

@@ -37,7 +37,7 @@ describe("scoreAndGroup", () => {
       },
     ];
     const sections = scoreAndGroup(items, involvement);
-    expect(sections.length).toBe(1);
+    expect(sections).toHaveLength(1);
     expect(sections[0]?.serviceId).toBe("github");
     expect(sections[0]?.items.map((i) => i.title).sort((a, b) => a.localeCompare(b))).toEqual([
       "high",

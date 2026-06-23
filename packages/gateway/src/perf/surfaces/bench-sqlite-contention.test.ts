@@ -37,7 +37,7 @@ describe("runSqliteContentionOnce", () => {
         durationMs: 50,
       },
     );
-    expect(samples.length).toBe(1);
+    expect(samples).toHaveLength(1);
     expect(samples[0]).toBeGreaterThan(0);
     expect(nWorkersSeen).toBe(3);
     expect(S10_BUSY_RETRIES.value).toBe(21);

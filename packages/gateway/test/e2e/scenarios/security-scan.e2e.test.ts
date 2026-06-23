@@ -69,7 +69,7 @@ describe("nimbus security scan (e2e, in-process)", () => {
     const audits = db
       .query(`SELECT hitl_status, action_json FROM audit_log WHERE action_type = ?`)
       .all("security.scan_completed") as Array<{ hitl_status: string; action_json: string }>;
-    expect(audits.length).toBe(1);
+    expect(audits).toHaveLength(1);
     expect(audits[0]!.hitl_status).toBe("not_required");
     expect(audits[0]!.action_json).not.toContain(PUBLIC_AWS_TEST_KEY);
     db.close();

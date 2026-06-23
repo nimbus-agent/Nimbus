@@ -9,7 +9,7 @@ function b64url(bytes: Uint8Array): string {
     .toString("base64")
     .replaceAll("+", "-")
     .replaceAll("/", "_")
-    .replace(/=+$/, "");
+    .replace(/={1,2}$/, "");
 }
 
 function b64urlJson(obj: unknown): string {

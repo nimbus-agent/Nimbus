@@ -92,7 +92,7 @@ describe("mapZoteroReferenceToItem", () => {
     const row = mapZoteroReferenceToItem(makeItem({ title: long }), { syncedAt: NOW });
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title).toBe(`${"x".repeat(120)}…`);
-    expect(row.title.length).toBe(121);
+    expect(row.title).toHaveLength(121);
   });
 
   test("title falls back to `<itemType> <key>` when title missing/empty", () => {

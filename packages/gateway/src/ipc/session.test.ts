@@ -78,7 +78,7 @@ describe("ClientSession.push — disposed guard", () => {
     const before = written.length;
     session.push(enc(requestLine("ping", 1)));
     // Nothing should be written; dispose not called again
-    expect(written.length).toBe(before);
+    expect(written).toHaveLength(before);
     expect(disposed).toHaveLength(1);
   });
 });

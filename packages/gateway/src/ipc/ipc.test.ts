@@ -217,7 +217,7 @@ describe("ipc server integration", () => {
       );
       const line = await rpcCall(listenPath, "people.search", { query: "ada", limit: 10 });
       const res = JSON.parse(line) as { result?: Array<{ id: string; canonicalEmail?: string }> };
-      expect(res.result?.length).toBe(1);
+      expect(res.result).toHaveLength(1);
       expect(res.result?.[0]?.id).toBe("p-test-1");
     });
   });
@@ -227,7 +227,7 @@ describe("ipc server integration", () => {
       async ({ listenPath }) => {
         const line = await rpcCall(listenPath, "connector.listStatus", {});
         const res = JSON.parse(line) as { result?: Array<{ serviceId: string }> };
-        expect(res.result?.length).toBe(1);
+        expect(res.result).toHaveLength(1);
         expect(res.result?.[0]?.serviceId).toBe("google_drive");
       },
       {
@@ -313,7 +313,7 @@ describe("ipc server integration", () => {
           sock.on("error", reject);
         });
         await new Promise<void>((r) => setImmediate(r));
-        expect(clientIds.length).toBe(1);
+        expect(clientIds).toHaveLength(1);
         const idA = clientIds[0];
         if (idA === undefined) {
           throw new Error("expected client id");
@@ -362,7 +362,7 @@ describe("ipc server integration", () => {
           },
         });
         await new Promise((r) => setTimeout(r, 0));
-        expect(clientIds.length).toBe(1);
+        expect(clientIds).toHaveLength(1);
         const idA = clientIds[0];
         if (idA === undefined) {
           throw new Error("expected client id");

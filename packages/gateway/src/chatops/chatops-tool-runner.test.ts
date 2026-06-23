@@ -35,7 +35,7 @@ describe("buildChatopsToolRunner (I19-pattern fail-closed bot-tool invocation)",
     await expect(run("slack", "slack_user_info", { user: "U1" })).rejects.toThrow(
       /missing required bot secret/,
     );
-    expect(calls.length).toBe(0);
+    expect(calls).toHaveLength(0);
   });
 
   test("the missing-key error never contains a secret value", async () => {

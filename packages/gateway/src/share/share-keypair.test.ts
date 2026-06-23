@@ -21,7 +21,7 @@ describe("ensureShareKeypair", () => {
   test("generates and persists a 32-byte keypair on first call", async () => {
     const v = fakeVault();
     const kp = await ensureShareKeypair(v.vault);
-    expect(Buffer.from(kp.pubkeyB64, "base64").length).toBe(32);
+    expect(Buffer.from(kp.pubkeyB64, "base64")).toHaveLength(32);
     expect(v.store.get(SHARE_SIGNING_PRIVKEY)).toBe(kp.privkeyB64);
     expect(v.store.get(SHARE_SIGNING_PUBKEY)).toBe(kp.pubkeyB64);
   });

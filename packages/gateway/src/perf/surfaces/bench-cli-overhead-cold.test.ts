@@ -8,7 +8,7 @@ describe("runCliOverheadColdOnce (S11-a)", () => {
       { runs: 1, runner: "local-dev" },
       { spawn: fakeSpawnExitsClean() },
     );
-    expect(samples.length).toBe(CLI_COLD_SAMPLES_PER_RUN);
+    expect(samples).toHaveLength(CLI_COLD_SAMPLES_PER_RUN);
     for (const s of samples) {
       expect(Number.isFinite(s)).toBe(true);
     }

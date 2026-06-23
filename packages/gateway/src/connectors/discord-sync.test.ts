@@ -508,7 +508,7 @@ describeWithFetchRestore("discord-sync", () => {
       .prepare("SELECT title FROM item WHERE service = 'discord' AND external_id = 'c1:m1'")
       .get() as { title: string } | undefined;
     // Non-string content → "" body → title is the display name, truncated to 512.
-    expect(row?.title.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 
   test("over-long message content is truncated to a 512-char body preview", async () => {

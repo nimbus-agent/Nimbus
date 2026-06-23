@@ -150,7 +150,7 @@ describe("UnauthenticatedError", () => {
     await forceSyncExpectReject(sched, "slack");
     sched.stop();
 
-    expect(notifications.length).toBe(1);
+    expect(notifications).toHaveLength(1);
     expect(notifications[0]?.[0]).toContain("authentication");
     expect(notifications[0]?.[1]).toContain("slack");
   });

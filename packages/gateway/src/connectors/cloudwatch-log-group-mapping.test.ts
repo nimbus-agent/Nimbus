@@ -144,6 +144,6 @@ describe("mapCloudwatchLogGroupToItem", () => {
     const longName = "x".repeat(300);
     const row = mapCloudwatchLogGroupToItem({ logGroupName: longName }, ctx());
     expect(row?.title.endsWith("…")).toBe(true);
-    expect(row?.title.length).toBe(257);
+    expect(row?.title).toHaveLength(257);
   });
 });

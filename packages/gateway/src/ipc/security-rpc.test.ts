@@ -135,7 +135,7 @@ describe("runSecurityScan — audit row", () => {
     const audits = db
       .query(`SELECT hitl_status, action_json FROM audit_log WHERE action_type = ?`)
       .all("security.scan_completed") as Array<{ hitl_status: string; action_json: string }>;
-    expect(audits.length).toBe(1);
+    expect(audits).toHaveLength(1);
     expect(audits[0]!.hitl_status).toBe("not_required");
     const payload = JSON.parse(audits[0]!.action_json) as Record<string, unknown>;
     expect(payload["items_scanned"]).toBe(1);

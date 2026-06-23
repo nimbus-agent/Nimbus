@@ -40,7 +40,7 @@ test("indexes endpoints from a Petstore 3.0 spec under a configured root", async
   const items = db
     .query("SELECT title, type, service FROM item WHERE service = 'openapi' ORDER BY title")
     .all() as Array<{ title: string; type: string; service: string }>;
-  expect(items.length).toBe(2);
+  expect(items).toHaveLength(2);
   for (const it of items) {
     expect(it.type).toBe("api_endpoint");
   }

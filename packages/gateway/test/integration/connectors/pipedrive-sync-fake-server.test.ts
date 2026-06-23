@@ -317,7 +317,7 @@ describe("pipedrive-sync against Bun.serve fake API", () => {
     const rows = h.db
       .query<Record<string, unknown>, []>("SELECT * FROM item WHERE service = 'pipedrive'")
       .all();
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(JSON.stringify(row).includes(TOKEN)).toBe(false);
     }

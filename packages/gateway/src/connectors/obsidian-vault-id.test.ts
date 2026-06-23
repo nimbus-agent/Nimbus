@@ -3,7 +3,7 @@ import { formatVaultName, vaultIdFromAbsolutePath } from "./obsidian-vault-id.ts
 
 test("vaultIdFromAbsolutePath is the first 12 hex of sha256(absolutePath)", () => {
   const id = vaultIdFromAbsolutePath("/Users/asaf/Documents/MyVault");
-  expect(id.length).toBe(12);
+  expect(id).toHaveLength(12);
   expect(/^[0-9a-f]{12}$/.test(id)).toBe(true);
 });
 

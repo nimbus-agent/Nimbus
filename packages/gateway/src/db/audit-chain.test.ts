@@ -91,7 +91,7 @@ describe("appendAuditEntry", () => {
     const rows = db
       .query(`SELECT id, row_hash, prev_hash FROM audit_log ORDER BY id ASC`)
       .all() as Array<{ id: number; row_hash: string; prev_hash: string }>;
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     expect(rows[1]?.prev_hash).toBe(rows[0]?.row_hash);
   });
 

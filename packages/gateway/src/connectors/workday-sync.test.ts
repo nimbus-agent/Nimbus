@@ -56,7 +56,7 @@ describe("createWorkdaySyncable", () => {
     const rows = db
       .prepare("SELECT external_id, type FROM item WHERE service = 'workday' ORDER BY external_id")
       .all() as Array<{ external_id: string; type: string }>;
-    expect(rows.length).toBe(3);
+    expect(rows).toHaveLength(3);
 
     const byId = Object.fromEntries(rows.map((row) => [row.external_id, row.type]));
     expect(byId["j1"]).toBe("job_posting");
@@ -231,7 +231,7 @@ describe("createWorkdaySyncable", () => {
     const rows = db
       .prepare("SELECT type, metadata FROM item WHERE service = 'workday'")
       .all() as Array<{ type: string; metadata: string }>;
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     const first = rows[0];
     expect(first).toBeDefined();
     expect(first?.type).toBe("report");

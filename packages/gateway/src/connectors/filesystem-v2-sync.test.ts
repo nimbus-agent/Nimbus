@@ -342,7 +342,7 @@ describe("excerptWithStartLine (pure)", () => {
     const body = Array.from({ length: 40 }, (_, i) => `  const v${i} = ${i};`).join("\n");
     const src = `export function big() {\n${body}\n}\n`;
     const { text, startLine } = excerptWithStartLine(src, "big", 20);
-    expect(text.length).toBe(20);
+    expect(text).toHaveLength(20);
     expect(startLine).not.toBeNull();
   });
 
@@ -350,7 +350,7 @@ describe("excerptWithStartLine (pure)", () => {
     const src = "const a = 1;\nfunction internal() { return a; }\n".repeat(10);
     const { text, startLine } = excerptWithStartLine(src, "doesNotExist", 15);
     expect(startLine).toBeNull();
-    expect(text.length).toBe(15); // flat.slice(0, maxChars)
+    expect(text).toHaveLength(15); // flat.slice(0, maxChars)
   });
 });
 
@@ -626,7 +626,7 @@ test("git_commit title is truncated to 200 chars when subject is very long", asy
   const row = db
     .query(`SELECT title FROM item WHERE service = 'filesystem' AND type = 'git_commit' LIMIT 1`)
     .get() as { title: string } | null;
-  expect(row?.title?.length).toBe(200);
+  expect(row?.title).toHaveLength(200);
 });
 
 // ── listPackageJsonFiles: maxFiles cap and non-package.json file ──────────────

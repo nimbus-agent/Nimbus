@@ -126,7 +126,7 @@ describe("LocalIndex", () => {
       url: canon,
     });
     const ranked = idx.searchRanked({ name: "hello", limit: 20 }, {});
-    expect(ranked.length).toBe(1);
+    expect(ranked).toHaveLength(1);
     expect(ranked[0]?.duplicates?.includes("github")).toBe(true);
   });
 
@@ -169,7 +169,7 @@ describe("LocalIndex", () => {
     expect(onlyFs.map((h) => h.id)).toEqual(["x1"]);
 
     const byType = idx.search({ itemType: "file", limit: 5 });
-    expect(byType.length).toBe(2);
+    expect(byType).toHaveLength(2);
   });
 
   test("delete removes item", () => {
@@ -224,7 +224,7 @@ describe("LocalIndex", () => {
     idx.recordAudit(e1);
     idx.recordAudit(e2);
     const list = idx.listAudit(10);
-    expect(list.length).toBe(2);
+    expect(list).toHaveLength(2);
     expect(list[0]?.actionType).toBe("filesystem.search");
     expect(list[1]?.actionType).toBe("file.delete");
   });
@@ -246,7 +246,7 @@ describe("LocalIndex", () => {
     const now = 1_700_000_000_000;
     idx.ensureConnectorSchedulerRegistration("google_drive", 60_000, now);
     const rows = idx.persistedConnectorStatuses();
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.serviceId).toBe("google_drive");
     expect(rows[0]?.intervalMs).toBe(60_000);
     expect(rows[0]?.status).toBe("ok");

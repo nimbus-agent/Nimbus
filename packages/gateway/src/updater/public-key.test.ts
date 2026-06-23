@@ -34,7 +34,7 @@ describe("UPDATER_PUBLIC_KEY_BASE64", () => {
 
   test("decodes to exactly 32 bytes", () => {
     const bytes = Buffer.from(UPDATER_PUBLIC_KEY_BASE64, "base64");
-    expect(bytes.length).toBe(32);
+    expect(bytes).toHaveLength(32);
   });
 });
 
@@ -42,7 +42,7 @@ describe("loadUpdaterPublicKey — no override", () => {
   test("returns a Uint8Array of exactly 32 bytes using the embedded key", () => {
     const key = loadUpdaterPublicKey();
     expect(key).toBeInstanceOf(Uint8Array);
-    expect(key.length).toBe(32);
+    expect(key).toHaveLength(32);
   });
 
   test("return value matches UPDATER_PUBLIC_KEY_BASE64 decoded bytes", () => {
@@ -64,7 +64,7 @@ describe("loadUpdaterPublicKey — NIMBUS_DEV_UPDATER_PUBLIC_KEY override", () =
 
     const key = loadUpdaterPublicKey();
     expect(key).toBeInstanceOf(Uint8Array);
-    expect(key.length).toBe(32);
+    expect(key).toHaveLength(32);
     expect(key).toEqual(overrideBytes);
   });
 

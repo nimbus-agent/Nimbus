@@ -458,7 +458,7 @@ describe("upsertChannelMessage", () => {
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("teams", "t1:c1:msg7")) as { title: string } | null;
     expect(row).not.toBeNull();
-    expect(row?.title.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 
   test("graphUserId empty string: authorId is null (L75 branch: graphUserId === '')", async () => {

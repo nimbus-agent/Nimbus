@@ -103,7 +103,7 @@ describe("NimbusClient method dispatch", () => {
     ipc.emit("agent.hitlBatch", { requestId: "r2", prompt: "No stream" });
     ipc.emit("agent.hitlBatch", { prompt: "no requestId" });
     ipc.emit("agent.hitlBatch", null);
-    expect(got.length).toBe(2);
+    expect(got).toHaveLength(2);
     expect(got[0]).toMatchObject({ requestId: "r1", prompt: "Approve?", streamId: "s1" });
     expect(got[1]).toMatchObject({ requestId: "r2", prompt: "No stream" });
     expect(got[1]).not.toHaveProperty("streamId");

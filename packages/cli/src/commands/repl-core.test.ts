@@ -108,7 +108,7 @@ describe("runReplTurn", () => {
     await runReplTurn(mock.client, "hi", "sess-1", write);
     const assistantCall = mock.calls[2];
     const params = assistantCall?.params as Record<string, unknown>;
-    expect(String(params["chunkText"]).length).toBe(8000);
+    expect(String(params["chunkText"])).toHaveLength(8000);
   });
 });
 

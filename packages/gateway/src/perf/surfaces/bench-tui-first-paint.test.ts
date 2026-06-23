@@ -27,7 +27,7 @@ describe("runTuiFirstPaintOnce (S4)", () => {
       { runs: 1, runner: "local-dev" },
       { spawn: fakeSpawn(["[tui] first-frame\n"]) },
     );
-    expect(samples.length).toBe(TUI_FIRST_PAINT_SAMPLES_PER_RUN);
+    expect(samples).toHaveLength(TUI_FIRST_PAINT_SAMPLES_PER_RUN);
     for (const s of samples) {
       expect(Number.isFinite(s)).toBe(true);
     }

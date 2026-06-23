@@ -230,7 +230,7 @@ describe("fetchGoogleJson", () => {
     await fetchGoogleJson(ctx, "tok", "https://example.com", "Svc");
     expect(capturedHeaders["authorization"]).toBe("Bearer tok");
     // No extra headers
-    expect(Object.keys(capturedHeaders).length).toBe(1);
+    expect(Object.keys(capturedHeaders)).toHaveLength(1);
   });
 
   test("non-OK, non-401 status → throws Error with formatted message", async () => {

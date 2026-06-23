@@ -64,11 +64,11 @@ describe("runWorkerBench", () => {
       sharedDbPath: "/fake/db",
       WorkerCtor: makeFakeWorker({ writes: 500, busyRetries: 3 }),
     });
-    expect(result.perWorker.length).toBe(3);
+    expect(result.perWorker).toHaveLength(3);
     expect(result.perWorker.every((w) => w.writes === 500)).toBe(true);
     expect(result.totalBusyRetries).toBe(9);
     expect(result.totalThroughputPerSec).toBeGreaterThan(0);
-    expect(result.errors.length).toBe(0);
+    expect(result.errors).toHaveLength(0);
   });
 
   test("captures error message and stack when a Worker errors before ready", async () => {
@@ -80,10 +80,10 @@ describe("runWorkerBench", () => {
         errorBeforeReady: { message: "bind failed", stack: "at line 42" },
       }),
     });
-    expect(result.errors.length).toBe(1);
+    expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.message).toBe("bind failed");
     expect(result.errors[0]?.stack).toBe("at line 42");
-    expect(result.perWorker.length).toBe(0);
+    expect(result.perWorker).toHaveLength(0);
     expect(result.totalThroughputPerSec).toBe(0);
   });
 
@@ -102,7 +102,7 @@ describe("runWorkerBench", () => {
     });
     const elapsed = performance.now() - start;
     expect(elapsed).toBeLessThan(500);
-    expect(result.perWorker.length).toBe(1);
+    expect(result.perWorker).toHaveLength(1);
   });
 
   test("partial failure — surviving Workers contribute to totalThroughput", async () => {
@@ -123,8 +123,8 @@ describe("runWorkerBench", () => {
         return new (ctor as unknown as new (u: URL) => Worker)(_url);
       } as unknown as typeof Worker,
     });
-    expect(result.errors.length).toBe(1);
-    expect(result.perWorker.length).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.perWorker).toHaveLength(1);
     expect(result.totalBusyRetries).toBe(1);
     expect(result.totalThroughputPerSec).toBeGreaterThan(0);
   });

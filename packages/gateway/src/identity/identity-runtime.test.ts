@@ -167,7 +167,7 @@ describe("IdentityRuntime.revalidateSession", () => {
     const s = store.getSession("https://acme");
     expect(s?.expiresAt).toBe(1000); // NOT advanced
     expect(s?.status).toBe("active"); // NOT forced to expired — grace governs validity
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("relying on grace window");
     // Grace semantics (isOperatorValid): with grace=1s, valid until expires_at(1000ms)+1000ms=2000ms.
     expect(isOperatorValid(store, "https://acme", 1500, 1)).toBe(true);
@@ -475,7 +475,7 @@ describe("IdentityRuntime.revalidateSession", () => {
       },
     });
     await rt.revalidateSession(); // must not throw
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("relying on grace window");
     expect(warnings[0]).toContain("offline-string");
   });

@@ -60,11 +60,11 @@ describe("watcher-store", () => {
       action_json: "{}",
       created_at: t0,
     });
-    expect(listWatchers(db).length).toBe(1);
-    expect(listEnabledWatchers(db).length).toBe(1);
+    expect(listWatchers(db)).toHaveLength(1);
+    expect(listEnabledWatchers(db)).toHaveLength(1);
 
     expect(setWatcherEnabled(db, id, false)).toBe(true);
-    expect(listEnabledWatchers(db).length).toBe(0);
+    expect(listEnabledWatchers(db)).toHaveLength(0);
 
     expect(setWatcherEnabled(db, id, true)).toBe(true);
     updateWatcherLastChecked(db, id, t0 + 100);
@@ -81,7 +81,7 @@ describe("watcher-store", () => {
     expect(ev.c).toBe(1);
 
     deleteWatcher(db, id);
-    expect(listWatchers(db).length).toBe(0);
+    expect(listWatchers(db)).toHaveLength(0);
   });
 
   test("insertWatcher accepts explicit id", () => {

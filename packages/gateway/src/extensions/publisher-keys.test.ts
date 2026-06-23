@@ -220,8 +220,8 @@ describe("resolvePublisherKey", () => {
     const thirtyThreeBytes = new Uint8Array(33);
     const b64 = encodeBase64(thirtyThreeBytes);
     // Verify our premise: exactly 44 base64 chars (no padding) that decode to 33 bytes.
-    expect(b64.length).toBe(44);
-    expect(decodeBase64(b64).length).toBe(33);
+    expect(b64).toHaveLength(44);
+    expect(decodeBase64(b64)).toHaveLength(33);
     writeFileSync(file, b64);
     try {
       await expect(

@@ -70,7 +70,7 @@ describe("createUpdaterFromConfig", () => {
       _forceUnsupported: true,
     });
     expect(result).toBeUndefined();
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
   });
 
   test("returns undefined when running from a package-manager channel", () => {

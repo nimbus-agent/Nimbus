@@ -289,7 +289,7 @@ describe("db/snapshot", () => {
       expect(countAfterStop).toBeGreaterThanOrEqual(1);
 
       await Bun.sleep(100);
-      expect(listSnapshots(dataDir).length).toBe(countAfterStop);
+      expect(listSnapshots(dataDir)).toHaveLength(countAfterStop);
     });
 
     it("stop() on a disabled scheduler does nothing (no throw)", () => {

@@ -415,7 +415,7 @@ describeWithFetchRestore("MR event — title longer than 512 chars is truncated"
     const row = db.prepare("SELECT title FROM item WHERE service = 'gitlab' LIMIT 1").get() as
       | { title: string }
       | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 });
 
@@ -479,7 +479,7 @@ describeWithFetchRestore("Issue event — title longer than 512 chars is truncat
     const row = db.prepare("SELECT title FROM item WHERE service = 'gitlab' LIMIT 1").get() as
       | { title: string }
       | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 });
 

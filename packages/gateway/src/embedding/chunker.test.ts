@@ -13,7 +13,7 @@ describe("chunkText", () => {
 
   test("short text is a single chunk", () => {
     const chunks = chunkText("Quarterly report for Zurich.", { maxChunkTokens: 256 });
-    expect(chunks.length).toBe(1);
+    expect(chunks).toHaveLength(1);
   });
 
   test("splits oversized run-on text under char budget", () => {
@@ -99,7 +99,7 @@ describe("chunkText", () => {
     expect(chunks.length).toBeGreaterThan(1);
     // The long word slices should appear in the chunks
     const allText = chunks.join("");
-    expect(allText.includes("y")).toBe(true);
+    expect(allText).toContain("y");
   });
 
   // overlapPrefixFromPrevious: prevChunk.length === 0
@@ -109,7 +109,7 @@ describe("chunkText", () => {
       maxChunkTokens: 256,
       overlapTokens: 20,
     });
-    expect(chunks.length).toBe(1);
+    expect(chunks).toHaveLength(1);
   });
 
   // overlapPrefixFromPrevious: prevChunk.length <= overlapChars
@@ -252,7 +252,7 @@ describe("chunkText", () => {
   test("uses default opts when none provided", () => {
     const text = "Default options test.";
     const chunks = chunkText(text);
-    expect(chunks.length).toBe(1);
+    expect(chunks).toHaveLength(1);
     expect(chunks[0]).toBe("Default options test.");
   });
 
@@ -260,7 +260,7 @@ describe("chunkText", () => {
   test("partial opts merge with defaults", () => {
     const text = "Hello world.";
     const chunks = chunkText(text, { maxChunkTokens: 128 });
-    expect(chunks.length).toBe(1);
+    expect(chunks).toHaveLength(1);
   });
 
   // splitLongPiece: when cur is filled and word fits (cur !== "" branch before cur = w)
@@ -301,7 +301,7 @@ describe("chunkText", () => {
     // maxChunkTokens=4 → maxChars=64; 16 chars = 4 tokens exactly
     const text = `${"A".repeat(16)}.`;
     const chunks = chunkText(text, { maxChunkTokens: 4, overlapTokens: 0 });
-    expect(chunks.length).toBe(1);
+    expect(chunks).toHaveLength(1);
   });
 });
 

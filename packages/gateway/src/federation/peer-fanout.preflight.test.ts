@@ -65,6 +65,6 @@ describe("fanOutPreflight", () => {
       req,
     );
     expect(out.perPeer).toEqual([]);
-    expect(out.gaps.length).toBe(1);
+    expect(out.gaps).toHaveLength(1);
   });
 });

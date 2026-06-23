@@ -25,7 +25,7 @@ test("listWatcherHistory returns the last N fires newest-first", () => {
     );
   }
   const out = listWatcherHistory(db, { watcherId: "w1", limit: 3 });
-  expect(out.events.length).toBe(3);
+  expect(out.events).toHaveLength(3);
   expect(out.events[0]?.firedAt).toBe(104);
   expect(out.events[2]?.firedAt).toBe(102);
   expect(out.events[0]?.conditionSnapshot).toBe('{"i":4}');
@@ -57,5 +57,5 @@ test("listWatcherHistory clamps limit to 1..500", () => {
     );
   }
   const outBig = listWatcherHistory(db, { watcherId: "w1", limit: 10000 });
-  expect(outBig.events.length).toBe(500);
+  expect(outBig.events).toHaveLength(500);
 });

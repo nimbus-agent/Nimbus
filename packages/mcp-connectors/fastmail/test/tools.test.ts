@@ -102,7 +102,7 @@ describe("registerFastmailTools", () => {
   test("fastmail_search passes the query + clamped limit through", async () => {
     const { handlers, client } = wire();
     const out = parse(await handlers.get("fastmail_search")!({ query: "invoice", limit: 5 }));
-    expect((out.matches as unknown[]).length).toBe(1);
+    expect(out.matches as unknown[]).toHaveLength(1);
     expect(client.lastSearch).toEqual({ query: "invoice", limit: 5 });
   });
 

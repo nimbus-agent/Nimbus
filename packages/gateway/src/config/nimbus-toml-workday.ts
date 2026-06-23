@@ -37,11 +37,32 @@ function finalizeReport(r: ReportAccum): WorkdayReport | null {
   return {
     label: r.label,
     url: r.url,
-    ...(r.keyField !== undefined && r.keyField !== "" ? { keyField: r.keyField } : {}),
+    ...(r.keyField === undefined || r.keyField === "" ? {} : { keyField: r.keyField }),
     // Preserve a present-but-empty `fields` (e.g. it parsed to []) so applyReportFieldPolicy
     // fails closed (emit nothing) instead of dropping to undefined and widening to the denylist.
     ...(r.fields !== undefined ? { fields: r.fields } : {}),
   };
+}
+
+function parseMainSectionKv(key: string, valRaw: string, current: number): number {
+  if (key === "time_off_history_days") {
+    const n = Number.parseInt(valRaw.trim(), 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return current;
+}
+
+function parseReportEntryKv(key: string, valRaw: string, cur: ReportAccum): void {
+  if (key === "label") cur.label = parseString(valRaw);
+  else if (key === "url") cur.url = parseString(valRaw);
+  else if (key === "key_field") cur.keyField = parseString(valRaw);
+  else if (key === "fields") {
+    try {
+      cur.fields = parseStringArray(valRaw);
+    } catch {
+      cur.fields = [];
+    }
+  }
 }
 
 export function parseNimbusWorkdayToml(
@@ -75,20 +96,10 @@ export function parseNimbusWorkdayToml(
     }
     const kv = splitKeyValue(t);
     if (kv === undefined) continue;
-    if (section === "main" && kv.key === "time_off_history_days") {
-      const n = Number.parseInt(kv.valRaw.trim(), 10);
-      if (Number.isFinite(n) && n > 0) timeOffHistoryDays = n;
+    if (section === "main") {
+      timeOffHistoryDays = parseMainSectionKv(kv.key, kv.valRaw, timeOffHistoryDays);
     } else if (section === "report" && cur !== null) {
-      if (kv.key === "label") cur.label = parseString(kv.valRaw);
-      else if (kv.key === "url") cur.url = parseString(kv.valRaw);
-      else if (kv.key === "key_field") cur.keyField = parseString(kv.valRaw);
-      else if (kv.key === "fields") {
-        try {
-          cur.fields = parseStringArray(kv.valRaw);
-        } catch {
-          cur.fields = [];
-        }
-      }
+      parseReportEntryKv(kv.key, kv.valRaw, cur);
     }
   }
   flush();

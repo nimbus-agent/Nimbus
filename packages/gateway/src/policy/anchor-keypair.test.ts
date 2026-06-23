@@ -47,8 +47,8 @@ describe("ensureAnchorKeypair", () => {
     expect(vault.store.get(POLICY_SIGNING_PUBKEY)).toBe(pubkeyB64);
 
     // Returned base64 values decode to exactly 32 bytes each (Ed25519 seed/pubkey).
-    expect(decodeBase64(privkeyB64).length).toBe(32);
-    expect(decodeBase64(pubkeyB64).length).toBe(32);
+    expect(decodeBase64(privkeyB64)).toHaveLength(32);
+    expect(decodeBase64(pubkeyB64)).toHaveLength(32);
   });
 
   it("returns the same persisted values on a second call (no regeneration)", async () => {
@@ -72,8 +72,8 @@ describe("ensureAnchorKeypair", () => {
     const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
 
     expect(privkeyB64).not.toBe(badPriv);
-    expect(decodeBase64(privkeyB64).length).toBe(32);
-    expect(decodeBase64(pubkeyB64).length).toBe(32);
+    expect(decodeBase64(privkeyB64)).toHaveLength(32);
+    expect(decodeBase64(pubkeyB64)).toHaveLength(32);
     expect(vault.store.get(POLICY_SIGNING_PRIVKEY)).toBe(privkeyB64);
     expect(vault.store.get(POLICY_SIGNING_PUBKEY)).toBe(pubkeyB64);
   });
@@ -87,8 +87,8 @@ describe("ensureAnchorKeypair", () => {
     const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
 
     expect(pubkeyB64).not.toBe(badPub);
-    expect(decodeBase64(privkeyB64).length).toBe(32);
-    expect(decodeBase64(pubkeyB64).length).toBe(32);
+    expect(decodeBase64(privkeyB64)).toHaveLength(32);
+    expect(decodeBase64(pubkeyB64)).toHaveLength(32);
   });
 
   it("regenerates when a persisted value is not valid base64", async () => {
@@ -97,8 +97,8 @@ describe("ensureAnchorKeypair", () => {
 
     const { privkeyB64, pubkeyB64 } = await ensureAnchorKeypair(vault);
 
-    expect(decodeBase64(privkeyB64).length).toBe(32);
-    expect(decodeBase64(pubkeyB64).length).toBe(32);
+    expect(decodeBase64(privkeyB64)).toHaveLength(32);
+    expect(decodeBase64(pubkeyB64)).toHaveLength(32);
     expect(vault.store.get(POLICY_SIGNING_PRIVKEY)).toBe(privkeyB64);
   });
 });

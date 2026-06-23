@@ -82,7 +82,7 @@ describe("vectorSearchChunksDual", () => {
       model384: "m384",
       limit: 10,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:a");
   });
 
@@ -100,7 +100,7 @@ describe("vectorSearchChunksDual", () => {
       model1536: "m1536",
       limit: 1,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
   });
 
   test.skipIf(!VEC_AVAILABLE)("missing model id with present vector skips that side", () => {
@@ -112,7 +112,7 @@ describe("vectorSearchChunksDual", () => {
       queryEmbedding1536: v1536,
       limit: 10,
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("with only the 1536 vector, returns only vec_items_1536 hits", () => {
@@ -125,7 +125,7 @@ describe("vectorSearchChunksDual", () => {
       model1536: "m1536",
       limit: 10,
     });
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:b");
   });
 
@@ -186,7 +186,7 @@ describe("vectorSearchChunksDual", () => {
       limit: 10,
       since: farFuture,
     });
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   test.skipIf(!VEC_AVAILABLE)("since filter includes items at or after threshold", () => {
@@ -203,7 +203,7 @@ describe("vectorSearchChunksDual", () => {
     });
     // since=0 is treated as falsy (the vec-store applies the filter only when since > 0),
     // so it behaves as "no filter" and the 384-indexed item survives.
-    expect(hits.length).toBe(1);
+    expect(hits).toHaveLength(1);
     expect(hits[0]?.itemId).toBe("s:a");
   });
 
@@ -222,7 +222,7 @@ describe("vectorSearchChunksDual", () => {
         limit: 10,
         since: pastTime,
       });
-      expect(hits.length).toBe(1);
+      expect(hits).toHaveLength(1);
       expect(hits[0]?.itemId).toBe("s:a");
     },
   );

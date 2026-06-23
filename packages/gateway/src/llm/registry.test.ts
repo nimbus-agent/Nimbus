@@ -126,7 +126,7 @@ describe("LlmRegistry.listAllModels", () => {
       }),
     );
     const models = await reg.listAllModels();
-    expect(models.length).toBe(3);
+    expect(models).toHaveLength(3);
     expect(models.map((m) => m.provider).sort((a, b) => a.localeCompare(b))).toEqual([
       "llamacpp",
       "ollama",
@@ -150,7 +150,7 @@ describe("LlmRegistry.listAllModels", () => {
       }),
     );
     const models = await reg.listAllModels();
-    expect(models.length).toBe(1);
+    expect(models).toHaveLength(1);
     expect(models[0]?.provider).toBe("ollama");
   });
 
@@ -165,7 +165,7 @@ describe("LlmRegistry.listAllModels", () => {
       }),
     );
     const models = await reg.listAllModels();
-    expect(models.length).toBe(1);
+    expect(models).toHaveLength(1);
     expect(models[0]?.modelName).toBe("good");
   });
 

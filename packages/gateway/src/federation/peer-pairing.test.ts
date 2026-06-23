@@ -44,7 +44,7 @@ test("listPeers reflects persisted peers", () => {
   const k = generateBoxKeypair().publicKey;
   const req = pairing.beginInboundPair({ peerPubkey: k, hostIp: "peer.test" });
   pairing.approveInboundPair(req);
-  expect(pairing.listPeers().length).toBe(1);
+  expect(pairing.listPeers()).toHaveLength(1);
 });
 
 test("initiatePair persists an outbound peer using the injected handshake", async () => {
@@ -69,9 +69,9 @@ test("removePeer unpairs a persisted peer", () => {
   const peerId = pairing.approveInboundPair(
     pairing.beginInboundPair({ peerPubkey: k, hostIp: "peer.test" }),
   );
-  expect(pairing.listPeers().length).toBe(1);
+  expect(pairing.listPeers()).toHaveLength(1);
   pairing.removePeer(peerId);
-  expect(pairing.listPeers().length).toBe(0);
+  expect(pairing.listPeers()).toHaveLength(0);
 });
 
 test("approveInboundPair with all optional fields set persists hostPort and displayName", () => {
@@ -189,12 +189,12 @@ test("approveInboundPair second call for same pubkey overwrites direction (upser
   pairing.approveInboundPair(
     pairing.beginInboundPair({ peerPubkey: peerKey, hostIp: "first.test" }),
   );
-  expect(pairing.listPeers().length).toBe(1);
+  expect(pairing.listPeers()).toHaveLength(1);
   // Re-approve same key — ON CONFLICT upsert, still one row
   pairing.approveInboundPair(
     pairing.beginInboundPair({ peerPubkey: peerKey, hostIp: "second.test" }),
   );
   const peers = pairing.listPeers();
-  expect(peers.length).toBe(1);
+  expect(peers).toHaveLength(1);
   expect(peers[0]?.host_ip).toBe("second.test");
 });

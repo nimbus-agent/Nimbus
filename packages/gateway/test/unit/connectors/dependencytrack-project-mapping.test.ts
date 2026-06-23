@@ -165,7 +165,7 @@ describe("mapDependencyTrackProjectToItem", () => {
     );
     if (row === null) throw new Error("expected mapping to succeed");
     expect(row.title.endsWith("…")).toBe(true);
-    expect(row.title.length).toBe(201);
+    expect(row.title).toHaveLength(201);
   });
 });
 

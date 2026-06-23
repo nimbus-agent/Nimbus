@@ -16,7 +16,7 @@ describe("MockClient", () => {
       ],
     });
     const r = await c.queryItems({});
-    expect(r.items.length).toBe(1);
+    expect(r.items).toHaveLength(1);
     expect(r.items[0]?.id).toBe("1");
     await c.close();
   });
@@ -35,7 +35,7 @@ describe("MockClient", () => {
   test("askStream honours custom streamTokens", async () => {
     const evs: { type: string }[] = [];
     for await (const e of new MockClient({ streamTokens: ["a"] }).askStream("hi")) evs.push(e);
-    expect(evs.filter((e) => e.type === "token").length).toBe(1);
+    expect(evs.filter((e) => e.type === "token")).toHaveLength(1);
   });
 
   test("askStream stops after cancel()", async () => {

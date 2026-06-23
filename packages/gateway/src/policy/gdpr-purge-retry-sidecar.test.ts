@@ -79,7 +79,7 @@ describe("gdpr-purge-retry-sidecar", () => {
       expect(sig.length).toBeGreaterThan(0);
 
       const rows = auditRows(db, "team.purge.completed");
-      expect(rows.length).toBe(1);
+      expect(rows).toHaveLength(1);
       const parsed = JSON.parse(rows[0]?.action_json ?? "{}") as {
         job_id: string;
         completion_sig: string;
@@ -111,7 +111,7 @@ describe("gdpr-purge-retry-sidecar", () => {
       const pending = store.pendingRequests("job-1");
       expect(pending.map((r) => r.peerId)).toEqual(["peer-offline"]);
       // Job still open (one peer pending) => no completion audit entry yet.
-      expect(auditRows(db, "team.purge.completed").length).toBe(0);
+      expect(auditRows(db, "team.purge.completed")).toHaveLength(0);
       expect(store.openJobIds()).toContain("job-1");
     });
 
@@ -135,7 +135,7 @@ describe("gdpr-purge-retry-sidecar", () => {
       expect(store.allDone("job-2")).toBe(true);
       expect(store.openJobIds()).not.toContain("job-2");
       const rows = auditRows(db, "team.purge.completed");
-      expect(rows.length).toBe(1);
+      expect(rows).toHaveLength(1);
       expect(JSON.parse(rows[0]?.action_json ?? "{}").job_id).toBe("job-2");
     });
 
@@ -152,7 +152,7 @@ describe("gdpr-purge-retry-sidecar", () => {
       await retryPendingPurges(deps);
 
       expect(store.pendingRequests("job-3").map((r) => r.peerId)).toEqual(["peer-err"]);
-      expect(auditRows(db, "team.purge.completed").length).toBe(0);
+      expect(auditRows(db, "team.purge.completed")).toHaveLength(0);
     });
   });
 
@@ -174,7 +174,7 @@ describe("gdpr-purge-retry-sidecar", () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
       expect(store.openJobIds()).not.toContain("job-now");
-      expect(auditRows(db, "team.purge.completed").length).toBe(1);
+      expect(auditRows(db, "team.purge.completed")).toHaveLength(1);
 
       // Stop is idempotent and never throws.
       expect(() => {

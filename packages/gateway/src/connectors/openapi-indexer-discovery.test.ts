@@ -50,7 +50,7 @@ test("matches case-insensitively for known filenames", () => {
   writeFileSync(join(root, "OpenAPI.YAML"), "");
   writeFileSync(join(root, "Swagger.JSON"), "{}");
   const files = discoverSpecFiles(root, { maxWalkDepth: 8, ignoreGlobs: [] });
-  expect(files.length).toBe(2);
+  expect(files).toHaveLength(2);
 });
 
 test("does not follow symlinks (file or directory)", () => {
@@ -68,7 +68,7 @@ test("does not follow symlinks (file or directory)", () => {
     // ignore — same reason as above
   }
   const files = discoverSpecFiles(root, { maxWalkDepth: 8, ignoreGlobs: [] });
-  expect(files.length).toBe(1);
+  expect(files).toHaveLength(1);
   const first = files[0];
   expect(first).toBeDefined();
   expect(first?.endsWith("openapi.yaml")).toBe(true);

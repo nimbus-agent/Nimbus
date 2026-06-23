@@ -101,7 +101,7 @@ describe("share.create", () => {
     expect(typeof value.contentHash).toBe("string");
 
     // Persisted exactly one row.
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(1);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(1);
     // The on-disk redacted body never contains the raw email.
     const written = await readFile(filePath, "utf8");
     expect(written).not.toContain("alice@corp.com");
@@ -116,7 +116,7 @@ describe("share.create", () => {
       freshCtx(db, { approve: false }),
     );
     expect((out as { value: { status: string } }).value.status).toBe("rejected");
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(0);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(0);
     expect(await Bun.file(filePath).exists()).toBe(false);
   });
 
@@ -127,7 +127,7 @@ describe("share.create", () => {
       freshCtx(db, { approve: true }),
     );
     expect((out as { value: { status: string } }).value.status).toBe("ok");
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(1);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(1);
   });
 
   test("peer sink: persisted + signed but not forwarded (stub)", async () => {
@@ -137,7 +137,7 @@ describe("share.create", () => {
       freshCtx(db, { approve: true }),
     );
     expect((out as { value: { status: string } }).value.status).toBe("ok");
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(1);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(1);
   });
 
   test("http sink with an unconfigured url throws ERR_SHARE_HTTP_SINK_UNCONFIGURED", async () => {
@@ -149,7 +149,7 @@ describe("share.create", () => {
       ),
     ).rejects.toThrow(/ERR_SHARE_HTTP_SINK_UNCONFIGURED/);
     // Approved + signed + persisted before the emit failed — the emit is the only failure point.
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(1);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(1);
   });
 
   test("http sink builds the configured auth header (from Vault) before the SSRF-blocked fetch", async () => {
@@ -169,7 +169,7 @@ describe("share.create", () => {
       dispatchShareRpc("share.create", { sessionId: "s1", sink: { type: "http" } }, ctx),
     ).rejects.toThrow(/loopback|private|unsafe/);
     // Approved + signed + persisted before the SSRF guard rejected the emit.
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(1);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(1);
   });
 
   test("missing sessionId throws ERR_INVALID_PARAMS", async () => {
@@ -186,7 +186,7 @@ describe("share.create", () => {
         freshCtx(db, { approve: true }),
       ),
     ).rejects.toThrow(/ERR_INVALID_PARAMS: unknown sink\.type/);
-    expect(listShareRecords(db, { now: 2000 }).length).toBe(0);
+    expect(listShareRecords(db, { now: 2000 })).toHaveLength(0);
   });
 
   test("share.create kind=recipe builds body.recipe from tool_call_log and persists it", async () => {
@@ -251,7 +251,7 @@ describe("share read methods", () => {
     );
     const out = await dispatchShareRpc("share.list", { includeExpired: true }, freshCtx(db));
     const shares = (out as { value: { shares: unknown[] } }).value.shares;
-    expect(shares.length).toBe(1);
+    expect(shares).toHaveLength(1);
   });
 
   test("share.get returns the record by contentHash; null when absent", async () => {

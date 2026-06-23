@@ -20,7 +20,7 @@ describe("runQueryLatencyOnce (S2-a)", () => {
         },
         { cacheDir: dir },
       );
-      expect(samples.length).toBe(100);
+      expect(samples).toHaveLength(100);
       for (const s of samples) {
         expect(Number.isFinite(s)).toBe(true);
         expect(s).toBeGreaterThanOrEqual(0);

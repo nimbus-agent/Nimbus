@@ -31,7 +31,7 @@ describe("capPreview", () => {
 
   test("truncates to PREVIEW_MAX_CHARS", () => {
     const out = capPreview("x".repeat(PREVIEW_MAX_CHARS + 500));
-    expect(out.length).toBe(PREVIEW_MAX_CHARS);
+    expect(out).toHaveLength(PREVIEW_MAX_CHARS);
   });
 
   test("returns an empty string unchanged", () => {

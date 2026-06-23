@@ -246,7 +246,7 @@ describe("createGooglePhotosSyncable", () => {
     await syncable.sync(ctx, null);
     // Neither item should produce a DB row since both have missing/empty ids
     const rows = db.query("SELECT id FROM item WHERE service = 'google_photos'").all();
-    expect(rows.length).toBe(0);
+    expect(rows).toHaveLength(0);
   });
 
   // L73: item with no filename falls back to "photo_<id>"
@@ -404,7 +404,7 @@ describe("createGooglePhotosSyncable", () => {
     const row = db
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("google_photos", "p-long")) as { title: string } | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
     expect(row?.title).toBe(longFilename.slice(0, 512));
   });
 

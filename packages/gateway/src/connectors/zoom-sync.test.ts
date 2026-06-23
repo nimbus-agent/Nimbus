@@ -224,7 +224,7 @@ describeWithFetchRestore("zoom-sync", () => {
 
     expect(fetchCount.n).toBe(2);
     // 2 meetings-list pages + 1 recordings-list page (Walk B, empty result).
-    expect(acquireProviders.filter((p) => p === "zoom").length).toBe(3);
+    expect(acquireProviders.filter((p) => p === "zoom")).toHaveLength(3);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "zoom", 2);
   });

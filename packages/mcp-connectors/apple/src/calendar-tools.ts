@@ -45,7 +45,7 @@ const createArgs = z.object({
   end: z.string().min(1),
   description: z.string().max(10_000).optional(),
   location: z.string().max(500).optional(),
-  attendees: z.array(z.string().email()).optional(),
+  attendees: z.array(z.email()).optional(),
   uid: z.string().min(1).optional(),
 });
 
@@ -118,13 +118,13 @@ export function registerAppleCalendarTools(
       let allCals = await calendar.listCalendars();
 
       // Filter by caller-supplied single calendar name or global config
-      if (parsed.data.calendar !== undefined) {
-        allCals = selectCalendars(allCals, { include: [parsed.data.calendar] });
-      } else {
+      if (parsed.data.calendar === undefined) {
         allCals = selectCalendars(allCals, {
           include: config?.include,
           exclude: config?.exclude,
         });
+      } else {
+        allCals = selectCalendars(allCals, { include: [parsed.data.calendar] });
       }
 
       const items: ViewEvent[] = [];
@@ -178,12 +178,7 @@ export function registerAppleCalendarTools(
       let targetCal: CalendarRef | undefined;
       const allCals = await calendar.listCalendars();
 
-      if (parsed.data.calendar !== undefined) {
-        targetCal = selectCalendars(allCals, { include: [parsed.data.calendar] })[0];
-        if (targetCal === undefined) {
-          throw new Error(`Calendar "${parsed.data.calendar}" not found`);
-        }
-      } else {
+      if (parsed.data.calendar === undefined) {
         const selected = selectCalendars(allCals, {
           include: config?.include,
           exclude: config?.exclude,
@@ -191,6 +186,11 @@ export function registerAppleCalendarTools(
         targetCal = selected[0];
         if (targetCal === undefined) {
           throw new Error("No calendar available to create the event in");
+        }
+      } else {
+        targetCal = selectCalendars(allCals, { include: [parsed.data.calendar] })[0];
+        if (targetCal === undefined) {
+          throw new Error(`Calendar "${parsed.data.calendar}" not found`);
         }
       }
 
@@ -201,9 +201,8 @@ export function registerAppleCalendarTools(
       // rejects ""); otherwise derive from the captured stamp + summary to
       // avoid a non-pure Date.now().
       const uid =
-        parsed.data.uid !== undefined
-          ? parsed.data.uid
-          : `nimbus-${stamp}-${parsed.data.summary.slice(0, 40).replace(/\s+/g, "-")}`;
+        parsed.data.uid ??
+        `nimbus-${stamp}-${parsed.data.summary.slice(0, 40).replace(/\s+/g, "-")}`;
 
       // Build the VEVENT ICS string
       const buildInput: {

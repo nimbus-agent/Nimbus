@@ -144,7 +144,7 @@ function walkNotes(currentDir: string, vaultRoot: string, out: string[]): void {
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-const H1_RE = /^#\s+(.+)$/m;
+const H1_RE = /^#\s+(\S.*)$/m;
 
 function readNote(
   vaultRoot: string,

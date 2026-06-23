@@ -34,7 +34,7 @@ test("e2e: fixture vault produces queryable obsidian_note rows + daily-note flag
   const daily = db
     .query("SELECT path FROM obsidian_notes WHERE daily_note_date = '2026-05-10'")
     .all() as Array<{ path: string }>;
-  expect(daily.length).toBe(1);
+  expect(daily).toHaveLength(1);
   expect(daily[0]?.path).toBe("Daily/2026-05-10.md");
 
   const ftsHits = db

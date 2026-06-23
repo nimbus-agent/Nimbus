@@ -31,7 +31,7 @@ describe("buildSyntheticIndex", () => {
       rmSync(a);
       const b = await buildSyntheticIndex("small", { cacheDir: dir });
       const contentB = readFileSync(b);
-      expect(contentA.length).toBe(contentB.length);
+      expect(contentA).toHaveLength(contentB.length);
       expect(contentA.equals(contentB)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

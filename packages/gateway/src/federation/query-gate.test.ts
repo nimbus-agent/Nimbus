@@ -147,7 +147,7 @@ test("non-standing grant: approval is cached and answers", async () => {
     request: { namespace: "project:zurich", purpose: "review" },
   });
   expect(res.kind).toBe("ok");
-  if (res.kind === "ok") expect(res.response.items.length).toBe(2);
+  if (res.kind === "ok") expect(res.response.items).toHaveLength(2);
   // a second query uses the cached approval (autoDeny would otherwise deny) and still answers
   const res2 = await answerFederatedQuery(ctx(autoDeny, cache), {
     peerId: "peerA",
@@ -188,5 +188,5 @@ test("service-only namespace honours a peer's type narrowing", async () => {
     request: { namespace: "svc-only", purpose: "review", types: ["pull_request"] },
   });
   expect(res.kind).toBe("ok");
-  if (res.kind === "ok") expect(res.response.items.length).toBe(2);
+  if (res.kind === "ok") expect(res.response.items).toHaveLength(2);
 });

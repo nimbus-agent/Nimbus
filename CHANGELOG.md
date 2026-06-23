@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.18.0](https://github.com/nimbus-agent/Nimbus/compare/v0.17.0...v0.18.0) (2026-06-23)
+
+
+### Features
+
+* **clips:** web clipper gateway — POST /v1/clips, pairing auth, invariant I30 (Phase 6 Slice 9) ([#718](https://github.com/nimbus-agent/Nimbus/issues/718)) ([17d325e](https://github.com/nimbus-agent/Nimbus/commit/17d325e7a55729772623438fa4a914c762d810ea))
+
 ## [0.17.0](https://github.com/nimbus-agent/Nimbus/compare/v0.16.0...v0.17.0) (2026-06-22)
 
 

@@ -49,7 +49,7 @@ export class LinkHeaderPagination implements Pagination<string> {
     const link = response.headers.get("Link") ?? response.headers.get("link");
     if (!link) return undefined;
     for (const part of link.split(",")) {
-      const m = /<([^>]+)>;\s*rel="next"/.exec(part.trim());
+      const m = /<([^<>]+)>;\s*rel="next"/.exec(part.trim());
       if (m) return m[1];
     }
     return undefined;

@@ -37,11 +37,15 @@ export function canonicalizeUrl(raw: string): string {
     return raw;
   }
   u.hash = "";
-  for (const key of [...u.searchParams.keys()]) {
+  // Collect first, delete after — mutating searchParams while iterating its live keys()
+  // iterator would skip entries (and lets us iterate the iterable directly, no array spread).
+  const trackingKeys: string[] = [];
+  for (const key of u.searchParams.keys()) {
     if (TRACKING_EXACT.has(key) || TRACKING_PREFIXES.some((p) => key.startsWith(p))) {
-      u.searchParams.delete(key);
+      trackingKeys.push(key);
     }
   }
+  for (const key of trackingKeys) u.searchParams.delete(key);
   // Strip a trailing slash on NON-root paths only — keep the root "https://host/" intact
   // (truncating it to "https://host" trips some URL parsers and risks dedup mismatch).
   if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
@@ -79,14 +83,14 @@ export function validateClipInput(parsed: unknown): ClipInput {
     throw new ClipValidationError("capturedAt (epoch ms) is required", "capturedAt");
   }
   const rawTags = o["tags"];
-  const tags =
-    rawTags === undefined
-      ? []
-      : Array.isArray(rawTags) && rawTags.every((t) => typeof t === "string")
-        ? (rawTags as string[])
-        : (() => {
-            throw new ClipValidationError("tags must be a string array", "tags");
-          })();
+  let tags: string[];
+  if (rawTags === undefined) {
+    tags = [];
+  } else if (Array.isArray(rawTags) && rawTags.every((t) => typeof t === "string")) {
+    tags = rawTags;
+  } else {
+    throw new ClipValidationError("tags must be a string array", "tags");
+  }
   const canonicalUrl =
     typeof o["canonicalUrl"] === "string" ? (o["canonicalUrl"] as string) : undefined;
   return { url, title, body, mode, capturedAt, tags, ...(canonicalUrl ? { canonicalUrl } : {}) };

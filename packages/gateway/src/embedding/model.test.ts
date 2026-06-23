@@ -50,10 +50,10 @@ describe("createLocalEmbedder", () => {
     expect(state.cacheDir).toBe(CACHE_DIR);
 
     expect(await e.embed([])).toEqual([]);
-    expect(state.calls.length).toBe(0);
+    expect(state.calls).toHaveLength(0);
 
     const out = await e.embed(["hi"]);
-    expect(out.length).toBe(1);
+    expect(out).toHaveLength(1);
     expect(Array.from(out[0] ?? [])).toEqual([0.5, 0.25]);
     expect(state.calls.at(-1)?.options).toEqual({ pooling: "mean", normalize: true });
   });
@@ -99,7 +99,7 @@ describe("createLocalEmbedder", () => {
     };
     const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
     const out = await e.embed(["hello", "world"]);
-    expect(out.length).toBe(2);
+    expect(out).toHaveLength(2);
     expect(Array.from(out[0] ?? [])).toEqual([1, 2, 3]);
     expect(Array.from(out[1] ?? [])).toEqual([4, 5, 6]);
   });
@@ -134,7 +134,7 @@ describe("createLocalEmbedder", () => {
     const e = await createLocalEmbedder({ cacheDir: CACHE_DIR }, fakeLoader(state));
     // width=0, so each slice is empty → one empty Float32Array
     const out = await e.embed(["x"]);
-    expect(out.length).toBe(1);
+    expect(out).toHaveLength(1);
     expect(Array.from(out[0] ?? [42])).toEqual([]);
   });
 });

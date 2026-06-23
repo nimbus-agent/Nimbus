@@ -20,7 +20,7 @@ describe("hitl-rpc", () => {
     const listed = await dispatchHitlRpc("hitl.listDelegations", {}, ctx(db));
     expect(listed.kind).toBe("hit");
     if (listed.kind === "hit") {
-      expect((listed.value as { delegations: unknown[] }).delegations.length).toBe(1);
+      expect((listed.value as { delegations: unknown[] }).delegations).toHaveLength(1);
     }
   });
 
@@ -67,7 +67,7 @@ describe("hitl-rpc", () => {
     expect(listed.kind).toBe("hit");
     if (listed.kind === "hit") {
       const { delegations } = listed.value as { delegations: unknown[] };
-      expect(delegations.length).toBe(0);
+      expect(delegations).toHaveLength(0);
     }
   });
 

@@ -48,7 +48,7 @@ test("federation.discover lists provider peers; federation.peers lists paired pe
   const disc = await dispatchFederationRpc("federation.discover", {}, ctx());
   expect(disc.kind).toBe("hit");
   if (disc.kind === "hit") {
-    expect((disc.value as { peers: unknown[] }).peers.length).toBe(1);
+    expect((disc.value as { peers: unknown[] }).peers).toHaveLength(1);
   }
   const peers = await dispatchFederationRpc("federation.peers", {}, ctx());
   expect(peers.kind).toBe("hit");
@@ -550,7 +550,7 @@ test("team.auditMerged with NO peers returns the merged LOCAL stream", async () 
   expect(res.kind).toBe("hit");
   if (res.kind === "hit") {
     const v = res.value as { entries: Array<{ peerId: string; timestamp: number }> };
-    expect(v.entries.length).toBe(2);
+    expect(v.entries).toHaveLength(2);
     // All entries are tagged "local" and sorted ascending by timestamp.
     expect(v.entries.every((e) => e.peerId === "local")).toBe(true);
     expect(v.entries[0]?.timestamp).toBe(100);
@@ -569,7 +569,7 @@ test("team.auditMerged sinceMs filters the local slice", async () => {
   expect(res.kind).toBe("hit");
   if (res.kind === "hit") {
     const v = res.value as { entries: Array<{ timestamp: number }> };
-    expect(v.entries.length).toBe(1);
+    expect(v.entries).toHaveLength(1);
     expect(v.entries[0]?.timestamp).toBe(500);
   }
 });
@@ -603,7 +603,7 @@ test("team.auditMerged SKIPS a host-less peer and an unreachable peer (best-effo
   if (res.kind === "hit") {
     const v = res.value as { entries: Array<{ peerId: string }> };
     // Only the local slice survives — both peers were skipped, never fatal.
-    expect(v.entries.length).toBe(1);
+    expect(v.entries).toHaveLength(1);
     expect(v.entries[0]?.peerId).toBe("local");
   }
 });

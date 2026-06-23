@@ -6,7 +6,7 @@ describe("quorumCoordinator singleton", () => {
     const seen: string[] = [];
     quorumCoordinator.setBroadcast((requestId) => seen.push(requestId));
     const p = quorumCoordinator.collect({ approvers: 1, windowMs: 5000 });
-    expect(seen.length).toBe(1);
+    expect(seen).toHaveLength(1);
     quorumCoordinator.respond(seen[0]!, "peer:a", true);
     expect((await p).outcome).toBe("approved");
   });

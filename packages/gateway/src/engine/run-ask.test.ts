@@ -139,7 +139,7 @@ describe("runAsk", () => {
       });
     });
 
-    expect(appended.length).toBe(2);
+    expect(appended).toHaveLength(2);
     expect(appended[0]).toMatchObject({
       sessionId: "sess-runask",
       role: "user",
@@ -182,7 +182,7 @@ describe("runAsk", () => {
       }),
     });
 
-    expect(appended.length).toBe(0);
+    expect(appended).toHaveLength(0);
     localIndex.close();
   });
 

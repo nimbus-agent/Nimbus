@@ -38,7 +38,7 @@ test("e2e: two specs in two services produce queryable api_endpoint rows", async
     const services = db
       .query("SELECT DISTINCT service_name FROM api_endpoint ORDER BY service_name")
       .all() as Array<{ service_name: string }>;
-    expect(services.length).toBe(2);
+    expect(services).toHaveLength(2);
     expect(services.some((s) => s.service_name === "payments-api")).toBe(true);
 
     const ftsHits = db

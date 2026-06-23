@@ -202,7 +202,7 @@ describe("createOneDriveSyncable", () => {
     const row = db
       .query("SELECT title FROM item WHERE id = ?")
       .get(itemPrimaryKey("onedrive", "longname1")) as { title: string } | undefined;
-    expect(row?.title?.length).toBe(512);
+    expect(row?.title).toHaveLength(512);
   });
 
   test("file mimeType is undefined when file field is array (L77 branch)", async () => {

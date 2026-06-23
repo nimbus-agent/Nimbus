@@ -115,11 +115,11 @@ describe("T2 PR 4 — dependency lifecycle (end-to-end in-process)", () => {
     expect(bRow).toBeDefined();
 
     const fwdB = forwardDeps(db, "com.example.B");
-    expect(fwdB.length).toBe(1);
+    expect(fwdB).toHaveLength(1);
     expect(fwdB[0]).toEqual({ id: "com.shared.A", range: "^1.0.0" });
 
     const revA = reverseDeps(db, "com.shared.A");
-    expect(revA.length).toBe(1);
+    expect(revA).toHaveLength(1);
     expect(revA[0]).toEqual({ extensionId: "com.example.B", range: "^1.0.0" });
 
     const cSourceDir = buildExtensionDir({

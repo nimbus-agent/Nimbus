@@ -140,7 +140,7 @@ describe("history", () => {
     transitionHealth(db, "github", { type: "sync_success" });
 
     const history = getConnectorHealthHistory(db, "github");
-    expect(history.length).toBe(2);
+    expect(history).toHaveLength(2);
   });
 
   test("returns rows most-recent-first", () => {
@@ -161,7 +161,7 @@ describe("history", () => {
       });
     }
     const history = getConnectorHealthHistory(db, "github", 2);
-    expect(history.length).toBe(2);
+    expect(history).toHaveLength(2);
   });
 });
 

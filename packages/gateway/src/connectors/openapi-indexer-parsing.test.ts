@@ -17,7 +17,7 @@ test("OpenAPI 3.0 — extracts endpoints with operationId, tags, deprecated", as
     throw new Error(`should not skip: ${r.reason}`);
   }
   const eps = r.endpoints;
-  expect(eps.length).toBe(2);
+  expect(eps).toHaveLength(2);
   const list = eps.find((e) => e.method === "GET" && e.path === "/pets");
   expect(list?.operationId).toBe("listPets");
   expect(list?.tags).toEqual(["pets"]);
@@ -31,14 +31,14 @@ test("OpenAPI 3.0 — extracts endpoints with operationId, tags, deprecated", as
 test("OpenAPI 3.1 fixture parses", async () => {
   const r = await parseFixture("petstore-3.1.yaml");
   if (r.kind === "skipped") throw new Error(r.reason);
-  expect(r.endpoints.length).toBe(1);
+  expect(r.endpoints).toHaveLength(1);
   expect(r.specVersion).toBe("openapi-3.1.0");
 });
 
 test("Swagger 2.0 fixture parses", async () => {
   const r = await parseFixture("petstore-2.0.json");
   if (r.kind === "skipped") throw new Error(r.reason);
-  expect(r.endpoints.length).toBe(1);
+  expect(r.endpoints).toHaveLength(1);
   expect(r.specVersion).toBe("swagger-2.0");
 });
 
@@ -69,7 +69,7 @@ test("YAML that is not a spec is skipped with reason 'not_a_spec'", async () => 
 test("unresolvable internal $ref does not crash; broken endpoints still surface", async () => {
   const r = await parseFixture("unresolvable-ref.yaml");
   if (r.kind === "skipped") throw new Error(`should not skip: ${r.reason}`);
-  expect(r.endpoints.length).toBe(1);
+  expect(r.endpoints).toHaveLength(1);
   expect(r.endpoints[0]?.path).toBe("/broken");
 });
 
@@ -78,7 +78,7 @@ test("webhook-only OpenAPI 3.1 yields zero endpoints (paths missing) but does no
   if (r.kind === "skipped") {
     return;
   }
-  expect(r.endpoints.length).toBe(0);
+  expect(r.endpoints).toHaveLength(0);
 });
 
 test("oversize spec is skipped with reason 'too_large'", () => {

@@ -168,7 +168,7 @@ function fedCtx(): ServerCtx {
 describe("tryDispatchFederationRpc — body coverage with wired providers", () => {
   test("federation.discover hits and returns the provider's peers (covers the hit path)", async () => {
     const out = await tryDispatchFederationRpc(fedCtx(), "federation.discover", {});
-    expect((out as { peers: unknown[] }).peers.length).toBe(1);
+    expect((out as { peers: unknown[] }).peers).toHaveLength(1);
   });
 
   test("invalid params remap FederationRpcError → RpcMethodError (covers the catch)", async () => {

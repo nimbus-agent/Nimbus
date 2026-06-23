@@ -18,7 +18,7 @@ describe("LatencyRingBuffer", () => {
       buf.push({ latencyMs: i, queryType: "fts", recordedAt: i });
     }
     const snap = buf.snapshotOrdered();
-    expect(snap.length).toBe(1440);
+    expect(snap).toHaveLength(1440);
     expect(snap[0]?.recordedAt).toBe(60);
     expect(snap[1439]?.recordedAt).toBe(1499);
   });

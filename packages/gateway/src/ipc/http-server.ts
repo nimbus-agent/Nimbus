@@ -521,6 +521,26 @@ async function handleClipRelated(
   return json(out);
 }
 
+// Web-clipper write seam — present only when BOTH clipsVault AND pairingController are wired.
+// pairingController is a singleton from assemble.ts (Task 7); http-server never constructs one.
+// Capture into locals so TS narrows them inside the closures (avoids non-null assertions).
+function buildClipsSeam(writeDb: Database, opts: ReadOnlyHttpServerOptions) {
+  const clipsVault = opts.clipsVault;
+  const pairingController = opts.pairingController;
+  const scheduleEmbedding = opts.scheduleEmbedding;
+  if (clipsVault === undefined || pairingController === undefined) return undefined;
+  return {
+    pairing: pairingController,
+    verifyToken: (t: string) => verifyClipToken(clipsVault, t),
+    mintToken: async (label: string): Promise<string> => {
+      const token = generateClipToken();
+      await addClipToken(clipsVault, label, token);
+      return token;
+    },
+    ingest: (input: unknown) => ingestClip(writeDb, validateClipInput(input), scheduleEmbedding),
+  };
+}
+
 // Assembles the full I13 dispatcher dependency set. Each write seam (deployment token, SCIM,
 // policy, messaging) is resolved independently — a gateway can enable any surface alone.
 async function resolveWriteRouteDeps(
@@ -541,26 +561,7 @@ async function resolveWriteRouteDeps(
     opts.resolveTeamsEventsSurface === undefined
       ? undefined
       : await opts.resolveTeamsEventsSurface();
-  // Web-clipper write seam — present only when BOTH clipsVault AND pairingController are wired.
-  // pairingController is a singleton from assemble.ts (Task 7); http-server never constructs one.
-  // Capture into locals so TS narrows them inside the closures (avoids non-null assertions).
-  const clipsVault = opts.clipsVault;
-  const pairingController = opts.pairingController;
-  const scheduleEmbedding = opts.scheduleEmbedding;
-  const clips =
-    clipsVault === undefined || pairingController === undefined
-      ? undefined
-      : {
-          pairing: pairingController,
-          verifyToken: (t: string) => verifyClipToken(clipsVault, t),
-          mintToken: async (label: string): Promise<string> => {
-            const token = generateClipToken();
-            await addClipToken(clipsVault, label, token);
-            return token;
-          },
-          ingest: (input: unknown) =>
-            ingestClip(writeDb, validateClipInput(input), scheduleEmbedding),
-        };
+  const clips = buildClipsSeam(writeDb, opts);
   return {
     writeDb,
     expectedToken,

@@ -249,7 +249,7 @@ describe("computeDeployPreflight: active_p1_incidents check", () => {
     }
     const out = computeDeployPreflight(db, cfg(), "main", now, 5);
     expect(out.checks.active_p1_incidents.count).toBe(15);
-    expect(out.checks.active_p1_incidents.findings.length).toBe(5);
+    expect(out.checks.active_p1_incidents.findings).toHaveLength(5);
     expect(out.checks.active_p1_incidents.findings[0]?.id).toBe("pagerduty:inc_0");
   });
 
@@ -582,6 +582,6 @@ describe("computeDeployPreflight: max_findings", () => {
     }
     const out = computeDeployPreflight(db, cfg(), "main", now, 3);
     expect(out.checks.merge_conflicts.count).toBe(12);
-    expect(out.checks.merge_conflicts.findings.length).toBe(3);
+    expect(out.checks.merge_conflicts.findings).toHaveLength(3);
   });
 });

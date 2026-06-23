@@ -25,20 +25,20 @@ function approvingExecutor(auditCalls: AuditRecord[]): ToolExecutor {
 describe("HITL_REQUIRED — frozen-set facade (full surface)", () => {
   test("size reflects the backing set and matches the iterator length", () => {
     expect(HITL_REQUIRED.size).toBeGreaterThan(80);
-    expect([...HITL_REQUIRED].length).toBe(HITL_REQUIRED.size);
+    expect([...HITL_REQUIRED]).toHaveLength(HITL_REQUIRED.size);
   });
 
   test("entries() yields [value, value] pairs (Set semantics)", () => {
     const entries = [...HITL_REQUIRED.entries()];
-    expect(entries.length).toBe(HITL_REQUIRED.size);
+    expect(entries).toHaveLength(HITL_REQUIRED.size);
     expect(entries).toContainEqual(["email.send", "email.send"]);
   });
 
   test("keys() and values() both enumerate the action types", () => {
     const keys = [...HITL_REQUIRED.keys()];
     const values = [...HITL_REQUIRED.values()];
-    expect(keys.length).toBe(HITL_REQUIRED.size);
-    expect(values.length).toBe(HITL_REQUIRED.size);
+    expect(keys).toHaveLength(HITL_REQUIRED.size);
+    expect(values).toHaveLength(HITL_REQUIRED.size);
     expect(keys).toContain("file.delete");
     expect(values).toContain("file.delete");
   });
@@ -53,7 +53,7 @@ describe("HITL_REQUIRED — frozen-set facade (full surface)", () => {
       expect(value).toBe(value2); // Set.forEach passes the value twice
       expect(set).toBe(HITL_REQUIRED);
     }, thisArg);
-    expect(collected.length).toBe(HITL_REQUIRED.size);
+    expect(collected).toHaveLength(HITL_REQUIRED.size);
     expect(collected).toContain("vault.delete");
     expect(boundThis.every((t) => t === thisArg)).toBe(true);
   });

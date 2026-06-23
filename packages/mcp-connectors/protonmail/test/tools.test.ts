@@ -117,7 +117,7 @@ describe("registerProtonmailTools", () => {
   test("protonmail_search passes the query through", async () => {
     const { handlers, client } = wire();
     const out = parse(await handlers.get("protonmail_search")!({ query: "hello", limit: 5 }));
-    expect((out.matches as unknown[]).length).toBe(1);
+    expect(out.matches as unknown[]).toHaveLength(1);
     expect(client.lastSearch?.query).toBe("hello");
   });
 

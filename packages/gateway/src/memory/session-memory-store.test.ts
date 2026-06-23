@@ -76,7 +76,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
 
     store.deleteSession(sid);
     const after = await store.recall(sid, "payment", 4);
-    expect(after.length).toBe(0);
+    expect(after).toHaveLength(0);
   });
 
   test("BUG-005: getRecentTurns returns chronological turns scoped to sessionId", async () => {
@@ -133,7 +133,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
     });
 
     const recent = await store.getRecentTurns(sid, 10);
-    expect(recent.length).toBe(2);
+    expect(recent).toHaveLength(2);
     expect(recent.map((t) => t.text)).toEqual(["user turn one", "assistant reply one"]);
     expect(recent.map((t) => t.role)).toEqual(["user", "assistant"]);
   });
@@ -174,7 +174,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
 
     // Row inserted with vec_rowid = 0 (no-vec path)
     const recent = await store.getRecentTurns(sid, 10);
-    expect(recent.length).toBe(1);
+    expect(recent).toHaveLength(1);
     expect(recent[0]?.text).toBe("wrong dim text");
   });
 
@@ -202,7 +202,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
       embedText: async () => null,
     });
     const hits = await storeQuery.recall("sess-recall-null", "important", 4);
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   // recall returns [] when qVec has wrong length
@@ -227,7 +227,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
     });
 
     const hits = await store.recall("sess-recall-dim", "query text", 4);
-    expect(hits.length).toBe(0);
+    expect(hits).toHaveLength(0);
   });
 
   // pruneExpired — zero rows pruned
@@ -287,7 +287,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
 
     // Only the new chunk remains
     const recent = await store.getRecentTurns("sess-prune", 10);
-    expect(recent.length).toBe(1);
+    expect(recent).toHaveLength(1);
     expect(recent[0]?.text).toBe("new chunk");
   });
 
@@ -311,7 +311,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
     await store.append({ sessionId: "ls-sess-b", text: "b1", role: "user", createdAt: 3000 });
 
     const sessions = store.listSessions();
-    expect(sessions.length).toBe(2);
+    expect(sessions).toHaveLength(2);
     // Most-recent session first
     expect(sessions[0]?.sessionId).toBe("ls-sess-b");
     expect(sessions[0]?.lastWriteAt).toBe(3000);
@@ -373,7 +373,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
     });
     // limit=0 clamped to 1 → returns at most 1 (the most recent)
     const recent = await store.getRecentTurns("sess-limit-clamp", 0);
-    expect(recent.length).toBe(1);
+    expect(recent).toHaveLength(1);
     expect(recent[0]?.text).toBe("text b");
   });
 
@@ -400,7 +400,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
     );
     const turns = await store.getRecentTurns("sess-role-filter", 10);
     // The "system" role row is filtered out; only the valid row is returned
-    expect(turns.length).toBe(1);
+    expect(turns).toHaveLength(1);
     expect(turns[0]?.text).toBe("valid user text");
     expect(turns[0]?.role).toBe("user");
   });
@@ -421,7 +421,7 @@ describe.skipIf(!VEC_AVAILABLE)("SessionMemoryStore", () => {
       createdAt: 100,
     });
     const turns = await store.getRecentTurns("sess-tool-role", 10);
-    expect(turns.length).toBe(1);
+    expect(turns).toHaveLength(1);
     expect(turns[0]?.role).toBe("tool");
     expect(turns[0]?.text).toBe("tool output text");
   });

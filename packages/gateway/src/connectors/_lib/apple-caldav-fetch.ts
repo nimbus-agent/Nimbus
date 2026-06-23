@@ -230,6 +230,12 @@ const DEFAULT_WINDOW_PAST_DAYS = 90;
 const DEFAULT_WINDOW_FUTURE_DAYS = 365;
 const DEFAULT_MAX_INSTANCES = 1000;
 
+function parsePositiveInt(raw: string, fallback: number): number {
+  if (raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
 /**
  * Resolve the CalDAV sync configuration from the Vault.
  *
@@ -266,12 +272,6 @@ export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | 
   const excludeRaw =
     (await readConnectorSecret(ctx.vault, "apple", "cal_exclude_calendars"))?.trim() ?? "";
 
-  function parsePositiveInt(raw: string, fallback: number): number {
-    if (raw === "") return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
-  }
-
   function parseCommaSeparated(raw: string): readonly string[] | undefined {
     if (raw === "") return undefined;
     return raw
@@ -292,8 +292,8 @@ export async function loadCalConfig(ctx: SyncContext): Promise<AppleCalConfig | 
     windowPastDays,
     windowFutureDays,
     maxInstancesPerCalendar,
-    ...(includeCalendars !== undefined ? { includeCalendars } : {}),
-    ...(excludeCalendars !== undefined ? { excludeCalendars } : {}),
+    ...(includeCalendars === undefined ? {} : { includeCalendars }),
+    ...(excludeCalendars === undefined ? {} : { excludeCalendars }),
   };
 
   return config;

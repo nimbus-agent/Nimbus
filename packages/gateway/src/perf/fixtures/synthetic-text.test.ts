@@ -5,7 +5,7 @@ import { SYNTHETIC_TEXT_DEFAULT_SEED, synthesizeText } from "./synthetic-text.ts
 describe("synthesizeText", () => {
   test("returns exactly `count` strings", () => {
     const out = synthesizeText({ length: 50, count: 32 });
-    expect(out.length).toBe(32);
+    expect(out).toHaveLength(32);
   });
 
   test("each string has roughly `length` characters (±10%)", () => {
@@ -36,7 +36,7 @@ describe("synthesizeText", () => {
 
   test("scales to S8 large-tier (length=5000, count=64) without OOM", () => {
     const out = synthesizeText({ length: 5_000, count: 64 });
-    expect(out.length).toBe(64);
+    expect(out).toHaveLength(64);
     expect(out[0]?.length).toBeGreaterThan(4_500);
   });
 });

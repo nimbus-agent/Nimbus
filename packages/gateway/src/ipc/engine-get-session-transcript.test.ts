@@ -58,7 +58,7 @@ describe("createGetSessionTranscriptHandler", () => {
     const handler = createGetSessionTranscriptHandler(db);
     const result = await handler({ sessionId: "sess-1" });
     expect(result.sessionId).toBe("sess-1");
-    expect(result.turns.length).toBe(4);
+    expect(result.turns).toHaveLength(4);
     expect(result.turns[0]).toMatchObject({ role: "user", text: "hello", timestamp: 1000 });
     expect(result.turns[1]).toMatchObject({ role: "assistant", text: "hi there" });
     expect(result.hasMore).toBe(false);
@@ -68,10 +68,10 @@ describe("createGetSessionTranscriptHandler", () => {
     const db = seedDb();
     const handler = createGetSessionTranscriptHandler(db);
     const r1 = await handler({ sessionId: "sess-1", limit: 2 });
-    expect(r1.turns.length).toBe(2);
+    expect(r1.turns).toHaveLength(2);
     expect(r1.hasMore).toBe(true);
     const r2 = await handler({ sessionId: "sess-1", limit: 9999 });
-    expect(r2.turns.length).toBe(4);
+    expect(r2.turns).toHaveLength(4);
     expect(r2.hasMore).toBe(false);
     const r3 = await handler({ sessionId: "sess-1", limit: 0 });
     expect(r3.turns.length).toBeGreaterThanOrEqual(1);

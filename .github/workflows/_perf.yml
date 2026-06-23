@@ -99,7 +99,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -223,7 +223,7 @@ jobs:
             github.event.schedule == '0 4 * * 0'
           )
         continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
-        uses: bencherdev/bencher@ec56bb69a7f34096002ca3384d10e2f6676b063e # v0.6.7
+        uses: bencherdev/bencher@5f9d4cf890255c35e0354af1ed325108a6a0babd # v0.6.8
 
       - name: Emit Bencher BMF
         id: bencher-emit

@@ -219,7 +219,7 @@ describe("searchLocalIndex", () => {
     };
     expect(p.itemsInWindow).toBe(0);
     expect(Array.isArray(p.items)).toBe(true);
-    expect(p.items.length).toBe(0);
+    expect(p.items).toHaveLength(0);
     expect(typeof p.note).toBe("string");
   });
 
@@ -249,9 +249,9 @@ describe("searchLocalIndex", () => {
       const tool = await getTool(agent, "searchLocalIndex");
       const longName = `${"a".repeat(3000)}    `;
       await tool.execute({ name: longName });
-      expect(spy.calls.length).toBe(1);
+      expect(spy.calls).toHaveLength(1);
       const observed = spy.calls[0]?.query.name ?? "";
-      expect(observed.length).toBe(2000);
+      expect(observed).toHaveLength(2000);
       expect(observed.endsWith(" ")).toBe(false);
     } finally {
       spy.restore();
@@ -268,7 +268,7 @@ describe("searchLocalIndex", () => {
       });
       const tool = await getTool(agent, "searchLocalIndex");
       await tool.execute({ service: "   " });
-      expect(spy.calls.length).toBe(1);
+      expect(spy.calls).toHaveLength(1);
       expect(spy.calls[0]?.query.service).toBeUndefined();
     } finally {
       spy.restore();
@@ -380,7 +380,7 @@ describe("searchLocalIndex", () => {
     const env = parseEnvelope(await tool.execute({ name: "alpha" }));
     const p = env.payload as { connectorHealthCaveats?: string[] };
     expect(Array.isArray(p.connectorHealthCaveats)).toBe(true);
-    expect((p.connectorHealthCaveats ?? []).length).toBe(2);
+    expect(p.connectorHealthCaveats ?? []).toHaveLength(2);
   });
 });
 
@@ -449,7 +449,7 @@ describe("fetchMoreIndexResults", () => {
     expect(p.limit).toBe(100);
     expect(p.service).toBe("github");
     expect(p.indexedType).toBe("pr");
-    expect(p.items.length).toBe(2);
+    expect(p.items).toHaveLength(2);
 
     const env2 = parseEnvelope(
       await tool.execute({
@@ -667,7 +667,7 @@ describe("getAuditLog", () => {
     const env = parseEnvelope(await tool.execute(null));
     const p = env.payload as { entries: unknown[] };
     expect(Array.isArray(p.entries)).toBe(true);
-    expect(p.entries.length).toBe(1);
+    expect(p.entries).toHaveLength(1);
   });
 
   test("limit clamps high (1000) and low (1)", async () => {
@@ -687,9 +687,9 @@ describe("getAuditLog", () => {
     });
     const tool = await getTool(agent, "getAuditLog");
     const envHigh = parseEnvelope(await tool.execute({ limit: 9999 }));
-    expect((envHigh.payload as { entries: unknown[] }).entries.length).toBe(3);
+    expect((envHigh.payload as { entries: unknown[] }).entries).toHaveLength(3);
     const envLow = parseEnvelope(await tool.execute({ limit: 0 }));
-    expect((envLow.payload as { entries: unknown[] }).entries.length).toBe(1);
+    expect((envLow.payload as { entries: unknown[] }).entries).toHaveLength(1);
   });
 
   test("redacts sensitive keys in persisted action_json", async () => {
@@ -810,7 +810,7 @@ describe("session-memory tools", () => {
       const env = parseEnvelope(await tool.execute({ query: "hello" }));
       const p = env.payload as { chunks: unknown[] };
       expect(Array.isArray(p.chunks)).toBe(true);
-      expect(p.chunks.length).toBe(1);
+      expect(p.chunks).toHaveLength(1);
     });
   });
 
@@ -899,7 +899,7 @@ describe("session-memory tools", () => {
       const env = parseEnvelope(await tool.execute({ role: "assistant", text: "  hi  " }));
       expect((env.payload as { ok?: boolean }).ok).toBe(true);
     });
-    expect(appended.length).toBe(1);
+    expect(appended).toHaveLength(1);
     expect(appended[0]?.sessionId).toBe("sess-Z");
     expect(appended[0]?.text).toBe("hi");
     expect(appended[0]?.role).toBe("assistant");
@@ -948,7 +948,7 @@ describe("wrapToolForLlm (auditDb branches)", () => {
       service: string;
       status: string;
     }>;
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({
       session_id: "sess-OK",
       tool_id: "listConnectors",
@@ -977,7 +977,7 @@ describe("wrapToolForLlm (auditDb branches)", () => {
       tool_id: string;
       status: string;
     }>;
-    expect(rows.length).toBe(1);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ tool_id: "searchLocalIndex", status: "error" });
   });
 

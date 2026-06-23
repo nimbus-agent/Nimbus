@@ -409,7 +409,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const sync = createPagerdutySyncable({ ensurePagerdutyMcpRunning: async () => {} });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
     const result = await sync.sync(syncTestContext(db, vault), null);
-    expect(calls.length).toBe(3);
+    expect(calls).toHaveLength(3);
     expect(new URL(calls[0] as string).searchParams.get("sort_by")).toBe("updated_at:asc"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
     expect(new URL(calls[1] as string).searchParams.get("offset")).toBe("100"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
     expect(new URL(calls[2] as string).searchParams.get("offset")).toBe("200"); // NOSONAR S4325: calls[N] is string|undefined under noUncheckedIndexedAccess
@@ -475,7 +475,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     });
     const vault = createStubVault({ "pagerduty.api_token": "test-token" });
     const result = await sync.sync(syncTestContext(db, vault), null);
-    expect(calls.length).toBe(2);
+    expect(calls).toHaveLength(2);
     expect(result.itemsUpserted).toBe(2);
     expect(result.hasMore).toBe(true);
     const cursor = result.cursor as string;
@@ -569,7 +569,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     // Second sync with the valid cursor returned from first sync
     const r2 = await sync.sync(syncTestContext(db, vault), r1.cursor);
     expect(r2.itemsUpserted).toBe(0);
-    expect(capturedUrls.length).toBe(1);
+    expect(capturedUrls).toHaveLength(1);
     // The "since" from the second call should be the cursor's lastUpdated (not the 30d floor)
     const since2 = new URL(capturedUrls[0] as string).searchParams.get("since"); // NOSONAR S4325
     expect(since2).not.toBeNull();
@@ -896,7 +896,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     const row = db
       .prepare("SELECT title FROM item WHERE service = ? AND external_id = ?")
       .get("pagerduty", "PT_LONG_TITLE") as { title: string };
-    expect(row.title.length).toBe(512);
+    expect(row.title).toHaveLength(512);
     expect(row.title).toBe("A".repeat(512));
   });
 
@@ -995,7 +995,7 @@ describeWithFetchRestore("pagerduty-sync", () => {
     });
     const vault = createStubVault({ "pagerduty.api_token": "tok" });
     const result = await sync.sync(syncTestContext(db, vault), null);
-    expect(calls.length).toBe(1);
+    expect(calls).toHaveLength(1);
     expect(result.itemsUpserted).toBe(1);
     // pdHasMore=true and pagesFetched(1) >= clampedMax(1) → hasMore=true
     expect(result.hasMore).toBe(true);

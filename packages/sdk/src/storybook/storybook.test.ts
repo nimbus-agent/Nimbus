@@ -30,7 +30,7 @@ describe("parseStorybookIndex", () => {
       },
     };
     const result = parseStorybookIndex(input);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     const story = result[0];
     expect(story).toBeDefined();
     expect(story?.id).toBe("button--primary");
@@ -52,7 +52,7 @@ describe("parseStorybookIndex", () => {
       },
     };
     const result = parseStorybookIndex(input);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     const story = result[0];
     expect(story).toBeDefined();
     // v6 uses `kind` → title, `story` → name
@@ -68,7 +68,7 @@ describe("parseStorybookIndex", () => {
       },
     };
     const result = parseStorybookIndex(input);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("has-id");
   });
 
@@ -81,7 +81,7 @@ describe("parseStorybookIndex", () => {
     };
     const result = parseStorybookIndex(input);
     // empty string → str() returns null → entryToStory returns null → skipped
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("real-id");
   });
 
@@ -106,7 +106,7 @@ describe("parseStorybookIndex", () => {
       },
     };
     const result = parseStorybookIndex(input);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     const story = result[0];
     expect(story?.title).toBeNull();
     expect(story?.name).toBeNull();
@@ -122,7 +122,7 @@ describe("parseStorybookIndex", () => {
     };
     const result = parseStorybookIndex(input);
     // Should only parse "entries" (the ?? short-circuits)
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("entry-id");
   });
 
@@ -135,7 +135,7 @@ describe("parseStorybookIndex", () => {
       },
     };
     const result = parseStorybookIndex(input);
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("valid-entry");
   });
 });

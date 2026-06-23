@@ -145,7 +145,7 @@ describe("App state machine", () => {
     await settle(SUBMIT_SETTLE_MS);
 
     const askCalls = stub.calls.filter((c) => c.method === "engine.askStream");
-    expect(askCalls.length).toBe(2);
+    expect(askCalls).toHaveLength(2);
     const firstParams = askCalls[0]?.params as { input: string; sessionId?: string };
     const secondParams = askCalls[1]?.params as { input: string; sessionId?: string };
     expect(typeof firstParams.sessionId).toBe("string");
@@ -202,7 +202,7 @@ describe("App state machine", () => {
     stdin.write("a");
     await settle(SUBMIT_SETTLE_MS);
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
-    expect(consentCalls.length).toBe(1);
+    expect(consentCalls).toHaveLength(1);
     const params = consentCalls[0]?.params as {
       batchId: string;
       decisions: Array<{ actionId: string; approved: boolean }>;
@@ -226,7 +226,7 @@ describe("App state machine", () => {
     stdin.write("r");
     await settle(SUBMIT_SETTLE_MS);
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
-    expect(consentCalls.length).toBe(1);
+    expect(consentCalls).toHaveLength(1);
     const params = consentCalls[0]?.params as {
       decisions: Array<{ approved: boolean }>;
     };
@@ -284,7 +284,7 @@ describe("App state machine", () => {
     await settle(SUBMIT_SETTLE_MS);
     expect(exitCalls).toBe(1);
     const consentCalls = stub.calls.filter((c) => c.method === "consent.respond");
-    expect(consentCalls.length).toBe(1);
+    expect(consentCalls).toHaveLength(1);
     const params = consentCalls[0]?.params as {
       decisions: Array<{ approved: boolean }>;
     };

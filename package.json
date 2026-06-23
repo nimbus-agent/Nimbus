@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "repository": {
     "type": "git",
@@ -222,7 +222,7 @@
   "devDependencies": {
     "@babel/core": "7.29.7",
     "@babel/preset-typescript": "7.29.7",
-    "@biomejs/biome": "^2.5.0",
+    "@biomejs/biome": "^2.5.1",
     "@hughescr/stryker-bun-runner": "1.2.2",
     "@resvg/resvg-js": "^2.6.2",
     "@stryker-mutator/core": "9.6.1",
@@ -238,7 +238,7 @@
     "istanbul-reports": "3.2.0",
     "js-yaml": "^4.2.0",
     "jscpd": "^5.0.11",
-    "knip": "^6.16.1",
+    "knip": "^6.18.0",
     "markdownlint-cli2": "^0.22.1",
     "tweetnacl": "^1.0.3",
     "typescript": "^6.0.3",

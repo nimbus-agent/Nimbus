@@ -15,7 +15,7 @@ describeWin("DpapiVault — optional entropy (S2-F4)", () => {
     const entropyPath = join(cfg, "vault", ".entropy");
     expect(existsSync(entropyPath)).toBe(true);
     const buf = readFileSync(entropyPath);
-    expect(buf.length).toBe(32);
+    expect(buf).toHaveLength(32);
   });
 
   test("round-trips a value across vault instances using the persisted entropy", async () => {

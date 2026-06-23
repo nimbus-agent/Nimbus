@@ -61,7 +61,7 @@ describe("nimbus impact (e2e, in-process)", () => {
       { db, sessionId: "e2e-impact-2", notify: () => {} },
     );
     expect(brief.startEntityId).toBeNull();
-    expect(brief.affected.length).toBe(0);
+    expect(brief.affected).toHaveLength(0);
   });
 
   test("structural HITL-free: impact.ts must not import ToolExecutor or HITL_REQUIRED", () => {

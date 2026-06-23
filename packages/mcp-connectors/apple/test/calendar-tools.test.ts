@@ -190,7 +190,7 @@ describe("apple_calendar_list", () => {
 
     // The first event has a 5000-char description — must be capped at 2000.
     expect(result.items[0]?.notes.length).toBeLessThanOrEqual(CAPPED_NOTES_LEN);
-    expect(result.items[0]?.notes.length).toBe(CAPPED_NOTES_LEN);
+    expect(result.items[0]?.notes).toHaveLength(CAPPED_NOTES_LEN);
   });
 
   it("filters to the requested calendar when calendar arg is supplied", async () => {

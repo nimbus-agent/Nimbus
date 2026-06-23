@@ -167,7 +167,7 @@ describe("watcher.listHistory", () => {
     expect(out.kind).toBe("hit");
     if (out.kind !== "hit") return;
     const value = out.value as { events: Array<{ firedAt: number }> };
-    expect(value.events.length).toBe(2);
+    expect(value.events).toHaveLength(2);
     expect(value.events[0]?.firedAt).toBe(20);
   });
 
@@ -203,7 +203,7 @@ describe("workflow.listRuns", () => {
     expect(out.kind).toBe("hit");
     if (out.kind !== "hit") return;
     const value = out.value as { runs: Array<{ id: string }> };
-    expect(value.runs.length).toBe(2);
+    expect(value.runs).toHaveLength(2);
     expect(value.runs[0]?.id).toBe("r2");
   });
 });
@@ -495,7 +495,7 @@ describe("extension.list", () => {
       db,
     });
     expect(out.kind).toBe("hit");
-    expect((out as { value: { extensions: Array<{ id: string }> } }).value.extensions.length).toBe(
+    expect((out as { value: { extensions: Array<{ id: string }> } }).value.extensions).toHaveLength(
       1,
     );
   });

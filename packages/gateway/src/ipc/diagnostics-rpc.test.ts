@@ -642,7 +642,7 @@ describe("index.queryItems", () => {
         );
         expect(r.kind).toBe("hit");
         const v = (r as { value: { items: unknown[]; meta: { limit: number } } }).value;
-        expect(v.items.length).toBe(1);
+        expect(v.items).toHaveLength(1);
         expect(v.meta.limit).toBe(10);
       } finally {
         db.close();
@@ -846,7 +846,7 @@ describe("diag.snapshot", () => {
             };
           }
         ).value;
-        expect(value.watchers.length).toBe(1);
+        expect(value.watchers).toHaveLength(1);
         expect(value.watchers[0]?.enabled).toBe(true);
         expect(value.watchers[0]?.lastFiredAtMs).toBe(12345);
       } finally {

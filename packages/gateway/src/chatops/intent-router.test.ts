@@ -74,7 +74,7 @@ describe("IntentRouter", () => {
     const r = new IntentRouter({ ...deps, resolveIdentity: async () => ({ kind: "unmapped" }) });
     await r.handle(msg("@nimbus who's on call?"));
     expect(audits.map((a) => a.reason)).toContain("unmapped_user");
-    expect(replies.length).toBe(1);
+    expect(replies).toHaveLength(1);
   });
 
   test("write with no resolvable owner → refusal audited (no_owner)", async () => {

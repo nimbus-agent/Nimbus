@@ -165,7 +165,7 @@ describe("buildSearchLocalIndexHealthExtras", () => {
     );
     expect(extras.connectorHealthCaveat).toBeUndefined();
     expect(extras.connectorHealthCaveats).toBeDefined();
-    expect(extras.connectorHealthCaveats?.length).toBe(2);
+    expect(extras.connectorHealthCaveats).toHaveLength(2);
     expect(extras.connectorHealthCaveats?.[0]).toContain("github");
     expect(extras.connectorHealthCaveats?.[1]).toContain("slack");
   });
@@ -201,7 +201,7 @@ describe("buildSearchLocalIndexHealthExtras", () => {
       },
       "",
     );
-    expect(extras.connectorHealthCaveats?.length).toBe(1);
+    expect(extras.connectorHealthCaveats).toHaveLength(1);
     expect(extras.connectorHealthCaveat).toBeUndefined();
   });
 });

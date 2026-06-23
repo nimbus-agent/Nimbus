@@ -313,22 +313,23 @@ class AppleSmtpMailer implements EmailSendMailer {
  */
 function buildRfc822Message(from: string, input: DraftInput): string {
   const lines: string[] = [];
-  lines.push(`From: ${from}`);
-  lines.push(`To: ${input.to}`);
+  lines.push(`From: ${from}`, `To: ${input.to}`);
   if (input.cc !== undefined && input.cc !== "") {
     lines.push(`Cc: ${input.cc}`);
   }
   if (input.bcc !== undefined && input.bcc !== "") {
     lines.push(`Bcc: ${input.bcc}`);
   }
-  lines.push(`Subject: ${input.subject}`);
-  lines.push("MIME-Version: 1.0");
-  lines.push("Content-Type: text/plain; charset=UTF-8");
   // The body may contain non-ASCII (UTF-8) characters, so it cannot be declared
   // 7bit. Base64-encode it (wrapped at 76 chars per RFC 2045) so the APPENDed
   // message is well-formed regardless of content.
-  lines.push("Content-Transfer-Encoding: base64");
-  lines.push("");
+  lines.push(
+    `Subject: ${input.subject}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+  );
   const encoded = Buffer.from(input.body, "utf8").toString("base64");
   lines.push(encoded.replace(/.{76}/g, "$&\r\n"));
   // RFC 5322 uses CRLF line endings.
@@ -372,7 +373,7 @@ class AppleDraftAppender implements DraftAppender {
       // IMAP APPEND to the Drafts mailbox. imapflow returns the assigned UID
       // when the server supports APPENDUID or UIDPLUS — it may return undefined
       // when neither is available, which is valid.
-      const result = await flow.append(DRAFTS_MAILBOX, buf, ["\\Draft"]);
+      const result = await flow.append(DRAFTS_MAILBOX, buf, [String.raw`\Draft`]);
       // imapflow append() returns { uid?: number; ... } or undefined.
       const uid = (result as { uid?: number } | undefined)?.uid ?? null;
       return { uid: uid === undefined ? null : uid, mailbox: DRAFTS_MAILBOX };
