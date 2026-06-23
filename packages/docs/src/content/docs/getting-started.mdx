@@ -70,7 +70,6 @@ nimbus ask "what is in my Drive?"
 | `packages/client` | `@nimbus-dev/client` — typed IPC wrapper used by the CLI, the desktop app, and integrators. |
 | `packages/sdk` | `@nimbus-dev/sdk` — interfaces and contract tests for first-party and community connectors. |
 | `packages/mcp-connectors/*` | First-party MCP servers (Google Drive, Gmail, GitHub, Slack, Linear, etc.). |
-| `packages/vscode-extension` | The Nimbus VS Code extension. |
 
 The Gateway never imports from the CLI or UI; clients communicate with the
 Gateway exclusively over JSON-RPC. See the

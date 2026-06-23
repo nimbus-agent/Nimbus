@@ -16,7 +16,8 @@
     "**/test/fixtures/**",
     "**/*.lock",
     "**/*.snap",
-    "packages/docs/**"
+    "packages/docs/**",
+    "**/gw-state-helpers.ts"
   ],
   "format": ["typescript", "tsx"],
   "absolute": false,

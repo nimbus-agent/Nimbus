@@ -375,7 +375,7 @@ First-party demonstrations of multi-agent orchestration. **Deferred to the v0.1.
   - Status bar item: Gateway health + active profile name
   - Compatible with VS Code-fork hosts: Cursor, Windsurf, VSCodium, Gitpod
   - Published to Open VSX Registry and VS Code Marketplace
-  - `packages/vscode-extension` workspace package; depends on `@nimbus-dev/client` only; never imports Gateway source
+  - Standalone repo [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode); depends on the published `@nimbus-dev/client` only; never imports Gateway source
 
 #### Editor AI Context (MCP Native)
 

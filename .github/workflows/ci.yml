@@ -76,8 +76,8 @@ jobs:
           # that package's tests. This is more robust than enumerating the
           # positive set: workflow changes, root config, scripts, and shared
           # deps (sdk, client, mcp-connectors) all correctly trigger both.
-          GATEWAY_EXCLUDE='^(packages/(cli|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
-          CLI_EXCLUDE='^(packages/(gateway|ui|vscode-extension|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          GATEWAY_EXCLUDE='^(packages/(cli|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
+          CLI_EXCLUDE='^(packages/(gateway|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
           if [[ -z "$CHANGED" ]]; then
             GW=true
             CLI=true
@@ -246,8 +246,8 @@ jobs:
       # monorepo-wide and identical between entries, so doing it twice per OS
       # would be pure runner-minute waste with no signal gain — host-specific TS
       # quirks still surface on the gateway entry. Client build is only needed
-      # for vscode-extension typecheck, which only runs alongside typecheck.
-      - name: Build @nimbus-dev/client (for vscode-extension typecheck)
+      # for cli typecheck, which only runs alongside typecheck.
+      - name: Build @nimbus-dev/client (for cli typecheck)
         if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
         run: cd packages/client && bun run build
 

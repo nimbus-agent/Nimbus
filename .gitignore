@@ -30,15 +30,6 @@ packages/mcp-connectors/*/src/nimbus-mcp-*.js.map
 # admin-console build output (static bundle; produced by `bun run build`)
 packages/admin-console/dist/
 
-# vscode-extension webview bundle output (esbuild copies styles.css and emits
-# webview.js here; both are produced from src/chat/webview/* and never edited
-# by hand)
-packages/vscode-extension/media/webview.js
-packages/vscode-extension/media/webview.js.map
-packages/vscode-extension/media/webview.css
-
-# vscode-extension package artifacts (built locally for QA; CI publishes the
-# canonical .vsix on the vscode-v* tag push)
 *.vsix
 .turbo/
 

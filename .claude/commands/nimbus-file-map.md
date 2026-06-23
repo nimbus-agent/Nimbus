@@ -238,7 +238,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 |---|---|
 | `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
 | `packages/client/src/index.ts` | `@nimbus-dev/client` — `NimbusClient`, `MockClient` |
-| `packages/vscode-extension/` | `nimbus-vscode` — Marketplace + Open VSX |
+| _(standalone repo)_ | VS Code extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) (Marketplace + Open VSX) |
 
 ## Tauri UI (frontend + Rust bridge)
 

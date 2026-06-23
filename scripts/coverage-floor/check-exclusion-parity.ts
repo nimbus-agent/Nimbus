@@ -39,13 +39,6 @@ function patternToSampleRelPaths(pattern: string): string[] {
     );
     return samples;
   }
-  if (pattern === "**/packages/vscode-extension/src/**") {
-    samples.push(
-      "packages/vscode-extension/src/extension.ts",
-      "packages/vscode-extension/src/chat/webview/main.ts",
-    );
-    return samples;
-  }
   if (pattern === "**/packages/admin-console/src/**") {
     samples.push("packages/admin-console/src/main.ts", "packages/admin-console/src/views.ts");
     return samples;

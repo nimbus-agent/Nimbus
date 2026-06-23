@@ -43,7 +43,6 @@ body:
         - "UI (packages/ui/)"
         - "SDK (packages/sdk/)"
         - "Client (packages/client/)"
-        - "VS Code extension (packages/vscode-extension/)"
         - "MCP connector (packages/mcp-connectors/*)"
         - "Repo-root docs (docs/*.md)"
         - "Other / cross-cutting"

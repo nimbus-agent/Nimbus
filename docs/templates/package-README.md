@@ -4,7 +4,7 @@ Nimbus Package README Template
 This template applies to every package in the monorepo. 
 Sections required by the lint vary by tier:
 
-**Public tier** (client, sdk, vscode-extension, mcp-connectors/*):
+**Public tier** (client, sdk, mcp-connectors/*):
 ## What this is
 ## Install
 ## Quickstart
