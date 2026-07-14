@@ -183,7 +183,11 @@ jobs:
 
       - name: Run cargo audit (packages/ui/src-tauri)
         working-directory: packages/ui/src-tauri
-        run: cargo audit
+        # quick-xml 0.39.4 DoS advisories (transitive via plist/wayland-scanner,
+        # not reachable without an upstream Tauri bump; Tauri desktop deferred to
+        # Phase 13, no runtime exposure). Mirrors the deny.toml ignore list —
+        # revisit at the next Tauri bump. See deny.toml for full rationale.
+        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 
   cargo-deny:
     name: Cargo deny (licenses + advisories + bans)

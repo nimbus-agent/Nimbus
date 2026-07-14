@@ -63,6 +63,18 @@ ignore = [
   # codegen). Runtime code uses rand 0.8.6 (also in lockfile). No runtime
   # exposure; revisit when tauri-utils drops the kuchikiki dep tree.
   "RUSTSEC-2026-0097",
+  # quick-xml 0.39.4 DoS advisories (published 2026-07): RUSTSEC-2026-0194
+  # (quadratic run time checking a start tag for duplicate attribute names)
+  # and RUSTSEC-2026-0195 (unbounded namespace-declaration allocation in
+  # NsReader → memory-exhaustion DoS). Both fixed in quick-xml >= 0.41.0, but
+  # 0.41 is a semver-breaking 0.x-minor bump pinned by transitive deps
+  # `plist` (macOS Info.plist bundling) and `wayland-scanner` (Linux Wayland)
+  # — not reachable via `cargo update` without an upstream Tauri/plist bump.
+  # Nimbus does not parse untrusted XML directly, and the Tauri desktop is
+  # deferred to Phase 13 (unshipped) → no runtime exposure. Revisit when
+  # Tauri bumps its plist/wayland-scanner dep tree past quick-xml 0.41.
+  "RUSTSEC-2026-0194", # quick-xml quadratic duplicate-attribute check
+  "RUSTSEC-2026-0195", # quick-xml NsReader unbounded namespace allocation
 ]
 
 [licenses]
