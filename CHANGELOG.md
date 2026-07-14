@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.20.0](https://github.com/nimbus-agent/Nimbus/compare/v0.19.0...v0.20.0) (2026-07-14)
+
+
+### Features
+
+* **client:** expose egress ledger reads on NimbusClient + MockClient ([#751](https://github.com/nimbus-agent/Nimbus/issues/751)) ([31c05b2](https://github.com/nimbus-agent/Nimbus/commit/31c05b25c17b858d14980455ad8800fbfb99e875))
+
 ## [0.19.0](https://github.com/nimbus-agent/Nimbus/compare/v0.18.0...v0.19.0) (2026-06-23)
 
 
