@@ -17,4 +17,12 @@ describe("NimbusClient typed surface", () => {
       "function",
     );
   });
+
+  test("instance exposes egress read methods", () => {
+    const proto = NimbusClient.prototype as unknown as Record<string, unknown>;
+    expect(typeof proto.egressHead).toBe("function");
+    expect(typeof proto.egressList).toBe("function");
+    expect(typeof proto.egressVerify).toBe("function");
+    expect(typeof proto.egressProveWindow).toBe("function");
+  });
 });

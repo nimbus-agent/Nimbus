@@ -1,6 +1,16 @@
 import type { NimbusItem } from "@nimbus-dev/sdk";
 
-import type { RankedSearchItem, RankedSearchParams } from "./nimbus-client.js";
+import type {
+  EgressHead,
+  EgressListParams,
+  EgressListResult,
+  EgressProveWindowParams,
+  EgressProveWindowResult,
+  EgressRow,
+  EgressVerifyResult,
+  RankedSearchItem,
+  RankedSearchParams,
+} from "./nimbus-client.js";
 import type {
   AskStreamHandle,
   AskStreamOptions,
@@ -13,6 +23,10 @@ export type MockClientFixtures = {
   rankedItems?: RankedSearchItem[];
   streamTokens?: string[];
   reply?: string;
+  egressHead?: EgressHead;
+  egressRows?: EgressRow[];
+  egressVerify?: EgressVerifyResult;
+  egressProveWindow?: EgressProveWindowResult;
 };
 
 /**
@@ -103,6 +117,28 @@ export class MockClient {
 
   async auditList(): Promise<unknown[]> {
     return [];
+  }
+
+  async egressHead(): Promise<EgressHead> {
+    return this.fixtures.egressHead ?? { head: "", count: 0 };
+  }
+
+  async egressList(_params?: EgressListParams): Promise<EgressListResult> {
+    return { rows: this.fixtures.egressRows ?? [] };
+  }
+
+  async egressVerify(): Promise<EgressVerifyResult> {
+    return this.fixtures.egressVerify ?? { ok: true, verifiedRows: 0 };
+  }
+
+  async egressProveWindow(_params?: EgressProveWindowParams): Promise<EgressProveWindowResult> {
+    return (
+      this.fixtures.egressProveWindow ?? {
+        rows: [],
+        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        verify: { ok: true, verifiedRows: 0 },
+      }
+    );
   }
 
   async close(): Promise<void> {

@@ -12,6 +12,15 @@ export {
 export { IPCClient } from "./ipc-transport.js";
 export { MockClient, type MockClientFixtures } from "./mock-client.js";
 export {
+  type EgressCompleteness,
+  type EgressHead,
+  type EgressListParams,
+  type EgressListResult,
+  type EgressProveWindowParams,
+  type EgressProveWindowResult,
+  type EgressReceipt,
+  type EgressRow,
+  type EgressVerifyResult,
   NimbusClient,
   type NimbusClientOptions,
   type RankedSearchItem,

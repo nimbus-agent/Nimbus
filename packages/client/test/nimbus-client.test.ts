@@ -118,6 +118,51 @@ describe("NimbusClient method dispatch", () => {
     expect(out).toEqual([]);
   });
 
+  test("egress read methods route to the right JSON-RPC methods", async () => {
+    const ipc = new FakeIpc([
+      { head: "abc", count: 3 },
+      { rows: [] },
+      { ok: true, verifiedRows: 3 },
+      {
+        rows: [],
+        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        verify: { ok: true, verifiedRows: 3 },
+      },
+    ]);
+    const c = makeClient(ipc);
+    const head = await c.egressHead();
+    await c.egressList();
+    await c.egressVerify();
+    await c.egressProveWindow();
+    expect(ipc.calls.map((x) => x.method)).toEqual([
+      "egress.head",
+      "egress.list",
+      "egress.verify",
+      "egress.proveWindow",
+    ]);
+    expect(head).toEqual({ head: "abc", count: 3 });
+  });
+
+  test("egressList forwards window + limit params", async () => {
+    const ipc = new FakeIpc([{ rows: [] }]);
+    await makeClient(ipc).egressList({ since: 10, until: 20, limit: 5 });
+    expect(ipc.calls[0]?.method).toBe("egress.list");
+    expect(ipc.calls[0]?.params).toEqual({ since: 10, until: 20, limit: 5 });
+  });
+
+  test("egressProveWindow forwards since/until/sign", async () => {
+    const ipc = new FakeIpc([
+      {
+        rows: [],
+        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        verify: { ok: true, verifiedRows: 0 },
+      },
+    ]);
+    await makeClient(ipc).egressProveWindow({ since: 1, until: 2, sign: true });
+    expect(ipc.calls[0]?.method).toBe("egress.proveWindow");
+    expect(ipc.calls[0]?.params).toEqual({ since: 1, until: 2, sign: true });
+  });
+
   test("askStream returns a handle with a string streamId", async () => {
     const ipc = new FakeIpc([{ streamId: "stream-1" }]);
     const h = makeClient(ipc).askStream("hi");

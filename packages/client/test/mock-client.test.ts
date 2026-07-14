@@ -66,6 +66,49 @@ describe("MockClient", () => {
     expect(r).toEqual({ items: [], meta: { limit: 0, total: 0 } });
   });
 
+  test("egress methods return safe defaults without fixtures", async () => {
+    const c = new MockClient();
+    expect(await c.egressHead()).toEqual({ head: "", count: 0 });
+    // Params accepted for drop-in parity with NimbusClient (TS would reject if not).
+    expect(await c.egressList({ since: 1, limit: 5 })).toEqual({ rows: [] });
+    expect(await c.egressVerify()).toEqual({ ok: true, verifiedRows: 0 });
+    expect(await c.egressProveWindow({ since: 1, sign: true })).toEqual({
+      rows: [],
+      completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+      verify: { ok: true, verifiedRows: 0 },
+    });
+  });
+
+  test("egress methods return configured fixtures", async () => {
+    const row = {
+      id: 1,
+      timestamp: 100,
+      sourceType: "agent",
+      sourceId: "s1",
+      destination: "github",
+      method: "github.issue.create",
+      payloadSummary: "{}",
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+      rowHash: "h1",
+      prevHash: "h0",
+    };
+    const c = new MockClient({
+      egressHead: { head: "h1", count: 1 },
+      egressRows: [row],
+      egressVerify: { ok: false, verifiedRows: 1, brokenAt: 2, reason: "mismatch" },
+      egressProveWindow: {
+        rows: [row],
+        completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+        verify: { ok: true, verifiedRows: 1 },
+      },
+    });
+    expect((await c.egressHead()).count).toBe(1);
+    expect((await c.egressList()).rows).toHaveLength(1);
+    expect((await c.egressVerify()).brokenAt).toBe(2);
+    expect((await c.egressProveWindow()).completeness.outboundEgressEvents).toBe(1);
+  });
+
   test("searchRanked returns [] by default and ranked fixtures when configured", async () => {
     expect(await new MockClient().searchRanked({ name: "x" })).toEqual([]);
     const c = new MockClient({

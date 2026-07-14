@@ -51,6 +51,94 @@ export type SessionTranscript = {
 };
 
 /**
+ * A single row of the append-only, BLAKE3-chained egress ledger.
+ * Mirrors the Gateway's `EgressRow` shape (`egress/egress-verify.ts`).
+ * The ledger records every gated outbound action before it dispatches.
+ */
+export type EgressRow = {
+  id: number;
+  timestamp: number;
+  sourceType: string;
+  sourceId: string | null;
+  /** `serviceOf()` prefix of the action type — never a raw URL. */
+  destination: string;
+  method: string;
+  /** Redacted, ≤256-byte debugging summary — NOT a security boundary. */
+  payloadSummary: string;
+  /** `"approved" | "not_required" | "rejected"`. */
+  hitlStatus: string;
+  /** `"authorized" | "blocked"`. */
+  resultStatus: string;
+  rowHash: string;
+  prevHash: string;
+};
+
+/** Parameters for {@link NimbusClient.egressList}. */
+export type EgressListParams = {
+  /** Lower bound (inclusive) on row `timestamp`, epoch ms. */
+  since?: number;
+  /** Upper bound (inclusive) on row `timestamp`, epoch ms. */
+  until?: number;
+  /** Max rows. The Gateway clamps to 1..5000; default 1000. */
+  limit?: number;
+};
+
+/** Result of {@link NimbusClient.egressList}. */
+export type EgressListResult = {
+  rows: EgressRow[];
+};
+
+/** Result of {@link NimbusClient.egressHead}: ledger head hash + row count. */
+export type EgressHead = {
+  head: string;
+  count: number;
+};
+
+/**
+ * Result of {@link NimbusClient.egressVerify}: an offline, timing-safe
+ * BLAKE3-chain verification over the whole ledger.
+ */
+export type EgressVerifyResult = {
+  ok: boolean;
+  verifiedRows: number;
+  /** Row id where the chain first broke, when `ok === false`. */
+  brokenAt?: number;
+  reason?: string;
+};
+
+/** Completeness tier attached to a prove-window result. */
+export type EgressCompleteness = {
+  tier: "authorized-actions";
+  outboundEgressEvents: number;
+};
+
+/** An optional signed receipt over a prove-window (Ed25519, share keypair). */
+export type EgressReceipt = {
+  sigB64: string;
+  pubkeyB64: string;
+  digest: string;
+};
+
+/** Parameters for {@link NimbusClient.egressProveWindow}. */
+export type EgressProveWindowParams = {
+  /** Lower bound (inclusive) on the window, epoch ms. */
+  since?: number;
+  /** Upper bound (inclusive) on the window, epoch ms. */
+  until?: number;
+  /** When true, attach a signed `receipt` over the window digest. */
+  sign?: boolean;
+};
+
+/** Result of {@link NimbusClient.egressProveWindow}. */
+export type EgressProveWindowResult = {
+  rows: EgressRow[];
+  completeness: EgressCompleteness;
+  /** Whole-ledger verify — the window claim is only sound if this is `ok`. */
+  verify: EgressVerifyResult;
+  receipt?: EgressReceipt;
+};
+
+/**
  * Typed convenience wrapper over the Gateway JSON-RPC IPC surface.
  */
 export class NimbusClient {
@@ -150,6 +238,37 @@ export class NimbusClient {
 
   async auditList(limit?: number): Promise<unknown[]> {
     return await this.ipc.call("audit.list", { limit: limit ?? 50 });
+  }
+
+  /** Egress ledger head hash + row count (read-only). */
+  async egressHead(): Promise<EgressHead> {
+    return await this.ipc.call<EgressHead>("egress.head");
+  }
+
+  /** List egress-ledger rows, optionally windowed and clamped (read-only). */
+  async egressList(params: EgressListParams = {}): Promise<EgressListResult> {
+    return await this.ipc.call<EgressListResult>("egress.list", {
+      since: params.since,
+      until: params.until,
+      limit: params.limit,
+    });
+  }
+
+  /** Offline, timing-safe verify of the whole egress chain (read-only). */
+  async egressVerify(): Promise<EgressVerifyResult> {
+    return await this.ipc.call<EgressVerifyResult>("egress.verify");
+  }
+
+  /**
+   * Prove what left the machine in a window: the rows, the completeness tier,
+   * a whole-ledger verify, and — when `sign` is set — a signed receipt.
+   */
+  async egressProveWindow(params: EgressProveWindowParams = {}): Promise<EgressProveWindowResult> {
+    return await this.ipc.call<EgressProveWindowResult>("egress.proveWindow", {
+      since: params.since,
+      until: params.until,
+      sign: params.sign,
+    });
   }
 
   async close(): Promise<void> {

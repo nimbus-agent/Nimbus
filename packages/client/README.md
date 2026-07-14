@@ -24,6 +24,20 @@ await client.close();
 
 Use `MockClient` in unit tests when no Gateway process is available.
 
+### Egress ledger (provable locality)
+
+Read-only view of the append-only, hash-chained egress ledger — every gated
+outbound action, recorded before it dispatches:
+
+```typescript
+const { head, count } = await client.egressHead();      // ledger head + row count
+const { rows } = await client.egressList({ limit: 100 }); // recent rows
+const verify = await client.egressVerify();               // offline chain verify
+const proof = await client.egressProveWindow({ since: Date.now() - 3_600_000 });
+// Trust `completeness` only when the whole-ledger verify passed:
+// proof.verify.ok && proof.completeness.outboundEgressEvents === 0 → nothing left the machine
+```
+
 ## Publishing (maintainers)
 
 CI publishes on push of a tag matching `client-v*` (see `.github/workflows/publish-client.yml` in the Nimbus repo). Configure a GitHub Actions secret **`NPM_TOKEN`** (npm access token with publish rights to this scope).
