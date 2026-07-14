@@ -45,6 +45,7 @@ Usage:
   nimbus repl [--session]  Interactive agent loop (TTY)
   nimbus run <file>        Save + run workflow from JSON/YAML file
   nimbus scaffold extension <id>  Minimal extension folder + manifest
+  nimbus version            Show the installed Nimbus version (also: --version, -v)
   nimbus help               Show this message
 
 Environment (optional):

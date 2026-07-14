@@ -61,6 +61,7 @@ import {
 } from "./commands/index.ts";
 import { createCliFileLogger } from "./lib/cli-logger.ts";
 import { getCliPlatformPaths } from "./paths.ts";
+import { NIMBUS_VERSION } from "./version.ts";
 
 const rawArgv = process.argv.slice(2);
 const isInteractiveShell = process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -132,8 +133,13 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
 };
 
 const HELP_ALIASES = new Set(["help", "--help", "-h"]);
+const VERSION_ALIASES = new Set(["--version", "-v", "version"]);
 
 async function dispatchCommand(command: string, args: string[]): Promise<void> {
+  if (VERSION_ALIASES.has(command)) {
+    console.log(NIMBUS_VERSION);
+    return;
+  }
   if (HELP_ALIASES.has(command)) {
     printHelp();
     return;
