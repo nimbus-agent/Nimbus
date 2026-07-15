@@ -26,7 +26,6 @@
     "packages/gateway",
     "packages/cli",
     "packages/ui",
-    "packages/sdk",
     "packages/client",
     "packages/docs",
     "packages/mcp-connectors/onedrive",
