@@ -18,12 +18,6 @@
       "package-name": "@nimbus-dev/client",
       "component": "client",
       "changelog-path": "CHANGELOG.md"
-    },
-    "packages/sdk": {
-      "release-type": "node",
-      "package-name": "@nimbus-dev/sdk",
-      "component": "sdk",
-      "changelog-path": "CHANGELOG.md"
     }
   }
 }
