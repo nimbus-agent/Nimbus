@@ -2,6 +2,11 @@ import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
+/** "1 clip" / "N clips" — singular-safe count label. */
+function clipCount(n: number): string {
+  return `${n} clip${n === 1 ? "" : "s"}`;
+}
+
 export const CLIP_USAGE = `Usage:
   nimbus clip pair [--label <device>]   open a pairing window and print the one-time code
   nimbus clip status                    list paired browsers (labels + token fingerprints)
@@ -113,18 +118,18 @@ export async function runClipDelete(
         all: true,
         dryRun: true,
       });
-      console.log(`${preview.matched} clips would be deleted. Re-run with --yes to confirm.`);
+      console.log(`${clipCount(preview.matched)} would be deleted. Re-run with --yes to confirm.`);
       return;
     }
     const out = await client.call<{ deleted: number }>("clip.delete", { all: true });
-    console.log(`Deleted ${out.deleted} clip${out.deleted === 1 ? "" : "s"}.`);
+    console.log(`Deleted ${clipCount(out.deleted)}.`);
     return;
   }
   if (target === undefined || target.trim() === "") {
     throw new Error("Usage: nimbus clip delete <id|url> | --all [--yes]");
   }
   const out = await client.call<{ deleted: number }>("clip.delete", { target });
-  console.log(`Deleted ${out.deleted} clip${out.deleted === 1 ? "" : "s"}.`);
+  console.log(`Deleted ${clipCount(out.deleted)}.`);
 }
 
 export async function runClip(args: string[]): Promise<void> {

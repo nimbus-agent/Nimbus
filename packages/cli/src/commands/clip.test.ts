@@ -334,6 +334,13 @@ describe("runClipDelete", () => {
     expect(out.stdout).toContain("--yes");
   });
 
+  it("--all without --yes is singular-safe for a single match", async () => {
+    const { client } = createMockIpcClient([{ deleted: 0, matched: 1 }]);
+    await runClipDelete(client, undefined, { all: true, yes: false });
+    expect(out.stdout).toContain("1 clip would be deleted");
+    expect(out.stdout).not.toContain("1 clips would be deleted");
+  });
+
   it("--all --yes deletes everything", async () => {
     const { client, calls } = createMockIpcClient([{ deleted: 12, matched: 12 }]);
     await runClipDelete(client, undefined, { all: true, yes: true });
