@@ -54,7 +54,6 @@ tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
         apt-get update -qq && apt-get install -y -qq git libsecret-tools gnome-keyring dbus >/dev/null
         mkdir -p /src && tar -x -C /src
         bun install --frozen-lockfile
-        (cd packages/client && bun run build)
         bash scripts/ci/run-with-optional-dbus.sh bash scripts/coverage-floor/build-lcov.sh
         cp coverage/lcov.info /out/lcov.info
       '
