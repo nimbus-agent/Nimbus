@@ -317,7 +317,7 @@ Automated vulnerability scans run on every PR and nightly:
 - **`CodeQL`** — static analysis for JS/TS *and* Rust (security-extended queries)
 - **`gitleaks`** — committed-secret detection on PRs and nightly
 - **`OpenSSF Scorecard`** — supply-chain posture, weekly + on default-branch push
-- **`@nimbus-dev/client`** is published with **npm provenance** (sigstore signature backed by GitHub OIDC); verify with `npm audit signatures`
+- **`@nimbus-dev/client`** — published from its own repo, [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client), with **npm provenance** (sigstore signature backed by GitHub OIDC); verify with `npm audit signatures`
 
 HIGH and CRITICAL findings block merges when branch protection checks are required. Dependabot opens update PRs automatically for outdated dependencies.
 

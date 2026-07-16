@@ -42,7 +42,6 @@ a plain repository secret.
 | `WINGET_PAT` | winget submission PR | **Classic** PAT — `public_repo` scope | `publish-package-managers.yml` |
 | `VSCE_PAT` | VS Code Marketplace publish | Azure DevOps PAT — Marketplace (Manage) | `publish-vscode.yml` |
 | `OVSX_PAT` | Open VSX publish | Open VSX token | `publish-vscode.yml` |
-| `NPM_TOKEN` | Publishing `@nimbus-dev/sdk` + `@nimbus-dev/client` | npm automation token | `publish-sdk.yml`, `publish-client.yml` |
 | `SONAR_TOKEN` | SonarCloud quality gate (optional) | SonarCloud token | `ci.yml`, `_test-suite.yml`, `release.yml` |
 | `CODECOV_TOKEN` | Coverage upload (optional) | Codecov upload token | `_test-suite.yml` |
 | `SCORECARD_TOKEN` | OSSF Scorecard (optional) | Fine-grained PAT — read-only | `scorecard.yml` |
@@ -156,11 +155,14 @@ Neither touches the GitHub repo.
 
 ---
 
-## npm packages (`publish-sdk.yml`, `publish-client.yml`)
+## npm packages
 
-`NPM_TOKEN` publishes `@nimbus-dev/sdk` and `@nimbus-dev/client`. Create an
-**Automation** token at <https://www.npmjs.com/settings/~/tokens> for an account
-with publish rights on the `@nimbus-dev` scope.
+`@nimbus-dev/sdk` and `@nimbus-dev/client` are no longer published from this
+monorepo — both were extracted to their own standalone repos
+([nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk),
+[nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client))
+and each publishes to npm via release-please + an OIDC trusted publisher —
+no `NPM_TOKEN` involved, here or there.
 
 ---
 

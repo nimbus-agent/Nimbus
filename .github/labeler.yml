@@ -12,10 +12,6 @@
   - changed-files:
     - any-glob-to-any-file: 'packages/ui/**/*'
 
-'pkg:client':
-  - changed-files:
-    - any-glob-to-any-file: 'packages/client/**/*'
-
 'pkg:mcp':
   - changed-files:
     - any-glob-to-any-file: 'packages/mcp-connectors/**/*'

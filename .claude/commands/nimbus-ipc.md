@@ -439,7 +439,7 @@ The append-only, BLAKE3-chained egress ledger — invariant `I29` / static `D22`
 7. **Tauri-accessible?** — add to `ALLOWED_METHODS` in `gateway_bridge.rs`
 8. **HITL-required?** — if it triggers a write/destructive action, add the tool to `HITL_REQUIRED` in `executor.ts`
 9. **Write the unit test** — `packages/gateway/test/unit/ipc/<namespace>-<method>.test.ts`
-10. **Update `@nimbus-dev/client`** — add typed wrapper in `packages/client/src/` so CLI and extensions can call it without raw JSON-RPC
+10. **Update `@nimbus-dev/client`** — add a typed wrapper in the standalone [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) repo so CLI and extensions can call it without raw JSON-RPC
 
 ---
 

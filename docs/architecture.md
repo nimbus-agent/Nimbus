@@ -1329,7 +1329,6 @@ Embedding storage is the dominant on-disk cost at scale: each item contributes o
 | DB layer (`db/`) *(Phase 3.5)* | ≥85% |
 | Connector health model *(Phase 3.5)* | ≥85% |
 | Config + profiles *(Phase 3.5)* | ≥80% |
-| `@nimbus-dev/client` *(Phase 3.5)* | ≥80% |
 | Telemetry collector *(Phase 3.5)* | ≥85% |
 | `nimbus doctor` *(Phase 3.5)* | ≥80% |
 | TUI components *(Phase 4)* | ≥80% |
@@ -1438,15 +1437,15 @@ nimbus/
 │   │       │                      data, audit, lan, update, bench, tui, repl, expert (Phase 5 T3)
 │   │       ├── tui/            ← Ink-based rich TUI (Phase 4 WS6)
 │   │       └── ipc-client/     ← JSON-RPC client + consent channel (terminal)
-│   │                              (IPC transport extracted to packages/client/src/ipc-transport.ts)
+│   │                              (re-exports IPCClient/MockClient/NimbusClient from
+│   │                               the published @nimbus-dev/client package)
 │   │
-│   ├── client/                 ← @nimbus-dev/client (npm, MIT-licensed)
-│   │   └── src/
-│   │       ├── index.ts        ← NimbusClient public API
-│   │       ├── ipc-transport.ts← JSON-RPC 2.0 over domain socket / named pipe
-│   │       ├── http-transport.ts← JSON-RPC over local HTTP API
-│   │       ├── mock-client.ts  ← MockClient for testing without a running Gateway
-│   │       └── types.ts        ← NimbusItem, NimbusPerson, ConnectorStatus, AuditEntry
+│   │   (@nimbus-dev/client — NimbusClient public API, ipc-transport.ts,
+│   │    http-transport.ts, mock-client.ts, types.ts — was extracted to its own
+│   │    repo, nimbus-agent/nimbus-client (npm, MIT), mirroring the
+│   │    @nimbus-dev/sdk extraction. packages/cli and the VS Code extension
+│   │    consume it as a published npm dependency; it releases independently
+│   │    of the Gateway.)
 │   │
 │   ├── docs/                   ← Astro Starlight documentation site (Phase 3.5)
 │   │   └── src/content/docs/  ← getting-started, connectors, cli, sdk, client, architecture, faq
@@ -1512,7 +1511,6 @@ nimbus/
 │   │   ├── scorecard.yml       ← OpenSSF Scorecard (weekly + on default-branch push)
 │   │   ├── release.yml         ← bun build --compile → signed binaries → GitHub Releases
 │   │   ├── release-please.yml  ← Conventional-commit changelog + tag automation
-│   │   ├── publish-client.yml  ← publish @nimbus-dev/client on client-v* tag
 │   │   ├── labeler.yml
 │   │   ├── lock-threads.yml
 │   │   └── stale.yml

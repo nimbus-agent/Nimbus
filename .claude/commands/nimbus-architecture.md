@@ -32,13 +32,14 @@ nimbus/
 │   ├── gateway/          ← Core headless process (Bun runtime)
 │   ├── cli/              ← nimbus CLI + TUI (Bun)
 │   ├── ui/               ← Tauri 2.0 desktop app (React 18 + Rust bridge)
-│   ├── client/           ← @nimbus-dev/client  (npm, MIT — published)
 │   ├── sdk/              ← @nimbus-dev/sdk      (npm, MIT — published)
 │   ├── mcp-connectors/   ← First-party MCP servers (one dir per connector)
 │   └── docs/             ← Astro Starlight documentation site
 ├── docs/                 ← Project docs (architecture.md, roadmap.md, etc.)
 └── .github/workflows/    ← ci.yml, security.yml, codeql.yml, release.yml
 ```
+
+`@nimbus-dev/client` — the typed IPC wrapper `packages/cli` and the VS Code extension consume — lives in its own repo, [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (npm, MIT), not under `packages/`.
 
 ---
 

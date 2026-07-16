@@ -67,7 +67,6 @@ bun run test:coverage:watcher         # ≥80% (watcher engine + store + anomaly
 bun run test:coverage:db              # ≥85% (verify, repair, snapshot, health, metrics, latency buffer)
 bun run test:coverage:health          # ≥85% (connectors/health.ts)
 bun run test:coverage:config          # ≥80% (config loader, profiles, env overrides)
-bun run test:coverage:client          # ≥80% (@nimbus-dev/client)
 bun run test:coverage:telemetry       # ≥85% (telemetry collector — payload safety gate)
 bun run test:coverage:doctor          # ≥80% (nimbus doctor)
 bun run test:coverage:tui             # ≥80% (packages/cli/src/tui)
@@ -415,12 +414,11 @@ cd packages/docs && bunx astro dev              # local dev server
 ## Release tags (publish triggers)
 
 ```bash
-# @nimbus-dev/client → npm
-git tag client-v0.1.0 && git push origin client-v0.1.0
-
-# The VS Code extension (nimbus-agent/nimbus-vscode) and the browser web clipper
-# (nimbus-agent/nimbus-web-clipper) now release from their OWN standalone repos,
-# each with its own CI + publish secrets — NOT from a monorepo tag.
+# @nimbus-dev/client (nimbus-agent/nimbus-client), the VS Code extension
+# (nimbus-agent/nimbus-vscode), and the browser web clipper
+# (nimbus-agent/nimbus-web-clipper) all release from their OWN standalone repos
+# via release-please + OIDC trusted publishing, each with its own CI —
+# NOT from a monorepo tag.
 ```
 
 Extension author CI template: `docs/templates/nimbus-extension-ci.yml`.

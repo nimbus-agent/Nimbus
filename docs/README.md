@@ -706,7 +706,6 @@ nimbus/
 │   ├── cli/                  # nimbus CLI
 │   │   └── src/commands/     # ask, search, query, config, profile, diag, doctor,
 │   │                         # db, telemetry, connector, extension, workflow, status
-│   ├── client/               # @nimbus-dev/client (published to npm, MIT)
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4)
 │   │   └── src/
 │   │       ├── components/   # ConsentDialog, ExtensionMarketplace, …
@@ -738,6 +737,11 @@ nimbus/
 ├── bunfig.toml
 └── package.json              # Bun workspace root
 ```
+
+`@nimbus-dev/client` — the typed IPC wrapper `packages/cli` and the VS Code
+extension consume — lives in its own repo,
+[nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client)
+(npm, MIT), published independently of this monorepo.
 
 ---
 

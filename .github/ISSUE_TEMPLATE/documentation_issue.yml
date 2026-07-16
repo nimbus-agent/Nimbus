@@ -41,7 +41,6 @@ body:
         - "Gateway (packages/gateway/)"
         - "CLI (packages/cli/)"
         - "UI (packages/ui/)"
-        - "Client (packages/client/)"
         - "MCP connector (packages/mcp-connectors/*)"
         - "Repo-root docs (docs/*.md)"
         - "Other / cross-cutting"

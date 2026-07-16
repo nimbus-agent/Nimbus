@@ -237,8 +237,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 | File | Purpose |
 |---|---|
 | `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
-| `packages/client/src/index.ts` | `@nimbus-dev/client` — `NimbusClient`, `MockClient` |
 | `packages/gateway/src/clips/*` | Gateway web-clip surface — `PairingWindowController` (I30) + `clip-token-store.ts`; ingest via `POST /v1/clips` (the browser extension itself is the standalone repo below) |
+| _(standalone repo)_ | `@nimbus-dev/client` — [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (npm, MIT) — `NimbusClient`, `MockClient`; `packages/cli` and the VS Code extension consume the published package |
 | _(standalone repo)_ | VS Code extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) (Marketplace + Open VSX) |
 | _(standalone repo)_ | Web clipper — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) (Chrome + Firefox MV3) |
 

@@ -610,8 +610,6 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/cli/src/commands/data.ts:36` | I2 | HITL requirement for data-delete operations routed through executor |
 | `packages/cli/src/lib/interactive-ipc-handlers.test.ts:5` | I2 | Test confirms HITL channel fires before destructive operations |
 | `packages/cli/src/lib/interactive-ipc-handlers.ts:35` | I2 | Interactive HITL handler must not bypass executor gate |
-| `packages/client/src/stream-events.ts:38` | I2 | Client stream event for hitlBatch notification shape |
-| `packages/client/src/stream-events.ts:39` | I2 | hitlBatch carries consolidated action list for user approval |
 | `packages/gateway/src/automation/workflow-hitl-preview.ts:2` | I2 | Workflow HITL preview redacts payload before display |
 | `packages/gateway/src/connectors/registry.ts:50` | I2 | Per-connector dispatch table: action.type → mcpToolId mapping header |
 | `packages/gateway/src/connectors/registry.ts:54` | I2 | Google Drive write tool mappings (file.create, file.delete, file.move, file.rename) |
