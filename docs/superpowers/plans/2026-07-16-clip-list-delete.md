@@ -17,7 +17,7 @@
 - **Deletes never use raw `DELETE FROM item`** — always `deleteItemByPrimaryKey(db, id)` (it also calls `deleteGraphEntitiesForItemKeys`).
 - **`clip.delete` only ever deletes `type = 'web_clip'` rows** — every id/url/all query is type-guarded so a `nimbus:` id for a non-clip item cannot be deleted.
 - **No new invariant, no migration, no security-surface change** (read + local delete; not outbound egress; `clip.*` is not renderer-exposed).
-- **Fail-soft when the DB is absent** — `clip.list` → `{ clips: [] }`, `clip.delete` → `{ deleted: 0, matched: 0 }`; `pair`/`status`/`revoke` keep working.
+- **DB absent (abnormal boot):** `clip.list` fail-soft → `{ clips: [] }`; `clip.delete` **throws** `Error("Clip index unavailable.")` — it must never report a false `Deleted 0` when it couldn't even check (per the spec's Error-handling section). `pair`/`status`/`revoke` keep working.
 - Run each task's tests with `--timeout 60000`. After the final task run `bun run preflight:fast` (validate via `bunx biome check packages scripts` if the worktree lint gate misbehaves).
 - Commit on this branch only: `dev/asafgolombek/clip-list-delete`.
 
@@ -115,6 +115,19 @@ describe("dispatchClipRpc — clip.list", () => {
     db.close();
   });
 
+  test("--tag filter does not crash when another row has malformed metadata", async () => {
+    const db = seededDb();
+    // A valid tagged clip + a second clip whose metadata is later corrupted to invalid JSON.
+    seedClip(db, { url: "https://a.com/1", title: "Good", body: "b", mode: "article", tags: ["rust"], capturedAt: 2000 });
+    const bad = seedClip(db, { url: "https://a.com/2", title: "Bad", body: "b", mode: "article", tags: [], capturedAt: 1000 });
+    db.run("UPDATE item SET metadata = '{not json' WHERE id = ?", [bad]);
+    // Without the json_valid guard, json_each would raise "malformed JSON" and abort this query.
+    const out = await dispatchClipRpc("clip.list", { tag: "rust" }, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips.map((c) => c["title"])).toEqual(["Good"]);
+    db.close();
+  });
+
   test("returns empty when db is absent (fail-soft)", async () => {
     const out = await dispatchClipRpc("clip.list", {}, deps());
     expect(out).toEqual({ kind: "hit", value: { clips: [] } });
@@ -198,9 +211,14 @@ function listClips(db: Database, limit: number, tag: string | undefined): ClipLi
     const { sql, vals } = buildItemListSql({ services: [], types: ["web_clip"], limit });
     rows = db.query(sql).all(...vals) as Record<string, unknown>[];
   } else {
+    // Guard json_each with json_valid: json_each raises "malformed JSON" (aborting the whole
+    // query) if ANY web_clip row has invalid metadata. Clip ingest always writes valid JSON, but
+    // this keeps a tampered/legacy row from crashing the listing — bad JSON → treated as no tags.
     rows = db
       .query(
-        "SELECT item.* FROM item, json_each(item.metadata, '$.tags') " +
+        "SELECT item.* FROM item, json_each(" +
+          "CASE WHEN json_valid(item.metadata) THEN item.metadata ELSE '{\"tags\":[]}' END, " +
+          "'$.tags') " +
           "WHERE item.type = 'web_clip' AND json_each.value = ? " +
           "ORDER BY item.modified_at DESC LIMIT ?",
       )
@@ -359,9 +377,10 @@ describe("dispatchClipRpc — clip.delete", () => {
     db.close();
   });
 
-  test("delete fail-soft when db is absent", async () => {
-    const out = await dispatchClipRpc("clip.delete", { all: true }, deps());
-    expect(out).toEqual({ kind: "hit", value: { deleted: 0, matched: 0 } });
+  test("delete throws when db is absent (never a false 'Deleted 0')", async () => {
+    await expect(dispatchClipRpc("clip.delete", { all: true }, deps())).rejects.toThrow(
+      "Clip index unavailable.",
+    );
   });
 });
 ```
@@ -416,7 +435,9 @@ Add the `clip.delete` case before `default`:
 
 ```ts
     case "clip.delete": {
-      if (deps.db === undefined) return { kind: "hit", value: { deleted: 0, matched: 0 } };
+      // Do NOT fail-soft to a false success here: a delete that can't reach the index must not
+      // report "Deleted 0" (which reads as "nothing matched"). Surface it (spec Error handling).
+      if (deps.db === undefined) throw new Error("Clip index unavailable.");
       const ids = resolveClipIdsToDelete(deps.db, rec);
       if (rec["dryRun"] === true) {
         return { kind: "hit", value: { deleted: 0, matched: ids.length } };
@@ -678,6 +699,14 @@ describe("runClipDelete", () => {
       "Usage: nimbus clip delete",
     );
   });
+
+  it("rejects a target together with --all (no accidental mass-delete)", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    await expect(
+      runClipDelete(client, "https://a.com/p", { all: true, yes: true }),
+    ).rejects.toThrow("not both");
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("runClip (dispatcher) — list + delete routing", () => {
@@ -721,6 +750,12 @@ export async function runClipDelete(
   target: string | undefined,
   opts: { all: boolean; yes: boolean },
 ): Promise<void> {
+  const hasTarget = target !== undefined && target.trim() !== "";
+  // Reject `clip delete <url> --all` — otherwise --all would silently win and wipe every clip
+  // even though the user named a specific target.
+  if (opts.all && hasTarget) {
+    throw new Error("Specify either a target or --all, not both.");
+  }
   if (opts.all) {
     if (!opts.yes) {
       const preview = await client.call<{ matched: number }>("clip.delete", {
@@ -875,7 +910,9 @@ Per the repo's cross-platform note, `audit:coverage-floor` is CI-Linux-authorita
 - `deleteItemByPrimaryKey` (graph/FTS/embedding cascade), never raw DELETE → Task 2 + Global Constraints. ✅
 - Empty/blank delete target guard → Task 2. ✅
 - `--limit` validation → Tasks 1 (gateway clamp) + 3 (`parseLimit`). ✅
-- Fail-soft when DB absent → Tasks 1, 2. ✅
+- DB absent: `clip.list` empty (fail-soft) / `clip.delete` throws `Clip index unavailable.` → Tasks 1, 2. ✅
+- `--tag` query resilient to a malformed-metadata row (`json_valid` guard) → Task 1. ✅
+- `<target> --all` mutual-exclusion guard → Task 4. ✅
 - DB threaded via `ctx.options.localIndex.getDatabase()` → Task 1. ✅
 - Docs (cli-reference + CHANGELOG) → Task 5. ✅
 - No new invariant/migration → Global Constraints + Task 5 sanity audit. ✅
@@ -883,3 +920,11 @@ Per the repo's cross-platform note, `audit:coverage-floor` is CI-Linux-authorita
 **Type consistency:** `ClipListEntry` fields (`id, title, url, clippedAt, tags, mode, wordCount`) match between gateway (Task 1) and CLI (Task 3). IPC shapes: `clip.list` → `{ clips }`, `clip.delete` → `{ deleted, matched }` — consistent across producer (Tasks 1/2) and consumer (Tasks 3/4). `runClipDelete`/`runClipList` signatures match their call sites in `runClip`.
 
 **Placeholder scan:** none — every code step carries complete code and exact commands.
+
+## Plan Review Resolution
+
+Plan review ([2026-07-16-clip-list-delete-review.md](./2026-07-16-clip-list-delete-review.md)) — all three points accepted after verification:
+
+1. **`json_each` crashes on malformed JSON** — FIXED. Verified a raw `json_each` tag query throws `malformed JSON` when any `web_clip` row has invalid metadata; wrapped the input in `CASE WHEN json_valid(...)` (verified to return the good rows). Added a Task-1 test with a corrupted sibling row under `--tag`.
+2. **DB-absent delete mismatch (plan vs. spec)** — FIXED. The plan had `clip.delete` fail-soft to `{deleted:0}`, contradicting the spec's "surface `Clip index unavailable.`". Aligned the handler to throw and updated the test + Global Constraints.
+3. **`<target> --all` mutual exclusion** — FIXED. Added a `runClipDelete` guard that rejects a target combined with `--all` (prevents an accidental mass-delete), plus a test asserting no IPC call is made.

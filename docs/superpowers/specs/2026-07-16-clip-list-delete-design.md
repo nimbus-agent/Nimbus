@@ -175,6 +175,12 @@ All loopback IPC; read + local delete only.
   (which could match a malformed row). The CLI also rejects a missing target with usage.
 - **`--limit` invalid** (`--limit foo`, `--limit -3`, `--limit 0`): CLI clamps to the
   default (50), never forwards `NaN`/negative to the IPC call.
+- **`<target>` combined with `--all`** (`clip delete https://… --all`): CLI rejects with a
+  usage error before any IPC call — `--all` must not silently override a named target and
+  wipe everything.
+- **Malformed metadata under `--tag`**: the `json_each` tag query is wrapped in
+  `CASE WHEN json_valid(item.metadata) …` so a single invalid-JSON row can't raise
+  `malformed JSON` and abort the whole listing.
 - **Unknown id / URL:** `Deleted 0 clips.` (idempotent, not an error).
 - **`--all` with no clips:** `No clips to delete.`.
 - **`--tag` with no matches:** `No clips match tag "<t>".`.
