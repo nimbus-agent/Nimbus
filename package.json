@@ -165,6 +165,7 @@
     "preflight": "bun scripts/preflight.ts",
     "preflight:fast": "bun scripts/preflight.ts --fast",
     "hooks:install": "bun scripts/install-hooks.ts",
+    "platform:link": "bun run scripts/platform-link.ts",
     "format": "biome format --write .",
     "test": "bun test packages/gateway packages/cli packages/client packages/mcp-connectors scripts",
     "test:ci": "bun scripts/run-tests.ts",
