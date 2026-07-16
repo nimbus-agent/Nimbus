@@ -6,8 +6,11 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 import {
   CLIP_USAGE,
+  formatClipList,
   formatStatus,
+  parseLimit,
   runClip,
+  runClipList,
   runClipPair,
   runClipRevoke,
   runClipStatus,
@@ -237,5 +240,71 @@ describe("runClip (dispatcher)", () => {
     await runClip(["revoke", "--all"]);
     expect(ipc.calls[0]).toEqual({ method: "clip.revoke", params: { label: "*" } });
     expect(out.stdout).toContain("Revoked 2 token(s).");
+  });
+});
+
+const CLIP_ROW = {
+  id: "nimbus:clip:abc",
+  title: "Understanding Rust Async",
+  url: "https://blog.ex.com/rust-async",
+  clippedAt: 1721145600000,
+  tags: ["rust", "async"],
+  mode: "article",
+  wordCount: 42,
+};
+
+describe("parseLimit", () => {
+  it("returns the number when valid", () => {
+    expect(parseLimit("25")).toBe(25);
+  });
+  it("falls back to 50 on non-numeric / non-positive", () => {
+    expect(parseLimit("foo")).toBe(50);
+    expect(parseLimit("-3")).toBe(50);
+    expect(parseLimit("0")).toBe(50);
+    expect(parseLimit(undefined)).toBe(50);
+  });
+  it("caps at 1000", () => {
+    expect(parseLimit("999999")).toBe(1000);
+  });
+});
+
+describe("formatClipList", () => {
+  it("shows an empty-state line when there are no clips", () => {
+    expect(formatClipList([], undefined)).toMatch(/no clips saved/i);
+  });
+  it("shows a tag-specific empty state", () => {
+    expect(formatClipList([], "rust")).toContain('tag "rust"');
+  });
+  it("renders title, tags and url", () => {
+    const s = formatClipList([CLIP_ROW], undefined);
+    expect(s).toContain("Understanding Rust Async");
+    expect(s).toContain("rust");
+    expect(s).toContain("https://blog.ex.com/rust-async");
+  });
+});
+
+describe("runClipList", () => {
+  beforeEach(() => out.reset());
+
+  it("calls clip.list and prints the table", async () => {
+    const { client, calls } = createMockIpcClient([{ clips: [CLIP_ROW] }]);
+    await runClipList(client, { limit: 50, json: false });
+    expect(calls[0]).toEqual({ method: "clip.list", params: { limit: 50 } });
+    expect(out.stdout).toContain("Understanding Rust Async");
+  });
+
+  it("passes the tag param when filtering", async () => {
+    const { client, calls } = createMockIpcClient([{ clips: [] }]);
+    await runClipList(client, { tag: "rust", limit: 50, json: false });
+    expect(calls[0]).toEqual({ method: "clip.list", params: { limit: 50, tag: "rust" } });
+    expect(out.stdout).toContain('tag "rust"');
+  });
+
+  it("emits JSON (incl. wordCount) with --json", async () => {
+    const { client } = createMockIpcClient([{ clips: [CLIP_ROW] }]);
+    await runClipList(client, { limit: 50, json: true });
+    const parsed = JSON.parse(out.stdout);
+    expect(parsed[0].wordCount).toBe(42);
+    expect(parsed[0].id).toBe("nimbus:clip:abc");
   });
 });
