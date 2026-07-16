@@ -48,10 +48,12 @@ CLIPPED           TITLE                        TAGS          URL
 
 - Sorted **newest-first** (by `modified_at`, which clip ingest sets to `capturedAt`).
 - `--tag rust` filters to clips whose stored metadata tags include `rust`
-  (case-sensitive exact match on a tag entry).
-- `--limit` defaults to 50.
-- `--json` emits the structured rows (array of `{ id, title, url, clippedAt, tags, mode }`)
-  for scripting.
+  (case-sensitive exact match on a tag entry). Filtering happens **in SQL** so `--limit`
+  stays correct (see Architecture — an in-memory filter after `LIMIT` would drop matches).
+- `--limit` defaults to 50; a non-positive / non-numeric value falls back to the default
+  (validated CLI-side, mirroring `nimbus search`).
+- `--json` emits the structured rows (array of
+  `{ id, title, url, clippedAt, tags, mode, wordCount }`) for scripting.
 - Empty state: `No clips saved yet.` (or `No clips match tag "<t>".` when filtered).
 
 ### `nimbus clip delete <id|url>` / `--all [--yes]`
@@ -105,19 +107,42 @@ This mirrors the existing agents dispatcher (`db: ctx.options.localIndex.getData
 `pair`/`status`/`revoke` keep working without a DB; `list`/`delete` fail-soft when the
 index is absent (`list` → empty result; `delete` → a clear error).
 
-- **`clip.list`** → `buildItemListSql({ services: [], types: ["web_clip"], limit })`
-  (`index/item-list-query.ts`, which returns `SELECT * … ORDER BY modified_at DESC LIMIT ?`
-  — i.e. **newest-first for free**, since clip ingest sets `modified_at = synced_at =
-  capturedAt`). Read rows, project `{ id, title, url, clippedAt, tags, mode }` where
-  `clippedAt = modified_at`, `tags`/`mode` parsed from the `metadata` JSON; optional
-  in-memory `tag` filter (applied after the SQL). Returns `{ clips: [...] }`.
-- **`clip.delete`** → resolve the target to primary key(s):
-  - Starts with `nimbus:` → `deleteItemByPrimaryKey(db, id)` (one item).
+- **`clip.list`** → project `{ id, title, url, clippedAt, tags, mode, wordCount }` where
+  `clippedAt = modified_at`, and `tags`/`mode`/`wordCount` parsed from the `metadata` JSON.
+  Returns `{ clips: [...] }`, **newest-first** (`ORDER BY modified_at DESC`, since clip
+  ingest sets `modified_at = synced_at = capturedAt`).
+  - **No `--tag`:** `buildItemListSql({ services: [], types: ["web_clip"], limit })`
+    (`index/item-list-query.ts`, already `SELECT * … ORDER BY modified_at DESC LIMIT ?`).
+  - **With `--tag`:** filter in **SQL**, not in memory — applying `LIMIT` before an
+    in-memory tag filter is a real bug (the last N rows might contain no matches while a
+    match sits at row N+1, yielding a false "no matches"). Use a JSON-array match with a
+    bound param (`json_each` verified available in `bun:sqlite`):
+    ```sql
+    SELECT item.* FROM item, json_each(item.metadata, '$.tags')
+    WHERE item.type = 'web_clip' AND json_each.value = ?
+    ORDER BY item.modified_at DESC LIMIT ?
+    ```
+    Safe here because clip ingest always writes valid `metadata` JSON with a `$.tags`
+    array (`{tags, mode, wordCount, clippedAt}`), so `json_each` never sees a malformed
+    path. The tag value is bound (I9). `wordCount` is included in the `--json` projection;
+    the table view stays lean (clipped-at / title / tags / url).
+- **`clip.delete`** → resolve the target to a **list of primary keys**, then delete each
+  key with `deleteItemByPrimaryKey(db, id)`. **Never a raw `DELETE FROM item`** — the
+  helper also calls `deleteGraphEntitiesForItemKeys` (item-store.ts:165), so raw deletes
+  would orphan graph-relationship rows.
+  - Empty / blank target → return `{ deleted: 0 }` **before** any query (guard, see Error
+    handling).
+  - Starts with `nimbus:` → that single id.
   - Else URL → reuse `canonicalizeUrl` from `clips/clip-ingest.ts`, then
-    `SELECT id FROM item WHERE type='web_clip' AND canonical_url = ?`, delete each.
-  - `{ all: true }` → `SELECT id FROM item WHERE type='web_clip'`, delete each.
-  - Returns `{ deleted: N }`. FTS rows drop automatically via the existing
-    `item_fts_delete` trigger — no extra FTS bookkeeping.
+    `SELECT id FROM item WHERE type='web_clip' AND canonical_url = ?` (bound, I9) → the
+    resolved ids (article + any selections).
+  - `{ all: true }` → `SELECT id FROM item WHERE type='web_clip'` → all clip ids. **Not**
+    `deleteAllItemsForService` (that is service-wide and would also wipe non-clip
+    `nimbus:` items).
+  - Returns `{ deleted: N }`. Deletion cleanup is fully cascade-driven — no manual
+    bookkeeping: `item_fts_delete` trigger drops the FTS row; the `embedding_chunk`
+    `ON DELETE CASCADE` FK fires (`PRAGMA foreign_keys = ON` is set in local-index.ts:283)
+    and its `AFTER DELETE` trigger clears the `vec_items_384` row.
 
 ### CLI (`packages/cli/src/commands/clip.ts`)
 
@@ -145,6 +170,11 @@ All loopback IPC; read + local delete only.
 
 - **Index absent** (no `localIndex` at boot — abnormal): `list` returns an empty list;
   `delete` returns an error the CLI surfaces as `Clip index unavailable.`.
+- **Empty / blank delete target** (`nimbus clip delete ""` or `"   "`): the handler
+  returns `{ deleted: 0 }` before running any query — never `SELECT … canonical_url = ''`
+  (which could match a malformed row). The CLI also rejects a missing target with usage.
+- **`--limit` invalid** (`--limit foo`, `--limit -3`, `--limit 0`): CLI clamps to the
+  default (50), never forwards `NaN`/negative to the IPC call.
 - **Unknown id / URL:** `Deleted 0 clips.` (idempotent, not an error).
 - **`--all` with no clips:** `No clips to delete.`.
 - **`--tag` with no matches:** `No clips match tag "<t>".`.
@@ -168,12 +198,20 @@ All loopback IPC; read + local delete only.
 - **`clip-rpc.test.ts`** — seed a real in-memory V44 SQLite (same harness style as
   `clip-ingest.test.ts` / `clip-e2e.test.ts`) with a few `web_clip` items (incl. one
   article + two selections sharing a URL, and varied tags):
-  - `clip.list`: all; `--tag` filter; `--limit`; newest-first ordering; tags/mode projected.
-  - `clip.delete`: by id (one); by URL (article + 2 selections → deleted 3); `--all`;
-    non-existent id/url → deleted 0; verify the row is gone and FTS no longer matches it.
+  - `clip.list`: all; `--tag` filter; `--limit`; newest-first ordering; tags/mode/wordCount
+    projected.
+  - **`--tag` past the `LIMIT` boundary (regression for the pagination bug):** seed >`limit`
+    clips where the only tag-matching clip is *older* than the `limit` newest untagged
+    clips; assert `list --tag X --limit N` still returns it (proves SQL-level filtering).
+  - `clip.delete`: by id (one); by URL (article + 2 selections → deleted 3); `--all`
+    (deletes only `web_clip`, leaves a seeded non-clip `nimbus:` item intact); empty/blank
+    target → deleted 0 with no query; non-existent id/url → deleted 0; verify the row is
+    gone, FTS no longer matches it, and (if embeddings seeded) the `embedding_chunk` /
+    `vec_items_384` rows cascaded away.
   - `list`/`delete` with `db` absent → fail-soft (empty / error), `pair` still works.
-- **`clip.test.ts`** — CLI: `list` table format, empty state, `--json` shape; `delete`
-  output; the `--all` needs-`--yes` guard (count-only vs. actual delete).
+- **`clip.test.ts`** — CLI: `list` table format, empty state, `--json` shape (incl.
+  `wordCount`), `--limit foo`/`-3` → clamps to default; `delete` output, missing target →
+  usage error; the `--all` needs-`--yes` guard (count-only vs. actual delete).
 - Coverage ≥80% on new lines (gateway + cli floors).
 
 ## Docs
@@ -181,6 +219,23 @@ All loopback IPC; read + local delete only.
 - `docs/cli-reference.md` — document `nimbus clip list` and `nimbus clip delete` under the
   existing `## Web clipper` / `nimbus clip …` section.
 - `docs/CHANGELOG.md` — one dated entry under post-Phase-6 deliveries.
+
+## Review resolution
+
+Design review ([2026-07-16-clip-list-delete-design-review.md](./2026-07-16-clip-list-delete-design-review.md)) — all six points accepted after verification against the code:
+
+1. **Tag filter + `LIMIT` bug** — FIXED. In-memory filtering after SQL `LIMIT` could hide
+   matches; moved to a `json_each` SQL filter (verified available in `bun:sqlite`).
+2. **Graph cleanup on delete** — FIXED (clarified). All delete paths resolve to ids and go
+   through `deleteItemByPrimaryKey` (which calls `deleteGraphEntitiesForItemKeys`); never a
+   raw `DELETE FROM item`.
+3. **Embedding/vec cascade** — CONFIRMED. Verified `PRAGMA foreign_keys = ON`
+   (local-index.ts:283), so the `embedding_chunk` `ON DELETE CASCADE` + `vec_items_384`
+   trigger fire. No code needed; documented in the delete cleanup note.
+4. **Empty/blank delete target** — FIXED. Guarded to `{ deleted: 0 }` before any query.
+5. **`--limit` validation** — FIXED. CLI clamps invalid values to the default.
+6. **`--json` `wordCount`** — ACCEPTED. Added to the projection (already parsed from
+   metadata; near-zero cost).
 
 ## Out-of-scope follow-ups (noted, not built)
 
