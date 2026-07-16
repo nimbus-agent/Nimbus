@@ -217,7 +217,7 @@ jobs:
             echo "::endgroup::"
           }
 
-          for pkg in packages/gateway packages/cli packages/sdk packages/client; do
+          for pkg in packages/gateway packages/cli packages/client; do
             run_pkg "${pkg}"
           done
 
@@ -268,7 +268,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun test packages/gateway packages/cli packages/sdk packages/client packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
+            bun test packages/gateway packages/cli packages/client packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0

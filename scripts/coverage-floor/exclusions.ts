@@ -40,7 +40,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
-  { kind: "exact", path: "packages/sdk/src/ipc/index.ts" },
   { kind: "exact", path: "packages/client/src/index.ts" },
   // `client/src/ipc-transport.ts`: the typed IPC client's unix-socket transport — connect/reconnect,
   // framed read loop, socket-error/close handling. No in-process seam (it speaks to a real gateway

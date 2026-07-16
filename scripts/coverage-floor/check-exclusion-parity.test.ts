@@ -19,9 +19,9 @@ describe("findParityGaps", () => {
   });
 
   test("treats a /testing/ path as covered even when it is not in EXCLUSIONS", () => {
-    // sandbox-probe.ts is exempt structurally via discoverSourceFiles (check.ts),
+    // a /testing/ path is exempt structurally via discoverSourceFiles (check.ts),
     // not via isExempt; the parity check must still consider it covered.
-    expect(findParityGaps(["packages/sdk/src/testing/sandbox-probe.ts"])).toEqual([]);
+    expect(findParityGaps(["packages/client/src/testing/sandbox-probe.ts"])).toEqual([]);
   });
 
   test("still reports a genuinely-uncovered non-testing path (no over-broadening)", () => {

@@ -15,7 +15,7 @@ const PRESERVE_PRAGMAS = [
   "<reference ",
 ];
 
-const PUBLISHED_JSDOC_PREFIXES = ["packages/sdk/src/", "packages/client/src/"];
+const PUBLISHED_JSDOC_PREFIXES = ["packages/client/src/"];
 
 export function shouldPreserveComment(text: string): boolean {
   return PRESERVE_PRAGMAS.some((p) => text.includes(p));

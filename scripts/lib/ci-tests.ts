@@ -39,7 +39,6 @@ function runInitialUnitTestsWithCoverage(): void {
   const args = [
     "packages/gateway",
     "packages/cli",
-    "packages/sdk",
     "packages/client",
     "packages/mcp-connectors",
     "scripts",

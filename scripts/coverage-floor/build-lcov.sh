@@ -59,7 +59,7 @@ run_pkg () {
   ) || true  # tolerate failing tests; whatever coverage was collected still merges
 }
 
-for pkg in packages/gateway packages/cli packages/sdk packages/client; do
+for pkg in packages/gateway packages/cli packages/client; do
   run_pkg "${pkg}"
 done
 

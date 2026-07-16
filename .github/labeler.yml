@@ -12,10 +12,6 @@
   - changed-files:
     - any-glob-to-any-file: 'packages/ui/**/*'
 
-'pkg:sdk':
-  - changed-files:
-    - any-glob-to-any-file: 'packages/sdk/**/*'
-
 'pkg:client':
   - changed-files:
     - any-glob-to-any-file: 'packages/client/**/*'

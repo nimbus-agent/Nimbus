@@ -11,7 +11,7 @@ Nimbus ships under a deliberate dual-license model:
 | Surface | License | Distribution shape |
 |---|---|---|
 | `packages/gateway`, `packages/cli`, `packages/mcp-connectors/*` | **AGPL-3.0** | Compiled binaries (`bun build --compile`) bundle runtime deps inline |
-| `packages/sdk`, `packages/client` | **MIT** | Published to npm as source; consumers link transitively |
+| `@nimbus-dev/sdk` (external repo), `packages/client` | **MIT** | Published to npm as source; consumers link transitively |
 
 A transitive dep with an incompatible license can corrupt either half of the model:
 
