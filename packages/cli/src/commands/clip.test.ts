@@ -90,6 +90,30 @@ describe("runClipPair", () => {
     await runClipPair(client, undefined);
     expect(out.stdout).toContain("2 minutes");
   });
+
+  it("prints the gateway URL when the response includes it", async () => {
+    const { client } = createMockIpcClient([
+      {
+        code: "ABC123",
+        expiresAtMs: Date.now() + 120_000,
+        label: "chrome",
+        gatewayUrl: "http://127.0.0.1:7474",
+      },
+    ]);
+    await runClipPair(client, undefined);
+    expect(out.stdout).toContain("http://127.0.0.1:7474");
+    expect(out.stdout).toContain("ABC123");
+    expect(out.stdout).not.toMatch(/no HTTP port/i);
+  });
+
+  it("warns to start the HTTP surface when no gateway URL is returned", async () => {
+    const { client } = createMockIpcClient([
+      { code: "ABC123", expiresAtMs: Date.now() + 120_000, label: "chrome" },
+    ]);
+    await runClipPair(client, undefined);
+    expect(out.stdout).toMatch(/no HTTP port/i);
+    expect(out.stdout).toContain("nimbus serve --port");
+  });
 });
 
 // ---------------------------------------------------------------------------

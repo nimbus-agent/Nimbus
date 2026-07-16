@@ -2095,11 +2095,20 @@ nimbus people link person:abc123 person:def456
 
 ### `nimbus clip pair [--label <device>]`
 
-Open a browser-extension pairing session and print the one-time code. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
+Open a browser-extension pairing session and print the one-time code **plus the gateway URL** to enter in the extension's Options page. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
+
+The printed URL is the gateway's loopback HTTP origin (`http://127.0.0.1:<port>`), derived from `NIMBUS_HTTP_PORT`. If the gateway is running without the HTTP surface, the command instead warns you to restart it with `nimbus serve --port 7474` — without that surface the extension has nothing to reach.
 
 ```bash
 nimbus clip pair
 nimbus clip pair --label work-chrome
+```
+
+```text
+Pairing "work-chrome" — in the browser extension's Options page, enter:
+  Gateway URL:  http://127.0.0.1:7474
+  Pairing code: 429040
+Enter it within 2 minutes.
 ```
 
 ---

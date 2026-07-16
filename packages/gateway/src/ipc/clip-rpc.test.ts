@@ -31,6 +31,25 @@ describe("dispatchClipRpc", () => {
     expect(d.pairing.isOpen()).toBe(true);
   });
 
+  test("clip.pair echoes the gatewayUrl when httpBaseUrl is wired", async () => {
+    const d = { ...deps(), httpBaseUrl: "http://127.0.0.1:7474" };
+    const out = await dispatchClipRpc("clip.pair", { label: "chrome" }, d);
+    expect(out).toEqual({
+      kind: "hit",
+      value: {
+        code: "654321",
+        expiresAtMs: 1000 + 120_000,
+        label: "chrome",
+        gatewayUrl: "http://127.0.0.1:7474",
+      },
+    });
+  });
+
+  test("clip.pair omits gatewayUrl when httpBaseUrl is absent", async () => {
+    const out = await dispatchClipRpc("clip.pair", { label: "chrome" }, deps());
+    expect((out as { value: Record<string, unknown> }).value).not.toHaveProperty("gatewayUrl");
+  });
+
   test("clip.pair defaults the label when omitted", async () => {
     const out = await dispatchClipRpc("clip.pair", {}, deps());
     expect(out).toMatchObject({ kind: "hit" });

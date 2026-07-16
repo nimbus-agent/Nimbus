@@ -6,6 +6,13 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 export interface ClipRpcDeps {
   readonly pairing: PairingWindowController;
   readonly vault: NimbusVault;
+  /**
+   * The gateway's loopback HTTP origin (e.g. `http://127.0.0.1:7474`), present only when the
+   * read-only HTTP sidecar is running (NIMBUS_HTTP_PORT set). Echoed back by `clip.pair` so the
+   * CLI can print the exact URL to paste into the extension. Undefined → the clip surface isn't
+   * reachable, and the CLI warns the owner to (re)start with `nimbus serve --port`.
+   */
+  readonly httpBaseUrl?: string;
 }
 
 type Outcome = { kind: "hit"; value: unknown } | { kind: "miss" };
@@ -29,7 +36,15 @@ export async function dispatchClipRpc(
           ? (rec["label"] as string)
           : `device-${randomBytes(3).toString("hex")}`;
       const { code, expiresAtMs } = deps.pairing.open(label);
-      return { kind: "hit", value: { code, expiresAtMs, label } };
+      return {
+        kind: "hit",
+        value: {
+          code,
+          expiresAtMs,
+          label,
+          ...(deps.httpBaseUrl === undefined ? {} : { gatewayUrl: deps.httpBaseUrl }),
+        },
+      };
     }
     case "clip.status": {
       const devices = await listClipFingerprints(deps.vault);

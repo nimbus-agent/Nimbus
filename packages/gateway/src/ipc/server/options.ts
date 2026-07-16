@@ -137,4 +137,8 @@ export type CreateIpcServerOptions = {
   // the read-only HTTP server's /v1/clips/pair/confirm route (Task 6). Present only when assembled
   // at boot; the clip.* dispatcher skips cleanly when unset.
   clipPairingController?: PairingWindowController;
+  // The gateway's loopback HTTP origin (e.g. `http://127.0.0.1:7474`), set at boot from
+  // NIMBUS_HTTP_PORT. Echoed by `clip.pair` so the CLI can print the exact URL to pair against.
+  // Absent when the gateway runs without the HTTP sidecar (then the clip surface is unreachable).
+  clipHttpBaseUrl?: string;
 };

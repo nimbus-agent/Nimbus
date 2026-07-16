@@ -892,6 +892,9 @@ export async function tryDispatchClipRpc(
   const out = await dispatchClipRpc(method, params, {
     pairing: ctx.options.clipPairingController,
     vault: ctx.options.vault,
+    ...(ctx.options.clipHttpBaseUrl === undefined
+      ? {}
+      : { httpBaseUrl: ctx.options.clipHttpBaseUrl }),
   });
   if (out.kind === "hit") return out.value;
   throw new RpcMethodError(-32601, `Method not found: ${method}`);
