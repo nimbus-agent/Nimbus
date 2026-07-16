@@ -738,8 +738,8 @@ nimbus/
 └── package.json              # Bun workspace root
 ```
 
-`@nimbus-dev/client` — the typed IPC wrapper `packages/cli` and the VS Code
-extension consume — lives in its own repo,
+`@nimbus-dev/client` — the typed IPC wrapper consumed by `packages/cli` and the
+VS Code extension — lives in its own repo,
 [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client)
 (npm, MIT), published independently of this monorepo.
 

@@ -767,8 +767,6 @@ jobs:
             script: "test:coverage:extensions"
           - name: Config
             script: "test:coverage:config"
-          - name: Client
-            script: "test:coverage:client"
           - name: Telemetry
             script: "test:coverage:telemetry"
           - name: TUI
