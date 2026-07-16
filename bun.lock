@@ -52,7 +52,7 @@
       "dependencies": {
         "@clack/prompts": "^1.5.1",
         "@modelcontextprotocol/sdk": "1.29.0",
-        "@nimbus-dev/client": "workspace:*",
+        "@nimbus-dev/client": "^0.5.0",
         "@nimbus-dev/sdk": "^1.3.0",
         "ink": "^7.0.6",
         "ink-text-input": "^6.0.0",
@@ -65,18 +65,6 @@
         "@types/react": "^19.2.17",
         "ink-testing-library": "^4.0.0",
         "react-devtools-core": "^7.0.1",
-      },
-    },
-    "packages/client": {
-      "name": "@nimbus-dev/client",
-      "version": "0.4.0",
-      "dependencies": {
-        "@nimbus-dev/sdk": "^1.3.0",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-        "tsx": "^4.22.3",
-        "typescript": "^6.0.3",
       },
     },
     "packages/docs": {
@@ -1774,7 +1762,7 @@
 
     "@nimbus-dev/admin-console": ["@nimbus-dev/admin-console@workspace:packages/admin-console"],
 
-    "@nimbus-dev/client": ["@nimbus-dev/client@workspace:packages/client"],
+    "@nimbus-dev/client": ["@nimbus-dev/client@0.5.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.3.0" } }, "sha512-DqIhRNGfwwNNUS9eqc2w3ggGhMB36xMYz4kh6TKut0rDDcOut/XNvIJIm7uqRbTfzMAuZQ9QAdTVGSMcy7uw1A=="],
 
     "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.3.0", "", {}, "sha512-mCVlMLbYUowRLsw1dAcDp61AyoLSW6hrfbdrJim7ho3kg78rJlS0DYrKpqQxbng6E83NscJkUHlIFanxp0hp5g=="],
 

@@ -3,10 +3,7 @@
   "compilerOptions": {
     "types": ["bun"],
     "jsx": "react-jsx",
-    "jsxImportSource": "react",
-    "paths": {
-      "@nimbus-dev/client": ["../client/src/index.ts"]
-    }
+    "jsxImportSource": "react"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.tsx", "**/*.spec.tsx"]
