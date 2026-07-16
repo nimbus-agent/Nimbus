@@ -39,7 +39,7 @@ something useful (clip-scoped display + filter).
 
 ### `nimbus clip list [--tag <t>] [--limit N] [--json]`
 
-```
+```text
 $ nimbus clip list
 CLIPPED           TITLE                        TAGS          URL
 2026-07-16 14:02  Understanding Rust Async…    rust, async   https://blog.ex.com/rust-async
@@ -58,7 +58,7 @@ CLIPPED           TITLE                        TAGS          URL
 
 ### `nimbus clip delete <id|url>` / `--all [--yes]`
 
-```
+```text
 $ nimbus clip delete https://blog.ex.com/rust-async
 Deleted 1 clip.
 $ nimbus clip delete nimbus:clip:c5b7e9…
@@ -117,11 +117,13 @@ index is absent (`list` → empty result; `delete` → a clear error).
     in-memory tag filter is a real bug (the last N rows might contain no matches while a
     match sits at row N+1, yielding a false "no matches"). Use a JSON-array match with a
     bound param (`json_each` verified available in `bun:sqlite`):
+
     ```sql
     SELECT item.* FROM item, json_each(item.metadata, '$.tags')
     WHERE item.type = 'web_clip' AND json_each.value = ?
     ORDER BY item.modified_at DESC LIMIT ?
     ```
+
     Safe here because clip ingest always writes valid `metadata` JSON with a `$.tags`
     array (`{tags, mode, wordCount, clippedAt}`), so `json_each` never sees a malformed
     path. The tag value is bound (I9). `wordCount` is included in the `--json` projection;
@@ -155,7 +157,7 @@ index is absent (`list` → empty result; `delete` → a clear error).
 
 ### Data flow
 
-```
+```text
 CLI (clip list/delete)
   → IPC clip.list / clip.delete
     → clip-rpc handler

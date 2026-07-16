@@ -26,11 +26,13 @@
 ### Task 1: Gateway `clip.list` IPC method
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/clip-rpc.ts` (add `db?` to `ClipRpcDeps`; add `clip.list` case + helpers)
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts:884-898` (thread `db` into clip deps)
 - Test: `packages/gateway/src/ipc/clip-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildItemListSql({ services, types, limit })` from `../index/item-list-query.ts`; `ingestClip(db, input)` from `../clips/clip-ingest.ts` (test seeding); `LocalIndex.ensureSchema(db)` from `../index/local-index.ts` (test setup); `ctx.options.localIndex.getDatabase()` (dispatcher).
 - Produces: IPC `clip.list` → `{ clips: ClipListEntry[] }` where
   `ClipListEntry = { id: string; title: string; url: string | null; clippedAt: number; tags: string[]; mode: string; wordCount: number }`, newest-first. Params: `{ limit?: number; tag?: string }`.
@@ -276,10 +278,12 @@ git commit -m "feat(gateway): clip.list IPC method (web_clip listing + --tag SQL
 ### Task 2: Gateway `clip.delete` IPC method
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/clip-rpc.ts` (add `clip.delete` case + resolver helpers)
 - Test: `packages/gateway/src/ipc/clip-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `canonicalizeUrl(raw)` from `../clips/clip-ingest.ts`; `deleteItemByPrimaryKey(db, id)`, `upsertIndexedItem(db, row)` from `../index/item-store.ts` (test seeding of a non-clip row).
 - Produces: IPC `clip.delete` → `{ deleted: number; matched: number }`. Params: `{ target?: string }` OR `{ all?: boolean }`, plus optional `{ dryRun?: boolean }` (dryRun → `{ deleted: 0, matched: N }`, deletes nothing).
 
@@ -469,10 +473,12 @@ git commit -m "feat(gateway): clip.delete IPC method (id/url/--all, web_clip-sco
 ### Task 3: CLI `nimbus clip list`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/clip.ts` (add `parseLimit`, `formatClipList`, `runClipList`, the `list` case, extend `CLIP_USAGE`)
 - Test: `packages/cli/src/commands/clip.test.ts`
 
 **Interfaces:**
+
 - Consumes: IPC `clip.list` → `{ clips: ClipListEntry[] }` (Task 1). `createMockIpcClient` / `captureOutput` test helpers (already imported in `clip.test.ts`).
 - Produces: `runClipList(client, { tag?: string; limit: number; json: boolean }): Promise<void>`; `parseLimit(raw: string | undefined): number`; `formatClipList(clips, tag): string`.
 
@@ -650,10 +656,12 @@ git commit -m "feat(cli): nimbus clip list (--tag/--limit/--json)"
 ### Task 4: CLI `nimbus clip delete`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/clip.ts` (add `runClipDelete` + the `delete` case)
 - Test: `packages/cli/src/commands/clip.test.ts`
 
 **Interfaces:**
+
 - Consumes: IPC `clip.delete` → `{ deleted: number; matched: number }` (Task 2).
 - Produces: `runClipDelete(client, target: string | undefined, opts: { all: boolean; yes: boolean }): Promise<void>`.
 
@@ -811,6 +819,7 @@ git commit -m "feat(cli): nimbus clip delete (id/url/--all --yes)"
 ### Task 5: Docs + full verification
 
 **Files:**
+
 - Modify: `docs/cli-reference.md` (document `clip list` + `clip delete`)
 - Modify: `docs/CHANGELOG.md` (one dated entry)
 
@@ -832,7 +841,7 @@ wordCount`) for scripting.
 nimbus clip list
 nimbus clip list --tag rust --limit 20
 nimbus clip list --json
-```
+```text
 
 ---
 
@@ -847,9 +856,10 @@ would be deleted. Deleting a missing id/url is idempotent (`Deleted 0 clips.`).
 nimbus clip delete https://blog.example.com/rust-async
 nimbus clip delete nimbus:clip:abc123…
 nimbus clip delete --all --yes
-```
+```text
 
 ---
+
 ```
 
 - [ ] **Step 2: Add the CHANGELOG entry**
@@ -870,10 +880,12 @@ In `docs/CHANGELOG.md`, add this as the first bullet under `## Post-Phase-6 deli
 - [ ] **Step 3: Run the full clip test suites + typecheck**
 
 Run:
+
 ```bash
 bun test packages/gateway/src/ipc/clip-rpc.test.ts packages/cli/src/commands/clip.test.ts --timeout 60000
 bun run --filter '@nimbus/gateway' --filter '@nimbus/cli' --sequential typecheck
 ```
+
 Expected: all PASS; typecheck `Done`.
 
 - [ ] **Step 4: Lint the changed files**
@@ -902,6 +914,7 @@ Per the repo's cross-platform note, `audit:coverage-floor` is CI-Linux-authorita
 ## Self-Review
 
 **Spec coverage:**
+
 - `clip list` (`--tag`/`--limit`/`--json`, newest-first, empty states) → Tasks 1, 3. ✅
 - SQL `json_each` tag filter (LIMIT-correct) + regression test → Task 1. ✅
 - `wordCount` in `--json` → Tasks 1, 3. ✅
