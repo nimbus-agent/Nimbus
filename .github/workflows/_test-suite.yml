@@ -799,8 +799,6 @@ jobs:
             script: "test:coverage:lan"
           - name: Perf
             script: "test:coverage:perf"
-          - name: SDK
-            script: "test:coverage:sdk"
           - name: Sandbox
             script: "test:coverage:sandbox"
     steps:
@@ -921,18 +919,13 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
-      # Build sdk's dist first: this job runs client's UNBUNDLED ESM build
-      # (tsc output) under real Node via tsx, so `@nimbus-dev/sdk/ipc` is
-      # resolved at runtime. Since #637 the sdk's `import`/`default` export
-      # conditions point at `dist` (Node doesn't honour the `bun`→`src`
-      # condition), so without sdk's dist present Node throws
-      # ERR_MODULE_NOT_FOUND for `@nimbus-dev/sdk/dist/ipc/index.js`. The
-      # client build does not build sdk, and this job has no other step that
-      # does — so build it explicitly. (Published npm consumers get sdk's
-      # dist from the registry; this CI job uses the workspace symlink.)
-      - name: Build @nimbus-dev/sdk
-        run: bun run --filter @nimbus-dev/sdk build
-
+      # This job runs client's UNBUNDLED ESM build (tsc output) under real Node
+      # via tsx, so `@nimbus-dev/sdk/ipc` is resolved at runtime. The sdk's
+      # `import`/`default` export conditions point at `dist` (Node doesn't honour
+      # the `bun`→`src` condition), and the published `@nimbus-dev/sdk` package
+      # ships that `dist/` — so `bun install` puts it in node_modules and Node
+      # resolves `@nimbus-dev/sdk/dist/ipc/index.js` directly. No local sdk build
+      # step is needed now that sdk is consumed from npm, not the workspace.
       - name: Build @nimbus-dev/client
         run: cd packages/client && bun run build
 

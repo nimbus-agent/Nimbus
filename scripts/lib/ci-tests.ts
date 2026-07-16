@@ -104,7 +104,6 @@ function runCoverageGates(): void {
     { script: "test:coverage:updater" },
     { script: "test:coverage:lan" },
     { script: "test:coverage:perf" },
-    { script: "test:coverage:sdk" },
     { script: "test:coverage:security" },
   ];
 
