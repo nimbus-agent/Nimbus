@@ -69,13 +69,13 @@ Each invariant has a production wiring site + an enforcement test in `packages/g
 - `packages/gateway` — Engine, MCP mesh, Vault, local index, IPC
 - `packages/cli` — Terminal client (CLI + Ink TUI)
 - `packages/ui` — Tauri 2.0 + React (desktop)
-- `packages/client` — `@nimbus-dev/client` typed IPC wrapper (MIT)
 - `packages/mcp-connectors/*` — first-party MCP servers (AGPL)
 - `packages/docs` — Astro Starlight documentation site
 
 Several surfaces live in their own standalone repos and release independently of the Gateway:
 
 - The **`@nimbus-dev/sdk`** extension-authoring contract — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (MIT); `mcp-connectors/*` consume the published package.
+- The **`@nimbus-dev/client`** typed IPC wrapper — [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (MIT); `packages/cli` and the VS Code extension consume the published package.
 - The VS Code / Open VSX extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode); consumes the published `@nimbus-dev/client`.
 - The browser **web clipper** (Chrome + Firefox MV3) — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper); talks to the gateway's web-clip HTTP surface (`POST /v1/clips`, invariant I30). The gateway-side surface itself stays here (`packages/gateway/src/clips/`).
 

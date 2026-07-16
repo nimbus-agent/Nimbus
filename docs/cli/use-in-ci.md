@@ -79,7 +79,7 @@ pipeline {
 
 - `nimbus query --json` emits an array of indexed-item rows; `jq` filters cleanly without extra dependencies.
 - The `metadata.*` field names follow the connector's chosen shape — check [`docs/schema-reference.md`](../schema-reference.md) or the connector source for the exact set.
-- For typed access from a Node/Bun CI script, prefer `@nimbus-dev/client` (`packages/client`) over raw `nimbus query`.
+- For typed access from a Node/Bun CI script, prefer `@nimbus-dev/client` (published to npm) over raw `nimbus query`.
 - The runner needs the `nimbus` binary on `PATH`. On a fresh runner, install once via `bun run package:headless` output and `cp` the binary into `/usr/local/bin/`.
 
 ## Worked Examples

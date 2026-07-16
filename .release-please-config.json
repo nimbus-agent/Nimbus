@@ -12,12 +12,6 @@
       "include-v-in-tag": true,
       "changelog-path": "CHANGELOG.md",
       "extra-files": []
-    },
-    "packages/client": {
-      "release-type": "node",
-      "package-name": "@nimbus-dev/client",
-      "component": "client",
-      "changelog-path": "CHANGELOG.md"
     }
   }
 }

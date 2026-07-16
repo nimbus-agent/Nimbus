@@ -65,12 +65,6 @@ jobs:
       - name: Setup Bun and install dependencies
         uses: ./.github/actions/setup-nimbus-ci
 
-      # Required before Typecheck — cli imports @nimbus-dev/client
-      # whose exports field points at dist/index.d.ts. Without an explicit build
-      # the workspace symlink resolves but the type declarations don't exist.
-      - name: Build @nimbus-dev/client (for cli typecheck)
-        run: cd packages/client && bun run build
-
       - name: Typecheck
         run: bun run typecheck
 
@@ -217,7 +211,7 @@ jobs:
             echo "::endgroup::"
           }
 
-          for pkg in packages/gateway packages/cli packages/client; do
+          for pkg in packages/gateway packages/cli; do
             run_pkg "${pkg}"
           done
 
@@ -268,7 +262,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun test packages/gateway packages/cli packages/client packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
+            bun test packages/gateway packages/cli packages/mcp-connectors scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml
             code=$?
             if [ "$code" -eq 0 ]; then
               exit 0
@@ -867,90 +861,3 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           use_oidc: true
           flags: ${{ matrix.gate.name }}
-
-  client-node-compat:
-    name: Client node-compat (${{ matrix.os }})
-    if: inputs.run-tests
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun and install dependencies
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Setup Node 20
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "20"
-
-      # Vault services must initialise before the spawned gateway can open its socket.
-      # Without these the gateway crashes silently and the 15s socket-wait expires.
-      - name: Linux — libsecret + D-Bus (vault tests)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: sudo bash scripts/linux/install-vault-deps.sh
-
-      - name: macOS — Strip quarantine from native SQLite extensions
-        if: runner.os == 'macOS'
-        shell: bash
-        run: find node_modules -name "*.dylib" -print0 2>/dev/null | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
-
-      - name: macOS — Create and unlock CI Keychain (vault tests)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          security create-keychain -p "" nimbus-ci.keychain
-          security list-keychains -d user -s nimbus-ci.keychain $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s nimbus-ci.keychain
-          security unlock-keychain -p "" nimbus-ci.keychain
-          security set-keychain-settings -lut 7200 nimbus-ci.keychain
-
-      # This job runs client's UNBUNDLED ESM build (tsc output) under real Node
-      # via tsx, so `@nimbus-dev/sdk/ipc` is resolved at runtime. The sdk's
-      # `import`/`default` export conditions point at `dist` (Node doesn't honour
-      # the `bun`→`src` condition), and the published `@nimbus-dev/sdk` package
-      # ships that `dist/` — so `bun install` puts it in node_modules and Node
-      # resolves `@nimbus-dev/sdk/dist/ipc/index.js` directly. No local sdk build
-      # step is needed now that sdk is consumed from npm, not the workspace.
-      - name: Build @nimbus-dev/client
-        run: cd packages/client && bun run build
-
-      - name: Build gateway binary
-        run: bun run --filter @nimbus/gateway build
-
-      - name: Run node-compat tests — Linux
-        if: runner.os == 'Linux'
-        working-directory: packages/client
-        env:
-          NIMBUS_GATEWAY_BIN: ${{ format('{0}/dist/nimbus-gateway', github.workspace) }}
-          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1"
-        # Wrap node with the dbus shim so libsecret can talk to a session keyring.
-        # Node 20 cannot execute .ts files directly — tsx/esm strips the TS types.
-        # Run from packages/client so node resolves tsx via the local node_modules.
-        shell: bash
-        run: bash ../../scripts/ci/run-with-optional-dbus.sh node --import tsx/esm --test test/node-compat.test.ts
-
-      - name: Run node-compat tests — macOS / Windows
-        if: runner.os != 'Linux'
-        env:
-          # Absolute path so the cwd we run from doesn't matter. The gateway binary
-          # is emitted by compile-gateway.ts to <repo-root>/dist, not packages/gateway/dist.
-          NIMBUS_GATEWAY_BIN: ${{ runner.os == 'Windows' && format('{0}\dist\nimbus-gateway.exe', github.workspace) || format('{0}/dist/nimbus-gateway', github.workspace) }}
-          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1"
-        # Node 20 cannot execute .ts files directly. Use `node --import tsx/esm` so the
-        # test runs under the real Node runtime (not Bun) while tsx strips the TS types.
-        run: cd packages/client && node --import tsx/esm --test test/node-compat.test.ts

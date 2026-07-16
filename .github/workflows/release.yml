@@ -44,14 +44,6 @@ jobs:
         with:
           verify-lock: "false"
 
-      # Required before Typecheck — the CLI imports @nimbus-dev/client
-      # whose `exports` field points at `dist/index.d.ts`. Without an explicit
-      # build the workspace symlink resolves but the type declarations don't
-      # exist, and `bun run --filter '*' typecheck` fails on packages/cli.
-      # _test-suite.yml does the same.
-      - name: Build @nimbus-dev/client (for cli typecheck)
-        run: cd packages/client && bun run build
-
       - name: Typecheck
         run: bun run typecheck
 

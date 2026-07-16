@@ -20,11 +20,11 @@ describe("auditReleasePleaseManifest", () => {
     const root = makeRepo({
       ".release-please-manifest.json": JSON.stringify({
         ".": "0.1.0",
-        "packages/client": "0.2.0",
+        "packages/example": "0.2.0",
       }),
       "package.json": JSON.stringify({ name: "nimbus", version: "0.1.0" }),
-      "packages/client/package.json": JSON.stringify({
-        name: "@nimbus-dev/client",
+      "packages/example/package.json": JSON.stringify({
+        name: "@nimbus-dev/example",
         version: "0.2.0",
       }),
     });
@@ -37,18 +37,18 @@ describe("auditReleasePleaseManifest", () => {
     const root = makeRepo({
       ".release-please-manifest.json": JSON.stringify({
         ".": "0.1.0",
-        "packages/client": "0.2.0",
+        "packages/example": "0.2.0",
       }),
       "package.json": JSON.stringify({ name: "nimbus", version: "0.1.0" }),
-      "packages/client/package.json": JSON.stringify({
-        name: "@nimbus-dev/client",
+      "packages/example/package.json": JSON.stringify({
+        name: "@nimbus-dev/example",
         version: "0.2.1",
       }),
     });
     const result = auditReleasePleaseManifest(root);
     expect(result.ok).toBe(false);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toContain("packages/client");
+    expect(result.errors[0]).toContain("packages/example");
     expect(result.errors[0]).toContain("0.2.0");
     expect(result.errors[0]).toContain("0.2.1");
   });

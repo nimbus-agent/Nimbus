@@ -9,7 +9,6 @@ Phase 0 covers the bun-tested packages only:
 - `packages/gateway`
 - `packages/cli`
 - `packages/sdk`
-- `packages/client`
 - `packages/mcp-connectors/*`
 
 UI (`packages/ui`) uses Vitest, which emits its own `coverage/lcov.info`. That file is not yet merged into the gate's input; the existing Vitest `>=80% lines / >=75% branches` thresholds keep that surface honest. A future phase can extend the floor to UI by merging the Vitest lcov into `coverage/lcov.info` before the gate runs.

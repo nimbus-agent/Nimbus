@@ -242,15 +242,11 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
-      # Build + typecheck run on the gateway matrix entry only. Typecheck is
+      # Typecheck runs on the gateway matrix entry only. Typecheck is
       # monorepo-wide and identical between entries, so doing it twice per OS
       # would be pure runner-minute waste with no signal gain — host-specific TS
-      # quirks still surface on the gateway entry. Client build is only needed
-      # for cli typecheck, which only runs alongside typecheck.
-      - name: Build @nimbus-dev/client (for cli typecheck)
-        if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
-        run: cd packages/client && bun run build
-
+      # quirks still surface on the gateway entry. cli consumes the published
+      # @nimbus-dev/client from npm, so no local client build is needed.
       - name: Typecheck (catches host-specific TS quirks)
         if: matrix.pkg == 'gateway' && needs.filter.outputs.code-changed == 'true'
         shell: bash

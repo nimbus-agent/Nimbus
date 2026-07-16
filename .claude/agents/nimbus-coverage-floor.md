@@ -19,7 +19,7 @@ export MSYS_NO_PATHCONV=1; export MSYS2_ARG_CONV_EXCL='*'
 docker volume create nimbus-bun-cache >/dev/null; mkdir -p coverage
 tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist --exclude=.claude -c -C "$(pwd)" . \
  | docker run --rm -i -e CI=true -v nimbus-bun-cache:/root/.bun/install/cache -v "$(pwd)/coverage:/out" -w /src oven/bun:latest \
-   bash -c 'set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq git libsecret-tools gnome-keyring dbus >/dev/null 2>&1; mkdir -p /src && tar -x -C /src; bun install --frozen-lockfile >/dev/null 2>&1; (cd packages/client && bun run build) >/dev/null 2>&1; bash scripts/ci/run-with-optional-dbus.sh bash scripts/coverage-floor/build-lcov.sh; cp coverage/lcov.info /out/lcov.info' > /tmp/dockcov.log 2>&1
+   bash -c 'set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq git libsecret-tools gnome-keyring dbus >/dev/null 2>&1; mkdir -p /src && tar -x -C /src; bun install --frozen-lockfile >/dev/null 2>&1; bash scripts/ci/run-with-optional-dbus.sh bash scripts/coverage-floor/build-lcov.sh; cp coverage/lcov.info /out/lcov.info' > /tmp/dockcov.log 2>&1
 grep -cE "\(fail\)" /tmp/dockcov.log   # MUST be 0 — if tests fail, FIX THE TEST FIRST (a failing test depresses the file's coverage)
 bun run audit:coverage-floor           # the gate; prints `::error file=… <dim> coverage regressed/below …`
 ```

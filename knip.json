@@ -28,10 +28,6 @@
       "entry": ["src/**/*.test.ts"],
       "project": "src/**/*.ts"
     },
-    "packages/client": {
-      "entry": ["src/index.ts", "src/**/*.test.ts", "test/**/*.test.ts"],
-      "project": "src/**/*.ts"
-    },
     "packages/mcp-connectors/*": {
       "entry": ["src/server.ts", "src/**/*.test.ts"],
       "project": "src/**/*.ts"

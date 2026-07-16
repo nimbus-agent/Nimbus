@@ -31,14 +31,12 @@ describe("shouldPreserveComment", () => {
 });
 
 describe("isPublishedJsdocFile", () => {
-  test("matches client src", () => {
-    expect(isPublishedJsdocFile("packages/client/src/index.ts")).toBe(true);
-  });
-  test("does not match other packages", () => {
+  test("no monorepo-tree source is a published-JSDoc file (sdk + client are external repos now)", () => {
     expect(isPublishedJsdocFile("packages/gateway/src/engine/executor.ts")).toBe(false);
     expect(isPublishedJsdocFile("packages/cli/src/index.ts")).toBe(false);
-    // sdk is published from its own repo now, not the monorepo tree.
+    // sdk and client are each published from their own repos, not the monorepo tree.
     expect(isPublishedJsdocFile("packages/sdk/src/index.ts")).toBe(false);
+    expect(isPublishedJsdocFile("packages/client/src/index.ts")).toBe(false);
   });
 });
 

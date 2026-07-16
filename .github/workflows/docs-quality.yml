@@ -235,9 +235,6 @@ jobs:
       - name: Setup Nimbus CI
         uses: ./.github/actions/setup-nimbus-ci
 
-      - name: Build @nimbus-dev/client (required by spawned CLI)
-        run: bun run --filter @nimbus-dev/client build
-
       - name: Run cast tripwire
         run: bun run record-casts --check --artifacts-dir=cast-artifacts
 

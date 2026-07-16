@@ -40,13 +40,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-wrapper.ts" },
   { kind: "exact", path: "packages/gateway/src/connectors/index.ts" },
   { kind: "exact", path: "packages/gateway/src/vault/factory.ts" },
-  { kind: "exact", path: "packages/client/src/index.ts" },
-  // `client/src/ipc-transport.ts`: the typed IPC client's unix-socket transport — connect/reconnect,
-  // framed read loop, socket-error/close handling. No in-process seam (it speaks to a real gateway
-  // socket); its reachable logic is exercised indirectly by the CLI/e2e suites, but the socket
-  // error/reconnect arms have no unit seam. Same untestable-socket-shell class as the already-exempt
-  // `client/src/stream-events.ts`. Held below the line floor (85) raise; clears the branch floor (80).
-  { kind: "exact", path: "packages/client/src/ipc-transport.ts" },
 
   // ── mock.module-shadowed (real logic tested via the gateway-process.ts twin) ──
   // `gateway-process.ts` is imported by 40+ CLI modules and is `mock.module`'d process-global in
@@ -179,7 +172,6 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // handlers with no in-process seam). Same untestable-socket-shell class as `socket-listeners.ts`.
   // Held below the line floor (85) raise; not relaxed for the branch floor (80, which it clears).
   { kind: "exact", path: "packages/gateway/src/ipc/server/server.ts" },
-  { kind: "exact", path: "packages/client/src/stream-events.ts" },
   // ──────────────────────────────────────────────────────────────────────────────────────────────
 ]);
 

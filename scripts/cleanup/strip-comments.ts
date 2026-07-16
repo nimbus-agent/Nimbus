@@ -15,7 +15,9 @@ const PRESERVE_PRAGMAS = [
   "<reference ",
 ];
 
-const PUBLISHED_JSDOC_PREFIXES = ["packages/client/src/"];
+// Both published MIT packages (@nimbus-dev/sdk, @nimbus-dev/client) now live in
+// their own repos; no monorepo-tree source ships as published JSDoc.
+const PUBLISHED_JSDOC_PREFIXES: string[] = [];
 
 export function shouldPreserveComment(text: string): boolean {
   return PRESERVE_PRAGMAS.some((p) => text.includes(p));

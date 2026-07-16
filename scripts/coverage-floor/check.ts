@@ -143,7 +143,6 @@ export async function discoverSourceFiles(): Promise<string[]> {
     new Glob("packages/gateway/src/**/*.tsx"),
     new Glob("packages/cli/src/**/*.ts"),
     new Glob("packages/cli/src/**/*.tsx"),
-    new Glob("packages/client/src/**/*.ts"),
     new Glob("packages/mcp-connectors/*/src/**/*.ts"),
   ];
   for (const glob of globs) {
