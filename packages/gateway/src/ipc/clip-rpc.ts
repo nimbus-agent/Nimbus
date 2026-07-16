@@ -1,17 +1,85 @@
+import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 import { listClipFingerprints, revokeClipToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
+import { buildItemListSql } from "../index/item-list-query.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export interface ClipRpcDeps {
   readonly pairing: PairingWindowController;
   readonly vault: NimbusVault;
+  /** Local-index DB handle. Present when the index is wired; absent → list/delete fail-soft. */
+  readonly db?: Database;
+}
+
+export interface ClipListEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly clippedAt: number;
+  readonly tags: string[];
+  readonly mode: string;
+  readonly wordCount: number;
 }
 
 type Outcome = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 function asRecord(p: unknown): Record<string, unknown> {
   return p !== null && typeof p === "object" ? (p as Record<string, unknown>) : {};
+}
+
+function clampLimit(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number.NaN;
+  if (!Number.isFinite(n) || n < 1) return 50;
+  return Math.min(1000, Math.trunc(n));
+}
+
+function parseMetadata(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string") return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function rowToClipEntry(row: Record<string, unknown>): ClipListEntry {
+  const meta = parseMetadata(row["metadata"]);
+  const tags = Array.isArray(meta["tags"])
+    ? (meta["tags"].filter((t) => typeof t === "string") as string[])
+    : [];
+  return {
+    id: String(row["id"]),
+    title: typeof row["title"] === "string" ? row["title"] : "",
+    url: typeof row["url"] === "string" ? row["url"] : null,
+    clippedAt: typeof row["modified_at"] === "number" ? row["modified_at"] : 0,
+    tags,
+    mode: typeof meta["mode"] === "string" ? meta["mode"] : "",
+    wordCount: typeof meta["wordCount"] === "number" ? meta["wordCount"] : 0,
+  };
+}
+
+function listClips(db: Database, limit: number, tag: string | undefined): ClipListEntry[] {
+  let rows: Record<string, unknown>[];
+  if (tag === undefined) {
+    const { sql, vals } = buildItemListSql({ services: [], types: ["web_clip"], limit });
+    rows = db.query(sql).all(...vals) as Record<string, unknown>[];
+  } else {
+    // Guard json_each with json_valid: json_each raises "malformed JSON" (aborting the whole
+    // query) if ANY web_clip row has invalid metadata. Clip ingest always writes valid JSON, but
+    // this keeps a tampered/legacy row from crashing the listing — bad JSON → treated as no tags.
+    rows = db
+      .query(
+        "SELECT item.* FROM item, json_each(" +
+          "CASE WHEN json_valid(item.metadata) THEN item.metadata ELSE '{\"tags\":[]}' END, " +
+          "'$.tags') " +
+          "WHERE item.type = 'web_clip' AND json_each.value = ? " +
+          "ORDER BY item.modified_at DESC LIMIT ?",
+      )
+      .all(tag, limit) as Record<string, unknown>[];
+  }
+  return rows.map(rowToClipEntry);
 }
 
 export async function dispatchClipRpc(
@@ -40,6 +108,15 @@ export async function dispatchClipRpc(
       if (label === "") return { kind: "hit", value: { revoked: 0 } };
       const revoked = await revokeClipToken(deps.vault, label);
       return { kind: "hit", value: { revoked } };
+    }
+    case "clip.list": {
+      if (deps.db === undefined) return { kind: "hit", value: { clips: [] } };
+      const limit = clampLimit(rec["limit"]);
+      const tag =
+        typeof rec["tag"] === "string" && rec["tag"].length > 0
+          ? (rec["tag"] as string)
+          : undefined;
+      return { kind: "hit", value: { clips: listClips(deps.db, limit, tag) } };
     }
     default:
       return { kind: "miss" };

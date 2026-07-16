@@ -1,5 +1,8 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { ingestClip } from "../clips/clip-ingest.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchClipRpc } from "./clip-rpc.ts";
 
@@ -72,5 +75,168 @@ describe("dispatchClipRpc", () => {
 
   test("unknown method → miss", async () => {
     expect(await dispatchClipRpc("clip.nope", {}, deps())).toEqual({ kind: "miss" });
+  });
+});
+
+function seededDb(): Database {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  return db;
+}
+
+function seedClip(
+  db: Database,
+  o: {
+    url: string;
+    title: string;
+    body: string;
+    mode: "article" | "selection";
+    tags: string[];
+    capturedAt: number;
+  },
+): string {
+  return ingestClip(db, {
+    url: o.url,
+    title: o.title,
+    body: o.body,
+    mode: o.mode,
+    tags: o.tags,
+    capturedAt: o.capturedAt,
+  }).id;
+}
+
+describe("dispatchClipRpc — clip.list", () => {
+  test("lists web_clip items newest-first with tags/mode/wordCount", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "Older",
+      body: "one two three",
+      mode: "article",
+      tags: ["x"],
+      capturedAt: 1000,
+    });
+    seedClip(db, {
+      url: "https://b.com/2",
+      title: "Newer",
+      body: "four five",
+      mode: "article",
+      tags: ["rust", "async"],
+      capturedAt: 2000,
+    });
+    const out = await dispatchClipRpc("clip.list", {}, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips.map((c) => c["title"])).toEqual(["Newer", "Older"]);
+    expect(clips[0]).toMatchObject({ tags: ["rust", "async"], mode: "article", wordCount: 2 });
+    expect(typeof clips[0]?.["clippedAt"]).toBe("number");
+    db.close();
+  });
+
+  test("--tag filters in SQL and survives past the LIMIT boundary", async () => {
+    const db = seededDb();
+    // 3 newest UNTAGGED clips + 1 OLDER tagged clip. An in-memory filter after LIMIT 2
+    // would return the 2 newest untagged → 0 matches. SQL filtering must still find the tagged one.
+    seedClip(db, {
+      url: "https://a.com/x",
+      title: "Tagged-old",
+      body: "b",
+      mode: "article",
+      tags: ["rust"],
+      capturedAt: 1000,
+    });
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "U1",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 3000,
+    });
+    seedClip(db, {
+      url: "https://a.com/2",
+      title: "U2",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 4000,
+    });
+    seedClip(db, {
+      url: "https://a.com/3",
+      title: "U3",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 5000,
+    });
+    const out = await dispatchClipRpc("clip.list", { tag: "rust", limit: 2 }, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips.map((c) => c["title"])).toEqual(["Tagged-old"]);
+    db.close();
+  });
+
+  test("respects --limit", async () => {
+    const db = seededDb();
+    for (let i = 0; i < 5; i++) {
+      seedClip(db, {
+        url: `https://a.com/${i}`,
+        title: `T${i}`,
+        body: "b",
+        mode: "article",
+        tags: [],
+        capturedAt: 1000 + i,
+      });
+    }
+    const out = await dispatchClipRpc("clip.list", { limit: 2 }, { ...deps(), db });
+    expect((out as { value: { clips: unknown[] } }).value.clips).toHaveLength(2);
+    db.close();
+  });
+
+  test("tolerates malformed metadata (tags empty, never throws)", async () => {
+    const db = seededDb();
+    const id = seedClip(db, {
+      url: "https://a.com/1",
+      title: "T",
+      body: "b",
+      mode: "article",
+      tags: ["x"],
+      capturedAt: 1000,
+    });
+    db.run("UPDATE item SET metadata = '{not json' WHERE id = ?", [id]);
+    const out = await dispatchClipRpc("clip.list", {}, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips[0]).toMatchObject({ tags: [], mode: "", wordCount: 0 });
+    db.close();
+  });
+
+  test("--tag filter does not crash when another row has malformed metadata", async () => {
+    const db = seededDb();
+    // A valid tagged clip + a second clip whose metadata is later corrupted to invalid JSON.
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "Good",
+      body: "b",
+      mode: "article",
+      tags: ["rust"],
+      capturedAt: 2000,
+    });
+    const bad = seedClip(db, {
+      url: "https://a.com/2",
+      title: "Bad",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 1000,
+    });
+    db.run("UPDATE item SET metadata = '{not json' WHERE id = ?", [bad]);
+    // Without the json_valid guard, json_each would raise "malformed JSON" and abort this query.
+    const out = await dispatchClipRpc("clip.list", { tag: "rust" }, { ...deps(), db });
+    const clips = (out as { value: { clips: Array<Record<string, unknown>> } }).value.clips;
+    expect(clips.map((c) => c["title"])).toEqual(["Good"]);
+    db.close();
+  });
+
+  test("returns empty when db is absent (fail-soft)", async () => {
+    const out = await dispatchClipRpc("clip.list", {}, deps());
+    expect(out).toEqual({ kind: "hit", value: { clips: [] } });
   });
 });
