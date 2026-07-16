@@ -28,8 +28,25 @@ if (import.meta.main) {
   }
   console.log(`Linking local sdk from ${target} …`);
   // `bun link` registers the sibling as a global link, then this repo consumes it.
-  Bun.spawnSync(["bun", "link"], { cwd: target, stdout: "inherit", stderr: "inherit" });
-  Bun.spawnSync(["bun", "link", "@nimbus-dev/sdk"], { stdout: "inherit", stderr: "inherit" });
+  // Bun.spawnSync does not throw on a non-zero exit — check each result so a
+  // failed registration or consumer link doesn't silently leave a broken link.
+  const register = Bun.spawnSync(["bun", "link"], {
+    cwd: target,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (register.exitCode !== 0) {
+    console.error(`\`bun link\` in ${target} failed (exit ${register.exitCode ?? "unknown"}).`);
+    process.exit(register.exitCode ?? 1);
+  }
+  const consume = Bun.spawnSync(["bun", "link", "@nimbus-dev/sdk"], {
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (consume.exitCode !== 0) {
+    console.error(`\`bun link @nimbus-dev/sdk\` failed (exit ${consume.exitCode ?? "unknown"}).`);
+    process.exit(consume.exitCode ?? 1);
+  }
   console.warn(
     "\n⚠  Any subsequent `bun install`/`bun update` in this monorepo RE-RESOLVES " +
       "@nimbus-dev/sdk from npm and OVERWRITES this link. Rerun `bun run platform:link` afterward.",
