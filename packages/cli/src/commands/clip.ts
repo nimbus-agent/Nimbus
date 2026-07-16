@@ -96,6 +96,37 @@ export async function runClipList(
   console.log(formatClipList(out.clips, opts.tag));
 }
 
+export async function runClipDelete(
+  client: IPCClient,
+  target: string | undefined,
+  opts: { all: boolean; yes: boolean },
+): Promise<void> {
+  const hasTarget = target !== undefined && target.trim() !== "";
+  // Reject `clip delete <url> --all` — otherwise --all would silently win and wipe every clip
+  // even though the user named a specific target.
+  if (opts.all && hasTarget) {
+    throw new Error("Specify either a target or --all, not both.");
+  }
+  if (opts.all) {
+    if (!opts.yes) {
+      const preview = await client.call<{ matched: number }>("clip.delete", {
+        all: true,
+        dryRun: true,
+      });
+      console.log(`${preview.matched} clips would be deleted. Re-run with --yes to confirm.`);
+      return;
+    }
+    const out = await client.call<{ deleted: number }>("clip.delete", { all: true });
+    console.log(`Deleted ${out.deleted} clip${out.deleted === 1 ? "" : "s"}.`);
+    return;
+  }
+  if (target === undefined || target.trim() === "") {
+    throw new Error("Usage: nimbus clip delete <id|url> | --all [--yes]");
+  }
+  const out = await client.call<{ deleted: number }>("clip.delete", { target });
+  console.log(`Deleted ${out.deleted} clip${out.deleted === 1 ? "" : "s"}.`);
+}
+
 export async function runClip(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -123,6 +154,13 @@ export async function runClip(args: string[]): Promise<void> {
       const limit = parseLimit(limitIdx >= 0 ? rest[limitIdx + 1] : undefined);
       const json = rest.includes("--json");
       await withIpc((c) => runClipList(c, { ...(tag !== undefined ? { tag } : {}), limit, json }));
+      return;
+    }
+    case "delete": {
+      const all = rest.includes("--all");
+      const yes = rest.includes("--yes");
+      const target = rest.find((a) => !a.startsWith("--"));
+      await withIpc((c) => runClipDelete(c, target, { all, yes }));
       return;
     }
     default:

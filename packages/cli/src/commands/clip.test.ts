@@ -10,6 +10,7 @@ import {
   formatStatus,
   parseLimit,
   runClip,
+  runClipDelete,
   runClipList,
   runClipPair,
   runClipRevoke,
@@ -306,5 +307,77 @@ describe("runClipList", () => {
     const parsed = JSON.parse(out.stdout);
     expect(parsed[0].wordCount).toBe(42);
     expect(parsed[0].id).toBe("nimbus:clip:abc");
+  });
+});
+
+describe("runClipDelete", () => {
+  beforeEach(() => out.reset());
+
+  it("deletes by target and reports the count", async () => {
+    const { client, calls } = createMockIpcClient([{ deleted: 1, matched: 1 }]);
+    await runClipDelete(client, "https://a.com/p", { all: false, yes: false });
+    expect(calls[0]).toEqual({ method: "clip.delete", params: { target: "https://a.com/p" } });
+    expect(out.stdout).toContain("Deleted 1 clip.");
+  });
+
+  it("pluralizes for multiple", async () => {
+    const { client } = createMockIpcClient([{ deleted: 3, matched: 3 }]);
+    await runClipDelete(client, "https://a.com/p", { all: false, yes: false });
+    expect(out.stdout).toContain("Deleted 3 clips.");
+  });
+
+  it("--all without --yes only reports the count (dry run, no delete)", async () => {
+    const { client, calls } = createMockIpcClient([{ deleted: 0, matched: 12 }]);
+    await runClipDelete(client, undefined, { all: true, yes: false });
+    expect(calls[0]).toEqual({ method: "clip.delete", params: { all: true, dryRun: true } });
+    expect(out.stdout).toContain("12 clips would be deleted");
+    expect(out.stdout).toContain("--yes");
+  });
+
+  it("--all --yes deletes everything", async () => {
+    const { client, calls } = createMockIpcClient([{ deleted: 12, matched: 12 }]);
+    await runClipDelete(client, undefined, { all: true, yes: true });
+    expect(calls[0]).toEqual({ method: "clip.delete", params: { all: true } });
+    expect(out.stdout).toContain("Deleted 12 clips.");
+  });
+
+  it("throws usage when no target and not --all", async () => {
+    const { client } = createMockIpcClient([]);
+    await expect(runClipDelete(client, undefined, { all: false, yes: false })).rejects.toThrow(
+      "Usage: nimbus clip delete",
+    );
+  });
+
+  it("rejects a target together with --all (no accidental mass-delete)", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    await expect(
+      runClipDelete(client, "https://a.com/p", { all: true, yes: true }),
+    ).rejects.toThrow("not both");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("runClip (dispatcher) — list + delete routing", () => {
+  beforeEach(() => out.reset());
+  afterEach(() => clearFixture());
+
+  it("routes 'list' through withIpc", async () => {
+    const ipc = createMockIpcClient([{ clips: [] }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runClip(["list"]);
+    expect(ipc.calls[0]).toEqual({ method: "clip.list", params: { limit: 50 } });
+  });
+
+  it("routes 'delete <url>' through withIpc", async () => {
+    const ipc = createMockIpcClient([{ deleted: 1, matched: 1 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runClip(["delete", "https://a.com/p"]);
+    expect(ipc.calls[0]).toEqual({ method: "clip.delete", params: { target: "https://a.com/p" } });
   });
 });
