@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { ingestClip } from "../clips/clip-ingest.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchClipRpc } from "./clip-rpc.ts";
@@ -238,5 +239,162 @@ describe("dispatchClipRpc — clip.list", () => {
   test("returns empty when db is absent (fail-soft)", async () => {
     const out = await dispatchClipRpc("clip.list", {}, deps());
     expect(out).toEqual({ kind: "hit", value: { clips: [] } });
+  });
+});
+
+describe("dispatchClipRpc — clip.delete", () => {
+  test("deletes a single clip by id", async () => {
+    const db = seededDb();
+    const id = seedClip(db, {
+      url: "https://a.com/1",
+      title: "T",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 1,
+    });
+    const out = await dispatchClipRpc("clip.delete", { target: id }, { ...deps(), db });
+    expect(out).toEqual({ kind: "hit", value: { deleted: 1, matched: 1 } });
+    expect(db.query("SELECT 1 FROM item WHERE id = ?").get(id)).toBeNull();
+    db.close();
+  });
+
+  test("deleting by URL removes the article + all selections from that page", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/p",
+      title: "Article",
+      body: "full",
+      mode: "article",
+      tags: [],
+      capturedAt: 1,
+    });
+    seedClip(db, {
+      url: "https://a.com/p",
+      title: "Sel1",
+      body: "sel one",
+      mode: "selection",
+      tags: [],
+      capturedAt: 2,
+    });
+    seedClip(db, {
+      url: "https://a.com/p",
+      title: "Sel2",
+      body: "sel two",
+      mode: "selection",
+      tags: [],
+      capturedAt: 3,
+    });
+    const out = await dispatchClipRpc(
+      "clip.delete",
+      { target: "https://a.com/p" },
+      { ...deps(), db },
+    );
+    expect((out as { value: { deleted: number } }).value.deleted).toBe(3);
+    expect(db.query("SELECT COUNT(*) c FROM item WHERE type='web_clip'").get()).toEqual({ c: 0 });
+    db.close();
+  });
+
+  test("--all deletes only web_clip rows, leaving other nimbus items", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "T",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 1,
+    });
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "note",
+      externalId: "note:keep",
+      title: "Keep me",
+      bodyPreview: "not a clip",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: {},
+    });
+    const out = await dispatchClipRpc("clip.delete", { all: true }, { ...deps(), db });
+    expect((out as { value: { deleted: number } }).value.deleted).toBe(1);
+    expect(db.query("SELECT COUNT(*) c FROM item").get()).toEqual({ c: 1 });
+    db.close();
+  });
+
+  test("dryRun reports the match count without deleting", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "T",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 1,
+    });
+    const out = await dispatchClipRpc(
+      "clip.delete",
+      { all: true, dryRun: true },
+      { ...deps(), db },
+    );
+    expect(out).toEqual({ kind: "hit", value: { deleted: 0, matched: 1 } });
+    expect(db.query("SELECT COUNT(*) c FROM item WHERE type='web_clip'").get()).toEqual({ c: 1 });
+    db.close();
+  });
+
+  test("empty / blank target deletes nothing (no query)", async () => {
+    const db = seededDb();
+    seedClip(db, {
+      url: "https://a.com/1",
+      title: "T",
+      body: "b",
+      mode: "article",
+      tags: [],
+      capturedAt: 1,
+    });
+    expect(await dispatchClipRpc("clip.delete", { target: "" }, { ...deps(), db })).toEqual({
+      kind: "hit",
+      value: { deleted: 0, matched: 0 },
+    });
+    expect(await dispatchClipRpc("clip.delete", { target: "   " }, { ...deps(), db })).toEqual({
+      kind: "hit",
+      value: { deleted: 0, matched: 0 },
+    });
+    db.close();
+  });
+
+  test("a nimbus: id for a NON-clip item is not deletable via clip.delete", async () => {
+    const db = seededDb();
+    upsertIndexedItem(db, {
+      service: "nimbus",
+      type: "note",
+      externalId: "note:keep",
+      title: "Keep me",
+      bodyPreview: "x",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: {},
+    });
+    const nonClipId = db.query("SELECT id FROM item WHERE type='note'").get() as { id: string };
+    const out = await dispatchClipRpc("clip.delete", { target: nonClipId.id }, { ...deps(), db });
+    expect(out).toEqual({ kind: "hit", value: { deleted: 0, matched: 0 } });
+    expect(db.query("SELECT 1 FROM item WHERE id = ?").get(nonClipId.id)).not.toBeNull();
+    db.close();
+  });
+
+  test("non-existent target → deleted 0 (idempotent)", async () => {
+    const db = seededDb();
+    const out = await dispatchClipRpc(
+      "clip.delete",
+      { target: "https://nowhere.example/x" },
+      { ...deps(), db },
+    );
+    expect(out).toEqual({ kind: "hit", value: { deleted: 0, matched: 0 } });
+    db.close();
+  });
+
+  test("delete throws when db is absent (never a false 'Deleted 0')", async () => {
+    await expect(dispatchClipRpc("clip.delete", { all: true }, deps())).rejects.toThrow(
+      "Clip index unavailable.",
+    );
   });
 });

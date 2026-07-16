@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
+import { canonicalizeUrl } from "../clips/clip-ingest.ts";
 import { listClipFingerprints, revokeClipToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
+import { deleteItemByPrimaryKey } from "../index/item-store.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export interface ClipRpcDeps {
@@ -82,6 +84,36 @@ function listClips(db: Database, limit: number, tag: string | undefined): ClipLi
   return rows.map(rowToClipEntry);
 }
 
+function allClipIds(db: Database): string[] {
+  return (db.query("SELECT id FROM item WHERE type = 'web_clip'").all() as { id: string }[]).map(
+    (r) => r.id,
+  );
+}
+
+function clipIdIfExists(db: Database, id: string): string[] {
+  const row = db.query("SELECT id FROM item WHERE id = ? AND type = 'web_clip'").get(id);
+  return row === null ? [] : [id];
+}
+
+function clipIdsByCanonicalUrl(db: Database, canonical: string): string[] {
+  return (
+    db
+      .query("SELECT id FROM item WHERE type = 'web_clip' AND canonical_url = ?")
+      .all(canonical) as {
+      id: string;
+    }[]
+  ).map((r) => r.id);
+}
+
+function resolveClipIdsToDelete(db: Database, rec: Record<string, unknown>): string[] {
+  if (rec["all"] === true) return allClipIds(db);
+  const target = typeof rec["target"] === "string" ? rec["target"].trim() : "";
+  if (target === "") return [];
+  return target.startsWith("nimbus:")
+    ? clipIdIfExists(db, target)
+    : clipIdsByCanonicalUrl(db, canonicalizeUrl(target));
+}
+
 export async function dispatchClipRpc(
   method: string,
   params: unknown,
@@ -117,6 +149,17 @@ export async function dispatchClipRpc(
           ? (rec["tag"] as string)
           : undefined;
       return { kind: "hit", value: { clips: listClips(deps.db, limit, tag) } };
+    }
+    case "clip.delete": {
+      // Do NOT fail-soft to a false success here: a delete that can't reach the index must not
+      // report "Deleted 0" (which reads as "nothing matched"). Surface it (spec Error handling).
+      if (deps.db === undefined) throw new Error("Clip index unavailable.");
+      const ids = resolveClipIdsToDelete(deps.db, rec);
+      if (rec["dryRun"] === true) {
+        return { kind: "hit", value: { deleted: 0, matched: ids.length } };
+      }
+      for (const id of ids) deleteItemByPrimaryKey(deps.db, id);
+      return { kind: "hit", value: { deleted: ids.length, matched: ids.length } };
     }
     default:
       return { kind: "miss" };
