@@ -1687,6 +1687,13 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // BOTH consumers so the IPC clip.pair and the HTTP /v1/clips/pair/confirm share the same window.
   const pairingController = new PairingWindowController({ nowMs: () => Date.now() });
   ipcOpts.clipPairingController = pairingController;
+  // Give clip.pair the loopback HTTP origin so `nimbus clip pair` can print the exact URL to paste
+  // into the extension. The gateway binds 127.0.0.1 (I6); the port is NIMBUS_HTTP_PORT (the same var
+  // that gates the /v1/clips sidecar below). Undefined port → no HTTP surface → leave it unset.
+  const clipHttpPort = parseSidecarPortEnv(processEnvGet("NIMBUS_HTTP_PORT"));
+  if (clipHttpPort !== undefined) {
+    ipcOpts.clipHttpBaseUrl = `http://127.0.0.1:${clipHttpPort}`;
+  }
 
   const httpSidecarOpts: HttpSidecarOpts = {
     clipsVault: vault,

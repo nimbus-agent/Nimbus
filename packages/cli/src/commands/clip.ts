@@ -39,12 +39,24 @@ export async function runClipPair(client: IPCClient, label: string | undefined):
   if (label !== undefined) {
     params.label = label;
   }
-  const out = await client.call<{ code: string; expiresAtMs: number; label: string }>(
-    "clip.pair",
-    params,
-  );
-  console.log(`Pairing code for "${out.label}": ${out.code}`);
-  console.log("Enter it in the browser extension within 2 minutes.");
+  const out = await client.call<{
+    code: string;
+    expiresAtMs: number;
+    label: string;
+    gatewayUrl?: string;
+  }>("clip.pair", params);
+  console.log(`Pairing "${out.label}" — in the browser extension's Options page, enter:`);
+  if (out.gatewayUrl !== undefined) {
+    console.log(`  Gateway URL:  ${out.gatewayUrl}`);
+  }
+  console.log(`  Pairing code: ${out.code}`);
+  console.log("Enter it within 2 minutes.");
+  if (out.gatewayUrl === undefined) {
+    console.log(
+      "\nNote: the gateway has no HTTP port open, so the extension can't reach it yet.\n" +
+        "      Restart it with the web-clip surface: nimbus serve --port 7474",
+    );
+  }
 }
 
 export async function runClipStatus(client: IPCClient): Promise<void> {

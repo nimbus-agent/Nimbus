@@ -12,6 +12,13 @@ export interface ClipRpcDeps {
   readonly vault: NimbusVault;
   /** Local-index DB handle. Present when the index is wired; absent → list/delete fail-soft. */
   readonly db?: Database;
+  /**
+   * The gateway's loopback HTTP origin (e.g. `http://127.0.0.1:7474`), present only when the
+   * read-only HTTP sidecar is running (NIMBUS_HTTP_PORT set). Echoed back by `clip.pair` so the
+   * CLI can print the exact URL to paste into the extension. Undefined → the clip surface isn't
+   * reachable, and the CLI warns the owner to (re)start with `nimbus serve --port`.
+   */
+  readonly httpBaseUrl?: string;
 }
 
 export interface ClipListEntry {
@@ -129,7 +136,15 @@ export async function dispatchClipRpc(
           ? (rec["label"] as string)
           : `device-${randomBytes(3).toString("hex")}`;
       const { code, expiresAtMs } = deps.pairing.open(label);
-      return { kind: "hit", value: { code, expiresAtMs, label } };
+      return {
+        kind: "hit",
+        value: {
+          code,
+          expiresAtMs,
+          label,
+          ...(deps.httpBaseUrl === undefined ? {} : { gatewayUrl: deps.httpBaseUrl }),
+        },
+      };
     }
     case "clip.status": {
       const devices = await listClipFingerprints(deps.vault);
