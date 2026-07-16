@@ -112,7 +112,7 @@ For reproducing a full scan before pushing (e.g. when CI is unavailable, or to d
 3. Generate coverage so the scanner finds an `lcov.info`:
 
    ```bash
-   bun test packages/gateway packages/cli packages/sdk packages/mcp-connectors scripts \
+   bun test packages/gateway packages/cli packages/mcp-connectors scripts \
      --coverage --coverage-reporter=lcov
    cd packages/ui && bunx vitest run --coverage && cd -
    sed -i 's|^SF:src/|SF:packages/ui/src/|' packages/ui/coverage/lcov.info

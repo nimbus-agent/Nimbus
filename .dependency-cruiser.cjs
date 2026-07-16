@@ -30,19 +30,12 @@ module.exports = {
       to: { path: "^packages/gateway/src" },
     },
     {
-      name: "sdk-no-import-core",
-      severity: "error",
-      comment: "SDK is MIT and must not import any AGPL package.",
-      from: { path: "^packages/sdk/src" },
-      to: { path: "^packages/(gateway|cli|ui|client|mcp-connectors)/" },
-    },
-    {
       name: "mcp-connectors-only-import-sdk",
       severity: "error",
       comment: "First-party MCP connectors depend only on @nimbus-dev/sdk.",
       from: { path: "^packages/mcp-connectors/[^/]+/src" },
       to: {
-        path: "^packages/(gateway|cli|ui|client)/",
+        path: "^packages/(gateway|cli|ui)/",
       },
     },
 

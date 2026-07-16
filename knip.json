@@ -24,10 +24,6 @@
       "entry": ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
       "project": "src/**/*.{ts,tsx}"
     },
-    "packages/sdk": {
-      "entry": ["src/**/*.test.ts"],
-      "project": "src/**/*.ts"
-    },
     "packages/mcp-connectors/*": {
       "entry": ["src/server.ts", "src/**/*.test.ts"],
       "project": "src/**/*.ts"

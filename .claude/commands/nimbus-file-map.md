@@ -48,7 +48,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint |
 | `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | `FIRST_PARTY_MANIFESTS` — per-connector sandbox manifests |
 | `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; setns/unshare-killer |
-| `packages/sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — SDK API for connector authors |
+| _(standalone repo)_ `nimbus-sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk), published as `@nimbus-dev/sdk` — SDK API for connector authors |
 | `docs/sandbox.md` | Operator-facing reference; `#platform-asymmetry` + `#windows-platform-status` |
 
 ## Extensions — Dependency Resolution
@@ -236,8 +236,8 @@ Everything else follows the standard triple. These break from it in a way worth 
 
 | File | Purpose |
 |---|---|
-| `packages/sdk/src/index.ts` | `@nimbus-dev/sdk` public API |
 | `packages/gateway/src/clips/*` | Gateway web-clip surface — `PairingWindowController` (I30) + `clip-token-store.ts`; ingest via `POST /v1/clips` (the browser extension itself is the standalone repo below) |
+| _(standalone repo)_ | `@nimbus-dev/sdk` — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) (npm, MIT) — extension-authoring contract; `mcp-connectors/*` consume the published package |
 | _(standalone repo)_ | `@nimbus-dev/client` — [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client) (npm, MIT) — `NimbusClient`, `MockClient`; `packages/cli` and the VS Code extension consume the published package |
 | _(standalone repo)_ | VS Code extension — [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) (Marketplace + Open VSX) |
 | _(standalone repo)_ | Web clipper — [nimbus-agent/nimbus-web-clipper](https://github.com/nimbus-agent/nimbus-web-clipper) (Chrome + Firefox MV3) |

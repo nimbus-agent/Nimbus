@@ -182,7 +182,7 @@ Full walkthrough: `docs/contributors/extension-author-walkthrough.md`
 | New Tauri UI page | `packages/ui/src/pages/<Name>.tsx` |
 | New TUI pane | `packages/cli/src/tui/<Name>.tsx` |
 | New LLM provider | `packages/gateway/src/llm/<name>-provider.ts` |
-| SDK export for extension authors | `packages/sdk/src/` |
+| SDK export for extension authors | _(standalone repo)_ [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk) — published as `@nimbus-dev/sdk` |
 
 ---
 

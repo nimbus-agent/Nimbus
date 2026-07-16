@@ -124,4 +124,4 @@ Found a vulnerability? See [SECURITY.md](./.github/SECURITY.md).
 
 ## License
 
-Dual-licensed by design: **AGPL-3.0** for the gateway, CLI, and MCP connectors; **MIT** for the `@nimbus-dev/sdk` and `@nimbus-dev/client` packages so extensions and integrations stay unencumbered.
+Dual-licensed by design: **AGPL-3.0** for the gateway, CLI, and MCP connectors; **MIT** for the separately-published [`@nimbus-dev/sdk`](https://github.com/nimbus-agent/nimbus-sdk) and [`@nimbus-dev/client`](https://github.com/nimbus-agent/nimbus-client) npm packages so extensions and integrations stay unencumbered.
