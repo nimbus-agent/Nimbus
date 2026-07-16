@@ -8,6 +8,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-16 — `nimbus clip list` + `nimbus clip delete`.** Two new read/manage commands
+  for web clips, backed by two new local-index IPC methods (`clip.list`, `clip.delete`).
+  `clip list` shows saved clips newest-first with `--tag` (SQL `json_each` filter, so
+  `--limit` is honored), `--limit`, and `--json` (incl. `wordCount`). `clip delete` removes a
+  clip by ID or by page URL (article + all selections), or `--all --yes` to clear everything;
+  deletes go through `deleteItemByPrimaryKey` (graph + FTS + embedding/vec cascade cleanup) and
+  are strictly `web_clip`-scoped. No new invariant, no migration (read + local delete is not
+  outbound egress).
 - **2026-06-22 — VS Code extension extracted to its own repo.** The VS Code / Open VSX extension moved out of the monorepo to the standalone repo [nimbus-agent/nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) (first standalone release `v0.2.0`); it consumes the published `@nimbus-dev/client` and releases independently of the Gateway. To make that possible, `@nimbus-dev/client` gained a publish-time rewrite of internal `workspace:*` deps to concrete versions (`client@0.2.4`) so the tarball installs standalone. Removed the `packages/vscode-extension` workspace and `.github/workflows/publish-vscode.yml`.
 
 ## Phase 6 — Team (✅ Complete — Slices 1 + 3 shipped 2026-06-05; Slices 2 + 4 shipped 2026-06-07; Slice 5 shipped 2026-06-09; Slice 6a shipped 2026-06-11; Slices 6b + 6c shipped 2026-06-12; Slice 7 Wave 7a shipped 2026-06-13, Waves 7b + 7c shipped 2026-06-14; Slice 8 shipped 2026-06-18)

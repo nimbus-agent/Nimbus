@@ -2104,6 +2104,36 @@ nimbus clip pair --label work-chrome
 
 ---
 
+### `nimbus clip list [--tag <t>] [--limit N] [--json]`
+
+List saved web clips, newest first. `--tag` filters to clips carrying that exact tag
+(matched in SQL, so `--limit` stays correct). `--limit` defaults to 50 (invalid values fall
+back to the default). `--json` emits structured rows (`id, title, url, clippedAt, tags, mode,
+wordCount`) for scripting.
+
+```bash
+nimbus clip list
+nimbus clip list --tag rust --limit 20
+nimbus clip list --json
+```
+
+---
+
+### `nimbus clip delete <id|url>` / `nimbus clip delete --all [--yes]`
+
+Delete clips. A `nimbus:` argument is treated as a clip ID (from `clip list`); anything else
+is treated as a page URL and every clip from that page (the article plus any text selections)
+is removed. `--all` clears every clip but is guarded: without `--yes` it only reports how many
+would be deleted. Deleting a missing id/url is idempotent (`Deleted 0 clips.`).
+
+```bash
+nimbus clip delete https://blog.example.com/rust-async
+nimbus clip delete nimbus:clip:abc123…
+nimbus clip delete --all --yes
+```
+
+---
+
 ### `nimbus clip status`
 
 List all paired browser devices — shows each device's label and its token fingerprint (never the raw token).
