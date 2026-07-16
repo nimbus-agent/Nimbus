@@ -70,21 +70,29 @@ export interface ClipListEntry {
 }
 
 export function parseLimit(raw: string | undefined): number {
-  const n = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? Math.min(1000, n) : 50;
+  // Number() (not parseInt) so partial-numeric tokens like "20junk" and decimals like "1.5"
+  // fall back to the default rather than silently truncating to 20 / 1.
+  const n = raw === undefined ? Number.NaN : Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? Math.min(1000, n) : 50;
+}
+
+/** Truncate (with an ellipsis) then right-pad to a fixed column width. */
+function truncPad(s: string, width: number): string {
+  const t = s.length > width ? `${s.slice(0, width - 1)}…` : s;
+  return t.padEnd(width);
 }
 
 export function formatClipList(clips: ClipListEntry[], tag: string | undefined): string {
   if (clips.length === 0) {
     return tag === undefined ? "No clips saved yet." : `No clips match tag "${tag}".`;
   }
-  return clips
-    .map((c) => {
-      const when = new Date(c.clippedAt).toISOString().slice(0, 16).replace("T", " ");
-      const tags = c.tags.length > 0 ? c.tags.join(", ") : "-";
-      return `${when}  ${c.title}  [${tags}]  ${c.url ?? ""}`.trimEnd();
-    })
-    .join("\n");
+  const header = `${"CLIPPED".padEnd(16)}  ${truncPad("TITLE", 32)}  ${truncPad("TAGS", 16)}  URL`;
+  const rows = clips.map((c) => {
+    const when = new Date(c.clippedAt).toISOString().slice(0, 16).replace("T", " ");
+    const tags = c.tags.length > 0 ? c.tags.join(", ") : "-";
+    return `${when.padEnd(16)}  ${truncPad(c.title, 32)}  ${truncPad(tags, 16)}  ${c.url ?? ""}`.trimEnd();
+  });
+  return [header, ...rows].join("\n");
 }
 
 export async function runClipList(
@@ -118,11 +126,15 @@ export async function runClipDelete(
         all: true,
         dryRun: true,
       });
+      if (preview.matched === 0) {
+        console.log("No clips to delete.");
+        return;
+      }
       console.log(`${clipCount(preview.matched)} would be deleted. Re-run with --yes to confirm.`);
       return;
     }
     const out = await client.call<{ deleted: number }>("clip.delete", { all: true });
-    console.log(`Deleted ${clipCount(out.deleted)}.`);
+    console.log(out.deleted === 0 ? "No clips to delete." : `Deleted ${clipCount(out.deleted)}.`);
     return;
   }
   if (target === undefined || target.trim() === "") {

@@ -264,6 +264,10 @@ describe("parseLimit", () => {
     expect(parseLimit("0")).toBe(50);
     expect(parseLimit(undefined)).toBe(50);
   });
+  it("rejects partially-numeric and decimal tokens", () => {
+    expect(parseLimit("20junk")).toBe(50);
+    expect(parseLimit("1.5")).toBe(50);
+  });
   it("caps at 1000", () => {
     expect(parseLimit("999999")).toBe(1000);
   });
@@ -276,8 +280,13 @@ describe("formatClipList", () => {
   it("shows a tag-specific empty state", () => {
     expect(formatClipList([], "rust")).toContain('tag "rust"');
   });
-  it("renders title, tags and url", () => {
+  it("renders a header row plus title, tags and url", () => {
     const s = formatClipList([CLIP_ROW], undefined);
+    const [header] = s.split("\n");
+    expect(header).toContain("CLIPPED");
+    expect(header).toContain("TITLE");
+    expect(header).toContain("TAGS");
+    expect(header).toContain("URL");
     expect(s).toContain("Understanding Rust Async");
     expect(s).toContain("rust");
     expect(s).toContain("https://blog.ex.com/rust-async");
@@ -346,6 +355,20 @@ describe("runClipDelete", () => {
     await runClipDelete(client, undefined, { all: true, yes: true });
     expect(calls[0]).toEqual({ method: "clip.delete", params: { all: true } });
     expect(out.stdout).toContain("Deleted 12 clips.");
+  });
+
+  it("--all with zero clips reports the empty state (dry run)", async () => {
+    const { client } = createMockIpcClient([{ deleted: 0, matched: 0 }]);
+    await runClipDelete(client, undefined, { all: true, yes: false });
+    expect(out.stdout).toContain("No clips to delete.");
+    expect(out.stdout).not.toContain("would be deleted");
+  });
+
+  it("--all --yes with zero clips reports the empty state", async () => {
+    const { client } = createMockIpcClient([{ deleted: 0, matched: 0 }]);
+    await runClipDelete(client, undefined, { all: true, yes: true });
+    expect(out.stdout).toContain("No clips to delete.");
+    expect(out.stdout).not.toContain("Deleted 0");
   });
 
   it("throws usage when no target and not --all", async () => {

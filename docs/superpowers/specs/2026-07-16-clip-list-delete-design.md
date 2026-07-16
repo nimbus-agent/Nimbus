@@ -151,9 +151,10 @@ index is absent (`list` → empty result; `delete` → a clear error).
 - Add `list` and `delete` subcommands to `runClip`'s switch; extend `CLIP_USAGE`.
 - `runClipList(client, opts)` → call `clip.list`, format a fixed-width table (or JSON with
   `--json`); handle empty/filtered-empty states.
-- `runClipDelete(client, target, opts)` → for `--all` without `--yes`, call `clip.list`
-  to get the count and print the guard message; with `--yes` (or a single id/url target),
-  call `clip.delete` and print `Deleted N clip(s).`.
+- `runClipDelete(client, target, opts)` → for `--all` without `--yes`, call
+  `clip.delete { all: true, dryRun: true }` for the match count and print the guard message
+  (or `No clips to delete.` when zero); with `--yes` (or a single id/url target), call
+  `clip.delete` and print `Deleted N clip(s).` (or `No clips to delete.` when zero).
 
 ### Data flow
 
