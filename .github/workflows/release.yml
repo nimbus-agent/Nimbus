@@ -130,8 +130,13 @@ jobs:
       - name: Build Gateway binary (Windows — with exe metadata)
         if: matrix.target.os == 'windows'
         shell: pwsh
+        env:
+          # Via env (not a ${{ }} run-body expansion) so a crafted tag name can't
+          # inject into the script; then validate the derived 4-part numeric.
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $winver = "${{ github.ref_name }}".TrimStart("v").Split("-")[0] + ".0"
+          $winver = $env:REF_NAME.TrimStart("v").Split("-")[0] + ".0"
+          if ($winver -notmatch '^[0-9]+(\.[0-9]+){3}$') { throw "unexpected version from ref '$env:REF_NAME': $winver" }
           cd packages/gateway
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun `
             --windows-title "Nimbus Gateway" `
@@ -233,8 +238,13 @@ jobs:
       - name: Build CLI binary (Windows — with exe metadata)
         if: matrix.target.os == 'windows'
         shell: pwsh
+        env:
+          # Via env (not a ${{ }} run-body expansion) so a crafted tag name can't
+          # inject into the script; then validate the derived 4-part numeric.
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $winver = "${{ github.ref_name }}".TrimStart("v").Split("-")[0] + ".0"
+          $winver = $env:REF_NAME.TrimStart("v").Split("-")[0] + ".0"
+          if ($winver -notmatch '^[0-9]+(\.[0-9]+){3}$') { throw "unexpected version from ref '$env:REF_NAME': $winver" }
           cd packages/cli
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun `
             --windows-title "Nimbus CLI" `
