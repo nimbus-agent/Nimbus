@@ -1,0 +1,28 @@
+name: Lint PR Title
+
+# The repo squash-merges, so the PR title becomes the commit on `main` that
+# Release Please reads to compute the version bump and changelog. Enforce a
+# Conventional Commit title so a malformed one can't silently break a release.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: amannn/action-semantic-pull-request@e7fef9b497b2d55c02c110d513558fe041d5f661 # v5.5.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
