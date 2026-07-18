@@ -23,6 +23,6 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: amannn/action-semantic-pull-request@e7fef9b497b2d55c02c110d513558fe041d5f661 # v5.5.3
+      - uses: amannn/action-semantic-pull-request@0723387faaf9b38adef4775cd42cfd5155ed6017 # v5.5.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
