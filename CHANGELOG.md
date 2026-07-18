@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.22.0](https://github.com/nimbus-agent/Nimbus/compare/v0.21.0...v0.22.0) (2026-07-18)
+
+
+### Features
+
+* **cli:** nimbus clip list + clip delete (+ clip-scoped tags) ([#760](https://github.com/nimbus-agent/Nimbus/issues/760)) ([65e8857](https://github.com/nimbus-agent/Nimbus/commit/65e8857a27dff10ac85f9c3e63c2fd2a21628bb2))
+* **cli:** print the gateway URL from `nimbus clip pair` ([#761](https://github.com/nimbus-agent/Nimbus/issues/761)) ([b72f96d](https://github.com/nimbus-agent/Nimbus/commit/b72f96dcb862f54084927d8542edce9e0e795ad7))
+
+
+### Bug Fixes
+
+* **gateway:** report real version in `nimbus status` + stamp Windows exe metadata ([#762](https://github.com/nimbus-agent/Nimbus/issues/762)) ([d337167](https://github.com/nimbus-agent/Nimbus/commit/d337167e6e461645526525167ed6acf77396f4e2))
+
 ## [0.21.0](https://github.com/nimbus-agent/Nimbus/compare/v0.20.0...v0.21.0) (2026-07-16)
 
 
