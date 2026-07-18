@@ -148,30 +148,30 @@ describe("install-from-local", () => {
 });
 
 describe("install-from-local symlink + traversal hardening (G7)", () => {
-  test("rejects extension source that contains a symlink (S7-F5)", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
-    const { symlinkSync, unlinkSync } = await import("node:fs");
-    const { extensionsDir, src, db } = createExtensionInstallFixture(
-      "nimbus-symlink-",
-      "src-symlink",
-    );
-    writeFileSync(
-      join(src, "nimbus.extension.json"),
-      JSON.stringify({ id: "ext.symlink", version: "1.0.0", entry: "dist/index.js" }),
-      "utf8",
-    );
-    writeFileSync(join(src, "dist", "index.js"), "/* legit */\n", "utf8");
+  test.skipIf(process.platform === "win32")(
+    "rejects extension source that contains a symlink (S7-F5)",
+    async () => {
+      const { symlinkSync, unlinkSync } = await import("node:fs");
+      const { extensionsDir, src, db } = createExtensionInstallFixture(
+        "nimbus-symlink-",
+        "src-symlink",
+      );
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "ext.symlink", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "/* legit */\n", "utf8");
 
-    const sym = join(src, "dist", "index.js");
-    unlinkSync(sym);
-    symlinkSync("/etc/hostname", sym);
+      const sym = join(src, "dist", "index.js");
+      unlinkSync(sym);
+      symlinkSync("/etc/hostname", sym);
 
-    await expect(
-      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
-    ).rejects.toThrow(/symlink/i);
-  });
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+      ).rejects.toThrow(/symlink/i);
+    },
+  );
 });
 
 async function writeSignedSource(opts: {
@@ -1235,12 +1235,7 @@ describe("assertSafeExtensionId — missing branch coverage (Tier C-4)", () => {
 // D-candidates noted at bottom for win32 SystemRoot/fallback branches
 // ---------------------------------------------------------------------------
 describe("resolveSystemTarCommand — platform branch (Tier C-5)", () => {
-  test("returns 'tar' on non-win32 platforms", () => {
-    if (process.platform === "win32") {
-      // On Windows CI this branch is unreachable without mutating process.platform —
-      // documented as D-candidate; skip.
-      return;
-    }
+  test.skipIf(process.platform === "win32")("returns 'tar' on non-win32 platforms", () => {
     expect(resolveSystemTarCommand()).toBe("tar");
   });
 });
@@ -1291,32 +1286,30 @@ describe("completeExtensionInstallAfterCopy — error branches (Tier C-6)", () =
 // scanForSymlinks — symlink found path (Tier C-7)
 // ---------------------------------------------------------------------------
 describe("scanForSymlinks — symlink found throws (Tier C-7)", () => {
-  test("directory source with a symlink inside a subdirectory is rejected", async () => {
-    if (process.platform === "win32") {
-      // Symlink creation typically requires elevated privileges on Windows;
-      // this test is D-candidate on win32.
-      return;
-    }
-    const { symlinkSync } = await import("node:fs");
-    const { extensionsDir, src, db } = createExtensionInstallFixture(
-      "nimbus-symlink-subdir-",
-      "src-sym-sub",
-    );
-    const subDir = join(src, "lib");
-    mkdirSync(subDir, { recursive: true });
-    writeFileSync(
-      join(src, "nimbus.extension.json"),
-      JSON.stringify({ id: "ext.symlink.sub", version: "1.0.0", entry: "dist/index.js" }),
-      "utf8",
-    );
-    writeFileSync(join(src, "dist", "index.js"), "/* ok */\n", "utf8");
-    // Create a symlink in a subdirectory (not dist/index.js)
-    symlinkSync("/etc/hostname", join(subDir, "bad.link"));
+  test.skipIf(process.platform === "win32")(
+    "directory source with a symlink inside a subdirectory is rejected",
+    async () => {
+      const { symlinkSync } = await import("node:fs");
+      const { extensionsDir, src, db } = createExtensionInstallFixture(
+        "nimbus-symlink-subdir-",
+        "src-sym-sub",
+      );
+      const subDir = join(src, "lib");
+      mkdirSync(subDir, { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "ext.symlink.sub", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "/* ok */\n", "utf8");
+      // Create a symlink in a subdirectory (not dist/index.js)
+      symlinkSync("/etc/hostname", join(subDir, "bad.link"));
 
-    await expect(
-      installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
-    ).rejects.toThrow(/symlink/i);
-  });
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src }),
+      ).rejects.toThrow(/symlink/i);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -2300,63 +2293,60 @@ describe("buildLocalSolverFetcher — registry unavailable for un-pinned dep (Ti
 // and archive symlink (line 238, Linux-only)
 // ---------------------------------------------------------------------------
 describe("checkExtractedEntry — escape and symlink in extracted archive (Tier C-21)", () => {
-  test("extracted archive containing a symlink is rejected (line 238, Linux-only)", async () => {
-    if (process.platform === "win32") {
-      // Symlink creation in tarballs typically requires elevated privileges on Windows.
-      // This test is authoritative on Linux CI; skip on win32.
-      return;
-    }
-
-    // Build a tarball that contains a symlink inside the extracted tree.
-    // We do this by creating the symlink on disk first, then archiving it.
-    const stage = mkdtempSync(join(tmpdir(), "nimbus-sym-arch-"));
-    try {
-      const { symlinkSync } = await import("node:fs");
-      const pkgDir = join(stage, "pkg");
-      mkdirSync(join(pkgDir, "dist"), { recursive: true });
-      writeFileSync(
-        join(pkgDir, "nimbus.extension.json"),
-        JSON.stringify({ id: "symlink.arch.ext", version: "1.0.0", entry: "dist/index.js" }),
-      );
-      writeFileSync(join(pkgDir, "dist", "index.js"), "export {}\n");
-      // Create a symlink inside the archive tree
-      symlinkSync("/etc/hostname", join(pkgDir, "evil.link"));
-
-      const archive = join(stage, "symlink.tgz");
-      const tarBin = resolveSystemTarCommand();
-      const pack = spawnSync(tarBin, ["-czf", archive, "-C", stage, "pkg"], {
-        windowsHide: true,
-      });
-      expect(pack.status).toBe(0);
-
-      const tmp = mkdtempSync(join(tmpdir(), "nimbus-sym-inst-"));
+  test.skipIf(process.platform === "win32")(
+    "extracted archive containing a symlink is rejected (line 238, Linux-only)",
+    async () => {
+      // Build a tarball that contains a symlink inside the extracted tree.
+      // We do this by creating the symlink on disk first, then archiving it.
+      const stage = mkdtempSync(join(tmpdir(), "nimbus-sym-arch-"));
       try {
-        const extensionsDir = join(tmp, "extensions");
-        const db = new Database(":memory:");
-        LocalIndex.ensureSchema(db);
+        const { symlinkSync } = await import("node:fs");
+        const pkgDir = join(stage, "pkg");
+        mkdirSync(join(pkgDir, "dist"), { recursive: true });
+        writeFileSync(
+          join(pkgDir, "nimbus.extension.json"),
+          JSON.stringify({ id: "symlink.arch.ext", version: "1.0.0", entry: "dist/index.js" }),
+        );
+        writeFileSync(join(pkgDir, "dist", "index.js"), "export {}\n");
+        // Create a symlink inside the archive tree
+        symlinkSync("/etc/hostname", join(pkgDir, "evil.link"));
 
-        await expect(
-          installExtensionFromLocalDirectory({
-            db,
-            extensionsDir,
-            sourcePath: archive,
-          }),
-        ).rejects.toThrow(/symlink/i);
+        const archive = join(stage, "symlink.tgz");
+        const tarBin = resolveSystemTarCommand();
+        const pack = spawnSync(tarBin, ["-czf", archive, "-C", stage, "pkg"], {
+          windowsHide: true,
+        });
+        expect(pack.status).toBe(0);
+
+        const tmp = mkdtempSync(join(tmpdir(), "nimbus-sym-inst-"));
+        try {
+          const extensionsDir = join(tmp, "extensions");
+          const db = new Database(":memory:");
+          LocalIndex.ensureSchema(db);
+
+          await expect(
+            installExtensionFromLocalDirectory({
+              db,
+              extensionsDir,
+              sourcePath: archive,
+            }),
+          ).rejects.toThrow(/symlink/i);
+        } finally {
+          try {
+            rmSync(tmp, { recursive: true, force: true });
+          } catch {
+            /* Windows EBUSY */
+          }
+        }
       } finally {
         try {
-          rmSync(tmp, { recursive: true, force: true });
+          rmSync(stage, { recursive: true, force: true });
         } catch {
           /* Windows EBUSY */
         }
       }
-    } finally {
-      try {
-        rmSync(stage, { recursive: true, force: true });
-      } catch {
-        /* Windows EBUSY */
-      }
-    }
-  });
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -2448,36 +2438,34 @@ describe("verifyAndRecordSignature — enforceAirGap omitted defaults to false (
 // test owns the "tar" branch; we skip here so the suite stays cross-platform.
 // ---------------------------------------------------------------------------
 describe("resolveSystemTarCommand — win32 SystemRoot + fallback (Tier C-24)", () => {
-  test("uses SystemRoot/System32/tar.exe when SystemRoot is set; falls back to C:\\Windows", () => {
-    if (process.platform !== "win32") {
-      // Linux/macOS: the win32 branches are unreachable without mutating process.platform.
-      // The Linux-authoritative coverage of these lines is therefore not possible here.
-      return;
-    }
-    const savedRoot = process.env["SystemRoot"];
-    const savedWindir = process.env["windir"];
-    try {
-      // cross-platform-ok: win32 branch assertion path literal
-      process.env["SystemRoot"] = "C:\\WinTest";
-      delete process.env["windir"];
-      expect(resolveSystemTarCommand()).toBe(join("C:\\WinTest", "System32", "tar.exe"));
+  test.skipIf(process.platform !== "win32")(
+    "uses SystemRoot/System32/tar.exe when SystemRoot is set; falls back to C:\\Windows",
+    () => {
+      const savedRoot = process.env["SystemRoot"];
+      const savedWindir = process.env["windir"];
+      try {
+        // cross-platform-ok: win32 branch assertion path literal
+        process.env["SystemRoot"] = "C:\\WinTest";
+        delete process.env["windir"];
+        expect(resolveSystemTarCommand()).toBe(join("C:\\WinTest", "System32", "tar.exe"));
 
-      // Both cleared → hard-coded C:\Windows\System32 fallback.
-      delete process.env["SystemRoot"];
-      delete process.env["windir"];
-      expect(resolveSystemTarCommand()).toBe(join("C:", "Windows", "System32", "tar.exe"));
+        // Both cleared → hard-coded C:\Windows\System32 fallback.
+        delete process.env["SystemRoot"];
+        delete process.env["windir"];
+        expect(resolveSystemTarCommand()).toBe(join("C:", "Windows", "System32", "tar.exe"));
 
-      // windir alone (SystemRoot absent) resolves via the env branch — SystemRoot must be
-      // deleted (not empty) so the `?? process.env["windir"]` coalescing falls through.
-      delete process.env["SystemRoot"];
-      // cross-platform-ok: win32 branch assertion path literal
-      process.env["windir"] = "C:\\WinDirTest";
-      expect(resolveSystemTarCommand()).toBe(join("C:\\WinDirTest", "System32", "tar.exe"));
-    } finally {
-      if (savedRoot === undefined) delete process.env["SystemRoot"];
-      else process.env["SystemRoot"] = savedRoot;
-      if (savedWindir === undefined) delete process.env["windir"];
-      else process.env["windir"] = savedWindir;
-    }
-  });
+        // windir alone (SystemRoot absent) resolves via the env branch — SystemRoot must be
+        // deleted (not empty) so the `?? process.env["windir"]` coalescing falls through.
+        delete process.env["SystemRoot"];
+        // cross-platform-ok: win32 branch assertion path literal
+        process.env["windir"] = "C:\\WinDirTest";
+        expect(resolveSystemTarCommand()).toBe(join("C:\\WinDirTest", "System32", "tar.exe"));
+      } finally {
+        if (savedRoot === undefined) delete process.env["SystemRoot"];
+        else process.env["SystemRoot"] = savedRoot;
+        if (savedWindir === undefined) delete process.env["windir"];
+        else process.env["windir"] = savedWindir;
+      }
+    },
+  );
 });

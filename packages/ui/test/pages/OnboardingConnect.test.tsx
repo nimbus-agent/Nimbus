@@ -48,9 +48,7 @@ describe("Onboarding → Connect", () => {
     });
     renderAt();
     fireEvent.click(screen.getByText("GitHub"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    });
+    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
     await waitFor(() =>
       expect(callMock).toHaveBeenCalledWith("connector.startAuth", { service: "GitHub" }),
     );
@@ -69,7 +67,7 @@ describe("Onboarding → Connect", () => {
     renderAt();
     fireEvent.click(screen.getByText("GitHub"));
     fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    await waitFor(() => expect(screen.getByText("Authenticating…")).toBeTruthy());
+    expect(await screen.findByText("Authenticating…")).toBeTruthy();
     resolveAuth();
   });
 
@@ -81,10 +79,8 @@ describe("Onboarding → Connect", () => {
     });
     renderAt();
     fireEvent.click(screen.getByText("GitHub"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    });
-    await waitFor(() => expect(screen.getByText("Failed — retry")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+    expect(await screen.findByText("Failed — retry")).toBeTruthy();
   });
 
   it("navigates to /onboarding/syncing when a connector becomes connected", async () => {
@@ -96,13 +92,14 @@ describe("Onboarding → Connect", () => {
     });
     renderAt();
     fireEvent.click(screen.getByText("GitHub"));
+    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+    // advanceTimersByTimeAsync flushes the pending startAuth microtasks first (so onAuth reaches
+    // the setInterval poll registration) and then fires the poll — plain advanceTimersByTime would
+    // run before the interval is even registered, and the navigation would never trigger.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+      await vi.advanceTimersByTimeAsync(2100);
     });
-    await act(async () => {
-      vi.advanceTimersByTime(2100);
-    });
-    await waitFor(() => expect(screen.getByText("syncing")).toBeTruthy());
+    expect(await screen.findByText("syncing")).toBeTruthy();
     vi.useRealTimers();
   });
 });

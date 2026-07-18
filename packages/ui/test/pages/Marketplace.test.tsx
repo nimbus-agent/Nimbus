@@ -76,7 +76,7 @@ describe("Marketplace page", () => {
   it("enabled checkbox reflects the extension state", async () => {
     stubExtensionList([EXT_1, EXT_2]);
     renderPage();
-    await waitFor(() => expect(screen.getByText("nimbus-git")).toBeInTheDocument());
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
     expect(screen.getByLabelText("nimbus-git enabled")).toBeChecked();
     expect(screen.getByLabelText("nimbus-slack enabled")).not.toBeChecked();
   });
@@ -95,7 +95,7 @@ describe("Marketplace page", () => {
       throw new Error(`unexpected method: ${method}`);
     });
     renderPage();
-    await waitFor(() => expect(screen.getByLabelText("nimbus-git enabled")).toBeInTheDocument());
+    expect(await screen.findByLabelText("nimbus-git enabled")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("nimbus-git enabled"));
     expect(extensionDisableMock).toHaveBeenCalledWith("nimbus-git");
   });
@@ -114,7 +114,7 @@ describe("Marketplace page", () => {
       throw new Error(`unexpected method: ${method}`);
     });
     renderPage();
-    await waitFor(() => expect(screen.getByLabelText("nimbus-slack enabled")).toBeInTheDocument());
+    expect(await screen.findByLabelText("nimbus-slack enabled")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("nimbus-slack enabled"));
     expect(extensionEnableMock).toHaveBeenCalledWith("nimbus-slack");
   });
@@ -132,7 +132,7 @@ describe("Marketplace page", () => {
     });
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPage();
-    await waitFor(() => expect(screen.getByText("nimbus-git")).toBeInTheDocument());
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /remove extension nimbus-git/i }));
     expect(extensionRemoveMock).toHaveBeenCalledWith("nimbus-git");
   });
@@ -166,13 +166,13 @@ describe("Marketplace page", () => {
   it("shows error state when extension.list fails", async () => {
     callMock.mockRejectedValue(new Error("socket closed"));
     renderPage();
-    await waitFor(() => expect(screen.getByText(/socket closed/)).toBeInTheDocument());
+    expect(await screen.findByText(/socket closed/)).toBeInTheDocument();
   });
 
   it("sandbox badge displays 'Process isolation' for every extension", async () => {
     stubExtensionList([EXT_1, EXT_2]);
     renderPage();
-    await waitFor(() => expect(screen.getByText("nimbus-git")).toBeInTheDocument());
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
     const badges = screen.getAllByTestId("sandbox-badge");
     expect(badges).toHaveLength(2);
     for (const badge of badges) {

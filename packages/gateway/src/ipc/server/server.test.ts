@@ -99,46 +99,52 @@ describe("createIpcServer — listener startup/shutdown (POSIX unix-socket arm)"
     }
   });
 
-  test("start() binds a unix socket at listenPath; stop() unlinks it", async () => {
-    if (platform() === "win32") return;
-    const server = createIpcServer({
-      listenPath: socketPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    await server.start();
-    expect(existsSync(socketPath)).toBe(true);
-    await server.stop();
-    expect(existsSync(socketPath)).toBe(false);
-  });
+  test.skipIf(platform() === "win32")(
+    "start() binds a unix socket at listenPath; stop() unlinks it",
+    async () => {
+      const server = createIpcServer({
+        listenPath: socketPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      await server.start();
+      expect(existsSync(socketPath)).toBe(true);
+      await server.stop();
+      expect(existsSync(socketPath)).toBe(false);
+    },
+  );
 
-  test("start() removes a stale socket file at listenPath before bind", async () => {
-    if (platform() === "win32") return;
-    writeFileSync(socketPath, "stale");
-    expect(existsSync(socketPath)).toBe(true);
+  test.skipIf(platform() === "win32")(
+    "start() removes a stale socket file at listenPath before bind",
+    async () => {
+      writeFileSync(socketPath, "stale");
+      expect(existsSync(socketPath)).toBe(true);
 
-    const server = createIpcServer({
-      listenPath: socketPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    await server.start();
-    expect(existsSync(socketPath)).toBe(true);
-    await server.stop();
-    expect(existsSync(socketPath)).toBe(false);
-  });
+      const server = createIpcServer({
+        listenPath: socketPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      await server.start();
+      expect(existsSync(socketPath)).toBe(true);
+      await server.stop();
+      expect(existsSync(socketPath)).toBe(false);
+    },
+  );
 
-  test("stop() is idempotent (a second call after cleanup is a no-op)", async () => {
-    if (platform() === "win32") return;
-    const server = createIpcServer({
-      listenPath: socketPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    await server.start();
-    await server.stop();
-    await expect(server.stop()).resolves.toBeUndefined();
-  });
+  test.skipIf(platform() === "win32")(
+    "stop() is idempotent (a second call after cleanup is a no-op)",
+    async () => {
+      const server = createIpcServer({
+        listenPath: socketPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      await server.start();
+      await server.stop();
+      await expect(server.stop()).resolves.toBeUndefined();
+    },
+  );
 });
 
 function testListenPath(): string {
@@ -318,328 +324,347 @@ describe("createIpcServer — RPC dispatch arms", () => {
 
   // ── BRDA line=143 block=7 branch=0 ──────────────────────────────────────────
   // session.* RPC hits tryDispatchSessionRpc → returns before automationRpc chain
-  test("session.list reaches sessionRpc dispatcher (early-return branch)", async () => {
-    if (platform() === "win32") return;
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const store = new SessionMemoryStore({ db, dims: 384, embedText: async () => null });
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-      sessionMemoryStore: store,
-    });
-    await server.start();
-
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({ jsonrpc: "2.0", id: 10, method: "session.list", params: {} })}\n`,
-    );
-    const res = JSON.parse(line) as { result?: unknown; error?: unknown };
-    // Either a hit (sessions envelope) or a method-not-found; what matters is we
-    // got a response (the session-rpc dispatcher was entered).
-    expect(res.result !== undefined || res.error !== undefined).toBe(true);
-  });
-
-  // ── BRDA line=158 block=10 branch=0 ────────────────────────────────────────
-  // diagnostics.* RPC hits tryDispatchDiagnosticsRpc → returns before people/phase4
-  test("diag.snapshot reaches diagnosticsRpc dispatcher (early-return branch)", async () => {
-    if (platform() === "win32") return;
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const localIndex = new LocalIndex(db);
-    const tmpDir2 = mkdtempSync(join(tmpdir(), "nimbus-srv-diag-"));
-    try {
+  test.skipIf(platform() === "win32")(
+    "session.list reaches sessionRpc dispatcher (early-return branch)",
+    async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const store = new SessionMemoryStore({ db, dims: 384, embedText: async () => null });
       server = createIpcServer({
         listenPath,
         vault: createMockVault(),
         version: "0.0.0-test",
-        localIndex,
-        dataDir: tmpDir2,
-        configDir: tmpDir2,
+        sessionMemoryStore: store,
       });
       await server.start();
 
       const line = await exchangeFirstNdjsonLine(
         listenPath,
-        `${JSON.stringify({ jsonrpc: "2.0", id: 11, method: "diag.snapshot", params: {} })}\n`,
+        `${JSON.stringify({ jsonrpc: "2.0", id: 10, method: "session.list", params: {} })}\n`,
       );
       const res = JSON.parse(line) as { result?: unknown; error?: unknown };
-      // The diagnostics dispatcher was entered (either success or typed error).
+      // Either a hit (sessions envelope) or a method-not-found; what matters is we
+      // got a response (the session-rpc dispatcher was entered).
       expect(res.result !== undefined || res.error !== undefined).toBe(true);
-    } finally {
+    },
+  );
+
+  // ── BRDA line=158 block=10 branch=0 ────────────────────────────────────────
+  // diagnostics.* RPC hits tryDispatchDiagnosticsRpc → returns before people/phase4
+  test.skipIf(platform() === "win32")(
+    "diag.snapshot reaches diagnosticsRpc dispatcher (early-return branch)",
+    async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const localIndex = new LocalIndex(db);
+      const tmpDir2 = mkdtempSync(join(tmpdir(), "nimbus-srv-diag-"));
       try {
-        rmSync(tmpDir2, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
+        server = createIpcServer({
+          listenPath,
+          vault: createMockVault(),
+          version: "0.0.0-test",
+          localIndex,
+          dataDir: tmpDir2,
+          configDir: tmpDir2,
+        });
+        await server.start();
+
+        const line = await exchangeFirstNdjsonLine(
+          listenPath,
+          `${JSON.stringify({ jsonrpc: "2.0", id: 11, method: "diag.snapshot", params: {} })}\n`,
+        );
+        const res = JSON.parse(line) as { result?: unknown; error?: unknown };
+        // The diagnostics dispatcher was entered (either success or typed error).
+        expect(res.result !== undefined || res.error !== undefined).toBe(true);
+      } finally {
+        try {
+          rmSync(tmpDir2, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
       }
-    }
-  });
+    },
+  );
 
   // ── BRDA line=164 block=12 branch=0 ────────────────────────────────────────
   // lan.getStatus is handled by phase4 → triggers phase4RpcSkipped != skip early-return
-  test("lan.getStatus reaches phase4Rpc dispatcher (early-return branch)", async () => {
-    if (platform() === "win32") return;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "lan.getStatus reaches phase4Rpc dispatcher (early-return branch)",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({ jsonrpc: "2.0", id: 12, method: "lan.getStatus", params: {} })}\n`,
-    );
-    const res = JSON.parse(line) as { result?: Record<string, unknown>; error?: unknown };
-    expect(res.result).toBeDefined();
-    expect(res.result?.["enabled"]).toBe(false);
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({ jsonrpc: "2.0", id: 12, method: "lan.getStatus", params: {} })}\n`,
+      );
+      const res = JSON.parse(line) as { result?: Record<string, unknown>; error?: unknown };
+      expect(res.result).toBeDefined();
+      expect(res.result?.["enabled"]).toBe(false);
+    },
+  );
 
   // ── BRDA line=166 block=13 branch=1 ────────────────────────────────────────
   // switch case "index.searchRanked"
-  test("index.searchRanked reaches the searchRanked switch arm", async () => {
-    if (platform() === "win32") return;
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const localIndex = new LocalIndex(db);
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-      localIndex,
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "index.searchRanked reaches the searchRanked switch arm",
+    async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const localIndex = new LocalIndex(db);
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        localIndex,
+      });
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 13,
-        method: "index.searchRanked",
-        params: { name: "test" },
-      })}\n`,
-    );
-    const res = JSON.parse(line) as { result?: unknown; error?: unknown };
-    // Got a response: the searchRanked switch arm was entered.
-    expect(res.result !== undefined || res.error !== undefined).toBe(true);
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 13,
+          method: "index.searchRanked",
+          params: { name: "test" },
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { result?: unknown; error?: unknown };
+      // Got a response: the searchRanked switch arm was entered.
+      expect(res.result !== undefined || res.error !== undefined).toBe(true);
+    },
+  );
 
   // ── BRDA line=166 block=13 branch=5 ────────────────────────────────────────
   // switch case "agent.invoke" — happy path with a handler installed
-  test("agent.invoke reaches the agent.invoke switch arm and returns handler reply", async () => {
-    if (platform() === "win32") return;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    server.setAgentInvokeHandler(async (_ctx) => ({ reply: "invoked-ok" }));
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "agent.invoke reaches the agent.invoke switch arm and returns handler reply",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      server.setAgentInvokeHandler(async (_ctx) => ({ reply: "invoked-ok" }));
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 14,
-        method: "agent.invoke",
-        params: { input: "hello" },
-      })}\n`,
-    );
-    const res = JSON.parse(line) as { result?: { reply?: string }; error?: unknown };
-    expect(res.result?.reply).toBe("invoked-ok");
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 14,
+          method: "agent.invoke",
+          params: { input: "hello" },
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { result?: { reply?: string }; error?: unknown };
+      expect(res.result?.reply).toBe("invoked-ok");
+    },
+  );
 
   // ── BRDA line=183 block=14 branch=1 ────────────────────────────────────────
   // engine.getSessionTranscript with localIndex present — no error, proceeds to handler
-  test("engine.getSessionTranscript with localIndex present proceeds past the undefined guard", async () => {
-    if (platform() === "win32") return;
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const localIndex = new LocalIndex(db);
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-      localIndex,
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "engine.getSessionTranscript with localIndex present proceeds past the undefined guard",
+    async () => {
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const localIndex = new LocalIndex(db);
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        localIndex,
+      });
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 15,
-        method: "engine.getSessionTranscript",
-        params: { sessionId: "test-session-id" },
-      })}\n`,
-    );
-    const res = JSON.parse(line) as {
-      result?: unknown;
-      error?: { code: number; message: string };
-    };
-    // With localIndex present the -32603 "requires a configured local index" is NOT thrown.
-    // The handler may return a result or throw a different error (e.g., missing session).
-    if (res.error !== undefined) {
-      expect(res.error.message).not.toContain("local index");
-    } else {
-      expect(res.result).toBeDefined();
-    }
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 15,
+          method: "engine.getSessionTranscript",
+          params: { sessionId: "test-session-id" },
+        })}\n`,
+      );
+      const res = JSON.parse(line) as {
+        result?: unknown;
+        error?: { code: number; message: string };
+      };
+      // With localIndex present the -32603 "requires a configured local index" is NOT thrown.
+      // The handler may return a result or throw a different error (e.g., missing session).
+      if (res.error !== undefined) {
+        expect(res.error.message).not.toContain("local index");
+      } else {
+        expect(res.result).toBeDefined();
+      }
+    },
+  );
 
   // ── BRDA line=125 block=5 branch=1  +  BRDA line=128 block=6 branch=0 ────
   // handleRpc catch: non-RpcMethodError Error — message comes from Error.message
-  test("agent.invoke handler throwing Error yields error response with the Error message", async () => {
-    if (platform() === "win32") return;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    server.setAgentInvokeHandler(async (_ctx) => {
-      throw new Error("handler-error-message");
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "agent.invoke handler throwing Error yields error response with the Error message",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      server.setAgentInvokeHandler(async (_ctx) => {
+        throw new Error("handler-error-message");
+      });
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 16,
-        method: "agent.invoke",
-        params: { input: "x" },
-      })}\n`,
-    );
-    const res = JSON.parse(line) as { error?: { code: number; message: string } };
-    expect(res.error).toBeDefined();
-    expect(res.error?.code).toBe(-32603);
-    expect(res.error?.message).toBe("handler-error-message");
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 16,
+          method: "agent.invoke",
+          params: { input: "x" },
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { error?: { code: number; message: string } };
+      expect(res.error).toBeDefined();
+      expect(res.error?.code).toBe(-32603);
+      expect(res.error?.message).toBe("handler-error-message");
+    },
+  );
 
   // ── BRDA line=128 block=6 branch=1 ─────────────────────────────────────────
   // handleRpc catch: thrown value is not an Error → "Internal error" fallback
-  test("agent.invoke handler throwing a non-Error value yields 'Internal error'", async () => {
-    if (platform() === "win32") return;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    // The handler throws a string literal — not an Error instance.
-    server.setAgentInvokeHandler(async (_ctx) => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw "non-error-throw" as unknown as Error;
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "agent.invoke handler throwing a non-Error value yields 'Internal error'",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      // The handler throws a string literal — not an Error instance.
+      server.setAgentInvokeHandler(async (_ctx) => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw "non-error-throw" as unknown as Error;
+      });
+      await server.start();
 
-    const line = await exchangeFirstNdjsonLine(
-      listenPath,
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 17,
-        method: "agent.invoke",
-        params: { input: "x" },
-      })}\n`,
-    );
-    const res = JSON.parse(line) as { error?: { code: number; message: string } };
-    expect(res.error).toBeDefined();
-    expect(res.error?.code).toBe(-32603);
-    expect(res.error?.message).toBe("Internal error");
-  });
+      const line = await exchangeFirstNdjsonLine(
+        listenPath,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 17,
+          method: "agent.invoke",
+          params: { input: "x" },
+        })}\n`,
+      );
+      const res = JSON.parse(line) as { error?: { code: number; message: string } };
+      expect(res.error).toBeDefined();
+      expect(res.error?.code).toBe(-32603);
+      expect(res.error?.message).toBe("Internal error");
+    },
+  );
 
   // ── BRDA line=114 block=4 branch=0 ─────────────────────────────────────────
   // handleRpc: notification (no id) → early return without a response
   // We send a notification and then a real request; the first response must be for the request.
-  test("sending a notification (no id) does not produce a response", async () => {
-    if (platform() === "win32") return;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-    });
-    await server.start();
+  test.skipIf(platform() === "win32")(
+    "sending a notification (no id) does not produce a response",
+    async () => {
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+      });
+      await server.start();
 
-    // Write a notification first (no id), then a ping request.
-    // Only the ping response should come back.
-    const twoMessages =
-      `${JSON.stringify({ jsonrpc: "2.0", method: "some.notification", params: {} })}\n` +
-      `${JSON.stringify({ jsonrpc: "2.0", id: 18, method: "gateway.ping", params: {} })}\n`;
+      // Write a notification first (no id), then a ping request.
+      // Only the ping response should come back.
+      const twoMessages =
+        `${JSON.stringify({ jsonrpc: "2.0", method: "some.notification", params: {} })}\n` +
+        `${JSON.stringify({ jsonrpc: "2.0", id: 18, method: "gateway.ping", params: {} })}\n`;
 
-    const line = await exchangeFirstNdjsonLine(listenPath, twoMessages);
-    const res = JSON.parse(line) as { id?: unknown; result?: Record<string, unknown> };
-    // The first (and only) line we receive is the ping reply, not a notification echo.
-    expect(res.id).toBe(18);
-    expect(res.result?.["version"]).toBe("0.0.0-test");
-  });
+      const line = await exchangeFirstNdjsonLine(listenPath, twoMessages);
+      const res = JSON.parse(line) as { id?: unknown; result?: Record<string, unknown> };
+      // The first (and only) line we receive is the ping reply, not a notification echo.
+      expect(res.id).toBe(18);
+      expect(res.result?.["version"]).toBe("0.0.0-test");
+    },
+  );
 
   // ── BRDA line=63 block=1 branch=0 ──────────────────────────────────────────
   // ConsentCoordinatorImpl getWriter lambda: session found → returns the write fn.
   // Triggered by requestConsent() for a connected client.
-  test("consentImpl getWriter finds a connected session and delivers the consent notification", async () => {
-    if (platform() === "win32") return;
-
-    let capturedClientId: string | undefined;
-    server = createIpcServer({
-      listenPath,
-      vault: createMockVault(),
-      version: "0.0.0-test",
-      onClientConnected: (id) => {
-        capturedClientId = id;
-      },
-    });
-    await server.start();
-
-    // Use a helper that keeps the connection open and collects all lines.
-    const notifLines = await new Promise<string[]>((resolve, reject) => {
-      const collected: string[] = [];
-      let buf = "";
-      Bun.connect({
-        unix: listenPath,
-        socket: {
-          open(_socket) {
-            // Connection is now live; capturedClientId is set by onClientConnected.
-          },
-          data(_socket, chunk: Uint8Array) {
-            buf += new TextDecoder().decode(chunk);
-            const parts = buf.split("\n");
-            buf = parts[parts.length - 1] ?? "";
-            for (let i = 0; i < parts.length - 1; i++) {
-              const l = parts[i];
-              if (l !== undefined && l.trim() !== "") collected.push(l);
-            }
-            if (collected.length >= 1) {
-              resolve(collected);
-            }
-          },
-          error(_socket, err) {
-            reject(err);
-          },
+  test.skipIf(platform() === "win32")(
+    "consentImpl getWriter finds a connected session and delivers the consent notification",
+    async () => {
+      let capturedClientId: string | undefined;
+      server = createIpcServer({
+        listenPath,
+        vault: createMockVault(),
+        version: "0.0.0-test",
+        onClientConnected: (id) => {
+          capturedClientId = id;
         },
-      }).catch(reject);
+      });
+      await server.start();
 
-      // Give the open() callback time to fire, then request consent.
-      setTimeout(() => {
-        if (capturedClientId === undefined) {
-          reject(new Error("onClientConnected was not called"));
-          return;
-        }
-        (server as IPCServer).consent
-          .requestConsent(capturedClientId, {
-            requestId: "req-consent-1",
-            prompt: "Allow action?",
-          })
-          .catch(() => {
-            /* consent promise rejection is expected when connection closes */
-          });
-      }, 50);
-    });
+      // Use a helper that keeps the connection open and collects all lines.
+      const notifLines = await new Promise<string[]>((resolve, reject) => {
+        const collected: string[] = [];
+        let buf = "";
+        Bun.connect({
+          unix: listenPath,
+          socket: {
+            open(_socket) {
+              // Connection is now live; capturedClientId is set by onClientConnected.
+            },
+            data(_socket, chunk: Uint8Array) {
+              buf += new TextDecoder().decode(chunk);
+              const parts = buf.split("\n");
+              buf = parts[parts.length - 1] ?? "";
+              for (let i = 0; i < parts.length - 1; i++) {
+                const l = parts[i];
+                if (l !== undefined && l.trim() !== "") collected.push(l);
+              }
+              if (collected.length >= 1) {
+                resolve(collected);
+              }
+            },
+            error(_socket, err) {
+              reject(err);
+            },
+          },
+        }).catch(reject);
 
-    // We should have received the consent.request notification.
-    const parsed = JSON.parse(notifLines[0] ?? "{}") as {
-      method?: string;
-      params?: { requestId?: string };
-    };
-    expect(parsed.method).toBe("consent.request");
-    expect(parsed.params?.requestId).toBe("req-consent-1");
-  });
+        // Give the open() callback time to fire, then request consent.
+        setTimeout(() => {
+          if (capturedClientId === undefined) {
+            reject(new Error("onClientConnected was not called"));
+            return;
+          }
+          (server as IPCServer).consent
+            .requestConsent(capturedClientId, {
+              requestId: "req-consent-1",
+              prompt: "Allow action?",
+            })
+            .catch(() => {
+              /* consent promise rejection is expected when connection closes */
+            });
+        }, 50);
+      });
+
+      // We should have received the consent.request notification.
+      const parsed = JSON.parse(notifLines[0] ?? "{}") as {
+        method?: string;
+        params?: { requestId?: string };
+      };
+      expect(parsed.method).toBe("consent.request");
+      expect(parsed.params?.requestId).toBe("req-consent-1");
+    },
+  );
 });

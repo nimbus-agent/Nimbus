@@ -255,38 +255,38 @@ describe("tryCreateRoutingEmbeddingRuntime — null-return branches", () => {
     }
   });
 
-  test("returns null when ensureSqliteVecForConnection is false (schema >= v6, vec not loaded)", async () => {
-    if (!VEC_AVAILABLE) {
-      return;
-    }
-    const h = makeHarness({ migrateTo: 30, setApiKey: true });
-    h.db.close();
-    const freshDb = new Database(h.db.filename);
-    try {
-      let vecOnFresh = true;
+  test.skipIf(!VEC_AVAILABLE)(
+    "returns null when ensureSqliteVecForConnection is false (schema >= v6, vec not loaded)",
+    async () => {
+      const h = makeHarness({ migrateTo: 30, setApiKey: true });
+      h.db.close();
+      const freshDb = new Database(h.db.filename);
       try {
-        freshDb.query("SELECT vec_version()").get();
-      } catch {
-        vecOnFresh = false;
+        let vecOnFresh = true;
+        try {
+          freshDb.query("SELECT vec_version()").get();
+        } catch {
+          vecOnFresh = false;
+        }
+        if (vecOnFresh) {
+          return;
+        }
+        const factory = await importFactory();
+        const runtime = await factory(freshDb, h.paths, silentLogger, h.toml, h.vault);
+        const stillVec = isVecLoaded(freshDb);
+        if (!stillVec) {
+          expect(runtime).toBeNull();
+        }
+      } finally {
+        freshDb.close();
+        try {
+          rmSync(h.paths.dataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
       }
-      if (vecOnFresh) {
-        return;
-      }
-      const factory = await importFactory();
-      const runtime = await factory(freshDb, h.paths, silentLogger, h.toml, h.vault);
-      const stillVec = isVecLoaded(freshDb);
-      if (!stillVec) {
-        expect(runtime).toBeNull();
-      }
-    } finally {
-      freshDb.close();
-      try {
-        rmSync(h.paths.dataDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
-    }
-  });
+    },
+  );
 });
 
 describe.skipIf(!VEC_AVAILABLE)(

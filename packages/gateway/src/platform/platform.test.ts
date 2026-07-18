@@ -111,54 +111,48 @@ describe("Platform Abstraction Layer", () => {
     }
   });
 
-  it("throws PlatformInitError for missing Linux secret-tool (subprocess)", () => {
-    if (platform() !== "linux") {
-      return;
-    }
-    const result = Bun.spawnSync({
-      cmd: ["bun", "run", join(gatewayRoot, "test/fixtures/linux-secret-tool-probe.ts")],
-      cwd: gatewayRoot,
-      env: {
-        ...process.env,
-        PATH: dirname(process.execPath),
-        NIMBUS_LINUX_VAULT_PROBE_STRICT_PATH: "1",
-      },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    expect(result.exitCode).not.toBe(0);
-    const errText = new TextDecoder().decode(result.stderr);
-    expect(errText).toContain("secret-tool not found");
-    expect(errText).toContain("PlatformInitError");
-  });
+  it.skipIf(platform() !== "linux")(
+    "throws PlatformInitError for missing Linux secret-tool (subprocess)",
+    () => {
+      const result = Bun.spawnSync({
+        cmd: ["bun", "run", join(gatewayRoot, "test/fixtures/linux-secret-tool-probe.ts")],
+        cwd: gatewayRoot,
+        env: {
+          ...process.env,
+          PATH: dirname(process.execPath),
+          NIMBUS_LINUX_VAULT_PROBE_STRICT_PATH: "1",
+        },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      expect(result.exitCode).not.toBe(0);
+      const errText = new TextDecoder().decode(result.stderr);
+      expect(errText).toContain("secret-tool not found");
+      expect(errText).toContain("PlatformInitError");
+    },
+  );
 
-  it("createWindowsPaths throws PlatformInitError without APPDATA", () => {
-    if (platform() !== "win32") {
-      return;
-    }
-    const prev = processEnvGet("APPDATA");
-    processEnvDelete("APPDATA");
-    try {
-      expect(() => createWindowsPaths()).toThrow(PlatformInitError);
-    } finally {
-      processEnvSet("APPDATA", prev);
-    }
-  });
+  it.skipIf(platform() !== "win32")(
+    "createWindowsPaths throws PlatformInitError without APPDATA",
+    () => {
+      const prev = processEnvGet("APPDATA");
+      processEnvDelete("APPDATA");
+      try {
+        expect(() => createWindowsPaths()).toThrow(PlatformInitError);
+      } finally {
+        processEnvSet("APPDATA", prev);
+      }
+    },
+  );
 });
 
 describe("PlatformPaths factories", () => {
-  it("darwin paths share config and data roots per Q1 plan", () => {
-    if (platform() !== "darwin") {
-      return;
-    }
+  it.skipIf(platform() !== "darwin")("darwin paths share config and data roots per Q1 plan", () => {
     const paths = createDarwinPaths();
     expect(paths.configDir).toBe(paths.dataDir);
   });
 
-  it("linux paths are under XDG-style directories", () => {
-    if (platform() !== "linux") {
-      return;
-    }
+  it.skipIf(platform() !== "linux")("linux paths are under XDG-style directories", () => {
     const paths = createLinuxPaths();
     expect(paths.configDir).toContain("nimbus");
     expect(paths.dataDir).toContain("nimbus");

@@ -17,13 +17,17 @@ export function parseTribalCaptureCommand(text: string): ParsedTribalCaptureComm
     .replace(/<@[^<>]+>/g, " ")
     .replace(/@\w+/g, " ")
     .trim();
-  // `(\S+)(?:\s+(.*))?` keeps the cluster id and the optional remainder disjoint (separated by
-  // whitespace) rather than letting `\S+` and `.*` compete over the same chars (S8786 backtracking).
-  const m = /^tribal\s+capture\s+(\S+)(?:\s+(.*))?$/i.exec(cleaned);
-  if (m === null) return undefined;
-  const clusterId = m[1] ?? "";
+  // Tokenize on whitespace rather than matching one regex with an optional `(.*)` tail — a single
+  // linear split avoids the super-linear backtracking Sonar flags (S8786). Command shape:
+  // `tribal capture <cluster-id> [--target notion|confluence]`.
+  const tokens = cleaned.split(/\s+/);
+  if (tokens.length < 3) return undefined;
+  if (tokens[0]?.toLowerCase() !== "tribal" || tokens[1]?.toLowerCase() !== "capture") {
+    return undefined;
+  }
+  const clusterId = tokens[2] ?? "";
   if (clusterId === "" || clusterId.startsWith("--")) return undefined;
-  const rest = m[2] ?? "";
+  const rest = tokens.slice(3).join(" ");
   const tm = /--target\s+(notion|confluence)\b/i.exec(rest);
   if (tm !== null) {
     return { clusterId, target: tm[1]?.toLowerCase() as "notion" | "confluence" };

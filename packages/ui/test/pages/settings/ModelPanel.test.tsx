@@ -85,7 +85,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     llmLoadModelMock.mockResolvedValueOnce({ isLoaded: true });
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /load gemma:2b/i }));
+    await screen.findByRole("button", { name: /load gemma:2b/i });
     await userEvent.click(screen.getByRole("button", { name: /load gemma:2b/i }));
     await waitFor(() => expect(llmLoadModelMock).toHaveBeenCalledWith("ollama", "gemma:2b"));
   });
@@ -98,7 +98,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     llmUnloadModelMock.mockResolvedValueOnce({ isLoaded: false });
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /unload gemma:2b/i }));
+    await screen.findByRole("button", { name: /unload gemma:2b/i });
     await userEvent.click(screen.getByRole("button", { name: /unload gemma:2b/i }));
     await waitFor(() => expect(llmUnloadModelMock).toHaveBeenCalledWith("ollama", "gemma:2b"));
   });
@@ -119,7 +119,7 @@ describe("ModelPanel", () => {
       },
     });
     renderPanel();
-    await waitFor(() => screen.getByLabelText("gemma:2b default-for"));
+    await screen.findByLabelText("gemma:2b default-for");
     await userEvent.selectOptions(screen.getByLabelText("gemma:2b default-for"), "reasoning");
     await waitFor(() =>
       expect(llmSetDefaultMock).toHaveBeenCalledWith("reasoning", "ollama", "gemma:2b"),
@@ -131,11 +131,9 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true, llamacpp: true } });
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     await userEvent.click(screen.getByRole("button", { name: /pull new model/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("dialog", { name: /pull model/i })).toBeInTheDocument(),
-    );
+    expect(await screen.findByRole("dialog", { name: /pull model/i })).toBeInTheDocument();
   });
 
   it("llm.modelLoaded notification patches the row's loaded indicator", async () => {
@@ -145,14 +143,12 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /load gemma:2b/i }));
+    await screen.findByRole("button", { name: /load gemma:2b/i });
     sub.handler?.({
       method: "llm.modelLoaded",
       params: { provider: "ollama", modelName: "gemma:2b" },
     });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /unload gemma:2b/i })).toBeInTheDocument(),
-    );
+    expect(await screen.findByRole("button", { name: /unload gemma:2b/i })).toBeInTheDocument();
   });
 
   it("surfaces pull progress from a persisted activePullId (re-attach on reload)", async () => {
@@ -186,14 +182,12 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /unload gemma:2b/i }));
+    await screen.findByRole("button", { name: /unload gemma:2b/i });
     sub.handler?.({
       method: "llm.modelUnloaded",
       params: { provider: "ollama", modelName: "gemma:2b" },
     });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /load gemma:2b/i })).toBeInTheDocument(),
-    );
+    expect(await screen.findByRole("button", { name: /load gemma:2b/i })).toBeInTheDocument();
   });
 
   it("llm.pullProgress notification updates the active pull banner", async () => {
@@ -202,7 +196,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     sub.handler?.({
       method: "llm.pullProgress",
       params: {
@@ -227,7 +221,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     sub.handler?.({ method: "llm.pullCompleted", params: { pullId: "pull_done" } });
     await waitFor(() => expect(llmListModelsMock).toHaveBeenCalledTimes(2));
     expect(useNimbusStore.getState().activePullId).toBeNull();
@@ -239,7 +233,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     const sub = captureSubscribe();
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     sub.handler?.({ method: "llm.pullFailed", params: { pullId: "pull_fail" } });
     await waitFor(() => expect(useNimbusStore.getState().activePullId).toBeNull());
     expect(llmListModelsMock).toHaveBeenCalledTimes(1);
@@ -250,7 +244,7 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     subscribeMock.mockRejectedValueOnce(new Error("subscribe failed"));
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     expect(screen.getByRole("button", { name: /pull new model/i })).toBeInTheDocument();
   });
 
@@ -259,9 +253,9 @@ describe("ModelPanel", () => {
     llmGetRouterStatusMock.mockResolvedValueOnce({ decisions: {} });
     llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true, llamacpp: false } });
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     await userEvent.click(screen.getByRole("button", { name: /pull new model/i }));
-    await waitFor(() => screen.getByRole("dialog", { name: /pull model/i }));
+    await screen.findByRole("dialog", { name: /pull model/i });
     await userEvent.click(screen.getByRole("button", { name: /close/i }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: /pull model/i })).not.toBeInTheDocument(),
@@ -276,7 +270,7 @@ describe("ModelPanel", () => {
       installedModels: [{ id: "ollama:gemma:2b", provider: "ollama" }],
     });
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /pull new model/i }));
+    await screen.findByRole("button", { name: /pull new model/i });
     expect(screen.getByRole("button", { name: /pull new model/i })).toBeDisabled();
   });
 });

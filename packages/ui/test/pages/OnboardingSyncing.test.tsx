@@ -30,7 +30,7 @@ describe("Onboarding → Syncing", () => {
       throw new Error(`unexpected ${method}`);
     });
     renderAt();
-    await waitFor(() => expect(screen.getByText(/42/)).toBeTruthy());
+    expect(await screen.findByText(/42/)).toBeTruthy();
   });
 
   it("Open Dashboard writes onboarding_completed and navigates", async () => {

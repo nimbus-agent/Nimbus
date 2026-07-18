@@ -52,7 +52,7 @@ describe("TelemetryPanel", () => {
   it("renders counter cards when enabled", async () => {
     telemetryGetStatusMock.mockResolvedValueOnce(ENABLED_PAYLOAD);
     render(<TelemetryPanel />);
-    await waitFor(() => expect(screen.getByText(/query p95/i)).toBeInTheDocument());
+    expect(await screen.findByText(/query p95/i)).toBeInTheDocument();
     expect(screen.getByText("14")).toBeInTheDocument();
   });
 
@@ -62,7 +62,7 @@ describe("TelemetryPanel", () => {
       .mockResolvedValueOnce({ enabled: false });
     telemetrySetEnabledMock.mockResolvedValueOnce({ enabled: false });
     render(<TelemetryPanel />);
-    await waitFor(() => screen.getByText(/query p95/i));
+    await screen.findByText(/query p95/i);
     await userEvent.click(screen.getByRole("switch", { name: /telemetry/i }));
     await waitFor(() => expect(telemetrySetEnabledMock).toHaveBeenCalledWith(false));
     await waitFor(() =>
@@ -76,7 +76,7 @@ describe("TelemetryPanel", () => {
   it("expander shows the raw JSON payload when opened", async () => {
     telemetryGetStatusMock.mockResolvedValueOnce(ENABLED_PAYLOAD);
     render(<TelemetryPanel />);
-    await waitFor(() => screen.getByText(/query p95/i));
+    await screen.findByText(/query p95/i);
     await userEvent.click(screen.getByRole("button", { name: /view payload sample/i }));
     expect(screen.getByTestId("telemetry-payload-json")).toHaveTextContent("preview-not-persisted");
   });
@@ -84,7 +84,7 @@ describe("TelemetryPanel", () => {
   it("toggle is disabled when connectionState is disconnected", async () => {
     telemetryGetStatusMock.mockResolvedValueOnce({ enabled: false });
     render(<TelemetryPanel />);
-    await waitFor(() => screen.getByRole("switch", { name: /telemetry/i }));
+    await screen.findByRole("switch", { name: /telemetry/i });
     useNimbusStore.setState({ connectionState: "disconnected" });
     await waitFor(() => expect(screen.getByRole("switch", { name: /telemetry/i })).toBeDisabled());
   });

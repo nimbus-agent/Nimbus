@@ -43,9 +43,7 @@ describe("PendingUpdates", () => {
   it("renders one row per cache entry with version pair + badges", async () => {
     callMock.mockResolvedValue([sample()]);
     render(<PendingUpdates offline={false} />);
-    await waitFor(() =>
-      expect(screen.getByTestId("pending-update-row-com.x.a")).toBeInTheDocument(),
-    );
+    expect(await screen.findByTestId("pending-update-row-com.x.a")).toBeInTheDocument();
     expect(screen.getByText(/X/)).toBeInTheDocument();
     expect(screen.getByText(/1\.0\.0 → 1\.1\.0/)).toBeInTheDocument();
     expect(screen.getByText("stable")).toBeInTheDocument();
@@ -59,7 +57,7 @@ describe("PendingUpdates", () => {
       throw new Error(`unexpected ${method}`);
     });
     render(<PendingUpdates offline={false} />);
-    const btn = await waitFor(() => screen.getByTestId("update-button-com.x.a"));
+    const btn = await screen.findByTestId("update-button-com.x.a");
     await userEvent.click(btn);
     await waitFor(() => {
       const calls = callMock.mock.calls.map((c) => c[0]);
@@ -70,14 +68,14 @@ describe("PendingUpdates", () => {
   it("disables Update + renders needs_sync badge when verification needs sync", async () => {
     callMock.mockResolvedValue([sample({ verificationStatus: "needs_sync" })]);
     render(<PendingUpdates offline={false} />);
-    await waitFor(() => expect(screen.getByTestId("needs-sync-com.x.a")).toBeInTheDocument());
+    expect(await screen.findByTestId("needs-sync-com.x.a")).toBeInTheDocument();
     expect(screen.getByTestId("update-button-com.x.a")).toBeDisabled();
   });
 
   it("disables Update + renders signature_failed badge", async () => {
     callMock.mockResolvedValue([sample({ verificationStatus: "signature_failed" })]);
     render(<PendingUpdates offline={false} />);
-    await waitFor(() => expect(screen.getByTestId("signature-failed-com.x.a")).toBeInTheDocument());
+    expect(await screen.findByTestId("signature-failed-com.x.a")).toBeInTheDocument();
     expect(screen.getByTestId("update-button-com.x.a")).toBeDisabled();
   });
 
@@ -88,7 +86,7 @@ describe("PendingUpdates", () => {
       throw new Error(`unexpected ${method}`);
     });
     render(<PendingUpdates offline={false} />);
-    await waitFor(() => screen.getByTestId("update-button-com.x.a"));
+    await screen.findByTestId("update-button-com.x.a");
     await userEvent.click(screen.getByTestId("update-button-com.x.a"));
     const updateCalls = callMock.mock.calls.filter((c) => c[0] === "extension.update");
     expect(updateCalls).toHaveLength(0);

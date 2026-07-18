@@ -44,7 +44,7 @@ function captureSubscription(): {
 
 async function renderAndStartPull(): Promise<void> {
   render(<PullDialog open onClose={() => {}} />);
-  await waitFor(() => screen.getByLabelText(/model name/i));
+  await screen.findByLabelText(/model name/i);
   await userEvent.type(screen.getByLabelText(/model name/i), "gemma:2b");
   await userEvent.click(screen.getByRole("button", { name: /pull/i }));
   await waitFor(() => expect(llmPullModelMock).toHaveBeenCalledWith("ollama", "gemma:2b"));
@@ -54,14 +54,14 @@ describe("PullDialog", () => {
   it("hides the llama.cpp radio when availability reports it unavailable", async () => {
     llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true, llamacpp: false } });
     render(<PullDialog open onClose={() => {}} />);
-    await waitFor(() => screen.getByLabelText(/ollama/i));
+    await screen.findByLabelText(/ollama/i);
     expect(screen.queryByLabelText(/llama\.cpp/i)).not.toBeInTheDocument();
   });
 
   it("shows both providers when both are available", async () => {
     llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true, llamacpp: true } });
     render(<PullDialog open onClose={() => {}} />);
-    await waitFor(() => screen.getByLabelText(/ollama/i));
+    await screen.findByLabelText(/ollama/i);
     expect(screen.getByLabelText(/llama\.cpp/i)).toBeInTheDocument();
   });
 
@@ -92,7 +92,7 @@ describe("PullDialog", () => {
     llmPullModelMock.mockResolvedValueOnce({ pullId: "pull_abc" });
     llmCancelPullMock.mockResolvedValueOnce({ cancelled: true });
     await renderAndStartPull();
-    await waitFor(() => screen.getByRole("button", { name: /cancel pull/i }));
+    await screen.findByRole("button", { name: /cancel pull/i });
     await userEvent.click(screen.getByRole("button", { name: /cancel pull/i }));
     await waitFor(() => expect(llmCancelPullMock).toHaveBeenCalledWith("pull_abc"));
   });
@@ -109,12 +109,12 @@ describe("PullDialog", () => {
       });
       render(<PullDialog open onClose={() => {}} />);
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await waitFor(() => screen.getByLabelText(/model name/i));
+      await screen.findByLabelText(/model name/i);
       await user.type(screen.getByLabelText(/model name/i), "gemma:2b");
       await user.click(screen.getByRole("button", { name: /pull/i }));
       await waitFor(() => expect(llmPullModelMock).toHaveBeenCalledWith("ollama", "gemma:2b"));
       vi.advanceTimersByTime(15_000);
-      await waitFor(() => expect(screen.getByText(/connecting…/i)).toBeInTheDocument());
+      expect(await screen.findByText(/connecting…/i)).toBeInTheDocument();
       captured?.({
         method: "llm.pullProgress",
         params: {
@@ -150,10 +150,10 @@ describe("PullDialog", () => {
       });
       llmGetStatusMock.mockResolvedValueOnce({ available: { ollama: true } });
       render(<PullDialog open onClose={() => {}} />);
-      await waitFor(() => screen.getByLabelText(/model name/i));
+      await screen.findByLabelText(/model name/i);
       expect(screen.queryByText(/connecting…/i)).not.toBeInTheDocument();
       vi.advanceTimersByTime(15_000);
-      await waitFor(() => expect(screen.getByText(/connecting…/i)).toBeInTheDocument());
+      expect(await screen.findByText(/connecting…/i)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

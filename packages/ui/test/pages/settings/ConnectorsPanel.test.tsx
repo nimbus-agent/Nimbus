@@ -85,7 +85,7 @@ describe("ConnectorsPanel", () => {
         enabled: null,
       });
       renderPanel();
-      await waitFor(() => screen.getByLabelText("github interval value"));
+      await screen.findByLabelText("github interval value");
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const input = screen.getByLabelText("github interval value");
       await user.clear(input);
@@ -113,7 +113,7 @@ describe("ConnectorsPanel", () => {
         },
       ]);
       renderPanel();
-      await waitFor(() => screen.getByLabelText("github interval value"));
+      await screen.findByLabelText("github interval value");
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const input = screen.getByLabelText("github interval value");
       const unit = screen.getByLabelText("github interval unit");
@@ -146,7 +146,7 @@ describe("ConnectorsPanel", () => {
       enabled: null,
     });
     renderPanel();
-    await waitFor(() => screen.getByLabelText("github depth"));
+    await screen.findByLabelText("github depth");
     await userEvent.selectOptions(screen.getByLabelText("github depth"), "full");
     await waitFor(() =>
       expect(connectorSetConfigMock).toHaveBeenCalledWith("github", { depth: "full" }),
@@ -170,7 +170,7 @@ describe("ConnectorsPanel", () => {
       enabled: false,
     });
     renderPanel();
-    await waitFor(() => screen.getByLabelText("github enabled"));
+    await screen.findByLabelText("github enabled");
     await userEvent.click(screen.getByLabelText("github enabled"));
     await waitFor(() =>
       expect(connectorSetConfigMock).toHaveBeenCalledWith("github", { enabled: false }),
@@ -192,7 +192,7 @@ describe("ConnectorsPanel", () => {
     });
     stubListStatus([]);
     renderPanel();
-    await waitFor(() => screen.getByLabelText("github enabled"));
+    await screen.findByLabelText("github enabled");
     expect(screen.getByLabelText("github enabled")).toBeDisabled();
     expect(screen.getByLabelText("github depth")).toBeDisabled();
     expect(screen.getByLabelText("github interval value")).toBeDisabled();
@@ -205,7 +205,7 @@ describe("ConnectorsPanel", () => {
         { name: "github", health: "healthy", intervalMs: 120000, depth: "summary", enabled: true },
       ]);
       renderPanel();
-      await waitFor(() => screen.getByLabelText("github interval value"));
+      await screen.findByLabelText("github interval value");
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const input = screen.getByLabelText("github interval value");
       const unit = screen.getByLabelText("github interval unit");
@@ -228,7 +228,7 @@ describe("ConnectorsPanel", () => {
         { name: "github", health: "healthy", intervalMs: 60000, depth: "summary", enabled: true },
       ]);
     renderPanel();
-    await waitFor(() => screen.getByRole("button", { name: /retry/i }));
+    await screen.findByRole("button", { name: /retry/i });
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument(),
@@ -247,7 +247,7 @@ describe("ConnectorsPanel", () => {
       },
     ]);
     renderPanel(["/settings/connectors?highlight=slack"]);
-    await waitFor(() => screen.getByText("slack"));
+    await screen.findByText("slack");
     const row = screen.getByTestId("connector-row-slack");
     expect(row.className).toMatch(/ring-2/);
   });
@@ -270,7 +270,7 @@ describe("ConnectorsPanel — connector.configChanged reconcile", () => {
       return () => {};
     });
     renderPanel();
-    await waitFor(() => screen.getByLabelText("github depth"));
+    await screen.findByLabelText("github depth");
     expect(captured).not.toBeNull();
     captured?.({
       method: "connector.configChanged",

@@ -110,7 +110,7 @@ describe("Watchers page — list", () => {
   it("enabled checkbox reflects the watcher state", async () => {
     stubWatcherList([WATCHER_1, WATCHER_2]);
     renderPage();
-    await waitFor(() => expect(screen.getByText("PR opened")).toBeInTheDocument());
+    expect(await screen.findByText("PR opened")).toBeInTheDocument();
     expect(screen.getByLabelText("PR opened enabled")).toBeChecked();
     expect(screen.getByLabelText("Daily digest enabled")).not.toBeChecked();
   });
@@ -122,7 +122,7 @@ describe("Watchers page — list", () => {
       .mockResolvedValueOnce({ watchers: [WATCHER_1] })
       .mockResolvedValue({ watchers: [{ ...WATCHER_1, enabled: 0 }] });
     renderPage();
-    await waitFor(() => expect(screen.getByLabelText("PR opened enabled")).toBeInTheDocument());
+    expect(await screen.findByLabelText("PR opened enabled")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("PR opened enabled"));
     expect(watcherPauseMock).toHaveBeenCalledWith("w1");
   });
@@ -134,7 +134,7 @@ describe("Watchers page — list", () => {
       .mockResolvedValueOnce({ watchers: [WATCHER_2] })
       .mockResolvedValue({ watchers: [{ ...WATCHER_2, enabled: 1 }] });
     renderPage();
-    await waitFor(() => expect(screen.getByLabelText("Daily digest enabled")).toBeInTheDocument());
+    expect(await screen.findByLabelText("Daily digest enabled")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("Daily digest enabled"));
     expect(watcherResumeMock).toHaveBeenCalledWith("w2");
   });
@@ -142,21 +142,21 @@ describe("Watchers page — list", () => {
   it("shows the last-fired timestamp when present", async () => {
     stubWatcherList([WATCHER_1]);
     renderPage();
-    await waitFor(() => expect(screen.getByTestId("last-fired-w1")).toBeInTheDocument());
+    expect(await screen.findByTestId("last-fired-w1")).toBeInTheDocument();
     expect(screen.getByTestId("last-fired-w1").textContent).not.toBe("Never fired");
   });
 
   it("shows 'Never fired' when last_fired_at is null", async () => {
     stubWatcherList([WATCHER_2]);
     renderPage();
-    await waitFor(() => expect(screen.getByTestId("last-fired-w2")).toBeInTheDocument());
+    expect(await screen.findByTestId("last-fired-w2")).toBeInTheDocument();
     expect(screen.getByTestId("last-fired-w2")).toHaveTextContent("Never fired");
   });
 
   it("shows error state when watcher.list fails", async () => {
     callMock.mockRejectedValue(new Error("Gateway timeout"));
     renderPage();
-    await waitFor(() => expect(screen.getByText(/Gateway timeout/)).toBeInTheDocument());
+    expect(await screen.findByText(/Gateway timeout/)).toBeInTheDocument();
   });
 
   it("'New watcher' button is disabled when offline", () => {
@@ -172,7 +172,7 @@ describe("Watchers page — list", () => {
     callMock.mockResolvedValueOnce({ watchers: [WATCHER_1] }).mockResolvedValue({ watchers: [] });
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPage();
-    await waitFor(() => expect(screen.getByText("PR opened")).toBeInTheDocument());
+    expect(await screen.findByText("PR opened")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /delete watcher PR opened/i }));
     expect(watcherDeleteMock).toHaveBeenCalledWith("w1");
   });
@@ -183,8 +183,8 @@ async function openDialog() {
   renderPage();
   await waitFor(() => expect(callMock).toHaveBeenCalled());
   await userEvent.click(screen.getByRole("button", { name: /new watcher/i }));
-  await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
-  await waitFor(() => expect(screen.getByLabelText("Graph relation")).toBeInTheDocument());
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Graph relation")).toBeInTheDocument();
 }
 
 describe("Watchers page — graph condition builder", () => {
