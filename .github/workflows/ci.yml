@@ -68,14 +68,15 @@ jobs:
             BASE="HEAD~1"
           fi
           CHANGED=$(git diff --name-only "$BASE" "${{ github.sha }}" 2>/dev/null || echo "")
-          echo "ui=$(echo "$CHANGED" | grep -qE '^packages/(ui|sdk)/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "ui=$(echo "$CHANGED" | grep -qE '^packages/ui/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "rust=$(echo "$CHANGED" | grep -qE '^packages/ui/src-tauri/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
           # gateway-touched / cli-touched use "exclude" logic — true unless
           # every changed file is exclusively under a path that can't affect
           # that package's tests. This is more robust than enumerating the
           # positive set: workflow changes, root config, scripts, and shared
-          # deps (sdk, client, mcp-connectors) all correctly trigger both.
+          # deps (mcp-connectors) all correctly trigger both. (@nimbus-dev/sdk
+          # and @nimbus-dev/client are consumed from npm, not in-monorepo dirs.)
           GATEWAY_EXCLUDE='^(packages/(cli|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
           CLI_EXCLUDE='^(packages/(gateway|ui|docs)/|docs/|LICENSE([-_].*)?$|CHANGELOG([-_].*)?$|.*\.md$|.*\.MD$)'
           if [[ -z "$CHANGED" ]]; then

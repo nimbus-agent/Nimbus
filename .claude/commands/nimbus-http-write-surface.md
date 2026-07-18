@@ -33,7 +33,7 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 
 ## The Allowlist
 
-Six entries (the CI deploy-annotation route + the SCIM provisioning surface added in Phase 6 Slice 3 + the admin-console anchor-policy write surface added in Phase 6 Slice 4 + the ChatOps Teams inbound surface added in Phase 6 Slice 5):
+Eight entries (the CI deploy-annotation route + the SCIM provisioning surface added in Phase 6 Slice 3 + the admin-console anchor-policy write surface added in Phase 6 Slice 4 + the ChatOps Teams inbound surface added in Phase 6 Slice 5 + the two web-clipper routes added in Phase 6 Slice 9):
 
 ```typescript
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
@@ -43,12 +43,14 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   "DELETE /scim/v2/Users/{id}",
   "PUT /v1/admin/policy",
   "POST /v1/messaging/teams/events",
+  "POST /v1/clips",
+  "POST /v1/clips/pair/confirm",
 ]);
 ```
 
 Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match; the SCIM item routes use a `{id}` placeholder matched by a regex in `resolveRoute` (the only sanctioned path-templating). `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
 
-The six routes do **not** all share one auth model — see the block comment at `http-write-routes.ts` lines 21–28 for the live source of truth:
+The eight routes do **not** all share one auth model — see the block comment at `http-write-routes.ts` lines 21–28 for the live source of truth:
 
 | Route | Auth model |
 |---|---|
@@ -56,8 +58,9 @@ The six routes do **not** all share one auth model — see the block comment at 
 | `POST /scim/v2/Users` · `PATCH …/{id}` · `DELETE …/{id}` | Bearer token (`identity.scim.bearer`) |
 | `PUT /v1/admin/policy` (Slice 4) | Bearer token (the admin token); signs the org policy with the Vault-only anchor key |
 | `POST /v1/messaging/teams/events` (Slice 5) | Bot Framework JWT validated in-route — **not** a static bearer |
+| `POST /v1/clips` · `POST /v1/clips/pair/confirm` (Slice 9) | Web-clipper bearer minted only behind a live owner-opened pairing window (`I30`); the token is Vault-stored + revocable |
 
-The first three rows are the bearer-token routes; the teams-events route is the lone validated-JWT route.
+The deployment/SCIM/policy rows are the static-bearer routes; the teams-events route is the lone validated-JWT route; the clip routes use the pairing-window one-time-token mint (`I30`).
 
 ## Enforcement (the I13 test triple)
 
