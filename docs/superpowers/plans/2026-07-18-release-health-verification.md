@@ -41,7 +41,7 @@ Thin injectable client — the single I/O boundary every script depends on. Cons
   export interface ProbeResult { readonly status: number; readonly scopes: string | null; }
   export interface GitHubApi {
     getReleaseByTag(tag: string): Promise<Release | null>;
-    getRepoPermissions(ownerRepo: string): Promise<RepoPerms | { status: number }>;
+    getRepoPermissions(ownerRepo: string, token?: string): Promise<RepoPerms | { status: number }>; // token overrides the default → check the PAT under test, not the runner token (plan-review #1)
     probeToken(token: string): Promise<ProbeResult>;      // GET /rate_limit with the given token
     listOpenIssues(label: string): Promise<IssueRef[]>;
     createIssue(title: string, body: string, labels: string[]): Promise<number>;
@@ -106,7 +106,7 @@ export interface ProbeResult { readonly status: number; readonly scopes: string 
 
 export interface GitHubApi {
   getReleaseByTag(tag: string): Promise<Release | null>;
-  getRepoPermissions(ownerRepo: string): Promise<RepoPerms | { status: number }>;
+  getRepoPermissions(ownerRepo: string, token?: string): Promise<RepoPerms | { status: number }>;
   probeToken(token: string): Promise<ProbeResult>;
   listOpenIssues(label: string): Promise<IssueRef[]>;
   createIssue(title: string, body: string, labels: string[]): Promise<number>;
@@ -129,8 +129,8 @@ export function createGitHubApi(opts: { token: string; repo: string; fetchFn?: t
       const data = (await j(res)) as { tag_name: string; assets: { name: string; size: number }[] };
       return { tagName: data.tag_name, assets: data.assets.map((a) => ({ name: a.name, size: a.size })) };
     },
-    async getRepoPermissions(ownerRepo) {
-      const res = await f(`${API}/repos/${ownerRepo}`, { headers: auth() });
+    async getRepoPermissions(ownerRepo, token) {
+      const res = await f(`${API}/repos/${ownerRepo}`, { headers: auth(token) }); // token undefined → default; else the PAT under test
       if (!res.ok) return { status: res.status };
       const data = (await j(res)) as { permissions?: { push?: boolean } };
       return { push: data.permissions?.push === true };
@@ -504,7 +504,7 @@ git commit -m "feat(release-health): de-duped, state-transition-aware issue help
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { classifyPatProbe, evaluateCertExpiry, summarize } from "./check-secret-health.ts";
+import { classifyPatProbe, evaluateCertExpiry, safeParseDate, summarize } from "./check-secret-health.ts";
 
 describe("classifyPatProbe", () => {
   test("repo-write: push true → ok, false → insufficient, 401 → dead", () => {
@@ -534,6 +534,12 @@ describe("evaluateCertExpiry", () => {
   test("within threshold → expiring", () => { expect(evaluateCertExpiry(new Date("2026-08-01T00:00:00Z"), now, 21)).toBe("expiring"); });
   test("beyond threshold → ok", () => { expect(evaluateCertExpiry(new Date("2026-09-01T00:00:00Z"), now, 21)).toBe("ok"); });
   test("null (undecodable) → indeterminate", () => { expect(evaluateCertExpiry(null, now, 21)).toBe("indeterminate"); });
+  test("NaN date → indeterminate (never a false ok)", () => { expect(evaluateCertExpiry(new Date("nonsense"), now, 21)).toBe("indeterminate"); });
+});
+
+describe("safeParseDate", () => {
+  test("valid openssl notAfter string → Date", () => { expect(safeParseDate("Jul 18 12:00:00 2028 GMT")?.getUTCFullYear()).toBe(2028); });
+  test("garbage → null", () => { expect(safeParseDate("not a date")).toBeNull(); });
 });
 
 describe("summarize", () => {
@@ -584,8 +590,14 @@ export function classifyPatProbe(strategy: PatStrategy, probe: { status: number;
   return "ok";
 }
 
+/** Guard against malformed/localized binary output — an unparseable date must be indeterminate, never a false "ok" (plan-review #2). */
+export function safeParseDate(dateStr: string): Date | null {
+  const d = new Date(dateStr.trim());
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function evaluateCertExpiry(notAfter: Date | null, now: Date, thresholdDays: number): CertStatus {
-  if (notAfter === null) return "indeterminate";
+  if (notAfter === null || Number.isNaN(notAfter.getTime())) return "indeterminate";
   const days = (notAfter.getTime() - now.getTime()) / 86_400_000;
   if (days < 0) return "expired";
   if (days <= thresholdDays) return "expiring";
@@ -623,7 +635,9 @@ export async function runSecretHealth(deps: {
       const probe = await deps.api.probeToken(p.token);
       let push: boolean | undefined;
       if (p.strategy.kind === "repo-write" && probe.status === 200) {
-        const perms = await deps.api.getRepoPermissions(p.strategy.targetRepo);
+        // Authenticate the repo-permission call with the PAT under test — NOT the runner's
+        // github.token (which is contents:read here and would falsely report push:false). (plan-review #1)
+        const perms = await deps.api.getRepoPermissions(p.strategy.targetRepo, p.token);
         push = "push" in perms ? perms.push : undefined;
       }
       rows.push({ name: p.env, kind: "pat", status: classifyPatProbe(p.strategy, { ...probe, push }), detail: p.strategy.kind });
@@ -694,11 +708,15 @@ if (import.meta.main) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test scripts/release/check-secret-health.test.ts`
-Expected: PASS (10 tests).
+Expected: PASS (13 tests).
 
 - [ ] **Step 5: Implement the real cert decoders**
 
-Replace the two `decode*` stubs with real implementations following the Global Constraints (temp file `0600` under `$RUNNER_TEMP`; `openssl … -passin env:<VAR>`; `gpg --batch --pinentry-mode loopback --passphrase-fd 0`; cleanup in `finally`). Use `Bun.spawn` with `stdin` piping for the passphrase; parse `notAfter=`/`gpg --with-colons` output. Return `null` on any non-zero exit or parse miss.
+Replace the two `decode*` stubs with real implementations that obey the Global Constraints and plan-review #2/#3:
+
+- **PKCS#12 (`decodePkcs12Expiry`)**: base64-decode `process.env[secretEnv]` to a `0600` temp file under `$RUNNER_TEMP` (`await Bun.write(tmp, buf)` then `chmodSync(tmp, 0o600)`); run `openssl pkcs12 -in <tmp> -passin env:<passwordEnv> -nokeys -clcerts -legacy` piped into `openssl x509 -enddate -noout` via `Bun.spawn` (password via `-passin env:` — **never argv**); extract the `notAfter=<date>` value and return `safeParseDate(value)`. Wrap the whole body in `try { … } finally { rmSync(tmp, { force: true }); }` so the temp `.p12`/`.pfx` is deleted even on throw (plan-review #3).
+- **GPG (`decodeGpgExpiry`)**: create a temp `GNUPGHOME` dir (`0700`); `Bun.spawn(["gpg","--batch","--pinentry-mode","loopback","--passphrase-fd","0","--import"], { stdin: <armored key piped> })` feeding the key on stdin (passphrase via `--passphrase-fd 0` — never argv); then `gpg --with-colons --list-keys` and read the **expiration field = the 7th colon-delimited field (0-based index 6) of the `sub` record** — a Unix-epoch-seconds value. **Correction to the review:** this is field **7**, *not* "index 9" — the colon format is `type:validity:length:algo:keyid:creation:`**`expiration`**`:…`. Convert via `new Date(Number(field) * 1000)` and validate with `Number.isNaN`. Wrap in `try { … } finally { rmSync(gnupgHome, { recursive: true, force: true }); }`.
+- Both return `null` on any non-zero exit, missing binary, or parse miss → surfaces as `indeterminate` (never a false `expired`/`ok`).
 
 - [ ] **Step 6: Commit**
 
@@ -830,6 +848,9 @@ Append as a new top-level job (sibling of `publish-release` / `update-manifest`)
       - build-msi
       - build-pkg
       - publish-release
+    # failure() fires when ANY needed job FAILED. A skipped needed job counts as neutral (not a
+    # failure), so this never fires spuriously on skips. Do NOT use always() — that would also
+    # fire on a fully successful release. (plan-review #4)
     if: ${{ failure() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -903,3 +924,16 @@ git commit -m "ci(release-health): wire asset gate + failure alert; document mon
 ## Deviation from spec (noted)
 
 Spec C1 said the asset-check step opens the `assets:<tag>` issue itself. The plan instead has it **fail with a detailed `$GITHUB_STEP_SUMMARY`** and lets the `issues: write`-scoped `alert-on-failure` job (C2) file the issue — so the sensitive `publish-release` job stays `contents: read` (least privilege). The specific missing-asset detail is preserved in the step summary visible on the failed run.
+
+## Plan-review dispositions (2026-07-18)
+
+Review: [2026-07-18-release-health-verification-review.md](./2026-07-18-release-health-verification-review.md).
+
+| # | Point | Disposition | Where |
+| --- | --- | --- | --- |
+| 1 | `getRepoPermissions` used the runner token, not the PAT under test | **Fixed** — real bug (would report every `repo-write` PAT "insufficient" since the monitor's `github.token` is `contents:read`). Added a `token?` override; the orchestration passes `p.token`. | Task 1 iface+impl, Task 4 orchestration |
+| 2 | Invalid-Date + GPG colon field | **Fixed, with correction** — added `safeParseDate` (NaN→null) + a NaN guard in `evaluateCertExpiry` (a malformed cert output would otherwise read false-`ok`). The review's GPG "field index 9" is wrong: the expiration is **field 7** of the `sub` record; the decoder uses field 7. | Task 4 pure cores + Step 5 |
+| 3 | Temp-file cleanup on failure | **Fixed (made explicit)** — the constraints already required cleanup; Step 5 now spells out `try { … } finally { rmSync(...) }` for both decoders. | Task 4 Step 5 |
+| 4 | Skipped needed jobs vs `if: failure()` | **Fixed (clarified)** — the review confirmed `failure()` is correct; added a comment documenting that skipped needs are neutral and that `always()` is deliberately NOT used. | Task 6 Step 2 |
+
+Invariant-alignment section of the review confirmed the least-privilege deviation (publish-release stays `contents:read`) and the no-argv credential feeding. No action.
