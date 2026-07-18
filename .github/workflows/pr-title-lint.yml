@@ -3,8 +3,11 @@ name: Lint PR Title
 # The repo squash-merges, so the PR title becomes the commit on `main` that
 # Release Please reads to compute the version bump and changelog. Enforce a
 # Conventional Commit title so a malformed one can't silently break a release.
+# pull_request_target (not pull_request) so title validation also runs on PRs
+# from forks. Safe here: this job never checks out or runs PR code and keeps
+# read-only permissions, so the elevated context can't leak secrets.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
 permissions:
