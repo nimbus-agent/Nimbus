@@ -25,11 +25,12 @@ The downstream race (`released` firing ~18 min before assets attach) is **alread
 - External notifications (Slack/email) — deliberately avoided; adds a webhook secret to the system we're hardening. GitHub issues are the alert channel.
 - Automatic secret rotation.
 - Satellite-repo-specific secrets (`VSCE_PAT`, `OVSX_PAT`, npm publish) — covered by sub-projects #3/#4. Scripts are written to be portable but only wired into `nimbus-agent/Nimbus` here.
+- A config-file secret **manifest** (design-review #5a) — deferred. Portability is served here by (a) presence-based skipping of unset secrets and (b) the checked-secret set living in one editable in-file table (not scattered), plus the dynamic `GITHUB_REPOSITORY`. A JSON/TOML manifest-loading layer is speculative generality for a single-repo deliverable; it lands if/when the satellite repos actually adopt the monitor (sub-project #4).
 - Replacing the PATs themselves — that is sub-project #2 (GitHub App migration). This sub-project makes the *current* PAT-based pipeline fail loudly; it is the safety net that de-risks that migration.
 
 ## Alerting model (decided)
 
-All failures/warnings surface as a **de-duped GitHub issue** labeled `release-health`, via a shared helper. De-dupe keys on a hidden HTML marker `<!-- release-health:<key> -->` in the issue body: if an open issue with that marker exists, the helper updates the body and adds a comment; otherwise it creates one (ensuring the label exists). Uses the automatic `github.token` (needs `issues: write`) — no new secret.
+All failures/warnings surface as a **de-duped GitHub issue** labeled `release-health`, via a shared helper. De-dupe keys on a hidden HTML marker `<!-- release-health:<key> -->` in the issue body: if an open issue with that marker exists, the helper refreshes its body (and comments only when the reported state changed — see C4); otherwise it creates one (ensuring the label exists). Uses the automatic `github.token` (needs `issues: write`) — no new secret.
 
 ## Components
 
@@ -56,11 +57,17 @@ All new TS lives under `scripts/release/` (new dir; sibling to the existing `scr
 ### C3 — `check-secret-health.ts` + `.github/workflows/secret-health.yml` (monitor)
 
 - **Workflow triggers:** `schedule` (weekly — Mondays 09:00 UTC) + `workflow_dispatch`. Job runs `environment: release` so the release-scoped secrets are readable; `permissions: issues: write` + `contents: read`.
-- **PAT probes (dead/alive):** `RELEASE_PAT`, `PACKAGE_MANAGER_PAT`, `WINGET_PAT`, `RELEASE_PLEASE_PAT`, `NIMBUS_CHECKS_TOKEN`, `SCORECARD_TOKEN`. For each set secret, one minimal authenticated call (`GET /rate_limit`); HTTP 200 ⇒ alive, 401 ⇒ dead, other ⇒ indeterminate (reported, not fatal). Unset optional secrets are skipped and listed as "not configured".
+- **PAT probes — validity *and* authorization, per-secret strategy (design-review #1).** A token can be *alive* yet have had its permissions reduced, which `/rate_limit` alone would not catch. Each monitored token declares a probe strategy in a single in-file table:
+  - `repo-write:<owner/repo>` — `GET /repos/<owner>/<repo>` and assert `permissions.push === true`. Used for `RELEASE_PAT` + `RELEASE_PLEASE_PAT` (→ the repo itself) and `PACKAGE_MANAGER_PAT` (→ the Homebrew-tap + Scoop-bucket repos). Catches both death **and** silent write-permission loss.
+  - `scopes:<scope>` — classic PAT: read the `X-OAuth-Scopes` response header and assert the required scope is present. Used for `WINGET_PAT` (`public_repo`).
+  - `alive` — `GET /rate_limit`; 200 ⇒ authorized-enough. Fallback for tokens with no single target repo (`NIMBUS_CHECKS_TOKEN` Checks:RW, `SCORECARD_TOKEN` read-only).
+  Across all strategies: 401 ⇒ dead, other non-2xx ⇒ indeterminate (reported, not fatal). The owning repo self-reference is read from `process.env.GITHUB_REPOSITORY` — **never hardcoded** (design-review #5b). Unset optional secrets are skipped and listed "not configured".
 - **Cert/key expiry (`notAfter`, N-days-ahead threshold, default 21, configurable via workflow input):**
   - `GPG_SIGNING_SUBKEY` (+ `GPG_PASSPHRASE`): import into an ephemeral `GNUPGHOME`, read the signing subkey's expiry.
   - `WINDOWS_CERT_PFX_BASE64` (+ `WINDOWS_CERT_PASSWORD`): `openssl pkcs12` → `x509 -enddate`.
   - `APPLE_CERT_P12_BASE64` (+ `APPLE_CERT_PASSWORD`): same.
+- **Credential feeding — no argv leakage (design-review #2).** Passphrases and base64 payloads are **never** passed as command-line arguments (visible in the process list / at risk in logs). base64 payloads are decoded to a `0600` temp file under `$RUNNER_TEMP`; passwords are fed via `openssl … -passin env:<VAR>` and `gpg --batch --pinentry-mode loopback --passphrase-fd 0`; the ephemeral `GNUPGHOME` and temp files are removed in a `finally`/post step. This upholds Non-Negotiable #3 (no plaintext credentials in logs).
+- **Missing/failing tooling → indeterminate (design-review #3a).** A missing `gpg`/`openssl` binary or any non-zero decode exit is reported as `indeterminate` for that credential — never a false `expired` and never a hard script crash that masks the other checks. (The monitor runs on `ubuntu-latest` where both are guaranteed; this guard is for robustness + local dry-runs.)
 - **Pure cores (unit-tested):** `classifyPatStatus(httpStatus): 'alive'|'dead'|'indeterminate'`; `evaluateCertExpiry(notAfter: Date, now: Date, thresholdDays): 'ok'|'expiring'|'expired'`.
 - **Outcome:** aggregate into a report table (credential · kind · status · days-left where known).
   - Any **dead** PAT or **expired** cert → job **fails** (red) **and** opens/updates the issue (key `secret-health`).
@@ -70,8 +77,8 @@ All new TS lives under `scripts/release/` (new dir; sibling to the existing `scr
 
 ### C4 — `open-health-issue.ts` (shared)
 
-- `openOrUpdateHealthIssue({ key, title, body, labels })`: lists open issues, finds the one whose body contains `<!-- release-health:<key> -->`, updates it + comments if found, else creates it (creating the `release-health` label if absent). Also `closeHealthIssue(key, comment)` for the resolved path.
-- **Pure core:** `selectExistingIssue(issues, key): Issue | null` — unit-tested.
+- `openOrUpdateHealthIssue({ key, title, body, state, labels })`: lists open issues, finds the one whose body carries `<!-- release-health:<key> -->`. None → create it (creating the `release-health` label if absent). Found → **state-transition-aware update (design-review #4):** the marker embeds the last-reported state hash; the body (report table + refreshed timestamp) is always updated silently, but a **new comment is posted only when the state hash changed** — a credential newly unhealthy, or a severity escalation (`expiring`→`expired`). An unchanged weekly run refreshes the body only: no comment, no notification spam. `closeHealthIssue(key, comment)` handles the resolved path.
+- **Pure cores:** `selectExistingIssue(issues, key)`; `computeStateHash(report)`; `shouldComment(prevHash, nextHash)` — all unit-tested.
 
 ## Data flow
 
@@ -100,9 +107,10 @@ secret-health.yml (weekly | dispatch, environment: release):
 
 Unit tests (`bun test`, DI-mocked — no network/`gpg`/`openssl`):
 - `diffReleaseAssets`: complete set ⇒ no gap; missing file ⇒ gap; zero-byte asset ⇒ gap; extra remote asset ⇒ ignored.
-- `classifyPatStatus`: 200⇒alive, 401⇒dead, 403/500⇒indeterminate.
+- `classifyPatProbe` (per strategy): `repo-write` — `permissions.push:true`⇒ok, `false`⇒insufficient, 401⇒dead; `scopes` — required scope present⇒ok, absent⇒insufficient; `alive` — 200⇒ok, 401⇒dead, other⇒indeterminate.
 - `evaluateCertExpiry`: past⇒expired, within threshold⇒expiring, beyond⇒ok (boundary at exactly threshold).
 - `selectExistingIssue`: marker match ⇒ update; no match ⇒ create; multiple ⇒ oldest-open wins.
+- `computeStateHash` / `shouldComment`: identical report ⇒ no comment; a credential newly unhealthy or `expiring`→`expired` ⇒ comment.
 
 No integration/e2e tests — the workflows are exercised manually via `workflow_dispatch` on first landing.
 
@@ -120,3 +128,19 @@ No integration/e2e tests — the workflows are exercised manually via `workflow_
 - `.github/workflows/release.yml` (edit: asset-gate step + `alert-on-failure` job)
 - `docs/ci-secrets.md` (edit: "Release-health monitor" section + how to act on a `release-health` issue)
 - `package.json` (optional `bun run` alias for local dry-run of the monitor/asset check)
+
+## Design-review dispositions (2026-07-18)
+
+Review: [2026-07-18-release-health-verification-design-review.md](./2026-07-18-release-health-verification-design-review.md).
+
+| # | Point | Disposition | Where |
+| --- | --- | --- | --- |
+| 1 | Alive ≠ authorized (PAT scope/permission) | **Fixed (bounded)** — per-secret probe strategy: `repo-write` permission check against the known target repo, classic `scopes` header check, `alive` fallback. Full per-scope introspection intentionally not built. | C3 PAT probes |
+| 2 | Secret leakage via CLI argv | **Fixed** — `env:` / `--passphrase-fd` / `0600` temp-file feeding; no secret ever in argv. | C3 credential feeding |
+| 3a | Missing/failing `gpg`/`openssl` | **Fixed** — reported `indeterminate`, never a false `expired` or hard crash. | C3 missing tooling |
+| 3b | Pure-JS cert parsing to drop the binary dep | **Deferred** — the monitor is CI-only (`ubuntu-latest` guarantees `gpg`+`openssl`); a PKCS#12 parser dependency (node-forge / openpgp.js) is YAGNI and cuts against the repo's dependency-caution posture. The DI seam keeps the spawn mockable in tests. | — |
+| 4 | Weekly comment spam on a still-open issue | **Fixed** — state-transition-aware: body refreshed silently every run, comment only on a state change. | C4 |
+| 5b | Hardcoded repo name | **Fixed** — read from `process.env.GITHUB_REPOSITORY`. | C3 PAT probes |
+| 5a | Config-manifest of secrets for satellites | **Deferred** — presence-based skip + single editable table + dynamic repo cover the portability need now; a manifest-loading layer is speculative until satellites adopt (sub-project #4). | Non-goals |
+
+Invariant-alignment section of the review confirmed: no plaintext credentials on disk/in source (Non-Negotiable #3), and no local Gateway invariants touched (CI-only). No action required.
