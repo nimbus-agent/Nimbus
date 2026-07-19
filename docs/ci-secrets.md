@@ -200,6 +200,38 @@ monorepo — both were extracted to their own standalone repos
 and each publishes to npm via release-please + an OIDC trusted publisher —
 no `NPM_TOKEN` involved, here or there.
 
+### npm provenance verification
+
+Both `@nimbus-dev/sdk` and `@nimbus-dev/client` publish via OIDC trusted
+publishing and carry two attestations: the npm publish attestation and a
+SLSA provenance predicate naming the source repo, workflow, and commit.
+
+Publishing access on both packages is set to **require two-factor
+authentication and disallow tokens**, so OIDC is the only path that can
+publish — a leaked token cannot. `NPM_TOKEN` was revoked and deleted on
+2026-07-19; the weekly secret-health run asserts it stays absent.
+
+Verify a published version yourself:
+
+```bash
+npm audit signatures                       # registry signature verification
+curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0" \
+  | jq -r '.attestations[].predicateType'  # expect both predicates
+```
+
+The release workflows gate on this automatically: a pre-publish preflight
+asserts OIDC is available and npm meets the 11.5.1 floor, and a post-publish
+step fails the release if provenance is missing or names the wrong source.
+
+### Publish PATs that cannot yet be retired
+
+| Secret | Repo | Owner | Notes |
+| --- | --- | --- | --- |
+| `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT. ⚠️ **Global ADO PATs are decommissioned 2026-12-01** and cannot be regenerated since 2026-03-15. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
+| `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
+
+Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`.
+
 ---
 
 ## CI quality, coverage & supply-chain (mostly optional)
