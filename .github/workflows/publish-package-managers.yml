@@ -68,15 +68,15 @@ jobs:
       # On the upstream repo a missing secret means releases would silently fail to
       # publish, so we error loudly rather than skip. (Release events don't fire from
       # forks, so this is not a fork-noise concern.)
-      - name: Require PACKAGE_MANAGER_PAT
-        env:
-          PKG_PAT: ${{ secrets.PACKAGE_MANAGER_PAT }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PKG_PAT}" ]; then
-            echo "::error::PACKAGE_MANAGER_PAT is not set. Add a fine-grained PAT with contents:write on nimbus-agent/homebrew-tap + nimbus-agent/scoop-bucket (repo Settings -> Secrets -> Actions)."
-            exit 1
-          fi
+      - name: Mint release-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: nimbus-agent
+          repositories: homebrew-tap,scoop-bucket
+          permission-contents: write
 
       - name: Download SHA256SUMS from the release
         env:
@@ -103,7 +103,7 @@ jobs:
 
       - name: Publish to homebrew-tap
         env:
-          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
@@ -123,7 +123,7 @@ jobs:
 
       - name: Publish to scoop-bucket
         env:
-          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
