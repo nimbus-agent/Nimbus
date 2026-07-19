@@ -27,12 +27,15 @@
 Thin injectable client — the single I/O boundary every script depends on. Consumers are tested against a fake implementing `GitHubApi`; this file's own test asserts request construction via an injected `fetch`.
 
 **Files:**
+
 - Create: `scripts/release/gh-api.ts`
 - Test: `scripts/release/gh-api.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing (leaf).
 - Produces:
+
   ```ts
   export interface ReleaseAsset { readonly name: string; readonly size: number; }
   export interface Release { readonly tagName: string; readonly assets: readonly ReleaseAsset[]; }
@@ -188,12 +191,15 @@ git commit -m "feat(release-health): injectable GitHub REST seam"
 ### Task 2: Asset-completeness gate (`verify-release-assets.ts`)
 
 **Files:**
+
 - Create: `scripts/release/verify-release-assets.ts`
 - Test: `scripts/release/verify-release-assets.test.ts`
 
 **Interfaces:**
+
 - Consumes: `GitHubApi`, `Release`, `ReleaseAsset` from `gh-api.ts`.
 - Produces:
+
   ```ts
   export interface LocalFile { readonly name: string; readonly size: number; }
   export interface AssetGap { readonly name: string; readonly reason: "missing" | "zero-byte"; }
@@ -337,12 +343,15 @@ git commit -m "feat(release-health): asset-completeness gate"
 ### Task 3: Issue helper (`open-health-issue.ts`)
 
 **Files:**
+
 - Create: `scripts/release/open-health-issue.ts`
 - Test: `scripts/release/open-health-issue.test.ts`
 
 **Interfaces:**
+
 - Consumes: `GitHubApi`, `IssueRef` from `gh-api.ts`.
 - Produces:
+
   ```ts
   export function markerFor(key: string): string;                        // `<!-- release-health:${key} -->`
   export function selectExistingIssue(issues: readonly IssueRef[], key: string): IssueRef | null;
@@ -353,6 +362,7 @@ git commit -m "feat(release-health): asset-completeness gate"
   export function openOrUpdateHealthIssue(api: GitHubApi, args: { key: string; title: string; body: string; state: string }): Promise<void>;
   export function closeHealthIssue(api: GitHubApi, key: string, comment: string): Promise<void>;
   ```
+
 - The issue body embeds two hidden markers: `<!-- release-health:<key> -->` (dedupe) and `<!-- release-health-state:<hash> -->` (last-reported state).
 
 - [ ] **Step 1: Write the failing test**
@@ -484,12 +494,15 @@ git commit -m "feat(release-health): de-duped, state-transition-aware issue help
 ### Task 4: Secret-health monitor (`check-secret-health.ts`)
 
 **Files:**
+
 - Create: `scripts/release/check-secret-health.ts`
 - Test: `scripts/release/check-secret-health.test.ts`
 
 **Interfaces:**
+
 - Consumes: `GitHubApi`, `ProbeResult` from `gh-api.ts`; `openOrUpdateHealthIssue` / `closeHealthIssue` from `open-health-issue.ts`.
 - Produces:
+
   ```ts
   export type PatStatus = "ok" | "dead" | "insufficient" | "indeterminate" | "not-configured";
   export type CertStatus = "ok" | "expiring" | "expired" | "indeterminate" | "not-configured";
@@ -498,6 +511,7 @@ git commit -m "feat(release-health): de-duped, state-transition-aware issue help
   export interface HealthRow { readonly name: string; readonly kind: "pat" | "cert"; readonly status: PatStatus | CertStatus; readonly detail: string; }
   export function summarize(rows: readonly HealthRow[]): { hasHardFailure: boolean; hasWarning: boolean; table: string; state: string };
   ```
+
   where `PatStrategy = { kind: "repo-write"; targetRepo: string } | { kind: "scopes"; required: string } | { kind: "alive" }`.
 
 - [ ] **Step 1: Write the failing test**
@@ -730,9 +744,11 @@ git commit -m "feat(release-health): secret-health monitor (PAT authz probes + c
 ### Task 5: `secret-health.yml` workflow
 
 **Files:**
+
 - Create: `.github/workflows/secret-health.yml`
 
 **Interfaces:**
+
 - Consumes: `scripts/release/check-secret-health.ts` (`import.meta.main`).
 - Produces: a weekly scheduled + manually-dispatchable check.
 
@@ -814,11 +830,13 @@ git commit -m "ci(release-health): weekly secret-health monitor workflow"
 ### Task 6: Wire the asset gate + failure alert into `release.yml`, docs, aliases
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml` (add a step to `publish-release` after "Create GitHub Release"; add an `alert-on-failure` job)
 - Modify: `docs/ci-secrets.md` (add "Release-health monitor" section)
 - Modify: `package.json` (add local dry-run aliases)
 
 **Interfaces:**
+
 - Consumes: `verify-release-assets.ts`, `open-health-issue.ts`.
 
 - [ ] **Step 1: Add the asset-verification step to `publish-release`**

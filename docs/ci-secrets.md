@@ -243,7 +243,7 @@ Two additional checks live directly in the release pipeline, both wired in
   the release via `github.token`, so `publish-release` stays `contents: read`
   — no elevated permission is added for the check itself.
 - **`alert-on-failure` job**: a separate top-level job that `needs` the build
-  + publish jobs and runs only `if: failure()` (never `always()` — a fully
+  - publish jobs and runs only `if: failure()` (never `always()` — a fully
   green release must not open an issue). On trigger it files/updates the same
   de-duped `release-health` issue via `scripts/release/open-health-issue.ts`,
   linking back to the failed run.

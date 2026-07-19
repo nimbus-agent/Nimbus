@@ -82,7 +82,7 @@ All new TS lives under `scripts/release/` (new dir; sibling to the existing `scr
 
 ## Data flow
 
-```
+```text
 release.yml publish-release:
   … build → sign → action-gh-release(upload dist/stage/*) →
     verify-release-assets.ts ──(gap?)──▶ open-health-issue(assets:<tag>) + exit 1
@@ -106,6 +106,7 @@ secret-health.yml (weekly | dispatch, environment: release):
 ## Testing
 
 Unit tests (`bun test`, DI-mocked — no network/`gpg`/`openssl`):
+
 - `diffReleaseAssets`: complete set ⇒ no gap; missing file ⇒ gap; zero-byte asset ⇒ gap; extra remote asset ⇒ ignored.
 - `classifyPatProbe` (per strategy): `repo-write` — `permissions.push:true`⇒ok, `false`⇒insufficient, 401⇒dead; `scopes` — required scope present⇒ok, absent⇒insufficient; `alive` — 200⇒ok, 401⇒dead, other⇒indeterminate.
 - `evaluateCertExpiry`: past⇒expired, within threshold⇒expiring, beyond⇒ok (boundary at exactly threshold).
