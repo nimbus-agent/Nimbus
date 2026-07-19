@@ -18,10 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `content-length` pre-check and the post-read `byteLength` check), with the same
   `413 payload_too_large` + audit-rejection shape. `POST /v1/clips` gets **1 MiB**; every other
   route — including `POST /v1/clips/pair/confirm`, whose body is a 6-digit `{code}` — keeps
-  **8 KiB**. Deliberately not user-configurable: the bound stays a code-level invariant. No
-  migration, no invariant change, no wire-contract change. Regression guards: per-route cap tests in
-  `http-write-routes.test.ts` plus a realistically-sized (~40 KiB) article body in the clip E2E,
-  which previously round-tripped a 44-byte body and is why this shipped undetected. Fixes
+  **8 KiB**. The raised cap is paid for with a matching **per-route rate limit**
+  (`ResolvedRoute.maxRequestsPerWindow`, which may only tighten the server-configured limit, never
+  loosen it): `POST /v1/clips` runs at **20/min** while every other write route keeps **60/min**,
+  holding the worst-case burst to ~20 MiB/min instead of ~60 MiB/min — the tightening the
+  write-surface playbook requires whenever a body cap is loosened. Clipping is a low-frequency human
+  action, so 20/min is generous in practice; the `X-RateLimit-*` headers report whichever limit
+  applied. Deliberately not user-configurable: both bounds stay code-level invariants. No
+  migration, no invariant change, no wire-contract change. Regression guards: per-route cap and
+  rate-limit tests in `http-write-routes.test.ts` (including the exact 1 MiB / 1 MiB + 1 boundary
+  pair and the 20/min-vs-60/min split) plus a realistically-sized (~40 KiB) article body in the clip
+  E2E, which previously round-tripped a 44-byte body and is why this shipped undetected. Fixes
   [#771](https://github.com/nimbus-agent/Nimbus/issues/771).
 - **2026-07-16 — `nimbus clip list` + `nimbus clip delete`.** Two new read/manage commands
   for web clips, backed by two new local-index IPC methods (`clip.list`, `clip.delete`).

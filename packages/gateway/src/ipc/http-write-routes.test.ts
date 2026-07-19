@@ -953,6 +953,11 @@ function clipBodyOfAtLeast(bytes: number): string {
   });
 }
 
+/** A clip body whose JSON encoding is exactly `bytes` long (ASCII only, so bytes === chars). */
+function clipBodyOfExactly(bytes: number): string {
+  return clipBodyOfAtLeast(bytes - clipBodyOfAtLeast(0).length);
+}
+
 function streamOf(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -1004,7 +1009,8 @@ test("POST /v1/clips still rejects a body over 1 MiB with 413 (content-length pr
   const res = await dispatchWriteRoute(req, ctx);
   expect(res.status).toBe(413);
   expect(await res.json()).toEqual({ error: "payload_too_large" });
-  expect(res.headers.get("X-RateLimit-Limit")).toBe("60");
+  // The clip route reports its own tighter limit (20/min), not the shared 60/min.
+  expect(res.headers.get("X-RateLimit-Limit")).toBe("20");
   expect(ingested).toBe(false);
 });
 
@@ -1029,6 +1035,87 @@ test("POST /v1/deployments keeps the 8 KiB cap (the clip cap is not global)", as
   const res = await dispatchWriteRoute(req, ctx);
   expect(res.status).toBe(413);
   expect(await res.json()).toEqual({ error: "payload_too_large" });
+});
+
+test("POST /v1/clips accepts a body of exactly 1 MiB (the cap is inclusive)", async () => {
+  const payload = clipBodyOfExactly(MIB_1);
+  expect(payload.length).toBe(MIB_1);
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: payload,
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ id: "nimbus:clip:abc", status: "created" });
+});
+
+test("POST /v1/clips rejects a body of exactly 1 MiB + 1 with 413", async () => {
+  const payload = clipBodyOfExactly(MIB_1 + 1);
+  expect(payload.length).toBe(MIB_1 + 1);
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: payload,
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(413);
+  expect(await res.json()).toEqual({ error: "payload_too_large" });
+});
+
+// ── Per-route rate limit (#771) ──────────────────────────────────────────────────────────────
+// The 1 MiB clip cap is paid for with a tighter per-route rate limit: `POST /v1/clips` gets
+// 20/min while every other write route keeps 60/min. The X-RateLimit-* headers must report the
+// limit that actually applied.
+
+const CLIP_RATE_LIMIT = 20;
+
+function clipIngestReq(): Request {
+  return new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: JSON.stringify({
+      url: "https://ex.com/p",
+      title: "T",
+      mode: "article",
+      body: "b",
+      capturedAt: 1750000000000,
+    }),
+  });
+}
+
+test("POST /v1/clips is rate-limited at 20/min, not the shared 60/min", async () => {
+  const ctx = clipCtx();
+  const first = await dispatchWriteRoute(clipIngestReq(), ctx);
+  expect(first.status).toBe(200);
+  expect(first.headers.get("X-RateLimit-Limit")).toBe(String(CLIP_RATE_LIMIT));
+  expect(first.headers.get("X-RateLimit-Remaining")).toBe(String(CLIP_RATE_LIMIT - 1));
+  for (let i = 1; i < CLIP_RATE_LIMIT; i += 1) {
+    const res = await dispatchWriteRoute(clipIngestReq(), ctx);
+    expect(res.status).toBe(200);
+  }
+  const over = await dispatchWriteRoute(clipIngestReq(), ctx);
+  expect(over.status).toBe(429);
+  expect(await over.json()).toEqual({ error: "rate_limited" });
+  expect(over.headers.get("X-RateLimit-Limit")).toBe(String(CLIP_RATE_LIMIT));
+  expect(over.headers.get("X-RateLimit-Remaining")).toBe("0");
+  expect(auditCount(ctx.writeDb, "clip.ingest_rejected")).toBe(1);
+});
+
+test("the tighter clip limit does not leak: deployments still get 60/min", async () => {
+  const ctx = deployContext();
+  for (let i = 0; i < CLIP_RATE_LIMIT + 5; i += 1) {
+    const res = await dispatchWriteRoute(
+      new Request("http://127.0.0.1/v1/deployments", {
+        method: "POST",
+        headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+        body: JSON.stringify(validDeployBody({ sha: `abc${1000 + i}` })),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-RateLimit-Limit")).toBe("60");
+  }
 });
 
 test("POST /v1/clips/pair/confirm keeps the 8 KiB cap (a pairing code is tiny)", async () => {
