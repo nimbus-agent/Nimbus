@@ -11,12 +11,13 @@ Release/publish secrets are scoped to the **`release`** GitHub
 **Settings → Environments → release → Environment secrets**. Everything else is
 a plain repository secret.
 
-> **Token hygiene.** Fine-grained PATs expire (90 days by default). When a
-> release fails with `Bad credentials` from `softprops/action-gh-release`, the
-> `RELEASE_PAT` has expired or been revoked — rotate it (see below) and re-run
-> the failed job. Prefer the **shortest practical expiry** and the **narrowest
-> scope** for every token here; never grant org-wide or `repo`-classic scope
-> when a fine-grained per-repo grant works.
+> **Token hygiene.** The release/publish path now authenticates as the
+> **Nimbus Release Bot** GitHub App for everything it can (see below) — App
+> installation tokens are minted fresh per job and expire in 1 hour, so there
+> is no 90-day clock to watch. `WINGET_PAT` is the one remaining human-owned
+> classic PAT (it must fork an external repo the App cannot reach); prefer the
+> **shortest practical expiry** and the **narrowest scope** for it and for any
+> future token added here.
 
 ---
 
@@ -24,8 +25,8 @@ a plain repository secret.
 
 | Secret | Required for | Type | Used by |
 | --- | --- | --- | --- |
-| `RELEASE_PAT` | Publishing GitHub Releases | Fine-grained PAT — Contents: RW | `release.yml`, `release-please.yml` |
-| `RELEASE_PLEASE_PAT` | release-please PRs (optional) | Fine-grained PAT — Contents + PRs: RW | `release-please.yml` |
+| `RELEASE_BOT_APP_ID` | Minting Nimbus Release Bot tokens | GitHub App ID | `release.yml`, `release-please.yml`, `publish-package-managers.yml`, `publish-linux-repo.yml`, `secret-health.yml` |
+| `RELEASE_BOT_PRIVATE_KEY` | Minting Nimbus Release Bot tokens | GitHub App private key (PEM) | `release.yml`, `release-please.yml`, `publish-package-managers.yml`, `publish-linux-repo.yml`, `secret-health.yml` |
 | `GPG_SIGNING_SUBKEY` | Signing Linux artifacts + `SHA256SUMS` | ASCII-armored GPG private subkey | `release.yml` |
 | `GPG_PASSPHRASE` | Unlocking the GPG subkey | String | `release.yml` |
 | `UPDATER_SIGNING_KEY` | Signing the auto-updater manifest | Ed25519 private key | `release.yml` |
@@ -38,7 +39,6 @@ a plain repository secret.
 | `APPLE_DEVELOPER_ID_INSTALLER` | macOS installer signing identity | Cert common-name | `release.yml` |
 | `APPLE_NOTARY_ID` | Apple notarization | Apple ID e-mail | `release.yml` |
 | `APPLE_NOTARY_PASSWORD` | Apple notarization | App-specific password | `release.yml` |
-| `PACKAGE_MANAGER_PAT` | Homebrew tap + Scoop bucket pushes | Fine-grained PAT — Contents: RW on the two channel repos | `publish-package-managers.yml` |
 | `WINGET_PAT` | winget submission PR | **Classic** PAT — `public_repo` scope | `publish-package-managers.yml` |
 | `VSCE_PAT` | VS Code Marketplace publish | Azure DevOps PAT — Marketplace (Manage) | `publish-vscode.yml` |
 | `OVSX_PAT` | Open VSX publish | Open VSX token | `publish-vscode.yml` |
@@ -50,43 +50,73 @@ a plain repository secret.
 
 `GITHUB_TOKEN` is injected by Actions automatically; it is never set by hand.
 Several optional secrets fall back to `github.token` when unset
-(`NIMBUS_CHECKS_TOKEN`, `RELEASE_PLEASE_PAT`) or simply skip their step
-(`SONAR_TOKEN`).
+(`NIMBUS_CHECKS_TOKEN`) or simply skip their step (`SONAR_TOKEN`).
 
 ---
 
 ## Release & GitHub Release publishing (`release` environment)
 
-### `RELEASE_PAT` — **required to ship a release**
+### Nimbus Release Bot (GitHub App) — **required to ship a release**
 
-Used by the `Create GitHub Release` step (`softprops/action-gh-release`) in
-`release.yml` and as the release-please fallback token. `GITHUB_TOKEN` is kept
-read-only in that job, so the Release API needs this PAT.
+An org-owned **GitHub App** ("Nimbus Release Bot", installed under
+`nimbus-agent`) replaces the three release-scoped PATs this section used to
+document (`RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`). Every
+job that used to consume one of those PATs now runs a mint step first:
 
-Create it:
+```yaml
+- name: Mint release-bot token
+  id: app-token
+  uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+  with:
+    app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+    private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+    owner: nimbus-agent
+    repositories: <only the repos this job writes>
+    permission-contents: write
+    # permission-pull-requests: write   # release-please.yml only
+```
 
-1. <https://github.com/settings/personal-access-tokens/new> → **Fine-grained
-   token**.
-2. **Resource owner:** `nimbus-agent`. **Repository access:** *Only select
-   repositories* → `nimbus-agent/Nimbus`.
-3. **Repository permissions:** **Contents → Read and write**. (That alone is
-   enough to create releases and upload assets.)
-4. Set a short expiry, generate, copy the `github_pat_…` value.
-5. Store as the **`RELEASE_PAT`** environment secret under
-   **Settings → Environments → release**.
+and uses `${{ steps.app-token.outputs.token }}` in place of the retired PAT.
+Each minted token is an **installation access token**: scoped to exactly the
+repos + permissions the `with:` block requests, and it expires in **1 hour**
+— there is no 90-day expiry clock to track, unlike a PAT.
 
-> **Rotation:** when the release job logs
-> `⚠️ Unexpected error fetching GitHub release for tag …: HttpError: Bad
-> credentials`, regenerate this token and re-run the failed
-> `Publish GitHub Release` job. The git tag is created by release-please, so a
-> re-run after rotation publishes against the existing tag.
+- **Two secrets**, both stored as **plain `Nimbus` repository secrets**, not
+  scoped to the `release` environment (`release-please.yml` and
+  `publish-package-managers.yml`/`publish-linux-repo.yml` mint a token
+  without declaring `environment: release`, so an environment-scoped secret
+  would be invisible to them). `create-github-app-token`'s `repositories:`
+  input mints tokens for any *other* installed repo too, so no org-level or
+  per-repo duplicate secrets are needed:
+  - `RELEASE_BOT_APP_ID` — the App's numeric ID.
+  - `RELEASE_BOT_PRIVATE_KEY` — the App's private key, PEM, generated once
+    from the App's settings page.
+- **Installed on exactly four repos** (`nimbus-agent` org, *Only select
+  repositories*): `Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`. A
+  token mint fails for any repo outside this set.
+- **Permissions:** `Contents: Read and write` + `Pull requests: Read and
+  write`. No organization or account permissions, no webhook — the App can
+  push/tag/PR in the four installed repos and nothing else.
+- **Who mints it:** `release-please.yml` (contents + pull-requests: write on
+  `Nimbus`, replacing the old `RELEASE_PLEASE_PAT` `token:` input),
+  `release.yml` (contents: write on `Nimbus`, replacing `RELEASE_PAT` in the
+  `Create GitHub Release` step), `publish-package-managers.yml` (contents:
+  write on `homebrew-tap` + `scoop-bucket`, replacing `PACKAGE_MANAGER_PAT`
+  for the brew/scoop pushes — **`WINGET_PAT` is untouched**, see below), and
+  `publish-linux-repo.yml` (contents: write on `linux-repo`, replacing
+  `PACKAGE_MANAGER_PAT` for the apt/yum repo + Pages push).
+  `secret-health.yml` also mints a token (scoped to all four repos) purely as
+  a weekly health probe — see
+  [Release-health monitor](#release-health-monitor) below.
 
-### `RELEASE_PLEASE_PAT` — optional
-
-Lets release-please open its release PR with a PAT instead of `GITHUB_TOKEN`
-(so the PR can trigger downstream workflows). Fine-grained, `nimbus-agent/Nimbus`
-only, **Contents: RW + Pull requests: RW**. Falls back to `RELEASE_PAT`, then
-`github.token`, when unset.
+> **Rotation:** an App private key doesn't expire on a schedule the way a PAT
+> does, but if it's ever compromised or you want to rotate it proactively:
+> generate a **new** private key from the App's settings page
+> (<https://github.com/organizations/nimbus-agent/settings/apps> → Nimbus
+> Release Bot → Generate a private key), replace the
+> **`RELEASE_BOT_PRIVATE_KEY`** repo secret with the new PEM, then revoke the
+> old key from the same page. No `RELEASE_BOT_APP_ID` change is needed — the
+> App ID is stable across key rotations.
 
 ### `GPG_SIGNING_SUBKEY` + `GPG_PASSPHRASE` — required for Linux signing
 
@@ -128,18 +158,24 @@ Seven secrets feed the per-arch `.pkg` build/sign/notarize step:
 
 ## Package-manager channels (`publish-package-managers.yml`)
 
-### `PACKAGE_MANAGER_PAT` — Homebrew tap + Scoop bucket
+### Homebrew tap + Scoop bucket — Nimbus Release Bot
 
 Pushes the updated formula/manifest to `nimbus-agent/homebrew-tap` and
-`nimbus-agent/scoop-bucket`. **Fine-grained** PAT, resource owner
-`nimbus-agent`, **both** channel repos selected, **Contents: Read and write**.
+`nimbus-agent/scoop-bucket`. Both repos are installed targets of the Nimbus
+Release Bot App (see above); the job mints a token scoped to both with
+`Contents: Read and write` and uses it in place of the retired
+`PACKAGE_MANAGER_PAT`.
 
-### `WINGET_PAT` — winget submission
+### `WINGET_PAT` — winget submission — **stays a classic PAT, on purpose**
 
-`wingetcreate` must **fork** `microsoft/winget-pkgs`, push to the fork, and open
-a cross-repo PR — which a fine-grained PAT cannot do. This one must be a
-**classic** PAT with the **`public_repo`** scope
-(<https://github.com/settings/tokens/new>).
+`wingetcreate` must **fork `microsoft/winget-pkgs`** (owned by Microsoft, not
+`nimbus-agent`), push to that fork, and open a cross-repo PR against it. A
+GitHub App installed on the `nimbus-agent` org can only mint tokens for repos
+*inside* that org's installation — it has no way to authenticate against an
+external org's repo or fork it. So this one credential cannot be migrated to
+the App and remains a **classic** PAT with the **`public_repo`** scope
+(<https://github.com/settings/tokens/new>). This is a deliberate, documented
+exception, not an oversight.
 
 ---
 
@@ -184,11 +220,18 @@ no `NPM_TOKEN` involved, here or there.
 
 After rotating or adding a secret, re-run the affected workflow from the Actions
 tab (**Re-run failed jobs** for a failed release). For the release path
-specifically, the `Require release PAT` / `Require PACKAGE_MANAGER_PAT` /
-`Require WINGET_PAT` guard steps fail fast with an actionable message when a
-required secret is missing, so a green guard step confirms the secret is at
-least present (it does not prove the token is unexpired — a valid-but-expired
-token still passes the guard and fails later at the API call).
+specifically:
+
+- The **`Mint release-bot token`** step itself is the guard for
+  `RELEASE_BOT_APP_ID` / `RELEASE_BOT_PRIVATE_KEY` — it fails fast if either
+  secret is missing, the App isn't installed on the target repo, or the
+  requested permission exceeds what the App grants, so there's no separate
+  "Require …" step to check.
+- The **`Require WINGET_PAT`** guard step still fails fast with an actionable
+  message when that secret is missing, so a green guard step confirms the
+  PAT is at least present (it does not prove the token is unexpired — a
+  valid-but-expired token still passes the guard and fails later at the
+  API call).
 
 ---
 
@@ -203,21 +246,33 @@ Runs on a **weekly cron** (`0 9 * * 1`, Mondays 09:00 UTC) and is also
 `workflow_dispatch`-able with a `threshold_days` input (default `21`) that
 controls how far ahead of expiry a certificate is flagged. It checks:
 
-- **Six PATs**: `RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`,
-  `WINGET_PAT`, `NIMBUS_CHECKS_TOKEN`, `SCORECARD_TOKEN` — each probed live
-  against the GitHub API for basic validity/permissions.
+- **Nimbus Release Bot App-health check**: the workflow itself mints an App
+  token (`Mint release-bot token (health probe)` step, `continue-on-error:
+  true`) scoped to **all four** installed repos (`Nimbus`, `homebrew-tap`,
+  `scoop-bucket`, `linux-repo`) with `Contents: Read and write` +
+  `Pull requests: Read and write` — the same permissions the real release
+  jobs request. Its outcome is passed to the script as `APP_MINT_STATUS`,
+  which classifies anything other than a clean mint (`failure`, `skipped`, or
+  unset) as `dead` so a missing secret, an uninstalled App, or a downgraded
+  permission all alert. This deliberately reuses `actions/create-github-app-token`
+  rather than reimplementing RS256 JWT signing in the script, and it
+  dogfoods the exact mint path the release pipeline depends on.
+- **Two remaining PATs**: `WINGET_PAT`, `NIMBUS_CHECKS_TOKEN` (falls back to
+  `github.token` when unset), and `SCORECARD_TOKEN` (unset — the Scorecard
+  job falls back to `github.token`) — each probed live against the GitHub API
+  for basic validity/permissions.
 - **Three certificate/signing-credential pairs**: the GPG signing subkey
   (`GPG_SIGNING_SUBKEY` + `GPG_PASSPHRASE`), the Windows code-signing cert
   (`WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD`), and the Apple
   Developer ID cert (`APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD`) —
   decoded and checked for upcoming expiry against `threshold_days`.
 
-> **Caveat — PAT dead/alive is not the same as PAT correct.** A live probe
-> only proves the token authenticates and has *some* permission; it does not
-> exercise the exact scope combination a release run needs (e.g. `RELEASE_PAT`
-> passing the health probe still says nothing about whether it retains
-> `Contents: Read and write` on this specific repo). Treat a green run as
-> "not yet expired," not as a release dry-run.
+> **Caveat — a green probe is not the same as "the real job will work."** A
+> live probe only proves the credential authenticates and has *some*
+> permission; the App-health check narrows this gap by minting with the same
+> repo set + permissions the release jobs use, but it still doesn't run the
+> actual publish steps. Treat a green run as "not yet broken," not as a
+> release dry-run.
 
 Findings are filed as a single, de-duped **`release-health`** GitHub issue
 (opened or updated in place per run, not re-created every week) — see
@@ -252,3 +307,63 @@ Local dry-run aliases: `bun run release:verify-assets` and
 `bun run release:secret-health` (see `package.json`) let you exercise either
 script by hand with the right env vars set locally, without waiting for the
 scheduled/tag-triggered workflow.
+
+---
+
+## GitHub App setup + migration runbook
+
+The four release/publish workflows and the secret-health monitor already
+contain the mint steps and reference `RELEASE_BOT_APP_ID` /
+`RELEASE_BOT_PRIVATE_KEY` — that part ships in code. What code **cannot** do
+is create the App itself or grant it org-admin-gated access; the following
+steps are **human-only**, done once, by someone with `nimbus-agent`
+org-admin rights:
+
+1. **Create the App.** `nimbus-agent` org → Settings → Developer settings →
+   GitHub Apps → New GitHub App. Name it **Nimbus Release Bot**.
+2. **Set repository permissions:** `Contents: Read and write` and
+   `Pull requests: Read and write`. Grant **no** organization or account
+   permissions, and **no** webhook — the App only needs to push commits/tags
+   and open PRs in the repos it's installed on.
+3. **Install the App** on `nimbus-agent`, *Only select repositories* →
+   `Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`. These are exactly
+   the four repos the release/publish pipeline writes to.
+4. **Generate a private key** from the App's settings page, then add it and
+   the App ID as two **plain repository secrets** on `Nimbus` (not
+   environment-scoped — see the note above):
+   - `RELEASE_BOT_APP_ID`
+   - `RELEASE_BOT_PRIVATE_KEY` (the full PEM block)
+5. **Allow-list the mint action.** `Nimbus` requires SHA-pinned third-party
+   actions, so add
+   `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`
+   (`v3.2.0`) to the org's (or repo's) allowed-actions list, or the mint step
+   fails closed with an "action not allowed" error before ever reaching the
+   App.
+6. **Grant the App push access on protected branches, if any.**
+   `homebrew-tap`, `scoop-bucket`, and `linux-repo` all receive direct
+   `git push`es from the publish workflows (not PRs). If any of those repos'
+   default branches has branch protection that requires PRs or restricts
+   which actors can push, add the Nimbus Release Bot App to that branch's
+   bypass/allowlist. `Nimbus` itself needs no change here — release-please
+   opens a PR and `release.yml` only pushes a tag, neither of which is a
+   protected-branch commit.
+7. **Confirm Actions are enabled** on all four target repos so that an
+   App-token-pushed tag actually triggers `release.yml`. This matters because
+   App-minted tokens (unlike the default `github.token`) *do* trigger
+   downstream workflow runs on push — that's part of why the App is used for
+   release-please in the first place — but it only works if Actions isn't
+   disabled on the receiving repo. Validate this live on the first real
+   release after cutover.
+8. **After the first green release, delete the three retired PAT secrets** —
+   `RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`. Do this only
+   once a full release has gone out end-to-end on the App wiring; keeping the
+   PATs around until then is a deliberate break-glass window — if the App
+   wiring has a problem, reverting the wiring PR falls back to a pipeline
+   that still has working PATs, with no secret to re-create under time
+   pressure.
+
+**Optional, deferred:** setting the publish jobs' git author identity to the
+bot (`<app-id>+<app-slug>[bot]@users.noreply.github.com`) is cosmetic —
+commits pushed with an App token show as **Unverified** either way (the same
+as today's PAT-pushed commits), and the App's slug isn't known until step 1
+is done. Not required for the migration to be complete.
