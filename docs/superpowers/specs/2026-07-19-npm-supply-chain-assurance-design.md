@@ -78,10 +78,14 @@ Both actions are **composite actions running dependency-free Node** (GitHub runn
 
 Fetches `https://registry.npmjs.org/-/npm/v1/attestations/<package>@<version>` and asserts:
 
+**URL form for scoped packages — empirically settled 2026-07-19.** All three candidate encodings return HTTP 200 against the live registry: the raw form (`@nimbus-dev/sdk@1.3.0`), the fully percent-encoded form (`%40nimbus-dev%2Fsdk@1.3.0`), and the mixed form (`%40nimbus-dev/sdk@1.3.0`). The implementation uses the **raw form**; no encoding gymnastics are required. A nonexistent version returns **404**, confirming 404 as the "no attestation published" signal. Fixtures pin both shapes so a registry-side change to either surfaces as a test failure.
+
 - **Both** predicate types are present — `https://github.com/npm/attestation/tree/main/specs/publish/v0.1` **and** `https://slsa.dev/provenance/v1`. A publish attestation alone means provenance silently degraded.
 - The SLSA predicate's `buildDefinition` source claim matches `expected-repo` (and `expected-workflow` / `expected-sha` when supplied). This is the difference between "an attestation exists" and "attested to us".
 
-**Attestation lag.** Attestations can trail the publish by seconds, so the action retries with backoff (5 attempts across roughly 60 seconds) before concluding absence.
+**Attestation lag.** Attestations can trail the publish, and the registry is CDN-fronted with edge replication delay, so the action retries before concluding absence: **exponential backoff starting at 5s and doubling to a 30s cap, spanning roughly 2.5 minutes total** (5s, 10s, 20s, 30s, 30s, 30s…). A 404 is only conclusive once that window is exhausted.
+
+**Jitter is deliberately omitted.** Jitter exists to decorrelate a *fleet* of clients retrying in lockstep. Here there is exactly one client per publish, so jitter adds nondeterminism to the test surface and buys nothing. Recorded so it isn't re-proposed later.
 
 **Failure semantics differ by caller, deliberately:**
 
@@ -93,9 +97,22 @@ Fetches `https://registry.npmjs.org/-/npm/v1/attestations/<package>@<version>` a
 
 The monitor must not convert a registry hiccup into issue spam; the release gate must not let a possibly-degraded publish through. Same classifier, different severity mapping supplied by the caller.
 
+### Pre-publish preflight — catching degradation *before* it is permanent
+
+Post-publish verification is necessary but structurally late: npm versions cannot be unpublished after 72 hours, so a failed gate reports damage rather than preventing it. The two dominant causes of silent provenance degradation are both detectable **before** `npm publish` runs, so the satellites gain a preflight step that converts a permanent problem into an ordinary job abort:
+
+- **Assert `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is present.** This variable is injected into the job environment only when `id-token: write` is in effect. Its absence means OIDC is unavailable — the single most likely regression, since it can be introduced by an unrelated permissions edit. It is a short-lived request token, never logged; the check tests presence only.
+- **Assert `npm --version` is at least 11.5.1.** Trusted publishing requires it, and it is newer than the npm bundled with Node 22. Both satellites currently install `npm@latest` to compensate; asserting the floor means a regression in that step fails loudly instead of silently degrading to a token-era publish path.
+
+The post-publish gate remains — the preflight cannot prove the attestation was actually recorded — but the expensive, irreversible failure mode is now caught early.
+
+**Failure runbook.** When the post-publish gate fails, the release job prints an explicit operator runbook: the affected package and version, which assertion failed, whether the 72-hour unpublish window is still open, and the deprecate-and-republish path once it is not. The weekly monitor's finding routes through the **existing** de-duped issue filer from sub-project 1 rather than a new alerting channel. No Slack notification is specified: the org has no release webhook today, and inventing one here would add an unowned integration to a program about reducing unowned surface.
+
 ### `actions/probe-publish-token`
 
 Liveness probes for the two credentials that cannot be retired: `VSCE_PAT` against the Azure DevOps Marketplace API, `OVSX_PAT` against the open-vsx API. Classification matches the existing `check-secret-health.ts` vocabulary — HTTP 200 is `ok`, 401 is `dead`, anything else is `indeterminate`.
+
+**Non-disclosure contract (Non-Negotiable 3).** This action handles two live publish credentials in a public repository's logs. It therefore: passes tokens only via environment, never on argv (matching the cert-decoder precedent from sub-project 1); registers each token for masking at entry; logs **only** the derived classification and HTTP status — never the token, request headers, or raw response bodies; and scrubs error paths, since client libraries routinely embed request headers in thrown errors. Tests assert that no probe output contains the token value on **any** path, including the error path.
 
 The `.github` repo gains a minimal `bun test` CI workflow to cover both actions' classifiers. This is the cost of the chosen topology and is accepted.
 
@@ -103,7 +120,7 @@ The `.github` repo gains a minimal `bun test` CI workflow to cover both actions'
 
 | Repo | Change |
 | --- | --- |
-| `nimbus-sdk`, `nimbus-client` | A post-publish step in `release.yml` calling `verify-npm-provenance` (SHA-pinned) with the just-published version. A degraded publish now fails loudly at release time — the 72-hour unpublish window makes late detection worthless. |
+| `nimbus-sdk`, `nimbus-client` | A **pre-publish preflight** (OIDC token present, npm floor met) that aborts before anything irreversible happens, plus a **post-publish** step calling `verify-npm-provenance` (SHA-pinned) with the just-published version. A degraded publish now fails loudly at release time — the 72-hour unpublish window makes late detection worthless. |
 | `Nimbus` (this repo) | `scripts/release/check-secret-health.ts` gains one provenance row per package (latest published version attested to the expected repo) plus the no-orphan-`NPM_TOKEN` assertion. Both feed the **existing** de-duped issue filer from sub-project 1 — no new alerting surface. The registry endpoint is public, so this needs no credentials. |
 | `nimbus-vscode` | Its own `secret-health.yml` calling `probe-publish-token` **where the secrets already live**. `VSCE_PAT` / `OVSX_PAT` are deliberately **not** copied into the monorepo — spreading credentials to centralise monitoring would be a net loss. Also adds `attest-build-provenance` over the packaged `.vsix`. |
 
@@ -111,7 +128,13 @@ The `.github` repo gains a minimal `bun test` CI workflow to cover both actions'
 
 ## Deadline de-risk
 
-A tracked issue on `nimbus-vscode` to determine whether the current `VSCE_PAT` is global or org-scoped and to decide the Azure-OIDC question with real numbers. Combined with weekly probes, a dead token surfaces within seven days instead of at the next release — which is precisely the regression class this whole program exists to eliminate.
+A tracked issue on `nimbus-vscode`, with an explicitly **ordered** investigation so the cheap answer is exhausted before the expensive one:
+
+1. **Determine whether the current `VSCE_PAT` is global or org-scoped.** If org-scoped, it is not covered by the 2026-12-01 decommission and the cliff may not apply at all.
+2. **Establish whether an org-scoped PAT is accepted for Marketplace publishing.** This is the pivotal unknown ([microsoft/vscode#322741](https://github.com/microsoft/vscode/issues/322741), open, unanswered). If yes, an org-scoped PAT is the immediate fallback and **no Azure tenant is required** — reducing this from an infrastructure project to a credential swap.
+3. **Only if both answers are unfavourable**, price the `azure/login` + Entra managed-identity path. Provisioning an Azure subscription solely to publish one VS Code extension is a real cost and must be a deliberate, evidenced decision rather than a default.
+
+Combined with weekly probes, a dead token surfaces within seven days instead of at the next release — which is precisely the regression class this whole program exists to eliminate.
 
 ## Documentation
 
@@ -130,6 +153,10 @@ Pure classifiers are unit-tested against **real captured** attestation bundles, 
 - registry 5xx and network error
 - malformed / truncated JSON
 - the severity-mapping split: identical input classified `fail` for the gate and `indeterminate` for the monitor
+- backoff schedule shape (deterministic, since jitter is omitted) and the retry-exhaustion boundary
+- scoped-package URL construction, pinned against the empirically confirmed forms
+- preflight: missing `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, and npm below the 11.5.1 floor
+- **non-disclosure**: no probe output on any path — success, `dead`, `indeterminate`, or thrown error — contains a token value
 
 Monorepo-side changes follow the existing `scripts/release/` conventions — pure functions, injected API surface, Bun tests alongside.
 
