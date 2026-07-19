@@ -49,16 +49,24 @@ Researched 2026-07-19. This section exists so the deferral in Non-goals is audit
 - **Open VSX.** Long-lived `OVSX_PAT` is the only option. Trusted publishing is [eclipse-openvsx/openvsx#1534](https://github.com/eclipse-openvsx/openvsx/issues/1534) — open, unassigned, nothing shipped.
 - **`.vsix` signing.** The Marketplace performs *repository* signing (proving "served by the Marketplace"), not publisher signing; publisher-held signing remains a proposal. A `attest-build-provenance` attestation on a `.vsix` is therefore verifiable only by someone who downloads the **GitHub release asset** and runs `gh attestation verify` deliberately.
 
-## Credential cleanup — ordered, human-gated
+## Credential cleanup — **executed 2026-07-19**
 
-Order matters: revoking before deleting preserves the token id needed to find it.
+Completed before implementation began, so the plan inherits a clean state.
 
-1. **Human:** `npm token list`, then revoke the token backing `NPM_TOKEN` on npmjs.com. *This is the step that removes the risk* — deleting the GitHub secret only removes a copy.
-2. **Automated:** `gh secret delete NPM_TOKEN --repo nimbus-agent/Nimbus`. Safe at any time: zero workflows reference it.
-3. **Human:** on both `@nimbus-dev/sdk` and `@nimbus-dev/client`, set publishing access to **require two-factor authentication and disallow tokens**. This is what converts OIDC from preferred to enforced.
-4. **Automated:** a regression assertion in the weekly monitor that fails if an `NPM_TOKEN` secret ever reappears.
+| # | Step | Status |
+| --- | --- | --- |
+| 1 | Set publishing access to **require 2FA and disallow tokens** on `@nimbus-dev/sdk` and `@nimbus-dev/client` (`npm access set mfa=publish`) | ✅ done (owner) |
+| 2 | Revoke the token backing `NPM_TOKEN` (`npm token revoke 301b01`) | ✅ done (owner) — verified: `npm token list` now returns empty |
+| 3 | `gh secret delete NPM_TOKEN --repo nimbus-agent/Nimbus` | ✅ done — verified absent from `gh secret list` |
+| 4 | Regression assertion in the weekly monitor so the secret cannot silently return | ⬜ implementation scope |
 
-Steps 1 and 3 are owner actions on npmjs.com and are prerequisites recorded in the plan, not something the implementation performs.
+**The documented order was inverted during execution, deliberately.** The original plan said revoke-then-configure, on the assumption that the CLI session and the CI credential were distinct. They were not: `npm token list` showed exactly **one** token, `id 301b01` created `2026-06-14` — matching the GitHub secret's creation date, and also authenticating the local CLI. Revoking first would have ended the session mid-sequence, before the package policies could be set. Configure-then-revoke was the correct order.
+
+Steps 1 and 2 each required an interactive one-time password (browser auth), so both are necessarily owner actions; automation cannot perform them.
+
+**Finding for sub-project 4.** A single npm credential appears to have served as *both* a workstation `~/.npmrc` token and the CI secret. That shared-credential pattern — one leak compromising two very differently-exposed environments — is precisely what the rotation-and-inventory work should detect, and it is not visible from CI-side inspection alone. Recorded here so #4 inherits it as evidence rather than a hunch.
+
+The `mfa=publish` setting is **not machine-verifiable**: npm exposes no `access get mfa` command and the value is absent from public registry metadata. Its failure mode surfaces only at the next release, which is an additional argument for the post-publish gate specified above.
 
 ## Architecture: shared actions in `nimbus-agent/.github`
 
