@@ -161,6 +161,55 @@ describe("web clipper E2E", () => {
     expect(rel.items.some((i) => i.id === clipJson.id)).toBe(true);
   });
 
+  // Regression guard for #771: the I13 dispatcher's body cap used to be a flat 8 KiB shared with
+  // the control-plane routes, so any real article (this one is ~40 KiB of prose) was rejected with
+  // 413 payload_too_large. The 44-byte body above is too small to catch that — this one is not.
+  test("pair → POST /v1/clips with a realistically-sized article body (>8 KiB) round-trips", async () => {
+    const base = `http://127.0.0.1:${handle.port}`;
+    const { code } = pairing.open("e2e-big-article");
+    const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    expect(confirmRes.status).toBe(200);
+    const { token } = (await confirmRes.json()) as { token: string };
+
+    // ~40 KiB of article prose — comfortably over the old 8 KiB cap, well under the 1 MiB one.
+    const paragraph =
+      "Nimbus keeps every clip on the owner's own machine, indexed locally and never uploaded. ";
+    const articleBody = `NimbusBigArticleMarker ${paragraph.repeat(460)}`;
+    expect(articleBody.length).toBeGreaterThan(8 * 1024);
+
+    const clipRes = await fetch(`${base}/v1/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        url: "https://example.com/e2e-big-article",
+        title: "NimbusBigArticleTitle",
+        mode: "article",
+        body: articleBody,
+        capturedAt: Date.now(),
+      }),
+    });
+    expect(clipRes.status).toBe(200);
+    const clipJson = (await clipRes.json()) as { id: string; status: string };
+    expect(clipJson.status).toBe("created");
+
+    // The whole body made it into the index (not a truncated prefix).
+    const readDb = new Database(dbPath, { readonly: true, create: false });
+    try {
+      const rows = readDb
+        .query(
+          "SELECT i.id FROM item i INNER JOIN item_fts ON i.rowid = item_fts.rowid WHERE item_fts MATCH ?",
+        )
+        .all("NimbusBigArticleMarker") as Array<{ id: string }>;
+      expect(rows.some((r) => r.id === clipJson.id)).toBe(true);
+    } finally {
+      readDb.close();
+    }
+  });
+
   test("POST /v1/clips/related without a token → 401", async () => {
     const res = await fetch(`http://127.0.0.1:${handle.port}/v1/clips/related`, {
       method: "POST",

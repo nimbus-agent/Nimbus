@@ -932,3 +932,121 @@ test("pair/confirm with no code field → 403", async () => {
   const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
   expect(res.status).toBe(403);
 });
+
+// ── Per-route body cap (#771) ────────────────────────────────────────────────────────────────
+// The I13 dispatcher's body cap is per-route: control-plane routes keep the 8 KiB anti-abuse
+// bound, while `POST /v1/clips` carries a real article body and gets 1 MiB. Both enforcement
+// sites (the content-length pre-check and the post-read byteLength check) must use the cap of
+// the route that was resolved.
+
+const KIB_8 = 8 * 1024;
+const MIB_1 = 1024 * 1024;
+
+/** A clip body whose JSON encoding is at least `bytes` long. */
+function clipBodyOfAtLeast(bytes: number): string {
+  return JSON.stringify({
+    url: "https://ex.com/article",
+    title: "T",
+    mode: "article",
+    body: "a".repeat(bytes),
+    capturedAt: 1750000000000,
+  });
+}
+
+function streamOf(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
+test("POST /v1/clips accepts a 32 KiB article body (over the 8 KiB control-plane cap)", async () => {
+  const payload = clipBodyOfAtLeast(32 * 1024);
+  expect(payload.length).toBeGreaterThan(KIB_8);
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: payload,
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ id: "nimbus:clip:abc", status: "created" });
+});
+
+test("POST /v1/clips accepts a 32 KiB body with no content-length (streamed)", async () => {
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token" },
+    body: streamOf(clipBodyOfAtLeast(32 * 1024)),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(200);
+});
+
+test("POST /v1/clips still rejects a body over 1 MiB with 413 (content-length pre-check)", async () => {
+  let ingested = false;
+  const ctx = clipCtx({
+    clips: clipsSurface({
+      ingest: () => {
+        ingested = true;
+        return { id: "x", status: "created" };
+      },
+    }),
+  });
+  const payload = clipBodyOfAtLeast(MIB_1 + 1);
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token", "content-type": "application/json" },
+    body: payload,
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(413);
+  expect(await res.json()).toEqual({ error: "payload_too_large" });
+  expect(res.headers.get("X-RateLimit-Limit")).toBe("60");
+  expect(ingested).toBe(false);
+});
+
+test("POST /v1/clips still rejects a body over 1 MiB with 413 when streamed (byteLength check)", async () => {
+  const req = new Request("http://127.0.0.1/v1/clips", {
+    method: "POST",
+    headers: { authorization: "Bearer good-token" },
+    body: streamOf(clipBodyOfAtLeast(MIB_1 + 1)),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx());
+  expect(res.status).toBe(413);
+  expect(await res.json()).toEqual({ error: "payload_too_large" });
+});
+
+test("POST /v1/deployments keeps the 8 KiB cap (the clip cap is not global)", async () => {
+  const ctx = deployContext();
+  const req = new Request("http://127.0.0.1/v1/deployments", {
+    method: "POST",
+    headers: { authorization: "Bearer hunter2", "content-type": "application/json" },
+    body: JSON.stringify(validDeployBody({ note: "n".repeat(KIB_8) })),
+  });
+  const res = await dispatchWriteRoute(req, ctx);
+  expect(res.status).toBe(413);
+  expect(await res.json()).toEqual({ error: "payload_too_large" });
+});
+
+test("POST /v1/clips/pair/confirm keeps the 8 KiB cap (a pairing code is tiny)", async () => {
+  let minted = false;
+  const surface = clipsSurface({
+    mintToken: async () => {
+      minted = true;
+      return "x";
+    },
+  });
+  surface.pairing.open("chrome-work");
+  const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "123456", pad: "p".repeat(KIB_8) }),
+  });
+  const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
+  expect(res.status).toBe(413);
+  expect(await res.json()).toEqual({ error: "payload_too_large" });
+  expect(minted).toBe(false);
+});

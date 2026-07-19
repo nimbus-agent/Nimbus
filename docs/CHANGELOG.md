@@ -8,6 +8,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-19 — fix: `POST /v1/clips` accepts real articles (per-route body cap).** The I13 write
+  dispatcher enforced a single 8 KiB request-body cap across every write route. That bound was sized
+  for the six control-plane routes it was written for (deploy annotations, SCIM, admin policy, Teams
+  events); when Slice 9 added the two web-clipper routes to the allowlist, clip ingest silently
+  inherited it — so any page whose readable body exceeded 8 KiB (i.e. most real articles) was
+  rejected with `413 payload_too_large` and the extension could never complete its primary function.
+  The cap is now **per-route** (`ResolvedRoute.maxBodyBytes`), enforced unchanged at both sites (the
+  `content-length` pre-check and the post-read `byteLength` check), with the same
+  `413 payload_too_large` + audit-rejection shape. `POST /v1/clips` gets **1 MiB**; every other
+  route — including `POST /v1/clips/pair/confirm`, whose body is a 6-digit `{code}` — keeps
+  **8 KiB**. Deliberately not user-configurable: the bound stays a code-level invariant. No
+  migration, no invariant change, no wire-contract change. Regression guards: per-route cap tests in
+  `http-write-routes.test.ts` plus a realistically-sized (~40 KiB) article body in the clip E2E,
+  which previously round-tripped a 44-byte body and is why this shipped undetected. Fixes
+  [#771](https://github.com/nimbus-agent/Nimbus/issues/771).
 - **2026-07-16 — `nimbus clip list` + `nimbus clip delete`.** Two new read/manage commands
   for web clips, backed by two new local-index IPC methods (`clip.list`, `clip.delete`).
   `clip list` shows saved clips newest-first with `--tag` (SQL `json_each` filter, so
