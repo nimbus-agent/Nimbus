@@ -360,7 +360,7 @@ nimbus egress prune (--before <ISO|epoch> | --older-than <dur>)    # HITL-gated 
 ### Phase 6 Slice 9 — Web clipper (owner-side control plane)
 
 ```bash
-nimbus clip pair [--label <name>]                     # open the I30 pairing window; prints a 6-digit code + gateway URL
+nimbus clip pair [--label <name>]                     # open the I30 pairing window; prints a 6-digit code (+ the gateway URL only when the HTTP sidecar is configured)
 nimbus clip status                                    # minted clip tokens by label (never the token bytes)
 nimbus clip revoke <label|--all>                      # revoke a paired browser
 nimbus clip list [--tag <tag>] [--limit <n>] [--json]  # list indexed nimbus:web_clip items
