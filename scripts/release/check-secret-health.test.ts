@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  classifyAppMint,
   classifyPatProbe,
   evaluateCertExpiry,
   type PatStrategy,
@@ -29,6 +30,21 @@ describe("classifyPatProbe", () => {
     expect(classifyPatProbe(s, { status: 200, scopes: null })).toBe("ok");
     expect(classifyPatProbe(s, { status: 401, scopes: null })).toBe("dead");
     expect(classifyPatProbe(s, { status: 403, scopes: null })).toBe("indeterminate");
+  });
+});
+
+describe("classifyAppMint", () => {
+  test("success outcome → ok", () => {
+    expect(classifyAppMint("success")).toBe("ok");
+  });
+  test("failure outcome → dead", () => {
+    expect(classifyAppMint("failure")).toBe("dead");
+  });
+  test("skipped outcome → dead (fail-closed: a skipped mint step alerts)", () => {
+    expect(classifyAppMint("skipped")).toBe("dead");
+  });
+  test("empty/unset outcome → dead (fail-closed: missing App secret alerts)", () => {
+    expect(classifyAppMint("")).toBe("dead");
   });
 });
 
@@ -75,6 +91,29 @@ describe("summarize", () => {
     const r = summarize([{ name: "X", kind: "pat", status: "ok", detail: "" }]);
     expect(r.hasHardFailure).toBe(false);
     expect(r.hasWarning).toBe(false);
+  });
+  test("dead RELEASE_BOT_APP row (from classifyAppMint) → hard failure", () => {
+    const r = summarize([
+      {
+        name: "RELEASE_BOT_APP",
+        kind: "pat",
+        status: classifyAppMint("failure"),
+        detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
+      },
+    ]);
+    expect(r.hasHardFailure).toBe(true);
+    expect(r.table).toContain("RELEASE_BOT_APP");
+  });
+  test("ok RELEASE_BOT_APP row (from classifyAppMint) → not a hard failure", () => {
+    const r = summarize([
+      {
+        name: "RELEASE_BOT_APP",
+        kind: "pat",
+        status: classifyAppMint("success"),
+        detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
+      },
+    ]);
+    expect(r.hasHardFailure).toBe(false);
   });
 });
 
@@ -264,6 +303,64 @@ describe("runSecretHealth (orchestration)", () => {
     });
     expect(result.hardFailure).toBe(true);
     expect(api.calls.createIssue.length).toBe(1);
+  });
+
+  test("extraRows: a dead App-mint row (classifyAppMint) opens the issue and returns hardFailure:true, even with otherwise-healthy pats/certs", async () => {
+    const api = createFakeApi({
+      probeResults: { "good-token": { status: 200, scopes: null } },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "WINGET_PAT",
+          token: "good-token",
+          strategy: { kind: "alive" } as PatStrategy,
+        },
+      ],
+      certs: [],
+      extraRows: [
+        {
+          name: "RELEASE_BOT_APP",
+          kind: "pat",
+          status: classifyAppMint("skipped"),
+          detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(true);
+    expect(api.calls.createIssue.length).toBe(1);
+  });
+
+  test("extraRows: an ok App-mint row does not trigger a hard failure", async () => {
+    const api = createFakeApi({
+      probeResults: { "good-token": { status: 200, scopes: null } },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "WINGET_PAT",
+          token: "good-token",
+          strategy: { kind: "alive" } as PatStrategy,
+        },
+      ],
+      certs: [],
+      extraRows: [
+        {
+          name: "RELEASE_BOT_APP",
+          kind: "pat",
+          status: classifyAppMint("success"),
+          detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(false);
+    expect(api.calls.createIssue.length).toBe(0);
   });
 
   test("repo-write: a repo perms-lookup error object → indeterminate, NOT a hard failure (T6)", async () => {

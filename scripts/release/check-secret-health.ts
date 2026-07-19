@@ -26,6 +26,17 @@ export function classifyPatProbe(
   return "ok";
 }
 
+/**
+ * The release-bot GitHub App health probe: a scoped-mint step (`actions/create-github-app-token`)
+ * runs before this check, and its `steps.<id>.outcome` is passed in via `APP_MINT_STATUS`.
+ * Fail-closed — only an explicit "success" outcome is "ok"; any other outcome (`failure`,
+ * `skipped`, unset/empty) is "dead", so a missing App secret or a skipped mint step alerts
+ * rather than silently passing.
+ */
+export function classifyAppMint(outcome: string): PatStatus {
+  return outcome === "success" ? "ok" : "dead";
+}
+
 /** Guard against malformed/localized binary output — an unparseable date must be indeterminate, never a false "ok" (plan-review #2). */
 export function safeParseDate(dateStr: string): Date | null {
   const d = new Date(dateStr.trim());
@@ -88,8 +99,10 @@ export async function runSecretHealth(deps: {
     present: boolean;
     decode: CertDecoder;
   }[];
+  /** Pre-classified rows (e.g. the App-mint health probe) merged in alongside the PAT/cert rows. */
+  extraRows?: readonly HealthRow[];
 }): Promise<{ hardFailure: boolean }> {
-  const rows: HealthRow[] = [];
+  const rows: HealthRow[] = [...(deps.extraRows ?? [])];
   for (const p of deps.pats) {
     if (!p.token) {
       rows.push({ name: p.env, kind: "pat", status: "not-configured", detail: "unset" });
@@ -308,24 +321,6 @@ if (import.meta.main) {
   const thresholdDays = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? rawThreshold : 21;
   const pats: readonly { env: string; token: string | undefined; strategy: PatStrategy }[] = [
     {
-      env: "RELEASE_PAT",
-      token: process.env["RELEASE_PAT"],
-      strategy: { kind: "repo-write", targetRepos: [repo] } as PatStrategy,
-    },
-    {
-      env: "RELEASE_PLEASE_PAT",
-      token: process.env["RELEASE_PLEASE_PAT"],
-      strategy: { kind: "repo-write", targetRepos: [repo] } as PatStrategy,
-    },
-    {
-      env: "PACKAGE_MANAGER_PAT",
-      token: process.env["PACKAGE_MANAGER_PAT"],
-      strategy: {
-        kind: "repo-write",
-        targetRepos: ["nimbus-agent/homebrew-tap", "nimbus-agent/scoop-bucket"],
-      } as PatStrategy,
-    },
-    {
       env: "WINGET_PAT",
       token: process.env["WINGET_PAT"],
       strategy: { kind: "scopes", required: "public_repo" } as PatStrategy,
@@ -364,12 +359,19 @@ if (import.meta.main) {
       decode: decodePkcs12Expiry,
     },
   ];
+  const appMintRow: HealthRow = {
+    name: "RELEASE_BOT_APP",
+    kind: "pat",
+    status: classifyAppMint(process.env["APP_MINT_STATUS"] ?? ""),
+    detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
+  };
   const { hardFailure } = await runSecretHealth({
     api: createGitHubApi({ token, repo }),
     now: new Date(),
     thresholdDays,
     pats,
     certs,
+    extraRows: [appMintRow],
   });
   process.exit(hardFailure ? 1 : 0);
 }
