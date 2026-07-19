@@ -820,14 +820,15 @@ gh pr create --repo nimbus-agent/.github --fill
 **Interfaces:**
 
 - Consumes: nothing.
-- Produces: action inputs `tool` (`vsce`|`ovsx`), `namespace`; output `status` (`ok`|`dead`|`indeterminate`); token supplied by the caller as the `PUBLISH_TOKEN` env var.
+- Produces: action inputs `tool` (`vsce`|`ovsx`), `namespace`; output `status` (`ok`|`dead`|`not-configured`|`indeterminate`); token supplied by the caller as the `PUBLISH_TOKEN` env var.
 
 **Design note:** both CLIs ship a first-class `verify-pat` command and both read the token from the environment (`VSCE_PAT` / `OVSX_PAT`). Using them means our own code never handles the token at all — the non-disclosure contract is satisfied structurally rather than by careful coding. Do not hand-roll an HTTP probe here.
 
 **Two hazards this task must handle — do not simplify them away:**
 
 1. **A non-zero exit does not mean the token is dead.** Registry downtime, a network timeout, or marketplace rate-limiting all produce a non-zero exit. Treating those as `dead` would file a false critical alert claiming a working credential is revoked — worse than silence, because it trains the operator to ignore the alarm. The probe therefore distinguishes "the service said no" from "we could not reach the service" by checking a public unauthenticated endpoint after a failure, and reports `indeterminate` when the service is unreachable.
-2. **The token is handed to whatever `npx` resolves.** `npx --yes <pkg>` with no version pulls `@latest` — so a compromised release of `@vscode/vsce` or `ovsx` would receive a live publish credential. Pin **exact** versions, not ranges: a `^` range still resolves to the newest match and provides no protection here. This is a supply-chain program; running unpinned third-party code with a credential in scope would undercut its own premise.
+2. **An unset secret is not a revoked secret.** The empty-token branch reports `not-configured`, never `dead` — it contacts nothing, so it has no evidence of revocation. Emitting `dead` there would file a "token revoked, rotate now" alert for a credential that was never provisioned.
+3. **The token is handed to whatever `npx` resolves.** `npx --yes <pkg>` with no version pulls `@latest` — so a compromised release of `@vscode/vsce` or `ovsx` would receive a live publish credential. Pin **exact** versions, not ranges: a `^` range still resolves to the newest match and provides no protection here. This is a supply-chain program; running unpinned third-party code with a credential in scope would undercut its own premise.
 
 - [ ] **Step 1: Create the action**
 
@@ -850,7 +851,7 @@ inputs:
 
 outputs:
   status:
-    description: "ok | dead | indeterminate"
+    description: "ok | dead | not-configured | indeterminate"
     value: ${{ steps.probe.outputs.status }}
 
 runs:
@@ -870,8 +871,14 @@ runs:
       run: |
         set +e
         if [ -z "${PUBLISH_TOKEN}" ]; then
-          echo "status=dead" >> "$GITHUB_OUTPUT"
-          echo "probe ${TOOL}: token not configured"
+          # NOT `dead`: this branch never contacts the vendor and never runs the
+          # reachability check, so it cannot know the token was revoked — the
+          # secret simply is not set. `dead` is reserved for a confirmed
+          # rejection by a reachable service, so the alert text stays truthful.
+          # Severity is the CALLER's decision: a repo that requires this token
+          # may still treat not-configured as a hard failure.
+          echo "status=not-configured" >> "$GITHUB_OUTPUT"
+          echo "probe ${TOOL}: secret not configured (not a revocation signal)"
           exit 0
         fi
         if [ "${TOOL}" = "vsce" ]; then
@@ -1512,14 +1519,20 @@ jobs:
           # `indeterminate` means we could not reach the service, which is NOT
           # evidence the token is revoked. Filing a revocation alert on a network
           # blip trains the operator to ignore the alarm.
+          # Both tokens are REQUIRED to publish this extension, so `dead` and
+          # `not-configured` are both hard failures here — but they are reported
+          # distinctly, because "revoked" and "never provisioned" need different
+          # remedies. `indeterminate` means we could not reach the service, which
+          # is NOT evidence about the token; it only warns.
           hard=""
-          [ "${VSCE_STATUS}" = "dead" ] && hard="yes"
-          [ "${OVSX_STATUS}" = "dead" ] && hard="yes"
+          for s in "${VSCE_STATUS}" "${OVSX_STATUS}"; do
+            case "$s" in dead|not-configured) hard="yes" ;; esac
+          done
 
           if [ -n "$hard" ]; then
             title="🔑 Publish credential health alert"
             existing="$(gh issue list --state open --search "$title" --json number --jq '.[0].number // empty')"
-            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. A dead token blocks the next extension release. Cross-check the marketplace status page before rotating — see docs/ci-secrets.md in the Nimbus monorepo."
+            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. \`dead\` = the marketplace rejected a configured token (rotate it); \`not-configured\` = the secret is missing entirely (provision it — do NOT rotate). Either blocks the next extension release. Cross-check the marketplace status page first — see docs/ci-secrets.md in the Nimbus monorepo."
             if [ -n "$existing" ]; then
               gh issue comment "$existing" --body "$body"
             else
@@ -1604,6 +1617,7 @@ Expected: a completed run. **Read the step summary** and interpret it precisely:
 | --- | --- | --- |
 | `ok` | Token valid | Nothing |
 | `dead` | Service reachable and rejected the token | **A real finding** — the token is already expired and the next release would have failed. Report it; do not adjust the probe to pass. |
+| `not-configured` | The secret is unset | The secret was never provisioned or has been deleted. Provision it — do **not** rotate a credential that does not exist. |
 | `indeterminate` | Service unreachable — no signal either way | Re-run once. If it persists, check the marketplace status page before concluding anything about the token. |
 
 - [ ] **Step 6: File the deadline issue**
