@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -76,10 +76,6 @@ export function summarize(rows: readonly HealthRow[]): {
 // --- I/O orchestration (injected cert decoders so tests never spawn gpg/openssl) ---
 export type CertDecoder = (secretEnvVar: string, passwordEnvVar: string) => Promise<Date | null>;
 
-// Reserved for a future per-strategy PAT table (currently assembled inline in the
-// import.meta.main block below using GITHUB_REPOSITORY); prefixed to mark intentional-unused.
-const _PAT_TABLE: readonly { env: string; strategy: PatStrategy }[] = [];
-
 export async function runSecretHealth(deps: {
   api: GitHubApi;
   now: Date;
@@ -111,7 +107,7 @@ export async function runSecretHealth(deps: {
       rows.push({
         name: p.env,
         kind: "pat",
-        status: classifyPatProbe(p.strategy, { ...probe, push }),
+        status: classifyPatProbe(p.strategy, push === undefined ? probe : { ...probe, push }),
         detail: p.strategy.kind,
       });
     } catch {
@@ -212,6 +208,8 @@ async function decodeGpgExpiry(secretEnv: string, passwordEnv: string): Promise<
     ]);
     if (listCode !== 0) return null;
 
+    // Targets the single signing subkey (GPG_SIGNING_SUBKEY): returns the first `sub:`
+    // record with a decodable expiration — a documented single-subkey assumption.
     for (const line of out.split("\n")) {
       const fields = line.split(":");
       if (fields[0] !== "sub") continue;
@@ -242,8 +240,10 @@ async function decodePkcs12Expiry(secretEnv: string, passwordEnv: string): Promi
   const tmp = join(releaseTempRoot(), `nimbus-cert-${crypto.randomUUID()}.p12`);
   try {
     const bytes = Buffer.from(base64Payload, "base64");
+    // Pre-create the file at 0600 before any bytes land, so the decoded cert material
+    // is never briefly world/group-readable at the umask default.
+    writeFileSync(tmp, "", { mode: 0o600 });
     await Bun.write(tmp, bytes);
-    chmodSync(tmp, 0o600);
 
     // Password never reaches argv: `-passin env:<passwordEnv>` reads it from the
     // child's environment (already inherited — we don't re-inject it).
@@ -290,7 +290,8 @@ if (import.meta.main) {
     console.error("check-secret-health: GITHUB_REPOSITORY + GITHUB_TOKEN required");
     process.exit(2);
   }
-  const thresholdDays = Number(process.env["THRESHOLD_DAYS"] ?? "21");
+  const rawThreshold = Number(process.env["THRESHOLD_DAYS"] ?? "21");
+  const thresholdDays = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? rawThreshold : 21;
   const pats: readonly { env: string; token: string | undefined; strategy: PatStrategy }[] = [
     {
       env: "RELEASE_PAT",

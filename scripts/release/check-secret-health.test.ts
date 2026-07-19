@@ -2,9 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyPatProbe,
   evaluateCertExpiry,
+  type PatStrategy,
+  runSecretHealth,
   safeParseDate,
   summarize,
 } from "./check-secret-health.ts";
+import type { GitHubApi, IssueRef, ProbeResult, Release, RepoPerms } from "./gh-api.ts";
+import { computeStateHash, markerFor, openOrUpdateHealthIssue } from "./open-health-issue.ts";
 
 describe("classifyPatProbe", () => {
   test("repo-write: push true → ok, false → insufficient, 401 → dead", () => {
@@ -71,5 +75,183 @@ describe("summarize", () => {
     const r = summarize([{ name: "X", kind: "pat", status: "ok", detail: "" }]);
     expect(r.hasHardFailure).toBe(false);
     expect(r.hasWarning).toBe(false);
+  });
+});
+
+// --- Orchestration integration tests: a hand-written fake GitHubApi (no HTTP), records calls ---
+
+interface FakeApiCalls {
+  probeToken: unknown[][];
+  getRepoPermissions: unknown[][];
+  listOpenIssues: unknown[][];
+  createIssue: unknown[][];
+  updateIssue: unknown[][];
+  commentIssue: unknown[][];
+  closeIssue: unknown[][];
+  ensureLabel: unknown[][];
+}
+
+function createFakeApi(
+  opts: {
+    probeResults?: Record<string, ProbeResult>;
+    repoPerms?: RepoPerms | { status: number };
+    existingIssues?: IssueRef[];
+  } = {},
+): GitHubApi & { calls: FakeApiCalls } {
+  const calls: FakeApiCalls = {
+    probeToken: [],
+    getRepoPermissions: [],
+    listOpenIssues: [],
+    createIssue: [],
+    updateIssue: [],
+    commentIssue: [],
+    closeIssue: [],
+    ensureLabel: [],
+  };
+  let issues = [...(opts.existingIssues ?? [])];
+  let nextIssueNumber = 100;
+  return {
+    calls,
+    async getReleaseByTag(_tag: string): Promise<Release | null> {
+      return null;
+    },
+    async getRepoPermissions(ownerRepo, token) {
+      calls.getRepoPermissions.push([ownerRepo, token]);
+      return opts.repoPerms ?? { push: true };
+    },
+    async probeToken(token) {
+      calls.probeToken.push([token]);
+      return opts.probeResults?.[token] ?? { status: 200, scopes: null };
+    },
+    async listOpenIssues(label) {
+      calls.listOpenIssues.push([label]);
+      return issues;
+    },
+    async createIssue(title, body, labels) {
+      calls.createIssue.push([title, body, labels]);
+      const number = nextIssueNumber++;
+      issues = [...issues, { number, body, createdAt: new Date().toISOString() }];
+      return number;
+    },
+    async updateIssue(num, body) {
+      calls.updateIssue.push([num, body]);
+      issues = issues.map((i) => (i.number === num ? { ...i, body } : i));
+    },
+    async commentIssue(num, body) {
+      calls.commentIssue.push([num, body]);
+    },
+    async closeIssue(num, comment) {
+      calls.closeIssue.push([num, comment]);
+      issues = issues.filter((i) => i.number !== num);
+    },
+    async ensureLabel(label) {
+      calls.ensureLabel.push([label]);
+    },
+  };
+}
+
+describe("runSecretHealth (orchestration)", () => {
+  test("hard failure: a dead PAT opens/updates the secret-health issue and returns hardFailure:true", async () => {
+    const api = createFakeApi({
+      probeResults: { "dead-token": { status: 401, scopes: null } },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "RELEASE_PAT",
+          token: "dead-token",
+          strategy: { kind: "alive" } as PatStrategy,
+        },
+      ],
+      certs: [],
+    });
+    expect(result.hardFailure).toBe(true);
+    expect(api.calls.ensureLabel.length).toBe(1);
+    expect(api.calls.createIssue.length).toBe(1);
+    expect(api.calls.closeIssue.length).toBe(0);
+  });
+
+  test("all healthy: probes ok + certs decode far-future → closes any open issue, returns hardFailure:false", async () => {
+    const existingBody = `${markerFor("secret-health")}\n<!-- release-health-state:stale -->\n\nprevious alert`;
+    const api = createFakeApi({
+      probeResults: { "good-token": { status: 200, scopes: null } },
+      existingIssues: [{ number: 7, body: existingBody, createdAt: "2020-01-01T00:00:00Z" }],
+    });
+    const farFuture = new Date(Date.now() + 1000 * 60 * 60 * 24 * 400);
+    const result = await runSecretHealth({
+      api,
+      now: new Date(),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "RELEASE_PAT",
+          token: "good-token",
+          strategy: { kind: "alive" } as PatStrategy,
+        },
+      ],
+      certs: [
+        {
+          name: "GPG_SIGNING_SUBKEY",
+          secretEnv: "GPG_SIGNING_SUBKEY",
+          passwordEnv: "GPG_PASSPHRASE",
+          present: true,
+          decode: async () => farFuture,
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(false);
+    expect(api.calls.closeIssue.length).toBe(1);
+    expect(api.calls.createIssue.length).toBe(0);
+    expect(api.calls.updateIssue.length).toBe(0);
+  });
+});
+
+describe("openOrUpdateHealthIssue", () => {
+  test("no existing issue: creates the issue and ensures the label", async () => {
+    const api = createFakeApi();
+    await openOrUpdateHealthIssue(api, {
+      key: "secret-health",
+      title: "🔑 alert",
+      body: "table",
+      state: "state-1",
+    });
+    expect(api.calls.ensureLabel.length).toBe(1);
+    expect(api.calls.createIssue.length).toBe(1);
+    expect(api.calls.updateIssue.length).toBe(0);
+  });
+
+  test("existing issue, state hash differs: updates the issue AND comments", async () => {
+    const oldHash = computeStateHash("state-old");
+    const existingBody = `${markerFor("secret-health")}\n<!-- release-health-state:${oldHash} -->\n\nold table`;
+    const api = createFakeApi({
+      existingIssues: [{ number: 42, body: existingBody, createdAt: "2020-01-01T00:00:00Z" }],
+    });
+    await openOrUpdateHealthIssue(api, {
+      key: "secret-health",
+      title: "🔑 alert",
+      body: "new table",
+      state: "state-new",
+    });
+    expect(api.calls.updateIssue.length).toBe(1);
+    expect(api.calls.commentIssue.length).toBe(1);
+  });
+
+  test("existing issue, state hash identical: updates the issue but does NOT comment", async () => {
+    const sameHash = computeStateHash("state-same");
+    const existingBody = `${markerFor("secret-health")}\n<!-- release-health-state:${sameHash} -->\n\nsame table`;
+    const api = createFakeApi({
+      existingIssues: [{ number: 43, body: existingBody, createdAt: "2020-01-01T00:00:00Z" }],
+    });
+    await openOrUpdateHealthIssue(api, {
+      key: "secret-health",
+      title: "🔑 alert",
+      body: "same table",
+      state: "state-same",
+    });
+    expect(api.calls.updateIssue.length).toBe(1);
+    expect(api.calls.commentIssue.length).toBe(0);
   });
 });
