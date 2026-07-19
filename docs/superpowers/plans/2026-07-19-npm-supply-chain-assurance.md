@@ -20,7 +20,7 @@
 - **npm floor for trusted publishing:** `11.5.1`.
 - **Fail closed.** Any unrecognised shape maps to `indeterminate`, never a false `ok`.
 - **Branch/commit rules:** work on `dev/asafgolombek/<topic>` branches; never commit to `main`. Monorepo work happens in a git worktree under `.claude/worktrees/`.
-- **`<ACTIONS_SHA>`** appears in Tasks B2, C1, and D1. It is the 40-character commit SHA of `nimbus-agent/.github` `main` **after Task A3's PR is merged**. Resolve it once with `gh api repos/nimbus-agent/.github/commits/main --jq '.sha'` and substitute the literal value everywhere. A tag or branch ref will fail the org's SHA-pinning requirement.
+- **`5fb42792fa88287048fd24f704183b9a9b807a67`** appears in Tasks B2, C1, and D1. It is the 40-character commit SHA of `nimbus-agent/.github` `main` **after Task A3's PR is merged**. Resolve it once with `gh api repos/nimbus-agent/.github/commits/main --jq '.sha'` and substitute the literal value everywhere. A tag or branch ref will fail the org's SHA-pinning requirement.
 
 ## Scope of Verification — read before Task A1
 
@@ -1186,7 +1186,7 @@ and tested for emptiness only, since GITHUB_TOKEN cannot list repo secrets."
 gh api repos/nimbus-agent/.github/commits/main --jq '.sha'
 ```
 
-Record this value; it is `<ACTIONS_SHA>` below. Task A3's PR must be merged first.
+Record this value; it is `5fb42792fa88287048fd24f704183b9a9b807a67` below. Task A3's PR must be merged first.
 
 - [ ] **Step 2: Add the version-resolution and provenance probe steps**
 
@@ -1202,7 +1202,7 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
 
       - name: Probe @nimbus-dev/sdk provenance
         id: sdk-provenance
-        uses: nimbus-agent/.github/actions/verify-npm-provenance@<ACTIONS_SHA>
+        uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           package: "@nimbus-dev/sdk"
           version: ${{ steps.versions.outputs.sdk }}
@@ -1212,7 +1212,7 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
 
       - name: Probe @nimbus-dev/client provenance
         id: client-provenance
-        uses: nimbus-agent/.github/actions/verify-npm-provenance@<ACTIONS_SHA>
+        uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           package: "@nimbus-dev/client"
           version: ${{ steps.versions.outputs.client }}
@@ -1315,7 +1315,7 @@ cannot be retired, including the 2026-12-01 ADO decommission deadline."
 
 **Interfaces:**
 
-- Consumes: `verify-npm-provenance` at `<ACTIONS_SHA>` (Task A3).
+- Consumes: `verify-npm-provenance` at `5fb42792fa88287048fd24f704183b9a9b807a67` (Task A3).
 
 **Per-repo values** — do not mix these up:
 
@@ -1374,7 +1374,7 @@ Insert immediately **after** the "Publish to npm with provenance" step:
         run: npm audit signatures
 
       - name: Verify provenance names this repo, workflow and commit
-        uses: nimbus-agent/.github/actions/verify-npm-provenance@<ACTIONS_SHA>
+        uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           package: "@nimbus-dev/sdk"
           version: ${{ steps.published.outputs.version }}
@@ -1451,7 +1451,7 @@ Use the `nimbus-client` row from the table above. Do not copy the `nimbus-sdk` v
 
 **Interfaces:**
 
-- Consumes: `probe-publish-token` at `<ACTIONS_SHA>` (Task A4).
+- Consumes: `probe-publish-token` at `5fb42792fa88287048fd24f704183b9a9b807a67` (Task A4).
 
 - [ ] **Step 1: Create the health workflow**
 
@@ -1487,7 +1487,7 @@ jobs:
 
       - name: Probe VSCE_PAT
         id: vsce
-        uses: nimbus-agent/.github/actions/probe-publish-token@<ACTIONS_SHA>
+        uses: nimbus-agent/.github/actions/probe-publish-token@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           tool: vsce
           namespace: nimbus-agent
@@ -1496,7 +1496,7 @@ jobs:
 
       - name: Probe OVSX_PAT
         id: ovsx
-        uses: nimbus-agent/.github/actions/probe-publish-token@<ACTIONS_SHA>
+        uses: nimbus-agent/.github/actions/probe-publish-token@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           tool: ovsx
           namespace: nimbus-agent
