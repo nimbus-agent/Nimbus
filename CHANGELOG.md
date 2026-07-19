@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.23.0](https://github.com/nimbus-agent/Nimbus/compare/v0.22.0...v0.23.0) (2026-07-19)
+
+
+### Features
+
+* **release-health:** loud release-asset gate + weekly secret-health monitor ([#768](https://github.com/nimbus-agent/Nimbus/issues/768)) ([2417189](https://github.com/nimbus-agent/Nimbus/commit/241718962e707e4f236b457dc8bd2ff21a255c4c))
+
 ## [0.22.0](https://github.com/nimbus-agent/Nimbus/compare/v0.21.0...v0.22.0) (2026-07-18)
 
 
