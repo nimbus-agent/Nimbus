@@ -76,7 +76,25 @@ Four layers disagree about the same object, and nothing catches it:
 | `@nimbus-dev/sdk` `NimbusItem` | **camelCase**, `itemType: "file" \| "folder" \| "email" \| "event" \| "photo" \| "task"` — 6 values |
 | `docs/schema-reference.md` | **19** emitted types, including `pr`, `issue`, `pipeline_run`, `deployment`, `alert`, `incident`, `infra_resource`, `dashboard`, `log_alarm` — and `task` is explicitly *not* emitted |
 
-Consequence, shipped and live: the VS Code Index view reads `rec["itemType"]` and
+Two live consequences.
+
+**In the gateway.** Because the SDK union is too narrow, `index/local-index.ts:94`
+coerces anything outside it to `"file"`:
+
+```ts
+function itemTypeFromRowType(raw: string): NimbusItem["itemType"] {
+  if (raw === "file" || raw === "folder" || raw === "email" ||
+      raw === "event" || raw === "photo" || raw === "task") return raw;
+  return "file";
+}
+```
+
+Every `deployment`, `alert`, `incident`, `pr`, `issue`, `pipeline_run`,
+`dashboard`, `infra_resource` and `log_alarm` read through `rowToItem` is
+**relabelled `"file"`** — mislabelled, not merely untyped. It accepts two values
+the gateway never emits and corrupts thirteen it does.
+
+**In the client.** The VS Code Index view reads `rec["itemType"]` and
 `rec["modifiedAt"]` and gets `undefined` every time. It has **never** displayed an
 item type or sorted by time. It looks correct only because `id`, `name`,
 `service` and `url` are single words that collide across both casings.
@@ -151,13 +169,16 @@ types. Stage 0 uses the dependency that is already there.
 **Goal:** one source of truth for the ecosystem's core data contract, enforced by
 a test that fails when the layers drift.
 
+> **Implementation plan:** [`superpowers/plans/2026-07-19-stage-0-seal-the-narrow-waist.md`](./superpowers/plans/2026-07-19-stage-0-seal-the-narrow-waist.md)
+> — five tasks across four repos, with the two npm release hops sequenced.
+
 **Why first:** it fixes a live user-visible bug, it is days rather than weeks, and
 it installs the safety net *before* Stage 1 starts writing against ~200 RPCs.
 
 | # | Change | Repo | Gate |
 | --- | --- | --- | --- |
-| 0.1 | `ItemType` becomes a real exported union in the SDK: drop `folder` and `task` (never emitted), add the 19 emitted types. `NimbusItem` becomes the canonical item shape. | `nimbus-sdk` | typecheck + unit |
-| 0.2 | Gateway imports the SDK's `ItemType`; connector mappers' bare string literals become typed. A connector emitting an undeclared type fails to compile. | `Nimbus` | typecheck + existing invariant suite |
+| 0.1 | `ItemType` becomes the canonical contract in the SDK, as an **open** enum: `KnownItemType` lists the 19 emitted types, and `ItemType = KnownItemType \| (string & {})` accepts what a newer gateway emits. Ships as a non-breaking `1.4.0`. | `nimbus-sdk` | typecheck + unit |
+| 0.2 | Gateway deletes `itemTypeFromRowType` and passes the raw column through. **No code path may rewrite one item type into another.** | `Nimbus` | round-trip test per ops type + existing invariant suite |
 | 0.3 | `queryItems` returns validated `NimbusItem[]`, not `Record<string, unknown>[]` — normalising snake_case→camelCase in the validator, so the last unvalidated method joins the other 14. | `nimbus-client` | validator unit tests |
 | 0.4 | **Conformance test**: assert the client's types against a real gateway (or a checked-in golden fixture DB) in CI. | `nimbus-client` | **the new gate** |
 | 0.5 | Consume the fixed client; delete the local `ITEM_TYPES` mirror. | `nimbus-vscode` | Index view shows types and sorts by time — the shipped bug, fixed |
