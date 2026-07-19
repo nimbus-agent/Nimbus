@@ -250,14 +250,15 @@ controls how far ahead of expiry a certificate is flagged. It checks:
   token (`Mint release-bot token (health probe)` step, `continue-on-error:
   true`) scoped to **all four** installed repos (`Nimbus`, `homebrew-tap`,
   `scoop-bucket`, `linux-repo`) with `Contents: Read and write` +
-  `Pull requests: Read and write` — the same permissions the real release
-  jobs request. Its outcome is passed to the script as `APP_MINT_STATUS`,
+  `Pull requests: Read and write` — a superset of what the individual
+  release jobs request, so a downgrade of either permission on any repo is
+  caught. Its outcome is passed to the script as `APP_MINT_STATUS`,
   which classifies anything other than a clean mint (`failure`, `skipped`, or
   unset) as `dead` so a missing secret, an uninstalled App, or a downgraded
   permission all alert. This deliberately reuses `actions/create-github-app-token`
   rather than reimplementing RS256 JWT signing in the script, and it
   dogfoods the exact mint path the release pipeline depends on.
-- **Two remaining PATs**: `WINGET_PAT`, `NIMBUS_CHECKS_TOKEN` (falls back to
+- **Three remaining PATs**: `WINGET_PAT`, `NIMBUS_CHECKS_TOKEN` (falls back to
   `github.token` when unset), and `SCORECARD_TOKEN` (unset — the Scorecard
   job falls back to `github.token`) — each probed live against the GitHub API
   for basic validity/permissions.
