@@ -436,20 +436,26 @@ test("404 then 200 succeeds without exhausting the schedule", async () => {
 });
 
 test("5xx exhausts retries and reports error, not absent", async () => {
+  let calls = 0;
   const r = await fetchAttestations("@x/y", "1.0.0", {
-    fetchFn: async () => new Response("", { status: 503 }),
+    fetchFn: async () => { calls += 1; return new Response("", { status: 503 }); },
     sleep: noSleep,
   });
   assert.equal(r.outcome, "error");
   assert.match(r.detail, /503/);
+  // Assert the RETRY, not just the outcome: a branch that returned immediately
+  // would still satisfy the outcome check while breaking the module's purpose.
+  assert.equal(calls, BACKOFF_MS.length + 1, "5xx is retryable; must exhaust the schedule");
 });
 
 test("network throw is error, never absent", async () => {
+  let calls = 0;
   const r = await fetchAttestations("@x/y", "1.0.0", {
-    fetchFn: async () => { throw new Error("ECONNRESET"); },
+    fetchFn: async () => { calls += 1; throw new Error("ECONNRESET"); },
     sleep: noSleep,
   });
   assert.equal(r.outcome, "error");
+  assert.equal(calls, BACKOFF_MS.length + 1, "network errors are transient; must exhaust the schedule");
 });
 
 test("invalid JSON body retries, then reports error — never a false absent", async () => {
