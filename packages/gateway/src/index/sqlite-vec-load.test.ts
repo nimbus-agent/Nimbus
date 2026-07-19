@@ -170,16 +170,15 @@ describe("tryLoadSqliteVec — upstream-first chain", () => {
 });
 
 describe("isVecLoaded", () => {
-  test("returns true when vec_version() is queryable (extension already loaded)", () => {
-    if (!upstreamSqliteVecLoadable) {
-      // Can't run this without the extension
-      return;
-    }
-    const db = new Database(":memory:");
-    loadSqliteVec(db);
-    expect(isVecLoaded(db)).toBe(true);
-    db.close();
-  });
+  test.skipIf(!upstreamSqliteVecLoadable)(
+    "returns true when vec_version() is queryable (extension already loaded)",
+    () => {
+      const db = new Database(":memory:");
+      loadSqliteVec(db);
+      expect(isVecLoaded(db)).toBe(true);
+      db.close();
+    },
+  );
 
   test("returns false when vec_version() is not available (extension not loaded)", () => {
     const db = new Database(":memory:");
@@ -238,16 +237,16 @@ describe("ensureSqliteVecForConnection", () => {
     db.close();
   });
 
-  test("returns true when indexedUserVersion >= 6 and vec_version() is already available", () => {
-    if (!upstreamSqliteVecLoadable) {
-      return;
-    }
-    const db = new Database(":memory:");
-    // Pre-load the extension so vec_version() succeeds
-    loadSqliteVec(db);
-    expect(ensureSqliteVecForConnection(db, 6)).toBe(true);
-    db.close();
-  });
+  test.skipIf(!upstreamSqliteVecLoadable)(
+    "returns true when indexedUserVersion >= 6 and vec_version() is already available",
+    () => {
+      const db = new Database(":memory:");
+      // Pre-load the extension so vec_version() succeeds
+      loadSqliteVec(db);
+      expect(ensureSqliteVecForConnection(db, 6)).toBe(true);
+      db.close();
+    },
+  );
 
   test("falls back to tryLoadSqliteVec when indexedUserVersion >= 6 and vec_version() is unavailable", () => {
     // Fresh db without extension — vec_version() will throw → falls to tryLoadSqliteVec

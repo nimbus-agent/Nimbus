@@ -1,0 +1,56 @@
+---
+title: Web clipper privacy
+description: The Nimbus web clipper collects no data. It is local-first and talks only to your own gateway on 127.0.0.1 — no telemetry, no cloud.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Privacy policy for the [Nimbus web clipper](/user-guide/web-clipper/) browser
+extension (Chrome + Firefox).
+
+_Last updated: 2026-07-19_
+
+<Aside type="tip" title="The short version">
+The extension collects, transmits, sells, and shares **no** personal data, and
+contains **no** analytics or telemetry. Everything it stores stays on your
+device.
+</Aside>
+
+---
+
+## What the extension does
+
+When you clip a page or open the related-items panel, the extension sends the
+page content (or your selection) to a Nimbus Gateway running on your own machine
+at `127.0.0.1` (loopback). That is the **only** network destination the extension
+ever contacts — it declares host access to `http://127.0.0.1` and
+`http://localhost` only, and cannot reach any remote server.
+
+---
+
+## What is stored, and where
+
+- **Pairing token and gateway origin.** After you pair with your local gateway,
+  the extension stores a bearer token and the gateway's loopback origin in the
+  browser's local extension storage (`chrome.storage.local`) on your device. The
+  token is used only as the `Authorization` header on requests to your local
+  gateway. It is never logged, never placed in a web page, and never sent
+  anywhere else. Revoke it at any time on the gateway with `nimbus clip revoke`.
+- **Offline clip queue.** Clips made while the gateway is unreachable are stored
+  locally and retried automatically. The bearer token is not stored in the queue.
+
+All of this data stays on your device. Uninstalling the extension removes it.
+
+---
+
+## No third parties, no tracking
+
+The extension makes no cloud calls, includes no third-party analytics or
+advertising code, and does not track you across sites.
+
+---
+
+## Contact
+
+Questions or reports: the
+[nimbus-web-clipper issue tracker](https://github.com/nimbus-agent/nimbus-web-clipper/issues).

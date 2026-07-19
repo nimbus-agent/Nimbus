@@ -6,6 +6,11 @@ import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import { deleteItemByPrimaryKey } from "../index/item-store.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import {
+  dispatchByMethod,
+  type RpcMethodHandlerMap,
+  type RpcMissOrHit,
+} from "./_lib/dispatch-by-method.ts";
 
 export interface ClipRpcDeps {
   readonly pairing: PairingWindowController;
@@ -30,8 +35,6 @@ export interface ClipListEntry {
   readonly mode: string;
   readonly wordCount: number;
 }
-
-type Outcome = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 function asRecord(p: unknown): Record<string, unknown> {
   return p !== null && typeof p === "object" ? (p as Record<string, unknown>) : {};
@@ -121,62 +124,70 @@ function resolveClipIdsToDelete(db: Database, rec: Record<string, unknown>): str
     : clipIdsByCanonicalUrl(db, canonicalizeUrl(target));
 }
 
-export async function dispatchClipRpc(
+function handleClipPair(params: unknown, deps: ClipRpcDeps): unknown {
+  const rec = asRecord(params);
+  // Random suffix, NOT a memory-only counter: a counter resets to 0 on gateway restart and a
+  // fresh "device-1" would overwrite an existing "device-1" token in the Vault map.
+  const label =
+    typeof rec["label"] === "string" && rec["label"].length > 0
+      ? (rec["label"] as string)
+      : `device-${randomBytes(3).toString("hex")}`;
+  const { code, expiresAtMs } = deps.pairing.open(label);
+  return {
+    code,
+    expiresAtMs,
+    label,
+    ...(deps.httpBaseUrl === undefined ? {} : { gatewayUrl: deps.httpBaseUrl }),
+  };
+}
+
+async function handleClipStatus(_params: unknown, deps: ClipRpcDeps): Promise<unknown> {
+  const devices = await listClipFingerprints(deps.vault);
+  return { devices };
+}
+
+async function handleClipRevoke(params: unknown, deps: ClipRpcDeps): Promise<unknown> {
+  const rec = asRecord(params);
+  const label = typeof rec["label"] === "string" ? (rec["label"] as string) : "";
+  if (label === "") return { revoked: 0 };
+  const revoked = await revokeClipToken(deps.vault, label);
+  return { revoked };
+}
+
+function handleClipList(params: unknown, deps: ClipRpcDeps): unknown {
+  if (deps.db === undefined) return { clips: [] };
+  const rec = asRecord(params);
+  const limit = clampLimit(rec["limit"]);
+  const tag =
+    typeof rec["tag"] === "string" && rec["tag"].length > 0 ? (rec["tag"] as string) : undefined;
+  return { clips: listClips(deps.db, limit, tag) };
+}
+
+function handleClipDelete(params: unknown, deps: ClipRpcDeps): unknown {
+  // Do NOT fail-soft to a false success here: a delete that can't reach the index must not
+  // report "Deleted 0" (which reads as "nothing matched"). Surface it (spec Error handling).
+  if (deps.db === undefined) throw new Error("Clip index unavailable.");
+  const rec = asRecord(params);
+  const ids = resolveClipIdsToDelete(deps.db, rec);
+  if (rec["dryRun"] === true) {
+    return { deleted: 0, matched: ids.length };
+  }
+  for (const id of ids) deleteItemByPrimaryKey(deps.db, id);
+  return { deleted: ids.length, matched: ids.length };
+}
+
+const CLIP_RPC_HANDLERS: RpcMethodHandlerMap<ClipRpcDeps> = {
+  "clip.pair": handleClipPair,
+  "clip.status": handleClipStatus,
+  "clip.revoke": handleClipRevoke,
+  "clip.list": handleClipList,
+  "clip.delete": handleClipDelete,
+};
+
+export function dispatchClipRpc(
   method: string,
   params: unknown,
   deps: ClipRpcDeps,
-): Promise<Outcome> {
-  const rec = asRecord(params);
-  switch (method) {
-    case "clip.pair": {
-      // Random suffix, NOT a memory-only counter: a counter resets to 0 on gateway restart and a
-      // fresh "device-1" would overwrite an existing "device-1" token in the Vault map.
-      const label =
-        typeof rec["label"] === "string" && rec["label"].length > 0
-          ? (rec["label"] as string)
-          : `device-${randomBytes(3).toString("hex")}`;
-      const { code, expiresAtMs } = deps.pairing.open(label);
-      return {
-        kind: "hit",
-        value: {
-          code,
-          expiresAtMs,
-          label,
-          ...(deps.httpBaseUrl === undefined ? {} : { gatewayUrl: deps.httpBaseUrl }),
-        },
-      };
-    }
-    case "clip.status": {
-      const devices = await listClipFingerprints(deps.vault);
-      return { kind: "hit", value: { devices } };
-    }
-    case "clip.revoke": {
-      const label = typeof rec["label"] === "string" ? (rec["label"] as string) : "";
-      if (label === "") return { kind: "hit", value: { revoked: 0 } };
-      const revoked = await revokeClipToken(deps.vault, label);
-      return { kind: "hit", value: { revoked } };
-    }
-    case "clip.list": {
-      if (deps.db === undefined) return { kind: "hit", value: { clips: [] } };
-      const limit = clampLimit(rec["limit"]);
-      const tag =
-        typeof rec["tag"] === "string" && rec["tag"].length > 0
-          ? (rec["tag"] as string)
-          : undefined;
-      return { kind: "hit", value: { clips: listClips(deps.db, limit, tag) } };
-    }
-    case "clip.delete": {
-      // Do NOT fail-soft to a false success here: a delete that can't reach the index must not
-      // report "Deleted 0" (which reads as "nothing matched"). Surface it (spec Error handling).
-      if (deps.db === undefined) throw new Error("Clip index unavailable.");
-      const ids = resolveClipIdsToDelete(deps.db, rec);
-      if (rec["dryRun"] === true) {
-        return { kind: "hit", value: { deleted: 0, matched: ids.length } };
-      }
-      for (const id of ids) deleteItemByPrimaryKey(deps.db, id);
-      return { kind: "hit", value: { deleted: ids.length, matched: ids.length } };
-    }
-    default:
-      return { kind: "miss" };
-  }
+): Promise<RpcMissOrHit> {
+  return dispatchByMethod(method, params, deps, CLIP_RPC_HANDLERS);
 }

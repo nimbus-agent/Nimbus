@@ -24,7 +24,7 @@ All 18 must be ✓. If `bun.lock` was touched (or any dep change), also: `bun in
 From `git status`, run `bun test` on the test files for the changed source (and their direct consumers). e.g. policy change → `bun test packages/gateway/src/policy …`. Confirm 0 fails + **clean exit** (a hanging run = a leaked `setInterval` from a sidecar test — `.unref()` on an awaited timer spins 100% CPU forever on Windows; flag it). For gateway changes also run `cd packages/gateway && bun run typecheck` (bun test ≠ tsc — a passing test can still have a type error CI rejects). For CLI changes, `cd packages/cli && bun run typecheck`.
 
 ## Step 3 — conditional deeper checks
-- **New source files OR coverage-sensitive change** under packages/{gateway,cli,sdk} → the coverage ratchet will gate it. Recommend (or invoke) the `nimbus-coverage-floor` agent for the Docker-Linux verify; do NOT rely on local scoped coverage.
+- **New source files OR coverage-sensitive change** under packages/{gateway,cli,mcp-connectors} → the coverage ratchet will gate it. Recommend (or invoke) the `nimbus-coverage-floor` agent for the Docker-Linux verify; do NOT rely on local scoped coverage.
 - **Security invariant / HITL / Vault / allowlist touched** → `bun run scripts/structure-audit/check-nimbus-invariants.ts` (the static D-checks) + `bun test packages/gateway/src/security-invariants.test.ts`. Confirm the triple rule (wiring + docs + test in the same commit).
 - **Connector added/changed** → `bun run audit:package-readmes` (public-tier README sections; not in test:ci) + the connector contract tests.
 - **Migration added** → confirm `CURRENT_SCHEMA_VERSION` bumped, `INDEXED_SCHEMA_STEPS` + `BACKFILL_LABELS` gapless + index-aligned, and a migration-existence test exists.

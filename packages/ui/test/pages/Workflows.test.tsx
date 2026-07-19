@@ -76,7 +76,7 @@ describe("Workflows page — list", () => {
       .mockResolvedValueOnce({ workflows: [WORKFLOW_1] })
       .mockResolvedValue({ workflows: [WORKFLOW_1] });
     renderPage();
-    await waitFor(() => expect(screen.getByText("Deploy")).toBeInTheDocument());
+    expect(await screen.findByText("Deploy")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /run workflow Deploy/i }));
     expect(workflowRunMock).toHaveBeenCalledWith({ name: "Deploy", dryRun: false });
   });
@@ -88,7 +88,7 @@ describe("Workflows page — list", () => {
       .mockResolvedValueOnce({ workflows: [WORKFLOW_1] })
       .mockResolvedValue({ workflows: [WORKFLOW_1] });
     renderPage();
-    await waitFor(() => expect(screen.getByText("Deploy")).toBeInTheDocument());
+    expect(await screen.findByText("Deploy")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("Dry run"));
     await userEvent.click(screen.getByRole("button", { name: /run workflow Deploy/i }));
     expect(workflowRunMock).toHaveBeenCalledWith({ name: "Deploy", dryRun: true });
@@ -102,7 +102,7 @@ describe("Workflows page — list", () => {
       .mockResolvedValue({ workflows: [] });
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPage();
-    await waitFor(() => expect(screen.getByText("Deploy")).toBeInTheDocument());
+    expect(await screen.findByText("Deploy")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /delete workflow Deploy/i }));
     expect(workflowDeleteMock).toHaveBeenCalledWith("Deploy");
   });
@@ -110,7 +110,7 @@ describe("Workflows page — list", () => {
   it("shows error state when workflow.list fails", async () => {
     callMock.mockRejectedValue(new Error("connection refused"));
     renderPage();
-    await waitFor(() => expect(screen.getByText(/connection refused/)).toBeInTheDocument());
+    expect(await screen.findByText(/connection refused/)).toBeInTheDocument();
   });
 
   it("'New workflow' button is disabled when offline", () => {
@@ -189,7 +189,7 @@ describe("Workflows page — step-list editor", () => {
   it("edit dialog pre-populates steps from the existing workflow", async () => {
     stubWorkflowList([WORKFLOW_1]);
     renderPage();
-    await waitFor(() => expect(screen.getByText("Deploy")).toBeInTheDocument());
+    expect(await screen.findByText("Deploy")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /edit workflow Deploy/i }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();

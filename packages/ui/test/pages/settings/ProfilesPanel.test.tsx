@@ -60,12 +60,12 @@ describe("ProfilesPanel", () => {
       });
     profileCreateMock.mockResolvedValueOnce({ name: "scratch" });
     renderPanel();
-    await waitFor(() => screen.getByText("default"));
+    await screen.findByText("default");
     await userEvent.click(screen.getByRole("button", { name: /create…/i }));
     await userEvent.type(screen.getByLabelText(/profile name/i), "scratch");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
     await waitFor(() => expect(profileCreateMock).toHaveBeenCalledWith("scratch"));
-    await waitFor(() => expect(screen.getByText("scratch")).toBeInTheDocument());
+    expect(await screen.findByText("scratch")).toBeInTheDocument();
   });
 
   it("switch flow calls profileSwitch with the chosen name", async () => {
@@ -75,7 +75,7 @@ describe("ProfilesPanel", () => {
     });
     profileSwitchMock.mockResolvedValueOnce({ active: "work" });
     renderPanel();
-    await waitFor(() => screen.getByText("work"));
+    await screen.findByText("work");
     const switchBtn = screen.getByRole("button", { name: "Switch to work" });
     await userEvent.click(switchBtn);
     await waitFor(() => expect(profileSwitchMock).toHaveBeenCalledWith("work"));
@@ -88,7 +88,7 @@ describe("ProfilesPanel", () => {
     });
     profileDeleteMock.mockResolvedValueOnce({ deleted: "scratch" });
     renderPanel();
-    await waitFor(() => screen.getByText("scratch"));
+    await screen.findByText("scratch");
     await userEvent.click(screen.getByRole("button", { name: "Delete scratch" }));
     const delConfirm = await screen.findByRole("button", { name: "Delete" });
     expect(delConfirm).toBeDisabled();
@@ -104,7 +104,7 @@ describe("ProfilesPanel", () => {
       active: "default",
     });
     renderPanel();
-    await waitFor(() => screen.getByText("default"));
+    await screen.findByText("default");
     useNimbusStore.setState({ connectionState: "disconnected" });
     await waitFor(() => expect(screen.getByRole("button", { name: /create…/i })).toBeDisabled());
   });

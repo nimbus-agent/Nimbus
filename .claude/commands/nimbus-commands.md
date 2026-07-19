@@ -71,7 +71,6 @@ bun run test:coverage:telemetry       # ≥85% (telemetry collector — payload 
 bun run test:coverage:doctor          # ≥80% (nimbus doctor)
 bun run test:coverage:tui             # ≥80% (packages/cli/src/tui)
 bun run test:coverage:mcp             # ≥70% (mcp-connectors)
-bun run test:coverage:sdk             # ≥80% (@nimbus-dev/sdk)
 
 # Phase 4 WS4 — release infrastructure
 bun run test:coverage:updater         # ≥80% (updater state machine + manifest fetcher)

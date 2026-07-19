@@ -97,7 +97,7 @@ describe("AuditPanel", () => {
   it("renders summary and one row per fetched entry", async () => {
     renderAt("/settings/audit");
     await waitFor(() => expect(screen.getAllByTestId("audit-row").length).toBeGreaterThan(0));
-    await waitFor(() => expect(screen.getByText(/Total rows: 3/)).toBeTruthy());
+    expect(await screen.findByText(/Total rows: 3/)).toBeTruthy();
     expect(screen.getByText("3 of 3 rows")).toBeTruthy();
   });
 
@@ -266,7 +266,7 @@ describe("AuditPanel runId deep-link", () => {
 
   test("shows a pruning-semantics banner when runId matches no entries", async () => {
     renderAt("/settings/audit?runId=run-missing");
-    await waitFor(() => expect(screen.getByTestId("audit-runid-banner")).toBeInTheDocument());
+    expect(await screen.findByTestId("audit-runid-banner")).toBeInTheDocument();
     expect(screen.getByTestId("audit-runid-banner").textContent).toMatch(
       /no audit entries found for run run-missing/i,
     );

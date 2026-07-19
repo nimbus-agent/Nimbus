@@ -52,7 +52,7 @@ afterEach(() => {
 describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", () => {
   it("renders current version once status loads", async () => {
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByText("0.1.0")).toBeTruthy());
+    expect(await screen.findByText("0.1.0")).toBeTruthy();
   });
 
   it("Check now success with no update keeps state idle", async () => {
@@ -62,7 +62,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
       updateAvailable: false,
     });
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Check now" })).toBeTruthy());
+    expect(await screen.findByRole("button", { name: "Check now" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Check now" }));
     await waitFor(() => expect(useNimbusStore.getState().updaterUiState).toBe("idle"));
     expect(useNimbusStore.getState().updaterCheck?.updateAvailable).toBe(false);
@@ -89,7 +89,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     });
     updaterApplyUpdateMock.mockResolvedValueOnce({ jobId: "x" });
     render(<UpdatesPanel />);
-    await waitFor(() => screen.getByRole("button", { name: /Apply 0.2.0/ }));
+    await screen.findByRole("button", { name: /Apply 0.2.0/ });
     fireEvent.click(screen.getByRole("button", { name: /Apply 0.2.0/ }));
     await waitFor(() => expect(useNimbusStore.getState().updaterUiState).toBe("applying"));
     expect(updaterApplyUpdateMock).toHaveBeenCalledTimes(1);
@@ -104,7 +104,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     });
     updaterRollbackMock.mockResolvedValueOnce({ ok: true });
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByText(/previous install failed/)).toBeTruthy());
+    expect(await screen.findByText(/previous install failed/)).toBeTruthy();
     const rollback = screen.getByRole("button", { name: "Rollback" });
     fireEvent.click(rollback);
     await waitFor(() => expect(updaterRollbackMock).toHaveBeenCalledTimes(1));
@@ -113,7 +113,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
   it("Disconnected state disables Check now", async () => {
     useNimbusStore.setState({ connectionState: "disconnected" });
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByText("0.1.0")).toBeTruthy());
+    expect(await screen.findByText("0.1.0")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Check now" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -122,9 +122,9 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
   it("Check now error shows fetch error and resets state to idle", async () => {
     updaterCheckNowMock.mockRejectedValueOnce(new Error("network timeout"));
     render(<UpdatesPanel />);
-    await waitFor(() => screen.getByRole("button", { name: "Check now" }));
+    await screen.findByRole("button", { name: "Check now" });
     fireEvent.click(screen.getByRole("button", { name: "Check now" }));
-    await waitFor(() => expect(screen.getByText(/network timeout/)).toBeTruthy());
+    expect(await screen.findByText(/network timeout/)).toBeTruthy();
     expect(useNimbusStore.getState().updaterUiState).toBe("idle");
   });
 
@@ -135,7 +135,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     });
     updaterApplyUpdateMock.mockRejectedValueOnce(new Error("installer failed"));
     render(<UpdatesPanel />);
-    await waitFor(() => screen.getByRole("button", { name: /Apply 0.2.0/ }));
+    await screen.findByRole("button", { name: /Apply 0.2.0/ });
     fireEvent.click(screen.getByRole("button", { name: /Apply 0.2.0/ }));
     await waitFor(() => expect(useNimbusStore.getState().updaterUiState).toBe("failed"));
     expect(screen.getByText(/installer failed/)).toBeTruthy();
@@ -150,7 +150,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     });
     updaterRollbackMock.mockRejectedValueOnce(new Error("rollback rpc failed"));
     render(<UpdatesPanel />);
-    await waitFor(() => screen.getByRole("button", { name: "Rollback" }));
+    await screen.findByRole("button", { name: "Rollback" });
     fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
     await waitFor(() => expect(useNimbusStore.getState().updaterUiState).toBe("failed"));
     expect(screen.getByText(/rollback rpc failed/)).toBeTruthy();
@@ -162,7 +162,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
       updaterFailure: { reason: "signature_invalid" },
     });
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByText(/signature invalid/i)).toBeTruthy());
+    expect(await screen.findByText(/signature invalid/i)).toBeTruthy();
   });
 
   it("shows hash_mismatch failure message when uiState is failed", async () => {
@@ -171,7 +171,7 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
       updaterFailure: { reason: "hash_mismatch" },
     });
     render(<UpdatesPanel />);
-    await waitFor(() => expect(screen.getByText(/hash mismatch/i)).toBeTruthy());
+    expect(await screen.findByText(/hash mismatch/i)).toBeTruthy();
   });
 
   it("shows generic rolled-back message for unknown failure reason", async () => {
@@ -180,8 +180,6 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
       updaterFailure: { reason: "unknown_reason" },
     });
     render(<UpdatesPanel />);
-    await waitFor(() =>
-      expect(screen.getByText(/Update rolled back: unknown_reason/)).toBeTruthy(),
-    );
+    expect(await screen.findByText(/Update rolled back: unknown_reason/)).toBeTruthy();
   });
 });

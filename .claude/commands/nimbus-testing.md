@@ -74,7 +74,7 @@ Coverage is checked in CI on push to `main`. PRs that drop a gate fail the `pr-q
 - **Unit tests have zero I/O.** No file system, no sockets, no real Vault calls.
 - **E2E CLI tests use mock MCP servers.** Never call real cloud APIs in automated tests.
 - **UI tests mock the Tauri `invoke` bridge.** Never open a real Gateway socket.
-- **Vault in tests:** use the `MockVault` from `@nimbus-dev/sdk` — never the real DPAPI/Keychain/libsecret in unit or integration tests.
+- **Vault in tests:** use the gateway-internal `MockVault` (`packages/gateway/src/vault/mock.ts`) — never the real DPAPI/Keychain/libsecret in unit or integration tests.
 
 ---
 

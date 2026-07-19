@@ -86,9 +86,13 @@ Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invarian
 
 **Anti-pattern:** constructing a `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)`. Caught by both the runtime I15 test in `security-invariants.test.ts` and the static `D10` rule in `check-nimbus-invariants.ts`.
 
-## I29 — Egress Ledger Chokepoint (latest)
+## I29 — Egress Ledger Chokepoint
 
-The most recently added structural defense (`I28` is reserved for the in-flight MCP-server owner-sink branch). Same static+runtime shape as `I15`: every gated action appends exactly one `egress_ledger` row from `engine/executor.ts` `ToolExecutor.gate()` **before** `connectors.dispatch` (a denied gate writes a `result_status='blocked'` row; an append failure aborts the dispatch, fail-closed) — a textbook triple (production wiring + a `SECURITY-INVARIANTS.md` row + the `I29` block in `security-invariants.test.ts`). Static `D22` in `check-nimbus-invariants.ts` confines every `connectors.dispatch` to `executor.ts` and `appendEgressEntry` to `egress/*`, so a bypass fails before the suite runs. Deep dive: the `nimbus-egress` skill.
+A recent static+runtime defense (`I28` is reserved for the in-flight MCP-server owner-sink branch). Same shape as `I15`: every gated action appends exactly one `egress_ledger` row from `engine/executor.ts` `ToolExecutor.gate()` **before** `connectors.dispatch` (a denied gate writes a `result_status='blocked'` row; an append failure aborts the dispatch, fail-closed) — a textbook triple (production wiring + a `SECURITY-INVARIANTS.md` row + the `I29` block in `security-invariants.test.ts`). Static `D22` in `check-nimbus-invariants.ts` confines every `connectors.dispatch` to `executor.ts` and `appendEgressEntry` to `egress/*`, so a bypass fails before the suite runs. Deep dive: the `nimbus-egress` skill.
+
+## I30 — Web-Clipper Token Minting (latest)
+
+The current highest invariant. A web-clipper bearer token is minted **only** behind a live, owner-opened, single-use pairing window (`clips/pairing-window.ts`, opened via `nimbus clip pair`): with no window, `POST /v1/clips/pair/confirm` returns HTTP 403 (fail-closed, no mint); the window is in-memory only (a restart drops it) and minted tokens are Vault-stored + revocable. A runtime triple — production wiring (`clips/pairing-window.ts` + `ipc/http-write-routes.ts` + `clips/clip-token-store.ts`) + the `SECURITY-INVARIANTS.md` I30 row + the no-mint-witness `I30` block in `security-invariants.test.ts`. Unlike `I29`, I30 has **no** static `D`-rule (runtime enforcement only). Deep dive: `docs/SECURITY-INVARIANTS.md` I30 + the web-clip HTTP surface in the `nimbus-http-write-surface` skill.
 
 ## When to Create a New Invariant Entry
 

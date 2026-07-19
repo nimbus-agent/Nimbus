@@ -100,7 +100,7 @@ describe("QuickQuery", () => {
       method: "engine.streamDone",
       params: { streamId: "s3", meta: { isLocal: true, modelUsed: "gemma2" } },
     });
-    await waitFor(() => expect(screen.getByText(/local · gemma2/)).toBeTruthy());
+    expect(await screen.findByText(/local · gemma2/)).toBeTruthy();
   });
 
   it("shows remote model label from meta when not local", async () => {
@@ -113,6 +113,6 @@ describe("QuickQuery", () => {
       method: "engine.streamDone",
       params: { streamId: "s4", meta: { isLocal: false, modelUsed: "gpt-4o" } },
     });
-    await waitFor(() => expect(screen.getByText(/gpt-4o/)).toBeTruthy());
+    expect(await screen.findByText(/gpt-4o/)).toBeTruthy();
   });
 });

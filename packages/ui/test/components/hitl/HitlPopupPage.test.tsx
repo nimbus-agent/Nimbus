@@ -96,7 +96,7 @@ describe("HitlPopupPage", () => {
     consentRespond.mockRejectedValueOnce(new Error("socket closed"));
     render(<HitlPopupPage />);
     fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
-    await waitFor(() => expect(screen.getByText(/socket closed/)).toBeInTheDocument());
+    expect(await screen.findByText(/socket closed/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
   });
 });

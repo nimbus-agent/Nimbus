@@ -127,96 +127,102 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
     }
   });
 
-  test("starts a net.createServer at the listen path; winSockets starts empty", async () => {
-    if (platform() === "win32") return;
-    const state = makeStubState();
-    const stubSession = makeStubSession(state, () => {});
-    const attach = (_write: SessionWrite): ClientSession => stubSession;
+  test.skipIf(platform() === "win32")(
+    "starts a net.createServer at the listen path; winSockets starts empty",
+    async () => {
+      const state = makeStubState();
+      const stubSession = makeStubSession(state, () => {});
+      const attach = (_write: SessionWrite): ClientSession => stubSession;
 
-    const handle = await startWin32NetServer(socketPath, attach);
-    try {
-      expect(handle.netServer).toBeDefined();
-      expect(handle.netServer.listening).toBe(true);
-      expect(handle.winSockets.size).toBe(0);
-    } finally {
-      await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
-    }
-  });
-
-  test("client connect/write/end/close drives push/endInput/dispose and winSockets cleanup", async () => {
-    if (platform() === "win32") return;
-    const state = makeStubState();
-    let capturedWrite: SessionWrite | null = null;
-    const attach = (write: SessionWrite): ClientSession => {
-      capturedWrite = write;
-      return makeStubSession(state, write);
-    };
-
-    const handle = await startWin32NetServer(socketPath, attach);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const client = net.connect(socketPath, () => {
-          client.write(Buffer.from([0x41, 0x42, 0x43]));
-          client.end();
-        });
-        client.on("close", () => resolve());
-        client.on("error", reject);
-      });
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
-      expect(capturedWrite).not.toBeNull();
-
-      expect(state.pushed.length).toBeGreaterThanOrEqual(1);
-      const total = state.pushed.reduce((acc, u) => acc + u.byteLength, 0);
-      expect(total).toBe(3);
-      expect(state.pushed[0]?.[0]).toBe(0x41);
-
-      expect(state.endedInput).toBe(true);
-      expect(state.disposed).toBe(true);
-
-      expect(handle.winSockets.size).toBe(0);
-    } finally {
-      await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
-    }
-  });
-
-  test("socket 'error' handler removes the socket from winSockets and disposes the session", async () => {
-    if (platform() === "win32") return;
-    const state = makeStubState();
-    const stubSession = makeStubSession(state, () => {});
-    const attach = (_write: SessionWrite): ClientSession => stubSession;
-
-    const handle = await startWin32NetServer(socketPath, attach);
-    try {
-      const client = net.connect(socketPath);
-      await new Promise<void>((resolve, reject) => {
-        client.on("connect", () => resolve());
-        client.on("error", reject);
-      });
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(handle.winSockets.size).toBe(1);
-
-      const serverSock = Array.from(handle.winSockets)[0];
-      expect(serverSock).toBeDefined();
-      serverSock?.destroy(new Error("forced-error-for-coverage"));
-
-      client.on("error", () => {});
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
-      expect(handle.winSockets.size).toBe(0);
-      expect(state.disposed).toBe(true);
-
+      const handle = await startWin32NetServer(socketPath, attach);
       try {
-        client.destroy();
-      } catch {
-        /* best-effort */
+        expect(handle.netServer).toBeDefined();
+        expect(handle.netServer.listening).toBe(true);
+        expect(handle.winSockets.size).toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
       }
-    } finally {
-      await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
-    }
-  });
+    },
+  );
+
+  test.skipIf(platform() === "win32")(
+    "client connect/write/end/close drives push/endInput/dispose and winSockets cleanup",
+    async () => {
+      const state = makeStubState();
+      let capturedWrite: SessionWrite | null = null;
+      const attach = (write: SessionWrite): ClientSession => {
+        capturedWrite = write;
+        return makeStubSession(state, write);
+      };
+
+      const handle = await startWin32NetServer(socketPath, attach);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const client = net.connect(socketPath, () => {
+            client.write(Buffer.from([0x41, 0x42, 0x43]));
+            client.end();
+          });
+          client.on("close", () => resolve());
+          client.on("error", reject);
+        });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+        expect(capturedWrite).not.toBeNull();
+
+        expect(state.pushed.length).toBeGreaterThanOrEqual(1);
+        const total = state.pushed.reduce((acc, u) => acc + u.byteLength, 0);
+        expect(total).toBe(3);
+        expect(state.pushed[0]?.[0]).toBe(0x41);
+
+        expect(state.endedInput).toBe(true);
+        expect(state.disposed).toBe(true);
+
+        expect(handle.winSockets.size).toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+      }
+    },
+  );
+
+  test.skipIf(platform() === "win32")(
+    "socket 'error' handler removes the socket from winSockets and disposes the session",
+    async () => {
+      const state = makeStubState();
+      const stubSession = makeStubSession(state, () => {});
+      const attach = (_write: SessionWrite): ClientSession => stubSession;
+
+      const handle = await startWin32NetServer(socketPath, attach);
+      try {
+        const client = net.connect(socketPath);
+        await new Promise<void>((resolve, reject) => {
+          client.on("connect", () => resolve());
+          client.on("error", reject);
+        });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        expect(handle.winSockets.size).toBe(1);
+
+        const serverSock = Array.from(handle.winSockets)[0];
+        expect(serverSock).toBeDefined();
+        serverSock?.destroy(new Error("forced-error-for-coverage"));
+
+        client.on("error", () => {});
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+        expect(handle.winSockets.size).toBe(0);
+        expect(state.disposed).toBe(true);
+
+        try {
+          client.destroy();
+        } catch {
+          /* best-effort */
+        }
+      } finally {
+        await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+      }
+    },
+  );
 });
 
 describe("startBunUnixListener (POSIX-only)", () => {
@@ -238,39 +244,41 @@ describe("startBunUnixListener (POSIX-only)", () => {
     }
   });
 
-  test("accepts a connection and routes bytes through session.push, then close fires endInput + dispose", async () => {
-    if (platform() === "win32") return;
-    const state = makeStubState();
-    let capturedWrite: SessionWrite | null = null;
-    const attach = (write: SessionWrite): ClientSession => {
-      capturedWrite = write;
-      return makeStubSession(state, write);
-    };
+  test.skipIf(platform() === "win32")(
+    "accepts a connection and routes bytes through session.push, then close fires endInput + dispose",
+    async () => {
+      const state = makeStubState();
+      let capturedWrite: SessionWrite | null = null;
+      const attach = (write: SessionWrite): ClientSession => {
+        capturedWrite = write;
+        return makeStubSession(state, write);
+      };
 
-    const listener = startBunUnixListener(socketPath, attach);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const client = net.connect(socketPath, () => {
-          client.write(Buffer.from([0x42]));
-          client.end();
-        });
-        client.on("close", () => resolve());
-        client.on("error", reject);
-      });
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-
-      expect(capturedWrite).not.toBeNull();
-      expect(state.pushed.length).toBeGreaterThan(0);
-      expect(state.pushed[0]?.[0]).toBe(0x42);
-      expect(state.endedInput).toBe(true);
-      expect(state.disposed).toBe(true);
-    } finally {
+      const listener = startBunUnixListener(socketPath, attach);
       try {
-        listener.stop();
-      } catch {
-        /* best-effort */
+        await new Promise<void>((resolve, reject) => {
+          const client = net.connect(socketPath, () => {
+            client.write(Buffer.from([0x42]));
+            client.end();
+          });
+          client.on("close", () => resolve());
+          client.on("error", reject);
+        });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+        expect(capturedWrite).not.toBeNull();
+        expect(state.pushed.length).toBeGreaterThan(0);
+        expect(state.pushed[0]?.[0]).toBe(0x42);
+        expect(state.endedInput).toBe(true);
+        expect(state.disposed).toBe(true);
+      } finally {
+        try {
+          listener.stop();
+        } catch {
+          /* best-effort */
+        }
       }
-    }
-  });
+    },
+  );
 });
