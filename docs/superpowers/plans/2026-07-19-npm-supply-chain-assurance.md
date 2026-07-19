@@ -198,15 +198,22 @@ test("truncated base64 payload decodes to null", () => {
   assert.equal(decodeStatements(broken), null);
 });
 
-test("detail never contains the raw statement blob", () => {
+test("detail is a short summary, never the raw statement blob", () => {
   const r = classifyProvenance(statementsOf(real), EXPECTED);
-  assert.ok(r.detail.length < 200, "detail should be a short summary");
+  // Assert the actual content, not merely that it is short: a length bound
+  // would pass on a truncated blob just as happily as on a real summary.
+  assert.equal(
+    r.detail,
+    ".github/workflows/release.yml @ https://github.com/nimbus-agent/nimbus-sdk",
+  );
+  assert.ok(!/[A-Za-z0-9+/]{80,}={0,2}/.test(r.detail), "no base64 payload in detail");
+  assert.ok(!r.detail.includes("dsseEnvelope"), "no envelope internals in detail");
 });
 ```
 
 - [ ] **Step 4: Run the test to verify it fails**
 
-Run: `node --test actions/verify-npm-provenance/test/`
+Run: `node --test "actions/verify-npm-provenance/test/*.test.js"`
 
 Expected: FAIL — `Cannot find module '../src/classify.js'`
 
@@ -297,7 +304,7 @@ export function classifyProvenance(statements, expected) {
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `node --test actions/verify-npm-provenance/test/`
+Run: `node --test "actions/verify-npm-provenance/test/*.test.js"`
 
 Expected: PASS — 12 tests, 0 failures
 
@@ -331,7 +338,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Run action tests
-        run: node --test actions/**/test/
+        # A bare directory arg worked on Node 20 but fails on Node 24
+        # (MODULE_NOT_FOUND); runners now default to 24. Use an explicit glob.
+        run: node --test "actions/**/test/*.test.js"
 ```
 
 - [ ] **Step 8: Commit**
@@ -547,7 +556,7 @@ export async function fetchAttestations(pkg, version, deps) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test actions/verify-npm-provenance/test/`
+Run: `node --test "actions/verify-npm-provenance/test/*.test.js"`
 
 Expected: PASS — 21 tests total across both files, 0 failures
 
@@ -694,7 +703,7 @@ if (process.env["NODE_ENV"] !== "test" && process.argv[1]?.endsWith("main.js")) 
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test actions/verify-npm-provenance/test/`
+Run: `node --test "actions/verify-npm-provenance/test/*.test.js"`
 
 Expected: PASS — 26 tests total, 0 failures
 
@@ -1680,7 +1689,7 @@ Follow the connector-docs convention: log the delivery in `docs/CHANGELOG.md`, n
 
 Do not report this plan complete until all of the following hold:
 
-- [ ] `node --test actions/**/test/` passes in `nimbus-agent/.github` (26 tests)
+- [ ] `node --test "actions/**/test/*.test.js"` passes in `nimbus-agent/.github` (26 tests)
 - [ ] `bun test scripts/release/check-secret-health.test.ts` passes in the monorepo
 - [ ] `bun run preflight:fast` passes in the monorepo worktree
 - [ ] The live smoke test in Task A3 Step 6 returns `ok` / exit 0 for the real package **and** exit 1 for the wrong-repo case
