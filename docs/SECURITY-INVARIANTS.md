@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I30 (static rules D10–D22). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server` — the I27→I29 gap is documented intent, reconciled at that branch's merge.
+**Current ceiling:** invariants I1–I30 (static rules D10–D22). Note: I28 is reserved for the MCP-server owner-sink on the parked `dev/asafgolombek/phase7-mcp-gateway-server` branch on `dev/asafgolombek/phase7-mcp-gateway-server` — the I27→I29 gap is documented intent, reconciled at that branch's merge.
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -528,7 +528,7 @@ The comments at `extensions/install-from-local.ts:120,404,556,558` document the 
 
 ## I29 — egress-ledger completeness over the executor chokepoint
 
-**Statement:** Every gated action appends one `egress_ledger` row to the BLAKE3-chained append-only ledger BEFORE `connectors.dispatch` is called — so a 0-row window is structurally impossible. A denied action appends a `blocked` row (and never dispatches); an append failure aborts the action entirely (fail-closed — dispatch never runs). The ledger is tamper-evident (BLAKE3 chain, timing-safe verify per I10), and the sole mutation (`egress.prune` — a continuing-tombstone retention edit) is gated by the owner's HITL approval (I2 frozen set member). Note: I28 is reserved for the in-flight MCP-server owner-sink on `dev/asafgolombek/phase7-mcp-gateway-server`.
+**Statement:** Every gated action appends one `egress_ledger` row to the BLAKE3-chained append-only ledger BEFORE `connectors.dispatch` is called — so a 0-row window is structurally impossible. A denied action appends a `blocked` row (and never dispatches); an append failure aborts the action entirely (fail-closed — dispatch never runs). The ledger is tamper-evident (BLAKE3 chain, timing-safe verify per I10), and the sole mutation (`egress.prune` — a continuing-tombstone retention edit) is gated by the owner's HITL approval (I2 frozen set member). Note: I28 is reserved for the MCP-server owner-sink on the parked `dev/asafgolombek/phase7-mcp-gateway-server` branch on `dev/asafgolombek/phase7-mcp-gateway-server`.
 
 **Wired at:**
 
@@ -577,7 +577,7 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I28 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I27`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I31 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I30`; note `I28` is reserved, not free) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 

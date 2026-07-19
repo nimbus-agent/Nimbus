@@ -88,7 +88,7 @@ Static-audit complement: `D10` in `scripts/structure-audit/check-nimbus-invarian
 
 ## I29 — Egress Ledger Chokepoint
 
-A recent static+runtime defense (`I28` is reserved for the in-flight MCP-server owner-sink branch). Same shape as `I15`: every gated action appends exactly one `egress_ledger` row from `engine/executor.ts` `ToolExecutor.gate()` **before** `connectors.dispatch` (a denied gate writes a `result_status='blocked'` row; an append failure aborts the dispatch, fail-closed) — a textbook triple (production wiring + a `SECURITY-INVARIANTS.md` row + the `I29` block in `security-invariants.test.ts`). Static `D22` in `check-nimbus-invariants.ts` confines every `connectors.dispatch` to `executor.ts` and `appendEgressEntry` to `egress/*`, so a bypass fails before the suite runs. Deep dive: the `nimbus-egress` skill.
+A recent static+runtime defense (`I28` is reserved for the MCP-server owner-sink on the parked `dev/asafgolombek/phase7-mcp-gateway-server` branch). Same shape as `I15`: every gated action appends exactly one `egress_ledger` row from `engine/executor.ts` `ToolExecutor.gate()` **before** `connectors.dispatch` (a denied gate writes a `result_status='blocked'` row; an append failure aborts the dispatch, fail-closed) — a textbook triple (production wiring + a `SECURITY-INVARIANTS.md` row + the `I29` block in `security-invariants.test.ts`). Static `D22` in `check-nimbus-invariants.ts` confines every `connectors.dispatch` to `executor.ts` and `appendEgressEntry` to `egress/*`, so a bypass fails before the suite runs. Deep dive: the `nimbus-egress` skill.
 
 ## I30 — Web-Clipper Token Minting (latest)
 

@@ -359,6 +359,22 @@ The append-only, BLAKE3-chained egress ledger — invariant `I29` / static `D22`
 
 ---
 
+### `clip.*` — Web clipper (Phase 6 / Slice 9)
+
+Owner-side management of the browser web clipper — invariant `I30` (fail-closed pairing window). The browser extension itself never speaks JSON-RPC; it talks to the HTTP write surface (`POST /v1/clips`, `POST /v1/clips/pair/confirm`) and the bearer-authed read route `POST /v1/clips/related`. These methods are the local owner's control plane over that surface. All five are **CLI-only** (not on the Tauri renderer allowlist — `clip.pair` mints a credential).
+
+| Method | Type | Description |
+|---|---|---|
+| `clip.pair` | request | Open the single-use, expiring pairing window and return the 6-digit code (I30). **CLI-only** |
+| `clip.status` | request | List minted clip tokens by label (never the token bytes). **CLI-only** |
+| `clip.revoke` | request | Revoke one label or all clip tokens. **CLI-only** |
+| `clip.list` | request | List indexed `nimbus:web_clip` items (`--tag` / `--limit`). **CLI-only** |
+| `clip.delete` | request | Delete clips by id / URL, or all. **CLI-only** |
+
+Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|revoke|list|delete`.
+
+---
+
 ### `audit.*` — Audit log (read-only; CLI-only)
 
 | Method | Type | Description |

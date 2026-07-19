@@ -1,5 +1,7 @@
 # Browser Web-Clipper (Ingest Surface) — Design
 
+> **SUPERSEDED (2026-07-19).** Shipped as built, with deviations from this design: the item type is `web_clip` under the `nimbus` service (not `web:page`), the Vault key is `http_api.web_clipper_tokens`, and pairing is gated by invariant **I30**. Gateway side shipped 2026-06-22 (#718); the Chrome/Firefox MV3 extension shipped `v0.1.0` on 2026-07-19 from `nimbus-agent/nimbus-web-clipper`. Kept for historical rationale only — see [`docs/roadmap.md`](../../roadmap.md) and [`docs/CHANGELOG.md`](../../CHANGELOG.md) for the as-built record.
+
 **Date:** 2026-06-20
 **Status:** Design — pending user review
 **Roadmap home:** Track 2 ingest surface — `docs/roadmap.md` "Phase 6 → Slice 9 (Deferred from Phase 5) → Browser & Reading → Web clipper" (line ~847, unchecked). Conceptually an **ingest surface** (widens how data enters the local index), not a query/act surface.
