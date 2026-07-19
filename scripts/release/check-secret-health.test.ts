@@ -12,7 +12,7 @@ import { computeStateHash, markerFor, openOrUpdateHealthIssue } from "./open-hea
 
 describe("classifyPatProbe", () => {
   test("repo-write: push true → ok, false → insufficient, 401 → dead", () => {
-    const s = { kind: "repo-write", targetRepo: "o/r" } as const;
+    const s = { kind: "repo-write", targetRepos: ["o/r"] } as const;
     expect(classifyPatProbe(s, { status: 200, scopes: null, push: true })).toBe("ok");
     expect(classifyPatProbe(s, { status: 200, scopes: null, push: false })).toBe("insufficient");
     expect(classifyPatProbe(s, { status: 401, scopes: null })).toBe("dead");
@@ -95,6 +95,7 @@ function createFakeApi(
   opts: {
     probeResults?: Record<string, ProbeResult>;
     repoPerms?: RepoPerms | { status: number };
+    repoPermsByRepo?: Record<string, RepoPerms | { status: number }>;
     existingIssues?: IssueRef[];
   } = {},
 ): GitHubApi & { calls: FakeApiCalls } {
@@ -117,7 +118,7 @@ function createFakeApi(
     },
     async getRepoPermissions(ownerRepo, token) {
       calls.getRepoPermissions.push([ownerRepo, token]);
-      return opts.repoPerms ?? { push: true };
+      return opts.repoPermsByRepo?.[ownerRepo] ?? opts.repoPerms ?? { push: true };
     },
     async probeToken(token) {
       calls.probeToken.push([token]);
@@ -206,6 +207,93 @@ describe("runSecretHealth (orchestration)", () => {
     expect(api.calls.closeIssue.length).toBe(1);
     expect(api.calls.createIssue.length).toBe(0);
     expect(api.calls.updateIssue.length).toBe(0);
+  });
+
+  test("repo-write multi-repo: push:true on every target repo → ok, no hard failure (T4)", async () => {
+    const api = createFakeApi({
+      probeResults: { "pm-token": { status: 200, scopes: null } },
+      repoPermsByRepo: {
+        "nimbus-agent/homebrew-tap": { push: true },
+        "nimbus-agent/scoop-bucket": { push: true },
+      },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "PACKAGE_MANAGER_PAT",
+          token: "pm-token",
+          strategy: {
+            kind: "repo-write",
+            targetRepos: ["nimbus-agent/homebrew-tap", "nimbus-agent/scoop-bucket"],
+          } as PatStrategy,
+        },
+      ],
+      certs: [],
+    });
+    expect(result.hardFailure).toBe(false);
+    expect(api.calls.getRepoPermissions.length).toBe(2);
+    expect(api.calls.createIssue.length).toBe(0);
+  });
+
+  test("repo-write multi-repo: push:false on one target repo → insufficient hard failure (T4)", async () => {
+    const api = createFakeApi({
+      probeResults: { "pm-token": { status: 200, scopes: null } },
+      repoPermsByRepo: {
+        "nimbus-agent/homebrew-tap": { push: true },
+        "nimbus-agent/scoop-bucket": { push: false },
+      },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "PACKAGE_MANAGER_PAT",
+          token: "pm-token",
+          strategy: {
+            kind: "repo-write",
+            targetRepos: ["nimbus-agent/homebrew-tap", "nimbus-agent/scoop-bucket"],
+          } as PatStrategy,
+        },
+      ],
+      certs: [],
+    });
+    expect(result.hardFailure).toBe(true);
+    expect(api.calls.createIssue.length).toBe(1);
+  });
+
+  test("repo-write: a repo perms-lookup error object → indeterminate, NOT a hard failure (T6)", async () => {
+    const api = createFakeApi({
+      probeResults: { "pm-token": { status: 200, scopes: null } },
+      repoPermsByRepo: {
+        "nimbus-agent/homebrew-tap": { status: 500 },
+        "nimbus-agent/scoop-bucket": { push: true },
+      },
+    });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-18T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        {
+          env: "PACKAGE_MANAGER_PAT",
+          token: "pm-token",
+          strategy: {
+            kind: "repo-write",
+            targetRepos: ["nimbus-agent/homebrew-tap", "nimbus-agent/scoop-bucket"],
+          } as PatStrategy,
+        },
+      ],
+      certs: [],
+    });
+    // indeterminate is a warning, not a hard failure — an errored perms lookup must never
+    // masquerade as a false "insufficient".
+    expect(result.hardFailure).toBe(false);
+    expect(api.calls.createIssue.length).toBe(1);
   });
 });
 

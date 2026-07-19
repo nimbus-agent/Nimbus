@@ -6,7 +6,7 @@ import { createGitHubApi, type GitHubApi } from "./gh-api.ts";
 import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.ts";
 
 export type PatStrategy =
-  | { readonly kind: "repo-write"; readonly targetRepo: string }
+  | { readonly kind: "repo-write"; readonly targetRepos: readonly string[] }
   | { readonly kind: "scopes"; readonly required: string }
   | { readonly kind: "alive" };
 export type PatStatus = "ok" | "dead" | "insufficient" | "indeterminate" | "not-configured";
@@ -97,17 +97,32 @@ export async function runSecretHealth(deps: {
     }
     try {
       const probe = await deps.api.probeToken(p.token);
-      let push: boolean | undefined;
+      let status: PatStatus;
       if (p.strategy.kind === "repo-write" && probe.status === 200) {
-        // Authenticate the repo-permission call with the PAT under test — NOT the runner's
+        // Authenticate each repo-permission call with the PAT under test — NOT the runner's
         // github.token (which is contents:read here and would falsely report push:false). (plan-review #1)
-        const perms = await deps.api.getRepoPermissions(p.strategy.targetRepo, p.token);
-        push = "push" in perms ? perms.push : undefined;
+        // Authz is required on ALL target repos (T4); a repo whose perms lookup errors makes
+        // the whole result inconclusive rather than a false "insufficient" (T6).
+        let push: boolean | undefined = true;
+        for (const repo of p.strategy.targetRepos) {
+          const perms = await deps.api.getRepoPermissions(repo, p.token);
+          if (!("push" in perms)) {
+            push = undefined;
+            break;
+          }
+          if (perms.push !== true) push = false;
+        }
+        status =
+          push === undefined
+            ? "indeterminate"
+            : classifyPatProbe(p.strategy, { status: probe.status, scopes: probe.scopes, push });
+      } else {
+        status = classifyPatProbe(p.strategy, { status: probe.status, scopes: probe.scopes });
       }
       rows.push({
         name: p.env,
         kind: "pat",
-        status: classifyPatProbe(p.strategy, push === undefined ? probe : { ...probe, push }),
+        status,
         detail: p.strategy.kind,
       });
     } catch {
@@ -161,9 +176,10 @@ export async function runSecretHealth(deps: {
 // --- Real cert decoders ---
 //
 // Constraints (never relaxed): secrets NEVER touch argv. Base64/armored payloads are
-// decoded to a 0600 temp file under $RUNNER_TEMP (falling back to os.tmpdir()); passwords
-// flow in only via `openssl ... -passin env:<VAR>` / `gpg --passphrase-fd 0`, i.e. through
-// the child's environment or stdin, never as a command-line argument. Any non-zero exit,
+// decoded to a 0600 temp file under $RUNNER_TEMP (falling back to os.tmpdir()); the PKCS#12
+// password flows in only via `openssl ... -passin env:<VAR>`, i.e. through the child's
+// environment, never as a command-line argument. The GPG import + list-keys read is
+// metadata-only and needs no passphrase at all (see decodeGpgExpiry). Any non-zero exit,
 // missing binary, or parse miss returns null — the caller maps that to "indeterminate",
 // never a false "expired"/"ok" (plan-review #2/#3).
 
@@ -171,27 +187,25 @@ function releaseTempRoot(): string {
   return process.env["RUNNER_TEMP"] ?? tmpdir();
 }
 
-async function decodeGpgExpiry(secretEnv: string, passwordEnv: string): Promise<Date | null> {
+async function decodeGpgExpiry(secretEnv: string, _passwordEnv: string): Promise<Date | null> {
   const gpgBin = Bun.which("gpg");
   if (gpgBin === null) return null;
   const armoredKey = process.env[secretEnv];
   if (armoredKey === undefined || armoredKey.length === 0) return null;
-  const passphrase = process.env[passwordEnv] ?? "";
 
   const gnupgHome = join(releaseTempRoot(), `nimbus-gnupg-${crypto.randomUUID()}`);
   try {
     mkdirSync(gnupgHome, { recursive: true, mode: 0o700 });
     const env = { ...process.env, GNUPGHOME: gnupgHome };
 
-    // Neither the passphrase nor the key material ever reach argv: the passphrase is
-    // delivered over fd 0 per --passphrase-fd 0 (consumed only if gpg needs to
-    // unlock/reprotect the secret material on import), immediately followed on the
-    // same stdin stream by the armored key itself.
-    const importProc = Bun.spawn(
-      [gpgBin, "--batch", "--pinentry-mode", "loopback", "--passphrase-fd", "0", "--import"],
-      { stdin: "pipe", stdout: "ignore", stderr: "ignore", env },
-    );
-    importProc.stdin.write(`${passphrase}\n`);
+    // import + list-keys are metadata-only — no passphrase needed; avoids sharing stdin
+    // between passphrase and key. Only the armored key is piped on stdin.
+    const importProc = Bun.spawn([gpgBin, "--batch", "--import"], {
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
     importProc.stdin.write(armoredKey);
     await importProc.stdin.end();
     const importCode = await importProc.exited;
@@ -296,17 +310,20 @@ if (import.meta.main) {
     {
       env: "RELEASE_PAT",
       token: process.env["RELEASE_PAT"],
-      strategy: { kind: "repo-write", targetRepo: repo } as PatStrategy,
+      strategy: { kind: "repo-write", targetRepos: [repo] } as PatStrategy,
     },
     {
       env: "RELEASE_PLEASE_PAT",
       token: process.env["RELEASE_PLEASE_PAT"],
-      strategy: { kind: "repo-write", targetRepo: repo } as PatStrategy,
+      strategy: { kind: "repo-write", targetRepos: [repo] } as PatStrategy,
     },
     {
       env: "PACKAGE_MANAGER_PAT",
       token: process.env["PACKAGE_MANAGER_PAT"],
-      strategy: { kind: "alive" } as PatStrategy,
+      strategy: {
+        kind: "repo-write",
+        targetRepos: ["nimbus-agent/homebrew-tap", "nimbus-agent/scoop-bucket"],
+      } as PatStrategy,
     },
     {
       env: "WINGET_PAT",

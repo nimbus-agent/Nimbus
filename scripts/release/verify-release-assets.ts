@@ -61,7 +61,7 @@ if (import.meta.main) {
   const tag = process.env["GITHUB_REF_NAME"];
   const repo = process.env["GITHUB_REPOSITORY"];
   const token = process.env["GITHUB_TOKEN"];
-  const stageDir = process.env["STAGE_DIR"] ?? "dist/stage";
+  const stageDir = process.env["STAGE_DIR"] ?? join("dist", "stage");
   if (!tag || !repo || !token) {
     console.error(
       "verify-release-assets: GITHUB_REF_NAME, GITHUB_REPOSITORY, GITHUB_TOKEN required",

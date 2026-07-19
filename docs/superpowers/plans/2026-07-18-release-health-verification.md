@@ -19,6 +19,7 @@
 - Scripts live under `scripts/release/` (new dir). `scripts/` is outside the coverage-floor glob, so there is no per-file coverage gate — but every pure function still gets tests (repo testing philosophy).
 - Alerts go only to **de-duped GitHub issues** labeled `release-health` (no Slack/email — design decision).
 - Cadence: monitor runs weekly (Mondays 09:00 UTC) + `workflow_dispatch`; cert warning threshold default **21 days**, overridable via a `threshold_days` dispatch input.
+- Docs under `docs/**` must pass `bun run lint:markdown` (markdownlint), and run `bun run preflight:fast` before pushing — the docs-quality gate covers committed spec/plan `.md` files.
 
 ---
 
@@ -698,7 +699,8 @@ if (import.meta.main) {
   const repo = process.env["GITHUB_REPOSITORY"];
   const token = process.env["GITHUB_TOKEN"];
   if (!repo || !token) { console.error("check-secret-health: GITHUB_REPOSITORY + GITHUB_TOKEN required"); process.exit(2); }
-  const thresholdDays = Number(process.env["THRESHOLD_DAYS"] ?? "21");
+  const rawThreshold = Number(process.env["THRESHOLD_DAYS"] ?? "21");
+  const thresholdDays = Number.isFinite(rawThreshold) && rawThreshold >= 0 ? rawThreshold : 21;
   const pats = [
     { env: "RELEASE_PAT", token: process.env["RELEASE_PAT"], strategy: { kind: "repo-write", targetRepo: repo } as PatStrategy },
     { env: "RELEASE_PLEASE_PAT", token: process.env["RELEASE_PLEASE_PAT"], strategy: { kind: "repo-write", targetRepo: repo } as PatStrategy },

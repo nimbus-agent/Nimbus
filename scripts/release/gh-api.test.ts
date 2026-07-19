@@ -32,4 +32,31 @@ describe("createGitHubApi", () => {
     const api = createGitHubApi({ token: "t", repo: "o/r", fetchFn: fakeFetch({}, {}, 404) });
     expect(await api.getReleaseByTag("v9")).toBeNull();
   });
+
+  test('listOpenIssues follows the Link `rel="next"` header and concatenates both pages', async () => {
+    const urls: string[] = [];
+    const page2Url =
+      "https://api.github.com/repositories/1/issues?state=open&labels=x&per_page=100&page=2";
+    const fetchFn = (async (url: string | URL | Request) => {
+      const u = String(url);
+      urls.push(u);
+      if (u === page2Url) {
+        return new Response(
+          JSON.stringify([{ number: 2, body: "second", created_at: "2026-01-02T00:00:00Z" }]),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify([{ number: 1, body: "first", created_at: "2026-01-01T00:00:00Z" }]),
+        { status: 200, headers: { link: `<${page2Url}>; rel="next"` } },
+      );
+    }) as unknown as typeof fetch;
+    const api = createGitHubApi({ token: "t", repo: "o/r", fetchFn });
+    const issues = await api.listOpenIssues("x");
+    expect(issues).toEqual([
+      { number: 1, body: "first", createdAt: "2026-01-01T00:00:00Z" },
+      { number: 2, body: "second", createdAt: "2026-01-02T00:00:00Z" },
+    ]);
+    expect(urls.length).toBe(2);
+  });
 });

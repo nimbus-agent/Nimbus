@@ -686,6 +686,7 @@ jobs:
       - build-msi
       - build-pkg
       - publish-release
+      - update-manifest
     # failure() fires when ANY needed job FAILED. A skipped needed job counts as neutral (not a
     # failure), so this never fires spuriously on skips. Do NOT use always() — that would also
     # fire on a fully successful release. (plan-review #4)

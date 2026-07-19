@@ -37,6 +37,16 @@ export interface GitHubApi {
   ensureLabel(label: string): Promise<void>;
 }
 
+/** Parses a GitHub `Link` response header and returns the `rel="next"` URL, or null if absent. */
+function parseNextLink(linkHeader: string | null): string | null {
+  if (linkHeader === null) return null;
+  for (const part of linkHeader.split(",")) {
+    const match = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
 export function createGitHubApi(opts: {
   token: string;
   repo: string;
@@ -68,13 +78,23 @@ export function createGitHubApi(opts: {
       return { status: res.status, scopes: res.headers.get("x-oauth-scopes") };
     },
     async listOpenIssues(label) {
-      const res = await f(
-        `${API}/repos/${opts.repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=100`,
-        { headers: auth() },
-      );
-      if (!res.ok) throw new Error(`listOpenIssues: HTTP ${res.status}`);
-      const data = (await j(res)) as { number: number; body: string | null; created_at: string }[];
-      return data.map((i) => ({ number: i.number, body: i.body ?? "", createdAt: i.created_at }));
+      const results: IssueRef[] = [];
+      let url: string | null =
+        `${API}/repos/${opts.repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=100`;
+      while (url !== null) {
+        const res = await f(url, { headers: auth() });
+        if (!res.ok) throw new Error(`listOpenIssues: HTTP ${res.status}`);
+        const data = (await j(res)) as {
+          number: number;
+          body: string | null;
+          created_at: string;
+        }[];
+        results.push(
+          ...data.map((i) => ({ number: i.number, body: i.body ?? "", createdAt: i.created_at })),
+        );
+        url = parseNextLink(res.headers.get("link"));
+      }
+      return results;
     },
     async createIssue(title, body, labels) {
       const res = await f(`${API}/repos/${opts.repo}/issues`, {
