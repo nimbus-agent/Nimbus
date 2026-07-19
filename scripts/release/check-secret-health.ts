@@ -55,10 +55,47 @@ export function evaluateCertExpiry(
   return "ok";
 }
 
+export type ProvenanceStatus =
+  | "ok"
+  | "missing-provenance"
+  | "source-mismatch"
+  | "indeterminate"
+  | "not-configured";
+export type AbsenceStatus = "ok" | "present";
+
+/**
+ * The `verify-npm-provenance` composite action runs in monitor mode before this
+ * check and its `steps.<id>.outputs.status` is passed in via env — the same
+ * shape as the App-mint probe above. Fail closed: an unset value means the step
+ * never ran, and an unrecognised value is never silently "ok".
+ */
+export function classifyProvenanceOutcome(status: string): ProvenanceStatus {
+  if (status === "") return "not-configured";
+  if (
+    status === "ok" ||
+    status === "missing-provenance" ||
+    status === "source-mismatch" ||
+    status === "indeterminate"
+  ) {
+    return status;
+  }
+  return "indeterminate";
+}
+
+/**
+ * Regression guard for a secret that must NOT exist. `NPM_TOKEN` was revoked and
+ * deleted 2026-07-19; publishing is OIDC-only. An absent secret interpolates to
+ * the empty string, so emptiness is the healthy state. Tests emptiness only —
+ * the value is never logged or passed on.
+ */
+export function classifySecretAbsence(value: string | undefined): AbsenceStatus {
+  return value === undefined || value.length === 0 ? "ok" : "present";
+}
+
 export interface HealthRow {
   readonly name: string;
-  readonly kind: "pat" | "cert";
-  readonly status: PatStatus | CertStatus;
+  readonly kind: "pat" | "cert" | "provenance" | "absence";
+  readonly status: PatStatus | CertStatus | ProvenanceStatus | AbsenceStatus;
   readonly detail: string;
 }
 
@@ -68,7 +105,14 @@ export function summarize(rows: readonly HealthRow[]): {
   table: string;
   state: string;
 } {
-  const hard = new Set<string>(["dead", "insufficient", "expired"]);
+  const hard = new Set<string>([
+    "dead",
+    "insufficient",
+    "expired",
+    "missing-provenance",
+    "source-mismatch",
+    "present",
+  ]);
   const warn = new Set<string>(["expiring", "indeterminate"]);
   const hasHardFailure = rows.some((r) => hard.has(r.status));
   const hasWarning = rows.some((r) => warn.has(r.status));
@@ -365,13 +409,33 @@ if (import.meta.main) {
     status: classifyAppMint(process.env["APP_MINT_STATUS"] ?? ""),
     detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo",
   };
+  const provenanceRows: HealthRow[] = [
+    {
+      name: "@nimbus-dev/sdk",
+      kind: "provenance",
+      status: classifyProvenanceOutcome(process.env["SDK_PROVENANCE_STATUS"] ?? ""),
+      detail: "latest published version",
+    },
+    {
+      name: "@nimbus-dev/client",
+      kind: "provenance",
+      status: classifyProvenanceOutcome(process.env["CLIENT_PROVENANCE_STATUS"] ?? ""),
+      detail: "latest published version",
+    },
+  ];
+  const npmTokenRow: HealthRow = {
+    name: "NPM_TOKEN",
+    kind: "absence",
+    status: classifySecretAbsence(process.env["NPM_TOKEN"]),
+    detail: "revoked 2026-07-19; publishing is OIDC-only",
+  };
   const { hardFailure } = await runSecretHealth({
     api: createGitHubApi({ token, repo }),
     now: new Date(),
     thresholdDays,
     pats,
     certs,
-    extraRows: [appMintRow],
+    extraRows: [appMintRow, ...provenanceRows, npmTokenRow],
   });
   process.exit(hardFailure ? 1 : 0);
 }

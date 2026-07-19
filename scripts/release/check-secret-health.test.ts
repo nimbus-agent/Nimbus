@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyAppMint,
   classifyPatProbe,
+  classifyProvenanceOutcome,
+  classifySecretAbsence,
   evaluateCertExpiry,
+  type HealthRow,
   type PatStrategy,
   runSecretHealth,
   safeParseDate,
@@ -438,5 +441,67 @@ describe("openOrUpdateHealthIssue", () => {
     });
     expect(api.calls.updateIssue.length).toBe(1);
     expect(api.calls.commentIssue.length).toBe(0);
+  });
+});
+
+describe("classifyProvenanceOutcome", () => {
+  test("passes through the action's known statuses", () => {
+    expect(classifyProvenanceOutcome("ok")).toBe("ok");
+    expect(classifyProvenanceOutcome("missing-provenance")).toBe("missing-provenance");
+    expect(classifyProvenanceOutcome("source-mismatch")).toBe("source-mismatch");
+    expect(classifyProvenanceOutcome("indeterminate")).toBe("indeterminate");
+  });
+
+  test("fails closed: unset or unrecognised is never ok", () => {
+    expect(classifyProvenanceOutcome("")).toBe("not-configured");
+    expect(classifyProvenanceOutcome("weird")).toBe("indeterminate");
+  });
+});
+
+describe("classifySecretAbsence", () => {
+  test("absent secret is ok — that is the desired state", () => {
+    expect(classifySecretAbsence(undefined)).toBe("ok");
+    expect(classifySecretAbsence("")).toBe("ok");
+  });
+
+  test("a returned secret is present, which is a failure", () => {
+    expect(classifySecretAbsence("npm_something")).toBe("present");
+  });
+});
+
+describe("summarize with the new row kinds", () => {
+  test("missing-provenance and source-mismatch are hard failures", () => {
+    for (const status of ["missing-provenance", "source-mismatch"] as const) {
+      const rows: HealthRow[] = [
+        { name: "@nimbus-dev/sdk", kind: "provenance", status, detail: "latest" },
+      ];
+      expect(summarize(rows).hasHardFailure).toBe(true);
+    }
+  });
+
+  test("a returned NPM_TOKEN is a hard failure", () => {
+    const rows: HealthRow[] = [
+      { name: "NPM_TOKEN", kind: "absence", status: "present", detail: "must not exist" },
+    ];
+    expect(summarize(rows).hasHardFailure).toBe(true);
+  });
+
+  test("provenance indeterminate warns but does not hard-fail", () => {
+    const rows: HealthRow[] = [
+      { name: "@nimbus-dev/sdk", kind: "provenance", status: "indeterminate", detail: "HTTP 503" },
+    ];
+    const s = summarize(rows);
+    expect(s.hasHardFailure).toBe(false);
+    expect(s.hasWarning).toBe(true);
+  });
+
+  test("all-clear stays clean", () => {
+    const rows: HealthRow[] = [
+      { name: "@nimbus-dev/sdk", kind: "provenance", status: "ok", detail: "latest" },
+      { name: "NPM_TOKEN", kind: "absence", status: "ok", detail: "absent" },
+    ];
+    const s = summarize(rows);
+    expect(s.hasHardFailure).toBe(false);
+    expect(s.hasWarning).toBe(false);
   });
 });
