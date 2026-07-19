@@ -10,13 +10,7 @@
 
 ## Global Constraints
 
-- **Resolve + reuse one pinned SHA** for `actions/create-github-app-token` across every workflow (the org requires SHA-pinned third-party actions; `audit:action-sha-pins` gates it). Resolve the latest `v2` SHA once:
-
-  ```bash
-  gh api repos/actions/create-github-app-token/git/matching-refs/tags/v2 --jq '.[-1].object.sha'
-  ```
-
-  Use that 40-hex SHA as `<APP_TOKEN_SHA>` in every mint step below, with a `# vX.Y.Z` trailing comment.
+- **Pinned action (hardcoded, resolved 2026-07-19):** every mint step pins `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0` (latest stable; `audit:action-sha-pins` gates the pin). This exact SHA is used in all mint steps below. It must also be added to the org's allowed-actions list (runbook step).
 - **The mint step is least-privilege:** `owner: nimbus-agent`, `repositories:` = only that job's repos, `permission-contents: write` (add `permission-pull-requests: write` ONLY for `release-please.yml`).
 - **Do NOT delete the PAT secrets in this PR.** `RELEASE_PAT` / `RELEASE_PLEASE_PAT` / `PACKAGE_MANAGER_PAT` deletion is a post-first-green-release runbook step (break-glass window). `WINGET_PAT` is never touched.
 - **Sequencing (documented, not code):** the wiring is static and committable now, but the workflows only *run* green once the human runbook is done (App created + installed + `RELEASE_BOT_APP_ID` / `RELEASE_BOT_PRIVATE_KEY` secrets added + the action allow-listed org-side). The PR must not merge before that.
@@ -26,7 +20,7 @@
   ```yaml
   - name: Mint release-bot token
     id: app-token
-    uses: actions/create-github-app-token@<APP_TOKEN_SHA> # vX.Y.Z
+    uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
     with:
       app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
       private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -45,11 +39,9 @@
 
 **Steps:**
 
-- [ ] **Step 1: Resolve the pinned SHA** (Global Constraints command) and record it for reuse in all tasks.
+- [ ] **Step 1: Insert the mint step** into the `release-please` job, before the `googleapis/release-please-action@…` step (line ~27). Use the canonical mint step (pinned SHA from Global Constraints) with `repositories: Nimbus` and add `permission-pull-requests: write` (this job opens PRs).
 
-- [ ] **Step 2: Insert the mint step** into the `release-please` job, before the `googleapis/release-please-action@…` step (line ~27). Use the canonical mint step with `repositories: Nimbus` and add `permission-pull-requests: write` (this job opens PRs).
-
-- [ ] **Step 3: Swap the action token.** Line 31:
+- [ ] **Step 2: Swap the action token.** Line 31:
 
   ```yaml
   # before
@@ -58,9 +50,9 @@
           token: ${{ steps.app-token.outputs.token }}
   ```
 
-- [ ] **Step 4: Verify.** `bun -e "import{parse}from'yaml';parse(await Bun.file('.github/workflows/release-please.yml').text());console.log('valid')"` → valid; `bun run audit:action-sha-pins` → OK.
+- [ ] **Step 3: Verify.** `bun -e "import{parse}from'yaml';parse(await Bun.file('.github/workflows/release-please.yml').text());console.log('valid')"` → valid; `bun run audit:action-sha-pins` → OK.
 
-- [ ] **Step 5: Commit.** `git add .github/workflows/release-please.yml && git commit -m "ci(app-migration): mint release-bot token in release-please"`
+- [ ] **Step 4: Commit.** `git add .github/workflows/release-please.yml && git commit -m "ci(app-migration): mint release-bot token in release-please"`
 
 ---
 
@@ -142,13 +134,13 @@
 
 **Steps:**
 
-- [ ] **Step 1: `secret-health.yml` — add the scoped App-mint step.** Before the "Run secret-health check" step, add the canonical mint step with `id: app-mint`, `continue-on-error: true`, `repositories:` = all four target repos (`Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`), `permission-contents: write`. Then add to the check step's `env:` `APP_MINT_STATUS: ${{ steps.app-mint.outcome }}` (`success`/`failure`). Remove the `RELEASE_PAT` / `RELEASE_PLEASE_PAT` / `PACKAGE_MANAGER_PAT` env lines (43-45) — those probes are retired.
+- [ ] **Step 1: `secret-health.yml` — add the scoped App-mint step.** Before the "Run secret-health check" step, add the canonical mint step with `id: app-mint`, `continue-on-error: true`, `repositories:` = all four target repos (`Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`), and BOTH `permission-contents: write` **and `permission-pull-requests: write`** — so it verifies the full permission set the pipeline needs (a PRs-permission downgrade that would break `release-please` is caught too; design-review #1). Then add to the check step's `env:` `APP_MINT_STATUS: ${{ steps.app-mint.outcome }}` (`success`/`failure`). Remove the `RELEASE_PAT` / `RELEASE_PLEASE_PAT` / `PACKAGE_MANAGER_PAT` env lines (43-45) — those probes are retired.
 
-- [ ] **Step 2: Write the failing test** in `check-secret-health.test.ts`: given a health row list containing an `App` row derived from `APP_MINT_STATUS`, assert `summarize` marks `hardFailure` when the App row is `dead` and healthy when `ok`. Add a `classifyAppMint("success"|"failure")` pure helper test: `success → "ok"`, `failure → "dead"`, anything else → `"indeterminate"`.
+- [ ] **Step 2: Write the failing test** in `check-secret-health.test.ts`: given a health row list containing an `App` row derived from `APP_MINT_STATUS`, assert `summarize` marks `hardFailure` when the App row is `dead` and healthy when `ok`. Add a `classifyAppMint(outcome)` pure helper test: `success → "ok"`; **any non-success outcome (`failure`, `skipped`, empty/undefined) → `"dead"`** — fail-closed, so a missing App secret or a skipped mint step alerts rather than silently passing (design-review #2).
 
 - [ ] **Step 2b: Run it** → FAIL (`classifyAppMint` not defined).
 
-- [ ] **Step 3: Implement.** In `check-secret-health.ts`: (a) delete the three PAT entries (`RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`) from the `pats` table in `import.meta.main`, keeping `WINGET_PAT`; (b) add `export function classifyAppMint(outcome: string): PatStatus { return outcome === "success" ? "ok" : outcome === "failure" ? "dead" : "indeterminate"; }`; (c) in `import.meta.main`, read `process.env["APP_MINT_STATUS"]` and push a `HealthRow { name: "RELEASE_BOT_APP", kind: "pat", status: classifyAppMint(...), detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo" }` (treat an unset value as `indeterminate` → reported, not fatal). The App row flows through the existing `summarize` (a `dead` App → hardFailure → red + `release-health` issue).
+- [ ] **Step 3: Implement.** In `check-secret-health.ts`: (a) delete the three PAT entries (`RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`) from the `pats` table in `import.meta.main`, keeping `WINGET_PAT`; (b) add `export function classifyAppMint(outcome: string): PatStatus { return outcome === "success" ? "ok" : "dead"; }` (fail-closed — any non-success outcome, incl. unset/`skipped`, is `dead`); (c) in `import.meta.main`, read `process.env["APP_MINT_STATUS"] ?? ""` and push a `HealthRow { name: "RELEASE_BOT_APP", kind: "pat", status: classifyAppMint(...), detail: "scoped mint: Nimbus+homebrew-tap+scoop-bucket+linux-repo" }`. The App row flows through the existing `summarize` (a `dead` App → hardFailure → red + `release-health` issue).
 
 - [ ] **Step 4: Run tests** → `bun test scripts/release/check-secret-health.test.ts` GREEN; then `bun test scripts/release/` all green.
 
@@ -190,3 +182,17 @@
 
 - The design's "release-please auto-create fix" is scoped as *attempt + validate on the next real release* — there is no code task that can prove it pre-merge, so it is a documented post-merge observation, and the manual tag step stays in `ci-secrets.md` until a release proves it auto-creates.
 - No `NIMBUS_CHECKS_TOKEN` / `SCORECARD_TOKEN` work — already deleted / unset.
+- **Bot git-author attribution (design-review #3) is deferred, not built.** The publish jobs' existing git author config already works; changing it to the App bot identity (`<app-id>+<app-slug>[bot]@users.noreply.github.com`) is cosmetic attribution only, the commits are Unverified either way (design-review #5), and the `<app-slug>` isn't known until the App is created. Recorded as an **optional** post-creation runbook item, not a task.
+
+## Plan-review dispositions (2026-07-19)
+
+Review: [2026-07-19-github-app-migration-review.md](./2026-07-19-github-app-migration-review.md).
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 1 | Monitor mint should also request `pull-requests: write` (a PRs downgrade would break release-please but pass a contents-only check) | **Fixed** — Task 5 Step 1 mint requests contents **and** pull-requests write. |
+| 2 | `skipped`/undefined outcome maps to non-alerting `indeterminate` — a missing App secret could go unnoticed | **Fixed** — `classifyAppMint` is fail-closed: `success → ok`, everything else (`failure`/`skipped`/empty) → `dead` (alerts). |
+| 3 | Set git author to the App bot identity for commit attribution | **Deferred** — cosmetic only; commits are Unverified regardless (design-review #5), and the bot slug isn't known until the App exists. Recorded as an optional post-creation runbook item. |
+| 4 | Hardcode the pinned action SHA instead of a placeholder | **Fixed** — pinned `actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0` (resolved 2026-07-19) throughout. |
+
+Invariant-alignment section confirmed the security posture (key in Actions secrets, staged deletion / rollback gate). No action.
