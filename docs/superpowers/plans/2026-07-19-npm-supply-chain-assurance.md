@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **No new runtime dependencies.** Action code uses only Node 20 built-ins (`node:test`, `node:assert`, global `fetch`, `Buffer`). Sub-project 1's precedent: no new dep.
+- **No new runtime dependencies.** Node action code uses only Node 20 built-ins (`node:test`, `node:assert`, global `fetch`, `Buffer`) — no `package.json`, no install step. Sub-project 1's precedent: no new dep. This governs code we author; it does not forbid Task A4 invoking the vendor `vsce`/`ovsx` CLIs via `npx` at an exact pin, which is a deliberate, documented choice.
 - **Secrets never touch argv.** Tokens flow only through the child process environment. Applies to every probe.
 - **Never log a token, request header, or raw response body.** Log only a derived classification and an HTTP status or exit code. Error paths must be scrubbed — client libraries embed request headers in thrown errors.
 - **SHA-pin every action reference.** The org sets `sha_pinning_required: true`. Use `uses: nimbus-agent/.github/actions/<name>@<full-40-char-sha>`.
@@ -549,7 +549,7 @@ export async function fetchAttestations(pkg, version, deps) {
 
 Run: `node --test actions/verify-npm-provenance/test/`
 
-Expected: PASS — 20 tests total across both files, 0 failures
+Expected: PASS — 21 tests total across both files, 0 failures
 
 - [ ] **Step 5: Commit**
 
@@ -696,7 +696,7 @@ if (process.env["NODE_ENV"] !== "test" && process.argv[1]?.endsWith("main.js")) 
 
 Run: `node --test actions/verify-npm-provenance/test/`
 
-Expected: PASS — 25 tests total, 0 failures
+Expected: PASS — 26 tests total, 0 failures
 
 - [ ] **Step 5: Create the action interface**
 
@@ -1680,7 +1680,7 @@ Follow the connector-docs convention: log the delivery in `docs/CHANGELOG.md`, n
 
 Do not report this plan complete until all of the following hold:
 
-- [ ] `node --test actions/**/test/` passes in `nimbus-agent/.github` (25 tests)
+- [ ] `node --test actions/**/test/` passes in `nimbus-agent/.github` (26 tests)
 - [ ] `bun test scripts/release/check-secret-health.test.ts` passes in the monorepo
 - [ ] `bun run preflight:fast` passes in the monorepo worktree
 - [ ] The live smoke test in Task A3 Step 6 returns `ok` / exit 0 for the real package **and** exit 1 for the wrong-repo case
