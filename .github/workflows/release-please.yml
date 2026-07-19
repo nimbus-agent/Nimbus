@@ -13,8 +13,9 @@ jobs:
   release-please:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Needed when using the default GITHUB_TOKEN (no RELEASE_PLEASE_PAT). Optional PAT keeps
-    # the same scopes off the automatic token if you add secret RELEASE_PLEASE_PAT later.
+    # release-please authenticates with the minted release-bot App token (step below), not
+    # GITHUB_TOKEN; these job-level permissions scope the automatic GITHUB_TOKEN the other
+    # steps (checkout, harden-runner) use.
     permissions:
       contents: write
       pull-requests: write
