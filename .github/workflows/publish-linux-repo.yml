@@ -65,18 +65,23 @@ jobs:
         with:
           verify-lock: "false"
 
+      - name: Mint release-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: nimbus-agent
+          repositories: linux-repo
+          permission-contents: write
+
       # Fail fast with actionable messages if any required secret is missing.
       - name: Require publish + signing secrets
         env:
-          PKG_PAT: ${{ secrets.PACKAGE_MANAGER_PAT }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_SIGNING_SUBKEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          if [ -z "${PKG_PAT}" ]; then
-            echo "::error::PACKAGE_MANAGER_PAT is not set. Grant the fine-grained PAT contents:write on nimbus-agent/linux-repo (repo Settings -> Secrets -> Actions)."
-            exit 1
-          fi
           if [ -z "${GPG_PRIVATE_KEY}" ] || [ -z "${GPG_PASSPHRASE}" ]; then
             echo "::error::GPG_SIGNING_SUBKEY and/or GPG_PASSPHRASE are not set. They sign the apt Release + yum repomd (same secrets release.yml already uses)."
             exit 1
@@ -141,7 +146,7 @@ jobs:
 
       - name: Clone the linux-repo Pages repo
         env:
-          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/linux-repo.git" repo
@@ -191,7 +196,7 @@ jobs:
 
       - name: Commit + push to linux-repo
         env:
-          GH_TOKEN: ${{ secrets.PACKAGE_MANAGER_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
