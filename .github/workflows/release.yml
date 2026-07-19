@@ -623,6 +623,14 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
 
+      - name: Verify release assets are complete
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          STAGE_DIR: dist/stage
+        run: bun scripts/release/verify-release-assets.ts
+
   update-manifest:
     name: Publish updater manifest
     needs: publish-release
@@ -669,3 +677,42 @@ jobs:
         with:
           token: ${{ secrets.RELEASE_PAT }}
           files: manifest-build/latest.json
+
+  alert-on-failure:
+    name: Alert on release failure
+    needs:
+      - build-gateway
+      - build-cli
+      - build-msi
+      - build-pkg
+      - publish-release
+    # failure() fires when ANY needed job FAILED. A skipped needed job counts as neutral (not a
+    # failure), so this never fires spuriously on skips. Do NOT use always() — that would also
+    # fire on a fully successful release. (plan-review #4)
+    if: ${{ failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+      - name: File release-health issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: run:${{ github.ref_name }}
+          HEALTH_TITLE: "🚨 Release ${{ github.ref_name }} failed"
+          HEALTH_BODY: "A job in the Release workflow for `${{ github.ref_name }}` failed — the published release may be missing assets. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts

@@ -209,6 +209,8 @@
     "docs:build": "bun run --filter @nimbus/docs build",
     "package:headless": "bun scripts/package-headless-bundle.ts",
     "package:installers:linux": "bun scripts/package-linux-installers.ts",
+    "release:verify-assets": "bun scripts/release/verify-release-assets.ts",
+    "release:secret-health": "bun scripts/release/check-secret-health.ts",
     "clean": "bun run --filter '*' clean && rm -rf node_modules"
   },
   "dependencies": {

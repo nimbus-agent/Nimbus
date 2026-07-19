@@ -189,3 +189,66 @@ specifically, the `Require release PAT` / `Require PACKAGE_MANAGER_PAT` /
 required secret is missing, so a green guard step confirms the secret is at
 least present (it does not prove the token is unexpired — a valid-but-expired
 token still passes the guard and fails later at the API call).
+
+---
+
+## Release-health monitor
+
+Two independent mechanisms watch the release pipeline's credential and asset
+health so a broken release doesn't sit undiscovered until the next tag push:
+
+### `secret-health.yml` — proactive credential/cert audit
+
+Runs on a **weekly cron** (`0 9 * * 1`, Mondays 09:00 UTC) and is also
+`workflow_dispatch`-able with a `threshold_days` input (default `21`) that
+controls how far ahead of expiry a certificate is flagged. It checks:
+
+- **Six PATs**: `RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`,
+  `WINGET_PAT`, `NIMBUS_CHECKS_TOKEN`, `SCORECARD_TOKEN` — each probed live
+  against the GitHub API for basic validity/permissions.
+- **Three certificate/signing-credential pairs**: the GPG signing subkey
+  (`GPG_SIGNING_SUBKEY` + `GPG_PASSPHRASE`), the Windows code-signing cert
+  (`WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD`), and the Apple
+  Developer ID cert (`APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD`) —
+  decoded and checked for upcoming expiry against `threshold_days`.
+
+> **Caveat — PAT dead/alive is not the same as PAT correct.** A live probe
+> only proves the token authenticates and has *some* permission; it does not
+> exercise the exact scope combination a release run needs (e.g. `RELEASE_PAT`
+> passing the health probe still says nothing about whether it retains
+> `Contents: Read and write` on this specific repo). Treat a green run as
+> "not yet expired," not as a release dry-run.
+
+Findings are filed as a single, de-duped **`release-health`** GitHub issue
+(opened or updated in place per run, not re-created every week) — see
+`scripts/release/open-health-issue.ts`.
+
+**Responding to an alert:** rotate the flagged secret using the per-secret
+runbook earlier in this document, confirm the new value is stored under the
+correct scope (repo secret vs. the `release` environment), then close the
+`release-health` issue (or just re-run `secret-health.yml` via
+`workflow_dispatch` — a clean run auto-resolves it on the next scheduled
+pass).
+
+### `release.yml` — reactive asset gate + failure alert
+
+Two additional checks live directly in the release pipeline, both wired in
+`.github/workflows/release.yml`:
+
+- **Asset-verify step** (`Verify release assets are complete`, in
+  `publish-release`, immediately after `Create GitHub Release`): runs
+  `scripts/release/verify-release-assets.ts` against the just-published
+  GitHub Release to confirm every expected artifact (binaries, installers,
+  archives, SBOM, `SHA256SUMS` + signature) actually landed. This step reads
+  the release via `github.token`, so `publish-release` stays `contents: read`
+  — no elevated permission is added for the check itself.
+- **`alert-on-failure` job**: a separate top-level job that `needs` the build
+  + publish jobs and runs only `if: failure()` (never `always()` — a fully
+  green release must not open an issue). On trigger it files/updates the same
+  de-duped `release-health` issue via `scripts/release/open-health-issue.ts`,
+  linking back to the failed run.
+
+Local dry-run aliases: `bun run release:verify-assets` and
+`bun run release:secret-health` (see `package.json`) let you exercise either
+script by hand with the right env vars set locally, without waiting for the
+scheduled/tag-triggered workflow.
