@@ -443,12 +443,29 @@ test("network throw is error, never absent", async () => {
   assert.equal(r.outcome, "error");
 });
 
-test("invalid JSON body is error, never a false absent", async () => {
+test("invalid JSON body retries, then reports error — never a false absent", async () => {
+  let calls = 0;
   const r = await fetchAttestations("@x/y", "1.0.0", {
-    fetchFn: async () => new Response("<html>502</html>", { status: 200 }),
+    fetchFn: async () => { calls += 1; return new Response("<html>502</html>", { status: 200 }); },
     sleep: noSleep,
   });
   assert.equal(r.outcome, "error");
+  assert.equal(calls, BACKOFF_MS.length + 1, "a proxy error page is transient — must retry");
+});
+
+test("transient bad body then good body succeeds", async () => {
+  let calls = 0;
+  const r = await fetchAttestations("@x/y", "1.0.0", {
+    fetchFn: async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("<html>502</html>", { status: 200 })
+        : new Response(JSON.stringify({ attestations: [1] }), { status: 200 });
+    },
+    sleep: noSleep,
+  });
+  assert.equal(r.outcome, "body");
+  assert.equal(calls, 2);
 });
 ```
 
@@ -504,7 +521,11 @@ export async function fetchAttestations(pkg, version, deps) {
         try {
           return { outcome: "body", body: await res.json(), detail: "200" };
         } catch {
-          return { outcome: "error", detail: "200 with unparseable JSON body" };
+          // A 200 carrying unparseable bytes is transient, not authoritative:
+          // a CDN/proxy error page or a truncated body both look like this.
+          // Retry rather than failing a release on one bad edge response.
+          lastDetail = "200 with unparseable JSON body";
+          continue;
         }
       }
       if (res.status === 404) {
@@ -780,9 +801,14 @@ gh pr create --repo nimbus-agent/.github --fill
 **Interfaces:**
 
 - Consumes: nothing.
-- Produces: action inputs `tool` (`vsce`|`ovsx`), `namespace`; output `status` (`ok`|`dead`); token supplied by the caller as the `PUBLISH_TOKEN` env var.
+- Produces: action inputs `tool` (`vsce`|`ovsx`), `namespace`; output `status` (`ok`|`dead`|`indeterminate`); token supplied by the caller as the `PUBLISH_TOKEN` env var.
 
 **Design note:** both CLIs ship a first-class `verify-pat` command and both read the token from the environment (`VSCE_PAT` / `OVSX_PAT`). Using them means our own code never handles the token at all — the non-disclosure contract is satisfied structurally rather than by careful coding. Do not hand-roll an HTTP probe here.
+
+**Two hazards this task must handle — do not simplify them away:**
+
+1. **A non-zero exit does not mean the token is dead.** Registry downtime, a network timeout, or marketplace rate-limiting all produce a non-zero exit. Treating those as `dead` would file a false critical alert claiming a working credential is revoked — worse than silence, because it trains the operator to ignore the alarm. The probe therefore distinguishes "the service said no" from "we could not reach the service" by checking a public unauthenticated endpoint after a failure, and reports `indeterminate` when the service is unreachable.
+2. **The token is handed to whatever `npx` resolves.** `npx --yes <pkg>` with no version pulls `@latest` — so a compromised release of `@vscode/vsce` or `ovsx` would receive a live publish credential. Pin **exact** versions, not ranges: a `^` range still resolves to the newest match and provides no protection here. This is a supply-chain program; running unpinned third-party code with a credential in scope would undercut its own premise.
 
 - [ ] **Step 1: Create the action**
 
@@ -805,7 +831,7 @@ inputs:
 
 outputs:
   status:
-    description: "ok | dead"
+    description: "ok | dead | indeterminate"
     value: ${{ steps.probe.outputs.status }}
 
 runs:
@@ -817,6 +843,11 @@ runs:
       # It is exported into the vendor CLI's expected env var and never echoed.
       # Output is discarded wholesale: error messages from these CLIs can echo
       # request context, and this runs in a public repository's logs.
+      #
+      # CLI versions are pinned EXACTLY, not by range: this hands a live publish
+      # credential to the resolved package, so `@latest` (or a `^` range, which
+      # still floats) would put a third-party release in the credential's trust
+      # boundary. Bumping these is a deliberate, reviewed change.
       run: |
         set +e
         if [ -z "${PUBLISH_TOKEN}" ]; then
@@ -825,17 +856,33 @@ runs:
           exit 0
         fi
         if [ "${TOOL}" = "vsce" ]; then
-          VSCE_PAT="${PUBLISH_TOKEN}" npx --yes @vscode/vsce verify-pat "${NAMESPACE}" >/dev/null 2>&1
+          VSCE_PAT="${PUBLISH_TOKEN}" npx --yes @vscode/vsce@3.9.2 verify-pat "${NAMESPACE}" >/dev/null 2>&1
+          code=$?
+          reach_url="https://marketplace.visualstudio.com/"
         else
-          OVSX_PAT="${PUBLISH_TOKEN}" npx --yes ovsx verify-pat "${NAMESPACE}" >/dev/null 2>&1
+          OVSX_PAT="${PUBLISH_TOKEN}" npx --yes ovsx@1.0.2 verify-pat "${NAMESPACE}" >/dev/null 2>&1
+          code=$?
+          reach_url="https://open-vsx.org/api/-/search?size=1"
         fi
-        code=$?
+
         if [ $code -eq 0 ]; then
           echo "status=ok" >> "$GITHUB_OUTPUT"
-        else
-          echo "status=dead" >> "$GITHUB_OUTPUT"
+          echo "probe ${TOOL} (${NAMESPACE}): ok"
+          exit 0
         fi
-        echo "probe ${TOOL} (${NAMESPACE}): exit=${code}"
+
+        # A non-zero exit alone does NOT mean the token is revoked — registry
+        # downtime, a timeout or rate-limiting look identical. Only call it dead
+        # if the service is actually reachable; otherwise report indeterminate
+        # so the caller warns instead of raising a false revocation alarm.
+        http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$reach_url" 2>/dev/null)"
+        if [ "$http" = "200" ]; then
+          echo "status=dead" >> "$GITHUB_OUTPUT"
+          echo "probe ${TOOL} (${NAMESPACE}): failed (exit=${code}) and service reachable -> dead"
+        else
+          echo "status=indeterminate" >> "$GITHUB_OUTPUT"
+          echo "probe ${TOOL} (${NAMESPACE}): failed (exit=${code}) and service unreachable (http=${http}) -> indeterminate"
+        fi
         exit 0
       env:
         TOOL: ${{ inputs.tool }}
@@ -844,12 +891,16 @@ runs:
 
 - [ ] **Step 2: Verify `verify-pat` exists in both CLIs before relying on it**
 
+Check the **exact pinned versions**, not `@latest` — those are what will run.
+
 ```bash
-npx --yes @vscode/vsce --help 2>&1 | grep -i "verify-pat"
-npx --yes ovsx --help 2>&1 | grep -i "verify-pat"
+npx --yes @vscode/vsce@3.9.2 --help 2>&1 | grep -i "verify-pat"
+npx --yes ovsx@1.0.2 --help 2>&1 | grep -i "verify-pat"
 ```
 
 Expected: both print a `verify-pat` line.
+
+If a newer version has since shipped, that is fine — do **not** float the pin to pick it up. Bump the pinned version deliberately, re-run this check, and note it in the commit.
 
 **If either does not:** stop and report. Do not substitute an invented HTTP endpoint — re-check the CLI's current docs and adjust the command, then continue.
 
@@ -1273,6 +1324,10 @@ In `.github/workflows/release.yml`, insert immediately **before** the "Publish t
           fi
           have="$(npm --version)"
           need="11.5.1"
+          # `sort -V` is a GNU coreutils extension. Both satellites run on
+          # ubuntu-24.04, where it is guaranteed. If this job is ever moved to a
+          # macOS runner, BSD sort has no -V and this comparison breaks — switch
+          # to `gsort` or a Node one-liner at that point.
           if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
             echo "::error::npm $have is below the $need floor required for OIDC trusted publishing."
             exit 1
@@ -1433,16 +1488,30 @@ jobs:
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| VSCE_PAT | ${VSCE_STATUS} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| OVSX_PAT | ${OVSX_STATUS} |" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${VSCE_STATUS}" != "ok" ] || [ "${OVSX_STATUS}" != "ok" ]; then
+
+          # Mirror the monorepo's warn/hard split. Only `dead` is a hard failure —
+          # `indeterminate` means we could not reach the service, which is NOT
+          # evidence the token is revoked. Filing a revocation alert on a network
+          # blip trains the operator to ignore the alarm.
+          hard=""
+          [ "${VSCE_STATUS}" = "dead" ] && hard="yes"
+          [ "${OVSX_STATUS}" = "dead" ] && hard="yes"
+
+          if [ -n "$hard" ]; then
             title="🔑 Publish credential health alert"
             existing="$(gh issue list --state open --search "$title" --json number --jq '.[0].number // empty')"
-            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. A dead token blocks the next extension release. See docs/ci-secrets.md in the Nimbus monorepo."
+            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. A dead token blocks the next extension release. Cross-check the marketplace status page before rotating — see docs/ci-secrets.md in the Nimbus monorepo."
             if [ -n "$existing" ]; then
               gh issue comment "$existing" --body "$body"
             else
               gh issue create --title "$title" --body "$body"
             fi
             exit 1
+          fi
+
+          if [ "${VSCE_STATUS}" != "ok" ] || [ "${OVSX_STATUS}" != "ok" ]; then
+            echo "::warning::probe inconclusive (VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}) — service unreachable, not a revocation signal"
+            exit 0
           fi
           echo "both publish credentials healthy"
 ```
@@ -1510,7 +1579,13 @@ sleep 60
 gh run list --workflow secret-health.yml --repo nimbus-agent/nimbus-vscode --limit 1
 ```
 
-Expected: a completed run. **Read the step summary**: both credentials should report `ok`. If either reports `dead`, that is a real finding — the token is already expired and the next release would have failed. Report it rather than adjusting the probe to pass.
+Expected: a completed run. **Read the step summary** and interpret it precisely:
+
+| Reported | Meaning | Action |
+| --- | --- | --- |
+| `ok` | Token valid | Nothing |
+| `dead` | Service reachable and rejected the token | **A real finding** — the token is already expired and the next release would have failed. Report it; do not adjust the probe to pass. |
+| `indeterminate` | Service unreachable — no signal either way | Re-run once. If it persists, check the marketplace status page before concluding anything about the token. |
 
 - [ ] **Step 6: File the deadline issue**
 
