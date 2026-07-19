@@ -703,7 +703,11 @@ if (process.env["NODE_ENV"] !== "test" && process.argv[1]?.endsWith("main.js")) 
   if (out) appendFileSync(out, `status=${status}\ndetail=${detail}\n`);
   console.log(`npm provenance: ${pkg}@${version} -> ${status} (${detail})`);
   if (status !== "ok" && severity === "gate") console.log(runbook(pkg, version, status, detail));
-  process.exit(exitCodeFor(status, severity));
+  // Assign exitCode; do NOT call process.exit(). exit() tears the process down
+  // while undici's keep-alive sockets from fetch() are still open, which trips a
+  // libuv assertion (observed: exit 127 on a SUCCESSFUL verification) and can
+  // truncate buffered stdout, silently dropping the GITHUB_OUTPUT write.
+  process.exitCode = exitCodeFor(status, severity);
 }
 ```
 
