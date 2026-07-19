@@ -24,11 +24,12 @@ A GitHub App installed on the `nimbus-agent` org can mint tokens for repos **ins
 - **`NIMBUS_CHECKS_TOKEN`** — already deleted (falls back to `github.token`).
 - **npm trusted publishing / keyless signing** — sub-project #3.
 - **Rolling the App out to the other satellite repos, rotation calendar, org push-protection** — sub-project #4. This sub-project installs the App only on the repos the current release pipeline touches.
+- **Bot commit signing** — App-pushed commits to the channel repos appear **Unverified**, exactly as today's `PACKAGE_MANAGER_PAT`-pushed commits do (not a regression); giving the bot a signing key is out of scope (design-review #5).
 
 ## The App
 
 - **Name:** Nimbus Release Bot (org-owned, under `nimbus-agent`).
-- **Repository permissions:** `Contents: Read and write` (create releases + tags, push to the channel repos) and `Pull requests: Read and write` (release-please PRs). No organization or account permissions.
+- **Repository permissions:** `Contents: Read and write` (create releases + tags, push to the channel repos) and `Pull requests: Read and write` (release-please PRs). No organization or account permissions. **No `Pages` permission is needed** (design-review #4): `publish-linux-repo` updates GitHub Pages by `git push`-ing to the branch `linux-repo` serves from (contents:write), not via the Pages deploy API — verified against the workflow (clone → commit → push, Jekyll disabled).
 - **Installed on:** `nimbus-agent`, *Only select repositories* → **`Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`**.
 - **Credentials:** two secrets on the `Nimbus` repo — `RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY` (PEM). The Actions workflows run in `Nimbus`, and `create-github-app-token` mints cross-repo tokens for any installed repo via its `repositories:` input, so repo-scoped secrets on `Nimbus` are sufficient (no org secrets needed).
 
@@ -77,7 +78,7 @@ An App token *should* let `googleapis/release-please-action@v5` create the GitHu
 `scripts/release/check-secret-health.ts` + `secret-health.yml` are updated to match the new credential reality:
 
 - **Remove** the `RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT` PAT probes (those secrets are being retired).
-- **Add** an App-health check: mint a token via the App (App ID + private key) and assert success — a failed mint (bad/rotated key, App uninstalled) reports `dead` → red + `release-health` issue, exactly as the PAT probes did. This is the App-era equivalent of the expiry probe.
+- **Add** an App-health check that mints a token **scoped to all four target repos** (`Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`) with `contents: write` — so it catches not just a bad/rotated key but also the App being uninstalled from a repo or having its permissions downgraded (design-review #1). The mint is performed by the same `actions/create-github-app-token` action the pipeline uses, run in `secret-health.yml` with `continue-on-error: true`; its success/failure is passed into `check-secret-health.ts` via an env flag (`APP_MINT_STATUS=ok|failed`), which reports `dead` → red + `release-health` issue on failure. This deliberately avoids re-implementing RS256 JWT signing in the script — design-review #2 suggested native `node:crypto`; using the action instead needs no crypto at all **and** dogfoods the exact mint path the release pipeline depends on.
 - **Keep** the `WINGET_PAT` probe (still a live PAT) and the cert decoders.
 - **Fix a pre-existing gap** the release-health PR shipped: the `PACKAGE_MANAGER_PAT` `repo-write` check listed only `homebrew-tap` + `scoop-bucket` and **missed `linux-repo`**. That check is superseded by the App-health check here, so the gap is closed by removal — but the design records it so the plan does not silently reintroduce it.
 
@@ -97,7 +98,9 @@ These require org-admin rights and cannot be automated from CI:
 3. Install the App on `nimbus-agent`, selected repos: `Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`.
 4. Generate a private key; add `RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY` as `Nimbus` repo Actions secrets.
 5. Add `actions/create-github-app-token@<sha>` to the org's allowed-actions list (the repo requires SHA-pinned third-party actions).
-6. After the first green release: delete the three retired PAT secrets.
+6. Confirm the App can push to the channel repos' default branches (design-review #3): `homebrew-tap`, `scoop-bucket`, and `linux-repo` receive direct `git push`es from the publish workflows, so if any has branch protection requiring PRs or restricting push actors, add the App to its bypass/allowlist. `Nimbus` needs no change — release-please uses a PR and `release.yml` pushes a tag, not a protected-branch commit.
+7. Confirm Actions are enabled on the target repos so an App-token-pushed tag triggers `release.yml` (App tokens trigger downstream workflows, unlike `github.token`; validated live on the first release — design-review #4).
+8. After the first green release: delete the three retired PAT secrets.
 
 Everything else — the four workflow edits, the monitor + script changes, and the docs — is automated in the PR.
 
@@ -110,3 +113,17 @@ Everything else — the four workflow edits, the monitor + script changes, and t
 - `.github/workflows/secret-health.yml` + `scripts/release/check-secret-health.ts` (+ `.test.ts`) (edit: retire 3 PAT probes, add App-mint health check)
 - `docs/ci-secrets.md` (edit: replace the 3 PAT rows with the App; document App setup + key rotation + the winget exception)
 - Allowed-actions config for `actions/create-github-app-token` (SHA-pinned)
+
+## Design-review dispositions (2026-07-19)
+
+Review: [2026-07-19-github-app-migration-design-review.md](./2026-07-19-github-app-migration-design-review.md).
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 1 | Health check must verify installation + scopes, not just a generic mint | **Fixed** — the App-health check mints a token scoped to all four target repos with `contents: write`, catching uninstall/permission-downgrade. |
+| 2 | RS256 JWT minting without heavy deps | **Fixed (cleaner path)** — the mint is done by the `actions/create-github-app-token` action in `secret-health.yml` (`continue-on-error`), fed into the script via an env flag; no crypto re-implemented, and it dogfoods the real mint path. The review's native-`node:crypto` suggestion was considered but the action is simpler + more faithful. |
+| 3 | Branch-protection could block App pushes | **Fixed** — added a runbook step to allow the App to push to the channel repos' default branches. |
+| 4 | Pages/Deployments perms + downstream triggers | **Fixed** — verified `publish-linux-repo` uses branch-served Pages (git push), so `contents: write` suffices (no `pages: write`); added a runbook step to confirm Actions-enabled + first-release trigger validation. |
+| 5 | App commits show Unverified | **Fixed (documented)** — recorded as a non-regression (PAT pushes are already unverified) and a non-goal; bot commit-signing is deferred. |
+
+Invariant-alignment section of the review confirmed the security improvement (short-lived tokens, key stays in Actions secrets) and that the App is CI-confined (no HITL/local-gate bypass). No action.
