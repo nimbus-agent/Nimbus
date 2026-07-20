@@ -75,6 +75,33 @@ secrets plus per-repo secrets including a private repo. Credentials are stored a
 `SECRET_AUDITOR_CLIENT_ID` / `SECRET_AUDITOR_PRIVATE_KEY` repo secrets on `Nimbus`.
 `client-id` is used rather than `app-id`, which is deprecated (Nimbus#779).
 
+#### What the auditor can and cannot see
+
+The App holds **no `contents` permission**, so it cannot read source, workflow
+files, or deployment configuration in any repository — public or private. Its
+entire reach is credential *names* and timestamps. This is why installing it on
+all repositories, including the 6 private ones, is safe and desirable: an
+undocumented credential in a low-traffic private repo is *likelier*, not less
+likely, and excluding those repos would defeat the detection this design exists
+for.
+
+GitHub scopes secret permissions by product. `secrets:read` covers **Actions**
+secrets only; Dependabot and Codespaces secrets sit behind separate permissions
+and separate endpoints. Verified on 2026-07-20: there are currently **zero**
+Dependabot secrets at org level and in every repo checked, and zero Codespaces
+secrets. So the inventory is complete today — but it would silently *become*
+incomplete the moment someone adds a Dependabot secret, which is exactly the
+drift class this design exists to catch.
+
+The auditor therefore also takes **`dependabot_secrets: read`** and enumerates
+that endpoint alongside Actions secrets. It is the same permission class:
+read-only, names and timestamps, never values.
+
+**Codespaces secrets are explicitly out of scope.** The org-level endpoint is
+unavailable on this plan (404) and repo-level count is zero. Rather than claim
+coverage the mechanism does not provide, this boundary is stated here and carried
+as a line in the manual checklist.
+
 ### The manifest
 
 `scripts/release/credential-registry.ts` holds one typed entry per credential:
@@ -146,6 +173,20 @@ It is a useful proxy, not truth. Row details must therefore read
 same discipline that forbids describing `verify-npm-provenance` as verifying
 cryptography.
 
+**There is no better source, and this was checked rather than assumed.** A PAT's
+true issue date is not exposed to consumers by any API — only the token's owner
+can see it in their own settings. The organization audit log, which would record
+secret-set events, requires GitHub Enterprise Cloud; this org is on the **Free**
+plan and `GET /orgs/nimbus-agent/audit-log` returns 404 (verified 2026-07-20).
+
+The consequence is a limitation to accept, not engineer around: **the system
+cannot distinguish a secret that was re-saved from one that was genuinely
+rotated.** Re-pasting an unchanged value resets the clock and the check goes
+quiet. This is tolerable because the warn is an instruction to *go look*, not an
+assertion that the credential is stale — and because the failure direction is a
+missed reminder, never a false all-clear about a credential's validity, which the
+independent liveness probes still cover.
+
 Against live data on 2026-07-20, a 90-day `maxAgeDays` immediately flags
 `CODECOV_TOKEN` (last set 2026-04-16, 95 days) and puts the three signing keys
 (76 days) on the horizon — so the check carries real signal on day one.
@@ -153,6 +194,22 @@ Against live data on 2026-07-20, a 90-day `maxAgeDays` immediately flags
 `maxAgeDays: null` applies to `GPG_SIGNING_SUBKEY` and `UPDATER_SIGNING_KEY`.
 Signing keys should not rotate on a calendar, and GPG already carries its own
 expiry, which the existing cert check reads. Age would be the wrong alarm.
+
+### Keeping `consumedBy` honest
+
+`consumedBy` is hand-maintained and will drift like any prose. A static check
+parses `.github/workflows/**` in **this repository** and asserts that every
+manifest entry scoped to `Nimbus` and marked `required` is referenced by at least
+one workflow, and conversely that every `secrets.*` reference in those workflows
+appears in the manifest. It runs in the existing preflight gate set, not the
+weekly monitor, because it needs no credentials and should fail at PR time.
+
+**This is deliberately monorepo-only.** Extending it across the other 17 repos
+would require reading their workflow files, which needs `contents: read` — the
+exact permission withheld to keep the auditor incapable of reading code. Paying
+for cross-repo `consumedBy` validation with a code-read grant is a bad trade for a
+field that is documentation. Cross-repo consumer enumeration stays a one-time
+manual step, which is all Gap 2 needs.
 
 ### Retirement
 
@@ -174,9 +231,20 @@ Whether it *stays* fixed is an open question: `security_and_analysis` requires
 **admin** repo permission, and the auditor deliberately holds only `metadata:read`,
 `secrets:read` and `organization_secrets:read`. Rather than reflexively widening
 the App, the plan **probes
-whether the auditor can read this field**. If it can, push protection becomes a
-monitored row across all 18 repos. If it cannot, it is a one-time fix plus a line
-in the manual checklist. The App's permissions are not widened for it.
+whether the auditor can read this field**. The App's permissions are not widened
+for it either way — `security_and_analysis` needs `administration`, which is a
+materially more dangerous grant than reading secret names, and push-protection
+drift is both rare and low-velocity.
+
+The fallback is defined now, so the probe's outcome cannot leave the plan
+stranded:
+
+- **If readable:** push protection becomes a monitored row across all 18 repos,
+  warn on any repo with it disabled.
+- **If not readable:** the enable action still happens as a one-time fix, and
+  "confirm push protection is on for all repos" becomes a line in
+  `docs/credential-hygiene.md` under the quarterly audit, checked with the
+  maintainer's own admin credentials.
 
 ### Gap 2 — `RELEASE_PLEASE_PAT` is org-visible to all 18 repos
 
@@ -227,6 +295,20 @@ step. The manifest marks both `required` today, with a note that they flip to
 It is seeded with the finding already in hand — the revoked npm token still in the
 maintainer's `~/.npmrc`. A checklist that opens with a real hit from this machine
 is likelier to be run than one full of hypotheticals.
+
+It also carries two items the automated side cannot cover: **confirm push
+protection is enabled on all repositories** (if the Gap 1 probe shows the auditor
+cannot read it), and **check for Codespaces secrets**, which are out of the
+auditor's scope.
+
+**Rotation ordering is written down here, because getting it wrong has already
+cost a reversal.** Sub-project 3 revoked the single npm token before the package
+policies were configured, which killed the maintainer's own CLI session mid-task.
+The rule is **configure-then-revoke**: provision and *verify the replacement
+works* before revoking the credential it replaces. The verification tooling
+already exists — the weekly liveness probes classify a credential `ok` / `dead` /
+`not-configured` / `indeterminate` — so the checklist points at running the
+monitor on demand rather than introducing a new command for it.
 
 A checklist silently stops being run. The same drift principle applies: record
 `lastManualAudit` as a date in the manifest and have the monitor warn when it is
