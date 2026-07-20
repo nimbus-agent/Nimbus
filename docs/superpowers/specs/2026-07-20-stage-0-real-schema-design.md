@@ -89,6 +89,15 @@ Read side: `local-index.ts:161` `rowToItem` + `applyItemMetadataColumn` — the 
 The round-trip is complete and already tested. There is no lossy-fit problem to design around, which
 is what makes the gateway the right seam.
 
+**What `rowToItem` does not carry.** Five V3-only columns — `body_preview`, `author_id`,
+`canonical_url`, `synced_at`, `pinned` — are **dropped entirely**, not preserved in `rawMeta`.
+`rawMeta` is populated only from the `metadata` JSON column, so nothing recovers them. That is
+deliberate for Stage 0: they are storage/provenance concerns rather than item identity, nothing
+consumes them today, and `searchRanked` already surfaces `canonicalUrl` where ranking needs it.
+Adding any of them to `NimbusItem` is a **deferred** decision — it would widen an MIT SDK type
+shared by every connector, which deserves its own design rather than riding along here. `querySql`
+remains available for ad-hoc access to the raw columns.
+
 ## Architecture
 
 **One mapping seam, at the gateway.**
@@ -110,6 +119,14 @@ type IndexedItem = NimbusItem & { indexPrimaryKey: string };
 `id = external_id` — the bare external id, which is **not unique across services**. Today's raw rows
 carry the `service:external_id` primary key in `id`; without `indexPrimaryKey` that information
 would be silently lost and multi-service list views could collide.
+
+**Is `r.id` guaranteed non-null?** By the schema, no: SQLite permits `NULL` in a `TEXT PRIMARY KEY`
+column unless it is also declared `NOT NULL` (verified empirically — the insert is accepted). By the
+code, yes: `upsertIndexedItem` (`item-store.ts:69`) is the sole writer and always computes
+`id = itemPrimaryKey(service, externalId)`, which returns a template string. A `NULL` is therefore
+reachable only through direct SQL against the file. The validator keeps `indexPrimaryKey` **required**
+precisely so that case fails loudly as the corrupt row it is, rather than propagating a null key into
+list rendering and dedup.
 
 The client then *validates* this shape rather than translating it. No snake_case crosses the IPC
 boundary, so there is no transcription to drift.
@@ -133,6 +150,11 @@ compile time, is precisely the failure that produced these bugs.
    const items = rows.map((r) => ({ ...rowToItem(r), indexPrimaryKey: r.id }));
    return { kind: "hit", value: { items, meta: { limit, total: items.length } } };
    ```
+
+   `{ kind, value }` is the **internal** `DiagnosticsRpcOutcome` discriminator, not the wire shape.
+   `ipc/server/dispatchers.ts:1224` unwraps it (`if (out.kind === "hit") return out.value`), so the
+   JSON-RPC `result` a client sees is exactly `{ items, meta }` — unchanged from today apart from the
+   row contents.
 
 3. **Regression tests** (`local-index.test.ts`, `diagnostics-rpc.test.ts`):
    - every ops type (`ci_run`, `pr`, `issue`, `deployment`, `incident`) survives a round-trip;
@@ -184,8 +206,10 @@ Once the gateway emits `NimbusItem`, `parseIndexRow`'s existing camelCase reads 
 - replace `ITEM_TYPE_ICONS` with a total lookup plus a fallback icon. Map exactly the seven types a
   live index actually contains (`email`, `ci_run`, `pr`, `file`, `folder`, `issue`, `web_clip`) plus
   the common ops types (`deployment`, `incident`, `message`, `page`, `event`), and let everything
-  else hit the fallback — do **not** enumerate all 68. Every codicon name must be verified against
-  the published codicon list;
+  else hit the fallback — do **not** enumerate all 68. The fallback must be visually distinct from
+  any mapped icon — `symbol-misc`, never `file` or `folder`, since those are themselves real item
+  types and reusing them would assert a type the row does not have. Every codicon name must be
+  verified against the published codicon list;
 - prefer `indexPrimaryKey` as the tree-item key so multi-service rows cannot collide.
 
 Requires `@nimbus-dev/client@0.6.0`, so it waits on Task B publishing.
@@ -232,12 +256,21 @@ if needed — though `@nimbus-dev/sdk@1.4.0` is already on npm, so this is no lo
 - **Refreshing `docs/schema-reference.md`.** It documents the legacy `items` table and is stale, but
   correcting it is a documentation task with its own blast radius.
 - **`querySql`.** Correctly untyped.
+- **A static `structure-audit` rule forcing `rpcIndexQueryItems` through `rowToItem`.**
+  `scripts/structure-audit/check-nimbus-invariants.ts` hosts only D10–D22, each bound to a numbered
+  **security** invariant under the triple rule (wiring + docs entry + enforcement test). A
+  data-mapping rule has no I-number and would dilute that system. It would also be weaker than what
+  Task A already specifies: a static check asserts one function is *called*, which a rename or a
+  second code path defeats, whereas the "no snake_case key in the response" runtime test asserts the
+  *observable output* and catches every route back to raw rows.
+- **Adding `body_preview` / `author_id` / `canonical_url` / `synced_at` / `pinned` to `NimbusItem`.**
+  See the round-trip section — deferred, needs its own design.
 
 ## Risks
 
 | Risk | Mitigation |
 | --- | --- |
 | IPC wire shape is a breaking change | Only two consumers: `nimbus query` (ships with the gateway) and nimbus-vscode (broken today regardless, fixed by Task C) |
-| **Version skew** — `@nimbus-dev/client@0.6.0` against a pre-Task-A gateway rejects every row with `IpcResponseError` | Strict task ordering (Task A merges first); 0.6.0's release notes must state the minimum gateway version. This is a louder failure than today's silent `undefined`, which is the intended direction, but it is a real upgrade constraint |
+| **Version skew** — `@nimbus-dev/client@0.6.0` against a pre-Task-A gateway rejects every row with `IpcResponseError` | Strict task ordering (Task A merges first); 0.6.0's release notes must state the minimum gateway version. The failure is contained, not fatal: `createIndexView` already catches and renders `errorRow("Failed to load index", err)` (`sidebar/index-view.ts`), so a skewed pair shows a named error instead of a crash — and a named error beats today's silently empty view. Validation stays whole-response fail-closed rather than per-row skipping: dropping bad rows and rendering the rest is itself a silent-corruption mode, which is the bug class this stage exists to remove |
 | `rowToItem` drops V3-only columns (`body_preview`, `author_id`, `canonical_url`, `pinned`, `synced_at`) | Raw `queryItems` exposed them incidentally; nothing consumes them. `searchRanked` already surfaces `canonicalUrl` where it matters, and `querySql` remains for ad-hoc access |
 | Icon map incomplete for 68 types | Total lookup with a generic fallback; an unmapped type renders a default icon rather than failing |
