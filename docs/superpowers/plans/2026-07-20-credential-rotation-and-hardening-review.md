@@ -14,9 +14,11 @@ This document reviews the implementation plan for **Credential Rotation & Harden
 ### Q1.2: Scope of the `repos` list in `credential-enumerate.ts`
 
 * **Observation:** The plan flatMaps repos from `CREDENTIAL_REGISTRY`:
+
   ```ts
   const repos = [...new Set(CREDENTIAL_REGISTRY.flatMap((e) => (e.location.repo ? [e.location.repo] : [])))];
   ```
+
 * **Question:** If the auditor is installed on all 18 repositories, but the registry only lists a subset of repositories (e.g. `Nimbus`, `nimbus-vscode`, `nimbus-web-clipper`, `nimbus-sdk`, `nimbus-client`), then any undocumented credentials in the remaining repositories won't be scanned because those repositories are not listed in the flatMap.
 * **Refinement:** To truly satisfy Goal 2 ("detect undocumented credentials"), the `repos` list fed to `enumerateSecrets` should ideally be resolved dynamically by querying GitHub for all repositories in the organization, rather than relying only on the repositories mentioned in the manifest. If we only scan repos declared in the manifest, we will never see an undocumented secret created in a completely new repository.
 
