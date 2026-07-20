@@ -67,8 +67,8 @@ export type ProvenanceStatus = "ok" | "missing-provenance" | "source-mismatch" |
  * never ran, and an unrecognised value is never silently "ok".
  *
  * An empty string is NOT the same situation as an absent PAT/cert secret
- * (`not-configured` there is a genuine, intentional healthy state — see
- * `classifySecretAbsence`). Here it means the probe never reported at all: a
+ * (`not-configured` there is a genuine, intentional healthy state). Here it
+ * means the probe never reported at all: a
  * renamed step id, a skipped step, or an action that exits before writing its
  * output all interpolate to "" with no workflow error. `not-configured` sits
  * in neither the `hard` nor `warn` set in `summarize`, so returning it here
