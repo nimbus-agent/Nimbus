@@ -55,12 +55,7 @@ export function evaluateCertExpiry(
   return "ok";
 }
 
-export type ProvenanceStatus =
-  | "ok"
-  | "missing-provenance"
-  | "source-mismatch"
-  | "indeterminate"
-  | "not-configured";
+export type ProvenanceStatus = "ok" | "missing-provenance" | "source-mismatch" | "indeterminate";
 export type AbsenceStatus = "ok" | "present";
 
 /**
@@ -90,6 +85,26 @@ export function classifyProvenanceOutcome(status: string): ProvenanceStatus {
     return status;
   }
   return "indeterminate";
+}
+
+/**
+ * Composes a provenance row's `detail` from the resolved version and the
+ * `verify-npm-provenance` action's own `detail` output (e.g. `repository
+ * https://github.com/attacker/x != https://github.com/nimbus-agent/nimbus-sdk`
+ * or `no SLSA provenance predicate — publish degraded`). Without this, the
+ * single most alarming row this monitor can produce (`source-mismatch`) filed
+ * an issue naming neither the version that failed nor the reason — the two
+ * facts an on-call reader actually needs.
+ *
+ * When both inputs are empty (the probe never ran — the workflow's `if:`
+ * guard skips the probe step when version resolution failed) this returns the
+ * original static placeholder, so a skipped probe still classifies exactly as
+ * it did before this composition existed.
+ */
+export function composeProvenanceDetail(version: string, actionDetail: string): string {
+  if (version === "" && actionDetail === "") return "latest published version";
+  const versionPart = version === "" ? "unknown version" : `v${version}`;
+  return actionDetail === "" ? versionPart : `${versionPart}: ${actionDetail}`;
 }
 
 /**
@@ -424,13 +439,19 @@ if (import.meta.main) {
       name: "@nimbus-dev/sdk",
       kind: "provenance",
       status: classifyProvenanceOutcome(process.env["SDK_PROVENANCE_STATUS"] ?? ""),
-      detail: "latest published version",
+      detail: composeProvenanceDetail(
+        process.env["SDK_VERSION"] ?? "",
+        process.env["SDK_PROVENANCE_DETAIL"] ?? "",
+      ),
     },
     {
       name: "@nimbus-dev/client",
       kind: "provenance",
       status: classifyProvenanceOutcome(process.env["CLIENT_PROVENANCE_STATUS"] ?? ""),
-      detail: "latest published version",
+      detail: composeProvenanceDetail(
+        process.env["CLIENT_VERSION"] ?? "",
+        process.env["CLIENT_PROVENANCE_DETAIL"] ?? "",
+      ),
     },
   ];
   const npmTokenRow: HealthRow = {
@@ -452,5 +473,11 @@ if (import.meta.main) {
     certs,
     extraRows: [appMintRow, ...provenanceRows, npmTokenRow],
   });
-  process.exit(hardFailure ? 1 : 0);
+  // process.exit() after awaited I/O can truncate buffered stdout before it
+  // flushes — a recurring defect class in this project (it previously caused
+  // exit 127 on SUCCESS in a sibling task) — and the `console.log(s.table)`
+  // inside runSecretHealth just above is exactly that exposure, made larger by
+  // this branch's extra provenance/absence rows. process.exitCode lets the
+  // event loop drain naturally instead.
+  process.exitCode = hardFailure ? 1 : 0;
 }

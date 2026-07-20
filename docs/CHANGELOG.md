@@ -8,6 +8,33 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-20 — npm supply-chain assurance: provenance monitoring + `NPM_TOKEN` absence guard.**
+  The weekly `secret-health.yml` job now carries three new rows alongside the existing App-health/
+  PAT/cert checks: two npm provenance probes (`@nimbus-dev/sdk`, `@nimbus-dev/client`), each resolved
+  to its latest published version and checked via the org's `verify-npm-provenance` composite action
+  in monitor mode (confirms the publish attestation + SLSA provenance predicate are present and name
+  the expected source repo/workflow), and an `NPM_TOKEN` absence guard that hard-fails if the deleted
+  secret (revoked 2026-07-19) is ever re-created — publishing is meant to be OIDC-only. New
+  `ProvenanceStatus`/`AbsenceStatus` classifiers (`classifyProvenanceOutcome`, fail-closed to
+  `indeterminate` on any unset/unrecognised value; `classifySecretAbsence`) feed the existing
+  de-duped issue filer. The `source-mismatch`/`missing-provenance` alert rows now carry the action's
+  own `detail` output plus the resolved version (`composeProvenanceDetail`), so an alert names what
+  actually happened instead of a static placeholder. Each package's version is now resolved and
+  written to `$GITHUB_OUTPUT` independently, so one package's registry hiccup no longer blanks the
+  other's probe too. `docs/ci-secrets.md` documents the new rows, the branched remediation per row
+  kind (rotate vs. unpublish/deprecate vs. delete-the-secret — "rotate" does not apply to a
+  provenance or absence row), and corrects two overclaims: the 2FA-required/no-tokens npm setting
+  blocks token-based publishing, not human publishing (an interactive maintainer with an OTP can
+  still publish by hand), and the `nimbus-vscode` weekly PAT-liveness probe is not yet live — it
+  ships as that repo's own `secret-health.yml`, landing in
+  [PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), open as of 2026-07-20, not yet
+  merged. Two accompanying but separate PRs add the release-time provenance gate to the npm
+  satellites' own release workflows — `nimbus-sdk`
+  [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12) and `nimbus-client`
+  [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) — both also open as of 2026-07-20, not
+  yet merged; this entry covers only the monorepo-side monitoring that lands with this branch. No
+  migration, no new invariant.
+
 - **2026-07-19 — docs: Phase 6 closed out; the Sequencing Spine is now the live build order.** A
   status-drift sweep across the roadmap and its mirror surfaces. `docs/roadmap.md` moves **Phase 6 —
   Team** out of `## Active` into `## Shipped` and gives `## Active` a new **Spine S1 — Local Brain**

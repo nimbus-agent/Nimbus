@@ -4,6 +4,7 @@ import {
   classifyPatProbe,
   classifyProvenanceOutcome,
   classifySecretAbsence,
+  composeProvenanceDetail,
   evaluateCertExpiry,
   type HealthRow,
   type PatStrategy,
@@ -459,6 +460,33 @@ describe("classifyProvenanceOutcome", () => {
     // (`indeterminate`), not silently pass as `not-configured` (review finding #1).
     expect(classifyProvenanceOutcome("")).toBe("indeterminate");
     expect(classifyProvenanceOutcome("weird")).toBe("indeterminate");
+  });
+});
+
+describe("composeProvenanceDetail", () => {
+  test("both empty (skipped probe) → the original static placeholder, unchanged", () => {
+    expect(composeProvenanceDetail("", "")).toBe("latest published version");
+  });
+
+  test("version + action detail present → both are surfaced together", () => {
+    expect(
+      composeProvenanceDetail(
+        "1.3.0",
+        "repository https://github.com/attacker/x != https://github.com/nimbus-agent/nimbus-sdk",
+      ),
+    ).toBe(
+      "v1.3.0: repository https://github.com/attacker/x != https://github.com/nimbus-agent/nimbus-sdk",
+    );
+  });
+
+  test("version present, action detail empty → just the version, no dangling separator", () => {
+    expect(composeProvenanceDetail("0.5.0", "")).toBe("v0.5.0");
+  });
+
+  test("version empty, action detail present → detail alone with an explicit unknown-version marker", () => {
+    expect(composeProvenanceDetail("", "no SLSA provenance predicate — publish degraded")).toBe(
+      "unknown version: no SLSA provenance predicate — publish degraded",
+    );
   });
 });
 

@@ -207,8 +207,12 @@ publishing and carry two attestations: the npm publish attestation and a
 SLSA provenance predicate naming the source repo, workflow, and commit.
 
 Publishing access on both packages is set to **require two-factor
-authentication and disallow tokens**, so OIDC is the only path that can
-publish — a leaked token cannot. `NPM_TOKEN` was revoked and deleted on
+authentication and disallow tokens**, so no automation or token-based publish
+is possible — CI's only path to publish is OIDC, and a leaked token cannot
+publish either. This does **not** mean only OIDC can publish, full stop: an
+interactive maintainer authenticating with a One-Time Password can still
+publish by hand from their own machine — the setting removes token-based
+publishing, not human publishing. `NPM_TOKEN` was revoked and deleted on
 2026-07-19; the weekly secret-health run asserts it stays absent.
 
 Verify a published version yourself:
@@ -240,7 +244,11 @@ wrong source.
 | `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT. ⚠️ **Global ADO PATs are decommissioned 2026-12-01** and cannot be regenerated since 2026-03-15. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
 | `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
 
-Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`.
+Both will be probed weekly for liveness by `nimbus-vscode`'s own
+`secret-health.yml` — landing as
+[PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), open as of
+2026-07-20, not yet merged. Until it merges, neither PAT is under any
+automated liveness check.
 
 ---
 
@@ -309,6 +317,17 @@ controls how far ahead of expiry a certificate is flagged. It checks:
   (`WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD`), and the Apple
   Developer ID cert (`APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD`) —
   decoded and checked for upcoming expiry against `threshold_days`.
+- **Two npm provenance probes**: `@nimbus-dev/sdk` and `@nimbus-dev/client`,
+  each resolved to its latest published version and checked via the
+  `verify-npm-provenance` composite action in monitor mode — confirming the
+  publish attestation + SLSA provenance predicate are present and name the
+  expected source repo/workflow. A version-resolution failure for either
+  package degrades that package's row to `indeterminate` rather than aborting
+  the job or blanking the other package's probe (see the `versions` step
+  comment in the workflow).
+- **The `NPM_TOKEN` absence guard**: asserts the secret stays unset (revoked
+  and deleted 2026-07-19) in this repo's env — a returned value is `present`,
+  a hard failure, since publishing is meant to be OIDC-only.
 
 > **Caveat — a green probe is not the same as "the real job will work."** A
 > live probe only proves the credential authenticates and has *some*
@@ -321,10 +340,23 @@ Findings are filed as a single, de-duped **`release-health`** GitHub issue
 (opened or updated in place per run, not re-created every week) — see
 `scripts/release/open-health-issue.ts`.
 
-**Responding to an alert:** rotate the flagged secret using the per-secret
-runbook earlier in this document, confirm the new value is stored under the
-correct scope (repo secret vs. the `release` environment), then close the
-`release-health` issue (or just re-run `secret-health.yml` via
+**Responding to an alert** — the fix depends on which kind of row fired,
+"rotate" is only correct for the first:
+
+- **A `dead`/`insufficient`/`expiring`/`expired` PAT or cert row** (App-health,
+  the three PATs, the three cert pairs): rotate the flagged secret using the
+  per-secret runbook earlier in this document, confirm the new value is
+  stored under the correct scope (repo secret vs. the `release` environment).
+- **A `missing-provenance` or `source-mismatch` provenance row**: this is not
+  a credential problem, so there is nothing to rotate. Either unpublish the
+  affected version within npm's 72-hour unpublish window, or once that window
+  has passed, deprecate it (`npm deprecate <pkg>@<version> "<reason>"`) and
+  publish a corrected version with OIDC provenance intact.
+- **An `NPM_TOKEN=present` row**: someone re-created the secret. Delete it
+  (repo Settings → Secrets and variables → Actions) — do not rotate it;
+  publishing is meant to be OIDC-only and the secret should not exist at all.
+
+Then close the `release-health` issue (or just re-run `secret-health.yml` via
 `workflow_dispatch` — a clean run auto-resolves it on the next scheduled
 pass).
 

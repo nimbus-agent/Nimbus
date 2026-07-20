@@ -1315,8 +1315,12 @@ publishing and carry two attestations: the npm publish attestation and a
 SLSA provenance predicate naming the source repo, workflow, and commit.
 
 Publishing access on both packages is set to **require two-factor
-authentication and disallow tokens**, so OIDC is the only path that can
-publish — a leaked token cannot. `NPM_TOKEN` was revoked and deleted on
+authentication and disallow tokens**, so no automation or token-based publish
+is possible — CI's only path to publish is OIDC, and a leaked token cannot
+publish either. This does **not** mean only OIDC can publish, full stop: an
+interactive maintainer authenticating with a One-Time Password can still
+publish by hand from their own machine — the setting removes token-based
+publishing, not human publishing. `NPM_TOKEN` was revoked and deleted on
 2026-07-19; the weekly secret-health run asserts it stays absent.
 
 Verify a published version yourself:
@@ -1333,9 +1337,13 @@ curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0"
   | jq -r '.attestations[].predicateType'  # expect both predicates
 ```
 
-The release workflows gate on this automatically: a pre-publish preflight
-asserts OIDC is available and npm meets the 11.5.1 floor, and a post-publish
-step fails the release if provenance is missing or names the wrong source.
+This gate is landing in the two satellite release workflows as Task C1
+(`nimbus-sdk` [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12),
+`nimbus-client` [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) —
+both open as of 2026-07-20, not yet merged): once merged, a pre-publish
+preflight will assert OIDC is available and npm meets the 11.5.1 floor, and a
+post-publish step will fail the release if provenance is missing or names the
+wrong source.
 
 ### Publish PATs that cannot yet be retired
 
@@ -1344,7 +1352,11 @@ step fails the release if provenance is missing or names the wrong source.
 | `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT. ⚠️ **Global ADO PATs are decommissioned 2026-12-01** and cannot be regenerated since 2026-03-15. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
 | `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
 
-Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`.
+Both will be probed weekly for liveness by `nimbus-vscode`'s own
+`secret-health.yml` — landing as
+[PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), open as of
+2026-07-20, not yet merged. Until it merges, neither PAT is under any
+automated liveness check.
 ````
 
 - [ ] **Step 6: Lint the docs**
