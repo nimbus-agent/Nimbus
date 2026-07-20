@@ -214,7 +214,13 @@ publish — a leaked token cannot. `NPM_TOKEN` was revoked and deleted on
 Verify a published version yourself:
 
 ```bash
+# `npm audit signatures` audits the tree it runs in, so install the package
+# under test into a clean directory first — running it inside a checkout would
+# audit that project's dependencies instead of the published tarball.
+tmp="$(mktemp -d)" && cd "$tmp" && npm init -y >/dev/null
+npm install @nimbus-dev/sdk@1.3.0 --no-audit --no-fund
 npm audit signatures                       # registry signature verification
+
 curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0" \
   | jq -r '.attestations[].predicateType'  # expect both predicates
 ```

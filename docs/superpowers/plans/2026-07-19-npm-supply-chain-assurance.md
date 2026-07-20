@@ -28,6 +28,8 @@ The provenance action **parses the DSSE payload** served by the registry over TL
 
 `npm audit signatures` **does** perform registry-signature verification and is therefore included in the release gate as the cryptographic complement (Task C1). Do not describe the action alone as "verifying signatures" in any comment, log line, or doc — it checks claims, not cryptography.
 
+**`npm audit signatures` audits the tree it is run in, not the package you just published.** Run in the repo root it verifies our own *dependencies*, and the published package is never a dependency of itself — the shipped artifact would go cryptographically unchecked. The release gate therefore installs the just-published version from the registry into a clean temporary tree and audits *that*. Confirmed live against `@nimbus-dev/sdk@1.3.0`. Anywhere this doc or a workflow comment says "verify signatures", it means that clean-tree audit.
+
 ## File Structure
 
 **Repo `nimbus-agent/.github`** (new `actions/` tree):
@@ -1263,7 +1265,13 @@ publish — a leaked token cannot. `NPM_TOKEN` was revoked and deleted on
 Verify a published version yourself:
 
 ```bash
+# `npm audit signatures` audits the tree it runs in, so install the package
+# under test into a clean directory first — running it in a checkout would
+# audit that project's dependencies instead.
+tmp="$(mktemp -d)" && cd "$tmp" && npm init -y >/dev/null
+npm install @nimbus-dev/sdk@1.3.0 --no-audit --no-fund
 npm audit signatures                       # registry signature verification
+
 curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0" \
   | jq -r '.attestations[].predicateType'  # expect both predicates
 ```
@@ -1370,8 +1378,34 @@ Insert immediately **after** the "Publish to npm with provenance" step:
         id: published
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Verify npm signatures (cryptographic)
-        run: npm audit signatures
+      # `npm audit signatures` verifies the registry signatures of the packages
+      # in the CURRENT tree. Run in the repo root it would audit our own
+      # dependencies — which never includes the package we just shipped. To
+      # cryptographically verify the published artifact it must be installed
+      # from the registry into a clean tree first. Verified live against
+      # @nimbus-dev/sdk@1.3.0: "1 package has a verified registry signature /
+      # 1 package has a verified attestation", exit 0.
+      - name: Verify the published tarball's registry signature (cryptographic)
+        env:
+          PUBLISHED_VERSION: ${{ steps.published.outputs.version }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cd "$tmp"
+          npm init -y >/dev/null
+          # The registry serves a fresh publish with a short propagation lag;
+          # retry so a few seconds of lag is not read as a supply-chain failure.
+          for attempt in 1 2 3 4 5; do
+            if npm install "@nimbus-dev/sdk@${PUBLISHED_VERSION}" --no-audit --no-fund; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::@nimbus-dev/sdk@${PUBLISHED_VERSION} was not installable from the registry after 5 attempts."
+              exit 1
+            fi
+            sleep $(( attempt * 5 ))
+          done
+          npm audit signatures
 
       - name: Verify provenance names this repo, workflow and commit
         uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
@@ -1384,7 +1418,7 @@ Insert immediately **after** the "Publish to npm with provenance" step:
           severity: gate
 ```
 
-**For `nimbus-client`,** use `package: "@nimbus-dev/client"` and `expected-repo: nimbus-agent/nimbus-client`. Everything else is identical.
+**For `nimbus-client`,** three values change: the `npm install` line in the signature step becomes `"@nimbus-dev/client@${PUBLISHED_VERSION}"`, the error message names `@nimbus-dev/client`, and the action gets `package: "@nimbus-dev/client"` + `expected-repo: nimbus-agent/nimbus-client`. Everything else is identical. Grep the finished file for `sdk` before committing in `nimbus-client` — there must be no hits.
 
 - [ ] **Step 4: Validate the workflow parses**
 
@@ -1426,9 +1460,12 @@ git commit -m "ci: gate releases on npm provenance
 
 Pre-publish preflight asserts OIDC is available and npm meets the 11.5.1
 trusted-publishing floor — the two dominant causes of silent degradation,
-both detectable before the irreversible step. Post-publish, npm audit
-signatures verifies cryptographically and verify-npm-provenance asserts the
-SLSA source claim names this repo, workflow and commit."
+both detectable before the irreversible step. Post-publish, the just-shipped
+version is installed from the registry into a clean tree so npm audit
+signatures verifies THAT tarball cryptographically — run in the repo root it
+would audit our own dependencies, which never include the package we just
+published — and verify-npm-provenance asserts the SLSA source claim names
+this repo, workflow and commit."
 git push -u origin dev/asafgolombek/provenance-gate
 gh pr create --fill
 ```
