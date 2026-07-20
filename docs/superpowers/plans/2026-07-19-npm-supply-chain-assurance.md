@@ -1564,6 +1564,14 @@ on:
 permissions:
   contents: read
 
+# Fix (PR #35 review, finding 5): a manual workflow_dispatch overlapping the
+# Monday cron can race the label-scoped dedup lookup in the Report step below
+# and file two alert issues for the same incident. Serialize instead of
+# canceling — a probe in flight should finish, not be dropped.
+concurrency:
+  group: secret-health
+  cancel-in-progress: false
+
 jobs:
   check:
     name: Probe publish credentials
@@ -1597,7 +1605,11 @@ jobs:
         env:
           PUBLISH_TOKEN: ${{ secrets.OVSX_PAT }}
 
+      # Fix (finding 4): `if: always()` so an infra-level failure upstream (a
+      # bad action ref, a network blip resolving the action) still reports,
+      # rather than silently skipping the whole alerting path.
       - name: Report
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           VSCE_STATUS: ${{ steps.vsce.outputs.status }}
@@ -1609,33 +1621,67 @@ jobs:
           echo "| VSCE_PAT | ${VSCE_STATUS} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| OVSX_PAT | ${OVSX_STATUS} |" >> "$GITHUB_STEP_SUMMARY"
 
-          # Mirror the monorepo's warn/hard split. Only `dead` is a hard failure —
-          # `indeterminate` means we could not reach the service, which is NOT
-          # evidence the token is revoked. Filing a revocation alert on a network
-          # blip trains the operator to ignore the alarm.
           # Both tokens are REQUIRED to publish this extension, so `dead` and
           # `not-configured` are both hard failures here — but they are reported
           # distinctly, because "revoked" and "never provisioned" need different
-          # remedies. `indeterminate` means we could not reach the service, which
-          # is NOT evidence about the token; it only warns.
+          # remedies (rotate vs. provision). `indeterminate` means we could not
+          # reach the service, which is NOT evidence the token is revoked —
+          # filing a revocation alert on a network blip trains the operator to
+          # ignore the alarm, so it only warns.
+          #
+          # Fix (finding 3): the mapping is explicit and default-hard. The old
+          # code branched on "anything that isn't ok" for the warn path, so an
+          # empty status, a renamed action output, an `id:` typo, or an
+          # incompatible action-ref bump would fall through to the warn branch
+          # and print a confident, false "service unreachable" explanation for
+          # a shape that was never indeterminate. Now only the literal
+          # `indeterminate` value warns; every other non-ok value — including
+          # anything unrecognised, via `*)` — is hard.
           hard=""
+          indeterminate=""
           for s in "${VSCE_STATUS}" "${OVSX_STATUS}"; do
-            case "$s" in dead|not-configured) hard="yes" ;; esac
+            case "$s" in
+              ok) ;;
+              indeterminate) indeterminate="yes" ;;
+              dead|not-configured) hard="yes" ;;
+              *) hard="yes" ;;
+            esac
           done
 
           if [ -n "$hard" ]; then
             title="🔑 Publish credential health alert"
-            existing="$(gh issue list --state open --search "$title" --json number --jq '.[0].number // empty')"
-            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. \`dead\` = the marketplace rejected a configured token (rotate it); \`not-configured\` = the secret is missing entirely (provision it — do NOT rotate). Either blocks the next extension release. Cross-check the marketplace status page first — see docs/ci-secrets.md in the Nimbus monorepo."
+            label="publish-credential-health"
+            # Fix (finding 1, CRITICAL): this workflow has no actions/checkout
+            # step (deliberately — the job only probes secrets and files/
+            # comments an issue, so `contents: read` has no other purpose
+            # otherwise). Without a checkout there is no `.git` remote for `gh`
+            # to resolve a repo from, and `gh` does not read
+            # `GITHUB_REPOSITORY` — it reads `GH_REPO`, which Actions does not
+            # set. Every gh call below is explicit about its target repo via
+            # `--repo`, which is cheaper than adding a checkout just to give
+            # `gh` a working directory.
+            #
+            # Fix (finding 2, IMPORTANT): dedup is label-scoped, not a text
+            # search. `gh issue list --search` is a fuzzy full-text match over
+            # title AND body — any unrelated open issue that happens to score
+            # on "publish"/"credential"/"health" would win `.[0]` and the real
+            # alert would be posted as a comment on the wrong issue and never
+            # created as its own issue. `gh issue create --label` fails if the
+            # label doesn't exist, so create it first (idempotent via
+            # --force) so the workflow is self-sufficient on a fresh repo.
+            gh label create "$label" --repo "$GITHUB_REPOSITORY" --color "B60205" \
+              --description "Publish credential rotation/provisioning alerts (secret-health.yml)" --force
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$label" --json number --jq '.[0].number // empty')"
+            body="VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}. \`dead\` = the marketplace rejected a configured token (rotate it); \`not-configured\` = the secret is missing entirely (provision it — do NOT rotate); any other value is an unrecognised probe result and should be treated as equally urgent until diagnosed. Either blocks the next extension release. Cross-check the marketplace status page first — see docs/ci-secrets.md in the Nimbus monorepo."
             if [ -n "$existing" ]; then
-              gh issue comment "$existing" --body "$body"
+              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
             else
-              gh issue create --title "$title" --body "$body"
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" --label "$label"
             fi
             exit 1
           fi
 
-          if [ "${VSCE_STATUS}" != "ok" ] || [ "${OVSX_STATUS}" != "ok" ]; then
+          if [ -n "$indeterminate" ]; then
             echo "::warning::probe inconclusive (VSCE_PAT=${VSCE_STATUS}, OVSX_PAT=${OVSX_STATUS}) — service unreachable, not a revocation signal"
             exit 0
           fi
@@ -1669,12 +1715,20 @@ Then insert immediately **after** the "Package .vsix" step:
 
 Add this section:
 
+<!-- Fix (finding 6): the original wording said "signed" (this is an
+     attestation, not a signature) and "every release" (only true going
+     forward — v0.5.0, the latest release at authoring time, predates this
+     PR, so `gh attestation verify` on it would FAIL and could wrongly read
+     as "your download is compromised"). State the version boundary and use
+     "attestation" throughout. -->
+
 ````markdown
 ## Verifying a release
 
-Every release attaches a signed `.vsix` to the GitHub Release with a build
-provenance attestation. To verify the file you downloaded was built by this
-repository's publish workflow:
+Starting with the next release after v0.5.0, every release attaches a build
+provenance attestation to the `.vsix` on the GitHub Release — this is an
+attestation, not a signature on the file itself. To verify a `.vsix` from one
+of those releases was built by this repository's publish workflow:
 
 ```bash
 gh attestation verify nimbus-<version>.vsix --repo nimbus-agent/nimbus-vscode
