@@ -148,7 +148,10 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [".github/workflows/release.yml"],
+    // Deliberately empty and VERIFIED empty: the App migration (#772) removed
+    // every reference. The note below names the workflows that must go green
+    // under the App before deletion — those are the GATE, not consumers.
+    consumedBy: [],
     maxAgeDays: 90,
     hardDeadline: null,
     note: "Superseded by the Release Bot App (#772). Flips to `forbidden` and is deleted once release.yml, publish-package-managers.yml and publish-linux-repo.yml have gone green under the App on a real tag.",
@@ -160,10 +163,8 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [
-      ".github/workflows/publish-package-managers.yml",
-      ".github/workflows/publish-linux-repo.yml",
-    ],
+    // Deliberately empty and VERIFIED empty — see RELEASE_PAT above.
+    consumedBy: [],
     maxAgeDays: 90,
     hardDeadline: null,
     note: "Superseded by the Release Bot App (#772). Same gate as RELEASE_PAT before deletion.",

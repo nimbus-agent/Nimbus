@@ -1867,6 +1867,14 @@ function main(): void {
   for (const [name, entry] of declared) {
     if (entry.state === "forbidden") continue;
     if (entry.consumedBy.length === 0) continue;
+    // Only assert this direction for entries consumed by THIS repo. Org-scoped
+    // secrets legitimately list satellite paths (e.g.
+    // "nimbus-sdk/.github/workflows/release.yml"), and those files are not in
+    // this checkout — flagging them would be a guaranteed false positive on
+    // RELEASE_PLEASE_PAT, whose three consumers all live in other repos.
+    // Local paths start with ".github/"; anything else is another repo's.
+    const localPaths = entry.consumedBy.filter((p) => p.startsWith(".github/"));
+    if (localPaths.length === 0) continue;
     if (!referenced.has(name)) {
       problems.push(
         `${name} declares consumedBy ${entry.consumedBy.join(", ")} but no workflow in this repo references it`,
