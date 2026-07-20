@@ -1238,8 +1238,18 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
           printf 'sdk=%s\n' "$sdk_version" >> "$GITHUB_OUTPUT"
           printf 'client=%s\n' "$client_version" >> "$GITHUB_OUTPUT"
 
+      # Skip rather than probe an empty version. If the resolution step above
+      # failed, `continue-on-error` leaves this output empty, and the action
+      # would request `.../@nimbus-dev/sdk@` — which the registry answers 404.
+      # `fetch-attestations` treats a 404 that survives the full backoff as
+      # `absent`, and `decide()` maps `absent` to `missing-provenance`, a HARD
+      # failure. An npm outage would therefore file an issue claiming the
+      # published package lost its provenance: the exact false alarm this
+      # design exists to avoid. Skipping leaves the status empty, which
+      # `classifyProvenanceOutcome` maps to `indeterminate` (warn).
       - name: Probe @nimbus-dev/sdk provenance
         id: sdk-provenance
+        if: steps.versions.outputs.sdk != ''
         continue-on-error: true
         uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
@@ -1249,8 +1259,11 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
           expected-workflow: .github/workflows/release.yml
           severity: monitor
 
+      # Same guard as the sdk probe above — see that comment for why an empty
+      # version would otherwise be reported as missing-provenance (hard).
       - name: Probe @nimbus-dev/client provenance
         id: client-provenance
+        if: steps.versions.outputs.client != ''
         continue-on-error: true
         uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
