@@ -1396,7 +1396,7 @@ export async function enumerateSecrets(deps: {
 bun test scripts/release/credential-enumerate.test.ts
 ```
 
-Expected: PASS, 5 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Prove the 403 assertion can fail**
 
