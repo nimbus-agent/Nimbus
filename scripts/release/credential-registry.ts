@@ -176,7 +176,10 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [".github/workflows/publish-package-managers.yml"],
+    consumedBy: [
+      ".github/workflows/publish-package-managers.yml",
+      ".github/workflows/secret-health.yml",
+    ],
     maxAgeDays: 90,
     hardDeadline: null,
     note: "Stays a PAT: it must fork microsoft/winget-pkgs, which the App cannot reach.",
