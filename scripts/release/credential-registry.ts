@@ -1,0 +1,382 @@
+/**
+ * The credential manifest: the single machine-checked declaration of every
+ * credential this organization holds.
+ *
+ * `docs/ci-secrets.md` carries the human narrative and points here; this file is
+ * authoritative for anything checkable. Adding a secret anywhere in the org
+ * without adding it here makes the weekly monitor hard-fail with `undocumented`,
+ * which is the point.
+ */
+
+export type CredentialState = "required" | "optional" | "forbidden";
+export type CredentialType = "pat" | "app-key" | "signing-key" | "service-token";
+
+/** GitHub scopes secrets by product; each has its own API and permission. */
+export type SecretProduct = "actions" | "dependabot";
+
+export interface CredentialLocation {
+  readonly scope: "org" | "repo";
+  /** Set if and only if scope === "repo". */
+  readonly repo?: string;
+}
+
+export interface CredentialEntry {
+  readonly name: string;
+  /**
+   * `required` — a workflow breaks without it (absent => hard).
+   * `optional`  — referenced but legitimately unset (absent => ok).
+   * `forbidden` — deliberately deleted; must not come back (present => hard).
+   */
+  readonly state: CredentialState;
+  readonly location: CredentialLocation;
+  readonly product: SecretProduct;
+  readonly type: CredentialType;
+  /** Who rotates it. */
+  readonly owner: string;
+  /** Workflow paths that consume it, so an unused entry is traceable. */
+  readonly consumedBy: readonly string[];
+  /** Warn when the secret was last set longer ago than this. null = age is the wrong signal. */
+  readonly maxAgeDays: number | null;
+  /** Immovable external date (ISO), e.g. a platform decommission. */
+  readonly hardDeadline: string | null;
+  /** Org-scoped entries only: the visibility this secret must keep. */
+  readonly expectedVisibility?: "all" | "selected";
+  readonly note: string;
+}
+
+/** Lead time on a hard external deadline. Longer than the 21-day cert threshold
+ *  because a deadline may require investigation, not just a rotation. */
+export const HARD_DEADLINE_LEAD_DAYS = 90;
+
+/** Quarterly, matching the default maxAgeDays so the cadences cannot drift apart. */
+export const MANUAL_AUDIT_MAX_AGE_DAYS = 90;
+
+/** Bump this when `docs/credential-hygiene.md` is actually walked through. */
+export const LAST_MANUAL_AUDIT = "2026-07-20";
+
+const OWNER = "@AsafGolombek";
+
+export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
+  // --- org scope ---
+  {
+    name: "RELEASE_PLEASE_PAT",
+    state: "required",
+    location: { scope: "org" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [
+      "nimbus-sdk/.github/workflows/release.yml",
+      "nimbus-client/.github/workflows/release.yml",
+      "nimbus-vscode/.github/workflows/release-please.yml",
+    ],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    expectedVisibility: "selected",
+    note: "Interim state. Migrating the satellites onto the Release Bot App retires this entirely.",
+  },
+  {
+    name: "SONAR_TOKEN",
+    state: "optional",
+    location: { scope: "org" },
+    product: "actions",
+    type: "service-token",
+    owner: OWNER,
+    consumedBy: [".github/workflows/ci.yml", ".github/workflows/_test-suite.yml"],
+    maxAgeDays: 180,
+    hardDeadline: null,
+    expectedVisibility: "selected",
+    note: "Quality gate skips its step when unset.",
+  },
+
+  // --- Nimbus: release bot + auditor ---
+  {
+    name: "RELEASE_BOT_APP_ID",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml", ".github/workflows/release-please.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "App ID is stable across key rotations. Superseded by CLIENT_ID once Nimbus#779 lands.",
+  },
+  {
+    name: "RELEASE_BOT_PRIVATE_KEY",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml", ".github/workflows/release-please.yml"],
+    maxAgeDays: 365,
+    hardDeadline: null,
+    note: "Mints 1-hour installation tokens; no schedule expiry, rotate on suspicion.",
+  },
+  {
+    name: "SECRET_AUDITOR_CLIENT_ID",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/secret-health.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Read-only auditor App; no contents permission, must never be granted one.",
+  },
+  {
+    name: "SECRET_AUDITOR_PRIVATE_KEY",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/secret-health.yml"],
+    maxAgeDays: 365,
+    hardDeadline: null,
+    note: "This system's own credential. Tracked here like any other.",
+  },
+
+  // --- Nimbus: release-path PATs (gap 4, pending deletion) ---
+  {
+    name: "RELEASE_PAT",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Superseded by the Release Bot App (#772). Flips to `forbidden` and is deleted once release.yml, publish-package-managers.yml and publish-linux-repo.yml have gone green under the App on a real tag.",
+  },
+  {
+    name: "PACKAGE_MANAGER_PAT",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Superseded by the Release Bot App (#772). Same gate as RELEASE_PAT before deletion.",
+  },
+  {
+    name: "WINGET_PAT",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [".github/workflows/publish-package-managers.yml"],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Stays a PAT: it must fork microsoft/winget-pkgs, which the App cannot reach.",
+  },
+
+  // --- Nimbus: signing material ---
+  {
+    name: "GPG_SIGNING_SUBKEY",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Carries its own GPG expiry, which the existing cert check reads. Calendar rotation is the wrong alarm.",
+  },
+  {
+    name: "GPG_PASSPHRASE",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Unlocks GPG_SIGNING_SUBKEY; rotates with it.",
+  },
+  {
+    name: "UPDATER_SIGNING_KEY",
+    state: "required",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Ed25519 updater-manifest key. Rotating it invalidates client trust; never on a calendar.",
+  },
+
+  // --- Nimbus: optional / absent ---
+  {
+    name: "CODECOV_TOKEN",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "service-token",
+    owner: OWNER,
+    consumedBy: [".github/workflows/_test-suite.yml"],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Coverage upload; the step degrades without it.",
+  },
+  {
+    name: "BENCHER_API_KEY",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "service-token",
+    owner: OWNER,
+    consumedBy: [".github/workflows/_perf.yml"],
+    maxAgeDays: 180,
+    hardDeadline: null,
+    note: "Benchmark upload.",
+  },
+  {
+    name: "NIMBUS_CHECKS_TOKEN",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [".github/workflows/ci.yml", ".github/workflows/_test-suite.yml"],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Deleted 2026-07-19 after the monitor flagged it dead; workflows fall back to github.token.",
+  },
+  {
+    name: "SCORECARD_TOKEN",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [".github/workflows/scorecard.yml"],
+    maxAgeDays: 90,
+    hardDeadline: null,
+    note: "Read-only fine-grained PAT; Scorecard degrades without it.",
+  },
+  {
+    name: "WINDOWS_CERT_PFX_BASE64",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Windows code-signing cert; unset today, so .msi ships unsigned.",
+  },
+  {
+    name: "WINDOWS_CERT_PASSWORD",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Password for WINDOWS_CERT_PFX_BASE64.",
+  },
+  {
+    name: "APPLE_CERT_P12_BASE64",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "macOS signing cert; unset today.",
+  },
+  {
+    name: "APPLE_CERT_PASSWORD",
+    state: "optional",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "signing-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/release.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Password for APPLE_CERT_P12_BASE64.",
+  },
+  {
+    name: "NPM_TOKEN",
+    state: "forbidden",
+    location: { scope: "repo", repo: "Nimbus" },
+    product: "actions",
+    type: "service-token",
+    owner: OWNER,
+    consumedBy: [],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Revoked 2026-07-19. Publishing is OIDC-only; both packages are set to mfa=publish, so a token cannot publish. If this reappears, someone has reintroduced a bypass.",
+  },
+
+  // --- nimbus-vscode ---
+  {
+    name: "VSCE_PAT",
+    state: "required",
+    location: { scope: "repo", repo: "nimbus-vscode" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [".github/workflows/publish.yml", ".github/workflows/secret-health.yml"],
+    maxAgeDays: null,
+    hardDeadline: "2026-12-01",
+    note: "Azure DevOps PAT. Global ADO PATs are decommissioned 2026-12-01 and cannot be regenerated; see nimbus-vscode#34. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422).",
+  },
+  {
+    name: "OVSX_PAT",
+    state: "required",
+    location: { scope: "repo", repo: "nimbus-vscode" },
+    product: "actions",
+    type: "pat",
+    owner: OWNER,
+    consumedBy: [".github/workflows/publish.yml", ".github/workflows/secret-health.yml"],
+    maxAgeDays: 180,
+    hardDeadline: null,
+    note: "Open VSX has no OIDC path at all (eclipse-openvsx/openvsx#1534); rotation is the only mitigation.",
+  },
+
+  // --- nimbus-web-clipper (store publishing) ---
+  ...(
+    [
+      ["AMO_JWT_ISSUER", "Firefox Add-ons API issuer."],
+      ["AMO_JWT_SECRET", "Firefox Add-ons API secret."],
+      ["CWS_CLIENT_ID", "Chrome Web Store OAuth client id."],
+      ["CWS_CLIENT_SECRET", "Chrome Web Store OAuth client secret."],
+      [
+        "CWS_EXTENSION_ID",
+        "Chrome Web Store extension id (identifier, not a secret, but stored as one).",
+      ],
+      ["CWS_PUBLISHER_ID", "Chrome Web Store publisher id."],
+      ["CWS_REFRESH_TOKEN", "Chrome Web Store refresh token."],
+    ] as const
+  ).map(
+    ([name, note]): CredentialEntry => ({
+      name,
+      state: "required",
+      location: { scope: "repo", repo: "nimbus-web-clipper" },
+      product: "actions",
+      type: "service-token",
+      owner: OWNER,
+      consumedBy: [".github/workflows/publish.yml"],
+      maxAgeDays: 180,
+      hardDeadline: null,
+      note,
+    }),
+  ),
+];
