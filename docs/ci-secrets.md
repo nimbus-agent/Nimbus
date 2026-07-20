@@ -225,9 +225,13 @@ curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0"
   | jq -r '.attestations[].predicateType'  # expect both predicates
 ```
 
-The release workflows gate on this automatically: a pre-publish preflight
-asserts OIDC is available and npm meets the 11.5.1 floor, and a post-publish
-step fails the release if provenance is missing or names the wrong source.
+This gate is landing in the two satellite release workflows as Task C1
+(`nimbus-sdk` [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12),
+`nimbus-client` [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) —
+both open as of 2026-07-20, not yet merged): once merged, a pre-publish
+preflight will assert OIDC is available and npm meets the 11.5.1 floor, and a
+post-publish step will fail the release if provenance is missing or names the
+wrong source.
 
 ### Publish PATs that cannot yet be retired
 

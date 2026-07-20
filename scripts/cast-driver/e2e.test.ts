@@ -28,13 +28,16 @@ describe("cast-driver e2e (incident-response committed snapshot)", () => {
     // `bun install`, the spawned CLI cannot resolve its imports, crashes with
     // no stdout, and the harness reports a misleading `expect missed` on the
     // first step — which reads like a stale snapshot rather than absent deps.
-    if (code !== 0) {
-      throw new Error(
-        `cast-driver --check failed (exit ${code}).\n` +
-          `If stderr mentions an unresolved module, run \`bun install\` in this worktree.\n` +
-          `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`,
-      );
-    }
-    expect(code).toBe(0);
+    //
+    // Fold the diagnostic into the assertion's own message rather than a
+    // separate `if (code !== 0) throw` before it: that prior form made this
+    // `expect` unreachable on failure (dead code) since the throw always
+    // fired first. One assertion path, still with the same diagnostic detail.
+    expect(
+      code,
+      `cast-driver --check failed (exit ${code}).\n` +
+        `If stderr mentions an unresolved module, run \`bun install\` in this worktree.\n` +
+        `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`,
+    ).toBe(0);
   });
 });

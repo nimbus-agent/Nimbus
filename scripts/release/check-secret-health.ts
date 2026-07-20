@@ -68,9 +68,19 @@ export type AbsenceStatus = "ok" | "present";
  * check and its `steps.<id>.outputs.status` is passed in via env — the same
  * shape as the App-mint probe above. Fail closed: an unset value means the step
  * never ran, and an unrecognised value is never silently "ok".
+ *
+ * An empty string is NOT the same situation as an absent PAT/cert secret
+ * (`not-configured` there is a genuine, intentional healthy state — see
+ * `classifySecretAbsence`). Here it means the probe never reported at all: a
+ * renamed step id, a skipped step, or an action that exits before writing its
+ * output all interpolate to "" with no workflow error. `not-configured` sits
+ * in neither the `hard` nor `warn` set in `summarize`, so returning it here
+ * took the issue-closing "healthy" branch for a probe that told us nothing —
+ * a false `ok` for "we have no idea". Map it to `indeterminate` instead, so
+ * it lands in the warn path (review finding #1).
  */
 export function classifyProvenanceOutcome(status: string): ProvenanceStatus {
-  if (status === "") return "not-configured";
+  if (status === "") return "indeterminate";
   if (
     status === "ok" ||
     status === "missing-provenance" ||
@@ -427,7 +437,12 @@ if (import.meta.main) {
     name: "NPM_TOKEN",
     kind: "absence",
     status: classifySecretAbsence(process.env["NPM_TOKEN"]),
-    detail: "revoked 2026-07-19; publishing is OIDC-only",
+    // This probe can only observe a secret bound into THIS repo's env — it is
+    // not a global assurance about npm/org-wide token existence, even though
+    // that absence was separately verified by hand (org scope, Nimbus repo
+    // scope, the Nimbus `release` environment, and both satellite repos).
+    detail:
+      "absent from this repo's env (the only scope this check observes); revoked 2026-07-19, publishing is OIDC-only",
   };
   const { hardFailure } = await runSecretHealth({
     api: createGitHubApi({ token, repo }),

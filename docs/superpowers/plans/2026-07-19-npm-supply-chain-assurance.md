@@ -986,7 +986,11 @@ describe("classifyProvenanceOutcome", () => {
   });
 
   test("fails closed: unset or unrecognised is never ok", () => {
-    expect(classifyProvenanceOutcome("")).toBe("not-configured");
+    // Empty means the probe never reported (renamed/skipped step id, or an
+    // action exiting before writing output) — not the same as a genuinely
+    // absent secret, so it must warn (`indeterminate`), never silently pass
+    // as `not-configured` (post-review fix; see Task B1 Step 3 below).
+    expect(classifyProvenanceOutcome("")).toBe("indeterminate");
     expect(classifyProvenanceOutcome("weird")).toBe("indeterminate");
   });
 });
@@ -1064,9 +1068,18 @@ export type AbsenceStatus = "ok" | "present";
  * check and its `steps.<id>.outputs.status` is passed in via env — the same
  * shape as the App-mint probe above. Fail closed: an unset value means the step
  * never ran, and an unrecognised value is never silently "ok".
+ *
+ * POST-REVIEW FIX: an earlier draft mapped "" to `not-configured`, but
+ * `not-configured` sits in neither `summarize`'s `hard` nor `warn` set — a
+ * renamed step id, a skipped step, or an action exiting before writing its
+ * output all interpolate to "" with NO workflow error, so that draft posted
+ * "all healthy" for a probe that reported nothing. `not-configured` is the
+ * right state for a genuinely absent PAT/cert secret (see
+ * `classifySecretAbsence`), but "no report" is not the same claim as
+ * "intentionally unconfigured" — map it to `indeterminate` so it warns.
  */
 export function classifyProvenanceOutcome(status: string): ProvenanceStatus {
-  if (status === "") return "not-configured";
+  if (status === "") return "indeterminate";
   if (
     status === "ok" ||
     status === "missing-provenance" ||
@@ -1197,13 +1210,37 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
 ```yaml
       - name: Resolve latest published versions
         id: versions
+        # Same reasoning as `app-mint` above: a registry hiccup here must
+        # degrade into a classified row, not abort the whole weekly job and
+        # silence PAT/cert monitoring too (post-review fix).
+        continue-on-error: true
         run: |
           set -euo pipefail
-          echo "sdk=$(npm view @nimbus-dev/sdk version)" >> "$GITHUB_OUTPUT"
-          echo "client=$(npm view @nimbus-dev/client version)" >> "$GITHUB_OUTPUT"
+          # POST-REVIEW FIX: `set -euo pipefail` does NOT catch a failing
+          # command substitution used as an echo argument — `echo
+          # "sdk=$(npm view …)"` still returns 0 (that's echo's own exit
+          # status), so a failed `npm view` silently wrote a literal "sdk=" to
+          # $GITHUB_OUTPUT and fed an empty version into the provenance probe
+          # below. Assigning to a variable first fixes it: the assignment's
+          # exit status IS the command substitution's, so `set -e` actually
+          # trips; the empty-check is a second line of defense; `printf`
+          # avoids re-embedding a command substitution in the output line.
+          sdk_version="$(npm view @nimbus-dev/sdk version)"
+          if [ -z "$sdk_version" ]; then
+            echo "::error::npm view @nimbus-dev/sdk version returned an empty version" >&2
+            exit 1
+          fi
+          client_version="$(npm view @nimbus-dev/client version)"
+          if [ -z "$client_version" ]; then
+            echo "::error::npm view @nimbus-dev/client version returned an empty version" >&2
+            exit 1
+          fi
+          printf 'sdk=%s\n' "$sdk_version" >> "$GITHUB_OUTPUT"
+          printf 'client=%s\n' "$client_version" >> "$GITHUB_OUTPUT"
 
       - name: Probe @nimbus-dev/sdk provenance
         id: sdk-provenance
+        continue-on-error: true
         uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           package: "@nimbus-dev/sdk"
@@ -1214,6 +1251,7 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
 
       - name: Probe @nimbus-dev/client provenance
         id: client-provenance
+        continue-on-error: true
         uses: nimbus-agent/.github/actions/verify-npm-provenance@5fb42792fa88287048fd24f704183b9a9b807a67
         with:
           package: "@nimbus-dev/client"
@@ -1222,6 +1260,12 @@ In `.github/workflows/secret-health.yml`, insert this block after the "Mint rele
           expected-workflow: .github/workflows/release.yml
           severity: monitor
 ```
+
+All three steps carry `continue-on-error: true`, matching the `app-mint` step
+above them: without it, one npm registry outage aborts the whole job and
+silences PAT/cert monitoring too, and it makes the `indeterminate`
+classification path unreachable (the scenario becomes a red job instead of a
+classified row) — a post-review fix.
 
 Note there is no `expected-sha` here: the monitor checks whatever version is currently latest, whose commit is not knowable from this workflow. The release-time gate in Task C1 is where the commit is pinned.
 

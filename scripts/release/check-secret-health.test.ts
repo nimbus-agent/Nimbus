@@ -453,7 +453,11 @@ describe("classifyProvenanceOutcome", () => {
   });
 
   test("fails closed: unset or unrecognised is never ok", () => {
-    expect(classifyProvenanceOutcome("")).toBe("not-configured");
+    // An empty string means the probe never reported (renamed step id, skipped
+    // step, or an action that exits before writing output) — never the same
+    // thing as a genuinely absent/unconfigured secret, so it must warn
+    // (`indeterminate`), not silently pass as `not-configured` (review finding #1).
+    expect(classifyProvenanceOutcome("")).toBe("indeterminate");
     expect(classifyProvenanceOutcome("weird")).toBe("indeterminate");
   });
 });
@@ -503,5 +507,23 @@ describe("summarize with the new row kinds", () => {
     const s = summarize(rows);
     expect(s.hasHardFailure).toBe(false);
     expect(s.hasWarning).toBe(false);
+  });
+
+  test("an unreported provenance probe (empty status — renamed/skipped step id, or an action that exits before writing output) warns, never closes the issue as healthy (review finding #1 regression guard)", () => {
+    const rows: HealthRow[] = [
+      {
+        name: "@nimbus-dev/sdk",
+        kind: "provenance",
+        status: classifyProvenanceOutcome(""),
+        detail: "latest published version",
+      },
+    ];
+    const s = summarize(rows);
+    // This is the exact defect the review caught: `not-configured` sits in
+    // neither `hard` nor `warn`, so a silently-unreported probe took the
+    // issue-CLOSING branch and posted "All release credentials healthy". A
+    // never-reported probe must warn — never a false ok.
+    expect(s.hasHardFailure).toBe(false);
+    expect(s.hasWarning).toBe(true);
   });
 });
