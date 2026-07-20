@@ -229,13 +229,14 @@ curl -s "https://registry.npmjs.org/-/npm/v1/attestations/@nimbus-dev/sdk@1.3.0"
   | jq -r '.attestations[].predicateType'  # expect both predicates
 ```
 
-This gate is landing in the two satellite release workflows as Task C1
+This gate is live in both satellite release workflows as of 2026-07-20
 (`nimbus-sdk` [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12),
-`nimbus-client` [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) —
-both open as of 2026-07-20, not yet merged): once merged, a pre-publish
-preflight will assert OIDC is available and npm meets the 11.5.1 floor, and a
-post-publish step will fail the release if provenance is missing or names the
-wrong source.
+`nimbus-client` [#5](https://github.com/nimbus-agent/nimbus-client/pull/5)): a
+pre-publish preflight asserts OIDC is available and npm meets the 11.5.1 floor,
+and two post-publish steps fail the release if the published tarball's registry
+signature does not verify, or if provenance is missing or names the wrong
+source. Neither has executed against a real publish yet — the next release of
+either package is the first live exercise.
 
 ### Publish PATs that cannot yet be retired
 
@@ -244,11 +245,13 @@ wrong source.
 | `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT. ⚠️ **Global ADO PATs are decommissioned 2026-12-01** and cannot be regenerated since 2026-03-15. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
 | `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
 
-Both will be probed weekly for liveness by `nimbus-vscode`'s own
-`secret-health.yml` — landing as
-[PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), open as of
-2026-07-20, not yet merged. Until it merges, neither PAT is under any
-automated liveness check.
+Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`
+([PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), merged
+2026-07-20), which runs Mondays 09:00 UTC and files a labelled issue when either
+PAT reports `dead` (rotate it) or `not-configured` (provision it — do not rotate
+a credential that does not exist). The secrets stay in `nimbus-vscode`; copying
+them here to centralise monitoring would spread credentials to save a workflow
+file.
 
 ---
 

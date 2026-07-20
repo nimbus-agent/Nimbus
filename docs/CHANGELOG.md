@@ -25,15 +25,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   kind (rotate vs. unpublish/deprecate vs. delete-the-secret — "rotate" does not apply to a
   provenance or absence row), and corrects two overclaims: the 2FA-required/no-tokens npm setting
   blocks token-based publishing, not human publishing (an interactive maintainer with an OTP can
-  still publish by hand), and the `nimbus-vscode` weekly PAT-liveness probe is not yet live — it
-  ships as that repo's own `secret-health.yml`, landing in
-  [PR #35](https://github.com/nimbus-agent/nimbus-vscode/pull/35), open as of 2026-07-20, not yet
-  merged. Two accompanying but separate PRs add the release-time provenance gate to the npm
-  satellites' own release workflows — `nimbus-sdk`
-  [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12) and `nimbus-client`
-  [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) — both also open as of 2026-07-20, not
-  yet merged; this entry covers only the monorepo-side monitoring that lands with this branch. No
-  migration, no new invariant.
+  still publish by hand). Three accompanying PRs merged the same day in the satellite repos:
+  `nimbus-vscode` [#35](https://github.com/nimbus-agent/nimbus-vscode/pull/35) adds that repo's own
+  `secret-health.yml` weekly PAT-liveness probe (the secrets stay where they are — copying them here
+  to centralise monitoring would spread credentials to save a workflow file) plus a `.vsix` build
+  provenance attestation, and `nimbus-sdk` [#12](https://github.com/nimbus-agent/nimbus-sdk/pull/12)
+  and `nimbus-client` [#5](https://github.com/nimbus-agent/nimbus-client/pull/5) add the release-time
+  gate to their own release workflows: a pre-publish preflight asserting OIDC is available and npm
+  meets the 11.5.1 floor, then two post-publish checks — the just-published version is installed from
+  the registry into a clean tree so `npm audit signatures` verifies *that* tarball (run in the repo
+  root it would audit the project's own dependencies, which never include the package just shipped),
+  and the provenance is asserted to name the expected repo, workflow and commit. No migration, no new
+  invariant.
 
 - **2026-07-19 — docs: Phase 6 closed out; the Sequencing Spine is now the live build order.** A
   status-drift sweep across the roadmap and its mirror surfaces. `docs/roadmap.md` moves **Phase 6 —
