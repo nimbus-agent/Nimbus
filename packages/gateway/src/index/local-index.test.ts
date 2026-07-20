@@ -1527,6 +1527,30 @@ describe("LocalIndex.listItemsForAuthor", () => {
   });
 });
 
+describe("LocalIndex.listItems", () => {
+  test("maps rows to IndexedItem and honours service/type/limit filters", () => {
+    const idx = makeIndex();
+    idx.upsert(makeItem({ id: "run-1", service: "github", itemType: "ci_run", name: "nightly" }));
+    idx.upsert(makeItem({ id: "m-1", service: "slack", itemType: "message", name: "hello" }));
+
+    const all = idx.listItems({ services: [], types: [], limit: 50 });
+    expect(all).toHaveLength(2);
+    // Mapped, not raw: camelCase fields and the composite key.
+    const run = all.find((i) => i.id === "run-1");
+    expect(run?.itemType).toBe("ci_run");
+    expect(run?.name).toBe("nightly");
+    expect(run?.indexPrimaryKey).toBe("github:run-1");
+
+    const onlyGithub = idx.listItems({ services: ["github"], types: [], limit: 50 });
+    expect(onlyGithub.map((i) => i.id)).toEqual(["run-1"]);
+
+    const onlyMessages = idx.listItems({ services: [], types: ["message"], limit: 50 });
+    expect(onlyMessages.map((i) => i.id)).toEqual(["m-1"]);
+
+    expect(idx.listItems({ services: [], types: [], limit: 1 })).toHaveLength(1);
+  });
+});
+
 describe("LocalIndex.fetchMoreItems", () => {
   test("returns items for a service+type with offset and limit", () => {
     const idx = makeIndex();

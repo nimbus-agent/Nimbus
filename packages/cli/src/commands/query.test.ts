@@ -106,7 +106,16 @@ describe("runQuery — --service path", () => {
   it("calls index.queryItems with services + clamped limit; renders --json", async () => {
     const mock = createMockIpcClient([
       {
-        items: [{ title: "foo", service: "github", type: "pr", modified_at: 1700000000000 }],
+        items: [
+          {
+            id: "pr-1",
+            indexPrimaryKey: "github:pr-1",
+            service: "github",
+            itemType: "pr",
+            name: "foo",
+            modifiedAt: 1700000000000,
+          },
+        ],
         meta: { limit: 50, total: 1 },
       },
     ]);
@@ -120,7 +129,7 @@ describe("runQuery — --service path", () => {
       method: "index.queryItems",
       params: { services: ["github"], limit: 1000 }, // clamped from 5000 → 1000
     });
-    expect(out.stdout).toContain('"title": "foo"');
+    expect(out.stdout).toContain('"name": "foo"');
   });
 
   it("includes types + sinceMs when --type and --since are present", async () => {

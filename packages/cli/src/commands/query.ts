@@ -71,10 +71,10 @@ Output:
   }
 
   const r = await withGatewayIpc((c) =>
-    c.call<{ items: Record<string, unknown>[]; meta: { limit: number; total: number } }>(
-      "index.queryItems",
-      params,
-    ),
+    c.call<{
+      items: Array<Record<string, unknown>>;
+      meta: { limit: number; total: number };
+    }>("index.queryItems", params),
   );
   printRows(r.items, wantJson, pretty);
 }

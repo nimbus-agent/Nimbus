@@ -20,7 +20,6 @@ import { formatRepairReport, repairIndex } from "../db/repair.ts";
 import { listSnapshots, previewRestore, pruneSnapshots, takeSnapshot } from "../db/snapshot.ts";
 import { formatVerifyResult, verifyIndex } from "../db/verify.ts";
 import { preT2DisabledCount, signatureDisabledRegistry } from "../extensions/hard-disable.ts";
-import { buildItemListSql } from "../index/item-list-query.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { LocalIndex as LocalIndexClass } from "../index/local-index.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
@@ -332,16 +331,14 @@ function rpcIndexQueryItems(params: unknown, ctx: DiagnosticsRpcContext): Diagno
   const types = Array.isArray(rec?.["types"])
     ? (rec["types"] as unknown[]).filter((x): x is string => typeof x === "string")
     : [];
-  const d = requireDb(ctx);
-  const { sql, vals } = buildItemListSql({
+  const items = requireLocalIndex(ctx).listItems({
     services,
     types,
     limit,
     ...(sinceMs === undefined ? {} : { sinceMs }),
     ...(untilMs === undefined ? {} : { untilMs }),
   });
-  const rows = d.query(sql).all(...vals) as Record<string, unknown>[];
-  return { kind: "hit", value: { items: rows, meta: { limit, total: rows.length } } };
+  return { kind: "hit", value: { items, meta: { limit, total: items.length } } };
 }
 
 async function rpcIndexQuerySql(
