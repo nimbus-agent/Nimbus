@@ -130,16 +130,20 @@ function truncate(s: string, max: number): string {
 }
 
 function isItemLikeRow(row: Record<string, unknown>): boolean {
-  return typeof row["title"] === "string" && typeof row["service"] === "string";
+  const hasName = typeof row["name"] === "string" || typeof row["title"] === "string";
+  return typeof row["service"] === "string" && hasName;
 }
 
 function printItemCard(row: Record<string, unknown>, idx: number): void {
   const num = `${String(idx + 1)}.`;
-  const title = typeof row["title"] === "string" ? row["title"] : "(untitled)";
+  const nameField = row["name"] ?? row["title"];
+  const title = typeof nameField === "string" ? nameField : "(untitled)";
+  const typeField = row["itemType"] ?? row["type"];
+  const timestampField = row["modifiedAt"] ?? row["modified_at"];
   const meta: string[] = [];
   if (typeof row["service"] === "string") meta.push(row["service"]);
-  if (typeof row["type"] === "string") meta.push(row["type"]);
-  if (typeof row["modified_at"] === "number") meta.push(formatTimestampField(row["modified_at"]));
+  if (typeof typeField === "string") meta.push(typeField);
+  if (typeof timestampField === "number") meta.push(formatTimestampField(timestampField));
 
   console.log(`${num.padEnd(4)} ${title}`);
   if (meta.length > 0) console.log(`     ${meta.join(" · ")}`);
@@ -153,10 +157,14 @@ function printItemCard(row: Record<string, unknown>, idx: number): void {
   console.log("");
 }
 
+function isTimestampKey(key: string): boolean {
+  return key.endsWith("_at") || key.endsWith("At");
+}
+
 function printKvBlock(row: Record<string, unknown>, idx: number): void {
   console.log(`── #${String(idx + 1)} ──`);
   for (const [k, v] of Object.entries(row)) {
-    const displayValue = k.endsWith("_at") ? formatTimestampField(v) : formatQueryCell(v);
+    const displayValue = isTimestampKey(k) ? formatTimestampField(v) : formatQueryCell(v);
     console.log(`  ${k}: ${displayValue}`);
   }
   console.log("");

@@ -172,11 +172,12 @@ describe("runQuery — --service path", () => {
       {
         items: [
           {
-            title: "My PR",
+            id: "pr-1",
+            indexPrimaryKey: "github:pr-1",
             service: "github",
-            type: "pr",
-            modified_at: 1700000000000,
-            body_preview: "fix things",
+            itemType: "pr",
+            name: "My PR",
+            modifiedAt: 1700000000000,
             url: "https://example.test/pr/1",
           },
         ],
@@ -254,7 +255,7 @@ describe("runQuery — output formatting branches", () => {
 
   // singular vs plural row count
   it("shows '1 row' (singular) for exactly one result in --pretty mode", async () => {
-    setupMock([{ items: [{ title: "A", service: "svc" }], meta: { limit: 50, total: 1 } }]);
+    setupMock([{ items: [{ name: "A", service: "svc" }], meta: { limit: 50, total: 1 } }]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\(1 row ·/);
   });
@@ -263,8 +264,8 @@ describe("runQuery — output formatting branches", () => {
     setupMock([
       {
         items: [
-          { title: "A", service: "svc" },
-          { title: "B", service: "svc" },
+          { name: "A", service: "svc" },
+          { name: "B", service: "svc" },
         ],
         meta: { limit: 50, total: 2 },
       },
@@ -306,6 +307,62 @@ describe("runQuery — output formatting branches", () => {
     await runQuery(["--service", "github", "--type", "", "--json"]);
     const p = mock.calls[0]?.params as Record<string, unknown>;
     expect(p["types"]).toBeUndefined();
+  });
+});
+
+describe("runQuery — TTY card regression for the new index.queryItems shape", () => {
+  let origIsTTY: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    out.reset();
+    // Force a deterministic TTY stdout so the default (non-flagged) card-rendering
+    // branch is exercised: this is the regression path for the bug where the new
+    // camelCase queryItems shape (name/itemType/modifiedAt) fell through to
+    // key/value blocks instead of numbered cards because isItemLikeRow only
+    // recognized the old `title` field.
+    origIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      writable: true,
+      value: true,
+    });
+  });
+  afterEach(() => {
+    clearFixture();
+    if (origIsTTY) {
+      Object.defineProperty(process.stdout, "isTTY", origIsTTY);
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        writable: true,
+        value: undefined,
+      });
+    }
+  });
+
+  it("renders a numbered card (not a key/value block) with a relative timestamp for a camelCase queryItems row", async () => {
+    const ms = Date.now() - 5 * 60 * 1000; // 5 min ago
+    setupMock([
+      {
+        items: [
+          {
+            id: "pr-42",
+            indexPrimaryKey: "github:pr-42",
+            service: "github",
+            itemType: "pr",
+            name: "Fix the thing",
+            modifiedAt: ms,
+          },
+        ],
+        meta: { limit: 50, total: 1 },
+      },
+    ]);
+    await runQuery(["--service", "github"]);
+    // Card path: a numbered line with the item name, not a "── #1 ──" kv block.
+    expect(out.stdout).toMatch(/^1\.\s+Fix the thing/m);
+    expect(out.stdout).not.toContain("── #1 ──");
+    // The timestamp must render relative ("...m ago"), not a bare epoch integer.
+    expect(out.stdout).toMatch(/\d+m ago/);
+    expect(out.stdout).not.toContain(String(ms));
   });
 });
 
@@ -391,13 +448,13 @@ describe("runQuery — formatRelative time branches", () => {
     clearFixture();
   });
 
-  // Each test drives a different formatRelative branch via modified_at on an item card.
-  // We use --pretty so printItemCard is called with formatTimestampField on modified_at.
+  // Each test drives a different formatRelative branch via modifiedAt on an item card.
+  // We use --pretty so printItemCard is called with formatTimestampField on modifiedAt.
 
   it("formatRelative: seconds ago (< 60s)", async () => {
     const ms = Date.now() - 30 * 1000; // 30s ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+s ago/);
@@ -406,7 +463,7 @@ describe("runQuery — formatRelative time branches", () => {
   it("formatRelative: minutes ago (< 60 min)", async () => {
     const ms = Date.now() - 5 * 60 * 1000; // 5 min ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+m ago/);
@@ -415,7 +472,7 @@ describe("runQuery — formatRelative time branches", () => {
   it("formatRelative: hours ago (< 24h)", async () => {
     const ms = Date.now() - 3 * 60 * 60 * 1000; // 3h ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+h ago/);
@@ -424,7 +481,7 @@ describe("runQuery — formatRelative time branches", () => {
   it("formatRelative: days ago (< 30d)", async () => {
     const ms = Date.now() - 10 * 24 * 60 * 60 * 1000; // 10d ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+d ago/);
@@ -433,7 +490,7 @@ describe("runQuery — formatRelative time branches", () => {
   it("formatRelative: months ago (< 12 months)", async () => {
     const ms = Date.now() - 60 * 24 * 60 * 60 * 1000; // ~2 months ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+mo ago/);
@@ -442,7 +499,7 @@ describe("runQuery — formatRelative time branches", () => {
   it("formatRelative: years ago (>= 12 months)", async () => {
     const ms = Date.now() - 400 * 24 * 60 * 60 * 1000; // ~13 months ago
     setupMock([
-      { items: [{ title: "T", service: "svc", modified_at: ms }], meta: { limit: 50, total: 1 } },
+      { items: [{ name: "T", service: "svc", modifiedAt: ms }], meta: { limit: 50, total: 1 } },
     ]);
     await runQuery(["--service", "svc", "--pretty"]);
     expect(out.stdout).toMatch(/\d+y ago/);
@@ -457,11 +514,11 @@ describe("runQuery — printItemCard field-presence branches", () => {
     clearFixture();
   });
 
-  // Card with no type, no modified_at → meta only has service
-  it("renders card without type or modified_at (meta = service only)", async () => {
+  // Card with no itemType, no modifiedAt → meta only has service
+  it("renders card without itemType or modifiedAt (meta = service only)", async () => {
     setupMock([
       {
-        items: [{ title: "Bare item", service: "notion" }],
+        items: [{ name: "Bare item", service: "notion" }],
         meta: { limit: 50, total: 1 },
       },
     ]);
@@ -470,15 +527,17 @@ describe("runQuery — printItemCard field-presence branches", () => {
     expect(out.stdout).toContain("notion");
   });
 
+  // body_preview is a raw-row-only field (dropped from the queryItems wire shape),
+  // so these exercise the card path via index.querySql instead.
   // body_preview present but equals title → body line suppressed
-  it("suppresses body_preview when it equals the title", async () => {
+  it("suppresses body_preview when it equals the title (raw querySql row)", async () => {
     setupMock([
       {
-        items: [{ title: "same", service: "svc", body_preview: "same" }],
-        meta: { limit: 50, total: 1 },
+        rows: [{ title: "same", service: "svc", body_preview: "same" }],
+        meta: { count: 1 },
       },
     ]);
-    await runQuery(["--service", "svc", "--pretty"]);
+    await runQuery(["--sql", "SELECT title, service, body_preview FROM items", "--pretty"]);
     expect(out.stdout).toContain("same");
     // body_preview === title → the body line is suppressed, so "same" renders exactly
     // once (the title line). If it were NOT suppressed it would appear twice.
@@ -487,15 +546,15 @@ describe("runQuery — printItemCard field-presence branches", () => {
   });
 
   // body_preview longer than 120 chars → gets truncated (covers truncate() long-string branch)
-  it("truncates long body_preview to 120 chars with ellipsis", async () => {
+  it("truncates long body_preview to 120 chars with ellipsis (raw querySql row)", async () => {
     const longBody = "A".repeat(200);
     setupMock([
       {
-        items: [{ title: "card", service: "svc", body_preview: longBody }],
-        meta: { limit: 50, total: 1 },
+        rows: [{ title: "card", service: "svc", body_preview: longBody }],
+        meta: { count: 1 },
       },
     ]);
-    await runQuery(["--service", "svc", "--pretty"]);
+    await runQuery(["--sql", "SELECT title, service, body_preview FROM items", "--pretty"]);
     // Truncated to 119 chars + ellipsis char (≤ 121 display chars total)
     expect(out.stdout).toContain("…");
     // Should not contain the full 200-char string
@@ -506,7 +565,7 @@ describe("runQuery — printItemCard field-presence branches", () => {
   it("renders card without url when url field is absent", async () => {
     setupMock([
       {
-        items: [{ title: "No URL", service: "svc" }],
+        items: [{ name: "No URL", service: "svc" }],
         meta: { limit: 50, total: 1 },
       },
     ]);
@@ -515,14 +574,14 @@ describe("runQuery — printItemCard field-presence branches", () => {
   });
 
   // body_preview present but empty string → body line suppressed
-  it("suppresses body_preview when it is an empty string", async () => {
+  it("suppresses body_preview when it is an empty string (raw querySql row)", async () => {
     setupMock([
       {
-        items: [{ title: "Has empty body", service: "svc", body_preview: "" }],
-        meta: { limit: 50, total: 1 },
+        rows: [{ title: "Has empty body", service: "svc", body_preview: "" }],
+        meta: { count: 1 },
       },
     ]);
-    await runQuery(["--service", "svc", "--pretty"]);
+    await runQuery(["--sql", "SELECT title, service, body_preview FROM items", "--pretty"]);
     expect(out.stdout).toContain("Has empty body");
   });
 });

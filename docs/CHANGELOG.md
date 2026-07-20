@@ -8,6 +8,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-20 — `index.queryItems` now returns camelCase `NimbusItem` rows, not raw SQLite columns
+  (breaking IPC contract change).** `rpcIndexQueryItems` used to hand back raw `SELECT * FROM item`
+  rows, so the unified V3 column names (`title`, `type`, `modified_at`, `body_preview`,
+  `external_id`, ...) leaked over IPC while every other read path mapped rows through `rowToItem`.
+  New `LocalIndex.listItems()` owns the list SQL and the mapping together and returns
+  `IndexedItem = NimbusItem & { indexPrimaryKey }` (the `service:external_id` composite key, which
+  bare `NimbusItem.id` doesn't uniquely provide across services); `body_preview`, `author_id`,
+  `synced_at`, `canonical_url`, and `pinned` are intentionally dropped from the narrowed wire shape.
+  `index.querySql` (the `nimbus query --sql` guarded-SELECT path) is unaffected and still returns raw
+  rows by design. The CLI `nimbus query` renderer (`packages/cli/src/commands/query.ts`) now handles
+  both shapes: `isItemLikeRow` accepts `name` or `title`, and `printItemCard` / `printKvBlock` read
+  `name`/`itemType`/`modifiedAt` with a `title`/`type`/`modified_at` fallback, so TTY card rendering
+  and relative-timestamp formatting keep working for `queryItems` results instead of silently
+  degrading to raw key/value blocks with a bare epoch integer. A structural test in
+  `diagnostics-rpc.test.ts` asserts no top-level response key is snake_case across every returned
+  item, so a regression to raw-row passthrough fails regardless of how it's written.
+
 - **2026-07-20 — npm supply-chain assurance: provenance monitoring + `NPM_TOKEN` absence guard.**
   The weekly `secret-health.yml` job now carries three new rows alongside the existing App-health/
   PAT/cert checks: two npm provenance probes (`@nimbus-dev/sdk`, `@nimbus-dev/client`), each resolved

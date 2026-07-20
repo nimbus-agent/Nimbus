@@ -72,7 +72,7 @@ Four layers disagree about the same object, and nothing catches it:
 | Layer | What it says about an indexed item |
 | --- | --- |
 | Gateway `index/item-list-query.ts:37` | `SELECT * FROM item` — raw **snake_case** rows (`item_type`, `modified_at`) |
-| `@nimbus-dev/client` | `queryItems(): Promise<{ items: Record<string, unknown>[] }>` — the **only** method with no validator; an unchecked passthrough |
+| `@nimbus-dev/client` | `queryItems(): Promise<{ items: Record<string, unknown>[] }>` — the **only** method with no validator; passes through whatever the gateway sends (as of the gateway fix, already camelCase `NimbusItem`, but still unchecked) |
 | `@nimbus-dev/sdk` `NimbusItem` | **camelCase**, `itemType: "file" \| "folder" \| "email" \| "event" \| "photo" \| "task"` — 6 values |
 | `docs/schema-reference.md` | **19** emitted types, including `pr`, `issue`, `pipeline_run`, `deployment`, `alert`, `incident`, `infra_resource`, `dashboard`, `log_alarm` — and `task` is explicitly *not* emitted |
 
@@ -179,7 +179,7 @@ it installs the safety net *before* Stage 1 starts writing against ~200 RPCs.
 | --- | --- | --- | --- |
 | 0.1 | `ItemType` becomes the canonical contract in the SDK, as an **open** enum: `KnownItemType` lists the 19 emitted types, and `ItemType = KnownItemType \| (string & {})` accepts what a newer gateway emits. Ships as a non-breaking `1.4.0`. | `nimbus-sdk` | typecheck + unit |
 | 0.2 | Gateway deletes `itemTypeFromRowType` and passes the raw column through. **No code path may rewrite one item type into another.** | `Nimbus` | round-trip test per ops type + existing invariant suite |
-| 0.3 | `queryItems` returns validated `NimbusItem[]`, not `Record<string, unknown>[]` — normalising snake_case→camelCase in the validator, so the last unvalidated method joins the other 14. | `nimbus-client` | validator unit tests |
+| 0.3 | `queryItems` returns validated `NimbusItem[]`, not `Record<string, unknown>[]` — the gateway now emits already-camelCase rows, so the client validator checks shape rather than normalising casing, and the last unvalidated method joins the other 14. | `nimbus-client` | validator unit tests |
 | 0.4 | **Conformance test**: assert the client's types against a real gateway (or a checked-in golden fixture DB) in CI. | `nimbus-client` | **the new gate** |
 | 0.5 | Consume the fixed client; delete the local `ITEM_TYPES` mirror. | `nimbus-vscode` | Index view shows types and sorts by time — the shipped bug, fixed |
 

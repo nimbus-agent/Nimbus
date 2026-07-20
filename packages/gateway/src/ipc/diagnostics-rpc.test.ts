@@ -724,6 +724,11 @@ describe("index.queryItems", () => {
   test("no response key is snake_case", async () => {
     // The structural gate. If queryItems ever regresses to returning raw
     // SELECT * rows, this fails regardless of how the regression is written.
+    // Checked across ALL returned items (not just the first) — a single-row
+    // fixture can't catch a regression scoped to a later row.
+    // Scope: TOP-LEVEL item keys only. We deliberately do not descend into
+    // `rawMeta` — it legitimately holds arbitrary connector-supplied keys
+    // (e.g. raw API field names) which may contain underscores.
     const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-qi4-"));
     try {
       const { ctx, db } = makeCtxWithIndex(dir);
@@ -732,11 +737,18 @@ describe("index.queryItems", () => {
           `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
            VALUES ('slack:m-1', 'slack', 'message', 'm-1', 'hello', 1000, 1000)`,
         );
+        db.run(
+          `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at)
+           VALUES ('github:run-2', 'github', 'ci_run', 'run-2', 'nightly build', 2000, 2000)`,
+        );
         const r = await dispatchDiagnosticsRpc("index.queryItems", {}, ctx);
         const v = (r as { value: { items: Record<string, unknown>[] } }).value;
-        const keys = Object.keys(v.items[0] ?? {});
-        expect(keys.length).toBeGreaterThan(0);
-        expect(keys.filter((k) => k.includes("_"))).toEqual([]);
+        expect(v.items.length).toBeGreaterThan(1);
+        for (const item of v.items) {
+          const keys = Object.keys(item);
+          expect(keys.length).toBeGreaterThan(0);
+          expect(keys.filter((k) => k.includes("_"))).toEqual([]);
+        }
       } finally {
         db.close();
       }
