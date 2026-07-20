@@ -1088,7 +1088,20 @@ intent instead, so absence is either missing (required) or correctly ok."
 **Interfaces:**
 
 - Consumes: `LiveSecret`, `SecretProduct`.
-- Produces: `function enumerateSecrets(deps): Promise<{ secrets: LiveSecret[]; errors: string[] }>` — used by Task 5.
+- Produces: `function enumerateSecrets(deps: { token: string; fetchFn?: ... }): Promise<{ secrets: LiveSecret[]; errors: string[] }>` — used by Task 5.
+
+> **The repo list is discovered, never derived from the manifest.** This is
+> load-bearing and easy to get wrong. Feeding `enumerateSecrets` the repos named
+> in `CREDENTIAL_REGISTRY` would mean the scan only ever looks where the manifest
+> already points — so a secret created in a repo nobody documented, which is the
+> single most important thing `undocumented` exists to catch, would be invisible
+> **by construction**. The manifest currently names 3 repos; the org has 18.
+>
+> `enumerateSecrets` therefore calls `GET /installation/repositories` and scans
+> every repo the auditor App can see. That endpoint is already proven to work with
+> this App (it returned `total_count = 18` during design verification). There is
+> no `repos` parameter, deliberately: an optional override would let production
+> silently take the wrong path.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1110,15 +1123,29 @@ function fetcher(handler: Handler) {
   };
 }
 
+/** Default handler: an installation covering one repo, everything else empty. */
+function baseHandler(repoNames: string[]): Handler {
+  return (url) => {
+    if (url.includes("/installation/repositories")) {
+      return { status: 200, body: { repositories: repoNames.map((name) => ({ name })) } };
+    }
+    return { status: 200, body: { secrets: [] } };
+  };
+}
+
 describe("enumerateSecrets", () => {
   test("tags org secrets with scope, product and visibility", async () => {
     const { secrets, errors } = await enumerateSecrets({
       token: "t",
-      repos: [],
-      fetchFn: fetcher(() => ({
-        status: 200,
-        body: { secrets: [{ name: "ORG_ONE", updated_at: "2026-01-01T00:00:00Z", visibility: "all" }] },
-      })),
+      fetchFn: fetcher((url) => {
+        if (url.includes("/installation/repositories")) {
+          return { status: 200, body: { repositories: [] } };
+        }
+        return {
+          status: 200,
+          body: { secrets: [{ name: "ORG_ONE", updated_at: "2026-01-01T00:00:00Z", visibility: "all" }] },
+        };
+      }),
     });
     expect(errors).toEqual([]);
     expect(secrets).toEqual([
@@ -1132,11 +1159,44 @@ describe("enumerateSecrets", () => {
     ]);
   });
 
+  test("scans EVERY repo the installation covers, not a caller-supplied list", async () => {
+    const asked: string[] = [];
+    await enumerateSecrets({
+      token: "t",
+      fetchFn: fetcher((url) => {
+        if (url.includes("/installation/repositories")) {
+          return {
+            status: 200,
+            body: { repositories: [{ name: "Nimbus" }, { name: "nimbus-benchmarks" }, { name: "awesome-nimbus" }] },
+          };
+        }
+        asked.push(url);
+        return { status: 200, body: { secrets: [] } };
+      }),
+    });
+    // Every discovered repo is queried for both products; none may be skipped.
+    for (const repo of ["Nimbus", "nimbus-benchmarks", "awesome-nimbus"]) {
+      expect(asked.some((u) => u.includes(`/repos/nimbus-agent/${repo}/actions/secrets`))).toBe(true);
+      expect(asked.some((u) => u.includes(`/repos/nimbus-agent/${repo}/dependabot/secrets`))).toBe(true);
+    }
+  });
+
+  test("a repo with no secrets returns 200 and an empty list, not an error", async () => {
+    const { secrets, errors } = await enumerateSecrets({
+      token: "t",
+      fetchFn: fetcher(baseHandler(["Nimbus"])),
+    });
+    expect(secrets).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
   test("enumerates both Actions and Dependabot secrets per repo", async () => {
     const { secrets } = await enumerateSecrets({
       token: "t",
-      repos: ["Nimbus"],
       fetchFn: fetcher((url) => {
+        if (url.includes("/installation/repositories")) {
+          return { status: 200, body: { repositories: [{ name: "Nimbus" }] } };
+        }
         if (url.includes("orgs/")) return { status: 200, body: { secrets: [] } };
         const name = url.includes("dependabot") ? "DEP" : "ACT";
         return { status: 200, body: { secrets: [{ name, updated_at: "2026-01-01T00:00:00Z" }] } };
@@ -1151,12 +1211,14 @@ describe("enumerateSecrets", () => {
   test("a 403 is reported as an error, never silently treated as an empty repo", async () => {
     const { secrets, errors } = await enumerateSecrets({
       token: "t",
-      repos: ["Nimbus"],
-      fetchFn: fetcher((url) =>
-        url.includes("dependabot")
+      fetchFn: fetcher((url) => {
+        if (url.includes("/installation/repositories")) {
+          return { status: 200, body: { repositories: [{ name: "Nimbus" }] } };
+        }
+        return url.includes("dependabot")
           ? { status: 403, body: { message: "Resource not accessible by integration" } }
-          : { status: 200, body: { secrets: [] } },
-      ),
+          : { status: 200, body: { secrets: [] } };
+      }),
     });
     expect(secrets).toEqual([]);
     expect(errors.join(" ")).toContain("403");
@@ -1166,22 +1228,35 @@ describe("enumerateSecrets", () => {
   test("a 404 on a repo is tolerated — the App may not be installed there", async () => {
     const { errors } = await enumerateSecrets({
       token: "t",
-      repos: ["ghost"],
-      fetchFn: fetcher((url) =>
-        url.includes("orgs/") ? { status: 200, body: { secrets: [] } } : { status: 404, body: {} },
-      ),
+      fetchFn: fetcher((url) => {
+        if (url.includes("/installation/repositories")) {
+          return { status: 200, body: { repositories: [{ name: "ghost" }] } };
+        }
+        return url.includes("orgs/") ? { status: 200, body: { secrets: [] } } : { status: 404, body: {} };
+      }),
     });
     expect(errors).toEqual([]);
+  });
+
+  test("a failure to discover repos is an error, never a silent empty scan", async () => {
+    const { errors } = await enumerateSecrets({
+      token: "t",
+      fetchFn: fetcher((url) =>
+        url.includes("/installation/repositories")
+          ? { status: 403, body: {} }
+          : { status: 200, body: { secrets: [] } },
+      ),
+    });
+    expect(errors.join(" ")).toContain("installation repositories");
   });
 
   test("never puts the token in a URL", async () => {
     const seen: string[] = [];
     await enumerateSecrets({
       token: "super-secret-token",
-      repos: ["Nimbus"],
       fetchFn: async (url: string) => {
         seen.push(url);
-        return new Response(JSON.stringify({ secrets: [] }), { status: 200 });
+        return new Response(JSON.stringify({ repositories: [], secrets: [] }), { status: 200 });
       },
     });
     expect(seen.join(" ")).not.toContain("super-secret-token");
@@ -1241,9 +1316,20 @@ function parseSecrets(
   return out;
 }
 
+interface RepoListResponse {
+  readonly repositories?: readonly { readonly name?: unknown }[];
+}
+
+/**
+ * Scan every repository the auditor App is installed on.
+ *
+ * There is deliberately no `repos` parameter. Deriving the list from the
+ * manifest would mean only looking where the manifest already points, so a
+ * secret in an undocumented repo — the exact thing `undocumented` exists to
+ * catch — would be invisible by construction.
+ */
 export async function enumerateSecrets(deps: {
   token: string;
-  repos: readonly string[];
   fetchFn?: (url: string, init?: RequestInit) => Promise<Response>;
 }): Promise<{ secrets: LiveSecret[]; errors: string[] }> {
   const fetchFn = deps.fetchFn ?? fetch;
@@ -1273,7 +1359,19 @@ export async function enumerateSecrets(deps: {
   if (org.status === 200) secrets.push(...parseSecrets(org.body, "org", "actions"));
   else errors.push(`org actions secrets: HTTP ${org.status}`);
 
-  for (const repo of deps.repos) {
+  // Discover the scan surface rather than being told it. A failure here must be
+  // loud: an empty repo list would make the whole inventory look clean.
+  const installed = await get("/installation/repositories");
+  const repos: string[] = [];
+  if (installed.status === 200) {
+    for (const r of (installed.body as RepoListResponse)?.repositories ?? []) {
+      if (typeof r?.name === "string") repos.push(r.name);
+    }
+  } else {
+    errors.push(`installation repositories: HTTP ${installed.status}`);
+  }
+
+  for (const repo of repos) {
     for (const product of ["actions", "dependabot"] as const) {
       const r = await get(`/repos/${ORG}/${repo}/${product}/secrets`);
       if (r.status === 200) {
@@ -1434,8 +1532,11 @@ In the `if (import.meta.main)` block of `check-secret-health.ts`, before the
   const auditorToken = process.env["AUDITOR_TOKEN"] ?? "";
   const inventoryRows: HealthRow[] = [];
   if (auditorToken) {
-    const repos = [...new Set(CREDENTIAL_REGISTRY.flatMap((e) => (e.location.repo ? [e.location.repo] : [])))];
-    const { secrets, errors } = await enumerateSecrets({ token: auditorToken, repos });
+    // No repo list is passed: enumerateSecrets discovers every repo the auditor
+    // App can see. Deriving it from the manifest would only look where the
+    // manifest already points, which is precisely where an undocumented secret
+    // is NOT.
+    const { secrets, errors } = await enumerateSecrets({ token: auditorToken });
     for (const e of errors) {
       inventoryRows.push({
         name: "inventory",
@@ -1917,7 +2018,12 @@ gh secret set ZZ_AUDIT_PROBE --repo nimbus-agent/nimbus-benchmarks --body "not-a
 ```
 
 `nimbus-benchmarks` is chosen because it holds no other secrets, so the probe
-cannot be confused with real state.
+cannot be confused with real state — **and because it appears nowhere in the
+manifest**, which makes it a true test of the discovery path. If the scan surface
+were derived from the manifest instead of from `/installation/repositories`, this
+repo would never be queried and this step would silently prove nothing. That is
+exactly the bug this plan's Task 4 was corrected to avoid, so treat a missing
+detection here as a real failure of the discovery logic, not a flaky run.
 
 - [ ] **Step 3: Confirm the monitor hard-fails and names it**
 
