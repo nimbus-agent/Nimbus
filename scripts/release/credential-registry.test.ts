@@ -40,11 +40,25 @@ describe("CREDENTIAL_REGISTRY", () => {
     }
   });
 
-  test("every entry states an owner and a note", () => {
+  test("every entry states a valid owner handle and a meaningful note", () => {
     for (const e of CREDENTIAL_REGISTRY) {
-      expect(e.owner.length).toBeGreaterThan(0);
-      expect(e.note.length).toBeGreaterThan(0);
+      expect(e.owner).toMatch(/^@/);
+      expect(e.note.length).toBeGreaterThanOrEqual(15);
     }
+  });
+
+  test("the manifest holds exactly the audited set: 30 entries across 4 locations", () => {
+    expect(CREDENTIAL_REGISTRY.length).toBe(30);
+
+    const counts = new Map<string, number>();
+    for (const e of CREDENTIAL_REGISTRY) {
+      const loc = e.location.scope === "org" ? "ORG" : (e.location.repo ?? "-");
+      counts.set(loc, (counts.get(loc) ?? 0) + 1);
+    }
+    expect(counts.get("ORG")).toBe(2);
+    expect(counts.get("Nimbus")).toBe(19);
+    expect(counts.get("nimbus-vscode")).toBe(2);
+    expect(counts.get("nimbus-web-clipper")).toBe(7);
   });
 
   test("hardDeadline is an ISO date when present", () => {

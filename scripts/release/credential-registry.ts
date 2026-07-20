@@ -3,9 +3,10 @@
  * credential this organization holds.
  *
  * `docs/ci-secrets.md` carries the human narrative and points here; this file is
- * authoritative for anything checkable. Adding a secret anywhere in the org
- * without adding it here makes the weekly monitor hard-fail with `undocumented`,
- * which is the point.
+ * authoritative for anything checkable. Once the weekly monitor is wired to diff
+ * live GitHub state against this manifest, adding a secret anywhere in the org
+ * without adding it here will hard-fail with `undocumented` — that is the intent
+ * of this file, though the wiring itself is a separate, not-yet-done task.
  */
 
 export type CredentialState = "required" | "optional" | "forbidden";
@@ -147,7 +148,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [],
+    consumedBy: [".github/workflows/release.yml"],
     maxAgeDays: 90,
     hardDeadline: null,
     note: "Superseded by the Release Bot App (#772). Flips to `forbidden` and is deleted once release.yml, publish-package-managers.yml and publish-linux-repo.yml have gone green under the App on a real tag.",
@@ -159,7 +160,10 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [],
+    consumedBy: [
+      ".github/workflows/publish-package-managers.yml",
+      ".github/workflows/publish-linux-repo.yml",
+    ],
     maxAgeDays: 90,
     hardDeadline: null,
     note: "Superseded by the Release Bot App (#772). Same gate as RELEASE_PAT before deletion.",
