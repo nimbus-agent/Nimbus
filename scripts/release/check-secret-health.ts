@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { InventoryStatus } from "./credential-audit";
 import { createGitHubApi, type GitHubApi } from "./gh-api.ts";
 import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.ts";
 
@@ -119,8 +120,8 @@ export function classifySecretAbsence(value: string | undefined): AbsenceStatus 
 
 export interface HealthRow {
   readonly name: string;
-  readonly kind: "pat" | "cert" | "provenance" | "absence";
-  readonly status: PatStatus | CertStatus | ProvenanceStatus | AbsenceStatus;
+  readonly kind: "pat" | "cert" | "provenance" | "absence" | "inventory";
+  readonly status: PatStatus | CertStatus | ProvenanceStatus | AbsenceStatus | InventoryStatus;
   readonly detail: string;
 }
 
