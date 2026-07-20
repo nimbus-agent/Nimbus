@@ -91,20 +91,6 @@ type ItemRow = {
   pinned: number;
 };
 
-function itemTypeFromRowType(raw: string): NimbusItem["itemType"] {
-  if (
-    raw === "file" ||
-    raw === "folder" ||
-    raw === "email" ||
-    raw === "event" ||
-    raw === "photo" ||
-    raw === "task"
-  ) {
-    return raw;
-  }
-  return "file";
-}
-
 function ftsTitleMatchQuery(name: string): string {
   const tokens = name
     .trim()
@@ -162,7 +148,7 @@ function rowToItem(row: ItemRow): NimbusItem {
   const item: NimbusItem = {
     id: String(row.external_id),
     service: String(row.service),
-    itemType: itemTypeFromRowType(String(row.type)),
+    itemType: String(row.type),
     name: String(row.title),
   };
   item.modifiedAt = Number(row.modified_at);
