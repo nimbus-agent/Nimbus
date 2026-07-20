@@ -201,6 +201,8 @@ since all three map rows through rowToItem."
 - Modify: `packages/gateway/src/ipc/diagnostics-rpc.ts:312-345`
 - Modify: `packages/cli/src/commands/query.ts:73-79`
 - Test: `packages/gateway/src/ipc/diagnostics-rpc.test.ts`
+- Test: `packages/gateway/src/index/local-index.test.ts` (direct `listItems` coverage)
+- Test: `packages/cli/src/commands/query.test.ts:106-124` (fixture uses raw V3 columns)
 
 **Interfaces:**
 
@@ -374,6 +376,47 @@ cd C:/gitrep/Nimbus && bun test packages/gateway/src/ipc/diagnostics-rpc.test.ts
 Expected: PASS, including the two pre-existing `index.queryItems` tests (empty-db defaults and the
 services/types/limit filters), which must keep passing unchanged.
 
+- [ ] **Step 5b: Cover `listItems` directly at the unit layer**
+
+The RPC test above proves the behaviour end-to-end, but a failure there cannot distinguish a bad
+mapping from a bad RPC wiring. Add a direct test to
+`packages/gateway/src/index/local-index.test.ts`, using the existing `makeIndex()` and `makeItem()`
+helpers:
+
+```ts
+describe("LocalIndex.listItems", () => {
+  test("maps rows to IndexedItem and honours service/type/limit filters", () => {
+    const idx = makeIndex();
+    idx.upsert(makeItem({ id: "run-1", service: "github", itemType: "ci_run", name: "nightly" }));
+    idx.upsert(makeItem({ id: "m-1", service: "slack", itemType: "message", name: "hello" }));
+
+    const all = idx.listItems({ services: [], types: [], limit: 50 });
+    expect(all).toHaveLength(2);
+    // Mapped, not raw: camelCase fields and the composite key.
+    const run = all.find((i) => i.id === "run-1");
+    expect(run?.itemType).toBe("ci_run");
+    expect(run?.name).toBe("nightly");
+    expect(run?.indexPrimaryKey).toBe("github:run-1");
+
+    const onlyGithub = idx.listItems({ services: ["github"], types: [], limit: 50 });
+    expect(onlyGithub.map((i) => i.id)).toEqual(["run-1"]);
+
+    const onlyMessages = idx.listItems({ services: [], types: ["message"], limit: 50 });
+    expect(onlyMessages.map((i) => i.id)).toEqual(["m-1"]);
+
+    expect(idx.listItems({ services: [], types: [], limit: 1 })).toHaveLength(1);
+  });
+});
+```
+
+Run it:
+
+```bash
+cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/local-index.test.ts
+```
+
+Expected: PASS.
+
 - [ ] **Step 6: Update the CLI's local result type**
 
 `packages/cli/src/commands/query.ts:73-79` declares the response shape inline. It prints rows through
@@ -393,6 +436,40 @@ a generic table printer, so no field-specific logic changes — only the type an
 The rows are now camelCase `NimbusItem` fields, so `nimbus query`'s columns change accordingly.
 `nimbus query --sql` / `index.querySql` still returns raw rows for genuine SQL access.
 
+- [ ] **Step 6b: Update the CLI test fixture, which encodes the old wire shape**
+
+`packages/cli/src/commands/query.test.ts:106-124` mocks the IPC client with a **raw V3 row** and
+asserts the raw key reaches stdout:
+
+```ts
+// Current — the shape the gateway no longer produces:
+      items: [{ title: "foo", service: "github", type: "pr", modified_at: 1700000000000 }],
+// ...
+    expect(out.stdout).toContain('"title": "foo"');
+```
+
+Because the IPC is mocked, this test keeps **passing** either way — which is exactly why it must be
+fixed deliberately. Left alone it documents a wire contract that no longer exists and would not
+catch a regression. Update the fixture and the assertion to the mapped shape:
+
+```ts
+      items: [
+        {
+          id: "pr-1",
+          indexPrimaryKey: "github:pr-1",
+          service: "github",
+          itemType: "pr",
+          name: "foo",
+          modifiedAt: 1700000000000,
+        },
+      ],
+// ...
+    expect(out.stdout).toContain('"name": "foo"');
+```
+
+Leave the assertion at line ~243 (`'[{"id":7}]'`) alone — that test covers `index.querySql`, which
+still returns raw rows.
+
 - [ ] **Step 7: Run the full gate**
 
 ```bash
@@ -405,8 +482,9 @@ Expected: all PASS.
 
 ```bash
 cd C:/gitrep/Nimbus
-git add packages/gateway/src/index/local-index.ts packages/gateway/src/ipc/diagnostics-rpc.ts \
-        packages/gateway/src/ipc/diagnostics-rpc.test.ts packages/cli/src/commands/query.ts
+git add packages/gateway/src/index/local-index.ts packages/gateway/src/index/local-index.test.ts \
+        packages/gateway/src/ipc/diagnostics-rpc.ts packages/gateway/src/ipc/diagnostics-rpc.test.ts \
+        packages/cli/src/commands/query.ts packages/cli/src/commands/query.test.ts
 git commit -m "fix: index.queryItems returns NimbusItem instead of raw SQLite rows
 
 rpcIndexQueryItems returned raw \`SELECT * FROM item\` rows, so the unified V3
@@ -973,15 +1051,22 @@ propagation, not a provenance failure. Re-check before concluding anything.
 **Files:**
 
 - Modify: `package.json` (dependency bump)
-- Modify: `src/sidebar/index.ts:5`, `:23-38`, `:66-93`
-- Modify: `src/sidebar/index-view.ts` (icon call site)
-- Test: `test/unit/index.test.ts`
+- Modify: `src/sidebar/index.ts:5` (union), `:23-30` (`ITEM_TYPES` set), `:31-38` (`ITEM_TYPE_ICONS`),
+  `:66-93` (`parseIndexRow`), `:114-116` (`iconForItemType`)
+- Test: `test/unit/index.test.ts` — **two existing tests will break and must be updated**, see Step 2
 
 **Interfaces:**
 
 - Consumes: `NimbusItem`, `IndexedItem` from `@nimbus-dev/client@0.6.0` (Task 3).
-- Produces: `IndexItem` keeps its name and shape, so `index-view.ts`'s tree building is unaffected.
-  Adds `iconForItemType(t: string | undefined): string`.
+- Produces: `IndexItem` keeps its name and shape, so the tree building is unaffected.
+  `iconForItemType` keeps its name and call site but changes signature from
+  `(itemType: IndexItem["itemType"]) => string` to `(itemType: string | undefined) => string`.
+
+> **Note on the existing code:** `iconForItemType` **already exists** at `src/sidebar/index.ts:114`
+> and is already called from `itemToRow` in that same file (line ~143) — *not* from
+> `index-view.ts`. This task modifies it; it does not create it. `itemToRow` also already sets
+> `description: item.itemType`, so once types stop being dropped, the type text appears in the tree
+> with no further change.
 
 - [ ] **Step 1: Bump the client**
 
@@ -990,12 +1075,65 @@ cd C:/gitrep/nimbus-vscode && bun add @nimbus-dev/client@^0.6.0 && bun run typec
 ```
 
 Expected: typecheck may FAIL in `src/extension.ts:454`, where `queryItems` now returns
-`IndexedItem[]` rather than `Record<string, unknown>[]`. **That failure is the contract working** —
-it is the compile error that should have existed all along.
+`IndexedItem[]` rather than `Record<string, unknown>[]`. **That failure is the compile error that
+should have existed all along** — the contract working.
 
-- [ ] **Step 2: Write the failing tests**
+**If `0.6.0` is not on npm yet**, develop against a locally packed build rather than waiting on the
+release pipeline. Use a packed tarball, not `npm link` / `yalc`: this repo is Bun-based, and a
+symlinked dependency would make `check-bundle` and `check-vsix-contents` validate a tree that is not
+what actually ships. This mirrors `nimbus-client`'s own `scripts/verify-against-local-sdk.ts`.
 
-Add to `test/unit/index.test.ts`:
+```bash
+cd C:/gitrep/nimbus-client && bun run build && bun pm pack --destination "$TEMP"
+cd C:/gitrep/nimbus-vscode && bun add "file:$TEMP/nimbus-dev-client-0.6.0.tgz" && bun run typecheck
+```
+
+`bun pm pack` flattens the scoped name: `@nimbus-dev/client` → `nimbus-dev-client-<version>.tgz`.
+
+**Before committing, restore the real dependency** — a manifest pointing at a local tarball must
+never be merged:
+
+```bash
+cd C:/gitrep/nimbus-vscode && bun add @nimbus-dev/client@^0.6.0
+```
+
+Task 5 still merges only after `0.6.0` is genuinely published; the tarball unblocks development, not
+the merge.
+
+- [ ] **Step 2: Update the two tests that encode the bug, then add the new ones**
+
+`test/unit/index.test.ts` contains two tests that assert the **current broken behaviour**. They will
+fail after this task, and that is correct — update them first so the suite states the intended
+contract.
+
+Replace `"name falls back to id; unknown itemType is dropped"` (line ~39):
+
+```ts
+  test("name falls back to id; an unknown itemType is preserved, not dropped", () => {
+    const item = parseIndexRow({ id: "i2", itemType: "wormhole" });
+    expect(item?.name).toBe("i2");
+    // Was: expect(item?.itemType).toBeUndefined() — that assertion encoded the
+    // bug. The vocabulary is open; dropping an unrecognised type is data loss.
+    expect(item?.itemType).toBe("wormhole");
+  });
+```
+
+Replace `"maps each enum value and defaults to file"` (line ~71). The old version asserts
+`iconForItemType("task")` → `"checklist"` and `iconForItemType(undefined)` → `"file"`; `task` is not
+a type the gateway emits, and `file` is no longer an acceptable fallback:
+
+```ts
+  test("maps the emitted types and falls back without claiming a type", () => {
+    expect(iconForItemType("email")).toBe("mail");
+    expect(iconForItemType("event")).toBe("calendar");
+    expect(iconForItemType("photo")).toBe("device-camera");
+    expect(iconForItemType("folder")).toBe("folder");
+    expect(iconForItemType("ci_run")).toBe("play-circle");
+    expect(iconForItemType("pr")).toBe("git-pull-request");
+  });
+```
+
+Then add these new tests:
 
 ```ts
 test("parseIndexRow keeps an ops item type", () => {
@@ -1030,7 +1168,11 @@ test("iconForItemType falls back without claiming the item is a file", () => {
 });
 ```
 
-Add `iconForItemType` to that file's import from `../../src/sidebar/index.js`.
+`iconForItemType` is already imported in that file (it has an existing `describe` block for it), so
+no import change is needed.
+
+Note that `parseIndexRow({ id: "x1", ... })` in the new tests omits `indexPrimaryKey`; Step 6 makes
+the parser prefer it when present and fall back to `id`, so both forms must work.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
@@ -1038,8 +1180,9 @@ Add `iconForItemType` to that file's import from `../../src/sidebar/index.js`.
 cd C:/gitrep/nimbus-vscode && bun run test
 ```
 
-Expected: FAIL — `itemType` is `undefined` because `ITEM_TYPES` does not contain `ci_run`, and
-`iconForItemType` does not exist.
+Expected: FAIL — `itemType` is `undefined` for `ci_run` and `dora_metric` because `ITEM_TYPES` does
+not contain them, and `iconForItemType("ci_run")` returns `undefined` because `ITEM_TYPE_ICONS` has
+no such key. Record the output.
 
 - [ ] **Step 4: Delete the private mirror**
 
@@ -1065,8 +1208,10 @@ validated the row:
 
 - [ ] **Step 5: Make the icon lookup total**
 
-`ITEM_TYPE_ICONS` is keyed on the old closed union and will no longer typecheck. Replace it and its
-declaration with a string-keyed map plus an accessor:
+`ITEM_TYPE_ICONS` is declared `Record<IndexItemType, string>`, total over the old closed union, so
+it no longer typechecks once the union opens. Replace the map (lines 31-38) and **modify** the
+existing `iconForItemType` at line 114 — it already exists and is already called from `itemToRow`
+in this same file, so its name and call site do not change:
 
 ```ts
 // Covers the types a live index actually contains plus the common ops types.
@@ -1092,14 +1237,18 @@ const ITEM_TYPE_ICONS: Readonly<Record<string, string>> = {
  *
  * The fallback is `symbol-misc` and must never be `file` or `folder` — those
  * are real item types, so reusing them would assert a type the row does not
- * have.
+ * have. The previous implementation returned "file" for an absent type, which
+ * did exactly that.
  */
-export function iconForItemType(t: string | undefined): string {
-  return (t !== undefined ? ITEM_TYPE_ICONS[t] : undefined) ?? "symbol-misc";
+export function iconForItemType(itemType: string | undefined): string {
+  return (itemType !== undefined ? ITEM_TYPE_ICONS[itemType] : undefined) ?? "symbol-misc";
 }
 ```
 
-Update the call site in `src/sidebar/index-view.ts` to use `iconForItemType(item.itemType)`.
+The `?? "symbol-misc"` is load-bearing: indexing a `Record<string, string>` yields
+`string | undefined` under `noUncheckedIndexedAccess`, whereas the old total `Record<IndexItemType,
+string>` yielded `string`. No call site changes — `itemToRow` (line ~143) already calls
+`iconForItemType(item.itemType)`.
 
 Verify every codicon id above against <https://microsoft.github.io/vscode-codicons/dist/codicon.html>
 and substitute a real one for any that does not exist.
@@ -1145,7 +1294,7 @@ do not claim this step passed without running it.**
 ```bash
 cd C:/gitrep/nimbus-vscode
 git switch -c fix/index-item-type-contract
-git add package.json bun.lock src/sidebar/index.ts src/sidebar/index-view.ts test/unit/index.test.ts
+git add package.json bun.lock src/sidebar/index.ts test/unit/index.test.ts
 git commit -m "fix: Index view shows item types and sorts by time
 
 The view kept a private six-value copy of the SDK's itemType union while the
@@ -1198,3 +1347,10 @@ gh pr create --title "fix: Index view shows item types and sorts by time"
   deferred; widening an SDK type shared by every connector needs its own design.
 - `querySql` still returns `Record<string, unknown>[]`. That is correct — arbitrary SQL has no fixed
   shape.
+- `docs/release/manual-smoke-headless.md:168-169` says **`Nimbus: Search`** "executes
+  `index.queryItems`" and lists results by "title". Both are wrong today, independently of this
+  work: the command calls `index.searchRanked` (`nimbus-vscode/src/extension.ts:575`), and that
+  method already returns camelCase `name`, not `title`. A pre-existing inaccuracy in a release
+  smoke-test doc — worth correcting, but not caused by and not in scope for Stage 0.
+  (`docs/SECURITY.md:186` also names `index.queryItems`, but only to classify it as a read-side LAN
+  method; no shape dependency, no change needed.)
