@@ -51,13 +51,13 @@ either way, and is not a reason to revoke anything.
       trade away the read-only guarantee this whole system depends on) — so this
       stays a manual check indefinitely, not a gap this program intends to close.
 
-      Scope it honestly: secret scanning is **unavailable on private repos** on
-      this org's Free plan — the API returns `null` for all six of them and
-      rejects an enable attempt with `422 Secret scanning is not available for
-      this repository`. Verified 2026-07-21: all 12 public repos are
-      `enabled`/`enabled`; the 6 private ones cannot be, and that is a plan
-      limitation, not a misconfiguration to chase. Re-check if the org ever moves
-      off Free.
+Scope that last item honestly: secret scanning is **unavailable on private
+repositories** on this organization's Free plan. The API returns `null` for all
+six of them and rejects an enable attempt with `422 Secret scanning is not
+available for this repository`. Verified 2026-07-21 — all 12 public repos are
+`enabled`/`enabled`; the 6 private ones cannot be, and that is a plan
+limitation rather than a misconfiguration to chase. Re-check if the organization
+ever moves off Free.
 
 ## What the automated side cannot tell you
 
