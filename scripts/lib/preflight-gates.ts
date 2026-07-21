@@ -24,6 +24,7 @@ const FAST: readonly Gate[] = [
   { name: "audit:cross-platform", cmd: ["bun", "run", "audit:cross-platform"], tier: "fast" },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
+  { name: "audit:consumed-by", cmd: ["bun", "run", "audit:consumed-by"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
   {
     // Reads .jscpd.json (min-lines 5 / min-tokens 50 / threshold ratchet / shared

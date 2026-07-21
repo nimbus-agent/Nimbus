@@ -3,7 +3,6 @@ import {
   classifyAppMint,
   classifyPatProbe,
   classifyProvenanceOutcome,
-  classifySecretAbsence,
   composeProvenanceDetail,
   evaluateCertExpiry,
   type HealthRow,
@@ -490,17 +489,6 @@ describe("composeProvenanceDetail", () => {
   });
 });
 
-describe("classifySecretAbsence", () => {
-  test("absent secret is ok — that is the desired state", () => {
-    expect(classifySecretAbsence(undefined)).toBe("ok");
-    expect(classifySecretAbsence("")).toBe("ok");
-  });
-
-  test("a returned secret is present, which is a failure", () => {
-    expect(classifySecretAbsence("npm_something")).toBe("present");
-  });
-});
-
 describe("summarize with the new row kinds", () => {
   test("missing-provenance and source-mismatch are hard failures", () => {
     for (const status of ["missing-provenance", "source-mismatch"] as const) {
@@ -509,13 +497,6 @@ describe("summarize with the new row kinds", () => {
       ];
       expect(summarize(rows).hasHardFailure).toBe(true);
     }
-  });
-
-  test("a returned NPM_TOKEN is a hard failure", () => {
-    const rows: HealthRow[] = [
-      { name: "NPM_TOKEN", kind: "absence", status: "present", detail: "must not exist" },
-    ];
-    expect(summarize(rows).hasHardFailure).toBe(true);
   });
 
   test("provenance indeterminate warns but does not hard-fail", () => {
@@ -530,7 +511,6 @@ describe("summarize with the new row kinds", () => {
   test("all-clear stays clean", () => {
     const rows: HealthRow[] = [
       { name: "@nimbus-dev/sdk", kind: "provenance", status: "ok", detail: "latest" },
-      { name: "NPM_TOKEN", kind: "absence", status: "ok", detail: "absent" },
     ];
     const s = summarize(rows);
     expect(s.hasHardFailure).toBe(false);
@@ -553,5 +533,27 @@ describe("summarize with the new row kinds", () => {
     // never-reported probe must warn — never a false ok.
     expect(s.hasHardFailure).toBe(false);
     expect(s.hasWarning).toBe(true);
+  });
+});
+
+describe("summarize with inventory rows", () => {
+  test("undocumented is a hard failure", () => {
+    const s = summarize([
+      { name: "org/X", kind: "inventory", status: "undocumented", detail: "d" },
+    ]);
+    expect(s.hasHardFailure).toBe(true);
+  });
+
+  test("missing is a hard failure", () => {
+    const s = summarize([{ name: "org/X", kind: "inventory", status: "missing", detail: "d" }]);
+    expect(s.hasHardFailure).toBe(true);
+  });
+
+  test("stale, deadline, visibility-drift and audit-overdue warn but do not fail", () => {
+    for (const status of ["stale", "deadline", "visibility-drift", "audit-overdue"] as const) {
+      const s = summarize([{ name: "org/X", kind: "inventory", status, detail: "d" }]);
+      expect(s.hasHardFailure).toBe(false);
+      expect(s.hasWarning).toBe(true);
+    }
   });
 });

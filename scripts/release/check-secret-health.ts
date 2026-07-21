@@ -2,6 +2,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { auditCredentials, type InventoryStatus } from "./credential-audit";
+import { enumerateSecrets } from "./credential-enumerate";
+import { CREDENTIAL_REGISTRY } from "./credential-registry";
 import { createGitHubApi, type GitHubApi } from "./gh-api.ts";
 import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.ts";
 
@@ -56,7 +59,6 @@ export function evaluateCertExpiry(
 }
 
 export type ProvenanceStatus = "ok" | "missing-provenance" | "source-mismatch" | "indeterminate";
-export type AbsenceStatus = "ok" | "present";
 
 /**
  * The `verify-npm-provenance` composite action runs in monitor mode before this
@@ -65,8 +67,8 @@ export type AbsenceStatus = "ok" | "present";
  * never ran, and an unrecognised value is never silently "ok".
  *
  * An empty string is NOT the same situation as an absent PAT/cert secret
- * (`not-configured` there is a genuine, intentional healthy state — see
- * `classifySecretAbsence`). Here it means the probe never reported at all: a
+ * (`not-configured` there is a genuine, intentional healthy state). Here it
+ * means the probe never reported at all: a
  * renamed step id, a skipped step, or an action that exits before writing its
  * output all interpolate to "" with no workflow error. `not-configured` sits
  * in neither the `hard` nor `warn` set in `summarize`, so returning it here
@@ -107,20 +109,10 @@ export function composeProvenanceDetail(version: string, actionDetail: string): 
   return actionDetail === "" ? versionPart : `${versionPart}: ${actionDetail}`;
 }
 
-/**
- * Regression guard for a secret that must NOT exist. `NPM_TOKEN` was revoked and
- * deleted 2026-07-19; publishing is OIDC-only. An absent secret interpolates to
- * the empty string, so emptiness is the healthy state. Tests emptiness only —
- * the value is never logged or passed on.
- */
-export function classifySecretAbsence(value: string | undefined): AbsenceStatus {
-  return value === undefined || value.length === 0 ? "ok" : "present";
-}
-
 export interface HealthRow {
   readonly name: string;
-  readonly kind: "pat" | "cert" | "provenance" | "absence";
-  readonly status: PatStatus | CertStatus | ProvenanceStatus | AbsenceStatus;
+  readonly kind: "pat" | "cert" | "provenance" | "inventory";
+  readonly status: PatStatus | CertStatus | ProvenanceStatus | InventoryStatus;
   readonly detail: string;
 }
 
@@ -137,8 +129,18 @@ export function summarize(rows: readonly HealthRow[]): {
     "missing-provenance",
     "source-mismatch",
     "present",
+    // Inventory: a credential nobody recorded is a credential nobody assessed.
+    "undocumented",
+    "missing",
   ]);
-  const warn = new Set<string>(["expiring", "indeterminate"]);
+  const warn = new Set<string>([
+    "expiring",
+    "indeterminate",
+    "stale",
+    "deadline",
+    "visibility-drift",
+    "audit-overdue",
+  ]);
   const hasHardFailure = rows.some((r) => hard.has(r.status));
   const hasWarning = rows.some((r) => warn.has(r.status));
   const table = [
@@ -454,24 +456,41 @@ if (import.meta.main) {
       ),
     },
   ];
-  const npmTokenRow: HealthRow = {
-    name: "NPM_TOKEN",
-    kind: "absence",
-    status: classifySecretAbsence(process.env["NPM_TOKEN"]),
-    // This probe can only observe a secret bound into THIS repo's env — it is
-    // not a global assurance about npm/org-wide token existence, even though
-    // that absence was separately verified by hand (org scope, Nimbus repo
-    // scope, the Nimbus `release` environment, and both satellite repos).
-    detail:
-      "absent from this repo's env (the only scope this check observes); revoked 2026-07-19, publishing is OIDC-only",
-  };
+  // The auditor token is minted by the workflow and passed in; without it the
+  // inventory check is skipped rather than reported as "no secrets found",
+  // which would fire `missing` for every declared credential at once.
+  const auditorToken = process.env["AUDITOR_TOKEN"] ?? "";
+  const inventoryRows: HealthRow[] = [];
+  if (auditorToken) {
+    // No repo list is passed: enumerateSecrets discovers every repo the auditor
+    // App can see. Deriving it from the manifest would only look where the
+    // manifest already points, which is precisely where an undocumented secret
+    // is NOT.
+    const { secrets, errors } = await enumerateSecrets({ token: auditorToken });
+    for (const e of errors) {
+      inventoryRows.push({
+        name: "inventory",
+        kind: "inventory",
+        status: "undocumented",
+        detail: `enumeration failed: ${e} — inventory is incomplete, treat as unverified`,
+      });
+    }
+    inventoryRows.push(...auditCredentials(CREDENTIAL_REGISTRY, secrets, new Date()));
+  } else {
+    inventoryRows.push({
+      name: "inventory",
+      kind: "inventory",
+      status: "audit-overdue",
+      detail: "AUDITOR_TOKEN not provided — credential inventory not checked this run",
+    });
+  }
   const { hardFailure } = await runSecretHealth({
     api: createGitHubApi({ token, repo }),
     now: new Date(),
     thresholdDays,
     pats,
     certs,
-    extraRows: [appMintRow, ...provenanceRows, npmTokenRow],
+    extraRows: [appMintRow, ...provenanceRows, ...inventoryRows],
   });
   // process.exit() after awaited I/O can truncate buffered stdout before it
   // flushes — a recurring defect class in this project (it previously caused

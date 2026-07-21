@@ -52,6 +52,17 @@ a plain repository secret.
 Several optional secrets fall back to `github.token` when unset
 (`NIMBUS_CHECKS_TOKEN`) or simply skip their step (`SONAR_TOKEN`).
 
+> **The machine-checked inventory lives in
+> [`scripts/release/credential-registry.ts`](../scripts/release/credential-registry.ts).**
+> That manifest is authoritative for anything checkable — expected state,
+> ownership, rotation policy, and consuming workflows — and the weekly monitor
+> hard-fails on any secret in the org that is missing from it. This page carries
+> the narrative: what each credential is for and how to mint it. When they
+> disagree, the manifest is right.
+>
+> Workstation credentials are out of CI's reach entirely; see
+> [`credential-hygiene.md`](./credential-hygiene.md).
+
 ---
 
 ## Release & GitHub Release publishing (`release` environment)
