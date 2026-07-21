@@ -77,36 +77,45 @@ function runInitialUnitTestsWithCoverage(): void {
   }
 }
 
-function runCoverageGates(): void {
-  const gates: Array<{ script: string; dbus?: boolean }> = [
-    { script: "test:coverage:engine" },
-    { script: "test:coverage:agents" },
-    { script: "test:coverage:vault", dbus: true },
-    { script: "test:coverage:sync" },
-    { script: "test:coverage:rate-limiter" },
-    { script: "test:coverage:people" },
-    { script: "test:coverage:embedding" },
-    { script: "test:coverage:workflow" },
-    { script: "test:coverage:watcher" },
-    { script: "test:coverage:extensions" },
-    { script: "test:coverage:config" },
-    { script: "test:coverage:client" },
-    { script: "test:coverage:telemetry" },
-    { script: "test:coverage:db" },
-    { script: "test:coverage:deployment" },
-    { script: "test:coverage:health" },
-    { script: "test:coverage:metrics" },
-    { script: "test:coverage:preflight" },
-    { script: "test:coverage:doctor" },
-    { script: "test:coverage:tui" },
-    { script: "test:coverage:mcp" },
-    { script: "test:coverage:updater" },
-    { script: "test:coverage:lan" },
-    { script: "test:coverage:perf" },
-    { script: "test:coverage:security" },
-  ];
+/**
+ * The per-subsystem coverage gates `test:ci` runs, in execution order.
+ *
+ * Exported so `ci-tests.test.ts` can assert this list and the `test:coverage:*`
+ * scripts in `package.json` stay in agreement. They drifted in both directions
+ * once already: a `client` gate outlived the package it covered (extracted to
+ * `@nimbus-dev/client` in #758), while `sandbox` was added to `package.json`
+ * and never wired in here — so `test:ci` silently skipped it.
+ */
+export const COVERAGE_GATES: ReadonlyArray<{ script: string; dbus?: boolean }> = [
+  { script: "test:coverage:engine" },
+  { script: "test:coverage:agents" },
+  { script: "test:coverage:vault", dbus: true },
+  { script: "test:coverage:sync" },
+  { script: "test:coverage:rate-limiter" },
+  { script: "test:coverage:people" },
+  { script: "test:coverage:embedding" },
+  { script: "test:coverage:workflow" },
+  { script: "test:coverage:watcher" },
+  { script: "test:coverage:extensions" },
+  { script: "test:coverage:config" },
+  { script: "test:coverage:sandbox" },
+  { script: "test:coverage:telemetry" },
+  { script: "test:coverage:db" },
+  { script: "test:coverage:deployment" },
+  { script: "test:coverage:health" },
+  { script: "test:coverage:metrics" },
+  { script: "test:coverage:preflight" },
+  { script: "test:coverage:doctor" },
+  { script: "test:coverage:tui" },
+  { script: "test:coverage:mcp" },
+  { script: "test:coverage:updater" },
+  { script: "test:coverage:lan" },
+  { script: "test:coverage:perf" },
+  { script: "test:coverage:security" },
+];
 
-  for (const { script, dbus } of gates) {
+function runCoverageGates(): void {
+  for (const { script, dbus } of COVERAGE_GATES) {
     if (dbus && process.platform === "linux" && dbusAvailable()) {
       run(["bash", DBUS_WRAPPER, "bun", "run", script], REPO_ROOT, CI_ENV);
     } else {
@@ -116,8 +125,6 @@ function runCoverageGates(): void {
 }
 
 export async function runCiTestSuite(): Promise<void> {
-  run(["bun", "run", "build"], join(REPO_ROOT, "packages", "client"));
-
   run(["bun", "run", "typecheck"], REPO_ROOT);
   run(["bun", "run", "lint"], REPO_ROOT);
   run(["bun", "run", "build"], REPO_ROOT);
