@@ -1,6 +1,6 @@
 # Stage 0 (Revised) Implementation Plan Review — Feedback, Suggestions, and Open Questions
 
-This document reviews the implementation plan for **Stage 0 (Revised) — Seal the Narrow Waist: Implementation Plan** ([2026-07-20-stage-0-real-schema.md](file:///C:/gitrep/Nimbus/.claude/worktrees/stage0-real-schema/docs/superpowers/plans/2026-07-20-stage-0-real-schema.md)).
+This document reviews the implementation plan for **Stage 0 (Revised) — Seal the Narrow Waist: Implementation Plan** ([2026-07-20-stage-0-real-schema.md](./2026-07-20-stage-0-real-schema.md)).
 
 ---
 

@@ -1,6 +1,6 @@
 # Stage 0 (Revised) Design Review — Feedback, Suggestions, and Open Questions
 
-This document reviews the revised design specification for **Stage 0: Seal the Narrow Waist Against the Real Schema** ([2026-07-20-stage-0-real-schema-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/stage0-real-schema/docs/superpowers/specs/2026-07-20-stage-0-real-schema-design.md)).
+This document reviews the revised design specification for **Stage 0: Seal the Narrow Waist Against the Real Schema** ([2026-07-20-stage-0-real-schema-design.md](./2026-07-20-stage-0-real-schema-design.md)).
 
 ---
 
