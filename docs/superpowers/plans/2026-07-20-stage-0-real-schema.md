@@ -22,8 +22,10 @@ shape rather than transcribing one, and nimbus-vscode consumes the real type.
 - TypeScript **strict**, **no `any`** — use `unknown` for external data. Non-negotiable #7.
 - The item-type vocabulary is an **open enum**. Never rewrite an unrecognised type to a recognised
   one; preserving it verbatim is required behaviour.
-- `@nimbus-dev/sdk@1.4.0` is published and already satisfies the gateway's `^1.3.0` range. No
-  manifest edit is needed in `Nimbus`.
+- `@nimbus-dev/sdk@1.4.0` is published. The gateway's `^1.3.0` range *allows* it, but `bun.lock`
+  pins 1.3.0, so Task 1 Step 0 bumps `packages/gateway/package.json` to `^1.4.0` and refreshes the
+  lock. The other 95 packages keep their `^1.3.0` ranges but 94 of them start resolving 1.4.0 via
+  new nested lock entries — a widening, verified typecheck-clean across all 96 packages.
 - `@nimbus-dev/client` ships as **0.6.0** (minor; breaking is permitted pre-1.0) via release-please.
   Do not hand-edit `package.json` versions or `CHANGELOG.md`; PR titles must be Conventional Commits.
 - **Tasks are strictly ordered.** Task 3 validates a shape that only exists after Tasks 1–2 merge.
@@ -54,6 +56,9 @@ shape rather than transcribing one, and nimbus-vscode consumes the real type.
 
 ## Task 1: Gateway — delete the lossy coercion
 
+> ✅ **Shipped 2026-07-21** in [#780](https://github.com/nimbus-agent/Nimbus/pull/780) (`008615da`),
+> together with Task 2. Steps are retained as the record of what was done.
+
 **Repo:** `Nimbus` (`C:/gitrep/Nimbus`)
 
 **Files:**
@@ -68,7 +73,62 @@ shape rather than transcribing one, and nimbus-vscode consumes the real type.
   `LocalIndex.search`, `LocalIndex.searchRanked` and `index.queryItems` simultaneously, because all
   three funnel through `rowToItem`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 0: Bump the SDK in the lockfile**
+
+`packages/gateway/package.json` already declares `^1.3.0`, which *allows* 1.4.0 — but `bun.lock`
+pins `1.3.0`, and a lockfile does not move on its own. Until it is updated, the installed SDK still
+carries the **closed** six-value union and Step 4 will not typecheck.
+
+Run the update **from `packages/gateway`**, not from the repo root. At the root, `@nimbus-dev/sdk`
+is not a dependency, so `bun update` treats it as an *add* and injects it into the root
+`package.json` — which is wrong and must not be committed.
+
+```bash
+cd C:/gitrep/Nimbus/packages/gateway && bun update @nimbus-dev/sdk
+cd C:/gitrep/Nimbus && node -e "console.log(require('./packages/gateway/node_modules/@nimbus-dev/sdk/package.json').version)"
+```
+
+Expected: `1.4.0`. Confirm the open type is present:
+
+```bash
+grep -n "export type ItemType" packages/gateway/node_modules/@nimbus-dev/sdk/dist/types.d.ts
+```
+
+Expected: `export type ItemType = KnownItemType | (string & {});`. If it prints the old
+`"file" | "folder" | ...` union instead, the update did not take — stop and resolve that first.
+
+This bumps `packages/gateway/package.json` from `^1.3.0` to `^1.4.0`. That is intended: the gateway
+is the one package whose code now *requires* the open union, so the manifest should say so.
+
+**Know the real blast radius before you commit.** Refreshing the lock does more than move the
+gateway: it also writes **nested `@nimbus-dev/sdk@1.4.0` entries for 94 `nimbus-mcp-*` packages**
+that previously had none. Their `package.json` ranges stay at `^1.3.0`, but they now *resolve* 1.4.0
+instead of the hoisted 1.3.0 (which remains in the lock only for the client's transitive copy). Do
+not describe this as "the gateway alone moved" — verify with:
+
+```bash
+grep -c 'nimbus-mcp-[a-z-]*/@nimbus-dev/sdk": \["@nimbus-dev/sdk@1.4.0' bun.lock
+```
+
+This is safe — 1.4.0 only *widens* the `itemType` union, so a connector emitting `ci_run` gains
+valid typings rather than losing any — but it must be stated accurately in the commit body, because
+that is the audit trail someone will read later to reason about the change.
+
+Verify the same way before moving on:
+
+```bash
+cd C:/gitrep/Nimbus && bun run typecheck
+```
+
+Expected: clean.
+
+`bun.lock` also keeps a nested `@nimbus-dev/client/@nimbus-dev/sdk` at `1.3.0`. That is the client's
+own transitive copy and is expected; it resolves when the client ships against 1.4.0. Do not
+hand-edit it.
+
+Commit `bun.lock` and `packages/gateway/package.json` with this task's other changes.
+
+- [x] **Step 1: Write the failing tests**
 
 Add to `packages/gateway/src/index/local-index.test.ts`, immediately after the existing
 `"upsert with itemType 'event' round-trips as event"` test (line ~118). Reuse that file's existing
@@ -103,7 +163,7 @@ Add to `packages/gateway/src/index/local-index.test.ts`, immediately after the e
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/local-index.test.ts
@@ -113,7 +173,7 @@ Expected: FAIL. The first two tests receive `"file"` for every ops type and for 
 **This failure is the bug reproduced** — record the output. The third test (`folder`) passes
 already, because `folder` is one of the six values the coercion happens to accept.
 
-- [ ] **Step 3: Delete the coercion function**
+- [x] **Step 3: Delete the coercion function**
 
 In `packages/gateway/src/index/local-index.ts`, delete this entire function (lines 94-105):
 
@@ -133,7 +193,7 @@ function itemTypeFromRowType(raw: string): NimbusItem["itemType"] {
 }
 ```
 
-- [ ] **Step 4: Pass the raw column value through**
+- [x] **Step 4: Pass the raw column value through**
 
 In the same file, in `rowToItem` (line ~161), change the `itemType` line:
 
@@ -147,7 +207,7 @@ In the same file, in `rowToItem` (line ~161), change the `itemType` line:
 `ItemType` is an open enum (`KnownItemType | (string & {})`), so `string` is assignable and no cast
 is needed.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/local-index.test.ts
@@ -155,7 +215,7 @@ cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/local-index.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 6: Confirm no other coercion survives**
+- [x] **Step 6: Confirm no other coercion survives**
 
 ```bash
 cd C:/gitrep/Nimbus && grep -rn "itemTypeFromRowType" packages/ --include=*.ts
@@ -163,7 +223,7 @@ cd C:/gitrep/Nimbus && grep -rn "itemTypeFromRowType" packages/ --include=*.ts
 
 Expected: no output. If anything matches, it is the same bug in another spelling — remove it too.
 
-- [ ] **Step 7: Run the wider gate**
+- [x] **Step 7: Run the wider gate**
 
 ```bash
 cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/ && bun run preflight:fast
@@ -172,11 +232,11 @@ cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/ && bun run preflight
 Expected: PASS. If another test asserted the old coercion (e.g. expecting `"file"` for a non-file
 type), update it — that test encoded the bug.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd C:/gitrep/Nimbus
-git add packages/gateway/src/index/local-index.ts packages/gateway/src/index/local-index.test.ts
+git add bun.lock packages/gateway/package.json packages/gateway/src/index/local-index.ts packages/gateway/src/index/local-index.test.ts
 git commit -m "fix: stop relabelling most indexed item types as \"file\"
 
 itemTypeFromRowType() accepted only the six values in the pre-1.4.0 SDK union
@@ -192,6 +252,12 @@ since all three map rows through rowToItem."
 ---
 
 ## Task 2: Gateway — return NimbusItem from `index.queryItems`
+
+> ✅ **Shipped 2026-07-21** in [#780](https://github.com/nimbus-agent/Nimbus/pull/780) (`008615da`).
+> A whole-branch review caught one regression per-commit review missed: `isItemLikeRow` gated
+> `nimbus query`'s card rendering on `row["title"]`, which the new payload lacks, silently degrading
+> TTY output to key/value blocks. It now accepts both shapes, since `--sql` legitimately still
+> returns raw rows.
 
 **Repo:** `Nimbus`. **Depends on:** Task 1.
 
@@ -216,7 +282,7 @@ since all three map rows through rowToItem."
 `rowToItem` and `ItemRow` stay module-private — `listItems` is the public seam, mirroring how
 `search()` wraps `searchRanked()`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `packages/gateway/src/ipc/diagnostics-rpc.test.ts` inside the existing
 `describe("index.queryItems", ...)` block (line ~601). Reuse that file's `makeCtxWithIndex()`
@@ -283,7 +349,7 @@ Add to `packages/gateway/src/ipc/diagnostics-rpc.test.ts` inside the existing
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd C:/gitrep/Nimbus && bun test packages/gateway/src/ipc/diagnostics-rpc.test.ts
@@ -293,7 +359,7 @@ Expected: FAIL — `row["itemType"]` is `undefined` (the raw row has `type`), an
 filter returns `["external_id", "body_preview", "canonical_url", "modified_at", "author_id",
 "synced_at"]` instead of `[]`.
 
-- [ ] **Step 3: Add the `IndexedItem` type and `listItems` to `LocalIndex`**
+- [x] **Step 3: Add the `IndexedItem` type and `listItems` to `LocalIndex`**
 
 In `packages/gateway/src/index/local-index.ts`, add the import at the top alongside the other
 `./` imports:
@@ -331,7 +397,7 @@ Add this method to the `LocalIndex` class, immediately after `search()` (line ~7
   }
 ```
 
-- [ ] **Step 4: Wire the RPC to `listItems`**
+- [x] **Step 4: Wire the RPC to `listItems`**
 
 In `packages/gateway/src/ipc/diagnostics-rpc.ts`, in `rpcIndexQueryItems` (line ~312), replace the
 final three lines of the function body. Everything above them — the `sinceMs` / `untilMs` / `limit` /
@@ -367,7 +433,7 @@ RPCs still call it.
 `{ kind, value }` is the internal `DiagnosticsRpcOutcome`; `ipc/server/dispatchers.ts:1224` unwraps
 it, so the JSON-RPC `result` is `{ items, meta }`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 cd C:/gitrep/Nimbus && bun test packages/gateway/src/ipc/diagnostics-rpc.test.ts
@@ -376,7 +442,7 @@ cd C:/gitrep/Nimbus && bun test packages/gateway/src/ipc/diagnostics-rpc.test.ts
 Expected: PASS, including the two pre-existing `index.queryItems` tests (empty-db defaults and the
 services/types/limit filters), which must keep passing unchanged.
 
-- [ ] **Step 5b: Cover `listItems` directly at the unit layer**
+- [x] **Step 5b: Cover `listItems` directly at the unit layer**
 
 The RPC test above proves the behaviour end-to-end, but a failure there cannot distinguish a bad
 mapping from a bad RPC wiring. Add a direct test to
@@ -417,7 +483,7 @@ cd C:/gitrep/Nimbus && bun test packages/gateway/src/index/local-index.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 6: Update the CLI's local result type**
+- [x] **Step 6: Update the CLI's local result type**
 
 `packages/cli/src/commands/query.ts:73-79` declares the response shape inline. It prints rows through
 a generic table printer, so no field-specific logic changes — only the type annotation:
@@ -436,7 +502,7 @@ a generic table printer, so no field-specific logic changes — only the type an
 The rows are now camelCase `NimbusItem` fields, so `nimbus query`'s columns change accordingly.
 `nimbus query --sql` / `index.querySql` still returns raw rows for genuine SQL access.
 
-- [ ] **Step 6b: Update the CLI test fixture, which encodes the old wire shape**
+- [x] **Step 6b: Update the CLI test fixture, which encodes the old wire shape**
 
 `packages/cli/src/commands/query.test.ts:106-124` mocks the IPC client with a **raw V3 row** and
 asserts the raw key reaches stdout:
@@ -470,7 +536,7 @@ catch a regression. Update the fixture and the assertion to the mapped shape:
 Leave the assertion at line ~243 (`'[{"id":7}]'`) alone — that test covers `index.querySql`, which
 still returns raw rows.
 
-- [ ] **Step 7: Run the full gate**
+- [x] **Step 7: Run the full gate**
 
 ```bash
 cd C:/gitrep/Nimbus && bun run preflight:fast && bun test packages/gateway/src/ipc/ packages/gateway/src/index/ packages/cli/src/commands/
@@ -478,7 +544,7 @@ cd C:/gitrep/Nimbus && bun run preflight:fast && bun test packages/gateway/src/i
 
 Expected: all PASS.
 
-- [ ] **Step 8: Commit and open the PR**
+- [x] **Step 8: Commit and open the PR**
 
 ```bash
 cd C:/gitrep/Nimbus
@@ -1314,10 +1380,11 @@ gh pr create --title "fix: Index view shows item types and sorts by time"
 
 ## Stage 0 exit criteria
 
-- [ ] No code path rewrites one item type into another:
-      `grep -rn "itemTypeFromRowType" C:/gitrep/Nimbus/packages` is empty.
-- [ ] `index.queryItems` emits no snake_case key, proven by a gateway test that has been **observed
-      failing** against the old implementation.
+- [x] No code path rewrites one item type into another:
+      `grep -rn "itemTypeFromRowType" C:/gitrep/Nimbus/packages` is empty. ✅ verified on `main`
+      after #780.
+- [x] `index.queryItems` emits no snake_case key, proven by a gateway test that has been **observed
+      failing** against the old implementation. ✅ #780.
 - [ ] `index.queryItems` is validated per-field like every other client method.
 - [ ] The conformance gate has been **observed failing** on a renamed fixture key (Task 4, Step 4).
 - [ ] Exactly one declaration of the item-type vocabulary exists across all four repos:
@@ -1330,6 +1397,12 @@ gh pr create --title "fix: Index view shows item types and sorts by time"
 
   Expected: hits only in `nimbus-sdk/src/item-types.ts`. Connector mappers legitimately contain the
   literal at their emit sites; typing those is a Stage 1 cleanup.
+
+  Known surviving hit after #780: `packages/gateway/src/graph/relationship-graph.ts`
+  `ITEM_LINKED_ENTITY_TYPES`. It is **not** a competing item-type vocabulary — it is a 19-entry
+  allowlist of which types participate in graph linking, and deliberately excludes `email`, `file`,
+  `folder` and `web_clip`. It is still a hand-maintained list of type literals that can drift from
+  the SDK's 68; type it against the SDK in Stage 1.
 - [ ] The VS Code Index view renders type icons and sorts by recency, confirmed in a real Extension
       Development Host.
 

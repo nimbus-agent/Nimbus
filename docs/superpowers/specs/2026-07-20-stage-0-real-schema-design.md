@@ -1,7 +1,7 @@
 # Stage 0 (Revised) — Seal the Narrow Waist Against the Real Schema
 
 > **Status:** Design — approved in brainstorm (2026-07-20); ready for implementation plan.
-> **Supersedes:** the schema assumptions in [`plans/2026-07-19-stage-0-seal-the-narrow-waist.md`](../plans/2026-07-19-stage-0-seal-the-narrow-waist.md). Task 1 of that plan is **done** — `@nimbus-dev/sdk@1.4.0` published 2026-07-20 with the corrected 68-type vocabulary. Tasks 2–5 are redesigned here.
+> **Supersedes:** the schema assumptions in the original Stage 0 plan, `2026-07-19-stage-0-seal-the-narrow-waist.md` (added in [#776](https://github.com/nimbus-agent/Nimbus/pull/776), deleted when this revision landed — recover it from git history if needed). Task 1 of that plan is **done** — `@nimbus-dev/sdk@1.4.0` published 2026-07-20 with the corrected 68-type vocabulary. Tasks 2–5 are redesigned here.
 
 ## Why this revision exists
 

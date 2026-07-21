@@ -170,8 +170,10 @@ types. Stage 0 uses the dependency that is already there.
 **Goal:** one source of truth for the ecosystem's core data contract, enforced by
 a test that fails when the layers drift.
 
-> **Implementation plan:** [`superpowers/plans/2026-07-19-stage-0-seal-the-narrow-waist.md`](./superpowers/plans/2026-07-19-stage-0-seal-the-narrow-waist.md)
-> — five tasks across four repos, with the two npm release hops sequenced.
+> **Implementation plan:** [`superpowers/plans/2026-07-20-stage-0-real-schema.md`](./superpowers/plans/2026-07-20-stage-0-real-schema.md)
+> — five tasks across four repos, with the two npm release hops sequenced. Tasks 1–2 (gateway)
+> shipped in [#780](https://github.com/nimbus-agent/Nimbus/pull/780); Tasks 3–5 (client, VS Code)
+> remain. Design: [`superpowers/specs/2026-07-20-stage-0-real-schema-design.md`](./superpowers/specs/2026-07-20-stage-0-real-schema-design.md).
 
 **Why first:** it fixes a live user-visible bug, it is days rather than weeks, and
 it installs the safety net *before* Stage 1 starts writing against ~200 RPCs.
