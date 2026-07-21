@@ -353,7 +353,7 @@ describe("get() edge cases", () => {
     expect("error" in out).toBe(false);
   });
 
-  test("oldestExpiresInSeconds clamps to 0 when oldest run is at expiry", () => {
+  test("oldestExpiresInSeconds reaches 0 for a run sitting exactly on its expiry", () => {
     let now = 1_000_000;
     let nextGenId = 0;
     const c = new BriefRunController({
@@ -376,9 +376,14 @@ describe("get() edge cases", () => {
     // remaining = 1000 ms, ceil(1000/1000) = 1, max(0, 1) = 1.
 
     now = run1Expiry;
-    // Now oldest expires at exactly this moment. Sweep won't remove it (needs now > expiry).
-    // Try to create run4. Sweep doesn't touch any run. activeRuns = 3, we're busy.
-    // Oldest expiry = 1010000, now = 1010000, remaining = 0, ceil(0) = 0, max(0, 0) = 0.
+    // The oldest run sits exactly on its expiry. sweep() needs `now > expiresAtMs`, so it
+    // survives and still counts toward the cap — that boundary is what this test pins.
+    //
+    // NOTE: this does NOT exercise the Math.max(0, ...) clamp. At now === expiry the
+    // expression is max(0, ceil(0)) = 0 either way, so deleting the clamp would not fail
+    // this test. Reaching the clamp needs soonest < now, i.e. a past-expiry run still in
+    // the map when the busy response is computed — unreachable, because create() sweeps
+    // those away first. The clamp is defensive only.
     const out = c.create({ brief: "q", sources: SRC, useIndex: false });
     if (!("error" in out)) throw new Error("expected busy");
     expect(out.activeRuns).toBe(3);
