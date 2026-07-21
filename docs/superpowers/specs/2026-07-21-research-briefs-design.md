@@ -157,6 +157,10 @@ ones are appended by the server and cannot be suppressed by the model:
 - `useIndex: true` but the index returned no `web_clip` matches,
 - `useIndex: true` but the semantic path was unavailable, so index recall was
   keyword-only,
+- `useIndex: true` but the index search **failed outright** — distinct from
+  "nothing matched", which is what an earlier draft would have reported. A broken
+  index must not be laundered into "your corpus had nothing relevant"; that is
+  the exact dishonesty this module exists to prevent,
 - findings, conflicts, or citations dropped by the report bounds,
 - the remote-model egress note (see [Config](#configuration)).
 
@@ -184,7 +188,7 @@ POST /v1/briefs/{id}/save
   → 200 { itemId: string }
 
 GET  /v1/briefs/{id}
-  → 200 { status: "collecting" | "running" | "done" | "failed", report?, error? }
+  → 200 { status: "collecting" | "running" | "done" | "failed", report?, failureReason? }
 ```
 
 The four `POST`s join `WRITE_ROUTE_ALLOWLIST` (**8 → 12**). The `GET` does **not**:
@@ -208,7 +212,7 @@ brief sweep would both 429 itself and starve ordinary clipping.
 
 | Route | Fingerprint | Body cap | Rate | Abuse bound |
 | --- | --- | --- | --- | --- |
-| `POST /v1/briefs` | `"brief"` | 8 KB (default) | 20/min | 160 KB/min |
+| `POST /v1/briefs` | `"brief"` | 64 KiB | 20/min | 1.25 MiB/min |
 | `POST /v1/briefs/{id}/sources` | `"brief-src"` | 1 MiB | 60/min | 60 MiB/min |
 | `POST /v1/briefs/{id}/run` | `"brief"` | — (`hasBody: false`) | 20/min | — |
 | `POST /v1/briefs/{id}/save` | `"brief"` | — (`hasBody: false`) | 20/min | — |
@@ -270,6 +274,15 @@ the longest a slot could take to free:
 TTL), and it is informational only — deliberately in the body rather than a
 header so it cannot be mistaken for retry guidance.
 
+**`error` means exactly one thing on this surface: an HTTP-level failure.** A run
+that failed legitimately is an HTTP **200** carrying
+`{ status: "failed", failureReason: "llm_unavailable" }` — not `error`. An
+earlier draft reused `error` for both, which meant the obvious client check
+(`if (body.error)`, correct on every other route here) would misclassify a normal
+failed run as a transport error. The `failureReason` values are
+`llm_unavailable`, `synthesis_invalid`, and `internal_error`; they never appear
+in a non-200 response, and `error` never appears in a 200.
+
 **Disabled surface is its own 404.** `POST /v1/briefs` against an unwired seam
 returns `{ error: "briefs_disabled", hint: "enable [briefs] in nimbus.toml" }`
 rather than a bare `not_found`, so the client can write exact first-run copy
@@ -328,11 +341,19 @@ interface BriefRun {
 
 | Cap | Value | Over-cap response |
 | --- | --- | --- |
-| `MAX_CONCURRENT_RUNS` | 3 | 503 `briefs_busy` (no `Retry-After`) |
+| `MAX_CONCURRENT_RUNS` | 3 **non-terminal** | 503 `briefs_busy` (no `Retry-After`) |
+| `MAX_RETAINED_TERMINAL_RUNS` | 16 | oldest terminal run evicted (then 410) |
 | `MAX_SOURCES_PER_RUN` | 20 | 400 `field: "sources"` (at create) |
 | `MAX_SOURCE_BYTES` | 256 KB | 413 `detail: "source_too_large"` |
 | `MAX_RUN_BYTES` | 4 MB | 413 `detail: "run_capacity"` |
 | `RUN_TTL_MS` | 30 min from creation | 410 |
+
+**`capturedAt` is epoch milliseconds, and the validator enforces it.** A seconds
+value is ~1.7e9 where milliseconds are ~1.7e12, so a merely "finite number" check
+would accept seconds silently and store a `modifiedAt` in 1970 — wrong data, no
+error, discovered much later. Values below `1e12` (before 2001-09-09) are
+rejected with `400 field: "capturedAt"`. The client owner confirmed milliseconds;
+this makes a silent-wrong failure loud.
 
 **Every byte cap here means UTF-8 encoded bytes**, measured with
 `Buffer.byteLength(s, "utf8")` — never `String.prototype.length`, which counts
@@ -363,6 +384,21 @@ it around the 19th, which is why the two 413s carry distinct `detail` values —
 is full and further sources are pointless. Both are terminal to the client either
 way, and the un-fed sources become gaps, so a saturating sweep degrades into an
 honest partial report rather than an error.
+
+**The concurrency cap counts only non-terminal runs.** `MAX_CONCURRENT_RUNS` is
+justified as a *memory* bound, and a `done` or `failed` run has already dropped
+its source bodies — it holds a report of at most ~20 KB. Counting those against
+a memory cap is incoherent, and the user-visible result is absurd: three briefs
+in ten minutes would lock the surface for the next twenty, returning 503 with no
+`Retry-After`, while the gateway held perhaps 60 KB. That reads as broken
+software. So `create()` counts runs in `collecting` or `running` only.
+
+Terminal runs stay in the map until their TTL so `GET` and `save` keep working —
+slot lifetime is deliberately *not* coupled to whether the client got around to
+saving. They are bounded separately by `MAX_RETAINED_TERMINAL_RUNS` (16, oldest
+evicted first, an evicted id then reading as 410), which caps their contribution
+at a few hundred KB. Without that second bound the create rate limit alone would
+permit ~600 retained reports over a 30-minute TTL.
 
 **Eviction runs before the concurrency check.** Expiry is lazy — no timer, no
 sweeper — but a purely access-triggered sweep has a hole: three runs created and
@@ -517,9 +553,20 @@ type Report = {
   findings:  { text: string; citations: SourceRef[] }[];
   conflicts: { text: string; citations: SourceRef[] }[];  // >= 2 refs, enforced
   gaps:      string[];
-  synthesis: { model: string; remote: boolean };
+  synthesis: { model: string; remote: boolean; disclosure?: string };
 };
 ```
+
+**`disclosure` exists so the client never string-matches prose.** The
+remote-model disclosure deliberately appears twice — typed on `synthesis` for a
+banner, and as a `gaps` entry because the saved artifact outlives any renderer.
+Rendering both is redundant, so a live view will want to suppress one. Rather
+than have the client pattern-match a sentence the gateway might reword,
+`synthesis.disclosure` carries the **exact string** that was appended to `gaps`
+(present iff `remote`). The client filters by equality:
+`gaps.filter((g) => g !== report.synthesis.disclosure)`. No pattern matching, no
+ordering assumption, and rewording the sentence server-side can never silently
+break the filter.
 
 **`synthesis` exists because one gap is not like the others.** The remote-model
 disclosure was originally specified as a server-authored entry in `gaps`, which
@@ -697,7 +744,7 @@ Recorded as an open question below rather than smuggled in here.
      (on any failure: status = "failed", error = "<code>")
 
 [extension] GET /v1/briefs/{id}            (bearer-checked in the fetch handler)
-   ← {status, report?, error?}             (404 unknown · 410 expired)
+   ← {status, report?, failureReason?}      (404 unknown · 410 expired)
 
 [extension] POST /v1/briefs/{id}/save      (only when status === "done")
    → upsertIndexedItem(nimbus:research_brief) → scheduleEmbedding

@@ -21,12 +21,17 @@
 - **Cross-platform:** `path.join()` only, never hardcoded separators.
 - **Clock injection:** every module that reads time takes `nowMs: () => number`. Never call `Date.now()` inside a testable unit, and never `.unref()` a timer (hangs `bun test` on Windows).
 - **Branch:** work happens on `dev/asafgolombek/research-briefs-gateway` in the worktree `.claude/worktrees/research-briefs-gateway`. Never commit on `main`.
-- **Verification before any completion claim:** `bun run preflight:fast` must be green; Task 12 runs full `preflight`.
+- **Verification before any completion claim:** `bun run preflight:fast` must be green; Task 15 runs full `preflight`.
+- **Stated test counts are indicative, not the gate.** They are correct as written, but
+  adding a case is encouraged and will change them. The pass criterion is **zero
+  failures** — never delete a test to make a count match, and never treat a higher count
+  as a failure.
 
 ### Constants (single source of truth — used verbatim across tasks)
 
 ```ts
-export const MAX_CONCURRENT_RUNS = 3;
+export const MAX_CONCURRENT_RUNS = 3;        // non-terminal runs only
+export const MAX_RETAINED_TERMINAL_RUNS = 16;
 export const MAX_SOURCES_PER_RUN = 20;
 export const MAX_SOURCE_BYTES = 256 * 1024;
 export const MAX_RUN_BYTES = 4 * 1024 * 1024;
@@ -309,8 +314,19 @@ Create `packages/gateway/src/briefs/brief-constants.ts`:
 ```ts
 /** Caps and bounds for research briefs. See docs/superpowers/specs/2026-07-21-research-briefs-design.md. */
 
-/** Live runs held in memory at once. Bounds worst-case memory at 3 x MAX_RUN_BYTES = 12 MB. */
+/**
+ * Live runs held in memory at once, counting only `collecting`/`running`.
+ * Bounds worst-case source memory at 3 x MAX_RUN_BYTES = 12 MB. Terminal runs
+ * have already dropped their bodies, so counting them against a MEMORY cap
+ * would be incoherent — and would lock a user out for 20 minutes over ~60 KB.
+ */
 export const MAX_CONCURRENT_RUNS = 3;
+/**
+ * Terminal runs retained for GET/save after finishing, oldest evicted first.
+ * Without this the create rate limit alone would permit ~600 retained reports
+ * across a 30-minute TTL.
+ */
+export const MAX_RETAINED_TERMINAL_RUNS = 16;
 /** Declared sources per run. The client caps its composer at this number. */
 export const MAX_SOURCES_PER_RUN = 20;
 /**
@@ -367,8 +383,13 @@ export type Report = {
   /** Every entry carries >= 2 distinct citations; enforced by the validator. */
   conflicts: ReportItem[];
   gaps: string[];
-  /** Typed disclosure so a client can render a banner, not bullet six. */
-  synthesis: { model: string; remote: boolean };
+  /**
+    * Typed disclosure so a client can render a banner, not bullet six.
+    * `disclosure` is the EXACT string also appended to `gaps` (present iff
+    * remote), so a live view can suppress the duplicate by equality rather
+    * than by pattern-matching prose the gateway might later reword.
+    */
+  synthesis: { model: string; remote: boolean; disclosure?: string };
 };
 
 /** A fed source. `body` is EPHEMERAL — it is never written to disk. */
@@ -624,7 +645,7 @@ export function verifyQuote(body: string, quote: string): string | null {
 bun test packages/gateway/src/briefs/quote-verify.test.ts
 ```
 
-Expected: PASS, 11 tests. If "rejects a case change" fails, you added case folding — remove it.
+Expected: PASS, 13 tests. If "rejects a case change" fails, you added case folding — remove it.
 
 - [ ] **Step 5: Commit**
 
@@ -987,7 +1008,7 @@ export function validateReport(
 bun test packages/gateway/src/briefs/brief-report.test.ts
 ```
 
-Expected: PASS, 15 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1029,6 +1050,7 @@ const base = {
   useIndex: false,
   indexHits: 0,
   semanticAvailable: true,
+  searchFailed: false,
   model: "llama3.1:8b",
   remote: false,
   boundGaps: [] as string[],
@@ -1052,6 +1074,12 @@ describe("buildServerGaps", () => {
   test("flags an empty index result when useIndex was requested", () => {
     const g = buildServerGaps({ ...base, useIndex: true, indexHits: 0 });
     expect(g.join(" ").toLowerCase()).toContain("no saved clips");
+  });
+
+  test("distinguishes a failed index search from an empty one", () => {
+    const g = buildServerGaps({ ...base, useIndex: true, indexHits: 0, searchFailed: true });
+    expect(g.join(" ").toLowerCase()).toContain("returned an error");
+    expect(g.join(" ").toLowerCase()).not.toContain("no saved clips");
   });
 
   test("flags keyword-only recall when semantic search was unavailable", () => {
@@ -1096,6 +1124,8 @@ export type ServerGapInput = {
   readonly useIndex: boolean;
   readonly indexHits: number;
   readonly semanticAvailable: boolean;
+  /** The index search threw. Distinct from "nothing matched" — see below. */
+  readonly searchFailed: boolean;
   readonly model: string;
   readonly remote: boolean;
   readonly boundGaps: readonly string[];
@@ -1121,7 +1151,13 @@ export function buildServerGaps(input: ServerGapInput): string[] {
   }
 
   if (input.useIndex) {
-    if (input.indexHits === 0) {
+    if (input.searchFailed) {
+      // NEVER launder a broken index into "your corpus had nothing relevant". They are
+      // completely different statements and only one of them is the user's problem.
+      gaps.push(
+        "Saved clips could not be searched (the local index returned an error), so this report draws only on the sources you selected.",
+      );
+    } else if (input.indexHits === 0) {
       gaps.push("No saved clips matched this question, so the report draws only on the sources you selected.");
     } else if (!input.semanticAvailable) {
       gaps.push(
@@ -1148,7 +1184,7 @@ export function buildServerGaps(input: ServerGapInput): string[] {
 bun test packages/gateway/src/briefs/brief-gaps.test.ts
 ```
 
-Expected: PASS, 8 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1185,7 +1221,12 @@ Create `packages/gateway/src/briefs/brief-run-store.test.ts`:
 ```ts
 import { describe, expect, test } from "bun:test";
 import { BriefRunController } from "./brief-run-store.ts";
-import { DEFAULT_RUN_TTL_MS, MAX_RUN_BYTES, MAX_SOURCE_BYTES } from "./brief-constants.ts";
+import {
+  DEFAULT_RUN_TTL_MS,
+  MAX_RETAINED_TERMINAL_RUNS,
+  MAX_RUN_BYTES,
+  MAX_SOURCE_BYTES,
+} from "./brief-constants.ts";
 import type { Report } from "./brief-types.ts";
 
 function fixture() {
@@ -1383,14 +1424,32 @@ describe("terminal states", () => {
     expect(run.sources.size).toBe(0);
   });
 
-  test("a terminal run frees a concurrency slot only once it expires", () => {
-    const { c, advance } = fixture();
+  test("a terminal run frees its concurrency slot immediately", () => {
+    const { c } = fixture();
     const a = created(c); created(c); created(c);
     c.finish(a, REPORT);
-    // Still readable, still occupying a slot: the client must be able to poll and save.
-    expect("error" in c.create({ brief: "q", sources: SRC, useIndex: false })).toBe(true);
-    advance(DEFAULT_RUN_TTL_MS + 1);
+    // The cap is a MEMORY bound and a finished run holds no source bytes. Locking the
+    // user out for the rest of the TTL over a ~20 KB report would read as broken.
     expect("error" in c.create({ brief: "q", sources: SRC, useIndex: false })).toBe(false);
+  });
+
+  test("a terminal run stays readable after freeing its slot", () => {
+    const { c } = fixture();
+    const a = created(c);
+    c.finish(a, REPORT);
+    created(c); created(c); created(c);
+    expect(c.get(a.id)?.report).toEqual(REPORT);
+  });
+
+  test("retained terminal runs are bounded, oldest evicted first", () => {
+    const { c } = fixture();
+    const first = created(c);
+    c.finish(first, REPORT);
+    for (let i = 0; i < MAX_RETAINED_TERMINAL_RUNS; i++) {
+      c.finish(created(c), REPORT);
+    }
+    expect(c.get(first.id)).toBeNull();
+    expect(c.wasKnown(first.id)).toBe(true);
   });
 });
 ```
@@ -1413,6 +1472,7 @@ import { canonicalizeUrl } from "../util/url-canonical.ts";
 import {
   DEFAULT_RUN_TTL_MS,
   MAX_CONCURRENT_RUNS,
+  MAX_RETAINED_TERMINAL_RUNS,
   MAX_RUN_BYTES,
   MAX_SOURCE_BYTES,
 } from "./brief-constants.ts";
@@ -1489,20 +1549,46 @@ export class BriefRunController {
     }
   }
 
+  private isTerminal(run: BriefRun): boolean {
+    return run.status === "done" || run.status === "failed";
+  }
+
+  /**
+   * Non-terminal runs only. The cap is a MEMORY bound, and a terminal run has
+   * already dropped its source bodies — counting it here would lock a user out
+   * for the rest of the TTL over a report of at most ~20 KB.
+   */
   activeCount(): number {
     this.sweep();
-    return this.runs.size;
+    let n = 0;
+    for (const run of this.runs.values()) if (!this.isTerminal(run)) n += 1;
+    return n;
+  }
+
+  /** Bounds retained terminal runs, dropping the oldest first. */
+  private trimTerminal(): void {
+    const terminal = [...this.runs.values()]
+      .filter((r) => this.isTerminal(r))
+      .sort((a, b) => a.createdAtMs - b.createdAtMs);
+    for (let i = 0; i < terminal.length - MAX_RETAINED_TERMINAL_RUNS; i++) {
+      const run = terminal[i] as BriefRun;
+      this.runs.delete(run.id);
+      this.expired.add(run.id);
+    }
   }
 
   create(input: CreateInput): CreateResult {
     this.sweep();
-    if (this.runs.size >= MAX_CONCURRENT_RUNS) {
+    const active = this.activeCount();
+    if (active >= MAX_CONCURRENT_RUNS) {
       const now = this.nowMs();
       let soonest = Number.POSITIVE_INFINITY;
-      for (const run of this.runs.values()) soonest = Math.min(soonest, run.expiresAtMs);
+      for (const run of this.runs.values()) {
+        if (!this.isTerminal(run)) soonest = Math.min(soonest, run.expiresAtMs);
+      }
       return {
         error: "busy",
-        activeRuns: this.runs.size,
+        activeRuns: active,
         oldestExpiresInSeconds: Math.max(0, Math.ceil((soonest - now) / 1000)),
       };
     }
@@ -1584,6 +1670,7 @@ export class BriefRunController {
     run.status = "done";
     run.sources.clear();
     run.bytesHeld = 0;
+    this.trimTerminal();
   }
 
   /** Terminal. Drops every source body. */
@@ -1592,6 +1679,7 @@ export class BriefRunController {
     run.status = "failed";
     run.sources.clear();
     run.bytesHeld = 0;
+    this.trimTerminal();
   }
 }
 ```
@@ -1602,7 +1690,7 @@ export class BriefRunController {
 bun test packages/gateway/src/briefs/brief-run-store.test.ts
 ```
 
-Expected: PASS, 17 tests. The "abandoned-run lockout" test is the regression guard for the review finding — if it fails, `create()` is not sweeping first.
+Expected: PASS, 21 tests. The "abandoned-run lockout" test is the regression guard for the review finding — if it fails, `create()` is not sweeping first.
 
 - [ ] **Step 5: Commit**
 
@@ -1688,6 +1776,10 @@ describe("validateCreateInput", () => {
 
 describe("validateSourceInput", () => {
   const ok = { url: "https://a.test", title: "A", body: "text", capturedAt: 1700000000000 };
+
+  test("rejects a seconds-precision timestamp rather than accepting it silently", () => {
+    expect(fieldOf(() => validateSourceInput({ ...ok, capturedAt: 1700000000 }))).toBe("capturedAt");
+  });
 
   test("accepts a well-formed body and defaults truncated to false", () => {
     expect(validateSourceInput(ok).truncated).toBe(false);
@@ -1808,7 +1900,14 @@ export function validateSourceInput(raw: unknown): SourceBody {
     throw new BriefValidationError("title must be a string", "title");
   }
   const body = nonEmptyString(rec.body, "body");
-  if (typeof rec.capturedAt !== "number" || !Number.isFinite(rec.capturedAt)) {
+  // Epoch MILLISECONDS. A seconds value (~1.7e9) is a finite number too, so a bare
+  // isFinite check would accept it silently and store modifiedAt in 1970 — wrong data,
+  // no error, found much later. 1e12 is 2001-09-09; nothing legitimate predates it here.
+  if (
+    typeof rec.capturedAt !== "number" ||
+    !Number.isFinite(rec.capturedAt) ||
+    rec.capturedAt < 1e12
+  ) {
     throw new BriefValidationError("capturedAt must be epoch milliseconds", "capturedAt");
   }
   return { url, title: rec.title, body, capturedAt: rec.capturedAt, truncated: rec.truncated === true };
@@ -1821,7 +1920,7 @@ export function validateSourceInput(raw: unknown): SourceBody {
 bun test packages/gateway/src/briefs/brief-validate.test.ts
 ```
 
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1920,11 +2019,13 @@ describe("buildRegistry", () => {
     expect(semanticAvailable).toBe(false);
   });
 
-  test("a failing index search degrades to sources only rather than failing the run", async () => {
-    const { registry, indexHits } = await buildRegistry(runWith(true, ["a"]), async () => {
-      throw new Error("vec0 not loaded");
-    });
+  test("a failing index search degrades to sources only and is reported as a failure", async () => {
+    const { registry, indexHits, searchFailed } = await buildRegistry(
+      runWith(true, ["a"]),
+      async () => { throw new Error("vec0 not loaded"); },
+    );
     expect(indexHits).toBe(0);
+    expect(searchFailed).toBe(true);
     expect([...registry.keys()]).toEqual(["S1"]);
   });
 });
@@ -1972,7 +2073,12 @@ export type IndexSearch = (
 export async function buildRegistry(
   run: BriefRun,
   search: IndexSearch | null,
-): Promise<{ registry: SourceRegistry; indexHits: number; semanticAvailable: boolean }> {
+): Promise<{
+  registry: SourceRegistry;
+  indexHits: number;
+  semanticAvailable: boolean;
+  searchFailed: boolean;
+}> {
   const registry = new Map<string, SourceRegistryEntry>();
 
   let n = 0;
@@ -1987,7 +2093,7 @@ export async function buildRegistry(
   }
 
   if (!run.useIndex || search === null) {
-    return { registry, indexHits: 0, semanticAvailable: true };
+    return { registry, indexHits: 0, semanticAvailable: true, searchFailed: false };
   }
 
   let hits: IndexHit[] = [];
@@ -1997,8 +2103,10 @@ export async function buildRegistry(
     hits = out.hits.slice(0, MAX_INDEX_HITS);
     semanticAvailable = out.semanticAvailable;
   } catch {
-    // A broken index must not cost the user their sweep — degrade to sources only.
-    return { registry, indexHits: 0, semanticAvailable: true };
+    // A broken index must not cost the user their sweep — degrade to sources only. But
+    // report it as a FAILURE, not as an empty result: claiming "nothing matched" when the
+    // search never ran is exactly the dishonesty brief-gaps.ts exists to prevent.
+    return { registry, indexHits: 0, semanticAvailable: true, searchFailed: true };
   }
 
   let m = 0;
@@ -2017,7 +2125,7 @@ export async function buildRegistry(
     });
   }
 
-  return { registry, indexHits: hits.length, semanticAvailable };
+  return { registry, indexHits: hits.length, semanticAvailable, searchFailed: false };
 }
 ```
 
@@ -2118,7 +2226,7 @@ describe("buildPrompt", () => {
 });
 
 describe("runSynthesis", () => {
-  const base = { indexHits: 0, semanticAvailable: true };
+  const base = { indexHits: 0, semanticAvailable: true, searchFailed: false };
 
   test("fails with llm_unavailable when no provider is configured", async () => {
     const run = makeRun(["a"]);
@@ -2160,7 +2268,27 @@ describe("runSynthesis", () => {
       run, registry, ...base, llm: llmReturning(EMPTY_JSON, true),
     });
     if ("error" in out) throw new Error(out.error);
-    expect(out.report.synthesis).toEqual({ model: "test-model", remote: true });
+    expect(out.report.synthesis.model).toBe("test-model");
+    expect(out.report.synthesis.remote).toBe(true);
+  });
+
+  test("synthesis.disclosure is the exact gap string, so the client need not match prose", async () => {
+    const run = makeRun(["a"]);
+    const { registry } = await buildRegistry(run, null);
+    const out = await runSynthesis({ run, registry, ...base, llm: llmReturning(EMPTY_JSON, true) });
+    if ("error" in out) throw new Error(out.error);
+    const { disclosure } = out.report.synthesis;
+    expect(disclosure).toBeDefined();
+    expect(out.report.gaps).toContain(disclosure as string);
+    expect(out.report.gaps.filter((g) => g !== disclosure)).toHaveLength(0);
+  });
+
+  test("a local model carries no disclosure marker", async () => {
+    const run = makeRun(["a"]);
+    const { registry } = await buildRegistry(run, null);
+    const out = await runSynthesis({ run, registry, ...base, llm: llmReturning(EMPTY_JSON, false) });
+    if ("error" in out) throw new Error(out.error);
+    expect(out.report.synthesis.disclosure).toBeUndefined();
   });
 
   test("a remote model also produces the unsuppressable gap", async () => {
@@ -2266,6 +2394,7 @@ export type SynthesisDeps = {
   readonly registry: SourceRegistry;
   readonly indexHits: number;
   readonly semanticAvailable: boolean;
+  readonly searchFailed: boolean;
   readonly llm: BriefSynthesizerLlm | null;
 };
 
@@ -2306,16 +2435,26 @@ export async function runSynthesis(deps: SynthesisDeps): Promise<{ report: Repor
     useIndex: deps.run.useIndex,
     indexHits: deps.indexHits,
     semanticAvailable: deps.semanticAvailable,
+    searchFailed: deps.searchFailed,
     model: out.model,
     remote: out.remote,
     boundGaps: validated.boundGaps,
   });
 
+  // The disclosure is deliberately duplicated (typed for a banner, prose for the saved
+  // artifact). Hand the client the EXACT string so it can suppress the duplicate by
+  // equality instead of pattern-matching a sentence we might later reword.
+  const disclosure = out.remote ? gaps[gaps.length - 1] : undefined;
+
   return {
     report: {
       ...validated.report,
       gaps,
-      synthesis: { model: out.model, remote: out.remote },
+      synthesis: {
+        model: out.model,
+        remote: out.remote,
+        ...(disclosure === undefined ? {} : { disclosure }),
+      },
     },
   };
 }
@@ -2327,7 +2466,7 @@ export async function runSynthesis(deps: SynthesisDeps): Promise<{ report: Repor
 bun test packages/gateway/src/briefs/brief-synthesis.test.ts
 ```
 
-Expected: PASS, 12 tests.
+Expected: PASS, 13 tests.
 
 > If the two envelope tests fail, check `wrapToolOutput`'s actual output shape in
 > `packages/gateway/src/engine/tool-output-envelope.ts` and adjust the **test's**
@@ -2375,7 +2514,7 @@ Create `packages/gateway/src/briefs/brief-save.test.ts`:
 ```ts
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { saveBriefReport } from "./brief-save.ts";
+import { ReportTooLargeError, saveBriefReport } from "./brief-save.ts";
 import { BriefRunController } from "./brief-run-store.ts";
 import { migrateToLatest } from "../index/migrations/runner.ts";
 import type { BriefRun, Report } from "./brief-types.ts";
@@ -2447,7 +2586,43 @@ describe("saveBriefReport", () => {
     expect(seen).toEqual([itemId]);
   });
 
-  test("drops quotes before failing when the report is near the metadata ceiling", () => {
+  // Two distinct degradation cases. Size them by MEASURING, not by eyeballing: a report
+  // of 25 findings x 8 citations with 200-char titles and URLs is ~100 KB even after the
+  // quotes come off, so a fixture like that can only ever throw.
+  test("drops quotes when that is enough to fit, and says so in gaps", () => {
+    const d = db();
+    // ~10 findings x 4 citations: over budget with 200-char quotes, under without them.
+    const heavy: Report = {
+      ...REPORT,
+      findings: Array.from({ length: 10 }, () => ({
+        text: "x".repeat(400),
+        citations: Array.from({ length: 4 }, () => ({
+          kind: "source" as const, title: "t".repeat(60), url: "https://a.test/p",
+          quote: "q".repeat(200),
+        })),
+      })),
+    };
+    const withQuotes = Buffer.byteLength(JSON.stringify(heavy), "utf8");
+    const stripped = JSON.stringify({
+      ...heavy,
+      findings: heavy.findings.map((f) => ({
+        text: f.text,
+        citations: f.citations.map(({ quote: _q, ...r }) => r),
+      })),
+    });
+    // Guard the fixture itself: if these stop straddling the budget the test is vacuous.
+    expect(withQuotes).toBeGreaterThan(60 * 1024);
+    expect(Buffer.byteLength(stripped, "utf8")).toBeLessThan(60 * 1024);
+
+    const { itemId } = saveBriefReport(d, doneRun(heavy));
+    const row = d.query("SELECT metadata FROM item WHERE id = ?").get(itemId) as { metadata: string };
+    expect(Buffer.byteLength(row.metadata, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    const meta = JSON.parse(row.metadata) as { report: Report };
+    expect(meta.report.findings[0]?.citations[0]?.quote).toBeUndefined();
+    expect(meta.report.gaps.join(" ")).toContain("quotes");
+  });
+
+  test("throws ReportTooLargeError when even a quote-free report cannot fit", () => {
     const d = db();
     const huge: Report = {
       ...REPORT,
@@ -2459,9 +2634,7 @@ describe("saveBriefReport", () => {
         })),
       })),
     };
-    const { itemId } = saveBriefReport(d, doneRun(huge));
-    const row = d.query("SELECT metadata FROM item WHERE id = ?").get(itemId) as { metadata: string };
-    expect(Buffer.byteLength(row.metadata, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(() => saveBriefReport(d, doneRun(huge))).toThrow(ReportTooLargeError);
   });
 });
 ```
@@ -2664,14 +2837,27 @@ const BRIEF_ITEM_RE = /^\/v1\/briefs\/([A-Za-z0-9_]{1,64})\/(sources|run|save)$/
 Add the rate/cap constants next to the clip ones:
 
 ```ts
-/** A brief source body is a whole extracted article, like a clip — same 1 MiB cap. */
-const MAX_BODY_BYTES_BRIEF_SOURCE = 1024 * 1024;
+/**
+ * A brief CREATE body carries the question plus up to MAX_SOURCES_PER_RUN
+ * {url,title} pairs. The 8 KiB control-plane default does NOT fit that: a
+ * 4000-char brief leaves ~4 KiB for 20 pairs (~200 bytes each), and real URLs
+ * plus real tab titles exceed that routinely — a fully conforming client would
+ * 413. 64 KiB is generous and still trivial next to the 1 MiB source cap.
+ */
+const MAX_BODY_BYTES_BRIEF_CREATE = 64 * 1024;
 /**
  * Briefs get their OWN buckets. Clip ingest runs on a constant `"clip"` fingerprint at
- * 20/min shared across all clipper clients; a 13-call brief sweep on that bucket would
+ * 20/min shared across all clipper clients; a brief sweep is up to 23 calls (1 create +
+ * 20 sources + run + save) and on that bucket would
  * both 429 itself and starve ordinary clipping.
  */
 const MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE = 60;
+
+// Also in this step: the brief SOURCE route needs the same 1 MiB cap clip ingest already
+// defines as `MAX_BODY_BYTES_CLIP`. Do NOT add a second 1 MiB constant — rename the
+// existing one to `MAX_BODY_BYTES_ARTICLE`, update its doc comment (`:48-84`) to say it
+// covers every route carrying a whole extracted article (clip ingest AND brief sources),
+// and update the clip route's reference. One constant, two call sites.
 
 const BRIEF_DISABLED_HINT = "research briefs disabled — enable [briefs] in nimbus.toml";
 const BRIEF_CREATE_REJECT_ACTION = "brief.create_rejected";
@@ -2713,7 +2899,8 @@ function resolveBriefCreateRoute(method: string, ctx: WriteRouteContext): Resolv
     disabledHint: BRIEF_DISABLED_HINT,
     rejectAction: BRIEF_CREATE_REJECT_ACTION,
     hasBody: true,
-    maxBodyBytes: MAX_BODY_BYTES_DEFAULT,
+    // NOT the 8 KiB control-plane default: see MAX_BODY_BYTES_BRIEF_CREATE.
+    maxBodyBytes: MAX_BODY_BYTES_BRIEF_CREATE,
     maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_DEFAULT,
   };
 }
@@ -2735,8 +2922,8 @@ function resolveBriefItemRoute(
       disabledHint: BRIEF_DISABLED_HINT,
       rejectAction: BRIEF_SOURCE_REJECT_ACTION,
       hasBody: true,
-      // A whole extracted article, like a clip body.
-      maxBodyBytes: MAX_BODY_BYTES_BRIEF_SOURCE,
+      // A whole extracted article, exactly like a clip body — same constant.
+      maxBodyBytes: MAX_BODY_BYTES_ARTICLE,
       maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE,
       id,
     };
@@ -2854,7 +3041,7 @@ async function runBriefCreateRoute(
         reason: "briefs_busy",
       });
       // NOT a 429, and this is load-bearing rather than a style choice: a concurrency
-      // Retry-After derived from run expiry is up to 1740s, the shipped web-clipper
+      // Retry-After derived from run expiry is up to 1800s (the full TTL), the shipped clipper
       // clamps Retry-After to 120s, and it would retry straight back into the same
       // rejection with no path forward. Emitting the rate-limit bucket's 60s instead
       // would be a different lie — nothing frees at 60s. 503 with NO Retry-After keeps
@@ -2987,14 +3174,25 @@ async function runBriefSaveRoute(
   }
   try {
     return jsonResponse(briefs.save(found.id), 200, rateLimitHeaders(limit));
-  } catch {
+  } catch (e) {
+    // Narrow: a bare catch here reports assemble's "run not found" as a SIZE problem,
+    // sending the client down a debugging path unrelated to the actual fault.
+    if (e instanceof ReportTooLargeError) {
+      recordRejection(ctx, {
+        actionType: route.rejectAction,
+        tokenFingerprint: fingerprint,
+        resultCode: 409,
+        reason: "report_too_large",
+      });
+      return jsonResponse({ error: "report_too_large" }, 409, rateLimitHeaders(limit));
+    }
     recordRejection(ctx, {
       actionType: route.rejectAction,
       tokenFingerprint: fingerprint,
-      resultCode: 409,
-      reason: "report_too_large",
+      resultCode: 500,
+      reason: "internal_error",
     });
-    return jsonResponse({ error: "report_too_large" }, 409, rateLimitHeaders(limit));
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
   }
 }
 ```
@@ -3004,6 +3202,7 @@ Add the imports at the top of the file:
 ```ts
 import type { BriefRunController } from "../briefs/brief-run-store.ts";
 import { BriefValidationError, validateCreateInput, validateSourceInput } from "../briefs/brief-validate.ts";
+import { ReportTooLargeError } from "../briefs/brief-save.ts";
 ```
 
 - [ ] **Step 9: Wire the dispatch branches**
@@ -3053,7 +3252,7 @@ git add packages/gateway/src/ipc/http-write-routes.ts packages/gateway/src/ipc/h
 git commit -m "feat(briefs): four I13 write routes (allowlist 8 -> 12)
 
 The concurrency cap is 503 briefs_busy with no Retry-After, not a 429: a
-concurrency delta derived from run expiry is ~1740s, the client clamps to 120s,
+concurrency delta derived from run expiry is up to 1800s, the client clamps to 120s,
 and it would retry into the same wall. Briefs also get their own rate-limit
 buckets so a sweep cannot starve ordinary clipping."
 ```
@@ -3096,6 +3295,9 @@ Find the `writeDb` open condition (around `:640-647`) and add `opts.briefRuns ==
 // through it would expose a user's research report to any local process on the machine.
 const BRIEF_GET_RE = /^\/v1\/briefs\/([A-Za-z0-9_]{1,64})$/;
 
+/** Kept identical to http-write-routes.ts BRIEF_DISABLED_HINT — one string, two surfaces. */
+const BRIEFS_DISABLED_HINT = "research briefs disabled — enable [briefs] in nimbus.toml";
+
 async function handleBriefGet(
   req: Request,
   id: string,
@@ -3104,7 +3306,8 @@ async function handleBriefGet(
   const clipsVault = opts.clipsVault;
   const runs = opts.briefRuns;
   if (clipsVault === undefined || runs === undefined) {
-    return json({ error: "briefs_disabled" }, 404);
+    // Same body as the POST routes' 404 so the client renders one string, not two.
+    return json({ error: "briefs_disabled", hint: BRIEFS_DISABLED_HINT }, 404);
   }
   // Shared parser from http-auth.ts (Task 1) — same header handling as the write dispatcher.
   const presented = bearerToken(req);
@@ -3115,11 +3318,14 @@ async function handleBriefGet(
   if (run === null) {
     return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
   }
+  // `failureReason`, NOT `error`: on every other route here `error` means an HTTP-level
+  // failure, so reusing it for a legitimately-failed run would make `if (body.error)` —
+  // the obvious client check — misread a normal outcome as a transport error.
   return json(
     {
       status: run.status,
       ...(run.report === null ? {} : { report: run.report }),
-      ...(run.error === null ? {} : { error: run.error }),
+      ...(run.error === null ? {} : { failureReason: run.error }),
     },
     200,
   );
@@ -3165,29 +3371,51 @@ function buildBriefsSeam(opts: ReadOnlyHttpServerOptions) {
 
 In `resolveWriteRouteDeps`, add `const briefs = buildBriefsSeam(opts);` and spread it exactly as `clips` is: `...(briefs === undefined ? {} : { briefs })`.
 
-- [ ] **Step 7: Write the auth test**
+- [ ] **Step 7: Build the shared test harness, then the auth test**
 
-Create `packages/gateway/src/briefs/brief-http.test.ts` with, at minimum, this invariant guard:
+Create `packages/gateway/src/briefs/brief-test-server.ts` (a test-only helper; check
+`scripts/coverage-floor/exclusions.ts` and add it if that list is path-based).
+
+Model it on the setup block of `packages/gateway/src/clips/clip-e2e.test.ts`: a fresh
+temp-dir SQLite migrated to latest, a fake vault holding one known clip token, a
+`BriefRunController` over an injectable `nowMs`, a stub `BriefSynthesizerLlm`, and
+`startReadOnlyHttpServer` on port 0. Export:
+
+```ts
+export type BriefTestServer = {
+  port: number;
+  token: string;
+  db: Database;
+  advance(ms: number): void;
+  stop(): void;
+};
+
+export async function startBriefTestServer(opts?: {
+  llm?: BriefSynthesizerLlm | null;
+  ttlMs?: number;
+  enabled?: boolean; // false => omit briefRuns, so the seam is absent
+}): Promise<BriefTestServer>;
+```
+
+Task 14 imports this rather than redefining it — the plan is otherwise strictly
+ordered and should not forward-depend. Then create
+`packages/gateway/src/briefs/brief-http.test.ts` with this invariant guard:
 
 ```ts
 import { describe, expect, test } from "bun:test";
 
 describe("GET /v1/briefs/{id} auth", () => {
   test("a tokenless GET is 401, proving briefs are not in the unauthenticated read table", async () => {
-    const { server, port } = await startBriefTestServer(); // helper built in Task 14
+    const s = await startBriefTestServer();
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/v1/briefs/run_doesnotexist`);
+      const res = await fetch(`http://127.0.0.1:${s.port}/v1/briefs/run_doesnotexist`);
       expect(res.status).toBe(401);
     } finally {
-      server.stop(true);
+      s.stop();
     }
   });
 });
 ```
-
-> Task 14 builds `startBriefTestServer`. If you are executing tasks strictly in
-> order, write this test file now with the assertion above and a local inline
-> helper copied from `clips/clip-e2e.test.ts`; Task 14 consolidates it.
 
 - [ ] **Step 8: Typecheck, test, commit**
 
@@ -3412,9 +3640,12 @@ Immediately after the existing `pairingController` block (around `:1688`), add:
       if (run === null) return;
       briefRuns.markRunning(run);
       void (async () => {
-        const { registry, indexHits, semanticAvailable } = await buildRegistry(run, briefSearch);
+        const { registry, indexHits, semanticAvailable, searchFailed } = await buildRegistry(
+          run,
+          briefSearch,
+        );
         const out = await runSynthesis({
-          run, registry, indexHits, semanticAvailable, llm: briefLlm,
+          run, registry, indexHits, semanticAvailable, searchFailed, llm: briefLlm,
         });
         if ("error" in out) briefRuns.fail(run, out.error);
         else briefRuns.finish(run, out.report);
@@ -3472,9 +3703,10 @@ the disclosure reflects what actually happened rather than what was preferred."
 - Create: `packages/gateway/src/briefs/brief-e2e.test.ts`
 - Modify: `packages/gateway/src/briefs/brief-http.test.ts` (use the shared helper)
 
-- [ ] **Step 1: Read the clip E2E harness**
+- [ ] **Step 1: Reuse the harness from Task 12**
 
-Read `packages/gateway/src/clips/clip-e2e.test.ts` end to end. Copy its setup shape: real `startReadOnlyHttpServer`, real temp-dir SQLite, a fake vault holding a clip token, `server.stop(true)` in a `finally`.
+Import `startBriefTestServer` from `./brief-test-server.ts` (Task 12, Step 7). Do not
+rebuild it here. Every test below takes a fresh server and stops it in a `finally`.
 
 - [ ] **Step 2: Write the E2E**
 
@@ -3506,7 +3738,7 @@ Use a stub `BriefSynthesizerLlm` injected through the server options — never a
 bun test packages/gateway/src/briefs/brief-e2e.test.ts
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 4: Commit**
 
