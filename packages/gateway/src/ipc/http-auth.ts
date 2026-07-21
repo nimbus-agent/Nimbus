@@ -27,6 +27,19 @@ function extractBearer(req: Request): string | undefined {
   return raw.slice(BEARER_PREFIX.length);
 }
 
+/**
+ * Extracts the token from an `Authorization: Bearer <token>` header, or
+ * undefined when the header is absent or uses another scheme.
+ *
+ * Canonical home for this parse: the I13 write dispatcher, the clip-related
+ * read route, and the brief read route all authenticate off the same header,
+ * and three hand-rolled copies is three chances to disagree about it.
+ */
+export function bearerToken(req: Request): string | undefined {
+  const raw = req.headers.get("authorization");
+  return raw?.startsWith("Bearer ") === true ? raw.slice("Bearer ".length) : undefined;
+}
+
 export function requireBearer(req: Request, ctx: RequireBearerContext): RequireBearerResult {
   if (ctx.expectedToken === "") {
     return { ok: false, fingerprint: "unknown", surfaceDisabled: true };

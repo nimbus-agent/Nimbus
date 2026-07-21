@@ -16,7 +16,7 @@ import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
-import { requireBearer } from "./http-auth.ts";
+import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import {
   dispatchWriteRoute,
@@ -470,8 +470,7 @@ async function handleClipRelated(
   if (clipsVault === undefined) {
     return new Response("Not Found", { status: 404 });
   }
-  const raw = req.headers.get("authorization");
-  const presented = raw?.startsWith("Bearer ") === true ? raw.slice(7) : undefined;
+  const presented = bearerToken(req);
   if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
     return json({ error: "unauthorized" }, 401);
   }

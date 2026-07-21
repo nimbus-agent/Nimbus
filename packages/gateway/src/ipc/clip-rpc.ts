@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
-import { canonicalizeUrl } from "../clips/clip-ingest.ts";
 import { listClipFingerprints, revokeClipToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import { deleteItemByPrimaryKey } from "../index/item-store.ts";
+import { canonicalizeUrl } from "../util/url-canonical.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   dispatchByMethod,

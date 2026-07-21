@@ -1,12 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LocalIndex } from "../index/local-index.ts";
-import {
-  ClipValidationError,
-  canonicalizeUrl,
-  ingestClip,
-  validateClipInput,
-} from "./clip-ingest.ts";
+import { canonicalizeUrl } from "../util/url-canonical.ts";
+import { ClipValidationError, ingestClip, validateClipInput } from "./clip-ingest.ts";
 
 let db: Database;
 beforeEach(() => {

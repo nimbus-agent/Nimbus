@@ -7,7 +7,7 @@ import type { IdentityStore } from "../identity/identity-store.ts";
 import { runScimWrite } from "../identity/scim-http-routes.ts";
 import { ScimError } from "../identity/scim-service.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
-import { requireBearer } from "./http-auth.ts";
+import { bearerToken, requireBearer } from "./http-auth.ts";
 import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts";
 
 // Canonical allowlist keys ("<METHOD> <PATH>", exact-match for deployment; the `{id}` item routes
@@ -731,11 +731,6 @@ async function runTeamsEventsRoute(
     });
     return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
   }
-}
-
-function bearerToken(req: Request): string | undefined {
-  const raw = req.headers.get("authorization");
-  return raw?.startsWith("Bearer ") === true ? raw.slice("Bearer ".length) : undefined;
 }
 
 async function runClipIngestRoute(
