@@ -82,18 +82,22 @@ export const MAX_INDEX_HITS = 8;
 
 ---
 
-## Task 1: Extract the shared URL canonicalizer
+## Task 1: Lift the two shared helpers to their canonical homes
 
-Pure refactor with zero behaviour change, landed first so both clips and briefs dedupe identically.
+Two pure refactors with zero behaviour change, landed first so the feature can consume them: the URL canonicalizer (clips and briefs must dedupe identically) and the bearer-header parser (which is about to gain a third copy).
 
 **Files:**
 - Create: `packages/gateway/src/util/url-canonical.ts`
 - Create: `packages/gateway/src/util/url-canonical.test.ts`
 - Modify: `packages/gateway/src/clips/clip-ingest.ts` (remove the local `canonicalizeUrl`, import the shared one)
+- Modify: `packages/gateway/src/ipc/http-auth.ts` (add `bearerToken`)
+- Modify: `packages/gateway/src/ipc/http-auth.test.ts`
+- Modify: `packages/gateway/src/ipc/http-write-routes.ts` (import `bearerToken` instead of defining it)
+- Modify: `packages/gateway/src/ipc/http-server.ts` (`handleClipRelated` uses the shared helper)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `canonicalizeUrl(raw: string): string`.
+- Produces: `canonicalizeUrl(raw: string): string`; `bearerToken(req: Request): string | undefined`.
 
 - [ ] **Step 1: Read the existing implementation**
 
@@ -178,14 +182,110 @@ bun test packages/gateway/src/clips/
 
 Expected: PASS, every pre-existing clip test green. If any clip test fails, you changed behaviour — revert and re-move the code verbatim.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Write the failing test for the shared bearer parser**
+
+Bearer-header parsing currently exists twice: `bearerToken` in `http-write-routes.ts:736`,
+and a hand-rolled copy in `handleClipRelated` (`http-server.ts:473`) that uses a
+magic `slice(7)`. Briefs' `GET` would make three. Promote it to `http-auth.ts`,
+which already owns `requireBearer` and `tokenFingerprint` — and which
+`http-write-routes.ts` already imports from, so the dependency direction is
+established.
+
+Add to `packages/gateway/src/ipc/http-auth.test.ts`:
+
+```ts
+import { bearerToken } from "./http-auth.ts";
+
+describe("bearerToken", () => {
+  test("extracts the token after the Bearer prefix", () => {
+    const req = new Request("http://127.0.0.1/x", { headers: { authorization: "Bearer abc123" } });
+    expect(bearerToken(req)).toBe("abc123");
+  });
+
+  test("is undefined with no authorization header", () => {
+    expect(bearerToken(new Request("http://127.0.0.1/x"))).toBeUndefined();
+  });
+
+  test("is undefined for a non-Bearer scheme", () => {
+    const req = new Request("http://127.0.0.1/x", { headers: { authorization: "Basic abc123" } });
+    expect(bearerToken(req)).toBeUndefined();
+  });
+
+  test("is case-sensitive on the scheme, matching the shipped behaviour", () => {
+    const req = new Request("http://127.0.0.1/x", { headers: { authorization: "bearer abc123" } });
+    expect(bearerToken(req)).toBeUndefined();
+  });
+});
+```
 
 ```bash
-git add packages/gateway/src/util/url-canonical.ts packages/gateway/src/util/url-canonical.test.ts packages/gateway/src/clips/clip-ingest.ts
-git commit -m "refactor: share canonicalizeUrl between clips and briefs
+bun test packages/gateway/src/ipc/http-auth.test.ts
+```
 
-Briefs dedupe fed sources by canonical URL and must produce byte-identical
-keys to clip ingest. Moved verbatim; clip tests prove no behaviour change."
+Expected: FAIL — `bearerToken` is not exported from `http-auth.ts`.
+
+- [ ] **Step 9: Move `bearerToken` into `http-auth.ts`**
+
+Add to `packages/gateway/src/ipc/http-auth.ts`, moving the body **verbatim** from
+`http-write-routes.ts:736`:
+
+```ts
+/**
+ * Extracts the token from an `Authorization: Bearer <token>` header, or
+ * undefined when the header is absent or uses another scheme.
+ *
+ * Canonical home for this parse: the I13 write dispatcher, the clip-related
+ * read route, and the brief read route all authenticate off the same header,
+ * and three hand-rolled copies is three chances to disagree about it.
+ */
+export function bearerToken(req: Request): string | undefined {
+  const raw = req.headers.get("authorization");
+  return raw?.startsWith("Bearer ") === true ? raw.slice("Bearer ".length) : undefined;
+}
+```
+
+- [ ] **Step 10: Point both existing call sites at it**
+
+In `http-write-routes.ts`: delete the local `bearerToken` (`:736-739`) and add it to the
+existing `http-auth.ts` import.
+
+In `http-server.ts` `handleClipRelated` (`:473-474`), replace:
+
+```ts
+  const raw = req.headers.get("authorization");
+  const presented = raw?.startsWith("Bearer ") === true ? raw.slice(7) : undefined;
+```
+
+with:
+
+```ts
+  const presented = bearerToken(req);
+```
+
+adding `bearerToken` to the existing `./http-auth.ts` import. This is behaviour-identical
+(`7 === "Bearer ".length`) and removes the magic number.
+
+- [ ] **Step 11: Prove nothing moved**
+
+```bash
+bun test packages/gateway/src/ipc/http-auth.test.ts packages/gateway/src/ipc/http-write-routes.test.ts packages/gateway/src/clips/
+bunx tsc --noEmit -p packages/gateway/tsconfig.json
+```
+
+Expected: all PASS. The clip suite covers `handleClipRelated`'s auth, so a green
+run is the proof that the `slice(7)` swap changed nothing.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add packages/gateway/src/util/url-canonical.ts packages/gateway/src/util/url-canonical.test.ts packages/gateway/src/clips/clip-ingest.ts packages/gateway/src/ipc/http-auth.ts packages/gateway/src/ipc/http-auth.test.ts packages/gateway/src/ipc/http-write-routes.ts packages/gateway/src/ipc/http-server.ts
+git commit -m "refactor: lift canonicalizeUrl and bearerToken to their canonical homes
+
+Briefs dedupe fed sources by canonical URL and must produce byte-identical keys
+to clip ingest. Bearer parsing existed twice — once with a magic slice(7) — and
+briefs' read route would have made three; http-auth.ts already owns requireBearer
+and tokenFingerprint. Both moved verbatim; existing tests prove no behaviour
+change."
 ```
 
 ---
@@ -400,6 +500,22 @@ describe("verifyQuote", () => {
   test("rejects a quote longer than the cap", () => {
     const long = "x".repeat(500);
     expect(verifyQuote(`prefix ${long} suffix`, long)).toBeNull();
+  });
+
+  // The normalizer walks UTF-16 code units, so an astral character (emoji, rarer CJK)
+  // is two iterations. That keeps the offset map 1:1 per code unit, which is what makes
+  // the final body.slice() safe — but web pages are full of emoji, so prove it rather
+  // than reason about it.
+  test("handles astral-plane characters without splitting a surrogate pair", () => {
+    const body = "The build 🚀 shipped on Friday.";
+    const got = verifyQuote(body, "build 🚀 shipped");
+    expect(got).toBe("build 🚀 shipped");
+    expect([...(got ?? "")].length).toBe("build 🚀 shipped".length - 1); // one astral char
+  });
+
+  test("handles an emoji adjacent to collapsed whitespace", () => {
+    const body = "ship  🚀   now";
+    expect(verifyQuote(body, "ship 🚀 now")).toBe("ship  🚀   now");
   });
 });
 ```
@@ -2737,7 +2853,13 @@ async function runBriefCreateRoute(
         resultCode: 503,
         reason: "briefs_busy",
       });
-      // NOT a 429: no Retry-After, so this can never be fed into the client's retry pacing.
+      // NOT a 429, and this is load-bearing rather than a style choice: a concurrency
+      // Retry-After derived from run expiry is up to 1740s, the shipped web-clipper
+      // clamps Retry-After to 120s, and it would retry straight back into the same
+      // rejection with no path forward. Emitting the rate-limit bucket's 60s instead
+      // would be a different lie — nothing frees at 60s. 503 with NO Retry-After keeps
+      // this out of retry pacing entirely. See the spec's "The concurrency cap is not
+      // a 429" section before changing it back.
       return jsonResponse(
         {
           error: "briefs_busy",
@@ -2984,9 +3106,9 @@ async function handleBriefGet(
   if (clipsVault === undefined || runs === undefined) {
     return json({ error: "briefs_disabled" }, 404);
   }
-  const header = req.headers.get("authorization") ?? "";
-  const presented = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
-  if (presented === "" || (await verifyClipToken(clipsVault, presented)) === null) {
+  // Shared parser from http-auth.ts (Task 1) — same header handling as the write dispatcher.
+  const presented = bearerToken(req);
+  if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
     return json({ error: "unauthorized" }, 401);
   }
   const run = runs.get(id);
@@ -3364,6 +3486,14 @@ Create `packages/gateway/src/briefs/brief-e2e.test.ts` covering, each as its own
 4. **Auth.** Every one of the five routes without a bearer → 401. **This is the I13/I30 guard.**
 5. **Expiry.** With a 1-minute TTL server, advance past it (inject `nowMs` via the controller the test constructs) → `GET` returns 410, then a fresh unknown id returns 404.
 6. **Body cap.** A source body over 1 MiB → 413 `payload_too_large`.
+6b. **The two 413 flavours are distinguishable over the wire.** The client branches on
+   them — `source_too_large` skips one source and continues, `run_capacity` stops the
+   sweep — so both must be provable end to end, not just at the unit layer. Declare 20
+   sources and feed near-`MAX_SOURCE_BYTES` bodies until the run budget is exhausted:
+   assert the earlier rejection carries `detail: "source_too_large"` and the later one
+   `detail: "run_capacity"`, then `run` and assert the report still synthesizes with the
+   un-fed sources named in `gaps`. A saturating sweep must degrade to an honest partial
+   report, never an error.
 7. **Concurrency.** Create 3 runs, then a 4th → 503 `briefs_busy`, and assert `res.headers.get("Retry-After") === null`.
 8. **Disabled seam.** A server built without `briefRuns` → `POST /v1/briefs` returns 404 `briefs_disabled`.
 9. **Leak check.** Across every response body and every `audit_entry.action_json` row written during the run, assert the raw bearer token, the source body text, and the source URL never appear.
