@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.23.1](https://github.com/nimbus-agent/Nimbus/compare/v0.23.0...v0.23.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **deps:** clear the critical + high advisories blocking every PR ([#781](https://github.com/nimbus-agent/Nimbus/issues/781)) ([4d723b8](https://github.com/nimbus-agent/Nimbus/commit/4d723b80bad63d96016f5aeb379b465844f82f5e))
+* stop relabelling 55% of indexed items, and return NimbusItem from index.queryItems ([#780](https://github.com/nimbus-agent/Nimbus/issues/780)) ([008615d](https://github.com/nimbus-agent/Nimbus/commit/008615da3ba74fec7aabf935abc57b7eabda90bb))
+
 ## [0.23.0](https://github.com/nimbus-agent/Nimbus/compare/v0.22.0...v0.23.0) (2026-07-19)
 
 
