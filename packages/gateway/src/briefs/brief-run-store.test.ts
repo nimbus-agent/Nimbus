@@ -306,3 +306,82 @@ describe("terminal states", () => {
     expect(c.wasKnown(first.id)).toBe(true);
   });
 });
+
+describe("custom ttlMs and default genId", () => {
+  test("custom ttlMs is honoured", () => {
+    let now = 1_000_000;
+    const customTtl = 60_000;
+    const c = new BriefRunController({ nowMs: () => now, ttlMs: customTtl });
+    const run = created(c, SRC);
+    // Advance past the custom TTL but well short of the default.
+    now += 100_000;
+    expect(c.get(run.id)).toBeNull();
+    expect(c.wasKnown(run.id)).toBe(true);
+  });
+
+  test("the default genId produces the production id format", () => {
+    const now = 1_000_000;
+    const c = new BriefRunController({ nowMs: () => now });
+    const run1 = created(c, SRC);
+    const run2 = created(c, SRC);
+    expect(run1.id).toMatch(/^run_[0-9a-f]{20}$/);
+    expect(run2.id).toMatch(/^run_[0-9a-f]{20}$/);
+    expect(run1.id).not.toBe(run2.id);
+  });
+});
+
+describe("get() edge cases", () => {
+  test("get() on a never-created id distinguishes from expired", () => {
+    const { c } = fixture();
+    expect(c.get("run_neverexisted")).toBeNull();
+    expect(c.wasKnown("run_neverexisted")).toBe(false);
+  });
+
+  test("a terminal run present while busy does not count against the active cap", () => {
+    const { c } = fixture();
+    const a = created(c);
+    created(c);
+    created(c);
+    // Finish the first run so it becomes terminal (drops source bytes).
+    c.finish(a, REPORT);
+    // Now a terminal run is in the map alongside two non-terminals.
+    // Attempting another create should succeed (activeRuns = 2, < 3).
+    // But if we had one more, we'd have 3 non-terminal + 1 terminal.
+    // Let's verify the behavior: after finishing a, we have 2 non-terminal + a (terminal).
+    // activeRuns should count only the 2 non-terminals = 2, so create should succeed.
+    const out = c.create({ brief: "q", sources: SRC, useIndex: false });
+    expect("error" in out).toBe(false);
+  });
+
+  test("oldestExpiresInSeconds clamps to 0 when oldest run is at expiry", () => {
+    let now = 1_000_000;
+    let nextGenId = 0;
+    const c = new BriefRunController({
+      nowMs: () => now,
+      ttlMs: 10_000,
+      genId: () => `run_${++nextGenId}`,
+    });
+
+    // Create three runs.
+    created(c, SRC);
+    const run1Expiry = now + 10_000;
+
+    now += 5_000;
+    created(c, SRC);
+
+    now += 4_999;
+    created(c, SRC);
+    // Now run1 expires at 1010000, run2 at 1015000, run3 at 1014999.
+    // Current now = 1009999. Oldest non-terminal expires at 1010000,
+    // remaining = 1000 ms, ceil(1000/1000) = 1, max(0, 1) = 1.
+
+    now = run1Expiry;
+    // Now oldest expires at exactly this moment. Sweep won't remove it (needs now > expiry).
+    // Try to create run4. Sweep doesn't touch any run. activeRuns = 3, we're busy.
+    // Oldest expiry = 1010000, now = 1010000, remaining = 0, ceil(0) = 0, max(0, 0) = 0.
+    const out = c.create({ brief: "q", sources: SRC, useIndex: false });
+    if (!("error" in out)) throw new Error("expected busy");
+    expect(out.activeRuns).toBe(3);
+    expect(out.oldestExpiresInSeconds).toBe(0);
+  });
+});
