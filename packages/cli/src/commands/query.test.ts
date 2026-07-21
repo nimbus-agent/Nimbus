@@ -229,11 +229,11 @@ describe("runQuery — output formatting branches", () => {
     if (origIsTTY) {
       Object.defineProperty(process.stdout, "isTTY", origIsTTY);
     } else {
-      Object.defineProperty(process.stdout, "isTTY", {
-        configurable: true,
-        writable: true,
-        value: undefined,
-      });
+      // No own descriptor existed, so restore that ABSENCE rather than defining
+      // an own `undefined` property — the latter leaves process.stdout with a
+      // property it never had, which shadows the prototype and can leak into
+      // any later test sharing this process.
+      Reflect.deleteProperty(process.stdout, "isTTY");
     }
   });
 
@@ -331,11 +331,11 @@ describe("runQuery — TTY card regression for the new index.queryItems shape", 
     if (origIsTTY) {
       Object.defineProperty(process.stdout, "isTTY", origIsTTY);
     } else {
-      Object.defineProperty(process.stdout, "isTTY", {
-        configurable: true,
-        writable: true,
-        value: undefined,
-      });
+      // No own descriptor existed, so restore that ABSENCE rather than defining
+      // an own `undefined` property — the latter leaves process.stdout with a
+      // property it never had, which shadows the prototype and can leak into
+      // any later test sharing this process.
+      Reflect.deleteProperty(process.stdout, "isTTY");
     }
   });
 

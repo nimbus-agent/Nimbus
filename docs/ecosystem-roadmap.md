@@ -65,51 +65,52 @@ namespace is roughly a day plus an hour of release latency.
 > This is not a hard problem. It is an unstaffed one — and it is the single
 > largest gap between what Nimbus is and what anyone can experience.
 
-### 2. The narrow waist has no enforced contract, and it is broken today
+### 2. The narrow waist had no enforced contract — the gateway half is now fixed
 
-Four layers disagree about the same object, and nothing catches it:
+Four layers disagreed about the same object, and nothing caught it. Two of the
+four are now aligned; the client half remains:
 
-| Layer | What it says about an indexed item |
-| --- | --- |
-| Gateway `index/item-list-query.ts:37` | `SELECT * FROM item` — raw **snake_case** rows (`item_type`, `modified_at`) |
-| `@nimbus-dev/client` | `queryItems(): Promise<{ items: Record<string, unknown>[] }>` — the **only** method with no validator; passes through whatever the gateway sends (as of the gateway fix, already camelCase `NimbusItem`, but still unchecked) |
-| `@nimbus-dev/sdk` `NimbusItem` | **camelCase**, `itemType: "file" \| "folder" \| "email" \| "event" \| "photo" \| "task"` — 6 values |
-| `docs/schema-reference.md` | **19** emitted types, including `pr`, `issue`, `pipeline_run`, `deployment`, `alert`, `incident`, `infra_resource`, `dashboard`, `log_alarm` — and `task` is explicitly *not* emitted |
+| Layer | What it says about an indexed item | Status |
+| --- | --- | --- |
+| Gateway `index.queryItems` | Maps rows through `rowToItem` → camelCase `NimbusItem & { indexPrimaryKey }` | ✅ fixed |
+| `@nimbus-dev/sdk` `NimbusItem` | `itemType: ItemType` — an **open** enum (`KnownItemType \| (string & {})`) over the 68 types connectors actually emit | ✅ fixed in 1.4.0 |
+| `@nimbus-dev/client` | `queryItems(): Promise<{ items: Record<string, unknown>[] }>` — still the **only** method with no per-field validator | ⬜ outstanding |
+| `nimbus-vscode` | Keeps a private six-value `itemType` mirror | ⬜ outstanding |
 
-Two live consequences.
+**What was wrong in the gateway.** The SDK union listed six values, so
+`index/local-index.ts` coerced anything outside it to `"file"`. Against a live
+546-row index that mislabelled **300 rows — 55%**: `ci_run` (214), `pr` (79),
+`issue` (5) and `web_clip` (2). Corruption, not merely missing typing — the true
+value was discarded. Separately, `index.queryItems` returned raw
+`SELECT * FROM item` rows, leaking V3 column names (`type`, `title`,
+`external_id`) over IPC while every other read path already mapped through
+`rowToItem`.
 
-**In the gateway.** Because the SDK union is too narrow, `index/local-index.ts:94`
-coerces anything outside it to `"file"`:
+Both are fixed: the coercion is deleted and the RPC now goes through
+`LocalIndex.listItems()`.
 
-```ts
-function itemTypeFromRowType(raw: string): NimbusItem["itemType"] {
-  if (raw === "file" || raw === "folder" || raw === "email" ||
-      raw === "event" || raw === "photo" || raw === "task") return raw;
-  return "file";
-}
-```
+**What is still wrong in the client.** The VS Code Index view reads
+`rec["itemType"]` and `rec["modifiedAt"]`. Those reads become correct once it
+consumes the fixed gateway, but the extension still filters types through a
+private six-value set, so `ci_run`, `pr` and `issue` are dropped on the floor —
+and `@nimbus-dev/client` still passes rows through unvalidated, so nothing
+catches the next shape change.
 
-Every `deployment`, `alert`, `incident`, `pr`, `issue`, `pipeline_run`,
-`dashboard`, `infra_resource` and `log_alarm` read through `rowToItem` is
-**relabelled `"file"`** — mislabelled, not merely untyped. It accepts two values
-the gateway never emits and corrupts thirteen it does.
+One deeper problem sits behind all of it:
 
-**In the client.** The VS Code Index view reads `rec["itemType"]` and
-`rec["modifiedAt"]` and gets `undefined` every time. It has **never** displayed an
-item type or sorted by time. It looks correct only because `id`, `name`,
-`service` and `url` are single words that collide across both casings.
-
-Two deeper problems sit behind that bug:
-
-- **There is no machine-readable source of truth for `item_type` anywhere.** The
-  enum lives in a SQL comment in a docs file. Connectors emit bare string
-  literals. `roadmap.md` plans to add `service`, `team`, `scorecard`,
-  `dora_metric`, `security_finding`, `llm_trace` and more — so a hand-maintained
-  enum in three places will keep breaking.
-- **The SDK's canonical taxonomy is a knowledge-worker document model**
-  (`folder`, `photo`, `task`) for a product whose index is full of deployments,
-  alerts, incidents and pipeline runs. The positioning gap is not just marketing
-  copy; it is encoded in the ecosystem's core data contract.
+- **There is no machine-readable source of truth for the item-type vocabulary.**
+  The 68 values are bare string literals across ~70 connector mapping modules,
+  all funnelling through one writer (`index/item-store.ts` `upsertIndexedItem`).
+  `docs/schema-reference.md` still documents a legacy `items` table that no
+  longer exists, and its type list is wrong in both directions — it omits real
+  types (`ci_run`, `web_clip`) and lists four (`pipeline_run`, `alert`,
+  `infra_resource`, `log_alarm`) that no writer emits. `KNOWN_ITEM_TYPES` in the
+  SDK is now testable against reality, but still hand-maintained.
+- **The SDK's canonical taxonomy was a knowledge-worker document model**
+  (`folder`, `photo`, `task` — the last of which no writer emits) for a product
+  whose index is mostly CI runs, PRs and issues. 1.4.0 replaced it with the real
+  vocabulary, but the positioning gap it encoded is worth remembering: the core
+  data contract described a product Nimbus is not.
 
 ### 3. Nobody is using it
 
