@@ -95,7 +95,7 @@ describe("mapBigqueryTableToItem", () => {
       { tableReference: { datasetId: "d", tableId: "t" }, type: "weird_thing" },
       CTX,
     );
-    expect((row?.metadata as Record<string, unknown>).tableType).toBe("weird_thing");
+    expect((row?.metadata as Record<string, unknown> | undefined)?.tableType).toBe("weird_thing");
   });
 });
 

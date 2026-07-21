@@ -42,7 +42,7 @@ describe("buildRecipeFromSession — ordered steps", () => {
     expect(recipe.generatedAt).toBe(999);
     expect(recipe.steps.map((s) => s.tool)).toEqual(["gmail_list", "slack_search"]); // 100 before 200
     expect(recipe.steps[0]?.service).toBe("gmail");
-    expect((recipe.steps[0]?.params as { label?: string }).label).toBe("INBOX");
+    expect((recipe.steps[0]?.params as { label?: string } | undefined)?.label).toBe("INBOX");
     expect(recipe.steps[0]?.status).toBe("ok");
     expect(recipe.steps[0]?.stepId).toBe("step-1");
     expect(recipe.steps[1]?.stepId).toBe("step-2");

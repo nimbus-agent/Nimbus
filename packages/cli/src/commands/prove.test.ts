@@ -87,7 +87,7 @@ describe("runEgressReport", () => {
     }) as any;
     await runEgressReport(c, { json: false, sign: true });
     expect(c.calls[0]?.method).toBe("egress.proveWindow");
-    expect((c.calls[0]?.params as { sign?: boolean }).sign).toBe(true);
+    expect((c.calls[0]?.params as { sign?: boolean } | undefined)?.sign).toBe(true);
   });
 
   test("a degraded (unverifiable) chain prints indeterminate and exits non-zero", async () => {
@@ -142,7 +142,7 @@ describe("runEgressReport", () => {
       // biome-ignore lint/suspicious/noExplicitAny: fake client
     }) as any;
     await runEgressReport(c, { json: false, since: 123 });
-    expect((c.calls[0]?.params as { since?: number }).since).toBe(123);
+    expect((c.calls[0]?.params as { since?: number } | undefined)?.since).toBe(123);
     expect(out.stdout).toContain("outbound egress events: 1");
     expect(out.stdout).toContain("email.send");
     expect(out.stdout).toContain("receipt: digest=deadbeef");

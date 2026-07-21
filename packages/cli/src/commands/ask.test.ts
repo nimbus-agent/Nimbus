@@ -202,7 +202,7 @@ describe("runAsk — happy paths", () => {
     const assistantAppend = calls
       .filter((c) => c.method === "session.append")
       .find((c) => (c.params as { role: string }).role === "assistant");
-    const chunkText = (assistantAppend?.params as { chunkText: string }).chunkText;
+    const chunkText = (assistantAppend?.params as { chunkText: string } | undefined)?.chunkText;
     expect(chunkText).toHaveLength(8000);
   });
 });

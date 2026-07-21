@@ -221,7 +221,7 @@ describe("runMetricsCli", () => {
     expect(stdoutChunks.join("")).toContain("DORA metrics");
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0]?.method).toBe("metrics.dora");
-    expect((mock.calls[0]?.params as Record<string, unknown>)["service"]).toBe("svc");
+    expect((mock.calls[0]?.params as Record<string, unknown> | undefined)?.["service"]).toBe("svc");
   });
 
   it("emits JSON envelope when --json passed", async () => {

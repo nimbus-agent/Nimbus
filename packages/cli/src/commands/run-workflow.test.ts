@@ -133,7 +133,7 @@ describe("runWorkflowFromFileWithClient", () => {
       noTtv: false,
       agent: "devops",
     });
-    expect((ipc.calls[1]?.params as Record<string, unknown>)["agent"]).toBe("devops");
+    expect((ipc.calls[1]?.params as Record<string, unknown> | undefined)?.["agent"]).toBe("devops");
   });
 
   it("omits description from workflow.save when the file has none", async () => {

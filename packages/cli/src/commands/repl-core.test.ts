@@ -99,7 +99,7 @@ describe("runReplTurn", () => {
     await runReplTurn(mock.client, "hi", "sess-1", write);
     expect(mock.calls).toHaveLength(2);
     expect(mock.calls[1]?.method).toBe("session.append");
-    expect((mock.calls[1]?.params as Record<string, unknown>)["role"]).toBe("user");
+    expect((mock.calls[1]?.params as Record<string, unknown> | undefined)?.["role"]).toBe("user");
   });
 
   it("truncates assistant chunkText to 8000 chars", async () => {

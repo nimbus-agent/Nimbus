@@ -19,7 +19,11 @@
     "@mastra/core": "1.43.0",
     "@mastra/mcp": "1.10.0",
     "nodemailer": "9.0.1",
-    "undici": "7.28.0"
+    "undici": "7.28.0",
+    "shell-quote": "1.10.0",
+    "brace-expansion": "5.0.7",
+    "tar": "7.5.20",
+    "js-yaml": "4.3.0"
   },
   "workspaces": [
     "packages/admin-console",
@@ -215,14 +219,14 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "astro": "^6.4.7",
-    "zod": "^4.4.2"
+    "astro": "^6.4.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@babel/core": "8.0.1",
     "@babel/plugin-syntax-jsx": "8.0.1",
     "@babel/preset-typescript": "8.0.1",
-    "@biomejs/biome": "^2.5.1",
+    "@biomejs/biome": "^2.5.4",
     "@hughescr/stryker-bun-runner": "1.2.2",
     "@resvg/resvg-js": "^2.6.2",
     "@stryker-mutator/core": "9.6.1",
@@ -232,13 +236,13 @@
     "@types/istanbul-lib-report": "3.0.3",
     "@types/istanbul-reports": "3.0.4",
     "babel-plugin-istanbul": "8.0.0",
-    "dependency-cruiser": "^17.4.2",
+    "dependency-cruiser": "^17.4.3",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "js-yaml": "^4.2.0",
-    "jscpd": "^5.0.11",
-    "knip": "^6.18.0",
+    "js-yaml": "^4.3.0",
+    "jscpd": "^5.0.12",
+    "knip": "^6.27.0",
     "markdownlint-cli2": "^0.22.1",
     "tweetnacl": "^1.0.3",
     "typescript": "^6.0.3",

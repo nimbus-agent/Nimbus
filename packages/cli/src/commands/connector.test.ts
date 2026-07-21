@@ -662,17 +662,17 @@ describe("runConnector auth — per-applier success", () => {
     clearFixture();
   });
 
-  it.each(AUTH_OK_ROWS)("auth $service succeeds and stores in vault", async ({
-    service,
-    flags,
-  }) => {
-    const mock = createMockIpcClient([{ ok: true, serviceId: service, scopesGranted: [] }]);
-    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runConnector(["auth", service, ...flags]);
-    expect(mock.calls[0]?.method).toBe("connector.auth");
-    expect(out.stdout).toContain(`Signed in: ${service}`);
-    expect(out.stdout).toContain("Credential: stored in the OS vault (no OAuth scopes).");
-  });
+  it.each(AUTH_OK_ROWS)(
+    "auth $service succeeds and stores in vault",
+    async ({ service, flags }) => {
+      const mock = createMockIpcClient([{ ok: true, serviceId: service, scopesGranted: [] }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runConnector(["auth", service, ...flags]);
+      expect(mock.calls[0]?.method).toBe("connector.auth");
+      expect(out.stdout).toContain(`Signed in: ${service}`);
+      expect(out.stdout).toContain("Credential: stored in the OS vault (no OAuth scopes).");
+    },
+  );
 });
 
 describe("runConnector auth — per-applier primary error (env cleared)", () => {
@@ -689,12 +689,12 @@ describe("runConnector auth — per-applier primary error (env cleared)", () => 
     clearFixture();
   });
 
-  it.each(AUTH_ERR_ROWS)("auth $service throws before IPC when required input is missing", async ({
-    service,
-    match,
-  }) => {
-    await expect(runConnector(["auth", service])).rejects.toThrow(match);
-  });
+  it.each(AUTH_ERR_ROWS)(
+    "auth $service throws before IPC when required input is missing",
+    async ({ service, match }) => {
+      await expect(runConnector(["auth", service])).rejects.toThrow(match);
+    },
+  );
 });
 
 describe("runConnector auth — help + flag edges", () => {
@@ -710,15 +710,13 @@ describe("runConnector auth — help + flag edges", () => {
     expect(out.stdout.length).toBeGreaterThan(0);
   });
 
-  it.each([
-    ["google_drive"],
-    ["onedrive"],
-    ["slack"],
-    ["notion"],
-  ])("auth %s --help prints OAuth setup help", async (service) => {
-    await runConnector(["auth", service, "--help"]);
-    expect(out.stdout.length).toBeGreaterThan(0);
-  });
+  it.each([["google_drive"], ["onedrive"], ["slack"], ["notion"]])(
+    "auth %s --help prints OAuth setup help",
+    async (service) => {
+      await runConnector(["auth", service, "--help"]);
+      expect(out.stdout.length).toBeGreaterThan(0);
+    },
+  );
 
   it("auth with no service argument throws usage", async () => {
     await expect(runConnector(["auth"])).rejects.toThrow(/Usage: nimbus connector auth/);
@@ -926,16 +924,13 @@ describe("runConnector auth — per-service help branches", () => {
     clearFixture();
   });
 
-  it.each([
-    ["gmail"],
-    ["google_photos"],
-    ["google_meet"],
-    ["outlook"],
-    ["teams"],
-  ])("auth %s --help prints provider-specific OAuth help", async (service) => {
-    await runConnector(["auth", service, "--help"]);
-    expect(out.stdout.length).toBeGreaterThan(0);
-  });
+  it.each([["gmail"], ["google_photos"], ["google_meet"], ["outlook"], ["teams"]])(
+    "auth %s --help prints provider-specific OAuth help",
+    async (service) => {
+      await runConnector(["auth", service, "--help"]);
+      expect(out.stdout.length).toBeGreaterThan(0);
+    },
+  );
 
   it("normalizes hyphenated service names in --help (google-drive)", async () => {
     await runConnector(["auth", "google-drive", "--help"]);
