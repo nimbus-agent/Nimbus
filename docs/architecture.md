@@ -1252,7 +1252,7 @@ The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed int
 
 ## Local Database Schema
 
-The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, `git_blame_line`, `extensions`, the Phase 6 federation / org-policy / share tables, and the V44 `egress_ledger` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
+The full table-by-table SQL — the unified V3 `item`, `item_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, `git_blame_line`, `extensions`, the Phase 6 federation / org-policy / share tables, and the V44 `egress_ledger` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
 
 **What you need to know here:**
 
