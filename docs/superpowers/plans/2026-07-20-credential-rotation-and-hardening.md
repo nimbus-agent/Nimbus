@@ -2131,12 +2131,33 @@ gh api orgs/nimbus-agent/actions/secrets/RELEASE_PLEASE_PAT/repositories --jq '[
 
 Expected: `selected`, and exactly the three repos.
 
-If `visibility` is still `all`, set it first:
+**This step cannot be completed by API, and that was a defect in this plan.**
+Verified live 2026-07-21: `PUT .../secrets/RELEASE_PLEASE_PAT/repositories`
+returns
 
-```bash
-gh api -X PUT orgs/nimbus-agent/actions/secrets/RELEASE_PLEASE_PAT \
-  -f visibility=selected -f "selected_repository_ids=[$ids]"
+```text
+409 Conflict — You cannot update selected repositories for a secret
+when the visibility is not set to 'selected'
 ```
+
+and flipping `visibility` requires `PUT .../secrets/RELEASE_PLEASE_PAT`, whose
+body takes `encrypted_value` + `key_id`. Organization secrets are **write-only** —
+nobody, including the owner, can read the value back to re-supply it. Do **not**
+attempt a visibility-only `PUT` to find out whether the value survives: if it
+does not, three repositories lose their release pipeline, and that is not a
+question worth answering empirically on a live credential.
+
+**Owner action instead.** The web UI changes repository access without
+re-entering the value:
+
+1. <https://github.com/organizations/nimbus-agent/settings/secrets/actions>
+2. `RELEASE_PLEASE_PAT` → **Update**
+3. **Repository access** → *Selected repositories* → pick exactly `nimbus-sdk`,
+   `nimbus-client`, `nimbus-vscode`
+4. Save, then verify: `gh api orgs/nimbus-agent/actions/secrets/RELEASE_PLEASE_PAT --jq '.visibility'`
+   must print `selected`, and the `/repositories` endpoint must list those three.
+
+Then run Step 4 to confirm a real consumer still mints a token.
 
 - [ ] **Step 4: Confirm the narrowing did not break a consumer (Gap 2)**
 

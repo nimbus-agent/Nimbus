@@ -45,11 +45,19 @@ either way, and is not a reason to revoke anything.
       private keys are frequently left there after being pasted into a secret.
 - [ ] **Codespaces secrets** — out of the auditor's scope. Check
       <https://github.com/settings/codespaces> and the org's Codespaces settings.
-- [ ] **Push protection** — confirm it is enabled on every repository. The
-      auditor App cannot read a repository's `security_and_analysis` field, and
-      it will not be widened to grant it that (widening it further would trade
-      away the read-only guarantee this whole system depends on) — so this stays
-      a manual check indefinitely, not a gap this program intends to close.
+- [ ] **Push protection** — confirm it is enabled on every **public** repository.
+      The auditor App cannot read a repository's `security_and_analysis` field,
+      and it will not be widened to grant it that (widening it further would
+      trade away the read-only guarantee this whole system depends on) — so this
+      stays a manual check indefinitely, not a gap this program intends to close.
+
+      Scope it honestly: secret scanning is **unavailable on private repos** on
+      this org's Free plan — the API returns `null` for all six of them and
+      rejects an enable attempt with `422 Secret scanning is not available for
+      this repository`. Verified 2026-07-21: all 12 public repos are
+      `enabled`/`enabled`; the 6 private ones cannot be, and that is a plan
+      limitation, not a misconfiguration to chase. Re-check if the org ever moves
+      off Free.
 
 ## What the automated side cannot tell you
 
