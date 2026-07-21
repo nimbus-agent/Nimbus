@@ -79,7 +79,7 @@ import {
   effectiveRetentionDays,
   startToolCallLogRetention,
 } from "../db/tool-call-log-retention.ts";
-import { dbRun } from "../db/write.ts";
+import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
@@ -220,10 +220,12 @@ type EmbeddingRuntime = Awaited<ReturnType<typeof createEmbeddingRuntime>>;
 function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Database {
   const dbPath = join(dataDir, "nimbus.db");
   const db = new Database(dbPath);
+  // Before ensureSchema: migrations write, and this is the handle that converts
+  // nimbus.db to WAL for every other connection (journal_mode is a file property).
+  applyWritablePragmas(db);
   LocalIndex.ensureSchema(db, { backupDir: join(dataDir, "backups"), dbPath });
   const stopLatency = startLatencyFlushScheduler(db);
   sidecarStops.push(() => stopLatency.stop());
-  dbRun(db, "PRAGMA busy_timeout = 8000");
   return db;
 }
 

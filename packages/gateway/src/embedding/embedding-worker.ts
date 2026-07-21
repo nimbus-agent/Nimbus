@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
+import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { readIndexedUserVersion, runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
@@ -15,7 +16,7 @@ function sendToMain(data: unknown): void {
 
 function setupDb(dbPath: string): Database {
   const d = new Database(dbPath);
-  d.run("PRAGMA busy_timeout = 8000");
+  applyWritablePragmas(d);
   const dir = dirname(dbPath);
   runIndexedSchemaMigrations(d, LocalIndex.SCHEMA_VERSION, {
     backupDir: join(dir, "backups"),
