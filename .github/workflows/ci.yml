@@ -364,6 +364,84 @@ jobs:
     permissions:
       contents: read
 
+  # ── The single required PR gate ────────────────────────────────────────────
+  #
+  # Branch-protection rulesets match check names LITERALLY, and a job skipped by
+  # its own `if:` never expands `${{ }}` in its `name:` — it reports the raw
+  # template instead. So a skipped reusable-workflow child posts
+  # `… / Static — ${{ inputs.runner }}`, the required context
+  # `… / Static — ubuntu-24.04` is never created, and the PR sits on
+  # "Expected — Waiting for status to be reported" forever. That is why every
+  # docs-only PR needed an OrganizationAdmin bypass to merge.
+  #
+  # Passing `run-tests=false` to the reusable workflow (so the caller always
+  # runs) does NOT fix this: the children are still skipped at job level, so
+  # their names still never expand.
+  #
+  # This job is the durable fix. It always runs, its name is a static string
+  # with no interpolation, and it fails if any PR gate did not succeed. Make it
+  # the only required `pr-quality-*` context and the whole class of bug is gone
+  # — adding, renaming or matrix-ing a gate no longer needs a ruleset edit.
+  #
+  # `skipped` counts as a pass: it means `filter` legitimately decided the gate
+  # does not apply (no Rust change, docs-only diff). It never means a gate was
+  # silently lost — a gate that ran and failed reports `failure`, and one whose
+  # dependency failed reports `skipped` only after that dependency has already
+  # reported `failure` here.
+  pr-quality-required:
+    name: PR quality — required gates
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - filter
+      - pr-quality-ts
+      - pr-quality-rust
+      - pr-quality-cross-platform
+      - pr-quality-duplication
+      - pr-quality-structure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Fail if any required PR gate did not succeed
+        env:
+          # Space-separated results of every job in `needs`, in declaration order.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "PR gate results: ${RESULTS}"
+
+          # Fail CLOSED. An empty or short result set means the expression did
+          # not evaluate as expected (renamed job, edited `needs:`), and an
+          # empty list would otherwise skip the loop entirely and report green —
+          # turning the one job that exists to catch failures into a rubber
+          # stamp. Keep EXPECTED in step with the `needs:` list above.
+          EXPECTED=6
+          count=$(printf '%s\n' ${RESULTS} | grep -c . || true)
+          if [[ "${count}" -ne "${EXPECTED}" ]]; then
+            echo "::error::expected ${EXPECTED} gate results, got ${count} (${RESULTS}) — the needs: list and this check have drifted"
+            exit 1
+          fi
+
+          failed=0
+          for r in ${RESULTS}; do
+            case "${r}" in
+              success|skipped) ;;
+              *) echo "::error::a required PR gate reported '${r}'"; failed=1 ;;
+            esac
+          done
+          if [[ "${failed}" -ne 0 ]]; then
+            echo "::error::one or more required PR gates did not pass — see the jobs above"
+            exit 1
+          fi
+          echo "All ${count} required PR gates passed or were legitimately skipped."
+
   # ── Push: full cross-platform matrix (two parallel matrix jobs) ────────────
 
   # TS/Bun suite — all 3 OSes, runs in parallel with ci-rust
