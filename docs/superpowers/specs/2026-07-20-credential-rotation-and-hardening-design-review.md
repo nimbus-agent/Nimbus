@@ -1,6 +1,6 @@
 # Credential Rotation & Hardening Design Review — Feedback, Suggestions, and Open Questions
 
-This document reviews the design specification for **Credential Rotation & Hardening** ([2026-07-20-credential-rotation-and-hardening-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/credential-rotation-hardening/docs/superpowers/specs/2026-07-20-credential-rotation-and-hardening-design.md)).
+This document reviews the design specification for **Credential Rotation & Hardening** ([2026-07-20-credential-rotation-and-hardening-design.md](./2026-07-20-credential-rotation-and-hardening-design.md)).
 
 ---
 

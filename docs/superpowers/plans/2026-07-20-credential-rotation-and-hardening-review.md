@@ -1,6 +1,6 @@
 # Credential Rotation & Hardening Implementation Plan Review — Feedback, Suggestions, and Open Questions
 
-This document reviews the implementation plan for **Credential Rotation & Hardening** ([2026-07-20-credential-rotation-and-hardening.md](file:///C:/gitrep/Nimbus/.claude/worktrees/credential-rotation-hardening/docs/superpowers/plans/2026-07-20-credential-rotation-and-hardening.md)).
+This document reviews the implementation plan for **Credential Rotation & Hardening** ([2026-07-20-credential-rotation-and-hardening.md](./2026-07-20-credential-rotation-and-hardening.md)).
 
 ---
 
