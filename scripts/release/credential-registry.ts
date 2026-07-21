@@ -226,15 +226,15 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
   // --- Nimbus: optional / absent ---
   {
     name: "CODECOV_TOKEN",
-    state: "optional",
+    state: "forbidden",
     location: { scope: "repo", repo: "Nimbus" },
     product: "actions",
     type: "service-token",
     owner: OWNER,
-    consumedBy: [".github/workflows/_test-suite.yml"],
-    maxAgeDays: 90,
+    consumedBy: [],
+    maxAgeDays: null,
     hardDeadline: null,
-    note: "Coverage upload; the step degrades without it.",
+    note: "Deleted 2026-07-21. It never reached Codecov: _test-suite.yml is a reusable workflow and its secrets contract declares SONAR_TOKEN only, so secrets.CODECOV_TOKEN resolved to an empty string there. Uploads authenticate via OIDC (use_oidc + id-token: write). Surfaced as a staleness row (95d vs 90d), but the real finding was redundancy, not age. If this reappears, someone has added a token path where OIDC already works.",
   },
   {
     name: "BENCHER_API_KEY",

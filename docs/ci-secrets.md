@@ -43,7 +43,7 @@ a plain repository secret.
 | `VSCE_PAT` | VS Code Marketplace publish | Azure DevOps PAT — Marketplace (Manage) | `publish-vscode.yml` |
 | `OVSX_PAT` | Open VSX publish | Open VSX token | `publish-vscode.yml` |
 | `SONAR_TOKEN` | SonarCloud quality gate (optional) | SonarCloud token | `ci.yml`, `_test-suite.yml`, `release.yml` |
-| `CODECOV_TOKEN` | Coverage upload (optional) | Codecov upload token | `_test-suite.yml` |
+| ~~`CODECOV_TOKEN`~~ | **Retired 2026-07-21** — uploads use OIDC | — | — |
 | `SCORECARD_TOKEN` | OSSF Scorecard (optional) | Fine-grained PAT — read-only | `scorecard.yml` |
 | `NIMBUS_CHECKS_TOKEN` | Cross-workflow check runs (optional) | Fine-grained PAT — Checks: RW | `ci.yml`, `_test-suite.yml` |
 | `GITHUB_TOKEN` | — | **Automatic**, no action needed | all |
@@ -270,8 +270,13 @@ file.
 
 - `SONAR_TOKEN` — SonarCloud analysis token. When unset the SonarQube step is
   silently skipped. Generate under your SonarCloud account → Security.
-- `CODECOV_TOKEN` — Codecov upload token (<https://app.codecov.io> → repo
-  settings). Coverage still computes locally without it; only the upload needs it.
+- **`CODECOV_TOKEN` — retired 2026-07-21, do not re-add.** Codecov uploads
+  authenticate via **OIDC** (`use_oidc: true` in `_test-suite.yml`, with
+  `id-token: write` granted by the calling workflow). The old `token:` input was
+  inert: `_test-suite.yml` is a reusable workflow, and GitHub passes only the
+  secrets named in its `secrets:` contract — which lists `SONAR_TOKEN` alone — so
+  `secrets.CODECOV_TOKEN` resolved to an empty string there and never reached the
+  action. Fork PRs use Codecov's tokenless path and are likewise unaffected.
 - `SCORECARD_TOKEN` — read-only fine-grained PAT used by the OSSF Scorecard
   workflow to read branch-protection metadata.
 - `NIMBUS_CHECKS_TOKEN` — optional fine-grained PAT with **Checks: Read and
