@@ -25,7 +25,7 @@ a plain repository secret.
 
 | Secret | Required for | Type | Used by |
 | --- | --- | --- | --- |
-| `RELEASE_BOT_APP_ID` | Minting Nimbus Release Bot tokens | GitHub App ID | `release.yml`, `release-please.yml`, `publish-package-managers.yml`, `publish-linux-repo.yml`, `secret-health.yml` |
+| `RELEASE_BOT_CLIENT_ID` | Minting Nimbus Release Bot tokens | GitHub App client ID | `release.yml`, `release-please.yml`, `publish-package-managers.yml`, `publish-linux-repo.yml`, `secret-health.yml` |
 | `RELEASE_BOT_PRIVATE_KEY` | Minting Nimbus Release Bot tokens | GitHub App private key (PEM) | `release.yml`, `release-please.yml`, `publish-package-managers.yml`, `publish-linux-repo.yml`, `secret-health.yml` |
 | `GPG_SIGNING_SUBKEY` | Signing Linux artifacts + `SHA256SUMS` | ASCII-armored GPG private subkey | `release.yml` |
 | `GPG_PASSPHRASE` | Unlocking the GPG subkey | String | `release.yml` |
@@ -79,7 +79,7 @@ job that used to consume one of those PATs now runs a mint step first:
   id: app-token
   uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
   with:
-    app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+    client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
     private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
     owner: nimbus-agent
     repositories: <only the repos this job writes>
@@ -99,9 +99,12 @@ repos + permissions the `with:` block requests, and it expires in **1 hour**
   would be invisible to them). `create-github-app-token`'s `repositories:`
   input mints tokens for any *other* installed repo too, so no org-level or
   per-repo duplicate secrets are needed:
-  - `RELEASE_BOT_APP_ID` — the App's numeric ID.
+  - `RELEASE_BOT_CLIENT_ID` — the App's client ID (`Iv23li…`). This value is
+    **not sensitive** — it is readable from the public `GET /apps/{slug}` —
+    and is held as a secret only for symmetry with the other App inputs and to
+    keep it out of workflow diffs.
   - `RELEASE_BOT_PRIVATE_KEY` — the App's private key, PEM, generated once
-    from the App's settings page.
+    from the App's settings page. This one *is* sensitive.
 - **Installed on exactly four repos** (`nimbus-agent` org, *Only select
   repositories*): `Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`. A
   token mint fails for any repo outside this set.
@@ -126,8 +129,8 @@ repos + permissions the `with:` block requests, and it expires in **1 hour**
 > (<https://github.com/organizations/nimbus-agent/settings/apps> → Nimbus
 > Release Bot → Generate a private key), replace the
 > **`RELEASE_BOT_PRIVATE_KEY`** repo secret with the new PEM, then revoke the
-> old key from the same page. No `RELEASE_BOT_APP_ID` change is needed — the
-> App ID is stable across key rotations.
+> old key from the same page. No `RELEASE_BOT_CLIENT_ID` change is needed — the
+> client ID is stable across key rotations.
 
 ### `GPG_SIGNING_SUBKEY` + `GPG_PASSPHRASE` — required for Linux signing
 
@@ -287,7 +290,7 @@ tab (**Re-run failed jobs** for a failed release). For the release path
 specifically:
 
 - The **`Mint release-bot token`** step itself is the guard for
-  `RELEASE_BOT_APP_ID` / `RELEASE_BOT_PRIVATE_KEY` — it fails fast if either
+  `RELEASE_BOT_CLIENT_ID` / `RELEASE_BOT_PRIVATE_KEY` — it fails fast if either
   secret is missing, the App isn't installed on the target repo, or the
   requested permission exceeds what the App grants, so there's no separate
   "Require …" step to check.
@@ -402,7 +405,7 @@ scheduled/tag-triggered workflow.
 ## GitHub App setup + migration runbook
 
 The four release/publish workflows and the secret-health monitor already
-contain the mint steps and reference `RELEASE_BOT_APP_ID` /
+contain the mint steps and reference `RELEASE_BOT_CLIENT_ID` /
 `RELEASE_BOT_PRIVATE_KEY` — that part ships in code. What code **cannot** do
 is create the App itself or grant it org-admin-gated access; the following
 steps are **human-only**, done once, by someone with `nimbus-agent`
@@ -418,9 +421,9 @@ org-admin rights:
    `Nimbus`, `homebrew-tap`, `scoop-bucket`, `linux-repo`. These are exactly
    the four repos the release/publish pipeline writes to.
 4. **Generate a private key** from the App's settings page, then add it and
-   the App ID as two **plain repository secrets** on `Nimbus` (not
+   the client ID as two **plain repository secrets** on `Nimbus` (not
    environment-scoped — see the note above):
-   - `RELEASE_BOT_APP_ID`
+   - `RELEASE_BOT_CLIENT_ID`
    - `RELEASE_BOT_PRIVATE_KEY` (the full PEM block)
 5. **Allow-list the mint action.** `Nimbus` requires SHA-pinned third-party
    actions, so add
