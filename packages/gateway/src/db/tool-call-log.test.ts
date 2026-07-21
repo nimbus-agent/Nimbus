@@ -259,7 +259,7 @@ describe("writeToolCallLog + readToolCallLog", () => {
     writeToolCallLog(db, entry({ sessionId: "sess-A", params: { channel: "#eng", limit: 10 } }));
     const { toolCalls } = readToolCallLog(db, { sessionId: "sess-A", limit: 1000 });
     expect(toolCalls).toHaveLength(1);
-    expect((toolCalls[0]?.params as { channel?: string }).channel).toBe("#eng");
+    expect((toolCalls[0]?.params as { channel?: string } | undefined)?.channel).toBe("#eng");
   });
 
   test("params over budget store VALID sentinel {truncated:true}, never null", () => {

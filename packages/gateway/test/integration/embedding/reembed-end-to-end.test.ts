@@ -113,7 +113,7 @@ describe.skipIf(!VEC_AVAILABLE)("nimbus index reembed — end-to-end", () => {
       await new Promise((r) => setTimeout(r, 50));
       const err = events.find((e) => e.method === "index.reembedError");
       expect(err).toBeDefined();
-      expect((err?.params as { message: string }).message).toMatch(/openai\.api_key/);
+      expect((err?.params as { message: string } | undefined)?.message).toMatch(/openai\.api_key/);
     } finally {
       cleanup();
     }

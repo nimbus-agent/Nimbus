@@ -76,7 +76,7 @@ describe("dispatchIndexReembedRpc", () => {
     await new Promise((r) => setTimeout(r, 50));
     const err = events.find((e) => e.method === "index.reembedError");
     expect(err).toBeDefined();
-    expect((err?.params as { message?: string }).message).toMatch(/openai\.api_key/);
+    expect((err?.params as { message?: string } | undefined)?.message).toMatch(/openai\.api_key/);
   });
 
   test("cancel for unknown jobId returns { cancelled: false }", async () => {
@@ -526,7 +526,7 @@ describe("dispatchIndexReembedRpc — non-dryRun via _sinkFactory seam", () => {
     await new Promise((r) => setTimeout(r, 50));
     const done = events.find((e) => e.method === "index.reembedDone");
     expect(done).toBeDefined();
-    expect((done?.params as Record<string, unknown>)["succeeded"]).toBe(0);
+    expect((done?.params as Record<string, unknown> | undefined)?.["succeeded"]).toBe(0);
   });
 
   test("non-dryRun with candidates emits progress and done (line=263 branch=1: not aborted)", async () => {

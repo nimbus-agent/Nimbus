@@ -6,8 +6,10 @@ test("request broadcasts federation.preflightRequest and resolves true on approv
   const sent: Array<{ method: string; params: unknown }> = [];
   b.setBroadcast((m, p) => sent.push({ method: m, params: p }));
   const p = b.request({ peerId: "peer:a", namespace: "n", ref: "HEAD", purpose: "x" }, 1000);
-  expect(sent[0]?.method).toBe("federation.preflightRequest");
-  const rid = (sent[0]?.params as { requestId: string }).requestId;
+  const request = sent[0];
+  expect(request?.method).toBe("federation.preflightRequest");
+  if (!request) throw new Error("expected a preflight request to be broadcast");
+  const rid = (request.params as { requestId: string }).requestId;
   expect(b.respond(rid, true)).toBe(true);
   expect(await p).toBe(true);
 });

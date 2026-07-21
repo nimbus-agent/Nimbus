@@ -10,8 +10,10 @@ test("request broadcasts and resolves on respond(approved=true)", async () => {
     1000,
   );
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.method).toBe("federation.consentRequest");
-  const rid = (sent[0]?.params as { requestId: string }).requestId;
+  const request = sent[0];
+  expect(request?.method).toBe("federation.consentRequest");
+  if (!request) throw new Error("expected a consent request to be broadcast");
+  const rid = (request.params as { requestId: string }).requestId;
   broker.respond(rid, true);
   expect(await p).toBe("approved");
 });

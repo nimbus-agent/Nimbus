@@ -70,8 +70,9 @@ describe("mapProtonmailEmailToItem", () => {
     const serialized = JSON.stringify(row);
     expect(serialized).not.toContain('"content"');
     expect(serialized).not.toContain("base64");
-    const att = (row?.metadata.attachments as Array<Record<string, unknown>>)[0];
-    expect(Object.keys(att).sort((a, b) => a.localeCompare(b))).toEqual([
+    const att = (row?.metadata.attachments as Array<Record<string, unknown>> | undefined)?.[0];
+    expect(att).toBeDefined();
+    expect(Object.keys(att ?? {}).sort((a, b) => a.localeCompare(b))).toEqual([
       "filename",
       "mimeType",
       "sizeBytes",

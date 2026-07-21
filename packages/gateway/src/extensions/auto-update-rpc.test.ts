@@ -155,7 +155,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       deps,
     );
     const calls = (gate as unknown as { mock: { calls: Array<[unknown]> } }).mock.calls;
-    expect((calls[0]?.[0] as { type: string }).type).toBe("extension.autoUpdate");
+    expect((calls[0]?.[0] as { type: string } | undefined)?.type).toBe("extension.autoUpdate");
   });
 
   it("returns applied=false / reason=user_rejected when gate rejects", async () => {
