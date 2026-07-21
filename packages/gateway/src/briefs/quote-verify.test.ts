@@ -17,7 +17,12 @@ describe("verifyQuote", () => {
   });
 
   test("matches when the model turned a non-breaking space into a normal one", () => {
-    expect(verifyQuote(BODY, "this idle timeout")).toBe("this idle timeout");
+    // The body holds a real U+00A0; the model sends a plain space. The span we return
+    // must come from the body, so it still contains the NBSP.
+    const nbspBody = "Chrome calls this idle timeout.";
+    const got = verifyQuote(nbspBody, "this idle timeout");
+    expect(got).toBe("this idle timeout");
+    expect(got).toContain(" ");
   });
 
   test("matches smart quotes against straight quotes in the body", () => {

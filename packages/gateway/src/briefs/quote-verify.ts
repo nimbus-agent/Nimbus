@@ -71,6 +71,9 @@ export function verifyQuote(body: string, quote: string): string | null {
 
   const nb = normalizeForQuote(body.normalize("NFC"));
   const nq = normalizeForQuote(trimmed.normalize("NFC"));
+  // Unreachable today — trim() and isSpace() agree on the whitespace set, so a non-empty
+  // `trimmed` always normalizes to non-empty text. Kept as a guard for a future GLYPHS
+  // entry that maps some character to the empty string.
   if (nq.text.length === 0) return null;
 
   const at = nb.text.indexOf(nq.text);
