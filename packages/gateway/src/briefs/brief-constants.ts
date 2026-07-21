@@ -37,6 +37,10 @@ export const MAX_FINDINGS = 25;
 export const MAX_CONFLICTS = 25;
 export const MAX_CITATIONS_PER_ITEM = 8;
 export const MAX_QUOTE_CHARS = 200;
+/** Characters of the report summary. Bounds the largest single free-text field. */
+export const MAX_SUMMARY_CHARS = 2000;
+/** Characters of one finding's or conflict's prose. */
+export const MAX_ITEM_TEXT_CHARS = 600;
 
 /** Indexed clips pulled in when useIndex is true. */
 export const MAX_INDEX_HITS = 8;

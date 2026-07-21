@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MAX_ITEM_TEXT_CHARS, MAX_SUMMARY_CHARS } from "./brief-constants.ts";
 import { parseModelJson, SynthesisParseError, validateReport } from "./brief-report.ts";
 import type { SourceRegistry, SourceRegistryEntry } from "./brief-types.ts";
 
@@ -220,5 +221,73 @@ describe("validateReport", () => {
     );
     expect(report.findings[0]?.citations).toHaveLength(8);
     expect(report.findings[0]?.citations.some((c) => c.title === "T9")).toBe(false);
+  });
+
+  // Finding 1 (Important, code review): the test above proves truncation
+  // happens but never asserts that it is REPORTED. Silent truncation reads to
+  // the user as absence of evidence, which is the failure `boundGaps` exists
+  // to prevent. This test uses 9 DISTINCT registry entries (not repeats of one
+  // token) so dedup cannot collapse the count before the bound fires.
+  test("reports a boundGaps entry naming the limit when per-item citations are truncated", () => {
+    const entries = Array.from({ length: 9 }, (_, i) => {
+      const token = `U${i + 1}`;
+      const entry: SourceRegistryEntry = {
+        token,
+        ref: { kind: "source", title: token, url: `https://z.test/${token}` },
+        body: `Body text for ${token}.`,
+      };
+      return entry;
+    });
+    const { report, boundGaps } = validateReport(
+      {
+        summary: "s",
+        findings: [{ text: "f", refs: entries.map((e) => e.token) }],
+        conflicts: [],
+        gaps: [],
+      },
+      reg(...entries),
+    );
+    expect(report.findings[0]?.citations).toHaveLength(8);
+    expect(boundGaps.join(" ")).toContain("8 per item");
+  });
+
+  // Finding 2a: summary and item text are unbounded in length. These caps are
+  // owned by this module (citation title/url are the registry's, not capped
+  // here).
+  test("truncates a summary longer than MAX_SUMMARY_CHARS and reports it", () => {
+    const longSummary = "x".repeat(MAX_SUMMARY_CHARS + 500);
+    const { report, boundGaps } = validateReport(
+      { summary: longSummary, findings: [], conflicts: [], gaps: [] },
+      reg(S1),
+    );
+    expect(report.summary.length).toBe(MAX_SUMMARY_CHARS);
+    expect(boundGaps.join(" ")).toContain(String(MAX_SUMMARY_CHARS));
+  });
+
+  test("truncates a finding's text longer than MAX_ITEM_TEXT_CHARS and reports it", () => {
+    const longText = "y".repeat(MAX_ITEM_TEXT_CHARS + 200);
+    const { report, boundGaps } = validateReport(
+      { summary: "s", findings: [{ text: longText, refs: ["S1"] }], conflicts: [], gaps: [] },
+      reg(S1),
+    );
+    expect(report.findings[0]?.text.length).toBe(MAX_ITEM_TEXT_CHARS);
+    expect(boundGaps.join(" ")).toContain(String(MAX_ITEM_TEXT_CHARS));
+  });
+
+  test("truncates a conflict's text longer than MAX_ITEM_TEXT_CHARS", () => {
+    const longText = "z".repeat(MAX_ITEM_TEXT_CHARS + 50);
+    const { report } = validateReport(
+      { summary: "s", findings: [], conflicts: [{ text: longText, refs: ["S1", "S2"] }], gaps: [] },
+      reg(S1, S2),
+    );
+    expect(report.conflicts[0]?.text.length).toBe(MAX_ITEM_TEXT_CHARS);
+  });
+
+  test("does not add a text-length boundGaps entry when nothing is truncated", () => {
+    const { boundGaps } = validateReport(
+      { summary: "short", findings: [{ text: "short", refs: ["S1"] }], conflicts: [], gaps: [] },
+      reg(S1),
+    );
+    expect(boundGaps).toEqual([]);
   });
 });

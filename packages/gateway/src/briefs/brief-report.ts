@@ -1,4 +1,10 @@
-import { MAX_CITATIONS_PER_ITEM, MAX_CONFLICTS, MAX_FINDINGS } from "./brief-constants.ts";
+import {
+  MAX_CITATIONS_PER_ITEM,
+  MAX_CONFLICTS,
+  MAX_FINDINGS,
+  MAX_ITEM_TEXT_CHARS,
+  MAX_SUMMARY_CHARS,
+} from "./brief-constants.ts";
 import type { Report, ReportItem, SourceRef, SourceRegistry } from "./brief-types.ts";
 import { verifyQuote } from "./quote-verify.ts";
 
@@ -89,35 +95,63 @@ export function parseModelJson(raw: string): ModelReport {
   };
 }
 
+/** Result of resolving one model item against the registry. */
+type ResolvedItem = {
+  readonly item: ReportItem;
+  /** True when refs resolved past MAX_CITATIONS_PER_ITEM and were cut off. */
+  readonly citationsTruncated: boolean;
+};
+
 /**
  * Resolves an item's refs against the registry. Unknown tokens vanish; a quote
  * that cannot be verified against the cited body is dropped while its citation
- * survives. Returns null when nothing resolved.
+ * survives. Returns null when nothing resolved. `citationsTruncated` is true
+ * when more than MAX_CITATIONS_PER_ITEM distinct refs resolved, so the caller
+ * can report the bound rather than let it pass silently.
  */
-function resolveItem(item: ModelItem, registry: SourceRegistry): ReportItem | null {
+function resolveItem(item: ModelItem, registry: SourceRegistry): ResolvedItem | null {
   const citations: SourceRef[] = [];
   const seen = new Set<string>();
+  let citationsTruncated = false;
   for (const token of item.refs) {
     if (seen.has(token)) continue;
     const entry = registry.get(token);
     if (entry === undefined) continue;
     seen.add(token);
+    if (citations.length >= MAX_CITATIONS_PER_ITEM) {
+      citationsTruncated = true;
+      break;
+    }
     const claimed = item.quotes?.[token];
     const verified = claimed === undefined ? null : verifyQuote(entry.body, claimed);
     citations.push({
       ...entry.ref,
       ...(verified === null ? {} : { quote: verified }),
     });
-    if (citations.length >= MAX_CITATIONS_PER_ITEM) break;
   }
   if (citations.length === 0) return null;
-  return { text: item.text, citations };
+  return { item: { text: item.text, citations }, citationsTruncated };
+}
+
+/** Truncates `text` to `max` chars, reporting whether it cut anything. */
+function capChars(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  return { text: text.slice(0, max), truncated: true };
 }
 
 /**
  * Turns raw model output into a report that cannot contain a claim the server
- * could not tie back to a real source. Also applies the report bounds, so the
- * result always serializes well under RAW_META_MAX_BYTES.
+ * could not tie back to a real source. Also applies the report's count bounds
+ * (findings/conflicts/citations-per-item) and length caps (summary/item
+ * text), every one of which is named in the returned `boundGaps` when it
+ * fires — never applied silently.
+ *
+ * These bounds substantially reduce the report's size but do NOT by
+ * themselves guarantee it serializes under RAW_META_MAX_BYTES (64 KB):
+ * citation `title` and `url` are supplied by the source registry and are not
+ * length-capped here (that belongs to the registry builder). The 64 KB
+ * ceiling is enforced downstream, in brief-save.ts, which fails loudly rather
+ * than silently shredding a saved report.
  */
 export function validateReport(
   model: ModelReport,
@@ -125,14 +159,26 @@ export function validateReport(
 ): { report: Omit<Report, "gaps" | "synthesis">; boundGaps: string[] } {
   const boundGaps: string[] = [];
 
-  const findings = model.findings
+  const resolvedFindings = model.findings
     .map((f) => resolveItem(f, registry))
-    .filter((f): f is ReportItem => f !== null);
-  const conflicts = model.conflicts
+    .filter((f): f is ResolvedItem => f !== null);
+  const resolvedConflicts = model.conflicts
     .map((c) => resolveItem(c, registry))
-    .filter((c): c is ReportItem => c !== null)
+    .filter((c): c is ResolvedItem => c !== null)
     // A conflict needs two DISTINCT sources or it is not a conflict.
-    .filter((c) => c.citations.length >= 2);
+    .filter((c) => c.item.citations.length >= 2);
+
+  const anyCitationsTruncated = [...resolvedFindings, ...resolvedConflicts].some(
+    (r) => r.citationsTruncated,
+  );
+  if (anyCitationsTruncated) {
+    boundGaps.push(
+      `Some findings cite more sources than the report shows (limit ${MAX_CITATIONS_PER_ITEM} per item).`,
+    );
+  }
+
+  let findings = resolvedFindings.map((r) => r.item);
+  let conflicts = resolvedConflicts.map((r) => r.item);
 
   if (findings.length > MAX_FINDINGS) {
     boundGaps.push(`${findings.length - MAX_FINDINGS} further findings omitted (report bound).`);
@@ -141,11 +187,33 @@ export function validateReport(
     boundGaps.push(`${conflicts.length - MAX_CONFLICTS} further conflicts omitted (report bound).`);
   }
 
+  findings = findings.slice(0, MAX_FINDINGS);
+  conflicts = conflicts.slice(0, MAX_CONFLICTS);
+
+  let textTruncated = false;
+  const capItemText = (it: ReportItem): ReportItem => {
+    const capped = capChars(it.text, MAX_ITEM_TEXT_CHARS);
+    if (!capped.truncated) return it;
+    textTruncated = true;
+    return { ...it, text: capped.text };
+  };
+  findings = findings.map(capItemText);
+  conflicts = conflicts.map(capItemText);
+
+  const cappedSummary = capChars(model.summary, MAX_SUMMARY_CHARS);
+  if (cappedSummary.truncated) textTruncated = true;
+
+  if (textTruncated) {
+    boundGaps.push(
+      `Some text was shortened to fit the report's length limits (summary ${MAX_SUMMARY_CHARS} chars, item text ${MAX_ITEM_TEXT_CHARS} chars).`,
+    );
+  }
+
   return {
     report: {
-      summary: model.summary,
-      findings: findings.slice(0, MAX_FINDINGS),
-      conflicts: conflicts.slice(0, MAX_CONFLICTS),
+      summary: cappedSummary.text,
+      findings,
+      conflicts,
     },
     boundGaps,
   };
