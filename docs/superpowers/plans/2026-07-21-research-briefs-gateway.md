@@ -12,7 +12,11 @@
 
 ## Global Constraints
 
-- **No `any`.** External data arrives as `unknown` and is narrowed by hand. TypeScript strict mode. (Non-negotiable 7.)
+- **No `any`.** External data arrives as `unknown` and is narrowed by hand. TypeScript strict mode.
+- **`noPropertyAccessFromIndexSignature` is ON** (`tsconfig.base.json:20`). Anything typed
+  `Record<string, unknown>` — i.e. every `asRecord()` result — must be read with bracket
+  notation (`rec["summary"]`), never dot access. Dot access is a compile error, not a
+  style preference. (Non-negotiable 7.)
 - **No new dependency.** No zod anywhere on this surface — validation is hand-rolled, matching `clips/clip-ingest.ts`.
 - **Never log** the bearer token, any source body, any source URL, or any report content. Audit rows carry only `tokenFingerprint` and a fixed enum `reason`.
 - **All byte caps are UTF-8 bytes**, measured with `Buffer.byteLength(s, "utf8")` — never `String.prototype.length`.
@@ -812,12 +816,18 @@ describe("validateReport", () => {
   });
 
   test("bounds citations per item to 8", () => {
-    const many = Array.from({ length: 12 }, () => S1.token);
+    // DISTINCT tokens. Repeating one token would be collapsed by the dedup before the
+    // bound could ever fire, so the assertion would pass trivially without exercising it.
+    const entries = Array.from({ length: 12 }, (_, i) => ({
+      token: `S${i + 1}`,
+      ref: { kind: "source" as const, title: `T${i}`, url: `https://x.test/${i}` },
+      body: `body ${i}`,
+    }));
     const { report } = validateReport(
-      { summary: "s", findings: [{ text: "f", refs: many }], conflicts: [], gaps: [] },
-      reg(S1),
+      { summary: "s", findings: [{ text: "f", refs: entries.map((e) => e.token) }], conflicts: [], gaps: [] },
+      reg(...entries),
     );
-    expect(report.findings[0]?.citations.length).toBeLessThanOrEqual(8);
+    expect(report.findings[0]?.citations).toHaveLength(8);
   });
 
   test("resolves a clip ref to a clipId citation", () => {
@@ -904,10 +914,10 @@ function asItems(v: unknown, what: string): ModelItem[] {
   if (!Array.isArray(v)) throw new SynthesisParseError(`${what} must be an array`);
   return v.map((raw, i) => {
     const rec = asRecord(raw);
-    const quotes = asQuotes(rec.quotes);
+    const quotes = asQuotes(rec["quotes"]);
     return {
-      text: asString(rec.text, `${what}[${i}].text`),
-      refs: asStringArray(rec.refs, `${what}[${i}].refs`),
+      text: asString(rec["text"], `${what}[${i}].text`),
+      refs: asStringArray(rec["refs"], `${what}[${i}].refs`),
       ...(quotes === undefined ? {} : { quotes }),
     };
   });
@@ -932,10 +942,10 @@ export function parseModelJson(raw: string): ModelReport {
   }
   const rec = asRecord(parsed);
   return {
-    summary: asString(rec.summary, "summary"),
-    findings: asItems(rec.findings, "findings"),
-    conflicts: asItems(rec.conflicts, "conflicts"),
-    gaps: asStringArray(rec.gaps ?? [], "gaps"),
+    summary: asString(rec["summary"], "summary"),
+    findings: asItems(rec["findings"], "findings"),
+    conflicts: asItems(rec["conflicts"], "conflicts"),
+    gaps: asStringArray(rec["gaps"] ?? [], "gaps"),
   };
 }
 
@@ -1855,12 +1865,12 @@ export type CreateBody = {
 export function validateCreateInput(raw: unknown): CreateBody {
   const rec = asRecord(raw);
 
-  const brief = nonEmptyString(rec.brief, "brief");
+  const brief = nonEmptyString(rec["brief"], "brief");
   if (brief.length > MAX_BRIEF_CHARS) {
     throw new BriefValidationError(`brief exceeds ${MAX_BRIEF_CHARS} characters`, "brief");
   }
 
-  const rawSources = rec.sources;
+  const rawSources = rec["sources"];
   if (!Array.isArray(rawSources) || rawSources.length === 0) {
     throw new BriefValidationError("sources must be a non-empty array", "sources");
   }
@@ -1873,16 +1883,16 @@ export function validateCreateInput(raw: unknown): CreateBody {
       throw new BriefValidationError("each source must be an object", "sources");
     }
     const rec2 = s as Record<string, unknown>;
-    if (typeof rec2.url !== "string" || rec2.url.trim().length === 0) {
+    if (typeof rec2["url"] !== "string" || rec2["url"].trim().length === 0) {
       throw new BriefValidationError("each source needs a url", "sources");
     }
-    if (typeof rec2.title !== "string") {
+    if (typeof rec2["title"] !== "string") {
       throw new BriefValidationError("each source needs a title", "sources");
     }
-    return { url: rec2.url, title: rec2.title };
+    return { url: rec2["url"], title: rec2["title"] };
   });
 
-  return { brief, sources, useIndex: rec.useIndex === true };
+  return { brief, sources, useIndex: rec["useIndex"] === true };
 }
 
 export type SourceBody = {
@@ -1895,22 +1905,28 @@ export type SourceBody = {
 
 export function validateSourceInput(raw: unknown): SourceBody {
   const rec = asRecord(raw);
-  const url = nonEmptyString(rec.url, "url");
-  if (typeof rec.title !== "string") {
+  const url = nonEmptyString(rec["url"], "url");
+  if (typeof rec["title"] !== "string") {
     throw new BriefValidationError("title must be a string", "title");
   }
-  const body = nonEmptyString(rec.body, "body");
+  const body = nonEmptyString(rec["body"], "body");
   // Epoch MILLISECONDS. A seconds value (~1.7e9) is a finite number too, so a bare
   // isFinite check would accept it silently and store modifiedAt in 1970 — wrong data,
   // no error, found much later. 1e12 is 2001-09-09; nothing legitimate predates it here.
   if (
-    typeof rec.capturedAt !== "number" ||
-    !Number.isFinite(rec.capturedAt) ||
-    rec.capturedAt < 1e12
+    typeof rec["capturedAt"] !== "number" ||
+    !Number.isFinite(rec["capturedAt"]) ||
+    rec["capturedAt"] < 1e12
   ) {
     throw new BriefValidationError("capturedAt must be epoch milliseconds", "capturedAt");
   }
-  return { url, title: rec.title, body, capturedAt: rec.capturedAt, truncated: rec.truncated === true };
+  return {
+    url,
+    title: rec["title"],
+    body,
+    capturedAt: rec["capturedAt"],
+    truncated: rec["truncated"] === true,
+  };
 }
 ```
 
@@ -2121,6 +2137,14 @@ export async function buildRegistry(
         clipId: hit.itemId,
         ...(hit.url === null ? {} : { url: hit.url }),
       },
+> **Cap `title` and `url` when building refs.** A ref is copied into EVERY citation that
+> names it, and a report can carry 25 x 8 = 200 citations, so an unbounded title or URL
+> here dominates the saved report's 64 KB metadata budget no matter what the count bounds
+> in `brief-report.ts` do. Clip both when constructing the `SourceRef` — `title` to 120
+> characters (the convention `clip-ingest.ts` already uses) and `url` to 300 — for BOTH
+> the `S`-token sources and the `C`-token index hits. Add a test asserting an over-long
+> title and an over-long URL are clipped in the emitted ref.
+
       body: hit.snippet,
     });
   }
