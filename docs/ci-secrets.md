@@ -256,7 +256,7 @@ either package is the first live exercise.
 
 | Secret | Repo | Owner | Notes |
 | --- | --- | --- | --- |
-| `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT. ⚠️ **Global ADO PATs are decommissioned 2026-12-01** and cannot be regenerated since 2026-03-15. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
+| `VSCE_PAT` | `nimbus-vscode` | @AsafGolombek | Azure DevOps PAT, **org-scoped to `asafgolombek`** (confirmed in the ADO portal 2026-07-22, nimbus-vscode#34) — the 2026-12-01 *global*-PAT decommission does **not** apply, and no Entra/OIDC migration is needed. ⚠️ The binding date is the token's **own expiry, 2026-09-20**: publishing breaks then unless it is regenerated, which is routine because it is org-scoped. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422). |
 | `OVSX_PAT` | `nimbus-vscode` | @AsafGolombek | Open VSX token. No OIDC path exists (eclipse-openvsx/openvsx#1534); rotation is the only mitigation. |
 
 Both are probed weekly for liveness by `nimbus-vscode`'s own `secret-health.yml`

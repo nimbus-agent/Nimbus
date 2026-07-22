@@ -73,9 +73,14 @@ describe("CREDENTIAL_REGISTRY", () => {
     expect(LAST_MANUAL_AUDIT).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("the VSCE_PAT decommission deadline is recorded", () => {
+  // The token is org-scoped (confirmed 2026-07-22), so the 2026-12-01 global-PAT
+  // decommission does not apply to it. What does bite is the token's own expiry:
+  // publishing breaks on 2026-09-20 unless it is regenerated. Pinned so the
+  // earlier, real date cannot silently regress back to the decommission date.
+  test("the VSCE_PAT deadline is its expiry, not the global decommission", () => {
     const vsce = CREDENTIAL_REGISTRY.find((e) => e.name === "VSCE_PAT");
-    expect(vsce?.hardDeadline).toBe("2026-12-01");
+    expect(vsce?.hardDeadline).toBe("2026-09-20");
+    expect(vsce?.hardDeadline).not.toBe("2026-12-01");
   });
 
   test("NPM_TOKEN is forbidden — it was revoked 2026-07-19 and must stay gone", () => {

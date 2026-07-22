@@ -421,8 +421,8 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     owner: OWNER,
     consumedBy: [".github/workflows/publish.yml", ".github/workflows/secret-health.yml"],
     maxAgeDays: null,
-    hardDeadline: "2026-12-01",
-    note: "Azure DevOps PAT. Global ADO PATs are decommissioned 2026-12-01 and cannot be regenerated; see nimbus-vscode#34. Marketplace trusted publishing is unshipped (microsoft/vsmarketplace#1422).",
+    hardDeadline: "2026-09-20",
+    note: "Azure DevOps PAT, confirmed org-scoped to `asafgolombek` in the ADO portal 2026-07-22 (nimbus-vscode#34) — so the 2026-12-01 GLOBAL-PAT decommission does NOT apply here, and no Entra/OIDC migration is needed. The binding date is instead the token's own expiry, 2026-09-20: Marketplace publishing breaks then unless it is regenerated. Regeneration is routine precisely because the token is org-scoped (global PATs have been uncreatable since 2026-03-15). Deliberately NOT the later decommission date — that one is not real for us and, at 90-day lead, would have stayed silent past the expiry that actually bites. Marketplace trusted publishing is still unshipped (microsoft/vsmarketplace#1422).",
   },
   {
     name: "OVSX_PAT",
