@@ -581,8 +581,16 @@ Replace line 61 (`export type ExpertiseRank = "high" | "medium" | "low" | "none"
 
 ```ts
 // Canonical definition now lives in @nimbus-dev/sdk (GhostBrief depends on it).
-export type { ExpertiseRank } from "@nimbus-dev/sdk";
+// NOTE: a bare `export type { X } from "…"` re-exports without binding X locally,
+// and this module USES ExpertiseRank (the `rank` field on the expertise type).
+// So import it and re-export the local binding — two statements, not one.
+import type { ExpertiseRank } from "@nimbus-dev/sdk";
+// …and near the other exports:
+export type { ExpertiseRank };
 ```
+
+Only `tsc` catches the bare-re-export mistake; `bun test` passes either way. This is why
+Step 6's typecheck is load-bearing.
 
 - [ ] **Step 5: Run the tests — the count must match Step 2**
 
