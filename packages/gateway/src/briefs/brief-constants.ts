@@ -16,19 +16,27 @@ export const MAX_RETAINED_TERMINAL_RUNS = 16;
 /** Declared sources per run. The client caps its composer at this number. */
 export const MAX_SOURCES_PER_RUN = 20;
 /**
- * UTF-8 bytes of a single source body. 256 KB against the client's 200 KB
- * extraction cap, leaving headroom for JSON escaping and multi-byte text.
+ * UTF-8 bytes of the FULL held size of one source — body + title + url, not just
+ * the body. 256 KB against the client's 200 KB extraction cap, leaving headroom
+ * for JSON escaping and multi-byte text.
  */
 export const MAX_SOURCE_BYTES = 256 * 1024;
 /**
- * UTF-8 bytes of all bodies in one run. DELIBERATELY NOT
- * MAX_SOURCES_PER_RUN * MAX_SOURCE_BYTES — the per-source cap stops one
- * pathological page, this one bounds what the gateway holds. A conforming
- * client (20 x 200 KB) lands exactly on it.
+ * UTF-8 bytes of all held source text (body + title + url) across one run.
+ * DELIBERATELY NOT MAX_SOURCES_PER_RUN * MAX_SOURCE_BYTES — the per-source cap
+ * stops one pathological page, this one bounds what the gateway holds. A
+ * conforming client (20 x 200 KB) lands exactly on it.
  */
 export const MAX_RUN_BYTES = 4 * 1024 * 1024;
 /** Run lifetime from creation. NOT refreshed on access — a polling client must not pin memory. */
 export const DEFAULT_RUN_TTL_MS = 30 * 60_000;
+/**
+ * Cap on the expired-run tombstone set (drives 410 vs 404 in `wasKnown`). Without
+ * a bound it grows for the gateway's entire lifetime; beyond the cap the OLDEST
+ * tombstone is evicted first, degrading that id from 410 to 404 — both are
+ * terminal "discard" signals to the client.
+ */
+export const MAX_EXPIRED_TOMBSTONES = 256;
 /** Characters of the brief question itself. */
 export const MAX_BRIEF_CHARS = 4000;
 

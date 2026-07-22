@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_RUN_TTL_MS,
+  MAX_EXPIRED_TOMBSTONES,
   MAX_RETAINED_TERMINAL_RUNS,
   MAX_RUN_BYTES,
   MAX_SOURCE_BYTES,
@@ -102,6 +103,26 @@ describe("get and expiry", () => {
   test("an id that never existed is not known", () => {
     const { c } = fixture();
     expect(c.wasKnown("run_nope")).toBe(false);
+  });
+
+  test("bounds the expired-tombstone set at MAX_EXPIRED_TOMBSTONES, evicting oldest first", () => {
+    const { c, advance } = fixture();
+    const total = MAX_EXPIRED_TOMBSTONES + 10;
+    const ids: string[] = [];
+    for (let i = 0; i < total; i++) {
+      const run = created(c);
+      ids.push(run.id);
+      // Expire this run (via the injected clock, like the rest of the suite) before
+      // creating the next one, so only one run is ever live at a time.
+      advance(DEFAULT_RUN_TTL_MS + 1);
+      expect(c.get(run.id)).toBeNull();
+    }
+    const oldest = ids[0] as string;
+    const mostRecent = ids[ids.length - 1] as string;
+    // The oldest tombstone was evicted once the set exceeded the cap...
+    expect(c.wasKnown(oldest)).toBe(false);
+    // ...but the most-recently expired id is still remembered.
+    expect(c.wasKnown(mostRecent)).toBe(true);
   });
 
   test("does NOT refresh the TTL on access", () => {

@@ -43,8 +43,13 @@ export async function buildRegistry(
 }> {
   const registry = new Map<string, SourceRegistryEntry>();
 
+  // Iterate in DECLARATION order (not feed order): `run.declared` is insertion-ordered by
+  // the client's original create() call, while `run.sources` is ordered by whenever each
+  // source happened to arrive. A declared URL never fed gets no token.
   let n = 0;
-  for (const source of run.sources.values()) {
+  for (const canonicalKey of run.declared.keys()) {
+    const source = run.sources.get(canonicalKey);
+    if (source === undefined) continue;
     n += 1;
     const token = `S${n}`;
     registry.set(token, {

@@ -29,6 +29,37 @@ describe("buildRegistry", () => {
     expect(registry.get("S1")?.ref.kind).toBe("source");
   });
 
+  test("tokenizes fed sources in DECLARATION order, not feed order", async () => {
+    const c = new BriefRunController({ nowMs: () => 1000 });
+    const sources = [
+      { url: "https://a.test/0", title: "T0" },
+      { url: "https://a.test/1", title: "T1" },
+    ];
+    const out = c.create({ brief: "why do workers die", sources, useIndex: false });
+    if ("error" in out) throw new Error("expected a run");
+    // Feed in the REVERSE of declaration order.
+    c.addSource(out.run, {
+      url: "https://a.test/1",
+      title: "T1",
+      body: "b1",
+      capturedAt: 1,
+      truncated: false,
+    });
+    c.addSource(out.run, {
+      url: "https://a.test/0",
+      title: "T0",
+      body: "b0",
+      capturedAt: 1,
+      truncated: false,
+    });
+
+    const { registry } = await buildRegistry(out.run, null);
+    // S1 must be the first-DECLARED source (T0), even though it was fed second.
+    expect([...registry.keys()]).toEqual(["S1", "S2"]);
+    expect(registry.get("S1")?.ref.title).toBe("T0");
+    expect(registry.get("S2")?.ref.title).toBe("T1");
+  });
+
   test("carries the source body for quote verification", async () => {
     const { registry } = await buildRegistry(runWith(false, ["the body text"]), null);
     expect(registry.get("S1")?.body).toBe("the body text");

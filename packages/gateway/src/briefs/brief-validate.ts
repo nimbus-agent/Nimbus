@@ -64,7 +64,12 @@ export function validateCreateInput(raw: unknown): CreateBody {
     return { url: rec2["url"], title: rec2["title"] };
   });
 
-  return { brief, sources, useIndex: rec["useIndex"] === true };
+  const rawUseIndex = rec["useIndex"];
+  if (rawUseIndex !== undefined && typeof rawUseIndex !== "boolean") {
+    throw new BriefValidationError("useIndex must be a boolean", "useIndex");
+  }
+
+  return { brief, sources, useIndex: rawUseIndex === true };
 }
 
 export type SourceBody = {
@@ -92,11 +97,16 @@ export function validateSourceInput(raw: unknown): SourceBody {
   ) {
     throw new BriefValidationError("capturedAt must be epoch milliseconds", "capturedAt");
   }
+  const rawTruncated = rec["truncated"];
+  if (rawTruncated !== undefined && typeof rawTruncated !== "boolean") {
+    throw new BriefValidationError("truncated must be a boolean", "truncated");
+  }
+
   return {
     url,
     title: rec["title"],
     body,
     capturedAt: rec["capturedAt"],
-    truncated: rec["truncated"] === true,
+    truncated: rawTruncated === true,
   };
 }

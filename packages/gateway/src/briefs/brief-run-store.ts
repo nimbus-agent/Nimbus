@@ -3,6 +3,7 @@ import { canonicalizeUrl } from "../util/url-canonical.ts";
 import {
   DEFAULT_RUN_TTL_MS,
   MAX_CONCURRENT_RUNS,
+  MAX_EXPIRED_TOMBSTONES,
   MAX_RETAINED_TERMINAL_RUNS,
   MAX_RUN_BYTES,
   MAX_SOURCE_BYTES,
@@ -75,13 +76,26 @@ export class BriefRunController {
       if (now > run.expiresAtMs) {
         run.sources.clear();
         this.runs.delete(id);
-        this.expired.add(id);
+        this.rememberExpired(id);
       }
     }
   }
 
   private isTerminal(run: BriefRun): boolean {
     return run.status === "done" || run.status === "failed";
+  }
+
+  /**
+   * Adds `id` to the expired-tombstone set, evicting the OLDEST entry once the
+   * cap is exceeded (a Set preserves insertion order). See MAX_EXPIRED_TOMBSTONES.
+   */
+  private rememberExpired(id: string): void {
+    this.expired.add(id);
+    while (this.expired.size > MAX_EXPIRED_TOMBSTONES) {
+      const oldest = this.expired.values().next().value;
+      if (oldest === undefined) break;
+      this.expired.delete(oldest);
+    }
   }
 
   /**
@@ -104,7 +118,7 @@ export class BriefRunController {
     for (let i = 0; i < terminal.length - MAX_RETAINED_TERMINAL_RUNS; i++) {
       const run = terminal[i] as BriefRun;
       this.runs.delete(run.id);
-      this.expired.add(run.id);
+      this.rememberExpired(run.id);
     }
   }
 
@@ -155,7 +169,7 @@ export class BriefRunController {
     if (this.nowMs() > run.expiresAtMs) {
       run.sources.clear();
       this.runs.delete(id);
-      this.expired.add(id);
+      this.rememberExpired(id);
       return null;
     }
     return run;

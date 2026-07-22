@@ -31,6 +31,14 @@ describe("validateCreateInput", () => {
     expect(validateCreateInput({ brief: "q", sources: ok.sources }).useIndex).toBe(false);
   });
 
+  test("accepts an explicit useIndex: false", () => {
+    expect(validateCreateInput({ ...ok, useIndex: false }).useIndex).toBe(false);
+  });
+
+  test("rejects a non-boolean useIndex instead of silently coercing to false", () => {
+    expect(fieldOf(() => validateCreateInput({ ...ok, useIndex: "true" }))).toBe("useIndex");
+  });
+
   test("rejects a non-object body", () => {
     expect(fieldOf(() => validateCreateInput("nope"))).toBeUndefined();
   });
@@ -89,6 +97,14 @@ describe("validateSourceInput", () => {
 
   test("honours truncated: true", () => {
     expect(validateSourceInput({ ...ok, truncated: true }).truncated).toBe(true);
+  });
+
+  test("accepts an explicit truncated: false", () => {
+    expect(validateSourceInput({ ...ok, truncated: false }).truncated).toBe(false);
+  });
+
+  test("rejects a non-boolean truncated instead of silently coercing to false", () => {
+    expect(fieldOf(() => validateSourceInput({ ...ok, truncated: 1 }))).toBe("truncated");
   });
 
   test("rejects an empty body", () => {
