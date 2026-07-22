@@ -2540,12 +2540,13 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { ReportTooLargeError, saveBriefReport } from "./brief-save.ts";
 import { BriefRunController } from "./brief-run-store.ts";
-import { migrateToLatest } from "../index/migrations/runner.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import type { BriefRun, Report } from "./brief-types.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
-  migrateToLatest(d);
+  // Real schema helper — creates the `item` table + FTS triggers (same as clip tests).
+  LocalIndex.ensureSchema(d);
   return d;
 }
 
