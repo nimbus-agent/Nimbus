@@ -26,6 +26,7 @@
 ## File Structure
 
 **`nimbus-sdk`**
+
 - Create `src/agents/brief-composites.ts` — the 8 composed brief types, supporting types, `AgentBrief`, `BriefReadyPayload`, `BriefFor`.
 - Create `src/agents/agent-names.ts` — `AGENT_NAMES`, `AgentName`, `AGENT_KIND`.
 - Create `src/agents/brief-guards.ts` — the 8 concrete guards.
@@ -33,6 +34,7 @@
 - Modify `src/index.ts` — re-export all of the above.
 
 **`Nimbus`**
+
 - Modify `packages/gateway/src/agents/_lib/findings.ts` — delete local definitions, re-export from SDK.
 - Modify `packages/gateway/src/federation/types.ts` — re-export `ExpertiseRank` from SDK.
 - Modify `packages/cli/src/types/agents.ts` — delete local definitions, re-export from SDK.
@@ -40,6 +42,7 @@
 - Create `scripts/gen-agent-brief-fixtures.ts` — dumps real `briefReady` payloads to JSON.
 
 **`nimbus-client`**
+
 - Create `src/agents.ts` — param types, `AgentBriefEvent`, `subscribeAgentBrief` wiring helpers, `BRIEF_GUARDS`, errors.
 - Create `test/agents.test.ts`, `test/agents-conformance.test.ts`.
 - Create `test/fixtures/agent-briefs.json` — generated, never hand-edited.
@@ -50,19 +53,21 @@
 
 ---
 
-# Phase 1 — `nimbus-sdk` 1.5.0
+## Phase 1 — `nimbus-sdk` 1.5.0
 
 Worktree: `cd /c/gitrep/nimbus-sdk && git worktree add .worktrees/agents-briefs -b dev/asafgolombek/promote-agent-briefs main`
 
 ### Task 1: Promote the composed brief types
 
 **Files:**
+
 - Create: `src/agents/brief-composites.ts`
 - Create: `src/agents/agent-names.ts`
 - Modify: `src/index.ts`
 - Test: `src/agents/agent-names.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `AgentBriefBase`, `CatchupSection`, `ConflictType`, `ExpertFinding`, `ImpactFinding`, `JanitorPeerTouch`, `PreflightDownstream`, `GapNote` from `./brief-types.ts`.
 - Produces: `ExpertBrief`, `ImpactBrief`, `CatchupBrief`, `GhostBrief`, `ConflictBrief`, `HuddleBrief`, `JanitorBrief`, `PreflightBrief`, `AgentBrief`, `BriefReadyPayload<B>`, `BriefFor<A>`, `ExpertiseRank`, `ImpactCategory`, `FederatedItemLite`, `GhostFinding`, `ConflictFinding`, `HuddleContribution`, `AGENT_NAMES`, `AgentName`, `AGENT_KIND`.
 
@@ -93,6 +98,7 @@ describe("agent names", () => {
     }
   });
 });
+
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -112,10 +118,14 @@ export const AGENT_NAMES = [
 export type AgentName = (typeof AGENT_NAMES)[number];
 
 /**
+
  * Agent name → the `kind` discriminant its brief carries.
+
  *
+
  * These are NOT interchangeable: the `conflicts` agent emits `kind: "conflict"`
  * (singular). Deriving one from the other rejects every valid conflicts brief.
+
  */
 export const AGENT_KIND = {
   expert: "expert",
@@ -127,6 +137,7 @@ export const AGENT_KIND = {
   janitor: "janitor",
   preflight: "preflight",
 } as const satisfies Record<AgentName, string>;
+
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -276,6 +287,7 @@ export type BriefFor<A extends AgentName> = {
   janitor: JanitorBrief;
   preflight: PreflightBrief;
 }[A];
+
 ```
 
 - [ ] **Step 6: Re-export from `src/index.ts`**
@@ -303,6 +315,7 @@ export type {
   JanitorBrief,
   PreflightBrief,
 } from "./agents/brief-composites";
+
 ```
 
 - [ ] **Step 7: Typecheck and lint**
@@ -324,6 +337,7 @@ ExpertiseRank comes with them: GhostBrief depends on it and it previously
 lived in the gateway-internal federation/types.ts.
 
 AGENT_KIND is an explicit table because conflicts emits kind \"conflict\"."
+
 ```
 
 ---
@@ -331,11 +345,13 @@ AGENT_KIND is an explicit table because conflicts emits kind \"conflict\"."
 ### Task 2: Add the eight concrete guards
 
 **Files:**
+
 - Create: `src/agents/brief-guards.ts`
 - Test: `src/agents/brief-guards.test.ts`
 - Modify: `src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `createBriefGuard` from `./guard-factory.ts`; the brief types from Task 1.
 - Produces: `isExpertBrief`, `isImpactBrief`, `isCatchupBrief`, `isGhostBrief`, `isConflictBrief`, `isHuddleBrief`, `isJanitorBrief`, `isPreflightBrief`, and `BRIEF_GUARDS`.
 
@@ -375,6 +391,7 @@ describe("brief guards", () => {
     for (const name of AGENT_NAMES) expect(typeof BRIEF_GUARDS[name]).toBe("function");
   });
 });
+
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -438,6 +455,7 @@ export const BRIEF_GUARDS: { [A in AgentName]: (x: unknown) => boolean } = {
   janitor: isJanitorBrief,
   preflight: isPreflightBrief,
 };
+
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -452,6 +470,7 @@ export {
   BRIEF_GUARDS, isCatchupBrief, isConflictBrief, isExpertBrief, isGhostBrief,
   isHuddleBrief, isImpactBrief, isJanitorBrief, isPreflightBrief,
 } from "./agents/brief-guards";
+
 ```
 
 - [ ] **Step 6: Full verification**
@@ -469,6 +488,7 @@ git commit -m "feat(agents): export the eight concrete brief guards
 All eight use requireQuery: true, matching every gateway guard. The CLI's
 expert/impact/catchup guards omitted it; adopting these tightens exactly
 those three."
+
 ```
 
 ---
@@ -476,6 +496,7 @@ those three."
 ### Task 3: Release 1.5.0
 
 **Files:**
+
 - Modify: `package.json` (version), `CHANGELOG.md`
 
 - [ ] **Step 1: Bump the version**
@@ -492,12 +513,15 @@ In `package.json`: `"version": "1.4.0"` → `"version": "1.5.0"`.
 - The eight composed agent brief types (`ExpertBrief`, `ImpactBrief`,
   `CatchupBrief`, `GhostBrief`, `ConflictBrief`, `HuddleBrief`, `JanitorBrief`,
   `PreflightBrief`), the `AgentBrief` union, and `BriefReadyPayload<B>`.
+
 - Supporting types: `ExpertiseRank`, `ImpactCategory`, `FederatedItemLite`,
   `GhostFinding`, `ConflictFinding`, `HuddleContribution`.
+
 - `AGENT_NAMES`, `AgentName`, `AGENT_KIND` and `BriefFor<A>`.
 - The eight concrete guards plus `BRIEF_GUARDS`.
 
 Purely additive; 1.4.x consumers are unaffected.
+
 ```
 
 - [ ] **Step 3: Verify, push, open the PR**
@@ -509,6 +533,7 @@ Expected: clean.
 git add package.json CHANGELOG.md && git commit -m "chore(release): 1.5.0"
 git push -u origin dev/asafgolombek/promote-agent-briefs
 gh pr create --title "feat(agents): promote composed brief types + guards (1.5.0)" --body "Stage 1 Wave 1a, PR 1 of 3. See Nimbus docs/superpowers/specs/2026-07-22-stage-1-wave-1a-agents-namespace-design.md"
+
 ```
 
 - [ ] **Step 4: After merge, publish and verify**
@@ -516,11 +541,12 @@ gh pr create --title "feat(agents): promote composed brief types + guards (1.5.0
 ```bash
 npm view @nimbus-dev/sdk@1.5.0 version
 ```
+
 Expected: `1.5.0`. **Phase 3 is blocked until this prints.**
 
 ---
 
-# Phase 2 — Nimbus de-duplication
+## Phase 2 — Nimbus de-duplication
 
 Worktree already exists: `.claude/worktrees/stage1-wave1a-agents` on `dev/asafgolombek/stage1-wave1a-agents`.
 
@@ -529,12 +555,14 @@ Worktree already exists: `.claude/worktrees/stage1-wave1a-agents` on `dev/asafgo
 ### Task 4: Gateway re-exports from the SDK
 
 **Files:**
+
 - Modify: `packages/gateway/package.json` — `"@nimbus-dev/sdk": "^1.5.0"`
 - Modify: `packages/gateway/src/agents/_lib/findings.ts` — delete lines 29-199, replace with re-exports
 - Modify: `packages/gateway/src/federation/types.ts:61` — re-export `ExpertiseRank`
 - Test: existing `packages/gateway/src/agents/**` suites, unchanged
 
 **Interfaces:**
+
 - Consumes: everything Task 1 and Task 2 produced.
 - Produces: no new names. `findings.ts` keeps its exact public surface so no consumer changes.
 
@@ -554,11 +582,15 @@ Replace the whole file with:
 
 ```ts
 /**
+
  * Agent brief types and guards.
+
  *
+
  * These now live in `@nimbus-dev/sdk` so the gateway, the CLI and
  * `@nimbus-dev/client` share one definition. This module re-exports them so
  * existing gateway imports keep working unchanged.
+
  */
 export type {
   AgentBrief, AgentBriefBase, BriefReadyPayload, CatchupBrief, CatchupItem,
@@ -573,6 +605,7 @@ export {
   isCatchupBrief, isConflictBrief, isExpertBrief, isGhostBrief,
   isHuddleBrief, isImpactBrief, isJanitorBrief, isPreflightBrief,
 } from "@nimbus-dev/sdk";
+
 ```
 
 - [ ] **Step 4: Re-export `ExpertiseRank` in `federation/types.ts`**
@@ -587,6 +620,7 @@ Replace line 61 (`export type ExpertiseRank = "high" | "medium" | "low" | "none"
 import type { ExpertiseRank } from "@nimbus-dev/sdk";
 // …and near the other exports:
 export type { ExpertiseRank };
+
 ```
 
 Only `tsc` catches the bare-re-export mistake; `bun test` passes either way. This is why
@@ -617,11 +651,13 @@ git commit -m "refactor(agents): consume the SDK's brief types in the gateway
 
 findings.ts keeps its public surface; the definitions now come from
 @nimbus-dev/sdk@1.5.0. ExpertiseRank moves with GhostBrief."
+
 ```
 
 ### Task 5: CLI re-exports from the SDK
 
 **Files:**
+
 - Modify: `packages/cli/package.json` — `"@nimbus-dev/sdk": "^1.5.0"`
 - Modify: `packages/cli/src/types/agents.ts` — delete lines 25-198, replace with re-exports
 
@@ -634,12 +670,16 @@ Expected: PASS. Record the count.
 
 ```ts
 /**
+
  * Agent brief types and guards, re-exported from `@nimbus-dev/sdk`.
+
  *
+
  * Previously a hand-maintained mirror of gateway `agents/_lib/findings.ts`.
  * Two names the SDK spells differently are kept as aliases so existing CLI
  * imports keep resolving: `GhostContextItem` (SDK `FederatedItemLite`) and
  * `ConflictCollision` (SDK `ConflictFinding`).
+
  */
 export type {
   AgentBrief, AgentBriefBase, BriefReadyPayload, CatchupBrief, CatchupItem,
@@ -656,6 +696,7 @@ export {
   isCatchupBrief, isConflictBrief, isExpertBrief, isGhostBrief,
   isHuddleBrief, isImpactBrief, isJanitorBrief, isPreflightBrief,
 } from "@nimbus-dev/sdk";
+
 ```
 
 - [ ] **Step 3: Run the CLI tests — this is where strictness may bite**
@@ -678,6 +719,7 @@ export const isImpactBrief = createBriefGuard<ImpactBrief>("impact", (b) =>
   Array.isArray(b["affected"]));
 export const isCatchupBrief = createBriefGuard<CatchupBrief>("catchup", (b) =>
   Array.isArray(b["sections"]));
+
 ```
 
 and drop those three from the `export { … } from "@nimbus-dev/sdk"` list.
@@ -694,14 +736,17 @@ git add packages/cli/package.json packages/cli/src/types/agents.ts bun.lock
 git commit -m "refactor(agents): consume the SDK's brief types in the CLI
 
 Deletes the hand-maintained mirror of gateway findings.ts."
+
 ```
 
 ### Task 6: Generate the conformance fixture
 
 **Files:**
+
 - Create: `scripts/gen-agent-brief-fixtures.ts`
 
 **Interfaces:**
+
 - Produces: a JSON file mapping each agent name to a real `briefReady` payload, for `nimbus-client`'s conformance gate.
 
 - [ ] **Step 1: Write the generator**
@@ -710,12 +755,16 @@ It drives the real `dispatchAgentsRpc` against an in-memory DB and captures what
 
 ```ts
 /**
+
  * Generates the golden agent-brief fixture consumed by nimbus-client's
  * conformance gate. The payloads come from the real dispatchAgentsRpc →
  * emitBriefWithSynthesis path, so the fixture cannot drift from the wire by
  * being written down wrong.
+
  *
+
  * Usage: bun run scripts/gen-agent-brief-fixtures.ts > agent-briefs.json
+
  */
 import { Database } from "bun:sqlite";
 import { LocalIndex } from "../packages/gateway/src/index/local-index.ts";
@@ -758,6 +807,7 @@ for (const [agent, params] of Object.entries(PARAMS)) {
 }
 
 process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+
 ```
 
 - [ ] **Step 2: Run it and inspect the output**
@@ -769,6 +819,7 @@ SCRATCH="$HOME/AppData/Local/Temp/claude/C--gitrep-Nimbus/dfb03fe9-a7c3-467f-8b7
 mkdir -p "$SCRATCH"
 bun run scripts/gen-agent-brief-fixtures.ts > "$SCRATCH/agent-briefs.json"
 node -e "const o=require(process.argv[1]); console.log(Object.keys(o)); console.log(o.conflicts.findings.kind)" "$SCRATCH/agent-briefs.json"
+
 ```
 
 Expected: all eight agent names printed, and `conflict` (singular) for the conflicts kind — the live confirmation of the mismatch this plan is built around.
@@ -783,6 +834,7 @@ git commit -m "test(agents): add the agent-brief fixture generator
 
 Drives the real dispatchAgentsRpc path so nimbus-client's conformance
 fixture is generated from gateway code, never hand-written."
+
 ```
 
 - [ ] **Step 4: Preflight, push, open the PR**
@@ -793,11 +845,12 @@ Expected: clean.
 ```bash
 git push -u origin dev/asafgolombek/stage1-wave1a-agents
 gh pr create --title "refactor(agents): consume SDK brief types; add fixture generator" --body "Stage 1 Wave 1a, PR 2 of 3."
+
 ```
 
 ---
 
-# Phase 3 — `nimbus-client` 0.7.0
+## Phase 3 — `nimbus-client` 0.7.0
 
 **Blocked until `npm view @nimbus-dev/sdk@1.5.0 version` succeeds.**
 
@@ -806,11 +859,13 @@ Worktree: `cd /c/gitrep/nimbus-client && git worktree add .worktrees/agents-name
 ### Task 7: The agent module — params, events, guards
 
 **Files:**
+
 - Create: `src/agents.ts`
 - Modify: `package.json` — `"@nimbus-dev/sdk": "^1.5.0"`, then `bun install`
 - Test: `test/agents.test.ts` (created in Task 8)
 
 **Interfaces:**
+
 - Produces: `ExpertParams`, `ImpactParams`, `CatchupParams`, `GhostParams`, `ConflictsParams`, `HuddleParams`, `JanitorParams`, `PreflightParams`, `AgentParamsFor<A>`, `AgentBriefEvent<A>`, `AgentBriefError`, `AgentTimeoutError`, `DEFAULT_AGENT_TIMEOUT_MS`, `parseBriefReady`, `parseBriefError`.
 
 - [ ] **Step 1: Create `src/agents.ts`**
@@ -819,12 +874,16 @@ Param shapes transcribed from `packages/gateway/src/ipc/agents-rpc.ts:48-370`.
 
 ```ts
 /**
+
  * The `agents.*` namespace: eight read-only, never-HITL built-in agents.
+
  *
+
  * Each method returns `{ sessionId }` immediately, then the gateway emits
  * EITHER `<agent>.briefReady` OR `<agent>.briefError` for that session. Both
  * must be handled — watching only briefReady turns every agent failure into a
  * timeout that hides the gateway's actual error message.
+
  */
 import { type AgentName, BRIEF_GUARDS, type BriefFor } from "@nimbus-dev/sdk";
 
@@ -908,6 +967,7 @@ export function parseBriefError<A extends AgentName>(
   if (typeof sessionId !== "string" || typeof error !== "string") return null;
   return { ok: false, sessionId, error };
 }
+
 ```
 
 - [ ] **Step 2: Typecheck**
@@ -920,6 +980,7 @@ Expected: clean. If `BriefFor` or `BRIEF_GUARDS` is unresolved, the installed SD
 ```bash
 git add src/agents.ts package.json bun.lock
 git commit -m "feat(agents): add agent param types, brief events and payload parsers"
+
 ```
 
 ### Task 8: `validateAgentSession`
@@ -927,10 +988,12 @@ git commit -m "feat(agents): add agent param types, brief events and payload par
 Comes before the client wiring because Task 9 imports it.
 
 **Files:**
+
 - Modify: `src/validate.ts`
 - Test: `test/validate.test.ts`
 
 **Interfaces:**
+
 - Produces: `validateAgentSession(method: string, v: unknown): { sessionId: string }`.
 
 - [ ] **Step 1: Add the failing test to `test/validate.test.ts`**
@@ -950,6 +1013,7 @@ describe("validateAgentSession", () => {
     expect(() => validateAgentSession("agents.expert", "nope")).toThrow(IpcResponseError);
   });
 });
+
 ```
 
 Add `validateAgentSession` to that file's existing import from `../src/validate.ts`.
@@ -969,6 +1033,7 @@ export function validateAgentSession(method: string, v: unknown): { sessionId: s
   const o = record(method, v);
   return { sessionId: str(method, o, "sessionId") };
 }
+
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -981,15 +1046,18 @@ Expected: PASS.
 ```bash
 git add src/validate.ts test/validate.test.ts
 git commit -m "feat(agents): validate the agents.* session envelope"
+
 ```
 
 ### Task 9: `subscribeAgentBrief` + `runAgent`
 
 **Files:**
+
 - Modify: `src/nimbus-client.ts`
 - Test: `test/agents.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 7's exports; `ipc.onNotification` / `offNotification` (`src/ipc-transport.ts:216,226`).
 - Produces: `NimbusClient.subscribeAgentBrief`, private `NimbusClient.runAgent`.
 
@@ -1030,6 +1098,7 @@ describe("brief payload parsing", () => {
     expect(e.agent).toBe("expert");
   });
 });
+
 ```
 
 - [ ] **Step 2: Run the tests**
@@ -1050,6 +1119,7 @@ import {
   DEFAULT_AGENT_TIMEOUT_MS, parseBriefError, parseBriefReady,
 } from "./agents.js";
 import { validateAgentSession } from "./validate.js";
+
 ```
 
 - [ ] **Step 4: Add `subscribeAgentBrief` to the `NimbusClient` class**
@@ -1058,8 +1128,10 @@ Place it directly after `subscribeHitl` (which ends at line 256) so the two subs
 
 ```ts
   /**
+
    * Observe both completion notifications for one agent.
    *
+
    * Registers on `<agent>.briefReady` AND `<agent>.briefError`; `dispose()`
    * removes both. Generic over the agent NAME so a ninth agent costs one
    * `AGENT_NAMES` entry rather than a new method.
@@ -1089,8 +1161,10 @@ Place it directly after `subscribeHitl` (which ends at line 256) so the two subs
   }
 
   /**
+
    * Fire an agent and await its brief.
    *
+
    * Ordering matters: the gateway starts the work before the RPC response is
    * parsed (`emit-brief.ts` fires its async IIFE immediately), so we subscribe
    * FIRST and buffer anything that arrives before `sessionId` is known, then
@@ -1141,6 +1215,7 @@ Place it directly after `subscribeHitl` (which ends at line 256) so the two subs
       sub.dispose();
     }
   }
+
 ```
 
 - [ ] **Step 5: Add `subscribeAgentBrief` to the `NimbusClientLike` interface**
@@ -1152,6 +1227,7 @@ Next to `subscribeHitl` at line 179:
     agent: A,
     handler: (ev: AgentBriefEvent<A>) => void,
   ): { dispose(): void };
+
 ```
 
 - [ ] **Step 6: Run tests and typecheck**
@@ -1168,16 +1244,19 @@ git commit -m "feat(agents): add subscribeAgentBrief and the runAgent correlator
 Subscribes before calling and buffers pre-sessionId events, so a fast agent's
 notification is never dropped and concurrent runs cannot swap results.
 Rejects with the gateway's message on briefError instead of timing out."
+
 ```
 
 ### Task 10: The eight promise methods + `MockClient` parity
 
 **Files:**
+
 - Modify: `src/nimbus-client.ts` (interface + class)
 - Modify: `src/mock-client.ts`
 - Test: `test/mock-client.test.ts`
 
 **Interfaces:**
+
 - Produces: `agentsExpert`, `agentsImpact`, `agentsCatchup`, `agentsGhost`, `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight` — each `(params, opts?) => Promise<<X>Brief>`.
 
 - [ ] **Step 1: Add the eight methods to the `NimbusClient` class**
@@ -1207,6 +1286,7 @@ Rejects with the gateway's message on briefError instead of timing out."
   agentsPreflight(p: PreflightParams, o?: { timeoutMs?: number }): Promise<PreflightBrief> {
     return this.runAgent("preflight", p, o);
   }
+
 ```
 
 Add the matching eight signatures to `NimbusClientLike`, and extend the SDK type import with `CatchupBrief, ConflictBrief, ExpertBrief, GhostBrief, HuddleBrief, ImpactBrief, JanitorBrief, PreflightBrief` plus the param types from `./agents.js`.
@@ -1226,6 +1306,7 @@ In `src/mock-client.ts`, add to `MockClientFixtures`:
     ghost: GhostBrief; conflicts: ConflictBrief; huddle: HuddleBrief;
     janitor: JanitorBrief; preflight: PreflightBrief;
   }>;
+
 ```
 
 and to the class:
@@ -1254,6 +1335,7 @@ and to the class:
   async agentsHuddle(): Promise<HuddleBrief> { return this.brief("huddle"); }
   async agentsJanitor(): Promise<JanitorBrief> { return this.brief("janitor"); }
   async agentsPreflight(): Promise<PreflightBrief> { return this.brief("preflight"); }
+
 ```
 
 - [ ] **Step 4: Add a mock test to `test/mock-client.test.ts`**
@@ -1271,6 +1353,7 @@ test("agentsExpert returns the configured fixture", async () => {
 test("an unconfigured agent rejects with a named reason", async () => {
   await expect(new MockClient().agentsGhost({ file: "a" })).rejects.toThrow("agentBriefs.ghost");
 });
+
 ```
 
 - [ ] **Step 5: Run tests and typecheck**
@@ -1283,6 +1366,7 @@ Expected: all PASS, typecheck clean.
 ```bash
 git add src/nimbus-client.ts src/mock-client.ts test/mock-client.test.ts
 git commit -m "feat(agents): add the eight promise methods and MockClient parity"
+
 ```
 
 ### Task 10b: Behaviour tests for the correlator
@@ -1299,6 +1383,7 @@ git commit -m "feat(agents): add the eight promise methods and MockClient parity
 > includes both) would then flag it as unused. Task 10's real callers dissolve that bind.
 
 **Files:**
+
 - Create: `test/_fake-ipc.ts` (extract the existing harness), `test/agents-wrapper.test.ts`
 - Modify: `test/nimbus-client.test.ts` (import the extracted harness)
 - **Do not modify anything under `src/`.**
@@ -1307,10 +1392,13 @@ Cover, through the **public** `agentsX` methods rather than by casting to the pr
 
 1. `subscribeAgentBrief` registers handlers for both `<agent>.briefReady` and
    `<agent>.briefError`, and `dispose()` removes both.
+
 2. **Buffering** — invoke the method *without awaiting*, emit `briefReady` synchronously (the
    client does not yet know its `sessionId`), then await: it must resolve, not time out.
+
 3. **Concurrency** — two `agentsExpert` calls with different session ids; emit both events
    *out of order*; each promise resolves with its own findings.
+
 4. **`briefError`** rejects with `AgentBriefError` carrying the gateway's message.
 5. **Timeout** rejects with `AgentTimeoutError` *and* the transport no longer holds the
    handlers afterwards — proving `dispose()` ran on the rejection path.
@@ -1325,6 +1413,7 @@ verify `git diff src/` is empty before committing.
 ### Task 11: The conformance gate
 
 **Files:**
+
 - Create: `test/fixtures/agent-briefs.json` (copied from Phase 2 Task 6 output)
 - Create: `test/agents-conformance.test.ts`
 - Modify: `test/fixtures/README.md`
@@ -1334,6 +1423,7 @@ verify `git diff src/` is empty before committing.
 ```bash
 SCRATCH="$HOME/AppData/Local/Temp/claude/C--gitrep-Nimbus/dfb03fe9-a7c3-467f-8b7c-8ba1a779f8ab/scratchpad"
 cp "$SCRATCH/agent-briefs.json" test/fixtures/agent-briefs.json
+
 ```
 
 Do not hand-edit it. If it is wrong, fix the generator in the Nimbus repo and regenerate.
@@ -1350,15 +1440,21 @@ import { parseBriefReady } from "../src/agents.ts";
 import golden from "./fixtures/agent-briefs.json" with { type: "json" };
 
 /**
+
  * The agents.* conformance gate.
+
  *
+
  * `parseBriefReady` and the SDK guards hand-transcribe the gateway's
  * notification contract; nothing links them at compile time. This pins them to
  * payloads real gateway code emitted, so a shape change upstream fails here
  * rather than silently yielding a rejected brief in every client.
+
  *
+
  * When this fails: regenerate via Nimbus `scripts/gen-agent-brief-fixtures.ts`,
  * then fix the parser or guard. Never edit the fixture to make it pass.
+
  */
 const fixtures = golden as Record<string, { sessionId: string; brief: string; findings: unknown }>;
 
@@ -1392,6 +1488,7 @@ describe("agents.* briefReady conformance", () => {
     });
   }
 });
+
 ```
 
 - [ ] **Step 3: Run it — expect PASS**
@@ -1408,6 +1505,7 @@ node -e "const fs=require('fs');const p='test/fixtures/agent-briefs.json';const 
 cp test/fixtures/agent-briefs.json test/fixtures/agent-briefs.good.json
 cp test/fixtures/agent-briefs.json.bak test/fixtures/agent-briefs.json
 bun test test/agents-conformance.test.ts
+
 ```
 
 Expected: **FAIL** — the expert `findings passes the SDK guard` and `brief envelope` tests go red.
@@ -1418,6 +1516,7 @@ Now restore and confirm green:
 cp test/fixtures/agent-briefs.good.json test/fixtures/agent-briefs.json
 rm test/fixtures/agent-briefs.json.bak test/fixtures/agent-briefs.good.json
 bun test test/agents-conformance.test.ts
+
 ```
 
 Expected: PASS. Do not proceed until both the red and the green have been observed.
@@ -1426,7 +1525,7 @@ Expected: PASS. Do not proceed until both the red and the green have been observ
 
 Append to `test/fixtures/README.md`:
 
-```markdown
+````markdown
 ## `agent-briefs.json`
 
 Golden `<agent>.briefReady` payloads for all eight `agents.*` methods, consumed
@@ -1437,11 +1536,12 @@ by `test/agents-conformance.test.ts`.
 ```bash
 bun run scripts/gen-agent-brief-fixtures.ts > agent-briefs.json
 cp agent-briefs.json ../nimbus-client/test/fixtures/agent-briefs.json
+
 ```
 
 The generator drives the real `dispatchAgentsRpc` → `emitBriefWithSynthesis`
 path against an in-memory index, so the shape comes from gateway code.
-```
+````
 
 - [ ] **Step 6: Commit**
 
@@ -1451,11 +1551,13 @@ git commit -m "test(agents): add the agents.* conformance gate
 
 Pins parseBriefReady and the SDK guards to payloads real gateway code emitted.
 Verified failing (agentVersion removed) before verified passing."
+
 ```
 
 ### Task 12: Export, release 0.7.0
 
 **Files:**
+
 - Modify: `src/index.ts`, `package.json`, `CHANGELOG.md`
 
 - [ ] **Step 1: Add the public exports to `src/index.ts`**
@@ -1476,6 +1578,7 @@ export {
   type JanitorParams,
   type PreflightParams,
 } from "./agents.js";
+
 ```
 
 Extend the existing `export type { NimbusItem } from "@nimbus-dev/sdk";` line so consumers can name brief shapes without depending on the SDK directly:
@@ -1485,6 +1588,7 @@ export type {
   AgentBrief, AgentName, BriefFor, CatchupBrief, ConflictBrief, ExpertBrief,
   GhostBrief, HuddleBrief, ImpactBrief, JanitorBrief, NimbusItem, PreflightBrief,
 } from "@nimbus-dev/sdk";
+
 ```
 
 - [ ] **Step 2: Bump the version and write the CHANGELOG**
@@ -1501,13 +1605,16 @@ export type {
   `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight`.
   Each resolves with its typed brief and rejects with `AgentBriefError`
   carrying the gateway's message when the agent fails.
+
 - `subscribeAgentBrief(agent, handler)` — the low-level primitive, generic over
   agent name, observing both `<agent>.briefReady` and `<agent>.briefError`.
+
 - `AgentTimeoutError`, `DEFAULT_AGENT_TIMEOUT_MS` (30s).
 - A conformance gate pinning the notification contract to gateway-generated
   golden payloads.
 
 Requires `@nimbus-dev/sdk` ^1.5.0.
+
 ```
 
 - [ ] **Step 3: Full verification**
@@ -1522,6 +1629,7 @@ git add src/index.ts package.json CHANGELOG.md
 git commit -m "chore(release): 0.7.0 — the agents.* namespace"
 git push -u origin dev/asafgolombek/agents-namespace
 gh pr create --title "feat(agents): expose the agents.* namespace (0.7.0)" --body "Stage 1 Wave 1a, PR 3 of 3. Eight methods + subscribeAgentBrief + conformance gate."
+
 ```
 
 - [ ] **Step 5: After merge, update the ecosystem roadmap**
