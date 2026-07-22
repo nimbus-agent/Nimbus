@@ -1,5 +1,10 @@
 import { wrapToolOutput } from "../engine/tool-output-envelope.ts";
-import { MAX_CONFLICTS, MAX_FINDINGS, MAX_QUOTE_CHARS } from "./brief-constants.ts";
+import {
+  MAX_CONFLICTS,
+  MAX_FINDINGS,
+  MAX_QUOTE_CHARS,
+  MAX_REF_TITLE_CHARS,
+} from "./brief-constants.ts";
 import { buildServerGaps } from "./brief-gaps.ts";
 import { parseModelJson, validateReport } from "./brief-report.ts";
 import type { BriefRun, Report, SourceRegistry } from "./brief-types.ts";
@@ -86,9 +91,13 @@ export async function runSynthesis(
     return { error: "synthesis_invalid" };
   }
 
+  // The stored title is at most MAX_SOURCE_BYTES (see brief-run-store.ts), which is still
+  // far too large for one gap line — clip it here, not by mutating the stored source.
   const truncatedTitles = [...deps.run.sources.values()]
     .filter((s) => s.truncated)
-    .map((s) => s.title);
+    .map((s) =>
+      s.title.length > MAX_REF_TITLE_CHARS ? `${s.title.slice(0, MAX_REF_TITLE_CHARS)}…` : s.title,
+    );
 
   const gaps = buildServerGaps({
     declaredCount: deps.run.declared.size,

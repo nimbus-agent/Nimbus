@@ -447,12 +447,14 @@ test("run_capacity is distinguishable from source_too_large over the wire, and a
     expect(tooLargeBody.error).toBe("payload_too_large");
     expect(tooLargeBody.detail).toBe("source_too_large");
 
-    // MAX_RUN_BYTES is an exact multiple of MAX_SOURCE_BYTES (4 MiB / 256 KiB = 16): feeding
-    // exactly that many sources, each exactly at the per-source cap, lands exactly on the run
-    // budget and all of them are accepted.
+    // MAX_RUN_BYTES is an exact multiple of MAX_SOURCE_BYTES (4 MiB / 256 KiB = 16). The
+    // per-source accounting also counts title + url (see brief-run-store.ts addSource), so
+    // leave headroom below the per-source cap for those — 64 bytes comfortably covers the
+    // longest `title`/`url` pair used in this run (well under 64 bytes combined).
+    const NEAR_CAP_BODY_BYTES = MAX_SOURCE_BYTES - 64;
     const acceptedCount = Math.floor(MAX_RUN_BYTES / MAX_SOURCE_BYTES);
     for (let i = 1; i <= acceptedCount; i++) {
-      const res = await feed(i, MAX_SOURCE_BYTES);
+      const res = await feed(i, NEAR_CAP_BODY_BYTES);
       expect(res.status).toBe(200);
       const body = (await res.json()) as SourceOk;
       expect(body.accepted).toBe(true);
@@ -460,7 +462,7 @@ test("run_capacity is distinguishable from source_too_large over the wire, and a
 
     // The next feed pushes the run over its byte budget — capacity, not size.
     const capacityIndex = acceptedCount + 1;
-    const capacityRes = await feed(capacityIndex, MAX_SOURCE_BYTES);
+    const capacityRes = await feed(capacityIndex, NEAR_CAP_BODY_BYTES);
     expect(capacityRes.status).toBe(413);
     const capacityBody = (await capacityRes.json()) as ErrorBody;
     expect(capacityBody.error).toBe("payload_too_large");

@@ -173,7 +173,9 @@ export class BriefRunController {
 
     // NFC once, here, so quote offsets computed later line up with what we hold.
     const body = input.body.normalize("NFC");
-    const bytes = utf8Bytes(body);
+    // Every string this source pins in memory counts, not just the body — an unbounded
+    // title/url would otherwise evade both the per-source and per-run caps entirely.
+    const bytes = utf8Bytes(body) + utf8Bytes(input.title) + utf8Bytes(input.url);
     if (bytes > MAX_SOURCE_BYTES) return { error: "source_too_large" };
     if (run.bytesHeld + bytes > MAX_RUN_BYTES) return { error: "run_capacity" };
 

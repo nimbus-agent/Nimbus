@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MAX_REF_TITLE_CHARS } from "./brief-constants.ts";
 import { buildRegistry } from "./brief-registry.ts";
 import { BriefRunController } from "./brief-run-store.ts";
 import { type BriefSynthesizerLlm, buildPrompt, runSynthesis } from "./brief-synthesis.ts";
@@ -238,5 +239,39 @@ describe("runSynthesis", () => {
     });
     if ("error" in out) throw new Error(out.error);
     expect(out.report.gaps.join(" ")).toContain("Truncated Page");
+  });
+
+  test("a very long truncated-source title is bounded in the gap, not shown verbatim", async () => {
+    const c = new BriefRunController({ nowMs: () => 1000 });
+    const longTitle = "T".repeat(300);
+    const out0 = c.create({
+      brief: "do workers die",
+      sources: [{ url: "https://a.test/0", title: longTitle }],
+      useIndex: false,
+    });
+    if ("error" in out0) throw new Error("expected a run");
+    c.addSource(out0.run, {
+      url: "https://a.test/0",
+      title: longTitle,
+      body: "partial body",
+      capturedAt: 1,
+      truncated: true,
+    });
+    const { registry } = await buildRegistry(out0.run, null);
+    const out = await runSynthesis({
+      run: out0.run,
+      registry,
+      ...base,
+      llm: llmReturning(EMPTY_JSON),
+    });
+    if ("error" in out) throw new Error(out.error);
+    const gapLine = out.report.gaps.find((g) => g.includes("was truncated during extraction"));
+    expect(gapLine).toBeDefined();
+    expect(gapLine).not.toContain(longTitle);
+    const match = gapLine?.match(/Source "(.+)" was truncated/);
+    expect(match).not.toBeNull();
+    const shown = match?.[1] ?? "";
+    // <= MAX_REF_TITLE_CHARS characters plus a single ellipsis character.
+    expect(shown.length).toBeLessThanOrEqual(MAX_REF_TITLE_CHARS + 1);
   });
 });

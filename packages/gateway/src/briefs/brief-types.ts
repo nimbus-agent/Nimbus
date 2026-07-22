@@ -38,7 +38,7 @@ export type BriefSource = {
   readonly body: string;
   readonly capturedAt: number;
   readonly truncated: boolean;
-  /** Buffer.byteLength(body, "utf8"). */
+  /** Sum of Buffer.byteLength(x, "utf8") over body, title, and url — the full held cost. */
   readonly bytes: number;
 };
 

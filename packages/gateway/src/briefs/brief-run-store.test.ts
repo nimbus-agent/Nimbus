@@ -199,6 +199,47 @@ describe("addSource", () => {
     ).toEqual({ error: "source_too_large" });
   });
 
+  test("rejects a source with a small body but an oversized title", () => {
+    const { c } = fixture();
+    const run = created(c);
+    const out = c.addSource(run, {
+      url: "https://a.test/1",
+      title: "x".repeat(MAX_SOURCE_BYTES + 1),
+      body: "x",
+      capturedAt: 1,
+      truncated: false,
+    });
+    expect(out).toEqual({ error: "source_too_large" });
+  });
+
+  test("titles count toward the run byte budget, not just bodies", () => {
+    const { c } = fixture();
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      url: `https://a.test/${i}`,
+      title: `T${i}`,
+    }));
+    const run = created(c, many);
+    // Just under MAX_SOURCE_BYTES on its own (with headroom for the tiny body + url), so
+    // each source passes the per-source cap but 16+ of them blow the 4 MB run budget.
+    const title = "x".repeat(MAX_SOURCE_BYTES - 64);
+    let sawCapacity = false;
+    for (let i = 0; i < 20; i++) {
+      const out = c.addSource(run, {
+        url: `https://a.test/${i}`,
+        title,
+        body: "x",
+        capturedAt: 1,
+        truncated: false,
+      });
+      if ("error" in out && out.error === "run_capacity") {
+        sawCapacity = true;
+        break;
+      }
+    }
+    expect(sawCapacity).toBe(true);
+    expect(run.bytesHeld).toBeLessThanOrEqual(MAX_RUN_BYTES);
+  });
+
   test("rejects once the run byte budget is exhausted", () => {
     const { c } = fixture();
     const many = Array.from({ length: 20 }, (_, i) => ({
@@ -206,7 +247,9 @@ describe("addSource", () => {
       title: `T${i}`,
     }));
     const run = created(c, many);
-    const body = "x".repeat(MAX_SOURCE_BYTES);
+    // Leave headroom below MAX_SOURCE_BYTES for the title + url, which now count too
+    // (see brief-run-store.ts addSource).
+    const body = "x".repeat(MAX_SOURCE_BYTES - 64);
     let sawCapacity = false;
     for (let i = 0; i < 20; i++) {
       const out = c.addSource(run, {
