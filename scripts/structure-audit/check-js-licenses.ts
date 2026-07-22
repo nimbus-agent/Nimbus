@@ -35,8 +35,12 @@ const ALLOWED_LICENSES: ReadonlySet<string> = new Set([
 ]);
 
 const PACKAGE_OVERRIDES: ReadonlySet<string> = new Set([
-  "@img/sharp-libvips-linux-x64@1.2.4",
-  "@img/sharp-libvips-linuxmusl-x64@1.2.4",
+  // sharp's prebuilt libvips native binaries are LGPL-3.0, dynamically linked
+  // (not statically compiled into our AGPL code) — the standard, already-accepted
+  // sharp arrangement. Version-pinned here so a bump is reviewed; sharp 0.35.3
+  // moved these from 1.2.4 to 1.3.2.
+  "@img/sharp-libvips-linux-x64@1.3.2",
+  "@img/sharp-libvips-linuxmusl-x64@1.3.2",
   "flatbuffers@1.12.0",
 ]);
 
