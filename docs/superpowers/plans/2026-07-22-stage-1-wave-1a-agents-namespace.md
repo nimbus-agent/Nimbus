@@ -701,8 +701,8 @@ It drives the real `dispatchAgentsRpc` against an in-memory DB and captures what
  * Usage: bun run scripts/gen-agent-brief-fixtures.ts > agent-briefs.json
  */
 import { Database } from "bun:sqlite";
+import { LocalIndex } from "../packages/gateway/src/index/local-index.ts";
 import { dispatchAgentsRpc } from "../packages/gateway/src/ipc/agents-rpc.ts";
-import { migrateToLatest } from "../packages/gateway/src/index/runner.ts";
 
 const PARAMS: Record<string, Record<string, unknown>> = {
   expert: { topicOrFile: "src/payments/charge.ts" },
@@ -718,8 +718,9 @@ const PARAMS: Record<string, Record<string, unknown>> = {
 const out: Record<string, unknown> = {};
 
 for (const [agent, params] of Object.entries(PARAMS)) {
+  // Same schema bootstrap the agents-rpc tests use (`freshDb()` in agents-rpc.test.ts).
   const db = new Database(":memory:");
-  migrateToLatest(db);
+  LocalIndex.ensureSchema(db);
 
   const payload = await new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${agent} never emitted`)), 20_000);
@@ -744,7 +745,14 @@ process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
 
 - [ ] **Step 2: Run it and inspect the output**
 
-Run: `bun run scripts/gen-agent-brief-fixtures.ts > /tmp/agent-briefs.json && node -e "const o=require('/tmp/agent-briefs.json'); console.log(Object.keys(o)); console.log(o.conflicts.findings.kind)"`
+Windows-safe scratch path (do not use `/tmp`):
+
+```bash
+SCRATCH="$HOME/AppData/Local/Temp/claude/C--gitrep-Nimbus/dfb03fe9-a7c3-467f-8b7c-8ba1a779f8ab/scratchpad"
+mkdir -p "$SCRATCH"
+bun run scripts/gen-agent-brief-fixtures.ts > "$SCRATCH/agent-briefs.json"
+node -e "const o=require(process.argv[1]); console.log(Object.keys(o)); console.log(o.conflicts.findings.kind)" "$SCRATCH/agent-briefs.json"
+```
 
 Expected: all eight agent names printed, and `conflict` (singular) for the conflicts kind — the live confirmation of the mismatch this plan is built around.
 
@@ -1270,7 +1278,8 @@ git commit -m "feat(agents): add the eight promise methods and MockClient parity
 - [ ] **Step 1: Copy the generated fixture in**
 
 ```bash
-cp /tmp/agent-briefs.json test/fixtures/agent-briefs.json
+SCRATCH="$HOME/AppData/Local/Temp/claude/C--gitrep-Nimbus/dfb03fe9-a7c3-467f-8b7c-8ba1a779f8ab/scratchpad"
+cp "$SCRATCH/agent-briefs.json" test/fixtures/agent-briefs.json
 ```
 
 Do not hand-edit it. If it is wrong, fix the generator in the Nimbus repo and regenerate.
