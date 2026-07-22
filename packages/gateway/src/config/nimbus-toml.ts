@@ -1427,6 +1427,62 @@ export function loadNimbusShareHttpSink(configDir: string): NimbusShareHttpSink 
 }
 
 // ---------------------------------------------------------------------------
+// [briefs] — research briefs (Spine S1)
+// ---------------------------------------------------------------------------
+
+export type NimbusBriefsToml = {
+  /** Default OFF: briefs are the first surface that can send user content to a remote model. */
+  enabled: boolean;
+  /** Route synthesis to a local provider when one is available. */
+  preferLocal: boolean;
+  ttlMinutes: number;
+};
+
+export const DEFAULT_NIMBUS_BRIEFS_TOML: NimbusBriefsToml = {
+  enabled: false,
+  preferLocal: true,
+  ttlMinutes: 30,
+};
+
+function applyNimbusBriefsKey(out: Partial<NimbusBriefsToml>, key: string, valRaw: string): void {
+  switch (key) {
+    case "enabled": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.enabled = b;
+      break;
+    }
+    case "prefer_local": {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.preferLocal = b;
+      break;
+    }
+    case "ttl_minutes": {
+      const n = parseIntDec(valRaw);
+      if (n !== undefined && n > 0) out.ttlMinutes = n;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function parseNimbusBriefsToml(
+  raw: string,
+  defaults: NimbusBriefsToml = DEFAULT_NIMBUS_BRIEFS_TOML,
+): NimbusBriefsToml {
+  const out: Partial<NimbusBriefsToml> = {};
+  forEachSectionEntry(raw, "[briefs]", (key, valRaw) => applyNimbusBriefsKey(out, key, valRaw));
+  return { ...defaults, ...out };
+}
+
+// The assemble consumer reads from a path — mirror the existing loadNimbus<X>FromPath
+// helpers (there is NO `readActiveTomlRaw`; `loadTomlSection` is the real primitive and
+// already handles a missing file / parse error by returning the defaults).
+export function loadNimbusBriefsFromPath(tomlPath: string): NimbusBriefsToml {
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_BRIEFS_TOML, (raw) => parseNimbusBriefsToml(raw));
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the

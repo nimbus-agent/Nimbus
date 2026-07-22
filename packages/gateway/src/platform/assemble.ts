@@ -9,6 +9,11 @@ import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
 } from "../automation/watcher-engine.ts";
+import { createBriefLlm } from "../briefs/brief-llm-adapter.ts";
+import { buildRegistry, type IndexSearch } from "../briefs/brief-registry.ts";
+import { BriefRunController } from "../briefs/brief-run-store.ts";
+import { saveBriefReport } from "../briefs/brief-save.ts";
+import { runSynthesis } from "../briefs/brief-synthesis.ts";
 import { buildChatopsBoot, type ChatopsBoot } from "../chatops/chatops-boot.ts";
 import { buildChatopsToolRunner } from "../chatops/chatops-tool-runner.ts";
 import {
@@ -22,6 +27,7 @@ import {
   type ConnectorsConfig,
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
+  loadNimbusBriefsFromPath,
   loadNimbusChatopsFromConfigDir,
   loadNimbusConnectorsFromConfigDir,
   loadNimbusEmbeddingFromPath,
@@ -443,6 +449,10 @@ interface HttpSidecarOpts {
   clipsVault?: NimbusVault;
   pairingController?: PairingWindowController;
   scheduleEmbedding?: (id: string) => void;
+  // Research briefs (Spine S1, Task 13): threaded into ReadOnlyHttpServerOptions the same way.
+  briefRuns?: BriefRunController;
+  briefStartRun?: (runId: string) => void;
+  briefSave?: (runId: string) => { itemId: string };
 }
 
 /** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
@@ -479,6 +489,9 @@ function buildReadOnlyHttpServerOpts(
     ...(httpOpts.scheduleEmbedding === undefined
       ? {}
       : { scheduleEmbedding: httpOpts.scheduleEmbedding }),
+    ...(httpOpts.briefRuns === undefined ? {} : { briefRuns: httpOpts.briefRuns }),
+    ...(httpOpts.briefStartRun === undefined ? {} : { briefStartRun: httpOpts.briefStartRun }),
+    ...(httpOpts.briefSave === undefined ? {} : { briefSave: httpOpts.briefSave }),
   };
 }
 
@@ -1700,6 +1713,64 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     pairingController,
     ...(scheduleItemEmbedding === undefined ? {} : { scheduleEmbedding: scheduleItemEmbedding }),
   };
+
+  // Research briefs (Spine S1). Default-off; the seam stays absent unless [briefs].enabled.
+  const briefsToml = loadNimbusBriefsFromPath(activeTomlPath);
+  if (briefsToml.enabled) {
+    const briefRuns = new BriefRunController({
+      nowMs: () => Date.now(),
+      ttlMs: briefsToml.ttlMinutes * 60_000,
+    });
+    const briefLlm = createBriefLlm(llmRegistry.llmRouter);
+    const briefSearch: IndexSearch = async (query, limit) => {
+      const hits = await localIndex.searchRankedAsync(
+        { name: query, itemType: "web_clip", limit },
+        { semantic: true, contextChunks: 2 },
+      );
+      return {
+        // NOTE: RankedIndexItem extends the SDK's NimbusItem, whose title field is `name`
+        // — there is no `title` and no `body_preview` on it (see index/ranked-item.ts and
+        // @nimbus-dev/sdk types.d.ts). The only body text available here is the matched
+        // chunk in `semanticSnippet`, which is absent on the BM25 fallback path.
+        hits: hits.map((h) => ({
+          itemId: h.indexPrimaryKey,
+          title: h.name,
+          url: h.url ?? h.canonicalUrl ?? null,
+          snippet: h.semanticSnippet ?? h.name,
+        })),
+        // A hit with no vectorRank anywhere means the hybrid path did not run.
+        semanticAvailable: hits.some((h) => h.vectorRank !== undefined && h.vectorRank !== null),
+      };
+    };
+    httpSidecarOpts.briefRuns = briefRuns;
+    httpSidecarOpts.briefStartRun = (runId: string): void => {
+      const run = briefRuns.get(runId);
+      if (run === null) return;
+      briefRuns.markRunning(run);
+      void (async () => {
+        const { registry, indexHits, semanticAvailable, searchFailed } = await buildRegistry(
+          run,
+          briefSearch,
+        );
+        const out = await runSynthesis({
+          run,
+          registry,
+          indexHits,
+          semanticAvailable,
+          searchFailed,
+          llm: briefLlm,
+        });
+        if ("error" in out) briefRuns.fail(run, out.error);
+        else briefRuns.finish(run, out.report);
+      })().catch(() => briefRuns.fail(run, "internal_error"));
+    };
+    httpSidecarOpts.briefSave = (runId: string) => {
+      const run = briefRuns.get(runId);
+      if (run === null) throw new Error("run not found");
+      return saveBriefReport(db, run, scheduleItemEmbedding);
+    };
+  }
+
   const identityBoot = bootIdentityIntoIpcOpts({
     configDir: paths.configDir,
     localIndex,

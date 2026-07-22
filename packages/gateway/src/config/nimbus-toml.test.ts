@@ -23,6 +23,7 @@ import { join } from "node:path";
 
 import {
   DEFAULT_NIMBUS_AUTOMATION_TOML,
+  DEFAULT_NIMBUS_BRIEFS_TOML,
   DEFAULT_NIMBUS_EMBEDDING_TOML,
   DEFAULT_NIMBUS_LAN_TOML,
   DEFAULT_NIMBUS_UPDATER_TOML,
@@ -30,6 +31,7 @@ import {
   loadNimbusAuditFromPath,
   loadNimbusAutomationFromConfigDir,
   loadNimbusAutomationFromPath,
+  loadNimbusBriefsFromPath,
   loadNimbusChatopsFromConfigDir,
   loadNimbusEmbeddingFromConfigDir,
   loadNimbusEmbeddingFromPath,
@@ -1024,6 +1026,55 @@ describe("loadNimbusChatopsFromConfigDir", () => {
   test("returns defaults when nimbus.toml is missing", () => {
     const result = loadNimbusChatopsFromConfigDir(dir);
     expect(result.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Briefs — loadNimbusBriefsFromPath
+// ---------------------------------------------------------------------------
+
+describe("loadNimbusBriefsFromPath", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("returns defaults when the [briefs] section is absent", () => {
+    const p = writeToml(dir, "[llm]\nprefer_local = true\n");
+    const result = loadNimbusBriefsFromPath(p);
+    expect(result).toEqual(DEFAULT_NIMBUS_BRIEFS_TOML);
+  });
+
+  test("returns defaults when nimbus.toml is missing", () => {
+    const result = loadNimbusBriefsFromPath(join(dir, "nimbus.toml"));
+    expect(result).toEqual(DEFAULT_NIMBUS_BRIEFS_TOML);
+  });
+
+  test("enabled = true parses", () => {
+    const p = writeToml(dir, "[briefs]\nenabled = true\n");
+    const result = loadNimbusBriefsFromPath(p);
+    expect(result.enabled).toBe(true);
+  });
+
+  test("prefer_local = false parses", () => {
+    const p = writeToml(dir, "[briefs]\nprefer_local = false\n");
+    const result = loadNimbusBriefsFromPath(p);
+    expect(result.preferLocal).toBe(false);
+  });
+
+  test("an unknown key is ignored", () => {
+    const p = writeToml(dir, "[briefs]\nbogus_key = 1\n");
+    const result = loadNimbusBriefsFromPath(p);
+    expect(result).toEqual(DEFAULT_NIMBUS_BRIEFS_TOML);
+  });
+
+  test("ttl_minutes = 0 is rejected in favour of the default", () => {
+    const p = writeToml(dir, "[briefs]\nttl_minutes = 0\n");
+    const result = loadNimbusBriefsFromPath(p);
+    expect(result.ttlMinutes).toBe(DEFAULT_NIMBUS_BRIEFS_TOML.ttlMinutes);
   });
 });
 
