@@ -531,7 +531,7 @@ async function handleClipRelated(
 // GET /v1/briefs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,
 // NOT in dispatchReadOnlyDataGet: that table is documented "no bearer gate", so routing briefs
 // through it would expose a user's research report to any local process on the machine.
-const BRIEF_GET_RE = /^\/v1\/briefs\/([A-Za-z0-9_]{1,64})$/;
+const BRIEF_GET_RE = /^\/v1\/briefs\/(\w{1,64})$/;
 
 /** Kept identical to http-write-routes.ts BRIEF_DISABLED_HINT — one string, two surfaces. */
 const BRIEFS_DISABLED_HINT = "research briefs disabled — enable [briefs] in nimbus.toml";

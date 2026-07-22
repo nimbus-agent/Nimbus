@@ -601,9 +601,9 @@ test("leak check: the bearer token, the fed source body, and its URL never appea
     );
 
     for (const text of bodies) {
-      expect(text.includes(s.token)).toBe(false);
-      expect(text.includes(SENTINEL_BODY)).toBe(false);
-      expect(text.includes(SENTINEL_URL_TOKEN)).toBe(false);
+      expect(text).not.toContain(s.token);
+      expect(text).not.toContain(SENTINEL_BODY);
+      expect(text).not.toContain(SENTINEL_URL_TOKEN);
     }
 
     const auditRows = s.db.query("SELECT action_json FROM audit_log").all() as {

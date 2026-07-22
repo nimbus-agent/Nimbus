@@ -35,8 +35,12 @@ function makeInMemoryVault(): NimbusVault {
   );
   return {
     get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => void store.set(k, v),
-    delete: async (k: string) => void store.delete(k),
+    set: async (k: string, v: string) => {
+      store.set(k, v);
+    },
+    delete: async (k: string) => {
+      store.delete(k);
+    },
     listKeys: async (prefix?: string) => {
       const keys = [...store.keys()];
       return prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix));

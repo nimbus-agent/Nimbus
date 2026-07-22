@@ -62,7 +62,7 @@ export class BriefRunController {
   constructor(deps: BriefRunControllerDeps) {
     this.nowMs = deps.nowMs;
     this.ttlMs = deps.ttlMs ?? DEFAULT_RUN_TTL_MS;
-    this.genId = deps.genId ?? (() => `run_${randomUUID().replace(/-/g, "").slice(0, 20)}`);
+    this.genId = deps.genId ?? (() => `run_${randomUUID().replaceAll("-", "").slice(0, 20)}`);
   }
 
   /**
