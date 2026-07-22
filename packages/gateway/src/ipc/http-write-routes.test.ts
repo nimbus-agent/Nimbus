@@ -1363,6 +1363,7 @@ test("POST /v1/briefs/{id}/sources on a non-collecting run -> 409 invalid_state"
   );
   expect(res.status).toBe(409);
   expect(await res.json()).toEqual({ error: "invalid_state" });
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/sources for an unknown id -> 404 not_found", async () => {
@@ -1373,6 +1374,7 @@ test("POST /v1/briefs/{id}/sources for an unknown id -> 404 not_found", async ()
   );
   expect(res.status).toBe(404);
   expect(await res.json()).toEqual({ error: "not_found" });
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/sources for an expired run -> 410 expired", async () => {
@@ -1390,6 +1392,7 @@ test("POST /v1/briefs/{id}/sources for an expired run -> 410 expired", async () 
   );
   expect(res.status).toBe(410);
   expect(await res.json()).toEqual({ error: "expired" });
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/sources with no bearer -> 401", async () => {
@@ -1502,6 +1505,7 @@ test("POST /v1/briefs/{id}/run for an unknown id -> 404 not_found", async () => 
   const res = await dispatchWriteRoute(briefReq("/v1/briefs/nonexistent12345/run"), ctx);
   expect(res.status).toBe(404);
   expect(await res.json()).toEqual({ error: "not_found" });
+  expect(auditCount(ctx.writeDb, "brief.run_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/run with a wrong bearer -> 401", async () => {
@@ -1512,6 +1516,14 @@ test("POST /v1/briefs/{id}/run with a wrong bearer -> 401", async () => {
     briefReq(`/v1/briefs/${run.id}/run`, undefined, "wrong-token"),
     ctx,
   );
+  expect(res.status).toBe(401);
+});
+
+test("POST /v1/briefs/{id}/run with no bearer -> 401", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/run`, undefined, null), ctx);
   expect(res.status).toBe(401);
 });
 
@@ -1532,6 +1544,7 @@ test("POST /v1/briefs/{id}/save on a non-done (collecting) run -> 409 invalid_st
   const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`), ctx);
   expect(res.status).toBe(409);
   expect(await res.json()).toEqual({ error: "invalid_state" });
+  expect(auditCount(ctx.writeDb, "brief.save_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/save maps ReportTooLargeError to 409 report_too_large (not 500)", async () => {
@@ -1574,6 +1587,7 @@ test("POST /v1/briefs/{id}/save for an unknown id -> 404 not_found", async () =>
   const res = await dispatchWriteRoute(briefReq("/v1/briefs/nonexistent12345/save"), ctx);
   expect(res.status).toBe(404);
   expect(await res.json()).toEqual({ error: "not_found" });
+  expect(auditCount(ctx.writeDb, "brief.save_rejected")).toBe(1);
 });
 
 test("POST /v1/briefs/{id}/save with no bearer -> 401", async () => {

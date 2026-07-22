@@ -112,10 +112,10 @@ const MAX_BODY_BYTES_BRIEF_CREATE = 64 * 1024;
 const MAX_REQUESTS_PER_WINDOW_DEFAULT = 60;
 const MAX_REQUESTS_PER_WINDOW_CLIP = 20;
 /**
- * Briefs get their OWN buckets. Clip ingest runs on a constant `"clip"` fingerprint at
- * 20/min shared across all clipper clients; a brief sweep is up to 23 calls (1 create +
- * 20 sources + run + save) and on that bucket would both 429 itself and starve ordinary
- * clipping.
+ * Bounds the `"brief-src"` bucket ONLY — the source-feed calls of a brief sweep, up to
+ * MAX_SOURCES_PER_RUN (20) feeds. This is a SEPARATE bucket from `"brief"` (create/run/save,
+ * see MAX_REQUESTS_PER_WINDOW_DEFAULT): a sweep feeding up to 20 sources back-to-back cannot
+ * starve ordinary clipping/control calls on the `"brief"` bucket, and vice versa.
  */
 const MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE = 60;
 
@@ -1040,13 +1040,32 @@ async function runBriefCreateRoute(
 }
 
 /** Resolves a run id to a run, or the 404/410 Response the client keys its discard on. */
-function lookupRun(ctx: WriteRouteContext, id: string, limit: RateLimitCheck) {
+function lookupRun(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  id: string,
+  limit: RateLimitCheck,
+) {
   const briefs = ctx.briefs as BriefsWriteSurface;
   const run = briefs.controller.get(id);
   if (run !== null) return run;
-  return briefs.controller.wasKnown(id)
-    ? jsonResponse({ error: "expired" }, 410, rateLimitHeaders(limit))
-    : jsonResponse({ error: "not_found" }, 404, rateLimitHeaders(limit));
+  if (briefs.controller.wasKnown(id)) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 410,
+      reason: "expired",
+    });
+    return jsonResponse({ error: "expired" }, 410, rateLimitHeaders(limit));
+  }
+  recordRejection(ctx, {
+    actionType: route.rejectAction,
+    tokenFingerprint: fingerprint,
+    resultCode: 404,
+    reason: "not_found",
+  });
+  return jsonResponse({ error: "not_found" }, 404, rateLimitHeaders(limit));
 }
 
 async function runBriefSourceRoute(
@@ -1060,9 +1079,15 @@ async function runBriefSourceRoute(
   const briefs = ctx.briefs as BriefsWriteSurface;
   const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
   if (denied !== null) return denied;
-  const found = lookupRun(ctx, route.id as string, limit);
+  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
   if (found instanceof Response) return found;
   if (found.status !== "collecting") {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 409,
+      reason: "invalid_state",
+    });
     return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
   }
   try {
@@ -1114,7 +1139,7 @@ async function runBriefRunRoute(
   const briefs = ctx.briefs as BriefsWriteSurface;
   const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
   if (denied !== null) return denied;
-  const found = lookupRun(ctx, route.id as string, limit);
+  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
   if (found instanceof Response) return found;
   // Idempotent: re-calling run is a no-op that reports where the run already is.
   if (found.status !== "collecting") {
@@ -1147,9 +1172,15 @@ async function runBriefSaveRoute(
   const briefs = ctx.briefs as BriefsWriteSurface;
   const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
   if (denied !== null) return denied;
-  const found = lookupRun(ctx, route.id as string, limit);
+  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
   if (found instanceof Response) return found;
   if (found.status !== "done") {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 409,
+      reason: "invalid_state",
+    });
     return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
   }
   try {
