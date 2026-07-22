@@ -93,7 +93,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
   // --- Nimbus: release bot + auditor ---
   {
     name: "RELEASE_BOT_APP_ID",
-    state: "optional",
+    state: "forbidden",
     location: { scope: "repo", repo: "Nimbus" },
     product: "actions",
     type: "app-key",
@@ -101,7 +101,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     consumedBy: [],
     maxAgeDays: null,
     hardDeadline: null,
-    note: "Superseded by RELEASE_BOT_CLIENT_ID (Nimbus#779); no workflow reads it any more, so it is safe to delete. Held at `optional` rather than `forbidden` deliberately: the secret still exists, and `forbidden` + present is a HARD failure that would red the monitor for a credential that is merely obsolete. Flip to `forbidden` once it is actually deleted.",
+    note: "Deleted 2026-07-22. Superseded by RELEASE_BOT_CLIENT_ID when the App-mint steps moved off the deprecated `app-id` input (Nimbus#779). No workflow reads it. If it reappears, someone has reintroduced the deprecated input.",
   },
   {
     name: "RELEASE_BOT_CLIENT_ID",
