@@ -92,7 +92,7 @@ rule applies unchanged: **shared types live in `nimbus-sdk` and flow one way**, 
 
 | # | Repo | Ships | Gate |
 | --- | --- | --- | --- |
-| 1 | `nimbus-sdk` → **1.5.0** | 8 composed brief types, `AgentBrief`, `BriefReadyPayload<B>`, `AGENT_NAMES` + `AgentName`, `BriefFor<A>`, 8 concrete guards | typecheck + guard accept/reject units |
+| 1 | `nimbus-sdk` → **1.5.0** | 8 composed brief types + their supporting types (`ExpertiseRank`, `ImpactCategory`, `FederatedItemLite`, `GhostFinding`, `ConflictFinding`, `HuddleContribution`), `AgentBrief`, `BriefReadyPayload<B>`, `AGENT_NAMES` + `AgentName`, `BriefFor<A>`, `AGENT_KIND`, 8 concrete guards | typecheck + guard accept/reject units |
 | 2 | `Nimbus` | gateway + CLI re-export from SDK; local copies deleted | existing gateway/CLI suites pass **unchanged** + `preflight:fast` |
 | 3 | `nimbus-client` → **0.7.0** | `subscribeAgentBrief` + 8 promise methods + validators + `MockClient` parity + conformance | validator units, mock parity, **the new conformance gate** |
 
@@ -184,7 +184,14 @@ payloads to JSON. That file is committed to the client's `test/fixtures/`, and t
 recipe is added to the existing `test/fixtures/README.md`.
 
 The gate asserts, per agent: the golden payload validates; `findings` passes the SDK guard;
-`agentVersion === 1`; `gaps` is an array; and every `kind` matches its agent name.
+`agentVersion === 1`; `gaps` is an array; and every `kind` matches the value in the explicit
+`AGENT_KIND` map.
+
+**`kind` is not always the agent name.** The `conflicts` agent emits `kind: "conflict"` — singular —
+while its method is `agents.conflicts` and its notification is `conflicts.briefReady`
+(`findings.ts:96`, guard at `findings.ts:174`). The other seven match. So the mapping is an explicit
+table, never a string derivation; a wrapper that assumes `kind === agent` rejects every valid
+conflicts brief.
 
 **Red-prove before green.** Drop `agentVersion` from one fixture brief and confirm the conformance
 test fails; restore it and confirm it passes. Same discipline for each guard. A gate never observed
@@ -197,11 +204,26 @@ failing is not a gate.
 check; every gateway guard and the remaining cli guards include it."* Promoting to one shared guard
 forces a single behaviour.
 
+Measured: **all eight gateway guards pass `requireQuery: true`**; the CLI omits it on exactly
+`isExpertBrief`, `isImpactBrief` and `isCatchupBrief`. So promoting the strict variant tightens
+exactly three CLI guards and nothing else.
+
 Resolution: the SDK exports the **gateway-strict** variants — the gateway is the producer and defines
 the wire. If that reddens CLI tests, PR 2 de-duplicates the *types* only and leaves the CLI's laxer
-guards local with a comment explaining why. **Verify shape-identity between the two copies before
-assuming they can merge at all** — the CLI declares `ExpertBrief = { … }` where the gateway declares
-`AgentBriefBase & { … }`, and equality is not established until read field-by-field.
+guards local with a comment explaining why.
+
+Shape-identity **has been verified** and the copies can merge: the CLI declares
+`ExpertBrief = { kind; agentVersion; generatedAt; latencyMs; gaps; … }` where the gateway declares
+`AgentBriefBase & { … }` — the same four base fields, inlined rather than intersected. Likewise
+CLI's `GhostContextItem` ≡ gateway's `FederatedItemLite`, and CLI's inline
+`rank: "high" | "medium" | "low" | "none"` ≡ `ExpertiseRank`
+(`gateway/src/federation/types.ts:61`), which the CLI's own comment already flags as a mirror.
+
+**Consequence for PR 1:** the promotion is larger than the eight briefs. `ExpertiseRank` currently
+lives in gateway `federation/types.ts` — a gateway-internal module — so `GhostBrief` cannot move to
+the SDK without it. PR 1 must also promote the supporting types: `ExpertiseRank`, `ImpactCategory`,
+`FederatedItemLite`, `GhostFinding`, `ConflictFinding`, `HuddleContribution`. The gateway then
+re-exports `ExpertiseRank` from the SDK to keep `federation/types.ts` consumers working.
 
 **Release latency.** Three repos, one npm publish on the critical path. PR 2 is deliberately kept off
 that path so a slow publish does not block de-duplication.
