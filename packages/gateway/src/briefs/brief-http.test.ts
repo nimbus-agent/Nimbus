@@ -226,15 +226,15 @@ describe("GET /v1/briefs/{id} lifecycle", () => {
     }
   });
 
-  test("a malformed run id (too long / bad chars) is not swallowed by the POST sub-path regex", async () => {
+  test("GET with a POST sub-path (/sources) does not match BRIEF_GET_RE and returns 404", async () => {
     const s = await startBriefTestServer();
     try {
       // A path that does NOT match BRIEF_GET_RE (contains a slash) falls through to the
-      // unauthenticated 404 table rather than being treated as a brief id.
+      // generic GET handler, which returns 404 for unknown paths.
       const res = await fetch(`http://127.0.0.1:${s.port}/v1/briefs/run_ok/sources`, {
         headers: { authorization: `Bearer ${s.token}` },
       });
-      expect(res.status).not.toBe(200);
+      expect(res.status).toBe(404);
     } finally {
       s.stop();
     }

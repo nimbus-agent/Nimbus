@@ -47,6 +47,12 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // logic is covered via the byte-identical `gw-state-helpers.ts` twin (which IS tested).
   { kind: "exact", path: "packages/cli/src/lib/gateway-process.ts" },
 
+  // ── Cross-task test harness ──
+  // `brief-test-server.ts` is test-only but not .test.ts-suffixed, so it isn't auto-skipped;
+  // imported by brief tests rather than redefined. Defensive branches (TOCTOU, stop() errors) can't
+  // meet the production floor.
+  { kind: "exact", path: "packages/gateway/src/briefs/brief-test-server.ts" },
+
   // ── Generated SQL ──
   { kind: "pathRegex", re: /^packages\/gateway\/src\/index\/[^/]+-v\d+-sql\.ts$/ },
 
