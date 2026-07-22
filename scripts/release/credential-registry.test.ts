@@ -55,8 +55,8 @@ describe("CREDENTIAL_REGISTRY", () => {
       const loc = e.location.scope === "org" ? "ORG" : (e.location.repo ?? "-");
       counts.set(loc, (counts.get(loc) ?? 0) + 1);
     }
-    expect(counts.get("ORG")).toBe(2);
-    expect(counts.get("Nimbus")).toBe(25);
+    expect(counts.get("ORG")).toBe(4);
+    expect(counts.get("Nimbus")).toBe(23);
     expect(counts.get("nimbus-vscode")).toBe(2);
     expect(counts.get("nimbus-web-clipper")).toBe(7);
   });
