@@ -1,3 +1,6 @@
+// Canonical definition now lives in @nimbus-dev/sdk (GhostBrief depends on it).
+import type { ExpertiseRank } from "@nimbus-dev/sdk";
+
 export type FederationRole = "owner" | "editor" | "viewer";
 
 export type FilterKind = "service" | "type" | "tag";
@@ -58,7 +61,7 @@ export type FederationDecision =
   | "consent_denied"
   | "identity_invalid";
 
-export type ExpertiseRank = "high" | "medium" | "low" | "none";
+export type { ExpertiseRank };
 
 export interface ExpertiseRequest {
   readonly query: string;
