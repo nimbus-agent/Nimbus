@@ -61,20 +61,15 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
   // --- org scope ---
   {
     name: "RELEASE_PLEASE_PAT",
-    state: "required",
+    state: "forbidden",
     location: { scope: "org" },
     product: "actions",
     type: "pat",
     owner: OWNER,
-    consumedBy: [
-      "nimbus-sdk/.github/workflows/release.yml",
-      "nimbus-client/.github/workflows/release.yml",
-      "nimbus-vscode/.github/workflows/release-please.yml",
-    ],
-    maxAgeDays: 90,
+    consumedBy: [],
+    maxAgeDays: null,
     hardDeadline: null,
-    expectedVisibility: "selected",
-    note: "Interim state. Migrating the satellites onto the Release Bot App retires this entirely.",
+    note: "Deleted 2026-07-22 — the last long-lived release PAT retired. All four consumers now mint from the Release Bot App: Nimbus (#787), nimbus-client (#8), nimbus-sdk (#16), nimbus-vscode (#42), each proven with a live 'Mint release-bot token: success'. If this reappears, someone has reintroduced a PAT where the App now works.",
   },
   {
     name: "SONAR_TOKEN",
