@@ -3467,7 +3467,7 @@ any local process."
 
 **Interfaces:**
 - Consumes: `LlmRouter` (`llm/router.ts`), `BriefSynthesizerLlm` (Task 9), `BriefRunController` (Task 6), `buildRegistry` (Task 8), `runSynthesis` (Task 9), `saveBriefReport` (Task 10).
-- Produces: `createBriefLlm(router: LlmRouter): BriefSynthesizerLlm`; `NimbusBriefsToml`; `DEFAULT_NIMBUS_BRIEFS_TOML`; `parseNimbusBriefsToml`.
+- Produces: `createBriefLlm(router: LlmRouter): BriefSynthesizerLlm`; `NimbusBriefsToml`; `DEFAULT_NIMBUS_BRIEFS_TOML`; `parseNimbusBriefsToml`; `loadNimbusBriefsFromPath`.
 
 - [ ] **Step 1: Write the adapter test**
 
@@ -3622,17 +3622,47 @@ export function parseNimbusBriefsToml(
   forEachSectionEntry(raw, "[briefs]", (key, valRaw) => applyNimbusBriefsKey(out, key, valRaw));
   return { ...defaults, ...out };
 }
+
+// The assemble consumer reads from a path — mirror the existing loadNimbus<X>FromPath
+// helpers (there is NO `readActiveTomlRaw`; `loadTomlSection` is the real primitive and
+// already handles a missing file / parse error by returning the defaults).
+export function loadNimbusBriefsFromPath(tomlPath: string): NimbusBriefsToml {
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_BRIEFS_TOML, (raw) =>
+    parseNimbusBriefsToml(raw),
+  );
+}
 ```
 
 Add a matching test in `packages/gateway/src/config/nimbus-toml.test.ts` covering: defaults when the section is absent, `enabled = true` parsing, and `ttl_minutes = 0` being rejected in favour of the default.
 
 - [ ] **Step 5: Wire it in `assemble.ts`**
 
+> **FIRST — thread three fields through the sidecar-options type, or the wiring below
+> will NOT typecheck.** `httpSidecarOpts` is of the assemble-local interface
+> `HttpSidecarOpts` (defined ~`:435`), which is a DISTINCT type from
+> `ReadOnlyHttpServerOptions` and is mapped into it field-by-field by
+> `buildReadOnlyHttpServerOpts` (~`:458`). It does NOT currently carry the brief
+> fields. So before the wiring block:
+> 1. Add to the `HttpSidecarOpts` interface, beside `clipsVault`/`pairingController`/`scheduleEmbedding`:
+> ```ts
+>   briefRuns?: BriefRunController;
+>   briefStartRun?: (runId: string) => void;
+>   briefSave?: (runId: string) => { itemId: string };
+> ```
+> 2. In `buildReadOnlyHttpServerOpts`, add three conditional spreads mirroring the
+>    existing ones, so they reach `ReadOnlyHttpServerOptions`:
+> ```ts
+>     ...(httpOpts.briefRuns === undefined ? {} : { briefRuns: httpOpts.briefRuns }),
+>     ...(httpOpts.briefStartRun === undefined ? {} : { briefStartRun: httpOpts.briefStartRun }),
+>     ...(httpOpts.briefSave === undefined ? {} : { briefSave: httpOpts.briefSave }),
+> ```
+> Import `BriefRunController` at the top of `assemble.ts` (it is also imported for the wiring below).
+
 Immediately after the existing `pairingController` block (around `:1688`), add:
 
 ```ts
   // Research briefs (Spine S1). Default-off; the seam stays absent unless [briefs].enabled.
-  const briefsToml = parseNimbusBriefsToml(readActiveTomlRaw(activeTomlPath));
+  const briefsToml = loadNimbusBriefsFromPath(activeTomlPath);
   if (briefsToml.enabled) {
     const briefRuns = new BriefRunController({
       nowMs: () => Date.now(),
@@ -3692,10 +3722,10 @@ import { buildRegistry, type IndexSearch } from "../briefs/brief-registry.ts";
 import { BriefRunController } from "../briefs/brief-run-store.ts";
 import { saveBriefReport } from "../briefs/brief-save.ts";
 import { runSynthesis } from "../briefs/brief-synthesis.ts";
-import { parseNimbusBriefsToml } from "../config/nimbus-toml.ts";
+import { loadNimbusBriefsFromPath } from "../config/nimbus-toml.ts";
 ```
 
-> `readActiveTomlRaw` / `activeTomlPath` / `localIndex` / `db` / `llmRegistry` /
+> `activeTomlPath` / `localIndex` / `db` / `llmRegistry` /
 > `scheduleItemEmbedding` are all already in scope at this point in `assemble.ts`
 > — match the exact names the surrounding code uses (see `buildLlmRegistryFromToml`
 > at `:899` and the sidecar options built at `:1699`). If a name differs, use the
@@ -3857,4 +3887,4 @@ is one command away from where they already are."
 
 **Type consistency check:** `BriefRunController.get` returns `BriefRun | null` (not `undefined`) at every call site; `addSource` returns the `{ accepted, received } | { error }` union in Tasks 6 and 11 identically; `BriefSynthesizerLlm.generateJson` returns `{ text, model, remote } | null` in Tasks 9 and 13 identically; `IndexSearch` returns `{ hits, semanticAvailable }` in Tasks 8 and 13 identically; `saveBriefReport` returns `{ itemId }` in Tasks 10, 11, and 13 identically.
 
-**Riskiest task:** 13 — it is the only one touching `assemble.ts`, which has the most surrounding context to match, and the only one where a name mismatch (`readActiveTomlRaw`, `scheduleItemEmbedding`) will surface as a typecheck error rather than a test failure. Do that task with the file open, not from memory.
+**Riskiest task:** 13 — it is the only one touching `assemble.ts`, which has the most surrounding context to match, and the only one where a name mismatch (e.g. `scheduleItemEmbedding`) will surface as a typecheck error rather than a test failure. Do that task with the file open, not from memory.
