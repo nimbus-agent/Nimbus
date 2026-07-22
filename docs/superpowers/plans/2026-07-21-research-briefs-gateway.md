@@ -96,6 +96,7 @@ export const MAX_INDEX_HITS = 8;
 Two pure refactors with zero behaviour change, landed first so the feature can consume them: the URL canonicalizer (clips and briefs must dedupe identically) and the bearer-header parser (which is about to gain a third copy).
 
 **Files:**
+
 - Create: `packages/gateway/src/util/url-canonical.ts`
 - Create: `packages/gateway/src/util/url-canonical.test.ts`
 - Modify: `packages/gateway/src/clips/clip-ingest.ts` (remove the local `canonicalizeUrl`, import the shared one)
@@ -105,6 +106,7 @@ Two pure refactors with zero behaviour change, landed first so the feature can c
 - Modify: `packages/gateway/src/ipc/http-server.ts` (`handleClipRelated` uses the shared helper)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `canonicalizeUrl(raw: string): string`; `bearerToken(req: Request): string | undefined`.
 
@@ -304,10 +306,12 @@ change."
 Tiny, but every later task imports from here, so it lands on its own.
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-constants.ts`
 - Create: `packages/gateway/src/briefs/brief-types.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: all constants from Global Constraints; types `SourceRef`, `ReportItem`, `Report`, `BriefSource`, `BriefRunStatus`, `BriefRun`, `SourceRegistryEntry`, `SourceRegistry`.
 
@@ -460,10 +464,12 @@ git commit -m "feat(briefs): constants and types for research briefs"
 The anti-hallucination primitive. Pure, no I/O, table-tested.
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/quote-verify.ts`
 - Create: `packages/gateway/src/briefs/quote-verify.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MAX_QUOTE_CHARS` from `brief-constants.ts`.
 - Produces: `verifyQuote(body: string, quote: string): string | null` — returns the span **from the body**, or `null` when the quote cannot be located.
 
@@ -667,10 +673,12 @@ rendition. Stays case- and punctuation-sensitive on purpose."
 ## Task 4: Citation validator and report bounds
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-report.ts`
 - Create: `packages/gateway/src/briefs/brief-report.test.ts`
 
 **Interfaces:**
+
 - Consumes: `SourceRegistry`, `Report`, `ReportItem`, `SourceRef` (Task 2); `verifyQuote` (Task 3); bounds (Task 2).
 - Produces:
   - `class SynthesisParseError extends Error`
@@ -1037,10 +1045,12 @@ citation. Bounds keep the saved report inside RAW_META_MAX_BYTES."
 ## Task 5: Server-authored gaps
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-gaps.ts`
 - Create: `packages/gateway/src/briefs/brief-gaps.test.ts`
 
 **Interfaces:**
+
 - Consumes: `BriefRun` (Task 2).
 - Produces: `buildServerGaps(input: ServerGapInput): string[]` where
   `ServerGapInput = { declaredCount: number; receivedCount: number; truncatedTitles: readonly string[]; useIndex: boolean; indexHits: number; semanticAvailable: boolean; model: string; remote: boolean; boundGaps: readonly string[] }`
@@ -1208,10 +1218,12 @@ git commit -m "feat(briefs): server-authored gaps including the remote-model dis
 ## Task 6: The run store
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-run-store.ts`
 - Create: `packages/gateway/src/briefs/brief-run-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: constants (Task 2), `BriefRun`/`BriefSource`/`Report` (Task 2), `canonicalizeUrl` (Task 1).
 - Produces: `class BriefRunController` with
   - `constructor(deps: { nowMs: () => number; ttlMs?: number; genId?: () => string })`
@@ -1718,10 +1730,12 @@ never expire, and lock briefs out until a gateway restart."
 ## Task 7: Request-body validation
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-validate.ts`
 - Create: `packages/gateway/src/briefs/brief-validate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `MAX_SOURCES_PER_RUN`, `MAX_BRIEF_CHARS` (Task 2).
 - Produces:
   - `class BriefValidationError extends Error { readonly field?: string }`
@@ -1950,10 +1964,12 @@ git commit -m "feat(briefs): hand-rolled request validation with field-tagged er
 ## Task 8: The source registry
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-registry.ts`
 - Create: `packages/gateway/src/briefs/brief-registry.test.ts`
 
 **Interfaces:**
+
 - Consumes: `BriefRun`, `SourceRegistry`, `SourceRegistryEntry` (Task 2); `MAX_INDEX_HITS` (Task 2).
 - Produces:
   - `type IndexHit = { itemId: string; title: string; url: string | null; snippet: string }`
@@ -2175,10 +2191,12 @@ git commit -m "feat(briefs): opaque server-issued source registry"
 Prompt construction (I11), the LLM seam, and the orchestration that ties Tasks 3–8 together.
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-synthesis.ts`
 - Create: `packages/gateway/src/briefs/brief-synthesis.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 2–8.
 - Produces:
   - `interface BriefSynthesizerLlm { generateJson(prompt: string): Promise<{ text: string; model: string; remote: boolean } | null> }`
@@ -2513,11 +2531,13 @@ regardless of what the model was persuaded to say."
 ## Task 10: Save-back
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-save.ts`
 - Create: `packages/gateway/src/briefs/brief-save.test.ts`
 - Modify: `packages/gateway/src/embedding/routing.ts`
 
 **Interfaces:**
+
 - Consumes: `BriefRun`, `Report` (Task 2).
 - Produces:
   - `class ReportTooLargeError extends Error`
@@ -2789,11 +2809,13 @@ git commit -m "feat(briefs): save a finished report as a nimbus:research_brief i
 ## Task 11: The four write routes
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-write-routes.ts`
 - Modify: `packages/gateway/src/ipc/http-write-routes.test.ts` (allowlist count 8→12)
 - Modify: `packages/gateway/src/security-invariants.test.ts` (three count assertions)
 
 **Interfaces:**
+
 - Consumes: `BriefRunController` (Task 6), validators (Task 7), `saveBriefReport` (Task 10).
 - Produces: `interface BriefsWriteSurface` on `WriteRouteContext.briefs`:
 
@@ -3287,9 +3309,11 @@ buckets so a sweep cannot starve ordinary clipping."
 ## Task 12: The bearer-gated GET and the server seam
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-server.ts`
 
 **Interfaces:**
+
 - Consumes: `BriefsWriteSurface` (Task 11), `BriefRunController` (Task 6), `verifyClipToken` (existing).
 - Produces: `ReadOnlyHttpServerOptions.briefRuns`, `.briefStartRun`, `.briefSave`; `handleBriefGet`.
 
@@ -3460,12 +3484,14 @@ any local process."
 ## Task 13: Config, LLM adapter, and assembly
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-llm-adapter.ts`
 - Create: `packages/gateway/src/briefs/brief-llm-adapter.test.ts`
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts`
 
 **Interfaces:**
+
 - Consumes: `LlmRouter` (`llm/router.ts`), `BriefSynthesizerLlm` (Task 9), `BriefRunController` (Task 6), `buildRegistry` (Task 8), `runSynthesis` (Task 9), `saveBriefReport` (Task 10).
 - Produces: `createBriefLlm(router: LlmRouter): BriefSynthesizerLlm`; `NimbusBriefsToml`; `DEFAULT_NIMBUS_BRIEFS_TOML`; `parseNimbusBriefsToml`; `loadNimbusBriefsFromPath`.
 
@@ -3643,19 +3669,24 @@ Add a matching test in `packages/gateway/src/config/nimbus-toml.test.ts` coverin
 > `ReadOnlyHttpServerOptions` and is mapped into it field-by-field by
 > `buildReadOnlyHttpServerOpts` (~`:458`). It does NOT currently carry the brief
 > fields. So before the wiring block:
+>
 > 1. Add to the `HttpSidecarOpts` interface, beside `clipsVault`/`pairingController`/`scheduleEmbedding`:
+>
 > ```ts
 >   briefRuns?: BriefRunController;
 >   briefStartRun?: (runId: string) => void;
 >   briefSave?: (runId: string) => { itemId: string };
 > ```
-> 2. In `buildReadOnlyHttpServerOpts`, add three conditional spreads mirroring the
+>
+> 1. In `buildReadOnlyHttpServerOpts`, add three conditional spreads mirroring the
 >    existing ones, so they reach `ReadOnlyHttpServerOptions`:
+>
 > ```ts
 >     ...(httpOpts.briefRuns === undefined ? {} : { briefRuns: httpOpts.briefRuns }),
 >     ...(httpOpts.briefStartRun === undefined ? {} : { briefStartRun: httpOpts.briefStartRun }),
 >     ...(httpOpts.briefSave === undefined ? {} : { briefSave: httpOpts.briefSave }),
 > ```
+>
 > Import `BriefRunController` at the top of `assemble.ts` (it is also imported for the wiring below).
 
 Immediately after the existing `pairingController` block (around `:1688`), add:
@@ -3755,6 +3786,7 @@ the disclosure reflects what actually happened rather than what was preferred."
 ## Task 14: End-to-end proof
 
 **Files:**
+
 - Create: `packages/gateway/src/briefs/brief-e2e.test.ts`
 - Modify: `packages/gateway/src/briefs/brief-http.test.ts` (use the shared helper)
 
@@ -3807,6 +3839,7 @@ git commit -m "test(briefs): end-to-end staged collection, auth, caps, and leak 
 ## Task 15: CLI status, docs, and preflight
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/clip.ts` (+ its test)
 - Modify: `docs/CHANGELOG.md`, `docs/roadmap.md`, `docs/architecture.md`, `CLAUDE.md`, `GEMINI.md`
 
@@ -3814,11 +3847,13 @@ git commit -m "test(briefs): end-to-end staged collection, auth, caps, and leak 
 
 In `packages/cli/src/commands/clip.ts`, extend the `status` case to print one extra line after the paired-browser list:
 
-```
+```text
 briefs: enabled
 ```
+
 or
-```
+
+```text
 briefs: disabled (enable [briefs] in nimbus.toml)
 ```
 

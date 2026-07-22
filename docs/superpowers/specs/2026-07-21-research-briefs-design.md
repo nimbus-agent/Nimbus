@@ -172,7 +172,7 @@ All routes are loopback-only (**I6** — `Bun.serve({ hostname: "127.0.0.1" })`,
 `http_api.web_clipper_tokens`. Briefs add **no new authentication path**, so
 **I30**'s fail-closed minting is untouched.
 
-```
+```text
 POST /v1/briefs
   { brief: string, sources: [{ url, title }], useIndex: boolean }
   → 200 { id, status: "collecting", expected: number }
