@@ -2,8 +2,9 @@
  * Agent brief types and guards, re-exported from `@nimbus-dev/sdk`.
  *
  * Previously a hand-maintained mirror of gateway `agents/_lib/findings.ts`.
- * `GhostContextItem` is kept as an alias of the SDK's `FederatedItemLite` so
- * existing CLI imports keep resolving.
+ * Two names the SDK spells differently are kept as aliases so existing CLI
+ * imports keep resolving: `GhostContextItem` (SDK `FederatedItemLite`) and
+ * `ConflictCollision` (SDK `ConflictFinding`).
  */
 export type {
   AgentBrief,
@@ -14,6 +15,7 @@ export type {
   CatchupSection,
   ConflictBrief,
   ConflictFinding,
+  ConflictFinding as ConflictCollision,
   ConflictType,
   Evidence,
   ExpertBrief,

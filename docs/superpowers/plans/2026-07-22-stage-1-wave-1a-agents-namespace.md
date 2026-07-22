@@ -597,10 +597,17 @@ Step 6's typecheck is load-bearing.
 Run: `bun test packages/gateway/src/agents/ && bun test packages/gateway/src/federation/`
 Expected: PASS with the same count as Step 2. A changed count means the refactor altered behaviour — stop and investigate.
 
-- [ ] **Step 6: Typecheck the whole workspace**
+- [ ] **Step 6: Typecheck AND lint**
 
 Run: `bun run typecheck`
 Expected: clean. `bun test` alone does not catch `tsc` failures in this repo.
+
+Run: `bun run --cwd packages/gateway lint`
+Expected: exit 0. **Do not skip this.** Biome requires one identifier per line in
+`export { … } from` blocks, so a re-export list written the way this plan's snippets
+format them (multiple names per line, for readability on the page) fails `lint` — and
+therefore fails the mandatory `preflight:fast`. Reformat with
+`bunx biome format --write <file>` and confirm the exported-identifier set is unchanged.
 
 - [ ] **Step 7: Commit**
 
@@ -630,12 +637,14 @@ Expected: PASS. Record the count.
  * Agent brief types and guards, re-exported from `@nimbus-dev/sdk`.
  *
  * Previously a hand-maintained mirror of gateway `agents/_lib/findings.ts`.
- * `GhostContextItem` is kept as an alias of the SDK's `FederatedItemLite` so
- * existing CLI imports keep resolving.
+ * Two names the SDK spells differently are kept as aliases so existing CLI
+ * imports keep resolving: `GhostContextItem` (SDK `FederatedItemLite`) and
+ * `ConflictCollision` (SDK `ConflictFinding`).
  */
 export type {
   AgentBrief, AgentBriefBase, BriefReadyPayload, CatchupBrief, CatchupItem,
-  CatchupSection, ConflictBrief, ConflictFinding, ConflictType, Evidence,
+  CatchupSection, ConflictBrief, ConflictFinding,
+  ConflictFinding as ConflictCollision, ConflictType, Evidence,
   ExpertBrief, ExpertFinding, ExpertiseRank,
   FederatedItemLite, FederatedItemLite as GhostContextItem,
   GapCategory, GapNote, GhostBrief, GhostFinding, HuddleBrief,
