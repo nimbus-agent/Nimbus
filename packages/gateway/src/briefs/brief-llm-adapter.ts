@@ -9,11 +9,15 @@ import type { BriefSynthesizerLlm } from "./brief-synthesis.ts";
  *
  * `remote` comes from the provider's own `isLocal`, not from config intent, so
  * the disclosure reflects what actually happened rather than what was preferred.
+ *
+ * `preferLocal` is `[briefs].prefer_local` — source-text egress is the most privacy-sensitive
+ * thing this feature does, so briefs honor their OWN prefer-local preference independently of
+ * `[llm].prefer_local`, falling back to remote only when no local provider is available.
  */
-export function createBriefLlm(router: LlmRouter): BriefSynthesizerLlm {
+export function createBriefLlm(router: LlmRouter, preferLocal: boolean): BriefSynthesizerLlm {
   return {
     async generateJson(prompt: string) {
-      const provider = await router.selectProvider("reasoning");
+      const provider = await router.selectProvider("reasoning", { preferLocal });
       if (provider === undefined) return null;
       const result = await provider.generate({
         task: "reasoning",

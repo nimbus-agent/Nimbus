@@ -1724,7 +1724,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       nowMs: () => Date.now(),
       ttlMs: briefsToml.ttlMinutes * 60_000,
     });
-    const briefLlm = createBriefLlm(llmRegistry.llmRouter);
+    const briefLlm = createBriefLlm(llmRegistry.llmRouter, briefsToml.preferLocal);
     const briefSearch: IndexSearch = async (query, limit) => {
       const hits = await localIndex.searchRankedAsync(
         { name: query, itemType: "web_clip", limit },

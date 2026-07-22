@@ -57,18 +57,26 @@ export class LlmRouter {
     return this.config.preferLocal;
   }
 
-  async selectProvider(task: LlmTaskType): Promise<LlmProvider | undefined> {
-    return this.firstAvailable(task, (p) => this.probeAvailable(p));
+  // `opts.preferLocal` overrides `config.preferLocal` for this call only (e.g. research briefs
+  // honoring `[briefs].prefer_local` independently of `[llm].prefer_local` — source text is
+  // privacy-sensitive enough to warrant its own knob). Omitted, behavior is unchanged.
+  async selectProvider(
+    task: LlmTaskType,
+    opts?: { preferLocal?: boolean },
+  ): Promise<LlmProvider | undefined> {
+    return this.firstAvailable(task, (p) => this.probeAvailable(p), opts?.preferLocal);
   }
 
   // Walks the task's provider priority order (respecting air-gap and the capability floor) and
   // returns the first provider whose availability check resolves true. The check is injected so
-  // callers can share a memoized probe across many tasks (see getStatus).
+  // callers can share a memoized probe across many tasks (see getStatus). `preferLocal`, when
+  // provided, overrides `config.preferLocal` for this call only.
   private async firstAvailable(
     task: LlmTaskType,
     isAvailable: (provider: LlmProvider) => Promise<boolean>,
+    preferLocal?: boolean,
   ): Promise<LlmProvider | undefined> {
-    for (const id of this.providerPriority(task)) {
+    for (const id of this.providerPriority(task, preferLocal)) {
       if (this.config.enforceAirGap && !LOCAL_PROVIDER_IDS.has(id)) continue;
       if (!this.meetsCapabilityFloor(id, task)) continue;
       const provider = this.providers.get(id);
@@ -247,8 +255,11 @@ export class LlmRouter {
     return out as Record<LlmTaskType, LlmTaskStatus | undefined>;
   }
 
-  private providerPriority(_task: LlmTaskType): LlmProviderKind[] {
-    if (this.config.preferLocal) {
+  private providerPriority(
+    _task: LlmTaskType,
+    preferLocal: boolean = this.config.preferLocal,
+  ): LlmProviderKind[] {
+    if (preferLocal) {
       return ["ollama", "llamacpp", "remote"];
     }
     return ["remote", "ollama", "llamacpp"];

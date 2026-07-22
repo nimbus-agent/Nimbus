@@ -75,6 +75,26 @@ describe("LlmRouter.selectProvider", () => {
     const provider = await router.selectProvider("classification");
     expect(provider?.providerId).toBe("remote");
   });
+
+  test("per-call preferLocal override prefers local even when config prefers remote", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("ollama", true));
+    router.registerProvider(makeFakeProvider("remote", true));
+    const overridden = await router.selectProvider("reasoning", { preferLocal: true });
+    expect(overridden?.providerId).toBe("ollama");
+    // No override: falls back to config, which prefers remote — proves the override is per-call.
+    const unoverridden = await router.selectProvider("reasoning");
+    expect(unoverridden?.providerId).toBe("remote");
+  });
+
+  test("per-call preferLocal override falls back to remote when no local provider is available", async () => {
+    const config: LlmRouterConfig = { ...DEFAULT_CONFIG, preferLocal: false };
+    const router = new LlmRouter(config);
+    router.registerProvider(makeFakeProvider("remote", true));
+    const provider = await router.selectProvider("reasoning", { preferLocal: true });
+    expect(provider?.providerId).toBe("remote");
+  });
 });
 
 describe("LlmRouter.generate", () => {
