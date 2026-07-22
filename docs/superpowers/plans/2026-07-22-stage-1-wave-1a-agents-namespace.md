@@ -1285,6 +1285,43 @@ git add src/nimbus-client.ts src/mock-client.ts test/mock-client.test.ts
 git commit -m "feat(agents): add the eight promise methods and MockClient parity"
 ```
 
+### Task 10b: Behaviour tests for the correlator
+
+> **Added during execution.** Review of Task 9 found that `runAgent`'s ordering, buffering,
+> session-correlation and timeout logic had **zero** test coverage: Task 9's tests cover only
+> Task 7's pure parsers, and Task 10's `MockClient` is a no-op stub that never calls
+> `runAgent`. Without this task the subtlest code in the changeset ships to npm untested, and
+> its failure modes — a dropped notification, two concurrent calls resolving each other's
+> results, a leaked handler — all pass the rest of the suite.
+>
+> It must come **after** Task 10: while `runAgent` has no `src/` caller, `tsconfig.json`
+> (which excludes tests) needs the `@ts-expect-error`, but `tsconfig.test.json` (which
+> includes both) would then flag it as unused. Task 10's real callers dissolve that bind.
+
+**Files:**
+- Create: `test/_fake-ipc.ts` (extract the existing harness), `test/agents-wrapper.test.ts`
+- Modify: `test/nimbus-client.test.ts` (import the extracted harness)
+- **Do not modify anything under `src/`.**
+
+Cover, through the **public** `agentsX` methods rather than by casting to the private one:
+
+1. `subscribeAgentBrief` registers handlers for both `<agent>.briefReady` and
+   `<agent>.briefError`, and `dispose()` removes both.
+2. **Buffering** — invoke the method *without awaiting*, emit `briefReady` synchronously (the
+   client does not yet know its `sessionId`), then await: it must resolve, not time out.
+3. **Concurrency** — two `agentsExpert` calls with different session ids; emit both events
+   *out of order*; each promise resolves with its own findings.
+4. **`briefError`** rejects with `AgentBriefError` carrying the gateway's message.
+5. **Timeout** rejects with `AgentTimeoutError` *and* the transport no longer holds the
+   handlers afterwards — proving `dispose()` ran on the rejection path.
+
+`test/nimbus-client.test.ts` already defines the `FakeIpc` + `makeClient` harness (it backs
+the existing `subscribeHitl` test); extract it rather than duplicating it.
+
+**Red-prove:** for tests 2 and 3, temporarily break the corresponding logic (drop the buffer
+drain; drop the `ev.sessionId === sessionId` filter), confirm red, revert, confirm green, and
+verify `git diff src/` is empty before committing.
+
 ### Task 11: The conformance gate
 
 **Files:**
