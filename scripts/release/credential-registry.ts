@@ -167,34 +167,30 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     note: "This system's own credential. Tracked here like any other.",
   },
 
-  // --- Nimbus: release-path PATs (gap 4, pending deletion) ---
+  // --- Nimbus: release-path PATs (retired 2026-07-22) ---
   {
     name: "RELEASE_PAT",
-    state: "required",
+    state: "forbidden",
     location: { scope: "repo", repo: "Nimbus" },
     product: "actions",
     type: "pat",
     owner: OWNER,
-    // Deliberately empty and VERIFIED empty: the App migration (#772) removed
-    // every reference. The note below names the workflows that must go green
-    // under the App before deletion — those are the GATE, not consumers.
     consumedBy: [],
-    maxAgeDays: 90,
+    maxAgeDays: null,
     hardDeadline: null,
-    note: "Superseded by the Release Bot App (#772). Flips to `forbidden` and is deleted once release.yml, publish-package-managers.yml and publish-linux-repo.yml have gone green under the App on a real tag.",
+    note: "Deleted 2026-07-22. Superseded by the Release Bot App (#772); the gate was met when v0.23.1 published under the App with publish-package-managers.yml + publish-linux-repo.yml both green. If this reappears, someone has reintroduced a PAT where the App now works.",
   },
   {
     name: "PACKAGE_MANAGER_PAT",
-    state: "required",
+    state: "forbidden",
     location: { scope: "repo", repo: "Nimbus" },
     product: "actions",
     type: "pat",
     owner: OWNER,
-    // Deliberately empty and VERIFIED empty — see RELEASE_PAT above.
     consumedBy: [],
-    maxAgeDays: 90,
+    maxAgeDays: null,
     hardDeadline: null,
-    note: "Superseded by the Release Bot App (#772). Same gate as RELEASE_PAT before deletion.",
+    note: "Deleted 2026-07-22. Same App gate as RELEASE_PAT (WINGET_PAT stays — it forks an external repo the App cannot reach). If this reappears, someone has reintroduced a PAT the App migration retired.",
   },
   {
     name: "WINGET_PAT",
