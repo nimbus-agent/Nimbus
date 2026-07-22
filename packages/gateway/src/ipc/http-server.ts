@@ -7,6 +7,7 @@ import { addClipToken, generateClipToken, verifyClipToken } from "../clips/clip-
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
+import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
@@ -696,6 +697,17 @@ async function handleGet(
   }
 }
 
+/**
+ * The I13 writable handle. Separate from the read-only handle above because it
+ * needs the writable pragmas; `journal_mode` in particular cannot be set from a
+ * read-only connection, so a read handle inherits whatever the file already is.
+ */
+function openI13WriteHandle(dbPath: string): Database {
+  const db = new Database(dbPath, { create: false, readwrite: true });
+  applyWritablePragmas(db);
+  return db;
+}
+
 export function startReadOnlyHttpServer(
   dbPath: string,
   port: number,
@@ -718,7 +730,7 @@ export function startReadOnlyHttpServer(
     opts.briefRuns === undefined &&
     (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
-      : new Database(dbPath, { create: false, readwrite: true });
+      : openI13WriteHandle(dbPath);
   const rateLimiter = new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 });
 
   const server = Bun.serve({

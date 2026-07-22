@@ -1252,7 +1252,7 @@ The `AbortSignal` from `engine.cancelStream` is deliberately **not** plumbed int
 
 ## Local Database Schema
 
-The full table-by-table SQL — `indexed_items`, `items_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, `git_blame_line`, `extensions`, the Phase 6 federation / org-policy / share tables, and the V44 `egress_ledger` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
+The full table-by-table SQL — the unified V3 `item`, `item_fts`, `vec_items_384` / `vec_items_1536`, `audit_log`, `sync_state`, `connector_health_history`, `api_endpoint`, `obsidian_notes`, the latency/slow-query logs, `llm_models`, `sub_task_results`, `tool_call_log`, `extension_dependency`, `git_blame_line`, `extensions`, the Phase 6 federation / org-policy / share tables, and the V44 `egress_ledger` — lives in **[`schema-reference.md`](./schema-reference.md)**. It was extracted from this document so the architecture narrative stays focused on shape rather than every column; it grows with every migration.
 
 **What you need to know here:**
 
@@ -1286,7 +1286,9 @@ The Gateway is a single OS process, but several SQLite handles are open against 
 
 The intended model is **WAL journaling** (so readers never block the writer and vice versa), with `busy_timeout = 8000` as the contention backstop when two write paths (delta sync, embedding backfill, the `I13` deploy-annotation route) briefly compete. Every write goes through `dbRun` / `dbExec` / `dbStmtRun` (invariant `I14`), which translates `SQLITE_FULL` into a typed `DiskFullError` rather than a silently swallowed write. On clean shutdown the index issues `PRAGMA wal_checkpoint(TRUNCATE)` to fold the WAL back into the main file.
 
-> **Status note (2026-05-25):** `PRAGMA journal_mode = WAL` is not currently set explicitly at any production open site. Until it is, the handles fall back to SQLite's default rollback journal — where readers and the writer block each other and the shutdown `wal_checkpoint(TRUNCATE)` is a no-op — and the 8 s busy-timeout is the only thing preventing immediate `SQLITE_BUSY` under contention. Enabling WAL explicitly, plus a regression guard that asserts it across every write handle, is tracked as **B5** in [`roadmap.md`](./roadmap.md#maintenance-initiative-follow-ups-b-series) and issue #426. This note documents the gap honestly rather than asserting a concurrency property the code does not yet guarantee.
+> **Status note (2026-07-21):** WAL is now set explicitly. `applyWritablePragmas()` in [`db/writable-pragmas.ts`](../packages/gateway/src/db/writable-pragmas.ts) applies `journal_mode = WAL` + `busy_timeout` at all three production writable open sites — the main writer (`platform/assemble.ts`), the embedding worker, and the `I13` HTTP write handle. `journal_mode` is a property of the database *file*, not the connection, so read-only handles (which cannot set it) inherit WAL once any writer has converted the file.
+>
+> Before the fix, a live gateway DB reported `journal_mode = delete`, confirming the finding empirically rather than by code-read. The helper returns the mode SQLite actually **adopted** rather than the one requested: WAL needs shared memory and is unavailable for `:memory:` and on some network filesystems, and degrading to the old blocking behaviour is a better outcome there than refusing to start. Tests assert `wal` on a real file-backed handle and assert each production site still calls the helper. Was **B5** in [`roadmap.md`](./roadmap.md#maintenance-initiative-follow-ups-b-series) / issue #426.
 
 ### Scaling Limits
 

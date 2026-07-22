@@ -6,6 +6,18 @@ name: Lint PR Title
 # pull_request_target (not pull_request) so title validation also runs on PRs
 # from forks. Safe here: this job never checks out or runs PR code and keeps
 # read-only permissions, so the elevated context can't leak secrets.
+#
+# Validated inline rather than with amannn/action-semantic-pull-request. That
+# action is not on this repo's Actions allow-list — repo policy is
+# `allowed_actions: selected`, and the ORG's `all` does not override a repo's
+# own narrower setting — so every run of this workflow from #764 until now
+# ended in `startup_failure`. The gate existed and never once executed, which
+# is how three unparseable PR titles reached main. `startup_failure` is not a
+# required context, so nothing surfaced it.
+#
+# Checking a title against a regex needs no third-party action and no
+# checkout, so an inline step is both the smaller fix and the smaller attack
+# surface than widening the allow-list.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
@@ -19,13 +31,43 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      pull-requests: read
+      contents: read
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
-      - uses: amannn/action-semantic-pull-request@0723387faaf9b38adef4775cd42cfd5155ed6017 # v5.5.3
+      - name: Validate Conventional Commit title
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed through the environment, never interpolated into the script
+          # body: a PR title is attacker-controlled text, and `${{ }}` expansion
+          # inside `run:` is a shell-injection sink.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # type(optional-scope)!: subject
+          # Types are the ones this repo actually uses, per `git log` on main.
+          pattern='^(feat|fix|chore|docs|ci|build|test|refactor|perf|style|revert)(\([a-z0-9._/-]+\))?!?: .+'
+
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            echo "::error title=PR title is not a Conventional Commit::${PR_TITLE}"
+            cat >&2 <<'EOF'
+          The repo squash-merges, so this title becomes the commit subject on main
+          and is what Release Please parses. A subject it cannot parse counts as
+          "no user facing commits": the change ships with no changelog entry and
+          triggers no release.
+
+          Expected:  type(optional-scope)!: subject
+          Types:     feat fix chore docs ci build test refactor perf style revert
+
+          Examples:
+            fix(db): enable WAL on the production SQLite write handles
+            feat: add nimbus prove
+            chore(deps)!: drop Node 20
+          EOF
+            exit 1
+          fi
+
+          echo "OK: ${PR_TITLE}"

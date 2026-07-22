@@ -7,40 +7,41 @@ The SQLite tables that back the local index, audit log, sync state, embeddings, 
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
 ```sql
--- Core metadata index
--- item_type values: "file" | "email" | "event" | "photo"
---                   "pr" | "issue" | "pipeline_run" | "deployment"
---                   "alert" | "incident" | "infra_resource"
---                   "data_model" | "data_pipeline" | "dashboard" | "log_alarm"  -- Phase 5/6
---                   "ml_model" | "data_quality_test"                             -- Phase 5/6 (pass 2)
---                   "api_endpoint"                                               -- Phase 5 Wave A PR 1 (V25)
---                   "obsidian_note"                                              -- Phase 5 Wave A PR 2 (V26)
--- Phase 7+: "service" | "team" | "scorecard" | "dora_metric" | "feature_flag" | ...
--- Phase 8+: "security_finding" | "posture_finding" | "security_incident" | "sbom_artifact" | ...
--- Phase 9+: "llm_trace" | "prompt_version" | "eval_run" | "vector_index" | "ai_spend_event" | ...
--- Note: "task" is not a currently emitted item_type; use "issue" for Linear/Jira items.
-CREATE TABLE indexed_items (
-    id          TEXT PRIMARY KEY,   -- "<service>:<native_id>"
-    service     TEXT NOT NULL,      -- "google_drive" | "gmail" | "github" | "jenkins" | ...
-    item_type   TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    mime_type   TEXT,
-    size_bytes  INTEGER,
-    created_at  INTEGER,            -- Unix ms
-    modified_at INTEGER,
-    url         TEXT,
-    parent_id   TEXT,
-    sync_token  TEXT,
-    raw_meta    TEXT                -- JSON blob: service-specific fields
+-- Core metadata index — the unified V3 `item` table.
+-- Authoritative source: packages/gateway/src/index/unified-item-v3-sql.ts
+--
+-- The `type` column stores the connector's raw value VERBATIM. The vocabulary
+-- lives in @nimbus-dev/sdk (`KnownItemType`) and is an OPEN enum
+-- (`KnownItemType | (string & {})`), so a new connector can emit a new type
+-- without a schema or SDK change. Never coerce an unrecognised type into a
+-- recognised one — doing exactly that silently relabelled 55% of a live index
+-- as "file" until #780 removed the coercion.
+CREATE TABLE item (
+    id            TEXT PRIMARY KEY,   -- "<service>:<external_id>"
+    service       TEXT NOT NULL,      -- "google_drive" | "gmail" | "github" | "jenkins" | ...
+    type          TEXT NOT NULL,      -- open enum; see above
+    external_id   TEXT NOT NULL,      -- native id, NOT unique across services
+    title         TEXT NOT NULL,
+    body_preview  TEXT,
+    url           TEXT,
+    canonical_url TEXT,
+    modified_at   INTEGER NOT NULL,   -- Unix ms
+    author_id     TEXT,               -- references person(id)
+    metadata      TEXT,               -- JSON blob: service-specific fields
+    synced_at     INTEGER NOT NULL,
+    pinned        INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(service, external_id)
 );
 
-CREATE INDEX idx_items_service_modified ON indexed_items(service, modified_at DESC);
-CREATE INDEX idx_items_name ON indexed_items(name COLLATE NOCASE);
+CREATE INDEX idx_item_service ON item(service);
+CREATE INDEX idx_item_type ON item(type);
+CREATE INDEX idx_item_modified_at ON item(modified_at);
 
--- Full-text search (FTS5)
-CREATE VIRTUAL TABLE items_fts USING fts5(
-    name, raw_meta,
-    content=indexed_items, content_rowid=rowid
+-- Full-text search (FTS5) — kept in sync by AFTER INSERT/DELETE/UPDATE triggers
+-- on `item` (item_fts_insert / item_fts_delete / item_fts_update).
+CREATE VIRTUAL TABLE item_fts USING fts5(
+    title, body_preview,
+    content='item', content_rowid='rowid'
 );
 
 -- Vector search (sqlite-vec)

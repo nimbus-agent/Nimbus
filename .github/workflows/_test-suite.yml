@@ -341,7 +341,14 @@ jobs:
         continue-on-error: true
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          # No `token:`. This is a reusable workflow, and GitHub only passes
+          # secrets declared in its `secrets:` contract above — which lists
+          # SONAR_TOKEN only. The old CODECOV_TOKEN reference therefore resolved
+          # to an empty string here and never reached the action. Uploads
+          # authenticate via OIDC (`id-token: write` is granted by the caller for
+          # exactly this), so the input was inert. See Nimbus#782.
+          # (Deliberately not writing the `secrets.` form above: audit:consumed-by
+          # scans for it textually and would read this comment as a live use.)
           use_oidc: true
           files: coverage/lcov.info,packages/ui/coverage/lcov.info
 
@@ -856,6 +863,6 @@ jobs:
         continue-on-error: true
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          # No `token:` — same reason as the upload step above (Nimbus#782).
           use_oidc: true
           flags: ${{ matrix.gate.name }}
