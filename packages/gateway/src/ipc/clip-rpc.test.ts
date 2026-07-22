@@ -21,6 +21,7 @@ function deps() {
   return {
     pairing: new PairingWindowController({ nowMs: () => 1000, genCode: () => "654321" }),
     vault: fakeVault(),
+    briefsEnabled: false,
   };
 }
 
@@ -70,6 +71,16 @@ describe("dispatchClipRpc", () => {
       .value;
     expect(value.devices[0]?.label).toBe("chrome");
     expect(JSON.stringify(value)).not.toContain("secret-tok");
+  });
+
+  test("clip.status echoes briefsEnabled: false", async () => {
+    const out = await dispatchClipRpc("clip.status", {}, { ...deps(), briefsEnabled: false });
+    expect((out as { value: { briefsEnabled: boolean } }).value.briefsEnabled).toBe(false);
+  });
+
+  test("clip.status echoes briefsEnabled: true", async () => {
+    const out = await dispatchClipRpc("clip.status", {}, { ...deps(), briefsEnabled: true });
+    expect((out as { value: { briefsEnabled: boolean } }).value.briefsEnabled).toBe(true);
   });
 
   test("clip.revoke removes a label", async () => {

@@ -896,6 +896,7 @@ export async function tryDispatchClipRpc(
     ...(ctx.options.clipHttpBaseUrl === undefined
       ? {}
       : { httpBaseUrl: ctx.options.clipHttpBaseUrl }),
+    briefsEnabled: ctx.options.briefsEnabled ?? false,
   });
   if (out.kind === "hit") return out.value;
   throw new RpcMethodError(-32601, `Method not found: ${method}`);

@@ -24,6 +24,12 @@ export interface ClipRpcDeps {
    * reachable, and the CLI warns the owner to (re)start with `nimbus serve --port`.
    */
   readonly httpBaseUrl?: string;
+  /**
+   * The research-briefs [briefs].enabled state (Spine S1), echoed verbatim by `clip.status` so
+   * `nimbus clip status` can tell a paired user whether their first brief will 404 — default-off
+   * means the feature is invisible otherwise, and clients are IPC-only (no reading nimbus.toml).
+   */
+  readonly briefsEnabled: boolean;
 }
 
 export interface ClipListEntry {
@@ -143,7 +149,7 @@ function handleClipPair(params: unknown, deps: ClipRpcDeps): unknown {
 
 async function handleClipStatus(_params: unknown, deps: ClipRpcDeps): Promise<unknown> {
   const devices = await listClipFingerprints(deps.vault);
-  return { devices };
+  return { devices, briefsEnabled: deps.briefsEnabled };
 }
 
 async function handleClipRevoke(params: unknown, deps: ClipRpcDeps): Promise<unknown> {

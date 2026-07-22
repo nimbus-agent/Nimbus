@@ -10,6 +10,7 @@ function clipCount(n: number): string {
 export const CLIP_USAGE = `Usage:
   nimbus clip pair [--label <device>]   open a pairing window and print the one-time code
   nimbus clip status                    list paired browsers (labels + token fingerprints)
+                                         and whether research briefs are enabled
   nimbus clip revoke <label|--all>      revoke a paired browser's token
   nimbus clip list [--tag <t>] [--limit N] [--json]   list saved clips
   nimbus clip delete <id|url> | --all [--yes]         delete clips`;
@@ -17,6 +18,11 @@ export const CLIP_USAGE = `Usage:
 export function formatStatus(devices: Array<{ label: string; fingerprint: string }>): string {
   if (devices.length === 0) return "No clipper tokens registered.";
   return devices.map((d) => `  ${d.label}\t${d.fingerprint}`).join("\n");
+}
+
+/** The `briefs: ...` discoverability line — one command from where pairing is managed. */
+export function formatBriefsLine(briefsEnabled: boolean): string {
+  return briefsEnabled ? "briefs: enabled" : "briefs: disabled (enable [briefs] in nimbus.toml)";
 }
 
 async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
@@ -62,8 +68,10 @@ export async function runClipPair(client: IPCClient, label: string | undefined):
 export async function runClipStatus(client: IPCClient): Promise<void> {
   const out = await client.call<{
     devices: Array<{ label: string; fingerprint: string }>;
+    briefsEnabled: boolean;
   }>("clip.status", {});
   console.log(formatStatus(out.devices));
+  console.log(formatBriefsLine(out.briefsEnabled));
 }
 
 export async function runClipRevoke(client: IPCClient, label: string): Promise<void> {

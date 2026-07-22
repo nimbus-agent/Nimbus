@@ -6,6 +6,7 @@ import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 import {
   CLIP_USAGE,
+  formatBriefsLine,
   formatClipList,
   formatStatus,
   parseLimit,
@@ -53,6 +54,14 @@ describe("clip CLI formatting", () => {
     expect(result).toContain("abcd1234");
     expect(result).toContain("firefox");
     expect(result).toContain("ef567890");
+  });
+
+  test("formatBriefsLine reports enabled", () => {
+    expect(formatBriefsLine(true)).toBe("briefs: enabled");
+  });
+
+  test("formatBriefsLine reports disabled with the how-to-enable hint", () => {
+    expect(formatBriefsLine(false)).toBe("briefs: disabled (enable [briefs] in nimbus.toml)");
   });
 });
 
@@ -131,7 +140,7 @@ describe("runClipStatus", () => {
 
   it("calls clip.status and prints formatted device list", async () => {
     const { client, calls } = createMockIpcClient([
-      { devices: [{ label: "chrome", fingerprint: "abcd1234" }] },
+      { devices: [{ label: "chrome", fingerprint: "abcd1234" }], briefsEnabled: true },
     ]);
     await runClipStatus(client);
     expect(calls).toHaveLength(1);
@@ -141,9 +150,21 @@ describe("runClipStatus", () => {
   });
 
   it("prints empty state when no devices", async () => {
-    const { client } = createMockIpcClient([{ devices: [] }]);
+    const { client } = createMockIpcClient([{ devices: [], briefsEnabled: false }]);
     await runClipStatus(client);
     expect(out.stdout).toMatch(/no clipper tokens/i);
+  });
+
+  it("prints 'briefs: enabled' when the gateway reports briefsEnabled: true", async () => {
+    const { client } = createMockIpcClient([{ devices: [], briefsEnabled: true }]);
+    await runClipStatus(client);
+    expect(out.stdout).toContain("briefs: enabled");
+  });
+
+  it("prints the disabled hint when the gateway reports briefsEnabled: false", async () => {
+    const { client } = createMockIpcClient([{ devices: [], briefsEnabled: false }]);
+    await runClipStatus(client);
+    expect(out.stdout).toContain("briefs: disabled (enable [briefs] in nimbus.toml)");
   });
 });
 
@@ -236,7 +257,9 @@ describe("runClip (dispatcher)", () => {
   });
 
   it("routes 'status' through withIpc", async () => {
-    const ipc = createMockIpcClient([{ devices: [{ label: "chrome", fingerprint: "ff00" }] }]);
+    const ipc = createMockIpcClient([
+      { devices: [{ label: "chrome", fingerprint: "ff00" }], briefsEnabled: false },
+    ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },

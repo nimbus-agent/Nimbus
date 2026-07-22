@@ -141,4 +141,9 @@ export type CreateIpcServerOptions = {
   // NIMBUS_HTTP_PORT. Echoed by `clip.pair` so the CLI can print the exact URL to pair against.
   // Absent when the gateway runs without the HTTP sidecar (then the clip surface is unreachable).
   clipHttpBaseUrl?: string;
+  // Research briefs (Spine S1) enable-state, echoed by `clip.status` so `nimbus clip status` can
+  // tell a paired user whether their first brief will 404 (default-off — see [briefs] in
+  // nimbus.toml). Always set at boot (not gated on the briefs seam being wired), so it is never
+  // left undefined by omission.
+  briefsEnabled?: boolean;
 };

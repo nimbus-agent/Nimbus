@@ -1716,6 +1716,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
 
   // Research briefs (Spine S1). Default-off; the seam stays absent unless [briefs].enabled.
   const briefsToml = loadNimbusBriefsFromPath(activeTomlPath);
+  // Always set (not gated on briefsToml.enabled) so `clip.status` can always echo the real
+  // enable-state — a paired user's first `nimbus clip status` should never see it silently absent.
+  ipcOpts.briefsEnabled = briefsToml.enabled;
   if (briefsToml.enabled) {
     const briefRuns = new BriefRunController({
       nowMs: () => Date.now(),
