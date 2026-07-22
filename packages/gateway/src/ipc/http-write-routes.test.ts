@@ -2,13 +2,21 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, it, test } from "bun:test";
 
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
+import { MAX_CONCURRENT_RUNS, MAX_SOURCE_BYTES } from "../briefs/brief-constants.ts";
+import { BriefRunController, type CreateResult } from "../briefs/brief-run-store.ts";
+import { ReportTooLargeError } from "../briefs/brief-save.ts";
+import type { Report } from "../briefs/brief-types.ts";
 import { ClipValidationError } from "../clips/clip-ingest.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { ScimError } from "../identity/scim-service.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
-import type { ClipsWriteSurface, WriteRouteContext } from "./http-write-routes.ts";
+import type {
+  BriefsWriteSurface,
+  ClipsWriteSurface,
+  WriteRouteContext,
+} from "./http-write-routes.ts";
 import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
 function freshContext(): {
@@ -104,8 +112,8 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(8);
+  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip + 4 brief routes", () => {
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -115,6 +123,10 @@ describe("dispatchWriteRoute", () => {
       "POST /v1/messaging/teams/events",
       "POST /v1/clips",
       "POST /v1/clips/pair/confirm",
+      "POST /v1/briefs",
+      "POST /v1/briefs/{id}/sources",
+      "POST /v1/briefs/{id}/run",
+      "POST /v1/briefs/{id}/save",
     ]);
   });
 });
@@ -1136,4 +1148,456 @@ test("POST /v1/clips/pair/confirm keeps the 8 KiB cap (a pairing code is tiny)",
   expect(res.status).toBe(413);
   expect(await res.json()).toEqual({ error: "payload_too_large" });
   expect(minted).toBe(false);
+});
+
+// ── Research-brief routes (POST /v1/briefs, .../sources, .../run, .../save) ───────────────────
+
+const BRIEF_TOKEN = "good-brief-token";
+
+function blankReport(): Report {
+  return {
+    summary: "s",
+    findings: [],
+    conflicts: [],
+    gaps: [],
+    synthesis: { model: "m", remote: false },
+  };
+}
+
+function briefsSurface(over: Partial<BriefsWriteSurface> = {}): BriefsWriteSurface {
+  return {
+    controller: over.controller ?? new BriefRunController({ nowMs: () => 1000 }),
+    verifyToken:
+      over.verifyToken ?? (async (t: string) => (t === BRIEF_TOKEN ? { label: "chrome" } : null)),
+    startRun: over.startRun ?? (() => {}),
+    save: over.save ?? (() => ({ itemId: "nimbus:research_brief:abc" })),
+  };
+}
+
+function briefCtx(over: Partial<WriteRouteContext> = {}): WriteRouteContext {
+  return { ...baseWriteCtx(), briefs: briefsSurface(), ...over };
+}
+
+// `token: null` (NOT `undefined`, which triggers the default-parameter substitution and would
+// silently send the valid bearer) means "send no Authorization header at all".
+function briefReq(path: string, body?: unknown, token: string | null = BRIEF_TOKEN): Request {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token !== null) headers["authorization"] = `Bearer ${token}`;
+  return new Request(`http://127.0.0.1${path}`, {
+    method: "POST",
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+function validCreateBody(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    brief: "What is the capital of France?",
+    sources: [{ url: "https://ex.com/a", title: "A" }],
+    useIndex: false,
+    ...over,
+  };
+}
+
+function validSourceBody(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    url: "https://ex.com/a",
+    title: "A",
+    body: "body text",
+    capturedAt: 1_700_000_000_000,
+    truncated: false,
+    ...over,
+  };
+}
+
+/** Creates a run directly on the controller (bypassing HTTP) and unwraps the CreateResult. */
+function seedRun(controller: BriefRunController, over: Record<string, unknown> = {}) {
+  const out: CreateResult = controller.create({
+    brief: "q",
+    sources: [{ url: "https://ex.com/a", title: "A" }],
+    useIndex: false,
+    ...over,
+  } as Parameters<BriefRunController["create"]>[0]);
+  if (!("run" in out)) throw new Error("test setup: seedRun hit the concurrency cap");
+  return out.run;
+}
+
+test("POST /v1/briefs with a valid body creates a run (200 collecting)", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody()), ctx);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { id: string; status: string; expected: number };
+  expect(body.status).toBe("collecting");
+  expect(body.expected).toBe(1);
+  expect(typeof body.id).toBe("string");
+});
+
+test("POST /v1/briefs 404s briefs_disabled when the briefs seam is absent", async () => {
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody()), baseWriteCtx());
+  expect(res.status).toBe(404);
+  const body = (await res.json()) as { error: string; hint: string };
+  expect(body.error).toBe("briefs_disabled");
+});
+
+test("405 + Allow: POST when a GET hits /v1/briefs with briefs enabled", async () => {
+  const res = await dispatchWriteRoute(
+    new Request("http://127.0.0.1/v1/briefs", { method: "GET" }),
+    briefCtx(),
+  );
+  expect(res.status).toBe(405);
+  expect(res.headers.get("Allow")).toBe("POST");
+});
+
+test("POST /v1/briefs with an invalid body (missing brief) -> 400 field brief", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(
+    briefReq("/v1/briefs", { sources: [{ url: "https://ex.com/a", title: "A" }], useIndex: false }),
+    ctx,
+  );
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as { error: string; field?: string };
+  expect(body.error).toBe("invalid_request");
+  expect(body.field).toBe("brief");
+  expect(auditCount(ctx.writeDb, "brief.create_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs returns 503 briefs_busy (no Retry-After) when MAX_CONCURRENT_RUNS are live", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  for (let i = 0; i < MAX_CONCURRENT_RUNS; i += 1) {
+    seedRun(controller, { brief: `q${i}`, sources: [{ url: `https://ex.com/${i}`, title: "t" }] });
+  }
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody()), ctx);
+  expect(res.status).toBe(503);
+  const body = (await res.json()) as {
+    error: string;
+    activeRuns: number;
+    oldestExpiresInSeconds: number;
+  };
+  expect(body.error).toBe("briefs_busy");
+  expect(body.activeRuns).toBe(MAX_CONCURRENT_RUNS);
+  expect(typeof body.oldestExpiresInSeconds).toBe("number");
+  // Load-bearing: NOT a 429 and NEVER a Retry-After (see the dispatcher's comment on why).
+  expect(res.headers.get("Retry-After")).toBeNull();
+  expect(auditCount(ctx.writeDb, "brief.create_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs with no bearer -> 401, run not created", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody(), null), ctx);
+  expect(res.status).toBe(401);
+  expect(await res.json()).toEqual({ error: "unauthorized" });
+  expect(auditCount(ctx.writeDb, "brief.create_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/sources feeds a declared source (200 accepted)", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody()),
+    ctx,
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { accepted: boolean; received: number; expected: number };
+  expect(body.accepted).toBe(true);
+  expect(body.received).toBe(1);
+  expect(body.expected).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/sources with an undeclared URL -> 400 field url", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(
+      `/v1/briefs/${run.id}/sources`,
+      validSourceBody({ url: "https://ex.com/NOT-DECLARED" }),
+    ),
+    ctx,
+  );
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as { error: string; field?: string };
+  expect(body.error).toBe("invalid_request");
+  expect(body.field).toBe("url");
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/sources with a malformed body (missing capturedAt) -> 400 field capturedAt", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const { capturedAt: _capturedAt, ...malformed } = validSourceBody();
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/sources`, malformed), ctx);
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as { error: string; field?: string };
+  expect(body.field).toBe("capturedAt");
+});
+
+test("POST /v1/briefs/{id}/sources over MAX_SOURCE_BYTES -> 413 detail source_too_large", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(
+      `/v1/briefs/${run.id}/sources`,
+      validSourceBody({ body: "x".repeat(MAX_SOURCE_BYTES + 1) }),
+    ),
+    ctx,
+  );
+  expect(res.status).toBe(413);
+  const body = (await res.json()) as { error: string; detail: string };
+  expect(body.error).toBe("payload_too_large");
+  expect(body.detail).toBe("source_too_large");
+  expect(auditCount(ctx.writeDb, "brief.source_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/sources on a non-collecting run -> 409 invalid_state", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.markRunning(run);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody()),
+    ctx,
+  );
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({ error: "invalid_state" });
+});
+
+test("POST /v1/briefs/{id}/sources for an unknown id -> 404 not_found", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(
+    briefReq("/v1/briefs/nonexistent12345/sources", validSourceBody()),
+    ctx,
+  );
+  expect(res.status).toBe(404);
+  expect(await res.json()).toEqual({ error: "not_found" });
+});
+
+test("POST /v1/briefs/{id}/sources for an expired run -> 410 expired", async () => {
+  let now = 0;
+  const controller = new BriefRunController({ nowMs: () => now, ttlMs: 1000 });
+  const run = seedRun(controller);
+  now = 5000; // past the 1000ms TTL
+  const ctx: WriteRouteContext = {
+    ...briefCtx({ briefs: briefsSurface({ controller }) }),
+    nowMs: () => now,
+  };
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody()),
+    ctx,
+  );
+  expect(res.status).toBe(410);
+  expect(await res.json()).toEqual({ error: "expired" });
+});
+
+test("POST /v1/briefs/{id}/sources with no bearer -> 401", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody(), null),
+    ctx,
+  );
+  expect(res.status).toBe(401);
+});
+
+test("405 + Allow: POST when a GET hits a brief item path with briefs enabled", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const res = await dispatchWriteRoute(
+    new Request(`http://127.0.0.1/v1/briefs/${run.id}/sources`, { method: "GET" }),
+    briefCtx({ briefs: briefsSurface({ controller }) }),
+  );
+  expect(res.status).toBe(405);
+  expect(res.headers.get("Allow")).toBe("POST");
+});
+
+test("brief item routes 404 briefs_disabled when the briefs seam is absent", async () => {
+  const res = await dispatchWriteRoute(
+    briefReq("/v1/briefs/abc123/sources", validSourceBody()),
+    baseWriteCtx(),
+  );
+  expect(res.status).toBe(404);
+  const body = (await res.json()) as { error: string };
+  expect(body.error).toBe("briefs_disabled");
+});
+
+test("POST /v1/briefs/{id}/run with a fed source -> 200 running, startRun called once", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.addSource(run, {
+    url: "https://ex.com/a",
+    title: "A",
+    body: "b",
+    capturedAt: 1_700_000_000_000,
+    truncated: false,
+  });
+  const started: string[] = [];
+  const ctx = briefCtx({
+    briefs: briefsSurface({
+      controller,
+      startRun: (id: string) => {
+        started.push(id);
+      },
+    }),
+  });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/run`), ctx);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ status: "running" });
+  expect(started).toEqual([run.id]);
+});
+
+test("POST /v1/briefs/{id}/run with useIndex=true and zero fed sources still runs", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller, { useIndex: true });
+  const started: string[] = [];
+  const ctx = briefCtx({
+    briefs: briefsSurface({
+      controller,
+      startRun: (id: string) => {
+        started.push(id);
+      },
+    }),
+  });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/run`), ctx);
+  expect(res.status).toBe(200);
+  expect(started).toEqual([run.id]);
+});
+
+test("POST /v1/briefs/{id}/run with zero fed sources and useIndex=false -> 400 field sources", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/run`), ctx);
+  expect(res.status).toBe(400);
+  const body = (await res.json()) as { error: string; field?: string };
+  expect(body.error).toBe("invalid_request");
+  expect(body.field).toBe("sources");
+  expect(auditCount(ctx.writeDb, "brief.run_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/run is idempotent: re-calling on a running run reports status, no restart", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.markRunning(run);
+  const started: string[] = [];
+  const ctx = briefCtx({
+    briefs: briefsSurface({
+      controller,
+      startRun: (id: string) => {
+        started.push(id);
+      },
+    }),
+  });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/run`), ctx);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ status: "running" });
+  expect(started).toEqual([]);
+});
+
+test("POST /v1/briefs/{id}/run for an unknown id -> 404 not_found", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs/nonexistent12345/run"), ctx);
+  expect(res.status).toBe(404);
+  expect(await res.json()).toEqual({ error: "not_found" });
+});
+
+test("POST /v1/briefs/{id}/run with a wrong bearer -> 401", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/run`, undefined, "wrong-token"),
+    ctx,
+  );
+  expect(res.status).toBe(401);
+});
+
+test("POST /v1/briefs/{id}/save on a done run -> 200 with the surface's itemId", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.finish(run, blankReport());
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`), ctx);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ itemId: "nimbus:research_brief:abc" });
+});
+
+test("POST /v1/briefs/{id}/save on a non-done (collecting) run -> 409 invalid_state", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`), ctx);
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({ error: "invalid_state" });
+});
+
+test("POST /v1/briefs/{id}/save maps ReportTooLargeError to 409 report_too_large (not 500)", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.finish(run, blankReport());
+  const ctx = briefCtx({
+    briefs: briefsSurface({
+      controller,
+      save: () => {
+        throw new ReportTooLargeError();
+      },
+    }),
+  });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`), ctx);
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({ error: "report_too_large" });
+  expect(auditCount(ctx.writeDb, "brief.save_rejected")).toBe(1);
+});
+
+test("POST /v1/briefs/{id}/save maps a non-ReportTooLargeError throw to 500 internal_error", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.finish(run, blankReport());
+  const ctx = briefCtx({
+    briefs: briefsSurface({
+      controller,
+      save: () => {
+        throw new Error("run not found");
+      },
+    }),
+  });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`), ctx);
+  expect(res.status).toBe(500);
+  expect(await res.json()).toEqual({ error: "internal_error" });
+});
+
+test("POST /v1/briefs/{id}/save for an unknown id -> 404 not_found", async () => {
+  const ctx = briefCtx();
+  const res = await dispatchWriteRoute(briefReq("/v1/briefs/nonexistent12345/save"), ctx);
+  expect(res.status).toBe(404);
+  expect(await res.json()).toEqual({ error: "not_found" });
+});
+
+test("POST /v1/briefs/{id}/save with no bearer -> 401", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  controller.finish(run, blankReport());
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const res = await dispatchWriteRoute(briefReq(`/v1/briefs/${run.id}/save`, undefined, null), ctx);
+  expect(res.status).toBe(401);
+});
+
+test("brief source-feed and control routes are rate-limited on SEPARATE buckets (brief-src vs brief)", async () => {
+  const controller = new BriefRunController({ nowMs: () => 1000 });
+  const run = seedRun(controller);
+  const ctx = briefCtx({ briefs: briefsSurface({ controller }) });
+  const sourceRes = await dispatchWriteRoute(
+    briefReq(`/v1/briefs/${run.id}/sources`, validSourceBody()),
+    ctx,
+  );
+  expect(sourceRes.status).toBe(200);
+  expect(sourceRes.headers.get("X-RateLimit-Limit")).toBe("60");
+  // A second create call still has its own full "brief" bucket — proves the two fingerprints
+  // ("brief" and "brief-src") don't share state.
+  const createRes = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody()), ctx);
+  expect(createRes.status).toBe(200);
+  expect(createRes.headers.get("X-RateLimit-Remaining")).toBe("59");
 });

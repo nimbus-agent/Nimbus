@@ -1,4 +1,11 @@
 import type { Database } from "bun:sqlite";
+import type { BriefRunController } from "../briefs/brief-run-store.ts";
+import { ReportTooLargeError } from "../briefs/brief-save.ts";
+import {
+  BriefValidationError,
+  validateCreateInput,
+  validateSourceInput,
+} from "../briefs/brief-validate.ts";
 import { ClipValidationError } from "../clips/clip-ingest.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
@@ -21,6 +28,10 @@ const ROUTE_ADMIN_POLICY = "PUT /v1/admin/policy";
 const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
 const ROUTE_CLIPS = "POST /v1/clips";
 const ROUTE_CLIPS_PAIR_CONFIRM = "POST /v1/clips/pair/confirm";
+const ROUTE_BRIEFS = "POST /v1/briefs";
+const ROUTE_BRIEF_SOURCES = "POST /v1/briefs/{id}/sources";
+const ROUTE_BRIEF_RUN = "POST /v1/briefs/{id}/run";
+const ROUTE_BRIEF_SAVE = "POST /v1/briefs/{id}/save";
 
 /**
  * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
@@ -31,7 +42,10 @@ const ROUTE_CLIPS_PAIR_CONFIRM = "POST /v1/clips/pair/confirm";
  * `POST /v1/messaging/teams/events` is the ChatOps Teams inbound surface (auth = a Bot Framework
  * JWT validated in-route, not a static bearer). `POST /v1/clips` is the web-clipper ingest surface
  * (auth = a labeled clip token validated in-route); `POST /v1/clips/pair/confirm` is the pairing
- * confirm surface (gated by a short-lived pairing code). No other HTTP method may write.
+ * confirm surface (gated by a short-lived pairing code). `POST /v1/briefs` creates a research-brief
+ * run, `POST /v1/briefs/{id}/sources` feeds it a captured source, `POST /v1/briefs/{id}/run`
+ * triggers synthesis, and `POST /v1/briefs/{id}/save` persists the finished report (auth = the same
+ * labeled clipper token, verified in-route). No other HTTP method may write.
  */
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_DEPLOY,
@@ -42,9 +56,15 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_TEAMS_EVENTS,
   ROUTE_CLIPS,
   ROUTE_CLIPS_PAIR_CONFIRM,
+  ROUTE_BRIEFS,
+  ROUTE_BRIEF_SOURCES,
+  ROUTE_BRIEF_RUN,
+  ROUTE_BRIEF_SAVE,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
+/** `/v1/briefs/<id>/<action>` — there is no path-param router here; SCIM sets the precedent. */
+const BRIEF_ITEM_RE = /^\/v1\/briefs\/([A-Za-z0-9_]{1,64})\/(sources|run|save)$/;
 /**
  * Per-route request-body cap (enforced in `parseBody`, twice: on the `content-length` header
  * before the body is read, and again on the actual byte length).
@@ -53,14 +73,22 @@ const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
  * dispatcher was built for — deploy annotations, SCIM user records, the admin policy TOML, Teams
  * activities, and the clip pairing confirm (a `{code}` body of a few dozen bytes). Keep it.
  *
- * `MAX_BODY_BYTES_CLIP` (1 MiB) applies ONLY to `POST /v1/clips`, which carries the readable text
- * of a whole web page — real articles routinely exceed 8 KiB, so the shared cap made the web
- * clipper unusable (413 payload_too_large on every non-trivial page; issue #771). Do NOT unify
- * these back into one constant: the clip route is the outlier, and widening the control-plane
- * routes to 1 MiB would give away a cheap abuse bound for nothing.
+ * `MAX_BODY_BYTES_ARTICLE` (1 MiB) applies to every route that carries a whole extracted article:
+ * `POST /v1/clips` (a whole web page — real articles routinely exceed 8 KiB, so the shared cap
+ * made the web clipper unusable, 413 payload_too_large on every non-trivial page; issue #771) and
+ * `POST /v1/briefs/{id}/sources` (the exact same shape of payload, fed one at a time into a brief
+ * run). Do NOT unify these back into the control-plane constant: both routes are the outlier, and
+ * widening the control-plane routes to 1 MiB would give away a cheap abuse bound for nothing.
  */
 const MAX_BODY_BYTES_DEFAULT = 8 * 1024;
-const MAX_BODY_BYTES_CLIP = 1024 * 1024;
+const MAX_BODY_BYTES_ARTICLE = 1024 * 1024;
+/**
+ * A brief CREATE body carries the question plus up to MAX_SOURCES_PER_RUN {url,title} pairs. The
+ * 8 KiB control-plane default does NOT fit that: a 4000-char brief leaves ~4 KiB for 20 pairs
+ * (~200 bytes each), and real URLs plus real tab titles exceed that routinely — a fully conforming
+ * client would 413. 64 KiB is generous and still trivial next to the 1 MiB source cap.
+ */
+const MAX_BODY_BYTES_BRIEF_CREATE = 64 * 1024;
 
 /**
  * Per-route request rate cap (per token fingerprint, per rate-limiter window; it may only tighten
@@ -68,7 +96,8 @@ const MAX_BODY_BYTES_CLIP = 1024 * 1024;
  *
  * `MAX_REQUESTS_PER_WINDOW_DEFAULT` (60/min) is the shared control-plane limit.
  *
- * `MAX_REQUESTS_PER_WINDOW_CLIP` (20/min) is the tightening that pays for `MAX_BODY_BYTES_CLIP`:
+ * `MAX_REQUESTS_PER_WINDOW_CLIP` (20/min) is the tightening that pays for `MAX_BODY_BYTES_ARTICLE`
+ * on `POST /v1/clips`:
  * raising a body cap without tightening the matching rate limit is exactly what the write-surface
  * playbook forbids, because the abuse bound is cap × rate. 60 × 1 MiB/min would have been a ~60
  * MiB/min burst; 20 × 1 MiB/min holds it to ~20 MiB/min while staying generous for a human
@@ -82,6 +111,13 @@ const MAX_BODY_BYTES_CLIP = 1024 * 1024;
  */
 const MAX_REQUESTS_PER_WINDOW_DEFAULT = 60;
 const MAX_REQUESTS_PER_WINDOW_CLIP = 20;
+/**
+ * Briefs get their OWN buckets. Clip ingest runs on a constant `"clip"` fingerprint at
+ * 20/min shared across all clipper clients; a brief sweep is up to 23 calls (1 create +
+ * 20 sources + run + save) and on that bucket would both 429 itself and starve ordinary
+ * clipping.
+ */
+const MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE = 60;
 
 const DEPLOY_DISABLED_HINT =
   "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
@@ -98,6 +134,11 @@ const TEAMS_EVENTS_REJECT_ACTION = "messaging.teams.inbound_rejected";
 const CLIP_DISABLED_HINT = "web clipper disabled — pair a browser with 'nimbus clip pair'";
 const CLIP_REJECT_ACTION = "clip.ingest_rejected";
 const CLIP_PAIR_REJECT_ACTION = "clip.pair_rejected";
+const BRIEF_DISABLED_HINT = "research briefs disabled — enable [briefs] in nimbus.toml";
+const BRIEF_CREATE_REJECT_ACTION = "brief.create_rejected";
+const BRIEF_SOURCE_REJECT_ACTION = "brief.source_rejected";
+const BRIEF_RUN_REJECT_ACTION = "brief.run_rejected";
+const BRIEF_SAVE_REJECT_ACTION = "brief.save_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
@@ -144,6 +185,20 @@ export interface ClipsWriteSurface {
   readonly ingest: (input: unknown) => { id: string; status: "created" | "updated" };
 }
 
+/**
+ * Research-briefs seam — present only when the briefs surface is enabled. `verifyToken` reuses the
+ * same labeled clipper token map as `ClipsWriteSurface` (clipIngest precedent: verified in-route,
+ * not via a static bearer). `startRun` kicks off synthesis fire-and-forget, resolving as soon as the
+ * run is marked running; `save` persists the finished report as an indexed item.
+ */
+export interface BriefsWriteSurface {
+  readonly controller: BriefRunController;
+  readonly verifyToken: (presented: string) => Promise<{ label: string } | null>;
+  /** Kicks off synthesis fire-and-forget; resolves as soon as the run is marked running. */
+  readonly startRun: (runId: string) => void;
+  readonly save: (runId: string) => { itemId: string };
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -155,6 +210,7 @@ export interface WriteRouteContext {
   readonly policy?: PolicyWriteSurface;
   readonly messaging?: TeamsEventsSurface;
   readonly clips?: ClipsWriteSurface;
+  readonly briefs?: BriefsWriteSurface;
 }
 
 type RouteKind =
@@ -163,7 +219,11 @@ type RouteKind =
   | "policy"
   | "teamsEvents"
   | "clipIngest"
-  | "clipPairConfirm";
+  | "clipPairConfirm"
+  | "briefCreate"
+  | "briefSource"
+  | "briefRun"
+  | "briefSave";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -172,7 +232,7 @@ interface ResolvedRoute {
   readonly disabledHint: string;
   readonly rejectAction: string;
   readonly hasBody: boolean;
-  /** Request-body cap for THIS route (see MAX_BODY_BYTES_DEFAULT / MAX_BODY_BYTES_CLIP). */
+  /** Request-body cap for THIS route (see MAX_BODY_BYTES_DEFAULT / MAX_BODY_BYTES_ARTICLE). */
   readonly maxBodyBytes: number;
   /**
    * Requests per rate-limit window for THIS route (see MAX_REQUESTS_PER_WINDOW_DEFAULT /
@@ -240,6 +300,11 @@ function recordRejection(
 
 function notFound(): Response {
   return new Response("Not Found", { status: 404 });
+}
+
+/** 404 that names the cause, so the client can write first-run copy instead of guessing. */
+function briefsDisabled(): Response {
+  return jsonResponse({ error: "briefs_disabled", hint: BRIEF_DISABLED_HINT }, 404);
 }
 
 /** `POST /v1/deployments` (always-on surface; bearer = `http_api.deployment_token`). */
@@ -339,7 +404,7 @@ function resolveClipIngestRoute(method: string, ctx: WriteRouteContext): Resolve
     rejectAction: CLIP_REJECT_ACTION,
     hasBody: true,
     // A clip body is a whole readable article, not a control-plane payload (#771).
-    maxBodyBytes: MAX_BODY_BYTES_CLIP,
+    maxBodyBytes: MAX_BODY_BYTES_ARTICLE,
     // The raised cap is paid for with a tighter rate limit (see the constants above).
     maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_CLIP,
   };
@@ -365,6 +430,60 @@ function resolveClipPairConfirmRoute(
   };
 }
 
+/** `POST /v1/briefs` (404 unless the briefs seam is enabled). */
+function resolveBriefCreateRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.briefs === undefined) return briefsDisabled();
+  return {
+    key: ROUTE_BRIEFS,
+    kind: "briefCreate",
+    expectedToken: "", // verified in-route against the clipper token map (clipIngest precedent)
+    disabledHint: BRIEF_DISABLED_HINT,
+    rejectAction: BRIEF_CREATE_REJECT_ACTION,
+    hasBody: true,
+    // NOT the 8 KiB control-plane default: see MAX_BODY_BYTES_BRIEF_CREATE.
+    maxBodyBytes: MAX_BODY_BYTES_BRIEF_CREATE,
+    maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_DEFAULT,
+  };
+}
+
+/** `POST /v1/briefs/{id}/{sources|run|save}`. */
+function resolveBriefItemRoute(
+  method: string,
+  id: string,
+  action: string,
+  ctx: WriteRouteContext,
+): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.briefs === undefined) return briefsDisabled();
+  if (action === "sources") {
+    return {
+      key: ROUTE_BRIEF_SOURCES,
+      kind: "briefSource",
+      expectedToken: "",
+      disabledHint: BRIEF_DISABLED_HINT,
+      rejectAction: BRIEF_SOURCE_REJECT_ACTION,
+      hasBody: true,
+      // A whole extracted article, exactly like a clip body — same constant.
+      maxBodyBytes: MAX_BODY_BYTES_ARTICLE,
+      maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE,
+      id,
+    };
+  }
+  const isRun = action === "run";
+  return {
+    key: isRun ? ROUTE_BRIEF_RUN : ROUTE_BRIEF_SAVE,
+    kind: isRun ? "briefRun" : "briefSave",
+    expectedToken: "",
+    disabledHint: BRIEF_DISABLED_HINT,
+    rejectAction: isRun ? BRIEF_RUN_REJECT_ACTION : BRIEF_SAVE_REJECT_ACTION,
+    hasBody: false,
+    maxBodyBytes: MAX_BODY_BYTES_DEFAULT,
+    maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_DEFAULT,
+    id,
+  };
+}
+
 /** Resolves the request to an allowlisted route, or a 404/405 Response. Does NOT consult auth. */
 function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedRoute | Response {
   const { method } = req;
@@ -375,6 +494,11 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
   if (path === "/v1/messaging/teams/events") return resolveTeamsEventsRoute(method, ctx);
   if (path === "/v1/clips") return resolveClipIngestRoute(method, ctx);
   if (path === "/v1/clips/pair/confirm") return resolveClipPairConfirmRoute(method, ctx);
+  if (path === "/v1/briefs") return resolveBriefCreateRoute(method, ctx);
+  const brief = BRIEF_ITEM_RE.exec(path);
+  if (brief !== null) {
+    return resolveBriefItemRoute(method, brief[1] as string, brief[2] as string, ctx);
+  }
   const item = SCIM_ITEM_RE.exec(path);
   if (item !== null) return resolveScimItemRoute(method, item[1] as string, ctx);
   return notFound();
@@ -391,6 +515,13 @@ function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): 
   // Clip ingest uses a labeled token verified inside runClipIngestRoute (same pattern as teamsEvents).
   if (route.kind === "clipIngest") {
     return { fingerprint: "clip" };
+  }
+  // Briefs verify the clipper token in-route (clipIngest precedent). The fingerprint doubles as
+  // the rate-limit bucket key: source-feeding gets its own bucket so a sweep cannot starve
+  // ordinary clipping, and vice versa.
+  if (route.kind === "briefSource") return { fingerprint: "brief-src" };
+  if (route.kind === "briefCreate" || route.kind === "briefRun" || route.kind === "briefSave") {
+    return { fingerprint: "brief" };
   }
   const auth = requireBearer(req, { expectedToken: route.expectedToken });
   if (auth.surfaceDisabled === true) {
@@ -811,6 +942,240 @@ async function runClipPairConfirmRoute(
   return jsonResponse({ token, label: confirmed.label }, 200, rateLimitHeaders(limit));
 }
 
+async function requireBriefAuth(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  req: Request,
+  limit: RateLimitCheck,
+): Promise<Response | null> {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const presented = bearerToken(req);
+  const verdict = presented === undefined ? null : await briefs.verifyToken(presented);
+  if (verdict !== null) return null;
+  recordRejection(ctx, {
+    actionType: route.rejectAction,
+    tokenFingerprint: fingerprint,
+    resultCode: 401,
+    reason: "unauthorized",
+  });
+  return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
+}
+
+function briefValidationResponse(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  e: unknown,
+): Response {
+  if (e instanceof BriefValidationError) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 400,
+      reason: e.field === undefined ? "invalid_request" : `invalid_${e.field}`,
+    });
+    return jsonResponse(
+      { error: "invalid_request", ...(e.field === undefined ? {} : { field: e.field }) },
+      400,
+      rateLimitHeaders(limit),
+    );
+  }
+  recordRejection(ctx, {
+    actionType: route.rejectAction,
+    tokenFingerprint: fingerprint,
+    resultCode: 500,
+    reason: "internal_error",
+  });
+  return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+}
+
+async function runBriefCreateRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
+  if (denied !== null) return denied;
+  try {
+    const input = validateCreateInput(parsed);
+    const out = briefs.controller.create(input);
+    if ("error" in out) {
+      recordRejection(ctx, {
+        actionType: route.rejectAction,
+        tokenFingerprint: fingerprint,
+        resultCode: 503,
+        reason: "briefs_busy",
+      });
+      // NOT a 429, and this is load-bearing rather than a style choice: a concurrency
+      // Retry-After derived from run expiry is up to 1800s (the full TTL), the shipped clipper
+      // clamps Retry-After to 120s, and it would retry straight back into the same
+      // rejection with no path forward. Emitting the rate-limit bucket's 60s instead
+      // would be a different lie — nothing frees at 60s. 503 with NO Retry-After keeps
+      // this out of retry pacing entirely. See the spec's "The concurrency cap is not
+      // a 429" section before changing it back.
+      return jsonResponse(
+        {
+          error: "briefs_busy",
+          activeRuns: out.activeRuns,
+          oldestExpiresInSeconds: out.oldestExpiresInSeconds,
+        },
+        503,
+        rateLimitHeaders(limit),
+      );
+    }
+    return jsonResponse(
+      { id: out.run.id, status: "collecting", expected: out.run.declared.size },
+      200,
+      rateLimitHeaders(limit),
+    );
+  } catch (e) {
+    return briefValidationResponse(ctx, route, fingerprint, limit, e);
+  }
+}
+
+/** Resolves a run id to a run, or the 404/410 Response the client keys its discard on. */
+function lookupRun(ctx: WriteRouteContext, id: string, limit: RateLimitCheck) {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const run = briefs.controller.get(id);
+  if (run !== null) return run;
+  return briefs.controller.wasKnown(id)
+    ? jsonResponse({ error: "expired" }, 410, rateLimitHeaders(limit))
+    : jsonResponse({ error: "not_found" }, 404, rateLimitHeaders(limit));
+}
+
+async function runBriefSourceRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
+  if (denied !== null) return denied;
+  const found = lookupRun(ctx, route.id as string, limit);
+  if (found instanceof Response) return found;
+  if (found.status !== "collecting") {
+    return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
+  }
+  try {
+    const input = validateSourceInput(parsed);
+    const out = briefs.controller.addSource(found, input);
+    if ("error" in out) {
+      if (out.error === "undeclared") {
+        recordRejection(ctx, {
+          actionType: route.rejectAction,
+          tokenFingerprint: fingerprint,
+          resultCode: 400,
+          reason: "invalid_url",
+        });
+        return jsonResponse(
+          { error: "invalid_request", field: "url" },
+          400,
+          rateLimitHeaders(limit),
+        );
+      }
+      recordRejection(ctx, {
+        actionType: route.rejectAction,
+        tokenFingerprint: fingerprint,
+        resultCode: 413,
+        reason: out.error,
+      });
+      return jsonResponse(
+        { error: "payload_too_large", detail: out.error },
+        413,
+        rateLimitHeaders(limit),
+      );
+    }
+    return jsonResponse(
+      { accepted: out.accepted, received: out.received, expected: found.declared.size },
+      200,
+      rateLimitHeaders(limit),
+    );
+  } catch (e) {
+    return briefValidationResponse(ctx, route, fingerprint, limit, e);
+  }
+}
+
+async function runBriefRunRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+): Promise<Response> {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
+  if (denied !== null) return denied;
+  const found = lookupRun(ctx, route.id as string, limit);
+  if (found instanceof Response) return found;
+  // Idempotent: re-calling run is a no-op that reports where the run already is.
+  if (found.status !== "collecting") {
+    return jsonResponse({ status: found.status }, 200, rateLimitHeaders(limit));
+  }
+  if (found.sources.size === 0 && !found.useIndex) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 400,
+      reason: "invalid_sources",
+    });
+    return jsonResponse(
+      { error: "invalid_request", field: "sources" },
+      400,
+      rateLimitHeaders(limit),
+    );
+  }
+  briefs.startRun(found.id);
+  return jsonResponse({ status: "running" }, 200, rateLimitHeaders(limit));
+}
+
+async function runBriefSaveRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+): Promise<Response> {
+  const briefs = ctx.briefs as BriefsWriteSurface;
+  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
+  if (denied !== null) return denied;
+  const found = lookupRun(ctx, route.id as string, limit);
+  if (found instanceof Response) return found;
+  if (found.status !== "done") {
+    return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
+  }
+  try {
+    return jsonResponse(briefs.save(found.id), 200, rateLimitHeaders(limit));
+  } catch (e) {
+    // Narrow: a bare catch here reports assemble's "run not found" as a SIZE problem,
+    // sending the client down a debugging path unrelated to the actual fault.
+    if (e instanceof ReportTooLargeError) {
+      recordRejection(ctx, {
+        actionType: route.rejectAction,
+        tokenFingerprint: fingerprint,
+        resultCode: 409,
+        reason: "report_too_large",
+      });
+      return jsonResponse({ error: "report_too_large" }, 409, rateLimitHeaders(limit));
+    }
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+}
+
 export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): Promise<Response> {
   const url = new URL(req.url);
   const route = resolveRoute(req, url, ctx);
@@ -856,6 +1221,18 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
   }
   if (route.kind === "clipPairConfirm") {
     return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
+  }
+  if (route.kind === "briefCreate") {
+    return runBriefCreateRoute(ctx, route, auth.fingerprint, limit, req, parsed);
+  }
+  if (route.kind === "briefSource") {
+    return runBriefSourceRoute(ctx, route, auth.fingerprint, limit, req, parsed);
+  }
+  if (route.kind === "briefRun") {
+    return runBriefRunRoute(ctx, route, auth.fingerprint, limit, req);
+  }
+  if (route.kind === "briefSave") {
+    return runBriefSaveRoute(ctx, route, auth.fingerprint, limit, req);
   }
   return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }
