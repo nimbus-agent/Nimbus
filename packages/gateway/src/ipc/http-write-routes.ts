@@ -64,7 +64,7 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
 /** `/v1/briefs/<id>/<action>` — there is no path-param router here; SCIM sets the precedent. */
-const BRIEF_ITEM_RE = /^\/v1\/briefs\/([A-Za-z0-9_]{1,64})\/(sources|run|save)$/;
+const BRIEF_ITEM_RE = /^\/v1\/briefs\/(\w{1,64})\/(sources|run|save)$/;
 /**
  * Per-route request-body cap (enforced in `parseBody`, twice: on the `content-length` header
  * before the body is read, and again on the actual byte length).
@@ -1233,39 +1233,34 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
     parsed = body.parsed;
   }
 
-  if (route.kind === "deployment") {
-    const svc = extractService(parsed);
-    const svcRes = checkServiceAllowlist(ctx, auth.fingerprint, limit, svc);
-    if (svcRes !== undefined) {
-      return svcRes;
+  switch (route.kind) {
+    case "deployment": {
+      const svc = extractService(parsed);
+      const svcRes = checkServiceAllowlist(ctx, auth.fingerprint, limit, svc);
+      if (svcRes !== undefined) {
+        return svcRes;
+      }
+      return runDeploymentRoute(ctx, auth.fingerprint, limit, parsed, svc);
     }
-    return runDeploymentRoute(ctx, auth.fingerprint, limit, parsed, svc);
+    case "policy":
+      return runPolicyRoute(ctx, auth.fingerprint, limit, parsed);
+    case "teamsEvents":
+      return runTeamsEventsRoute(ctx, auth.fingerprint, limit, req, parsed);
+    case "clipIngest":
+      return runClipIngestRoute(ctx, auth.fingerprint, limit, req, parsed);
+    case "clipPairConfirm":
+      return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
+    case "briefCreate":
+      return runBriefCreateRoute(ctx, route, auth.fingerprint, limit, req, parsed);
+    case "briefSource":
+      return runBriefSourceRoute(ctx, route, auth.fingerprint, limit, req, parsed);
+    case "briefRun":
+      return runBriefRunRoute(ctx, route, auth.fingerprint, limit, req);
+    case "briefSave":
+      return runBriefSaveRoute(ctx, route, auth.fingerprint, limit, req);
+    default:
+      return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
   }
-  if (route.kind === "policy") {
-    return runPolicyRoute(ctx, auth.fingerprint, limit, parsed);
-  }
-  if (route.kind === "teamsEvents") {
-    return runTeamsEventsRoute(ctx, auth.fingerprint, limit, req, parsed);
-  }
-  if (route.kind === "clipIngest") {
-    return runClipIngestRoute(ctx, auth.fingerprint, limit, req, parsed);
-  }
-  if (route.kind === "clipPairConfirm") {
-    return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
-  }
-  if (route.kind === "briefCreate") {
-    return runBriefCreateRoute(ctx, route, auth.fingerprint, limit, req, parsed);
-  }
-  if (route.kind === "briefSource") {
-    return runBriefSourceRoute(ctx, route, auth.fingerprint, limit, req, parsed);
-  }
-  if (route.kind === "briefRun") {
-    return runBriefRunRoute(ctx, route, auth.fingerprint, limit, req);
-  }
-  if (route.kind === "briefSave") {
-    return runBriefSaveRoute(ctx, route, auth.fingerprint, limit, req);
-  }
-  return runScimRoute(ctx, route, auth.fingerprint, limit, parsed);
 }
 
 export { tokenFingerprint } from "./http-auth.ts";

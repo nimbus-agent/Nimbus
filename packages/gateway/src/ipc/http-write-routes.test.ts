@@ -1051,7 +1051,7 @@ test("POST /v1/deployments keeps the 8 KiB cap (the clip cap is not global)", as
 
 test("POST /v1/clips accepts a body of exactly 1 MiB (the cap is inclusive)", async () => {
   const payload = clipBodyOfExactly(MIB_1);
-  expect(payload.length).toBe(MIB_1);
+  expect(payload).toHaveLength(MIB_1);
   const req = new Request("http://127.0.0.1/v1/clips", {
     method: "POST",
     headers: { authorization: "Bearer good-token", "content-type": "application/json" },
@@ -1064,7 +1064,7 @@ test("POST /v1/clips accepts a body of exactly 1 MiB (the cap is inclusive)", as
 
 test("POST /v1/clips rejects a body of exactly 1 MiB + 1 with 413", async () => {
   const payload = clipBodyOfExactly(MIB_1 + 1);
-  expect(payload.length).toBe(MIB_1 + 1);
+  expect(payload).toHaveLength(MIB_1 + 1);
   const req = new Request("http://127.0.0.1/v1/clips", {
     method: "POST",
     headers: { authorization: "Bearer good-token", "content-type": "application/json" },

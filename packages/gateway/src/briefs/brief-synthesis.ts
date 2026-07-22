@@ -115,7 +115,7 @@ export async function runSynthesis(
   // The disclosure is deliberately duplicated (typed for a banner, prose for the saved
   // artifact). Hand the client the EXACT string so it can suppress the duplicate by
   // equality instead of pattern-matching a sentence we might later reword.
-  const disclosure = out.remote ? gaps[gaps.length - 1] : undefined;
+  const disclosure = out.remote ? gaps.at(-1) : undefined;
 
   return {
     report: {

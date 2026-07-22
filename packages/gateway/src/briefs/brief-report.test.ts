@@ -260,7 +260,7 @@ describe("validateReport", () => {
       { summary: longSummary, findings: [], conflicts: [], gaps: [] },
       reg(S1),
     );
-    expect(report.summary.length).toBe(MAX_SUMMARY_CHARS);
+    expect(report.summary).toHaveLength(MAX_SUMMARY_CHARS);
     expect(boundGaps.join(" ")).toContain(String(MAX_SUMMARY_CHARS));
   });
 

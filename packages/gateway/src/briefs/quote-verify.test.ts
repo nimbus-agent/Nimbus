@@ -66,7 +66,7 @@ describe("verifyQuote", () => {
     const body = "The build 🚀 shipped on Friday.";
     const got = verifyQuote(body, "build 🚀 shipped");
     expect(got).toBe("build 🚀 shipped");
-    expect([...(got ?? "")].length).toBe("build 🚀 shipped".length - 1); // one astral char
+    expect([...(got ?? "")]).toHaveLength("build 🚀 shipped".length - 1); // one astral char
   });
 
   test("handles an emoji adjacent to collapsed whitespace", () => {

@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.25.0](https://github.com/nimbus-agent/Nimbus/compare/v0.24.0...v0.25.0) (2026-07-22)
+
+
+### Features
+
+* **gateway:** research briefs — staged HTTP reasoning surface with citation-validated reports ([#799](https://github.com/nimbus-agent/Nimbus/issues/799)) ([f310d2a](https://github.com/nimbus-agent/Nimbus/commit/f310d2a679ca7edc1f73c6abde808acd0c851931))
+
+
+### Bug Fixes
+
+* clear the SonarCloud board (15), the 6 astro XSS advisories, and the stale release line ([#801](https://github.com/nimbus-agent/Nimbus/issues/801)) ([825df03](https://github.com/nimbus-agent/Nimbus/commit/825df03e6157ebfa2299984115aa68be24539fe1))
+
 ## [0.24.0](https://github.com/nimbus-agent/Nimbus/compare/v0.23.2...v0.24.0) (2026-07-22)
 
 

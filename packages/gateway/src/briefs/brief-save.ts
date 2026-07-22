@@ -57,7 +57,8 @@ export function saveBriefReport(
     }
   }
 
-  const externalId = `brief:${sha256(`${run.brief} ${run.createdAtMs}`)}`;
+  const briefFingerprint = `${run.brief} ${run.createdAtMs}`;
+  const externalId = `brief:${sha256(briefFingerprint)}`;
   const itemId = itemPrimaryKey("nimbus", externalId);
 
   upsertIndexedItem(db, {
