@@ -49,7 +49,9 @@ export const MAX_INDEX_HITS = 8;
  * Characters of a source ref's `title`, once fed into the registry. A single
  * ref is copied into every citation that names it, so an unbounded title —
  * multiplied across up to 200 citations — would blow the report's 64 KB
- * metadata budget regardless of the count caps above.
+ * metadata budget regardless of the count caps above. This 120-char convention
+ * mirrors TITLE_MAX in connectors/mendeley-reference-mapping.ts and
+ * connectors/zotero-reference-mapping.ts.
  */
 export const MAX_REF_TITLE_CHARS = 120;
 /**

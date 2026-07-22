@@ -73,6 +73,8 @@ describe("buildRegistry", () => {
       semanticAvailable: true,
     }));
     expect([...registry.keys()].filter((k) => k.startsWith("C"))).toHaveLength(8);
+    // Assert that null url from the hit produces an absent ref.url (undefined, not null).
+    expect(registry.get("C1")?.ref.url).toBeUndefined();
   });
 
   test("propagates semanticAvailable so the caller can emit the keyword-only gap", async () => {
@@ -81,6 +83,21 @@ describe("buildRegistry", () => {
       semanticAvailable: false,
     }));
     expect(semanticAvailable).toBe(false);
+  });
+
+  test("a successful search that returns empty hits is reported as searchFailed: false", async () => {
+    let searchWasCalled = false;
+    const { registry, indexHits, searchFailed } = await buildRegistry(
+      runWith(true, ["a"]),
+      async () => {
+        searchWasCalled = true;
+        return { hits: [], semanticAvailable: true };
+      },
+    );
+    expect(searchWasCalled).toBe(true);
+    expect(indexHits).toBe(0);
+    expect(searchFailed).toBe(false);
+    expect([...registry.keys()]).toEqual(["S1"]);
   });
 
   test("a failing index search degrades to sources only and is reported as a failure", async () => {
