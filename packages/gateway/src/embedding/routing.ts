@@ -41,6 +41,9 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   // Web-clipper readable-article / selection bodies are prose paragraphs — same
   // hybrid posture as gmail:email: MiniLM-384 fallback when openai.api_key is absent.
   "nimbus:web_clip",
+  // Saved research-brief reports are prose synthesis (summary/findings/gaps), like
+  // nimbus:web_clip. MiniLM-only fallback when openai.api_key is absent.
+  "nimbus:research_brief",
 ]);
 
 export function routingKey(service: string, type: string): string {
