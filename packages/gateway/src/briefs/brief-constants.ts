@@ -44,3 +44,16 @@ export const MAX_ITEM_TEXT_CHARS = 600;
 
 /** Indexed clips pulled in when useIndex is true. */
 export const MAX_INDEX_HITS = 8;
+
+/**
+ * Characters of a source ref's `title`, once fed into the registry. A single
+ * ref is copied into every citation that names it, so an unbounded title —
+ * multiplied across up to 200 citations — would blow the report's 64 KB
+ * metadata budget regardless of the count caps above.
+ */
+export const MAX_REF_TITLE_CHARS = 120;
+/**
+ * Characters of a source ref's `url`, once fed into the registry. Same
+ * fan-out rationale as MAX_REF_TITLE_CHARS.
+ */
+export const MAX_REF_URL_CHARS = 300;
