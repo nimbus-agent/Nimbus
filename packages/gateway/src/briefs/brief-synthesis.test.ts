@@ -50,6 +50,9 @@ describe("buildPrompt", () => {
     const at = prompt.indexOf(attack);
     expect(at).toBeGreaterThan(open);
     expect(at).toBeLessThan(close);
+    // Prove the payload appears ONLY inside the envelope, not before or after it.
+    expect(prompt.slice(0, open)).not.toContain(attack);
+    expect(prompt.slice(close)).not.toContain(attack);
   });
 
   test("includes the brief question and every ref token", async () => {
@@ -59,6 +62,35 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("do workers die");
     expect(prompt).toContain("S1");
     expect(prompt).toContain("S2");
+  });
+
+  test("exercises the url: null branch by including a clip with no url", async () => {
+    // Create a run with useIndex: true to allow index integration.
+    const c = new BriefRunController({ nowMs: () => 1000 });
+    const sources = [{ url: "https://a.test/0", title: "T0" }];
+    const runOut = c.create({ brief: "do workers die", sources, useIndex: true });
+    if ("error" in runOut) throw new Error("expected a run");
+    c.addSource(runOut.run, {
+      url: "https://a.test/0",
+      title: "T0",
+      body: "a",
+      capturedAt: 1,
+      truncated: false,
+    });
+    // Inject a clip entry with url: null to exercise the null-url path.
+    const { registry } = await buildRegistry(runOut.run, async () => ({
+      hits: [
+        { itemId: "nimbus:clip:test", title: "No-URL Clip", url: null, snippet: "clipped text" },
+      ],
+      semanticAvailable: true,
+    }));
+    const prompt = buildPrompt(runOut.run, registry);
+    // Should not throw and should contain the clip token and its body.
+    expect(prompt).toContain("C1");
+    expect(prompt).toContain("clipped text");
+    // The ref should have url undefined (not null).
+    const clipRef = registry.get("C1");
+    expect(clipRef?.ref.url).toBeUndefined();
   });
 });
 
@@ -167,6 +199,8 @@ describe("runSynthesis", () => {
     const joined = out.report.gaps.join(" ");
     expect(joined).toContain("2 of 3");
     expect(joined).toContain("test-model");
+    // Prove the model's own gap is NOT merged into the report (the exact regression this test guards).
+    expect(joined).not.toContain("nothing is missing");
   });
 
   test("drops a finding citing a source that does not exist", async () => {
