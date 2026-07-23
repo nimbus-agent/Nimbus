@@ -247,7 +247,7 @@ registration and treats it as part of the deliverable.
 | **P3** | Review Layer | S–M | Actions-only | An invariant violation is caught in CI, not only in local `preflight` |
 | **P4a** | Main-CI concurrency fix | XS | Actions-only | Every commit on `main` has a completed CI run |
 | **P4b** | Latency | S–M | Actions-only | Per-job wall-clock tracked; regressions visible |
-| **P5** | Org Legibility | S | Actions-only | Dashboard regenerates on schedule; stale downstream and expiring secrets surface before they bite |
+| **P5** | Org Legibility | S | Actions-only | Dashboard regenerates on schedule; stale downstream and expiring secrets surface before they bite; `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md` |
 
 ### P1 — Org CI Foundation
 
@@ -351,20 +351,71 @@ writes markdown to the `.github` repo profile or a pinned issue — zero hosting
 **Tier B** (a hosted receiver for a live view) is the only candidate in the whole
 program for a real webhook service, and is deferrable indefinitely.
 
-**Public-surface constraint.** The `.github` repo is **public**, so Tier A must
-not aggregate private-repo metadata (names, versions, activity) onto it — six
-private scaffolds plus `nimbus-statuspage`, `nimbus-raycast`,
-`nimbus-mcp-servers`, `nimbus-connector-registry`, `nimbus-recipes` and
-`create-nimbus-connector` would otherwise become publicly enumerable with commit
-cadence attached. Tier A therefore covers the nine public repos on a public
-surface, or all repos on a private one — not a mix.
+**Public-surface constraint.** The org is 12 public repos and 6 private
+(`nimbus-statuspage`, `nimbus-raycast`, `nimbus-mcp-servers`,
+`nimbus-connector-registry`, `create-nimbus-connector`, `nimbus-recipes`). The
+`.github` repo is **public**, so Tier A must not aggregate private-repo metadata
+onto it — those six would otherwise become publicly enumerable with commit
+cadence attached. Tier A covers the public repos on a public surface, or all
+repos on a private one; never a mix.
 
-Secret **names** are explicitly *not* in scope for this constraint: they are
-already public by design in [`ci-secrets.md`](../../ci-secrets.md), which is the
-canonical inventory and lives in a public repo. Publishing an expiry countdown
-for a name an attacker can already read costs nothing and is the entire point of
-the surface. Likewise CI pass-rates and job durations are already public for
-public repos through the Actions UI.
+Secret **names** are *not* in scope for that constraint, but the reasoning needs
+stating precisely rather than waved through. `grep -rhoE "secrets\.[A-Z_]+"
+.github/workflows/` yields 22 names, and the workflow files are public — so every
+name and its consuming workflow is already derivable without
+[`ci-secrets.md`](../../ci-secrets.md). Publishing an expiry countdown against a
+name an attacker can already read costs nothing, and is the point of the surface.
+CI pass-rates and job durations are likewise already public through the Actions
+UI for public repos.
+
+Three details in `ci-secrets.md` *do* exceed what `grep` yields, and two are
+worth trimming — not because names are secret, but because these change an
+attacker's plan rather than merely restating it:
+
+- **Which secrets are plain repo secrets versus `release`-environment-scoped.**
+  This is a map of which high-value credentials are reachable without the
+  environment's protection rules. Keep the operational fact, move the mapping
+  off the public page.
+- **A precise expiry date** (`VSCE_PAT`, 2026-09-20). Coarsen to a quarter on the
+  public page; the exact date belongs to the countdown surface and the
+  `secret-health.yml` job.
+- **Token type and scope** (e.g. `WINGET_PAT` is a classic PAT with
+  `public_repo`). **Keep as-is** — it serves auditors and Scorecard more than it
+  serves an attacker, and the scope is minimal by design.
+
+The document itself is not the problem and must not be deleted or privatized:
+it is why `secret-health.yml` exists, and the silently-expired-PAT root cause was
+findable only because the surface had been enumerated. Obscurity is the weakest
+control available here; the real ones (encryption at rest, environment scoping,
+1-hour App tokens, least privilege) are unaffected by what the doc says.
+
+### The inventory is incomplete, and that is the real defect
+
+`ci-secrets.md` opens by calling itself the canonical inventory of **every**
+Actions secret the workflows consume. Three are missing:
+
+| Secret | Consumed by |
+| --- | --- |
+| `SECRET_AUDITOR_CLIENT_ID` | `secret-health.yml` |
+| `SECRET_AUDITOR_PRIVATE_KEY` | `secret-health.yml` |
+| `BENCHER_API_KEY` | `_perf.yml`, `_perf-reference.yml` |
+
+**The two missing App credentials belong to `secret-health.yml` — the workflow
+whose job is monitoring secret health.** The monitor is invisible to the
+inventory it exists to serve, which is the same shape as `audit:action-sha-pins`
+auditing every repo except the drift next door. `nimbus-secret-auditor` is
+installed org-wide with `all` repository selection, so this is an App credential
+sitting outside the rotation inventory.
+
+A doc claiming completeness while incomplete is worse than one that is public,
+because the incompleteness is what people act on. **P5's gate therefore includes
+an `audit:secret-inventory` check** — the `grep secrets\.` set across all
+workflows must equal the `ci-secrets.md` table, and any divergence fails. Same
+idiom as `audit:action-sha-pins` and `audit:doc-refs`, and it makes this
+particular drift structurally unrepeatable.
+
+P5's first concrete tasks are therefore: add the three missing rows, apply the
+two trims above, then land the gate that keeps both true.
 
 P5 precedes P4b because it supplies the measurements P4b must be justified
 against.

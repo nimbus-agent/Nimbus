@@ -81,7 +81,7 @@ commands are named so the reasoning can be re-checked rather than trusted.
 | 2b | Auto-merge bypasses I2 | **Split** — I2 linkage rejected, merge question adopted | Non-goals + Open decision 4 |
 | 3 | Rulesets as code | **Fixed**, scoped to script + drift gate | P1 |
 | 4 | Cross-repo reusable dev loop | **Fixed** | Design constraints |
-| 5 | Dashboard privacy | **Split** — secret-name framing rejected, private-repo leak accepted | P5 |
+| 5 | Dashboard privacy | **Split** — secret-name framing rejected, private-repo leak accepted, and a follow-up found the inventory itself incomplete | P5 |
 
 ### On item 1 — right conclusion, wrong reasoning
 
@@ -140,19 +140,38 @@ Terraform is rejected as disproportionate — nine repos, no existing state
 backend, solo maintainer, and it breaches the Actions-only infra tier the program
 committed to. A `gh api` script in `.github` reaches the same guarantee.
 
-### On item 5 — wrong risk, real risk underneath
+### On item 5 — wrong risk, real risk underneath, and a third one neither of us saw
 
-Secret **names** are already public by design: `docs/ci-secrets.md` is the
-canonical inventory and lives in a public repo. An expiry countdown against a
-name an attacker can already read leaks nothing, and surfacing it is the point.
-CI pass-rates and durations are likewise already public for public repos via the
-Actions UI.
+Secret **names** are already public regardless of `ci-secrets.md`:
+`grep -rhoE "secrets\.[A-Z_]+" .github/workflows/` yields 22 names, and the
+workflow files are public. So privatizing the doc buys nothing on the thing it
+looks like it protects. CI pass-rates and durations are likewise already public
+for public repos via the Actions UI.
 
-The real exposure the review pointed at without naming: the `.github` repo is
-**public**, and six private scaffolds plus five other private repos would become
-publicly enumerable with commit cadence attached if a dashboard aggregated them
-there. The constraint adopted is therefore about **repo visibility mixing**, not
-about secret names.
+The exposure the review pointed at without naming: the `.github` repo is
+**public**, and the org's **6** private repos would become publicly enumerable
+with commit cadence attached if a dashboard aggregated them there. The adopted
+constraint is therefore about **repo-visibility mixing**, not secret names.
+(Revision 2 of the design miscounted this as "six private scaffolds plus five
+others"; the true split is 12 public / 6 private, corrected in revision 3.)
+
+**A follow-up question — "maybe `ci-secrets.md` is a mistake?" — surfaced the
+real defect, which is neither of the above.** The doc claims to be the canonical
+inventory of *every* Actions secret the workflows consume, and is missing three:
+`SECRET_AUDITOR_CLIENT_ID`, `SECRET_AUDITOR_PRIVATE_KEY` (both
+`secret-health.yml`) and `BENCHER_API_KEY` (`_perf.yml`, `_perf-reference.yml`).
+The two App credentials belong to the workflow that monitors secret health — the
+monitor is absent from the inventory it exists to serve, and
+`nimbus-secret-auditor` is installed org-wide with `all` repo selection.
+
+A completeness claim that is false is worse than a public one, because the claim
+is what people act on. P5 gains an `audit:secret-inventory` gate asserting the
+`grep secrets\.` set equals the documented table. Two narrower trims were also
+adopted (coarsen the one precise expiry date; move the repo-secret-versus-
+`release`-environment mapping off the public page); token type and scope stay,
+as they serve auditors more than attackers. The document is **not** deleted or
+privatized — it is why `secret-health.yml` exists, and obscurity is the weakest
+control in this stack.
 
 ### Not in the review — two gaps found while verifying it
 
