@@ -279,44 +279,60 @@ assertion from 0.4.
 **Goal:** stop competing on Copilot's turf with Copilot's vocabulary; build the
 things a local-first agent can do that a cloud assistant structurally cannot.
 
-The VS Code extension currently ships Copilot's exact three slash commands
-(`/explain`, `/fix`, `/test`) with generic prompts — adjudicated on model quality,
-which is the one axis a local-first client cannot win.
+**Status: VS Code slice complete, 2026-07-23** — one day, six PRs (a
+consumption PR plus 2e-core/2d/2b/2c in full), shipped in `nimbus-vscode`
+0.7.0 → 0.9.0. 2a was deliberately **not** built: a data spike against a live
+index said no (below). Scope was chosen against this section's own framing —
+2e first because it was a silent bug, 2d for the multiplier, 2a de-risked
+before any UI work — not in roadmap order.
 
-**2a — The `why` lens (the headline; see below).** Hover a line: author, PR,
-linked ticket, the Slack thread, the incident that drove the change, and
-downstream dependents. Already specified in [`roadmap.md`](./roadmap.md) as part
-of Phase 7's implicit-knowledge triad. Degrades gracefully — with only git +
-GitHub it still yields blame → PR → author → issue (`git_blame_line`, V32), and
-each connector adds a lane.
+The diagnosis that opened the stage is kept as written: the extension shipped
+Copilot's exact three slash commands (`/explain`, `/fix`, `/test`) with generic
+prompts — adjudicated on model quality, the one axis a local-first client
+cannot win. It also pinned `@nimbus-dev/client` at `^0.6.0`, which on 0.x does
+not cross minors — so none of Stage 1's 15 → 52 methods was reachable until the
+consumption PR bumped it.
 
-**2b — Ops vocabulary.** `/incident`, `/deploys`, `/owns`, `/blast` replacing the
-Copilot three. Quick-ask presets keyed to file type (`*.tf`, k8s/helm YAML,
-`Dockerfile`, `.github/workflows/*`): *"What breaks if I apply this?"*,
-*"Who owns this service?"*
+### Shipped
 
-**2c — Egress receipts.** Per-answer ledger-delta footer; "Prove window" exported
-as a self-contained offline verifier; "Prove this PR" attaching a signed
-`Nimbus-Egress-Proof` trailer; blocked/denied actions surfaced as first-class
-*proof of denial*. Buildable today on the four already-exposed `egress.*` methods.
-Aligns with M7 (Provable Locality), Phase 12.5 and the EAF standards track.
+Spec + per-PR plans: [#814](https://github.com/nimbus-agent/Nimbus/pull/814).
+Extension version is the release that carries the item.
 
-**2d — Language Model Tool registration.** `vscode.lm.registerTool` +
-`contributes.languageModelTools` — present in stable `@types/vscode` at the
-extension's existing `^1.95.0` floor, so no engines bump and no proposed-API
-flag. Copilot calls Nimbus for private context. Zero new RPCs. Multiplies the
-value of every install — note it does *not* create installs; that is Stage 3's
-job.
+| Item | What shipped | Ext. version | PR |
+| --- | --- | --- | --- |
+| Consumption | Client `^0.11.0`; sessions via `session.list` (the `querySql` hack deleted + a guard test); live degraded-connector status bar via `connector.listStatus`; `gateway.ping` in Troubleshoot | `0.7.0` | [#45](https://github.com/nimbus-agent/nimbus-vscode/pull/45) |
+| 2e-core | `untrustedWorkspaces: limited` (restricting `socketPath` + `autoStartGateway`) + `extensionKind: ["ui"]` — the Restricted-Mode silent disablement fixed; `viewsWelcome` across all five sidebar views | `0.7.0` | [#46](https://github.com/nimbus-agent/nimbus-vscode/pull/46) |
+| 2d | `nimbus_search` + `nimbus_ask` registered via `contributes.languageModelTools` / `vscode.lm.registerTool`; zero new RPCs, no engines bump | `0.8.0` | [#47](https://github.com/nimbus-agent/nimbus-vscode/pull/47) |
+| 2b | `/incident` → `agents.catchup`, `/deploys` → `metrics.dora`, `/owns` → `agents.expert`, `/blast` → `agents.impact` — structured brief calls, not prompt rewrites, degrading honestly (empty briefs surface the gateway's own gap notes). The Copilot three live on as quick-ask presets; infra-file presets for `*.tf` / k8s-helm YAML / `Dockerfile` / workflow YAML | `0.8.0` | [#49](https://github.com/nimbus-agent/nimbus-vscode/pull/49) |
+| 2c | Per-answer egress delta footer (zero renders as *"nothing left this machine"*); Prove-Window as a self-contained HTML proof artifact (embedded byte-equivalent JSON; the CLI is the verifier); opt-in signed `Nimbus-Egress-Proof` commit trailer; ⛔ proof-of-denial rows in the Egress view | `0.9.0` | [#50](https://github.com/nimbus-agent/nimbus-vscode/pull/50) |
 
-**2e — Native-feel and correctness bundle.** `capabilities.untrustedWorkspaces`
-and `extensionKind` are undeclared, so VS Code **disables the extension entirely**
-in a Restricted-Mode workspace with no explanation — a silent bug, not a feature
-gap. Plus `viewsWelcome` (the five sidebar views currently render as blank boxes
-when the gateway is down), `TreeView.badge`, `FileDecorationProvider`, chat
-participant `followupProvider` / `onDidReceiveFeedback` / `disambiguation`.
+### 2a — the `why` lens: spiked, not built
 
-**Cross-client:** `metrics.dora` and `deploy.preflight` land in
-`nimbus-statuspage`; `agents.*` in `nimbus-raycast`.
+The hover lens (author, PR, ticket, thread, incident, dependents per line) was
+the stage's headline, but its quality is data-dependent, so a read-only spike
+ran against a live index before any UI work —
+[findings](./superpowers/specs/2026-07-23-stage-2a-data-spike-findings.md),
+merged as [#815](https://github.com/nimbus-agent/Nimbus/pull/815). Verdict:
+**don't build yet.** The precomputed `git_blame_line` lane had zero rows on an
+actively-used machine, PR titles were id-only (`"PR #220"`), PR→issue graph
+joins covered five issues, and no conversation/incident lane had data. The
+report records the prerequisites (blame-pipeline investigation gateway-side,
+PR-title enrichment in the GitHub connector, one conversation or
+incident-driver lane live) and a reproducible re-run bar (≥60% of sampled
+recent blame rows resolving to a PR). Until then the lens stays parked — and
+the spike feeds [Open decision 3](#open-decisions) rather than closing it.
+
+### Left open from Stage 2
+
+- **2e tail** (deliberately deferred from 2e-core): `TreeView.badge`,
+  `FileDecorationProvider`, chat participant `followupProvider` /
+  `onDidReceiveFeedback` / `disambiguation`.
+- **Cross-client:** `metrics.dora` and `deploy.preflight` in
+  `nimbus-statuspage`; `agents.*` in `nimbus-raycast`. Neither repo was touched
+  in the VS Code slice.
+- **Gateway-side follow-ups surfaced by the spike:** why `git_blame_line` never
+  populates on a machine with active repos, and id-only PR titles from the
+  GitHub connector.
 
 ---
 
@@ -348,6 +364,13 @@ multiplier.** They are not exclusive; they differ in what they earn.
 
 Ship them in cost order — receipts, then LM tools, then the lens as Stage 1
 lands — but organise the story around the lens.
+
+> **Status 2026-07-23:** the moat and the multiplier shipped (2c, 2d above);
+> the banner did not — the 2a spike found the data can't carry it yet. The
+> "Correlation quality is data-dependent" risk in the table was the one that
+> fired. Stage 3's story therefore leads with what exists — receipts, LM
+> tools, and the ops vocabulary — with the lens as the roadmap tease, not the
+> claim.
 
 **Why the lens and not the moat.** Verifiable egress is the stronger asset: a
 survey of nine major competitors plus the AI-DLP category found **none** offering
@@ -398,7 +421,12 @@ receipts are why they stay and why procurement signs.
    CLI/desktop own it? During a live page engineers are usually in Slack,
    PagerDuty and a terminal — not the editor. The editor's strongest jobs may be
    the *before* (blast radius pre-push) and the *after* (postmortem), with the
-   incident itself owned elsewhere.
+   incident itself owned elsewhere. **Sharpened, not closed, by the Stage 2a
+   spike (2026-07-23):** the data cannot support the lens on *any* surface yet
+   ([findings](./superpowers/specs/2026-07-23-stage-2a-data-spike-findings.md)),
+   and the *before* job is already served by `/blast` (Stage 2b). Decide the
+   surface only after the spike's prerequisites are met and its re-run bar
+   clears.
 4. ~~**Staffing the client.** Every stage here is gated on `nimbus-client`
    throughput, which has averaged ~1.25 methods/month.~~ **Answered by Stage 1
    (2026-07-23):** 37 methods in 8 days, ~4.6/day. The ~1.25/month figure
