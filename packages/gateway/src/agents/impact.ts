@@ -8,6 +8,7 @@ import {
   detectMissingConnector,
   detectMissingEntityType,
 } from "./_lib/gap-notes.ts";
+import { reverseDependsOn } from "./_lib/graph-traversals.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type ImpactInput = {
@@ -207,18 +208,7 @@ async function subDownstreamCode(
       },
     };
   }
-  const rows = db
-    .query(
-      `SELECT
-         e.id    AS entity_id,
-         e.label AS title,
-         COALESCE(e.service, 'filesystem') AS service_id
-       FROM graph_relation r
-       JOIN graph_entity   e ON e.id = r.from_id
-       WHERE r.to_id = ? AND r.type = 'depends_on'
-       LIMIT 50`,
-    )
-    .all(start.entityId) as Array<{ entity_id: string; title: string; service_id: string }>;
+  const rows = reverseDependsOn(db, start.entityId);
   if (rows.length === 0) {
     return {
       gap: {
@@ -232,9 +222,9 @@ async function subDownstreamCode(
   return {
     findings: rows.map((r) => ({
       category: "downstream_repo",
-      affectedItemId: r.entity_id,
-      affectedTitle: r.title,
-      serviceId: r.service_id,
+      affectedItemId: r.entityId,
+      affectedTitle: r.label,
+      serviceId: r.serviceId,
       hops: 1,
       pathSummary: `(reverse) ${start.entityType} <- depends_on <- result`,
     })),
