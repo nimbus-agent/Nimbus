@@ -22,10 +22,12 @@
 ### Task 0: Worktree + dependency bump
 
 **Files:**
+
 - Modify: `package.json` (devDependencies)
 - Modify: `bun.lock` (via `bun install`)
 
 **Interfaces:**
+
 - Produces: a workspace where `client.sessionList`, `client.connectorListStatus`, `client.gatewayPing` typecheck.
 
 - [ ] **Step 1: Create the worktree and install**
@@ -60,6 +62,7 @@ git commit -m "build: bump @nimbus-dev/client to ^0.11.0 (Stage 1 surface)"
 ### Task 1: Sessions via `sessionList()` + querySql guard
 
 **Files:**
+
 - Modify: `src/extension.ts` (delete `SESSIONS_SQL` at :70-74, rewrite `loadSessions` at :436-453, drop the `parseSessionRow` import at :52)
 - Modify: `src/sidebar/sessions.ts` (delete `parseSessionRow`; keep `SessionSummary`, `sessionToItem`)
 - Modify: `test/unit/sessions.test.ts` (drop `parseSessionRow` describe-block)
@@ -67,6 +70,7 @@ git commit -m "build: bump @nimbus-dev/client to ^0.11.0 (Stage 1 surface)"
 - Create: `test/unit/no-raw-sql-guard.test.ts`
 
 **Interfaces:**
+
 - Consumes: `client.sessionList(): Promise<{ sessions: SessionListEntry[] }>` where `SessionListEntry` is structurally identical to the local `SessionSummary`.
 - Produces: `loadSessions(): Promise<SessionSummary[]>` unchanged in signature — `createSessionsView` needs no change.
 
@@ -183,12 +187,14 @@ git commit -m "feat(sessions): consume session.list; delete the querySql hack + 
 ### Task 2: Connector health in the status bar
 
 **Files:**
+
 - Create: `src/status-bar/connector-health.ts`
 - Create: `test/unit/connector-health.test.ts`
 - Modify: `src/extension.ts` (poll + feed `renderStatusBar`)
 - Modify: `test/unit/extension.test.ts` (one new integration test)
 
 **Interfaces:**
+
 - Consumes: `client.connectorListStatus(): Promise<ConnectorSyncStatus[]>` (`status: "ok" | "syncing" | "paused" | "backoff" | "error"`, `enabled: boolean`, `serviceId: string`).
 - Produces: `summarizeConnectorHealth(statuses: ConnectorSyncStatus[]): { count: number; names: string[] }` — degraded = `enabled && (status === "error" || status === "backoff")`, names sorted for deterministic rendering. Feeds the existing `StatusBarInputs.degradedConnectorCount/-Names` (`src/status-bar/status-bar-item.ts:7-8`), currently hardwired to `0`/`[]` at `src/extension.ts:211-212`.
 
@@ -370,11 +376,13 @@ git commit -m "feat(status-bar): live degraded-connector count via connector.lis
 ### Task 3: `gatewayPing` in the Troubleshoot report
 
 **Files:**
+
 - Modify: `src/connection/troubleshooter.ts` (optional `ping` input, connected-state message)
 - Modify: `test/unit/troubleshooter.test.ts` (confirm exact name with `ls test/unit | grep trouble`)
 - Modify: `src/extension.ts:828-846` (`nimbus.troubleshootConnection` handler)
 
 **Interfaces:**
+
 - Consumes: `client.gatewayPing(): Promise<{ version: string; uptime: number }>` (extra fields ignored).
 - Produces: `buildTroubleshooter(state, opts)` where `opts` gains `ping?: { ok: true; version: string; uptime: number } | { ok: false; error: string }`. Absent `ping` keeps today's exact output (all existing tests must pass unmodified).
 
