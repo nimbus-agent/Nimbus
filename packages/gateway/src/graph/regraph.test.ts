@@ -2,7 +2,23 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { LocalIndex } from "../index/local-index.ts";
+import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 import { type RegraphResult, regraphAllItems } from "./regraph.ts";
+import { deterministicGraphEntityId } from "./relationship-graph.ts";
+
+/** Every `graph_relation` row touching one entity, ignoring weight/created_at. */
+function relationsTouching(
+  db: Database,
+  entityId: string,
+): Array<{ type: string; from_id: string; to_id: string }> {
+  return db
+    .query(
+      `SELECT type, from_id, to_id FROM graph_relation
+        WHERE from_id = ? OR to_id = ?
+        ORDER BY type, from_id, to_id`,
+    )
+    .all(entityId, entityId) as Array<{ type: string; from_id: string; to_id: string }>;
+}
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -306,4 +322,171 @@ test("a corrupt metadata JSON row degrades to {} instead of aborting the backfil
       .get("github:acme/app#4") as { n: number }
   ).n;
   expect(validItemGraphed).toBe(1);
+});
+
+test("D1: a throw partway through a batch rolls back only that item — no item half-cleared", () => {
+  const db = freshDb();
+  const now = Date.now();
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#1",
+    title: "Issue 1",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#2",
+    title: "Issue 2",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#3",
+    title: "Issue 3",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#101",
+    title: "Fix 2",
+    body: "closes #2",
+    at: now,
+  });
+
+  // First pass: give issue #2 real edges (a `resolves` edge from the PR) so
+  // there is something for a half-clear to destroy.
+  regraphAllItems(db);
+
+  const poisonItemId = "github:acme/app#2";
+  const poisonEntityId = deterministicGraphEntityId("issue", poisonItemId);
+  const beforeRelations = relationsTouching(db, poisonEntityId);
+  expect(beforeRelations.length).toBeGreaterThan(0);
+
+  // Second pass with batchSize 3: issues #1, #2, #3 land in ONE batch
+  // (transaction). Issue #2's sync does the real clear+rebuild work and then
+  // fails — whether the throw lands before or after the rebuild finishes,
+  // the whole attempt must roll back atomically via the per-item savepoint,
+  // leaving issue #2 exactly as it was before this pass, never half-cleared.
+  const flaky: typeof syncGraphFromIndexedItem = (flakyDb, row, resolveServiceId) => {
+    if (row.id === poisonItemId) {
+      syncGraphFromIndexedItem(flakyDb, row, resolveServiceId);
+      throw new Error("simulated failure after partial work");
+    }
+    syncGraphFromIndexedItem(flakyDb, row, resolveServiceId);
+  };
+
+  const result = regraphAllItems(db, { batchSize: 3, _syncItem: flaky });
+
+  expect(result.scanned).toBe(4);
+  expect(result.skipped).toBe(1);
+  // Issue #1, #3 (siblings in the same batch) and the PR (separate batch,
+  // different slice) all still landed.
+  expect(result.graphed).toBe(3);
+
+  // Issue #2 is left exactly as it was before the failed attempt — not
+  // cleared-and-not-rebuilt.
+  expect(relationsTouching(db, poisonEntityId)).toEqual(beforeRelations);
+});
+
+test("D2: a throwing row is skipped, not fatal — the rest of the backfill still completes", () => {
+  const db = freshDb();
+  const now = Date.now();
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#1",
+    title: "Issue 1",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#2",
+    title: "Issue 2",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#3",
+    title: "Issue 3",
+    body: "",
+    at: now,
+  });
+
+  const poisonItemId = "github:acme/app#2";
+  const throwing: typeof syncGraphFromIndexedItem = (throwingDb, row, resolveServiceId) => {
+    if (row.id === poisonItemId) {
+      throw new Error("simulated sync failure");
+    }
+    syncGraphFromIndexedItem(throwingDb, row, resolveServiceId);
+  };
+
+  const result = regraphAllItems(db, { _syncItem: throwing });
+
+  // On unfixed code this throws out of regraphAllItems entirely (no catch),
+  // so scanned/graphed/skipped never get returned.
+  expect(result.scanned).toBe(3);
+  expect(result.graphed).toBe(2);
+  expect(result.skipped).toBe(1);
+
+  const graphedIssues = (
+    db.query("SELECT COUNT(*) AS n FROM graph_entity WHERE type = 'issue'").get() as {
+      n: number;
+    }
+  ).n;
+  expect(graphedIssues).toBe(2);
+});
+
+test("D3: graphed does not count item types with no populator dispatch branch (ci_run, alert)", () => {
+  const db = freshDb();
+  const now = Date.now();
+  insertRawItem(db, {
+    service: "circleci",
+    type: "ci_run",
+    externalId: "build-1",
+    title: "Build #1",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "pagerduty",
+    type: "alert",
+    externalId: "alert-1",
+    title: "High CPU",
+    body: "",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#9",
+    title: "Issue 9",
+    body: "",
+    at: now,
+  });
+
+  const result = regraphAllItems(db);
+
+  expect(result.scanned).toBe(3);
+  // ci_run and alert both satisfy `isItemLinkedGraphType`, but
+  // `syncGraphFromIndexedItem` has no dispatch branch for either — no graph
+  // work happens, so they must not be counted as graphed.
+  expect(result.graphed).toBe(1);
+
+  const relatedGraphEntities = (
+    db.query("SELECT COUNT(*) AS n FROM graph_entity WHERE type IN ('ci_run', 'alert')").get() as {
+      n: number;
+    }
+  ).n;
+  expect(relatedGraphEntities).toBe(0);
 });
