@@ -1,4 +1,3 @@
-/// <reference types="bun-types" />
 import { afterEach, beforeEach, expect, test } from "bun:test";
 
 const linuxTest = process.platform === "linux" ? test : test.skip;

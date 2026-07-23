@@ -22,6 +22,7 @@
         "@types/istanbul-lib-coverage": "2.0.6",
         "@types/istanbul-lib-report": "3.0.3",
         "@types/istanbul-reports": "3.0.4",
+        "@types/js-yaml": "^4.0.9",
         "babel-plugin-istanbul": "8.0.0",
         "dependency-cruiser": "^17.4.3",
         "istanbul-lib-coverage": "3.2.2",

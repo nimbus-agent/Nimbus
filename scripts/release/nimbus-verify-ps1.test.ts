@@ -1,4 +1,3 @@
-/// <reference types="bun-types" />
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
