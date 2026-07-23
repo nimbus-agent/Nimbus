@@ -243,6 +243,30 @@ nimbus impact --json --service payment-service src/billing/retry.ts
 
 ---
 
+### `nimbus why`
+
+Answer "why is this line/file the way it is?" — six parallel lanes over the local relationship graph: authorship (who last touched the line and when), pull request (the PR that merged it), ticket (the issue it resolves), discussion (Slack/Teams messages mentioning the commit, PR, or ticket), driver/what-drove-it (a temporally correlated incident within a 48h window — never a causal claim), and downstream (reverse `depends_on` edges from the file's indexed symbols). `<ref>` is a `path[:line]` (e.g. `src/billing/retry.ts:42`) or a bare symbol name resolved against indexed code symbols; `--line` overrides a line number embedded in `<ref>`. A lane with nothing to show degrades to a gap note naming the missing connector or graph relation rather than going silent.
+
+```bash
+nimbus why src/billing/retry.ts:42
+nimbus why retryPayment --peek
+nimbus why src/billing/retry.ts --line 42 --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--line <n>` | Line number, overriding any `:line` suffix on `<ref>` |
+| `--peek` | Sub-300ms one-liner via `agents.whyPeek` instead of the full six-lane brief: author · short SHA · date · commit subject · PR # · ticket key |
+| `--json` | Machine-readable JSON output (otherwise Markdown / a one-line string for `--peek`) |
+
+**Output (Markdown):** one section per lane with its findings, plus gap notes for any lane that couldn't answer confidently (e.g. "no blame available for this line", "PRs emit `merged_as` when github-sync records a merge commit SHA — sync the connector for this repo"). The downstream lane currently degrades to a gap note on most real indexes — the graph populator emits `depends_on` at workspace→package granularity today; symbol-level edges are a populator follow-up.
+
+**Read-only:** never triggers HITL, never makes a live connector API call — answered from the local index and relationship graph, with one exception: an unblamed line triggers a single, cached, root-fenced local `git blame` subprocess (via `ensureBlameLine`), scoped to a configured `[[filesystem.roots]]` repo and cached forever after in `git_blame_line`. This is a local git read, not a connector dispatch.
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
@@ -1775,6 +1799,27 @@ nimbus index reembed --model Xenova/all-MiniLM-L6-v2 --yes --json
 **Exit codes:** `0` = run completed (any number of skips); operator re-runs to retry skipped items. `1` = fatal abort (vault key missing, unknown model, auth failure, Gateway down).
 
 **Security:** `index.reembed` and `index.reembedCancel` are CLI-only — both methods are in `FORBIDDEN_OVER_LAN` (invariant I5) and absent from the Tauri renderer allowlist (invariant I7).
+
+---
+
+### `nimbus index regraph`
+
+Re-run the graph populator over every indexed item via `index.regraph`. Needed because a populator change only reaches existing rows when they next re-sync, and historical items may never re-sync. Threads the same service-identity resolver the live sync path uses, so `correlates_with` edges between resolver-bound deployments/incidents survive the backfill instead of being cleared. Idempotent — safe to re-run.
+
+```bash
+nimbus index regraph
+nimbus index regraph --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--json` | Machine-readable JSON output (otherwise a one-line summary) |
+
+**Output:** `regraph: scanned <n>, graphed <n>, skipped <n>` — `graphed` counts only items that actually wrote graph rows (not every item dispatched); `skipped > 0` prints a `WARN` to stderr pointing at the gateway log for per-item errors.
+
+**Read-only relative to connectors:** no live API call — it re-derives graph edges from data already in the local index. It does write to the local database (`graph_entity` / `graph_relation`); no HITL.
 
 ---
 

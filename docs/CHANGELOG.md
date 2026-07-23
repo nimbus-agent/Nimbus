@@ -11,6 +11,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-07-24 — GitHub connector PR-title enrichment.** GitHub connector now enriches indexed PR
   titles via a pull-detail fetch, replacing id-only `PR #N` fallbacks.
 
+- **2026-07-24 — `nimbus why`: six-lane provenance briefs over the local relationship graph
+  (why-lens step 1b, Spine S1).** A ninth built-in agent answers "why is this line/file the way it
+  is?" by fanning out six parallel sub-agents over the 1a graph edges: authorship (blamed commit),
+  pull request (`merged_as`), ticket (`resolves`), discussion (`mentions`), driver/what-drove-it (a
+  temporally correlated incident within a 48h window — never a causal claim), and downstream
+  (reverse `depends_on` from the file's indexed symbols). `agents.why` returns a `sessionId`
+  immediately and streams the brief via `why.briefReady`/`why.briefError`; `agents.whyPeek` is a
+  synchronous sub-300ms companion returning a one-line answer (author · sha · date · subject · PR #
+  · ticket) with no notification round-trip. Every lane degrades to a gap note naming the missing
+  connector or relation instead of going silent; the downstream lane currently degrades on most real
+  indexes, since the graph populator emits `depends_on` at workspace→package granularity today —
+  symbol-level edges are a tracked populator follow-up, not a defect in this brief. **One new local
+  read, no new connector call and no HITL:** an unblamed line triggers a single, root-fenced,
+  cached-forever single-line `git blame` subprocess (`ensureBlameLine` → `git_blame_line`), gated to
+  paths inside a configured `[[filesystem.roots]]` repo. New CLI: `nimbus why <ref> [--line <n>]
+  [--peek] [--json]`, where `<ref>` is a `path[:line]` or a bare symbol name resolved against
+  indexed code symbols. Tauri `ALLOWED_METHODS` count moves 99 → 101 (invariant I7). **No migration,
+  no new invariant, no new HTTP write route** — read-only end to end. The same PR lands
+  `nimbus index regraph [--json]` (`index.regraph`), which re-runs the graph populator over every
+  indexed item so a populator change reaches historical rows without a full re-sync; it threads the
+  live service-identity resolver so `correlates_with` edges between resolver-bound
+  deployments/incidents survive the backfill, and its `graphed` counter reflects only items that
+  actually wrote graph rows (`skipped > 0` warns on stderr, pointing at the gateway log). Two 1a
+  backlog fixes ride along: a ticket-key standards stoplist (rejecting standards-body false
+  positives like `RFC 2119`/`ISO 8601` as issue-key matches) and `obsidian_note` added to
+  `REGRAPH_TYPE_ORDER` (notes are `backlinks` targets and must be graphed before anything that
+  references one). Spec:
+  [`docs/superpowers/specs/2026-07-23-nimbus-why-lens-design.md`](./superpowers/specs/2026-07-23-nimbus-why-lens-design.md);
+  plan: [`docs/superpowers/plans/2026-07-23-why-lens-1b-agent.md`](./superpowers/plans/2026-07-23-why-lens-1b-agent.md).
+
 - **2026-07-23 — Ecosystem Stage 1 complete: the client surface goes 15 → 52 methods.** The gateway
   dispatches ~212 JSON-RPC methods; `@nimbus-dev/client` exposed 15 of them, so entire namespaces
   were built, dispatch-wired and Tauri-allowlisted yet unreachable from any npm client. All eight

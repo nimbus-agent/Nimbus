@@ -1071,6 +1071,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | 6a | `ghost` | `nimbus ghost <file> [--namespace <n>]` | `agents.ghost` | ✅ Shipped 2026-06-11 — ranks teammates by file expertise across paired peers (federated `federation.expertise` fan-out), surfaces matching PRs/issues/commits; emits `ghost.briefReady`; read-only, no message sent |
 | 6a | `conflicts` | `nimbus conflicts <file> [--namespace <n>]` | `agents.conflicts` | ✅ Shipped 2026-06-11 — warns of work-in-progress collisions (open PR / assigned ticket / recent commit / open branch) before editing a file; emits `conflicts.briefReady`; read-only |
 | 6a | `huddle` | `nimbus huddle [--since <ms>] [--namespace <n>]` | `agents.huddle` | ✅ Shipped 2026-06-11 — team-scoped morning briefing aggregating each teammate's recent PRs, tickets, and incidents across paired peers; emits `huddle.briefReady`; read-only |
+| S1 | `why` | `nimbus why <ref> [--line <n>] [--peek] [--json]` | `agents.why` / `agents.whyPeek` | ✅ Shipped 2026-07-24 — six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, plus a sub-300ms `--peek` one-liner; on-demand root-fenced cached single-line `git blame` (not a connector call); emits `why.briefReady` |
 | 7 | `excellence` | `nimbus excellence [--service \| --team]` | `agents.excellence` | Planned — parallel sub-agents over service catalog, DORA, feature flags, recent activity |
 | 8 | `security` | `nimbus security <repo\|service>` | `agents.security` | Planned — vulns, CVEs, secrets, IaC misconfigs, license issues for a repo or service |
 | 8 | `posture` | `nimbus posture <cloud-account\|cluster>` | `agents.posture` | Planned — CSPM findings + IaC drift + over-privileged identities + exposure ranked by exploitability × blast radius |
@@ -1240,6 +1241,13 @@ const streamReq: JSONRPCRequest = {
 // egress.verify      — offline BLAKE3-chain verify, timing-safe (I10); a degraded chain reports `indeterminate`, never a false 0 (read; renderer-exposed)
 // egress.proveWindow — rows + completeness tier backing `nimbus prove "<query>"` (read; renderer-exposed)
 // egress.prune       — the SOLE ledger mutation: HITL-gated continuing tombstone (I2 frozen set; CLI/owner-only, NOT renderer-exposed)
+//
+// Phase 6 S1 surfaces — why agent (six-lane provenance brief over the 1a graph edges; why-lens step 1b):
+// agents.why      — full six-lane brief (authorship/pull_request/ticket/discussion/driver/downstream);
+//   async, returns { sessionId } immediately, emits why.briefReady / why.briefError; renderer-exposed (Tauri count 101)
+// agents.whyPeek  — synchronous sub-300ms one-liner (author · sha · date · subject · PR # · ticket); renderer-exposed (Tauri count 101)
+//   Both read-only, never HITL; an unblamed line triggers one cached, root-fenced local `git blame` subprocess
+//   (not a connector dispatch, no I29 row) via `ensureBlameLine` / `git_blame_line`.
 ```
 
 ### AbortController scope in `engine.cancelStream`
