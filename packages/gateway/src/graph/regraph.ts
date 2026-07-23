@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
 
-import { syncGraphFromIndexedItem } from "./graph-populator.ts";
+import { type ResolveServiceId, syncGraphFromIndexedItem } from "./graph-populator.ts";
 import { isItemLinkedGraphType } from "./relationship-graph.ts";
 
 export type RegraphResult = {
@@ -13,6 +13,20 @@ export type RegraphResult = {
 export type RegraphOptions = {
   batchSize?: number;
   logger?: Logger;
+  /**
+   * Threaded through to `syncGraphFromIndexedItem`'s third argument on every
+   * row. Without it, `syncTimelineEventGraph` binds `affectedService` from
+   * `metadata.service` alone — so a `deployment`/`incident` pair that only
+   * correlates via a `[metrics.dora.<id>]`/`[ci.service.<id>]` binding (e.g.
+   * PagerDuty's `pagerduty_service_id` or a repo URN, never a plain
+   * `metadata.service`) has its `correlates_with` edge unconditionally
+   * cleared and NOT re-emitted, and `affectedService` gets rewritten to
+   * `null` in the entity's stored metadata. Production callers must supply
+   * the same resolver assembled for the live `SyncContext`
+   * (`platform/assemble.ts`) or this backfill is destructive for that class
+   * of edge.
+   */
+  resolveServiceId?: ResolveServiceId;
   /**
    * @internal test seam: override the sync function so a test can force a
    * deterministic per-item failure without touching graph-populator.ts or
@@ -81,20 +95,29 @@ function totalChanges(db: Database): number {
  * can't drift out of sync with the populator the way a second hand-maintained
  * type list would.
  */
-function graphOneRow(db: Database, r: ItemRow, syncItem: typeof syncGraphFromIndexedItem): boolean {
+function graphOneRow(
+  db: Database,
+  r: ItemRow,
+  syncItem: typeof syncGraphFromIndexedItem,
+  resolveServiceId: ResolveServiceId | undefined,
+): boolean {
   if (!isItemLinkedGraphType(r.type)) return false;
   let graphed = false;
   db.transaction(() => {
     const before = totalChanges(db);
-    syncItem(db, {
-      id: r.id,
-      service: r.service,
-      type: r.type,
-      title: r.title,
-      bodyPreview: r.body_preview,
-      authorId: r.author_id,
-      metadata: parseMetadata(r.metadata),
-    });
+    syncItem(
+      db,
+      {
+        id: r.id,
+        service: r.service,
+        type: r.type,
+        title: r.title,
+        bodyPreview: r.body_preview,
+        authorId: r.author_id,
+        metadata: parseMetadata(r.metadata),
+      },
+      resolveServiceId,
+    );
     graphed = totalChanges(db) > before;
   })();
   return graphed;
@@ -104,6 +127,7 @@ type RegraphRunConfig = {
   batchSize: number;
   syncItem: typeof syncGraphFromIndexedItem;
   logger: Logger | undefined;
+  resolveServiceId: ResolveServiceId | undefined;
 };
 
 /**
@@ -145,7 +169,7 @@ function regraphSlice(
       for (const r of batchRows) {
         counters.scanned += 1;
         try {
-          if (graphOneRow(db, r, cfg.syncItem)) counters.graphed += 1;
+          if (graphOneRow(db, r, cfg.syncItem, cfg.resolveServiceId)) counters.graphed += 1;
         } catch (err) {
           counters.skipped += 1;
           cfg.logger?.warn(
@@ -182,6 +206,7 @@ export function regraphAllItems(db: Database, opts?: RegraphOptions): RegraphRes
     batchSize: opts?.batchSize ?? 500,
     syncItem: opts?._syncItem ?? syncGraphFromIndexedItem,
     logger: opts?.logger,
+    resolveServiceId: opts?.resolveServiceId,
   };
   const counters = { scanned: 0, graphed: 0, skipped: 0 };
 

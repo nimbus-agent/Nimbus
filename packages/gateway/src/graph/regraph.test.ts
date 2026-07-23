@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 import { type RegraphResult, regraphAllItems } from "./regraph.ts";
 import { deterministicGraphEntityId } from "./relationship-graph.ts";
@@ -489,4 +492,143 @@ test("D3: graphed does not count item types with no populator dispatch branch (c
     }
   ).n;
   expect(relatedGraphEntities).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// C-1: without threading `resolveServiceId` through, the backfill destroys
+// every `correlates_with` edge bound via `[metrics.dora.<id>]`/
+// `[ci.service.<id>]` service identity (the class of edge neither side's
+// `metadata.service` covers — PagerDuty's `pagerduty_service_id`, a repo URN).
+// ---------------------------------------------------------------------------
+
+const CHECKOUT_SERVICE_CONFIG: ServiceConfig = {
+  serviceId: "checkout",
+  repos: [{ provider: "github", providerId: "acme/checkout" }],
+  pagerdutyServices: ["PSVC1"],
+  deployWorkflowPattern: /^Deploy/,
+  incidentWindowMinutes: 60,
+  excludePrLabels: [],
+  deployEnvironments: ["prod"],
+  severityP1Aliases: ["P1"],
+};
+
+function correlationEdgeCount(db: Database): number {
+  return (
+    db.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'correlates_with'").get() as {
+      n: number;
+    }
+  ).n;
+}
+
+/** Seed a PagerDuty incident + a deployment whose only shared service identity
+ * is the `resolveServiceId` binding — neither carries a plain `metadata.service`. */
+function seedResolverBoundIncidentAndDeploy(
+  db: Database,
+  now: number,
+  resolveServiceId: ReturnType<typeof buildServiceIdentityResolver>,
+): void {
+  upsertIndexedItem(
+    db,
+    {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "PD-1",
+      title: "Checkout 500s",
+      bodyPreview: "",
+      modifiedAt: now + 60 * 60 * 1000,
+      syncedAt: now + 60 * 60 * 1000,
+      metadata: { pagerduty_service_id: "PSVC1" },
+    },
+    resolveServiceId,
+  );
+  upsertIndexedItem(
+    db,
+    {
+      service: "github",
+      type: "deployment",
+      externalId: "deploy-9",
+      title: "Deploy checkout v2",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/checkout", target: "production" },
+    },
+    resolveServiceId,
+  );
+}
+
+test("C-1: regraphAllItems with resolveServiceId threaded through preserves an existing correlates_with edge and its affectedService binding", () => {
+  const db = freshDb();
+  const now = Date.now();
+  const resolveServiceId = buildServiceIdentityResolver(
+    new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]),
+  );
+  seedResolverBoundIncidentAndDeploy(db, now, resolveServiceId);
+
+  expect(correlationEdgeCount(db)).toBe(1);
+
+  const result = regraphAllItems(db, { resolveServiceId });
+
+  expect(result.scanned).toBe(2);
+  expect(correlationEdgeCount(db)).toBe(1);
+
+  const entity = db
+    .query("SELECT metadata FROM graph_entity WHERE type = 'deployment' AND external_id = ?")
+    .get("github:deploy-9") as { metadata: string };
+  const parsed = JSON.parse(entity.metadata) as { affectedService: unknown };
+  expect(parsed.affectedService).toBe("checkout");
+});
+
+test("C-1 regression: regraphAllItems called without resolveServiceId destroys the correlates_with edge (reproduces the pre-fix bug)", () => {
+  const db = freshDb();
+  const now = Date.now();
+  const resolveServiceId = buildServiceIdentityResolver(
+    new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]),
+  );
+  seedResolverBoundIncidentAndDeploy(db, now, resolveServiceId);
+
+  expect(correlationEdgeCount(db)).toBe(1);
+
+  // The no-resolver call: mirrors every pre-fix production call site, and
+  // still the correct call shape when the caller genuinely has no resolver.
+  regraphAllItems(db);
+
+  expect(correlationEdgeCount(db)).toBe(0);
+  const entity = db
+    .query("SELECT metadata FROM graph_entity WHERE type = 'deployment' AND external_id = ?")
+    .get("github:deploy-9") as { metadata: string };
+  const parsed = JSON.parse(entity.metadata) as { affectedService: unknown };
+  expect(parsed.affectedService).toBeNull();
+});
+
+test("C-1: the no-resolver case behaves exactly as it did before — plain metadata.service correlation is unaffected", () => {
+  const db = freshDb();
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-1",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: now + 60 * 60 * 1000,
+    syncedAt: now + 60 * 60 * 1000,
+    metadata: { service: "checkout" },
+  });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-9",
+    title: "Deploy checkout v2",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { service: "checkout" },
+  });
+
+  expect(correlationEdgeCount(db)).toBe(1);
+
+  const result = regraphAllItems(db);
+
+  expect(result.scanned).toBe(2);
+  expect(correlationEdgeCount(db)).toBe(1);
 });
