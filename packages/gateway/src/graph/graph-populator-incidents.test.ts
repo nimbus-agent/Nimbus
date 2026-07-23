@@ -603,3 +603,88 @@ test("fallback preserved: with no resolver supplied, metadata.service still corr
     { from: "deployment:github:deploy-fallback", to: "incident:pagerduty:PD-fallback" },
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// I-1: a Vercel preview deployment must not correlate — a git-integrated
+// Vercel project creates a preview deployment on every push, so left
+// unfiltered they numerically dominate and drown out real prod correlations.
+// ---------------------------------------------------------------------------
+
+test("I-1: a Vercel preview deployment does not correlate, but a production deployment of the same repo does", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  const incidentRaw = {
+    id: "PD-1",
+    title: "Checkout 500s",
+    status: "triggered",
+    created_at: new Date(t + HOUR).toISOString(),
+    updated_at: new Date(t + HOUR).toISOString(),
+    service: { id: "PSVC1" },
+    priority: { name: "P1" },
+    urgency: "high",
+  };
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+
+  const previewRaw = {
+    uid: "dpl_preview",
+    name: "checkout-web",
+    readyState: "READY",
+    target: "preview",
+    created: t,
+    meta: { githubOrg: "acme", githubRepo: "checkout" },
+  };
+  const previewMapped = mapVercelDeploymentToItem(previewRaw, { syncedAt: t });
+  if (previewMapped === null) throw new Error("mapVercelDeploymentToItem returned null");
+  upsertIndexedItemForSync(ctx, previewMapped);
+
+  const prodRaw = {
+    uid: "dpl_prod",
+    name: "checkout-web",
+    readyState: "READY",
+    target: "production",
+    created: t,
+    meta: { githubOrg: "acme", githubRepo: "checkout" },
+  };
+  const prodMapped = mapVercelDeploymentToItem(prodRaw, { syncedAt: t });
+  if (prodMapped === null) throw new Error("mapVercelDeploymentToItem returned null");
+  upsertIndexedItemForSync(ctx, prodMapped);
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:vercel:dpl_prod", to: "incident:pagerduty:PD-1" },
+  ]);
+});
+
+test("I-1: a deployment with no environment signal at all still binds and correlates (fail-open decision)", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  upsertIndexedItemForSync(ctx, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-no-env-signal",
+    title: "Deploy checkout",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { repo: "acme/checkout" },
+  });
+  upsertIndexedItemForSync(ctx, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-no-env-signal",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: { pagerduty_service_id: "PSVC1" },
+  });
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-no-env-signal", to: "incident:pagerduty:PD-no-env-signal" },
+  ]);
+});

@@ -1590,9 +1590,34 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // PagerDuty/repo metadata to a nimbus service id via the [metrics.dora.<id>] /
   // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
   // "PSVC1" vs. a forge's "checkout-web") resolve to the same `ServiceConfig.serviceId`.
-  const resolveServiceId = buildServiceIdentityResolver(
-    loadNimbusServiceConfigsFromConfigDir(paths.configDir),
-  );
+  //
+  // M-1: `loadNimbusServiceConfigsFromConfigDir` throws on any malformed
+  // `[metrics.dora.*]`/`[ci.service.*]` block (missing `repos`, unknown key, bad
+  // URN/regex, out-of-range window, invalid env name). This is the only call site
+  // reached unconditionally at boot — degrade to no service-identity bindings
+  // (timeline correlation falls back to plain `metadata.service`, as before this
+  // feature existed) rather than aborting gateway startup over a config typo.
+  let serviceConfigs: ReturnType<typeof loadNimbusServiceConfigsFromConfigDir>;
+  try {
+    serviceConfigs = loadNimbusServiceConfigsFromConfigDir(paths.configDir);
+  } catch (err) {
+    syncLogger.warn(
+      { err },
+      "failed to load [metrics.dora.*]/[ci.service.*] service configs — timeline " +
+        "correlation will fall back to metadata.service only until this is fixed",
+    );
+    serviceConfigs = new Map();
+  }
+  // M-2: two ServiceConfigs claiming the same pagerdutyServices entry or repo URN
+  // (a monorepo) resolve deterministically but silently otherwise; surface it the
+  // same way `loadNimbusServiceConfigsFromConfigDir` already warns on duplicate ids.
+  const resolveServiceId = buildServiceIdentityResolver(serviceConfigs, (w) => {
+    syncLogger.warn(
+      { ...w },
+      "ambiguous service-identity binding — multiple [metrics.dora.*]/[ci.service.*] " +
+        "configs claim the same key; picked the first by config order",
+    );
+  });
 
   const syncBase: SyncContext = {
     vault,

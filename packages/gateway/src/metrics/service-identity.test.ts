@@ -198,6 +198,144 @@ describe("buildServiceIdentityResolver", () => {
     });
   });
 
+  describe("I-1: deployment environment gating", () => {
+    it("binds a deployment whose metadata.target matches deployEnvironments (after the production→prod alias)", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["prod"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "deployment",
+          metadata: { repo: "acme/checkout", target: "production" },
+        }),
+      ).toBe("checkout");
+    });
+
+    it("does not bind a deployment whose metadata.target is excluded by deployEnvironments", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["prod"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "deployment",
+          metadata: { repo: "acme/checkout", target: "preview" },
+        }),
+      ).toBeUndefined();
+    });
+
+    it("prefers the canonical metadata.environment over metadata.target when both are present", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["staging"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "deployment",
+          metadata: { repo: "acme/checkout", environment: "staging", target: "preview" },
+        }),
+      ).toBe("checkout");
+    });
+
+    it("binds a deployment with no environment signal at all (fail-open)", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["prod"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "deployment",
+          metadata: { repo: "acme/checkout" },
+        }),
+      ).toBe("checkout");
+    });
+
+    it("does not gate a non-deployment item type even when it carries a non-matching target", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["prod"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "incident",
+          metadata: { repo: "acme/checkout", target: "preview" },
+        }),
+      ).toBe("checkout");
+    });
+  });
+
+  describe("M-2: ambiguous binding warning", () => {
+    it("warns when two ServiceConfigs claim the same pagerdutyServices entry, and still resolves deterministically (first by config-map order)", () => {
+      const warnings: unknown[] = [];
+      const resolve = buildServiceIdentityResolver(
+        configs(
+          baseConfig({ serviceId: "checkout", pagerdutyServices: ["PSVC1"] }),
+          baseConfig({ serviceId: "checkout-mono", pagerdutyServices: ["PSVC1"], repos: [] }),
+        ),
+        (w) => warnings.push(w),
+      );
+      const result = resolve({
+        service: "pagerduty",
+        type: "incident",
+        metadata: { pagerduty_service_id: "PSVC1" },
+      });
+      expect(result).toBe("checkout");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        bindingKind: "pagerduty_service_id",
+        key: "PSVC1",
+        chosenServiceId: "checkout",
+        candidateServiceIds: ["checkout", "checkout-mono"],
+      });
+    });
+
+    it("warns when two ServiceConfigs claim the same repo URN (a monorepo)", () => {
+      const warnings: unknown[] = [];
+      const resolve = buildServiceIdentityResolver(
+        configs(
+          baseConfig({
+            serviceId: "checkout",
+            pagerdutyServices: [],
+            repos: [{ provider: "github", providerId: "acme/mono" }],
+          }),
+          baseConfig({
+            serviceId: "billing",
+            pagerdutyServices: [],
+            repos: [{ provider: "github", providerId: "acme/mono" }],
+          }),
+        ),
+        (w) => warnings.push(w),
+      );
+      const result = resolve({
+        service: "github",
+        type: "pr",
+        metadata: { repo: "acme/mono" },
+      });
+      expect(result).toBe("checkout");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        bindingKind: "repo_urn",
+        chosenServiceId: "checkout",
+        candidateServiceIds: ["checkout", "billing"],
+      });
+    });
+
+    it("does not warn when only one ServiceConfig claims the key", () => {
+      const warnings: unknown[] = [];
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ serviceId: "checkout", pagerdutyServices: ["PSVC1"] })),
+        (w) => warnings.push(w),
+      );
+      resolve({
+        service: "pagerduty",
+        type: "incident",
+        metadata: { pagerduty_service_id: "PSVC1" },
+      });
+      expect(warnings).toHaveLength(0);
+    });
+  });
+
   describe("no match anywhere", () => {
     it("returns undefined for an item with none of the bound fields", () => {
       const resolve = buildServiceIdentityResolver(configs(baseConfig()));
