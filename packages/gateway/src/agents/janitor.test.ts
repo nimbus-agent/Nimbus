@@ -101,13 +101,34 @@ test("a gap suppresses the proposal unless allowGaps", async () => {
   expect(lenient.proposalSuppressed).toBe(false);
 });
 
-test("an invalid ref is flagged as a gap and never proposes", async () => {
+test("a too-short ref is flagged as a gap, naming the length, and never proposes", async () => {
   const brief = await runJanitor(
     { resourceRef: "ab", idleDays: 7, cleanupAction: null, allowGaps: true },
     baseCtx(freshDb(), async () => ({ touched: false })),
   );
   expect(brief.idle).toBe(false);
-  expect(brief.gaps.some((g) => g.detail.includes("malformed"))).toBe(true);
+  const gap = brief.gaps.find((g) => g.detail.includes("resourceRef"));
+  expect(gap?.detail).toContain("at least 4");
+  expect(gap?.detail).toContain("got 2");
+});
+
+test("a long ref with an unsupported character is flagged for its CHARACTER SET, not length", async () => {
+  // 29 chars. The gap used to read "too short or malformed (min 4 chars)", which
+  // sent anyone debugging it looking for a length problem that did not exist —
+  // `#` simply is not in the allowed set.
+  const brief = await runJanitor(
+    {
+      resourceRef: "repo:acme/payments#branch/wip",
+      idleDays: 7,
+      cleanupAction: null,
+      allowGaps: true,
+    },
+    baseCtx(freshDb(), async () => ({ touched: false })),
+  );
+  expect(brief.idle).toBe(false);
+  const gap = brief.gaps.find((g) => g.detail.includes("resourceRef"));
+  expect(gap?.detail).toContain("only letters, digits");
+  expect(gap?.detail).not.toContain("at least");
 });
 
 test("emitJanitorBrief fires janitor.briefReady", async () => {

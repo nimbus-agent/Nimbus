@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { fanOutProbe } from "../federation/peer-fanout.ts";
-import { isValidResourceRef } from "../federation/resource-probe.ts";
+import { describeInvalidResourceRef } from "../federation/resource-probe.ts";
 import type { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { sendFederatedOverWire } from "../ipc/lan-client.ts";
@@ -31,11 +31,12 @@ export type JanitorContext = {
 export async function runJanitor(input: JanitorInput, ctx: JanitorContext): Promise<JanitorBrief> {
   const start = performance.now();
   const gaps: GapNote[] = [];
-  const refValid = isValidResourceRef(input.resourceRef);
-  if (!refValid) {
+  const refProblem = describeInvalidResourceRef(input.resourceRef);
+  const refValid = refProblem === null;
+  if (refProblem !== null) {
     gaps.push({
       category: "missing_connector",
-      detail: "resourceRef too short or malformed (min 4 chars)",
+      detail: refProblem,
     });
   }
   if (ctx.index.listLanPeers().length === 0) {

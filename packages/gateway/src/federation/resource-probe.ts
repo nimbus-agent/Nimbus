@@ -17,6 +17,24 @@ export function isValidResourceRef(ref: string): boolean {
   return ref.length >= MIN_RESOURCE_REF_LEN && RESOURCE_REF_RE.test(ref);
 }
 
+/**
+ * Why `isValidResourceRef` rejected a ref, or `null` if it did not.
+ *
+ * Two independent rules reject a ref and callers were reporting only the length
+ * one, so a ref failing on an unsupported character (`#` is the common case —
+ * `repo:acme/payments#branch/wip` is a natural thing to type) was told it was
+ * "too short" while being 29 characters long.
+ */
+export function describeInvalidResourceRef(ref: string): string | null {
+  if (ref.length < MIN_RESOURCE_REF_LEN) {
+    return `resourceRef must be at least ${MIN_RESOURCE_REF_LEN} characters (got ${ref.length})`;
+  }
+  if (!RESOURCE_REF_RE.test(ref)) {
+    return "resourceRef may contain only letters, digits, and _ : . - /";
+  }
+  return null;
+}
+
 /** Escape SQL LIKE metacharacters so the ref matches literally (no wildcard probing). */
 function escapeLikeWildcards(s: string): string {
   return s
