@@ -64,6 +64,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "agents.impact",
     "agents.janitor",
     "agents.preflight",
+    "agents.why",
+    "agents.whyPeek",
     "audit.export",
     "audit.getSummary",
     "audit.list",
@@ -513,7 +515,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 99);
+        assert_eq!(ALLOWED_METHODS.len(), 101);
     }
 
     #[test]

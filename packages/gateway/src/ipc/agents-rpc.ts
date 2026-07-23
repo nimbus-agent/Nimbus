@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
+import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
 import { emitExpertBrief } from "../agents/expert.ts";
@@ -8,6 +9,9 @@ import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
+import { emitWhyBrief } from "../agents/why.ts";
+import { runWhyPeek } from "../agents/why-peek.ts";
+import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -181,7 +185,8 @@ function newSessionId(
     | "conflicts"
     | "huddle"
     | "janitor"
-    | "preflight",
+    | "preflight"
+    | "why",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -374,6 +379,52 @@ async function handlePreflight(params: unknown, ctx: AgentsRpcContext): Promise<
   return await emitPreflightBrief(input, federatedAgentBase(ctx, newSessionId("preflight")));
 }
 
+const MIN_REF_LEN = 1;
+const MAX_REF_LEN = 1024;
+
+function requireWhyParams(params: unknown): WhyInput {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.why requires { ref: string, line?: number }");
+  }
+  const p = params as { ref?: unknown; line?: unknown };
+  if (typeof p.ref !== "string" || p.ref.length < MIN_REF_LEN || p.ref.length > MAX_REF_LEN) {
+    throw new AgentsRpcError(-32602, `ref must be a non-empty string up to ${MAX_REF_LEN} chars`);
+  }
+  if (
+    p.line !== undefined &&
+    (typeof p.line !== "number" || !Number.isInteger(p.line) || p.line < 1)
+  ) {
+    throw new AgentsRpcError(-32602, "line must be a positive integer");
+  }
+  return { ref: p.ref, ...(p.line === undefined ? {} : { line: p.line }) };
+}
+
+function whyRoots(ctx: AgentsRpcContext) {
+  return ctx.configDir === undefined ? [] : loadNimbusFilesystemRootsFromConfigDir(ctx.configDir);
+}
+
+async function handleWhy(params: unknown, ctx: AgentsRpcContext): Promise<{ sessionId: string }> {
+  const input = requireWhyParams(params);
+  const sessionId = newSessionId("why");
+  return await emitWhyBrief(input, {
+    db: ctx.db,
+    roots: whyRoots(ctx),
+    notify: ctx.notify,
+    sessionId,
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+  });
+}
+
+/**
+ * The namespace's first synchronous method: no coordinator, no LLM, no
+ * notification — returns its payload directly (spec: "a 10-second hover is
+ * not a hover").
+ */
+async function handleWhyPeek(params: unknown, ctx: AgentsRpcContext): Promise<WhyPeek> {
+  const input = requireWhyParams(params);
+  return await runWhyPeek(input, { db: ctx.db, roots: whyRoots(ctx) });
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -388,5 +439,7 @@ export async function dispatchAgentsRpc(
     "agents.huddle": handleHuddle,
     "agents.janitor": handleJanitor,
     "agents.preflight": handlePreflight,
+    "agents.why": handleWhy,
+    "agents.whyPeek": handleWhyPeek,
   });
 }
