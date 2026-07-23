@@ -101,6 +101,61 @@ test("a ticket key matches an issue indexed by another service", () => {
   expect(resolvesTargets(db)).toEqual(["linear:NIM-88"]);
 });
 
+test("a numeric ref is scoped to the referring PR's own repo — same key in another repo is excluded", () => {
+  const db = freshDb();
+  const now = Date.now();
+  seedIssue(db, "acme/app#4", "Login broken", now);
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "other/app#4",
+    title: "Unrelated issue in a different repo",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { repo: "other/app" },
+  });
+
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#1",
+    title: "Fix login",
+    bodyPreview: "closes #4",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { repo: "acme/app" },
+  });
+
+  expect(resolvesTargets(db)).toEqual(["github:acme/app#4"]);
+});
+
+test("an incoming resolves edge survives the target issue's own re-sync", () => {
+  const db = freshDb();
+  const now = Date.now();
+  seedIssue(db, "acme/app#4", "Login broken", now);
+
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#1",
+    title: "Fix login",
+    bodyPreview: "closes #4",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { repo: "acme/app" },
+  });
+
+  expect(resolvesTargets(db)).toEqual(["github:acme/app#4"]);
+
+  // Re-sync the ISSUE itself (not the PR) — this runs syncIssueGraph, which
+  // calls clearRelationsTouchingEntity on the issue entity. The incoming
+  // `resolves` edge from the PR must not be swept up in that blanket clear.
+  seedIssue(db, "acme/app#4", "Login broken — retitled", now + 1);
+
+  expect(resolvesTargets(db)).toEqual(["github:acme/app#4"]);
+});
+
 test("removing the reference from the PR body removes the edge on re-sync", () => {
   const db = freshDb();
   const now = Date.now();

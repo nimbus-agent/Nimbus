@@ -97,6 +97,15 @@ function findIssueEntityIds(
   }
 
   for (const key of refs.ticketKeys) {
+    // If two different trackers both use the ticket key (e.g. two services
+    // each with a "NIM-88"), `id` is a SHA-256 hash, so `ORDER BY id ASC`
+    // picks a winner arbitrarily rather than by any meaningful precedence.
+    //
+    // The `LIKE '%:' || ?` pattern is injection-safe only because
+    // `TICKET_KEY_RE` (graph-refs.ts) cannot emit `%` or `_` — its charset
+    // is `[A-Z][A-Z0-9]{1,9}-\d+`. If that regex is ever loosened to allow
+    // those characters, this LIKE clause would silently start producing
+    // false matches.
     const row = db
       .query(
         `SELECT id FROM graph_entity
