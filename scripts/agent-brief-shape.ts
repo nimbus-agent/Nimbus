@@ -28,15 +28,21 @@ function walk(value: unknown, path: string, out: string[]): void {
   if (t === "array") {
     const arr = value as unknown[];
     // An empty array carries no element shape. Record it as `empty` rather than
-    // guessing — every fixture brief comes from an empty in-memory index, so the
-    // element type genuinely is not observable here, and pretending otherwise
-    // would bake a false expectation into the snapshot.
-    const first = arr[0];
-    if (first === undefined) {
+    // guessing — every fixture brief currently comes from an empty in-memory
+    // index, so the element type genuinely is not observable, and pretending
+    // otherwise would bake a false expectation into the snapshot.
+    if (arr.length === 0) {
       out.push(`${path}[]:empty`);
       return;
     }
-    walk(first, `${path}[]`, out);
+    // EVERY element, not just index 0. Sampling the first would make the gate
+    // blind to a field added or renamed on any later element — the same
+    // one-level-deep blindness this exists to compensate for in the client's
+    // conformance gate. Tokens are de-duplicated in briefShapeSignature, so
+    // homogeneous arrays still produce one entry per path.
+    for (const el of arr) {
+      walk(el, `${path}[]`, out);
+    }
     return;
   }
 
@@ -51,9 +57,16 @@ function walk(value: unknown, path: string, out: string[]): void {
   out.push(`${path}:${t}`);
 }
 
-/** Sorted `path:type` pairs describing a payload's structure, values discarded. */
+/**
+ * Sorted, de-duplicated `path:type` pairs describing a payload's structure,
+ * values discarded.
+ *
+ * De-duplication is what makes walking every array element affordable: a
+ * 500-entry homogeneous array collapses to one token per path, while a single
+ * odd element out still shows up as an extra token.
+ */
 export function briefShapeSignature(payload: unknown): ShapeSignature {
   const out: string[] = [];
   walk(payload, "", out);
-  return out.sort();
+  return [...new Set(out)].sort();
 }

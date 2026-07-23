@@ -65,6 +65,19 @@ describe("briefShapeSignature", () => {
     expect(briefShapeSignature({ gaps: [] })).toEqual([".gaps[]:empty"]);
   });
 
+  test("walks EVERY element, so a field on a later one is not missed", () => {
+    // Sampling index 0 would report only `.g[].a:number` and stay blind to `b` —
+    // the same one-level-deep blindness this gate exists to compensate for.
+    expect(briefShapeSignature({ g: [{ a: 1 }, { a: 1, b: "x" }] })).toEqual([
+      ".g[].a:number",
+      ".g[].b:string",
+    ]);
+  });
+
+  test("de-duplicates a homogeneous array to one token per path", () => {
+    expect(briefShapeSignature({ g: [{ a: 1 }, { a: 2 }, { a: 3 }] })).toEqual([".g[].a:number"]);
+  });
+
   test("a renamed field changes the signature", () => {
     expect(briefShapeSignature({ ranked: [] })).not.toEqual(briefShapeSignature({ experts: [] }));
   });
