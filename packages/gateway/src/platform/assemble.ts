@@ -41,6 +41,7 @@ import {
   loadNimbusPreflightFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
+  loadNimbusServiceConfigsFromConfigDir,
   loadNimbusShareHttpSink,
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
@@ -134,6 +135,7 @@ import { LlamaCppProvider } from "../llm/llamacpp-provider.ts";
 import { OllamaProvider } from "../llm/ollama-provider.ts";
 import { LlmRegistry } from "../llm/registry.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
+import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
@@ -1584,11 +1586,20 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     identityBootRefHolder,
   });
 
+  // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
+  // PagerDuty/repo metadata to a nimbus service id via the [metrics.dora.<id>] /
+  // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
+  // "PSVC1" vs. a forge's "checkout-web") resolve to the same `ServiceConfig.serviceId`.
+  const resolveServiceId = buildServiceIdentityResolver(
+    loadNimbusServiceConfigsFromConfigDir(paths.configDir),
+  );
+
   const syncBase: SyncContext = {
     vault,
     db,
     logger: syncLogger,
     rateLimiter,
+    resolveServiceId,
     ...teamCredentialExtras,
   };
   const syncContext: SyncContext = scheduleItemEmbedding

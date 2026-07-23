@@ -1,8 +1,14 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { upsertIndexedItem } from "../index/item-store.ts";
+import { EMPTY_NIMBUS_VAULT, syncTestContext } from "../connectors/connector-sync-test-helpers.ts";
+import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
+import { mapVercelDeploymentToItem } from "../connectors/vercel-deployment-mapping.ts";
+import { upsertIndexedItem, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { ServiceConfig } from "../metrics/dora-config.ts";
+import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
+import type { SyncContext } from "../sync/types.ts";
 import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 
 function freshDb(): Database {
@@ -394,4 +400,144 @@ test("an incident with more than 20 deployments in its window keeps the ones nea
   // The nearest deploy is the most plausibly causal one and must survive
   // the LIMIT 20 truncation.
   expect(rels.map((r) => r.from)).toContain("deployment:github:d24");
+});
+
+// ---------------------------------------------------------------------------
+// Service-identity binding (SyncContext.resolveServiceId): the real-world
+// case neither PagerDuty nor Vercel writes a plain `metadata.service` key,
+// so correlation only fires when the [metrics.dora.<id>]/[ci.service.<id>]
+// binding resolves both sides to the same nimbus service id.
+// ---------------------------------------------------------------------------
+
+const CHECKOUT_SERVICE_CONFIG: ServiceConfig = {
+  serviceId: "checkout",
+  repos: [{ provider: "github", providerId: "acme/checkout" }],
+  pagerdutyServices: ["PSVC1"],
+  deployWorkflowPattern: /^Deploy/,
+  incidentWindowMinutes: 60,
+  excludePrLabels: [],
+  deployEnvironments: ["prod"],
+  severityP1Aliases: ["P1"],
+};
+
+function ctxWithResolver(db: Database, configs: Map<string, ServiceConfig>): SyncContext {
+  return {
+    ...syncTestContext(db, EMPTY_NIMBUS_VAULT),
+    resolveServiceId: buildServiceIdentityResolver(configs),
+  };
+}
+
+test("a PagerDuty incident (pagerduty_service_id) and a Vercel deployment (repo) bind to the same nimbus service via resolveServiceId and correlate", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  // Real `buildPagerdutyMetadata`-shaped raw incident payload: carries
+  // `pagerduty_service_id`, never a plain `service` key.
+  const incidentRaw = {
+    id: "PD-1",
+    title: "Checkout 500s",
+    status: "triggered",
+    html_url: "https://acme.pagerduty.com/incidents/PD-1",
+    created_at: new Date(t + HOUR).toISOString(),
+    updated_at: new Date(t + HOUR).toISOString(),
+    service: { id: "PSVC1" },
+    priority: { name: "P1" },
+    urgency: "high",
+  };
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+
+  // Real `mapVercelDeploymentToItem`-shaped raw deployment payload: the
+  // git-integrated `meta` block carries the owning GitHub repo, never a
+  // plain `service` key.
+  const deploymentRaw = {
+    uid: "dpl_123",
+    name: "checkout-web",
+    readyState: "READY",
+    target: "production",
+    url: "checkout-web.vercel.app",
+    inspectorUrl: "https://vercel.com/acme/checkout-web/dpl_123",
+    created: t,
+    meta: {
+      githubCommitSha: "abc123def456",
+      githubCommitMessage: "Fix checkout bug",
+      githubCommitRef: "main",
+      githubOrg: "acme",
+      githubRepo: "checkout",
+    },
+    creator: { username: "alice" },
+  };
+  const mapped = mapVercelDeploymentToItem(deploymentRaw, { syncedAt: t });
+  if (mapped === null) throw new Error("mapVercelDeploymentToItem returned null");
+  upsertIndexedItemForSync(ctx, mapped);
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:vercel:dpl_123", to: "incident:pagerduty:PD-1" },
+  ]);
+});
+
+test("without resolveServiceId wired, the same PagerDuty/Vercel pair emits no correlation (proves the fix is load-bearing)", () => {
+  const db = freshDb();
+  const t = Date.now();
+  // No `resolveServiceId` on the context: exercises the pre-fix production
+  // shape, `syncTestContext` builds a SyncContext with the field absent.
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+
+  const incidentRaw = {
+    id: "PD-1",
+    title: "Checkout 500s",
+    status: "triggered",
+    created_at: new Date(t + HOUR).toISOString(),
+    updated_at: new Date(t + HOUR).toISOString(),
+    service: { id: "PSVC1" },
+    priority: { name: "P1" },
+    urgency: "high",
+  };
+  syncPagerdutyIncidentItems(ctx, [incidentRaw], "1970-01-01T00:00:00Z", t + HOUR);
+
+  const deploymentRaw = {
+    uid: "dpl_123",
+    name: "checkout-web",
+    readyState: "READY",
+    created: t,
+    meta: { githubOrg: "acme", githubRepo: "checkout" },
+  };
+  const mapped = mapVercelDeploymentToItem(deploymentRaw, { syncedAt: t });
+  if (mapped === null) throw new Error("mapVercelDeploymentToItem returned null");
+  upsertIndexedItemForSync(ctx, mapped);
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("fallback preserved: with no resolver supplied, metadata.service still correlates exactly as before", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  expect(ctx.resolveServiceId).toBeUndefined();
+
+  upsertIndexedItemForSync(ctx, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-fallback",
+    title: "Deploy checkout v3",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { service: "checkout" },
+  });
+  upsertIndexedItemForSync(ctx, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-fallback",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: { service: "checkout" },
+  });
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-fallback", to: "incident:pagerduty:PD-fallback" },
+  ]);
 });

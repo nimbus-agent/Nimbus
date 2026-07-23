@@ -46,6 +46,16 @@ export function mapVercelDeploymentToItem(
   const commitMessage = stringField(meta, "githubCommitMessage") ?? null;
   const commitRef = stringField(meta, "githubCommitRef") ?? null;
   const prId = stringField(meta, "githubPrId") ?? null;
+  // Vercel's git-integration `meta` also carries the owning repo, under either the
+  // top-level keys (githubOrg/githubRepo) or the commit-scoped ones
+  // (githubCommitOrg/githubCommitRepo) depending on API version. Surfaced as
+  // `repo` (the same key `graph-populator.ts` / `metrics/service-identity.ts`
+  // already read off PR/issue/CI items) so a git-integrated Vercel deployment
+  // can bind to a `[metrics.dora.<id>]`/`[ci.service.<id>]` repo URN.
+  const githubOrg = stringField(meta, "githubOrg") ?? stringField(meta, "githubCommitOrg") ?? null;
+  const githubRepo =
+    stringField(meta, "githubRepo") ?? stringField(meta, "githubCommitRepo") ?? null;
+  const repo = githubOrg !== null && githubRepo !== null ? `${githubOrg}/${githubRepo}` : null;
 
   const creatorObj = asRecord(row["creator"]) ?? {};
   const creator = stringField(creatorObj, "username") ?? stringField(creatorObj, "email") ?? null;
@@ -67,6 +77,7 @@ export function mapVercelDeploymentToItem(
     commit_message: commitMessage,
     commit_ref: commitRef,
     pr_id: prId,
+    repo,
     creator,
     created_at: createdAt,
     canonical_url: canonicalUrl,

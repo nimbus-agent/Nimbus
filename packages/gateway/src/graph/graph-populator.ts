@@ -21,6 +21,17 @@ export type IndexedItemGraphInput = {
   metadata: Record<string, unknown>;
 };
 
+/**
+ * Matches `SyncContext["resolveServiceId"]` (`sync/types.ts`). Threaded down
+ * to `syncTimelineEventGraph` only — every other populator branch keys off
+ * `metadata.repo`/`metadata.channel`/etc, not a service-identity binding.
+ */
+export type ResolveServiceId = (item: {
+  readonly service: string;
+  readonly type: string;
+  readonly metadata: Record<string, unknown>;
+}) => string | undefined;
+
 function stringField(meta: Record<string, unknown>, key: string): string | undefined {
   const v = meta[key];
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
@@ -585,8 +596,9 @@ function syncTimelineEventGraph(
   entityType: "incident" | "deployment",
   occurredAt: number,
   now: number,
+  resolveServiceId: ResolveServiceId | undefined,
 ): void {
-  const affectedService = stringField(row.metadata, "service");
+  const affectedService = resolveServiceId?.(row) ?? stringField(row.metadata, "service");
   const entityId = upsertGraphEntity(db, {
     type: entityType,
     externalId: row.id,
@@ -670,7 +682,11 @@ function occurredAtForItem(db: Database, itemId: string): number {
   return row.modified_at;
 }
 
-export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInput): void {
+export function syncGraphFromIndexedItem(
+  db: Database,
+  row: IndexedItemGraphInput,
+  resolveServiceId?: ResolveServiceId,
+): void {
   if (readIndexedUserVersion(db) < 7) {
     return;
   }
@@ -725,10 +741,24 @@ export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInpu
     return;
   }
   if (row.type === "incident") {
-    syncTimelineEventGraph(db, row, "incident", occurredAtForItem(db, row.id), now);
+    syncTimelineEventGraph(
+      db,
+      row,
+      "incident",
+      occurredAtForItem(db, row.id),
+      now,
+      resolveServiceId,
+    );
     return;
   }
   if (row.type === "deployment") {
-    syncTimelineEventGraph(db, row, "deployment", occurredAtForItem(db, row.id), now);
+    syncTimelineEventGraph(
+      db,
+      row,
+      "deployment",
+      occurredAtForItem(db, row.id),
+      now,
+      resolveServiceId,
+    );
   }
 }

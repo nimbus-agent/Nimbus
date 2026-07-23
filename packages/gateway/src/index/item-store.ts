@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { NimbusItem } from "@nimbus-dev/sdk";
 
 import { dbRun } from "../db/write.ts";
-import { syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
+import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { RAW_META_MAX_BYTES } from "./constants.ts";
@@ -54,6 +54,7 @@ export function upsertIndexedItem(
     pinned?: boolean;
     syncedAt: number;
   },
+  resolveServiceId?: ResolveServiceId,
 ): void {
   const id = itemPrimaryKey(row.service, row.externalId);
   const meta = JSON.stringify(row.metadata ?? {});
@@ -96,22 +97,26 @@ export function upsertIndexedItem(
       row.pinned === true ? 1 : 0,
     ],
   );
-  syncGraphFromIndexedItem(db, {
-    id,
-    service: row.service,
-    type: row.type,
-    title: row.title,
-    bodyPreview: preview,
-    authorId: row.authorId ?? null,
-    metadata: row.metadata ?? {},
-  });
+  syncGraphFromIndexedItem(
+    db,
+    {
+      id,
+      service: row.service,
+      type: row.type,
+      title: row.title,
+      bodyPreview: preview,
+      authorId: row.authorId ?? null,
+      metadata: row.metadata ?? {},
+    },
+    resolveServiceId,
+  );
 }
 
 export function upsertIndexedItemForSync(
   ctx: SyncContext,
   row: Parameters<typeof upsertIndexedItem>[1],
 ): void {
-  upsertIndexedItem(ctx.db, row);
+  upsertIndexedItem(ctx.db, row, ctx.resolveServiceId);
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }

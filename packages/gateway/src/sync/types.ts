@@ -16,6 +16,17 @@ export interface SyncContext {
   credentialFor: (service: string) => { credential: "personal" | "team"; teamEntry?: string };
   /** Gate-routed localOperator team list drain (I19). Returns raw items or throws an actionable error. */
   runTeamList: (req: { entry: string; service: string; listToolId: string }) => Promise<unknown[]>;
+  /**
+   * Resolves an indexed item to its nimbus service id using the
+   * [metrics.dora.<id>] / [ci.service.<id>] bindings. Optional: when absent
+   * the graph populator falls back to `metadata.service`, so connectors and
+   * tests that predate this compile and behave unchanged.
+   */
+  resolveServiceId?: (item: {
+    readonly service: string;
+    readonly type: string;
+    readonly metadata: Record<string, unknown>;
+  }) => string | undefined;
 }
 
 export interface Syncable {
