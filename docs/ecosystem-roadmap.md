@@ -9,8 +9,8 @@ web clipper, statuspage, and whatever comes next).
 > north-stars. This document is authoritative for how that capability *reaches a
 > human*. The distinction is load-bearing:
 >
-> **The gateway roadmap is 27 phases deep. The client surface is 15 methods wide.
-> This document owns the width.**
+> **The gateway roadmap is 27 phases deep. The client surface was 15 methods
+> wide; Stage 1 took it to 52. This document owns the width.**
 >
 > Where the two touch, `roadmap.md` wins on *what* and this file wins on *when it
 > becomes reachable*.
@@ -39,6 +39,12 @@ Three measured facts, each verified against source rather than inferred. They ar
 stated bluntly because the sequencing below only makes sense if they are true.
 
 ### 1. The capability is built — it is not reachable
+
+> **Superseded by Stage 1, 2026-07-23.** The client now exposes **52** methods,
+> not 15. The diagnosis below is kept as written — it is the argument that
+> justified the sequencing, and rewriting it after the fact would erase the
+> evidence for why the work was ordered this way. Read it as of 2026-07-22.
+> Current numbers: [Stage 1 — shipped](#shipped).
 
 The gateway dispatches **212 JSON-RPC methods**.[^count] `@nimbus-dev/client`
 exposes **15**. The VS Code extension — the most developed client — consumes
@@ -205,25 +211,58 @@ insufficient.
 
 **Goal:** make the built capability reachable, in batches.
 
-**Batch, don't drip.** Cost is dominated by upstream shape archaeology, not
-typing: the egress batch did 4 methods in 275 lines (~69/method) versus 106 lines
-for `searchRanked` alone. Surface a whole namespace per PR.
+**Status: complete, 2026-07-23.** All eight waves shipped across
+`@nimbus-dev/client` 0.7.0 → 0.11.0 in eight days. The client surface went
+**15 → 52 methods**; `agents.*`, `connector.*` and `workflow.*` — three
+namespaces named in the diagnosis as built-but-unreachable — are now reachable
+from npm.
 
-Priority is (value ÷ effort), not roadmap order:
+**Batch, don't drip** held up. Cost is dominated by upstream shape archaeology,
+not typing: the egress batch did 4 methods in 275 lines (~69/method) versus 106
+lines for `searchRanked` alone. Every wave surfaced a whole namespace per PR,
+and the two largest (1g, 1h) shipped in one.
 
-| Wave | Namespace | Why it is first | Notes |
+### Shipped
+
+Priority was (value ÷ effort), not roadmap order. Client version is the release
+that carries the method.
+
+| Wave | Namespace | Client | PR |
 | --- | --- | --- | --- |
-| 1a | `agents.*` (8) | **Highest value per line in the ecosystem.** All read-only, never HITL, all Tauri-allowlisted — and the SDK already ships both the result types (`agents/brief-types.ts`) *and* runtime type guards (`agents/guard-factory.ts`), both in the published `dist/`. So the two costliest parts of exposing a method — shape archaeology and writing a validator — are already done. Unlocks expert / impact / catchup, the substance of Stage 2's headline. | Returns via `<agent>.briefReady` notification → needs a subscription wrapper like `subscribeHitl`. M, not S. |
-| 1b | `consent.respond` | Closes the half-wired HITL loop. One param, trivial result. | Under an hour |
-| 1c | Diagnostics: `gateway.ping`, `diag.getVersion`, `admin.status`, `index.metrics`, `diag.snapshot` | Clients currently *infer* connectivity and have no version at all. This kills the largest support loop for every thin client and enables real version negotiation. | S |
-| 1d | `session.*` (list/clear/recall/append) | Deletes the raw-SQL schema-coupling hack in the VS Code Sessions view. | S |
-| 1e | `audit.verify`, `audit.getSummary`, `audit.toolCalls` | Same BLAKE3-chain design as egress, for which a UI already exists — near-zero design work. `audit.toolCalls` is a genuinely differentiated forensic surface. | S |
-| 1f | `metrics.dora`, `deploy.preflight` | The ops payload. Directly serves the ICP and `nimbus-statuspage`. | S |
-| 1g | `connector.*` | Largest coherent management surface; unblocks the connector-management gap in every client. | M |
-| 1h | `workflow.*` (5) | The long-tracked flagship gap. `workflow.run` streams → wrapper needed. | M |
+| 1a | `agents.*` (8) — expert, impact, catchup, ghost, conflicts, huddle, janitor, preflight | `0.7.0` (bundle fix in `0.7.1`) | [#14](https://github.com/nimbus-agent/nimbus-client/pull/14) |
+| 1b | `consent.respond` | `0.8.0` | [#19](https://github.com/nimbus-agent/nimbus-client/pull/19) |
+| 1c | `gateway.ping`, `diag.getVersion`, `admin.status`, `index.metrics`, `diag.snapshot` | `0.8.0` | [#19](https://github.com/nimbus-agent/nimbus-client/pull/19) |
+| 1e | `audit.verify`, `audit.getSummary`, `audit.toolCalls` | `0.9.0` | [#23](https://github.com/nimbus-agent/nimbus-client/pull/23) |
+| 1d | `session.*` (append/recall/list/clear) | `0.10.0` | [#26](https://github.com/nimbus-agent/nimbus-client/pull/26) |
+| 1f | `metrics.dora`, `deploy.preflight` | `0.10.0` | [#26](https://github.com/nimbus-agent/nimbus-client/pull/26) |
+| 1g | `connector.*` (12) | `0.11.0` | [#28](https://github.com/nimbus-agent/nimbus-client/pull/28) |
+| 1h | `workflow.*` (5) | `0.11.0` | [#28](https://github.com/nimbus-agent/nimbus-client/pull/28) |
 
-Later, demand-driven: `watcher.*`, `people.*`, `tribal.*`, `share.*`,
-`policy.*`, `llm.*`, `profile.*`, `updater.*`, `federation.*`.
+Two shape decisions worth carrying forward, because both were discovered by
+reading gateway source rather than by reading its docs:
+
+- **`agents.*` resolve from a notification.** Each agent returns via
+  `<agent>.briefReady`, so the client subscribes *before* calling and correlates
+  by session, rather than awaiting the RPC result. `subscribeAgentBrief` exposes
+  the raw stream for callers that want it.
+- **HITL-gated methods do not reject uniformly.** `connector.addMcp` and
+  `connector.remove` *resolve* with `{ status: "rejected", reason }` on denial;
+  `connector.reindex({ depth: "full" })` *rejects* the promise. The client types
+  the difference (`GatedRejection`) instead of smoothing it over — a client that
+  smoothed it would silently swallow one of the two denials.
+
+**Later, demand-driven:** `watcher.*`, `people.*`, `tribal.*`, `share.*`,
+`policy.*`, `llm.*`, `profile.*`, `updater.*`, `federation.*`. None is blocking
+a known consumer; surface one when a client asks for it.
+
+**Known gaps left open deliberately** — each is a gateway-side change, not a
+client one, so none blocked the stage:
+
+- `connector.addMcp`'s consent payload reads `command`/`args`, which the
+  `{ serviceId, commandLine }` params never populate — so the security prompt
+  renders blank. Filed against the gateway.
+- `connector.configChanged` is emitted but not exposed; clients poll instead.
+- `workflow.run({ stream: true })` emits chunks that no public API surfaces.
 
 **Permanently out of bounds:** `vault.*` and `db.*` are gateway-internal and must
 never be surfaced to a client. Anything the gateway marks CLI-only stays CLI-only
@@ -360,9 +399,11 @@ receipts are why they stay and why procurement signs.
    PagerDuty and a terminal — not the editor. The editor's strongest jobs may be
    the *before* (blast radius pre-push) and the *after* (postmortem), with the
    incident itself owned elsewhere.
-4. **Staffing the client.** Every stage here is gated on `nimbus-client`
-   throughput, which has averaged ~1.25 methods/month. Nothing below Stage 0
-   changes until that does.
+4. ~~**Staffing the client.** Every stage here is gated on `nimbus-client`
+   throughput, which has averaged ~1.25 methods/month.~~ **Answered by Stage 1
+   (2026-07-23):** 37 methods in 8 days, ~4.6/day. The ~1.25/month figure
+   measured *attention*, not difficulty — the work was never throughput-bound.
+   Stage 2 and 3 should not be sequenced as though it were.
 
 ---
 

@@ -8,6 +8,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-23 — Ecosystem Stage 1 complete: the client surface goes 15 → 52 methods.** The gateway
+  dispatches ~212 JSON-RPC methods; `@nimbus-dev/client` exposed 15 of them, so entire namespaces
+  were built, dispatch-wired and Tauri-allowlisted yet unreachable from any npm client. All eight
+  waves of [`docs/ecosystem-roadmap.md`](./ecosystem-roadmap.md) Stage 1 shipped across client
+  `0.7.0` → `0.11.0`: `agents.*` (8), `consent.respond`, the five diagnostics methods, `audit.*`
+  (3), `session.*` (4), `metrics.dora` + `deploy.preflight`, `connector.*` (12), `workflow.*` (5).
+  **No gateway behaviour changed** — every method was already dispatched; the work was runtime
+  validators, `MockClient` parity stubs, and shape archaeology against gateway source. Two contract
+  facts the client now encodes rather than smooths over: `agents.*` resolve from an
+  `<agent>.briefReady` **notification**, so the client subscribes before calling and correlates by
+  session; and HITL-gated connector methods **do not deny uniformly** — `connector.addMcp` and
+  `connector.remove` resolve `{ status: "rejected", reason }` while `connector.reindex({ depth:
+  "full" })` rejects the promise, a difference the `GatedRejection` type makes callers handle.
+  Gateway-side, the same workstream added a **brief-shape drift gate**
+  ([#806](https://github.com/nimbus-agent/Nimbus/pull/806)): `scripts/agent-brief-shape.ts` reduces
+  every `briefReady` payload — walking *every* array element, not just index 0 — to a `path:type`
+  signature snapshot, so changing an agent's brief shape here fails CI on that PR instead of
+  silently leaving the client validating a contract the gateway no longer speaks. That PR also put
+  `scripts/` (151 files) under `tsc` for the first time, fixing 42 pre-existing errors. Three
+  gateway-side gaps were found and deliberately left open, each filed rather than patched inside a
+  client PR: `connector.addMcp`'s consent payload reads `command`/`args` that its
+  `{ serviceId, commandLine }` params never populate (the security prompt renders blank);
+  `connector.configChanged` is emitted but unexposed; `workflow.run({ stream: true })` chunks have
+  no public API.
+
 - **2026-07-22 — Research briefs: an owner-triggered multi-source research pass over the local
   index (Spine S1).** The gateway can now assemble a citation-validated report from a handful of
   captured web sources, entirely on the local HTTP write surface. **Four new I13 write routes plus
