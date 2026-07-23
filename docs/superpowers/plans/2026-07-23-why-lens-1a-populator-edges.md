@@ -59,6 +59,7 @@ This task must land first — every later task depends on it.
 - Produces:
   - `CROSS_ITEM_RELATION_TYPES: readonly ["resolves", "mentions", "correlates_with"]` — module-private.
   - `clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void` — module-private. Later tasks call this immediately before re-emitting a cross-item edge, so the emitting side stays authoritative for its own edges.
+  - `clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void` — module-private. The mirror image, for the case where the *target* of a cross-item edge is authoritative for whether the edge should still exist (Task 6's incident side).
   - `clearRelationsTouchingEntity(db: Database, entityId: string): void` — unchanged signature, new behavior.
 
 - [ ] **Step 1: Write the failing test**
@@ -201,7 +202,19 @@ function clearRelationsTouchingEntity(db: Database, entityId: string): void {
 function clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void {
   dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type = ?", [fromId, relationType]);
 }
+
+/**
+ * The mirror image, for a cross-item edge whose *target* decides whether the
+ * edge still belongs. Task 6 needs this: an incident that moves in time or
+ * changes service must drop the correlations pointing at it, and only the
+ * incident's own sync knows that.
+ */
+function clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void {
+  dbRun(db, "DELETE FROM graph_relation WHERE to_id = ? AND type = ?", [toId, relationType]);
+}
 ```
+
+The two clears are disjoint in effect — one keys on `from_id`, the other on `to_id` — so each side stays authoritative for its own slice of a cross-item relation without racing the other.
 
 Note the placeholder string is built from array *length* only — every value still binds, so `I9` holds.
 
@@ -735,7 +748,13 @@ test("deduplicates SHAs", () => {
 });
 ```
 
-Note the second case: `1234567` is seven hex characters and is indistinguishable from a short SHA by shape alone. It is kept — a false positive that resolves to no commit entity emits no edge, so the cost is a wasted lookup, whereas excluding all-digit runs would drop real SHAs.
+Note the second case: `1234567` is seven hex characters and is indistinguishable from a short SHA by shape alone. **It is deliberately kept.**
+
+A reviewer proposed skipping all-decimal 7-character candidates to avoid false-positive lookups. The arithmetic argues against it: a hex character is decimal with probability 10/16, so an all-decimal 7-character SHA prefix occurs at rate (10/16)⁷ ≈ **3.7%**. That filter would silently drop roughly one in twenty-seven real short-SHA mentions.
+
+What it buys is one avoided lookup per false positive. That lookup is `external_id LIKE '%:' || ?`, which cannot use an index — but it is bounded by the `UNIQUE(type, external_id)` prefix on `type = 'commit'`, so it scans commit entities only, and a message body yields few candidates.
+
+The trade is a few milliseconds against a 3.7% silent miss rate. This entire phase exists because three lanes were silently empty; accepting a new silent-miss rate to save microseconds is the wrong direction. Keep the false positives — they resolve to nothing and emit nothing.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1206,13 +1225,39 @@ test("a different service does not correlate", () => {
 
   expect(correlations(db)).toEqual([]);
 });
+
+test("re-syncing an incident to a different service retires the stale correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The incident is re-classified against a different service.
+  seedIncident(db, t + HOUR, "search");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("re-syncing an incident out of the window retires the stale correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The incident's true start time turns out to be much later.
+  seedIncident(db, t + 5 * HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([]);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/graph/graph-populator-incidents.test.ts`
 
-Expected: FAIL — the first two tests get `[]`.
+Expected: FAIL — the first two tests get `[]`, and the two retirement tests fail on their second assertion with a surviving stale edge.
 
 - [ ] **Step 3: Implement the correlation**
 
@@ -1267,6 +1312,13 @@ Then replace the `void now;` line at the end of `syncTimelineEventGraph` with:
 
   // An incident syncing after its deploy must still create the edge, and the
   // edge is always directed deployment -> incident.
+  //
+  // The incoming clear is load-bearing: `clearRelationsTouchingEntity` skips
+  // `correlates_with` (Task 1), so an incident that moved in time or changed
+  // service would otherwise keep every correlation it ever had. Only the
+  // incident's own sync knows its current window and service, so only it can
+  // retire those edges.
+  clearIncomingRelationsOfType(db, entityId, "correlates_with");
   for (const dep of timelineCounterparts(
     db,
     "deployment",
@@ -1479,53 +1531,105 @@ function parseMetadata(raw: string | null): Record<string, unknown> {
 }
 
 /**
- * Re-run the graph populator over every indexed item.
+ * Item types graphed in dependency order. An entity that is only ever a
+ * reference *target* must already exist when the item referencing it is
+ * processed, or the edge is silently skipped: `findIssueEntityIds` and
+ * `findCommitEntityIds` resolve against `graph_entity`, not `item`.
  *
- * Needed because a populator change only reaches existing rows when they next
- * re-sync — and historical items may never re-sync. Paged so a large index
- * does not materialise every row at once. Idempotent: each sync function
- * clears and rebuilds the edges it owns.
+ * `deployment` / `incident` correlate symmetrically (either side emits the
+ * edge), so their relative order is free — they are listed only to keep the
+ * whole dependency story in one place.
  */
-export function regraphAllItems(db: Database, opts?: { batchSize?: number }): RegraphResult {
-  const batchSize = opts?.batchSize ?? 500;
-  let offset = 0;
-  let scanned = 0;
-  let graphed = 0;
+const REGRAPH_TYPE_ORDER: readonly string[] = Object.freeze([
+  "issue",
+  "git_commit",
+  "deployment",
+  "incident",
+  "pr",
+  "message",
+]);
 
+function graphOneRow(db: Database, r: ItemRow): boolean {
+  if (!isItemLinkedGraphType(r.type)) return false;
+  syncGraphFromIndexedItem(db, {
+    id: r.id,
+    service: r.service,
+    type: r.type,
+    title: r.title,
+    bodyPreview: r.body_preview,
+    authorId: r.author_id,
+    metadata: parseMetadata(r.metadata),
+  });
+  return true;
+}
+
+/**
+ * Page through one slice of the item table by keyset (`id > lastId`) rather
+ * than OFFSET. OFFSET makes SQLite re-walk every skipped row on each page,
+ * which turns a large backfill quadratic.
+ */
+function regraphSlice(
+  db: Database,
+  where: string,
+  params: readonly unknown[],
+  batchSize: number,
+  counters: { scanned: number; graphed: number },
+): void {
+  let lastId = "";
   for (;;) {
     const rows = db
       .query(
         `SELECT id, service, type, title, body_preview, author_id, metadata
            FROM item
+          WHERE ${where} AND id > ?
           ORDER BY id ASC
-          LIMIT ? OFFSET ?`,
+          LIMIT ?`,
       )
-      .all(batchSize, offset) as ItemRow[];
-    if (rows.length === 0) break;
+      .all(...params, lastId, batchSize) as ItemRow[];
+    if (rows.length === 0) return;
 
     for (const r of rows) {
-      scanned += 1;
-      if (!isItemLinkedGraphType(r.type)) continue;
-      syncGraphFromIndexedItem(db, {
-        id: r.id,
-        service: r.service,
-        type: r.type,
-        title: r.title,
-        bodyPreview: r.body_preview,
-        authorId: r.author_id,
-        metadata: parseMetadata(r.metadata),
-      });
-      graphed += 1;
+      counters.scanned += 1;
+      if (graphOneRow(db, r)) counters.graphed += 1;
     }
 
-    offset += rows.length;
+    const last = rows.at(-1);
+    if (last === undefined) return;
+    lastId = last.id;
+  }
+}
+
+/**
+ * Re-run the graph populator over every indexed item.
+ *
+ * Needed because a populator change only reaches existing rows when they next
+ * re-sync — and historical items may never re-sync.
+ *
+ * Processed in `REGRAPH_TYPE_ORDER` so reference targets are graphed before
+ * the items that reference them; every edge this plan emits therefore settles
+ * in a single pass. Idempotent regardless — each sync function clears and
+ * rebuilds the edges it owns — so re-running is always safe.
+ */
+export function regraphAllItems(db: Database, opts?: { batchSize?: number }): RegraphResult {
+  const batchSize = opts?.batchSize ?? 500;
+  const counters = { scanned: 0, graphed: 0 };
+
+  for (const type of REGRAPH_TYPE_ORDER) {
+    regraphSlice(db, "type = ?", [type], batchSize, counters);
   }
 
-  return { scanned, graphed };
+  // Everything else: graph-participating types with no ordering constraint,
+  // plus non-participating types, which are counted as scanned but skipped.
+  const placeholders = REGRAPH_TYPE_ORDER.map(() => "?").join(", ");
+  regraphSlice(db, `type NOT IN (${placeholders})`, REGRAPH_TYPE_ORDER, batchSize, counters);
+
+  return counters;
 }
 ```
 
-The ordering caveat is real and acceptable: a PR processed before the issue it references emits no `resolves` edge on that pass. Because the backfill is idempotent, running it twice resolves every forward reference — which the idempotency test above also demonstrates.
+The `where` fragment is a module-private literal built only from `REGRAPH_TYPE_ORDER.length`; every value still binds, so `I9` holds.
+
+**Why not `ORDER BY CASE type ... END`:** it expresses the same intent in one query, but no index can serve the computed sort key, so SQLite materialises and sorts the entire item table — and with `OFFSET` paging it redoes that sort for every page. Slicing by type keeps each query on `idx_item_type` and the keyset cursor keeps each page O(batch).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1533,15 +1637,52 @@ Run: `bun test packages/gateway/src/graph/regraph.test.ts`
 
 Expected: PASS, 3 tests.
 
-- [ ] **Step 5: Document the two-pass caveat in the module**
+- [ ] **Step 5: Prove a single pass settles forward references**
 
-Append to the `regraphAllItems` doc comment:
+Append to `packages/gateway/src/graph/regraph.test.ts`:
 
 ```ts
- * Ordering caveat: items are processed in `id` order, so a PR seen before the
- * issue it references emits no `resolves` edge on that pass. Run twice to
- * settle forward references; the operation is idempotent.
+test("one pass settles a forward reference that sorts the wrong way by id", () => {
+  const db = freshDb();
+  const now = Date.now();
+
+  // `github:acme/app#1` (the PR) sorts BEFORE `github:acme/app#4` (the issue),
+  // so an id-ordered backfill processes the PR while the issue entity does not
+  // yet exist and emits nothing. Type ordering is what makes one pass enough.
+  insertRawItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: "acme/app#1",
+    title: "Fix login",
+    body: "closes #4",
+    at: now,
+  });
+  insertRawItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#4",
+    title: "Login broken",
+    body: "",
+    at: now,
+  });
+
+  regraphAllItems(db);
+
+  expect(
+    (
+      db.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'resolves'").get() as {
+        n: number;
+      }
+    ).n,
+  ).toBe(1);
+});
 ```
+
+Numeric refs resolve within one service (Task 3), so both items must share `service: "github"` for `#4` to bind — which is also the realistic case.
+
+Run: `bun test packages/gateway/src/graph/regraph.test.ts`
+
+Expected: PASS, 4 tests. If this one fails, `REGRAPH_TYPE_ORDER` is not being honoured — and note the Step 1 backfill test exercises the same ordering hazard, so it fails too.
 
 - [ ] **Step 6: Run the full gateway graph + agent suites**
 
@@ -1577,6 +1718,31 @@ Expected: no file below 80% line or branch. `audit:coverage-floor` is CI-Linux-a
 Run: `bun run audit:structure`
 
 Expected: PASS. This task adds no new invariant and no new `connectors.dispatch` call site, so `D12` (all writes via `dbRun`) is the only static check with new surface — every write added here goes through `dbRun`.
+
+---
+
+## Review dispositions
+
+From `2026-07-23-why-lens-1a-populator-edges-feedback.md`.
+
+| # | Item | Disposition |
+| --- | --- | --- |
+| 1 | Stale incoming `correlates_with` on incident re-sync | **Fixed** — real bug. `clearIncomingRelationsOfType` added in Task 1, called from the incident branch in Task 6, with two retirement regression tests. |
+| 2 | Backfill ordering | **Fixed, different mechanism** — and it was a bug, not an optimization. |
+| 3 | Filter all-decimal 7-char SHAs | **Rejected**, with the arithmetic recorded in Task 4 Step 1. |
+| 4 | Expression index on JSON fields | **Deferred**, premise corrected below. |
+
+**On #2 — it was a latent test failure, not a speed-up.** The reviewer framed it as avoiding a second pass. Checking the actual sort order shows worse: `github:acme/app#1` (the PR) sorts *before* `github:acme/app#4` (the issue), so under id-only ordering the Task 7 Step 1 test would have processed the PR against a non-existent issue entity and asserted `1` against `0`. The plan shipped a failing test. Type-ordered slicing fixes it, and a dedicated test now pins the ordering hazard.
+
+The suggested `ORDER BY CASE type ... END` was not adopted: no index can serve a computed sort key, so SQLite materialises and sorts the whole item table, and `OFFSET` paging repeats that sort per page. Slicing by type keeps each query on `idx_item_type`, and a keyset cursor (`id > ?`) keeps each page O(batch) instead of O(offset).
+
+**On #4 — the premise is wrong, the deferral is right.** The concern was that `json_extract` in `timelineCounterparts` forces full-table scans. It does not: the query leads with `type = ?`, and `EXPLAIN QUERY PLAN` confirms SQLite serves that from the `UNIQUE(type, external_id)` autoindex —
+
+```text
+SEARCH graph_entity USING INDEX sqlite_autoindex_graph_entity_2 (type=?)
+```
+
+So the `json_extract` predicates filter within deployments (or incidents) only, already bounded and further capped by `LIMIT 20`. No index is warranted now. If a very large history ever makes it measurable, the fix belongs in a migration alongside a benchmark that demonstrates the problem — not speculatively here.
 
 ---
 
