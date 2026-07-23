@@ -37,3 +37,17 @@ export function extractIssueRefs(text: string): IssueRefs {
 
   return { numeric, ticketKeys };
 }
+
+const COMMIT_SHA_RE = /\b([0-9a-f]{7,40})\b/g;
+
+export function extractCommitShas(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(COMMIT_SHA_RE)) {
+    const sha = m[1];
+    if (sha === undefined || seen.has(sha)) continue;
+    seen.add(sha);
+    out.push(sha);
+  }
+  return out;
+}

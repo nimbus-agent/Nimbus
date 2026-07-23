@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
-import { extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
+import { extractCommitShas, extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
   ensureGraphEntity,
   isItemLinkedGraphType,
@@ -354,6 +354,22 @@ function syncCodeSymbolGraph(db: Database, row: IndexedItemGraphInput, now: numb
   }
 }
 
+/** Resolve commit SHAs to `commit` entities by their `<service>:<sha>` external id. */
+function findCommitEntityIds(db: Database, shas: readonly string[]): string[] {
+  const ids: string[] = [];
+  for (const sha of shas) {
+    const row = db
+      .query(
+        `SELECT id FROM graph_entity
+          WHERE type = 'commit' AND external_id LIKE '%:' || ?
+          ORDER BY id ASC LIMIT 1`,
+      )
+      .get(sha) as { id?: string } | null;
+    if (row?.id !== undefined) ids.push(row.id);
+  }
+  return ids;
+}
+
 function syncMessageGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
   const msgEntityId = upsertGraphEntity(db, {
     type: "message",
@@ -386,6 +402,16 @@ function syncMessageGraph(db: Database, row: IndexedItemGraphInput, now: number)
       service: row.service,
     });
     upsertGraphRelation(db, msgEntityId, chId, "belongs_to", now);
+  }
+
+  clearOutgoingRelationsOfType(db, msgEntityId, "mentions");
+  const text = `${row.title}\n${row.bodyPreview ?? ""}`;
+  const mentioned = new Set<string>([
+    ...findIssueEntityIds(db, row.service, undefined, extractIssueRefs(text)),
+    ...findCommitEntityIds(db, extractCommitShas(text)),
+  ]);
+  for (const targetId of mentioned) {
+    upsertGraphRelation(db, msgEntityId, targetId, "mentions", now);
   }
 }
 

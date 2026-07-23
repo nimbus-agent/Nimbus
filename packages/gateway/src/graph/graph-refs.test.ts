@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { extractIssueRefs } from "./graph-refs.ts";
+import { extractCommitShas, extractIssueRefs } from "./graph-refs.ts";
 
 test("extracts GitHub-style numeric issue references", () => {
   expect(extractIssueRefs("closes #4 and fixes #17")).toEqual({
@@ -36,4 +36,19 @@ test("ignores a bare hash with no digits", () => {
 
 test("handles empty input", () => {
   expect(extractIssueRefs("")).toEqual({ numeric: [], ticketKeys: [] });
+});
+
+test("extracts 7-to-40 character hex SHAs", () => {
+  expect(extractCommitShas("see a1b2c3d and 0123456789abcdef0123456789abcdef01234567")).toEqual([
+    "a1b2c3d",
+    "0123456789abcdef0123456789abcdef01234567",
+  ]);
+});
+
+test("ignores short hex runs and decimal numbers", () => {
+  expect(extractCommitShas("abc123 and 1234567")).toEqual(["1234567"]);
+});
+
+test("deduplicates SHAs", () => {
+  expect(extractCommitShas("a1b2c3d a1b2c3d")).toEqual(["a1b2c3d"]);
 });
