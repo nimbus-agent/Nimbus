@@ -29,6 +29,12 @@ export type ResolvedRootPath = { repoRoot: string; filePath: string };
  * via `relative()` + startsWith("..")/isAbsolute checks before ever touching
  * `exists()` — a relative `../`-escape must be rejected regardless of whether
  * the joined path happens to exist on disk.
+ *
+ * NOTE: `resolveWhySubject`'s symbol branch below is a SECOND path to a
+ * blame-spawn subject that does not go through this function — it enforces
+ * its own equivalent containment check (`sym.repoRoot` must match a
+ * currently configured root) inline, since a symbol's `repoRoot` comes
+ * verbatim from `graph_entity` metadata, not from resolving a caller path.
  */
 export function matchConfiguredRoot(
   roots: readonly NimbusFilesystemRootToml[],
@@ -121,6 +127,14 @@ export function resolveWhySubject(
 
   const sym = lookupSymbol(db, parsed.path);
   if (sym !== null) {
+    // The symbol branch's own fence: `sym.repoRoot` comes straight from
+    // `graph_entity` metadata, never through `matchConfiguredRoot`, so a
+    // stale root (removed from nimbus.toml since the symbol was indexed) or
+    // any future symbol-entity writer must not be trusted implicitly —
+    // require it to still be one of the currently configured roots before
+    // handing it out as a blame-spawn subject.
+    const inConfiguredRoots = roots.some((r) => resolve(r.path) === resolve(sym.repoRoot));
+    if (!inConfiguredRoots) return null;
     return {
       repoRoot: sym.repoRoot,
       filePath: sym.file,

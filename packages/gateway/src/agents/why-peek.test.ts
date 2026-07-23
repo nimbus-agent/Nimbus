@@ -107,6 +107,36 @@ test("a path outside every configured root → null subject and ZERO spawns (red
   expect(spawns).toBe(0);
 });
 
+test("a symbol ref resolving to an out-of-roots repoRoot → null subject and ZERO spawns (red-prove me)", async () => {
+  const db = seededDb();
+  const OUTSIDE_ROOT = path.resolve(path.join(path.sep, "elsewhere", "repo"));
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${OUTSIDE_ROOT}:src/a.ts:retryBackoff:function`,
+    title: "retryBackoff (function)",
+    bodyPreview: "src/a.ts\nexport function retryBackoff() {",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "retryBackoff",
+      kind: "function",
+      file: "src/a.ts",
+      repoRoot: OUTSIDE_ROOT,
+      excerptStartLine: 42,
+    },
+  });
+  let spawns = 0;
+  const spy = ((..._a: unknown[]) => {
+    spawns += 1;
+    throw new Error("must not spawn");
+  }) as typeof Bun.spawn;
+  const peek = await runWhyPeek({ ref: "retryBackoff" }, { db, roots, spawn: spy });
+  expect(peek.subject).toBeNull();
+  expect(spawns).toBe(0);
+});
+
 test("no blame row and no git dir → nulls, not an error", async () => {
   const db = seededDb();
   const peek = await runWhyPeek({ ref: `${path.join(ROOT, "src", "other.ts")}:9` }, { db, roots });

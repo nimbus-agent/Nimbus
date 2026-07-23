@@ -11,10 +11,15 @@ export type BlameSpawn = typeof Bun.spawn;
 /**
  * Blame one line on demand, cached forever after.
  *
- * The path fence has two layers: callers can only obtain a ResolvedRootPath
- * from `matchConfiguredRoot` (a path outside every configured root resolves
- * to null upstream), and this function independently refuses to spawn unless
- * `<repoRoot>/.git` exists. The spawn itself is the existing
+ * The path fence has two layers: callers obtain a ResolvedRootPath (or the
+ * shape-compatible `WhySubject`) only through `resolveWhySubject`, which
+ * enforces containment in a currently configured root on EVERY branch — the
+ * literal-path branch via `matchConfiguredRoot` (a path outside every
+ * configured root resolves to null upstream), and the symbol branch via its
+ * own inline `repoRoot`-membership check (a symbol's metadata is never
+ * implicitly trusted, since it did not come from resolving a caller path
+ * against the roots list) — and this function independently refuses to spawn
+ * unless `<repoRoot>/.git` exists. The spawn itself is the existing
  * `gitBlameLinePorcelain` — argv after `--`, 20 s AbortSignal, failure → [].
  * A local git read: not a connector dispatch (no I29), not a write gate (no I2).
  */

@@ -78,6 +78,115 @@ test("a bare token resolves through a symbol entity, line from the item's excerp
   });
 });
 
+test("a symbol entity whose metadata repoRoot is NOT among the configured roots resolves to null — the symbol-branch fence", () => {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  const now = Date.now();
+  const OUTSIDE_ROOT = path.resolve(path.join(path.sep, "elsewhere", "repo"));
+  // Same connector-verbatim code_symbol shape as the test above, but the
+  // symbol's own repoRoot metadata is a root that was never configured (e.g.
+  // stale after removal from nimbus.toml, or written by a future symbol-entity
+  // writer) — resolveWhySubject must refuse to hand this out as a subject.
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${OUTSIDE_ROOT}:src/a.ts:retryBackoff:function`,
+    title: "retryBackoff (function)",
+    bodyPreview: "src/a.ts\nexport function retryBackoff() {",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "retryBackoff",
+      kind: "function",
+      file: "src/a.ts",
+      repoRoot: OUTSIDE_ROOT,
+      excerptStartLine: 42,
+    },
+  });
+  const subject = resolveWhySubject(db, [root(ROOT)], { ref: "retryBackoff" }, () => false);
+  expect(subject).toBeNull();
+});
+
+test("lookupSymbol's LIKE fallback resolves a partial token against the label", () => {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  const now = Date.now();
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${ROOT}:src/a.ts:retryBackoff:function`,
+    title: "retryBackoff (function)",
+    bodyPreview: "src/a.ts\nexport function retryBackoff() {",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "retryBackoff",
+      kind: "function",
+      file: "src/a.ts",
+      repoRoot: ROOT,
+      excerptStartLine: 42,
+    },
+  });
+  // "retryBack" is a prefix of the symbol's name, not an exact match, so the
+  // exact-name query misses and only the `label LIKE '%...%'` fallback finds it.
+  const subject = resolveWhySubject(db, [root(ROOT)], { ref: "retryBack" }, () => false);
+  expect(subject).toEqual({
+    repoRoot: ROOT,
+    filePath: "src/a.ts",
+    lineNo: 42,
+    symbol: "retryBackoff",
+  });
+});
+
+test("lookupSymbol's LIKE fallback tie-break picks the shorter label when two symbols match", () => {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  const now = Date.now();
+  // Neither symbol's `name` is exactly "foo", so the exact-match query misses
+  // for both and the LIKE fallback (ORDER BY length(e.label) ASC) decides.
+  // label = "fooBarLongName — src/deep/nested/aaa.ts" (long)
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${ROOT}:src/deep/nested/aaa.ts:fooBarLongName:function`,
+    title: "fooBarLongName (function)",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "fooBarLongName",
+      kind: "function",
+      file: "src/deep/nested/aaa.ts",
+      repoRoot: ROOT,
+      excerptStartLine: 5,
+    },
+  });
+  // label = "fooX — src/b.ts" (short)
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${ROOT}:src/b.ts:fooX:function`,
+    title: "fooX (function)",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "fooX",
+      kind: "function",
+      file: "src/b.ts",
+      repoRoot: ROOT,
+      excerptStartLine: 9,
+    },
+  });
+  const subject = resolveWhySubject(db, [root(ROOT)], { ref: "foo" }, () => false);
+  expect(subject).toEqual({
+    repoRoot: ROOT,
+    filePath: "src/b.ts",
+    lineNo: 9,
+    symbol: "fooX",
+  });
+});
+
 test("an unresolvable ref yields null", () => {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
