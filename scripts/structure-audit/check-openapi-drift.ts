@@ -83,6 +83,7 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
   for (const key of schemaSet) {
     if (!routeSet.has(key)) {
       const [method, ...rest] = key.split(" ");
+      if (method === undefined) continue;
       issues.push({
         kind: "schema_without_handler",
         method,
@@ -94,6 +95,7 @@ export function findOpenApiDrift(schemaFile: string, routes: readonly HttpRoute[
   for (const key of routeSet) {
     if (!schemaSet.has(key)) {
       const [method, ...rest] = key.split(" ");
+      if (method === undefined) continue;
       issues.push({
         kind: "handler_without_schema",
         method,

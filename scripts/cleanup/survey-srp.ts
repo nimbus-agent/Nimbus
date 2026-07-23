@@ -21,7 +21,10 @@ async function main() {
     const loc = source.split(/\r?\n/).length;
     if (loc <= 500) continue;
     const names: string[] = [];
-    for (const m of source.matchAll(EXPORT_RE)) names.push(m[1]);
+    for (const m of source.matchAll(EXPORT_RE)) {
+      const name = m[1];
+      if (name !== undefined) names.push(name);
+    }
     rows.push({ file: relPath(file), loc, exports: names.length, names });
   }
   rows.sort((a, b) => b.loc - a.loc);

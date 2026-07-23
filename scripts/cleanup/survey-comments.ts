@@ -24,6 +24,7 @@ function findCommentLines(source: string): Array<{ line: number; text: string }>
   let inBlock = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
+    if (raw === undefined) continue;
     if (inBlock) {
       hits.push({ line: i + 1, text: raw.trim() });
       if (raw.includes("*/")) inBlock = false;

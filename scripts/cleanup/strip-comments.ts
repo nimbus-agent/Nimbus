@@ -84,6 +84,7 @@ export function stripRustSource(source: string): { stripped: string; abstained: 
   while (i < source.length) {
     const c = source[i];
     const c2 = source[i + 1];
+    if (c === undefined) break;
 
     if (c === "r" && (c2 === '"' || c2 === "#")) {
       let j = i + 1;

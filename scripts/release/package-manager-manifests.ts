@@ -13,8 +13,10 @@ export function parseSha256Sums(text: string): Map<string, string> {
     const line = rawLine.trim();
     if (line === "") continue;
     const m = /^([0-9a-fA-F]{64})\s+\*?(.+)$/.exec(line);
-    if (!m) continue;
-    map.set(m[2].trim(), m[1].toLowerCase());
+    const hash = m?.[1];
+    const filename = m?.[2];
+    if (hash === undefined || filename === undefined) continue;
+    map.set(filename.trim(), hash.toLowerCase());
   }
   return map;
 }

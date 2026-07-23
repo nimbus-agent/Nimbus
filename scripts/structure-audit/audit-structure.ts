@@ -8,7 +8,7 @@ type StepResult =
 
 async function step(name: string, cmd: readonly string[]): Promise<StepResult> {
   const start = performance.now();
-  const proc = Bun.spawnSync(cmd, {
+  const proc = Bun.spawnSync([...cmd], {
     cwd: REPO_ROOT,
     stdout: "inherit",
     stderr: "inherit",

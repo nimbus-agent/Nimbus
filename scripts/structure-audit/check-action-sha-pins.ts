@@ -51,6 +51,7 @@ export function auditActionShaPins(repoRoot: string): AuditResult {
       const m = line.match(usesRe);
       if (!m) return;
       const ref = m[1];
+      if (ref === undefined) return;
       // Exempt local actions / reusable workflows / docker refs.
       if (ref.startsWith("./") || ref.startsWith("../") || ref.startsWith("docker://")) return;
       const at = ref.lastIndexOf("@");
