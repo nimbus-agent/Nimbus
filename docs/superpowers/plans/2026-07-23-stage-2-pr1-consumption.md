@@ -178,7 +178,7 @@ Expected: all PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -u test/unit/no-raw-sql-guard.test.ts
+git add -u && git add test/unit/no-raw-sql-guard.test.ts
 git commit -m "feat(sessions): consume session.list; delete the querySql hack + guard"
 ```
 

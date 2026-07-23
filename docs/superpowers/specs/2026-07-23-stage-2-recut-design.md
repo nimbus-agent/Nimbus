@@ -33,7 +33,7 @@ The mandatory unblock, scoped opportunistically:
 - Bump `@nimbus-dev/client` to `^0.11.0`.
 - Sessions view: replace `querySql(SESSIONS_SQL)` + the local `listSessions` wrapper with
   `sessionList()`; delete `SESSIONS_SQL`.
-- Wire `gatewayPing()` into connection health and the Troubleshoot Connection command.
+- Wire `gatewayPing()` into the Troubleshoot Connection command (a live "socket up but gateway unresponsive" probe). Ongoing connection health stays with the connection manager; the status bar's live signal is the connector-health poll.
 - Status bar: add a connector-health segment fed by `connectorListStatus()` on the existing
   `statusBarPollMs` cadence — making the setting's description true.
 - Guard test: assert `querySql(` appears nowhere in `src/` so the hack cannot return
