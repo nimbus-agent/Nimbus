@@ -1841,6 +1841,54 @@ So the `json_extract` predicates filter within deployments (or incidents) only, 
 
 ---
 
+## Post-review remediation (Tasks 8–12)
+
+The whole-branch review found that the per-task suites all passed against **hand-written fixtures that no connector emits**. Two of the three new edge types were correct in code but unreachable against real connector data — the same "declared but always empty" failure this phase exists to eliminate, relocated one layer up. Tasks 8–12 close that.
+
+**Standing rule for every task below:** a regression test must be seeded from the connector's own `externalId` / metadata builder, or from a literal copied verbatim out of the connector source — never from a hand-written shape.
+
+### Task 8 — C2: the `resolves` numeric path cannot match a GitHub issue
+
+`findIssueEntityIds` builds `${repoFull}#${n}`. That is the shape `github-sync.ts:197` uses for **pull requests**; issues are indexed at `:237` as `${repoFull}#issue-${n}`, deliberately disambiguated because PRs and issues share a number space. The lookup is `type='issue'`-scoped, so it is a clean miss, not a mis-link.
+
+GitLab is the mirror image: its issue externalId *is* `path/ns#4` (`connectors/_lib/gitlab/events.ts:57`) and would match — but GitLab MR items are written with `bodyPreview: ""` (same file, line 79), so there is no body text to extract a reference from.
+
+Fix: resolve numerically against `item.metadata.number` + `metadata.repo`, which both forges populate, rather than reconstructing an externalId string. Falls back to the existing exact-key lookup. Tests seeded from `github-sync.ts`'s own builders for both a PR body `closes #4` and the issue it names.
+
+### Task 9 — C1: `correlates_with` is unreachable on every real index
+
+`syncTimelineEventGraph` keys on `stringField(row.metadata, "service")`. No first-party connector writes that key: `pagerduty-sync.ts` writes `pagerduty_service_id`, `vercel-deployment-mapping.ts` writes `name`, `prefect-deployment-mapping.ts` writes `deployment_id`, and `deployment/annotate.ts` writes `nimbus_service_id` *and* bypasses the populator entirely via a raw `dbRun`. Both entities are created, then the correlation bails at the `affectedService === undefined` guard, so the relation stays exactly as empty as before.
+
+A metadata fallback chain cannot fix this: correlation is always cross-provider, and PagerDuty's `PSVC1` never equals Vercel's `checkout-web`. It needs the service-identity binding that `ServiceConfig` already carries (`serviceId`, `repos`, `pagerdutyServices`) — but that lives in `nimbus.toml`, loaded at the IPC layer, while the populator sits below `item-store` with no config access.
+
+**Design (decided):** thread an **optional** resolver through `SyncContext`.
+
+- `SyncContext` gains `resolveServiceId?: (item: {service: string; type: string; metadata: Record<string, unknown>}) => string | undefined`.
+- It is populated where `loadNimbusServiceConfigsFromConfigDir` already runs, mapping `metadata.pagerduty_service_id` via `ServiceConfig.pagerdutyServices`, `metadata.nimbus_service_id` directly, and repo-bearing deployments via `ServiceConfig.repos`.
+- `upsertIndexedItemForSync` passes it to the populator; `syncGraphFromIndexedItem` takes it as an optional third argument.
+- **Optional is load-bearing:** ~80 connectors and every existing test compile unchanged, and the populator degrades to today's `metadata.service` when it is absent.
+- No migration, no new table.
+
+### Task 10 — I1: `expert.ts` loses a gap note and goes silently empty
+
+`agents/expert.ts:295-298`'s `subIncidentResolved` is a pure gap-reporter: it emits `detectMissingEntityType(db, "incident")` and otherwise returns `{}`. Before this branch `incident` entities never existed, so it always explained itself. Task 5 creates them, so for any user with PagerDuty connected the detector returns `null` and the lane now contributes nothing **with no gap note** — a shipped agent silently losing a lane it used to explain. Fix: key the gap note on the relation being absent, not the entity type.
+
+### Task 11 — I2: `LIMIT 20` × two-sided ownership destroys far-side edges
+
+Each side clears its whole direction before re-emitting at most 20. With a deployment and >20 counterpart incidents in-window — an ordinary big-outage fan-out — re-syncing the *deployment alone* deletes the surplus edges the incident side legitimately created. Reproduced: 30 edges → 20 after a deployment re-sync. It self-heals on the next incident sync and a full backfill converges, but between syncs the driver lane is sync-order dependent. Fix: make the clear symmetric with the emit, or lift the cap on the emitting side.
+
+### Task 12 — I3: the backfill is non-transactional and non-resumable
+
+`regraphSlice` issues every delete and insert in autocommit: measured 3.7 s for 3,000 message items on a file-backed WAL database (~124 s per 100k). Worse than the wall time, an interrupted or throwing pass leaves the graph half-rebuilt with each processed item's **old edges already cleared**. Fix: wrap each batch in `db.transaction`, add the per-item guard (logged Minor #5) so one bad row cannot abort the pass, and stop counting `ci_run` / `alert` / `error_issue` as `graphed` (logged Minor #4) since they pass `isItemLinkedGraphType` but have no dispatch branch.
+
+### Corrected record
+
+Logged review item #4 was **wrong**: `foreign_keys` is **ON**, not off. `local-index.ts:279` sets `PRAGMA foreign_keys = ON` inside `ensureSchema` (verified: `PRAGMA foreign_keys` returns 1 on a fresh handle). `graph_relation`'s `ON DELETE CASCADE` is live, so deleting an item cleanly cascades away the new cross-item edges. There is no dangling-relation risk. The earlier note claiming otherwise checked `bun:sqlite`'s default rather than the production path.
+
+Deferred Minors, with reasons: the `findCommitEntityIds` doc note and the "service ids contain no colon" comment are cosmetic; `REGRAPH_TYPE_ORDER` omitting `obsidian_note` is near-zero risk because ordering only matters when the target entity does not yet exist and note entities are created by every vault sync. Ticket-key extraction firing on prose (`UTF-8`, `RFC-2119`, `SHA-256`) is logged as a real precision issue for step 1b — each costs an unindexed scan and a project literally named `SHA` would emit a wrong edge.
+
+---
+
 ## What step 1b consumes from this plan
 
 Step 1b's six lanes traverse, in the direction shown:
