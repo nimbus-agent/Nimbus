@@ -34,8 +34,28 @@ function repoPathFromMetadata(meta: Record<string, unknown>): string | undefined
   return stringField(meta, "repo") ?? stringField(meta, "project");
 }
 
+/**
+ * Relation types whose two endpoints come from *different* items' syncs.
+ * The blanket clear below must not touch them: the entity being cleared is
+ * only one endpoint, and the other side is authoritative for the edge.
+ * Each emitting sync function clears its own outgoing edges of these types
+ * via `clearOutgoingRelationsOfType` immediately before re-emitting them.
+ */
+const CROSS_ITEM_RELATION_TYPES: readonly string[] = Object.freeze([
+  "resolves",
+  "mentions",
+  "correlates_with",
+]);
+
 function clearRelationsTouchingEntity(db: Database, entityId: string): void {
-  dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? OR to_id = ?", [entityId, entityId]);
+  const placeholders = CROSS_ITEM_RELATION_TYPES.map(() => "?").join(", ");
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE (from_id = ? OR to_id = ?)
+        AND type NOT IN (${placeholders})`,
+    [entityId, entityId, ...CROSS_ITEM_RELATION_TYPES],
+  );
 }
 
 function personDisplayName(db: Database, personId: string): string | null {
