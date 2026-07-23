@@ -494,6 +494,45 @@ function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now:
   }
 }
 
+/**
+ * Incidents and deployments are timeline anchors: the graph needs them as
+ * entities so a change can be correlated with what it responded to or
+ * caused. `occurredAt` is the item's `modified_at`, which every connector
+ * sets to the event time.
+ */
+function syncTimelineEventGraph(
+  db: Database,
+  row: IndexedItemGraphInput,
+  entityType: "incident" | "deployment",
+  occurredAt: number,
+  now: number,
+): void {
+  const affectedService = stringField(row.metadata, "service");
+  const entityId = upsertGraphEntity(db, {
+    type: entityType,
+    externalId: row.id,
+    label: row.title,
+    service: row.service,
+    metadata: { occurredAt, affectedService: affectedService ?? null },
+  });
+  clearRelationsTouchingEntity(db, entityId);
+  void now;
+}
+
+/**
+ * `syncGraphFromIndexedItem` does not receive the item's `modified_at`
+ * directly — reading it back from the `item` table avoids widening
+ * `IndexedItemGraphInput` a second time. The row is always written
+ * immediately before the populator runs, so this read-back is always
+ * populated.
+ */
+function occurredAtForItem(db: Database, itemId: string): number {
+  const row = db.query("SELECT modified_at FROM item WHERE id = ?").get(itemId) as {
+    modified_at: number;
+  } | null;
+  return row?.modified_at ?? Date.now();
+}
+
 export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInput): void {
   if (readIndexedUserVersion(db) < 7) {
     return;
@@ -546,5 +585,13 @@ export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInpu
   }
   if (row.type === "data_quality_test") {
     syncDataQualityTestGraph(db, row, now);
+    return;
+  }
+  if (row.type === "incident") {
+    syncTimelineEventGraph(db, row, "incident", occurredAtForItem(db, row.id), now);
+    return;
+  }
+  if (row.type === "deployment") {
+    syncTimelineEventGraph(db, row, "deployment", occurredAtForItem(db, row.id), now);
   }
 }
