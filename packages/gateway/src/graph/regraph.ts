@@ -61,6 +61,11 @@ function parseMetadata(raw: string | null): Record<string, unknown> {
  * processed, or the edge is silently skipped: `findIssueEntityIds` and
  * `findCommitEntityIds` resolve against `graph_entity`, not `item`.
  *
+ * `obsidian_note` is here too: notes are `backlinks` targets
+ * (`syncObsidianNoteGraph` resolves `resolved_wikilink_ids` against
+ * `graph_entity` the same way issues/commits are resolved), so it must be
+ * graphed before anything that references a note (deferred from 1a).
+ *
  * `deployment` / `incident` correlate symmetrically (either side emits the
  * edge), so their relative order is free — they are listed only to keep the
  * whole dependency story in one place.
@@ -68,6 +73,7 @@ function parseMetadata(raw: string | null): Record<string, unknown> {
 const REGRAPH_TYPE_ORDER: readonly string[] = Object.freeze([
   "issue",
   "git_commit",
+  "obsidian_note",
   "deployment",
   "incident",
   "pr",

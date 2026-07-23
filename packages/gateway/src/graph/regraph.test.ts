@@ -32,7 +32,15 @@ function freshDb(): Database {
 /** Insert an item directly, bypassing the populator, to simulate pre-existing data. */
 function insertRawItem(
   db: Database,
-  o: { service: string; type: string; externalId: string; title: string; body: string; at: number },
+  o: {
+    service: string;
+    type: string;
+    externalId: string;
+    title: string;
+    body: string;
+    at: number;
+    metadata?: Record<string, unknown>;
+  },
 ): void {
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, metadata, pinned)
@@ -46,7 +54,7 @@ function insertRawItem(
       o.body,
       o.at,
       o.at,
-      JSON.stringify({ repo: "acme/app" }),
+      JSON.stringify(o.metadata ?? { repo: "acme/app" }),
     ],
   );
 }
@@ -631,4 +639,68 @@ test("C-1: the no-resolver case behaves exactly as it did before — plain metad
 
   expect(result.scanned).toBe(2);
   expect(correlationEdgeCount(db)).toBe(1);
+});
+
+// ---------------------------------------------------------------------------
+// obsidian_note in REGRAPH_TYPE_ORDER (deferred from 1a): note entities are
+// `backlinks` targets, so the ordered pass must create them before anything
+// that references them.
+// ---------------------------------------------------------------------------
+
+test("obsidian_note is in the ordered slice, not the catch-all", () => {
+  // Guards the REGRAPH_TYPE_ORDER omission deferred from 1a: note entities are
+  // backlink targets, so the ordered pass must create them before anything
+  // that references them. Assert membership structurally (the array is not
+  // exported; read the source) — plus a behavioral check below that a raw
+  // obsidian_note item regraphs into a note entity.
+  const src = require("node:fs").readFileSync(require.resolve("./regraph.ts"), "utf8") as string;
+  // Extract the `Object.freeze([...])` literal that follows the declaration
+  // rather than a naive `[^\]]+\]` scan from the identifier: the type
+  // annotation itself is `readonly string[]`, whose own `[]` closes before
+  // the array literal ever starts, so a bracket-count-1 regex captures only
+  // "REGRAPH_TYPE_ORDER: readonly string[]" and never sees the entries.
+  const declStart = src.indexOf("const REGRAPH_TYPE_ORDER");
+  const freezeStart = src.indexOf("Object.freeze([", declStart);
+  const freezeEnd = src.indexOf("])", freezeStart);
+  const orderBlock =
+    declStart >= 0 && freezeStart >= 0 && freezeEnd >= 0 ? src.slice(freezeStart, freezeEnd) : "";
+  expect(orderBlock).toContain("obsidian_note");
+});
+
+test("a raw obsidian_note item regraphs into a note entity", () => {
+  const db = freshDb();
+  const now = Date.now();
+  // Metadata shape copied verbatim from `connectors/obsidian-sync.ts`'s
+  // `upsertNote` (vault_id/vault_name/path/tags/aliases/frontmatter/
+  // daily_note_date/resolved_wikilink_ids) — `syncObsidianNoteGraph` only
+  // reads `vault_id` and `resolved_wikilink_ids`, but the fixture mirrors the
+  // connector's real shape rather than a hand-trimmed subset.
+  insertRawItem(db, {
+    service: "obsidian",
+    type: "obsidian_note",
+    externalId: "vault1#daily/2026-07-23.md",
+    title: "2026-07-23",
+    body: "Today's log",
+    at: now,
+    metadata: {
+      vault_id: "vault1",
+      vault_name: "Personal",
+      path: "daily/2026-07-23.md",
+      tags: [],
+      aliases: [],
+      frontmatter: {},
+      daily_note_date: "2026-07-23",
+      resolved_wikilink_ids: [],
+    },
+  });
+
+  const result = regraphAllItems(db);
+
+  expect(result.scanned).toBe(1);
+  expect(result.graphed).toBe(1);
+
+  const entity = db
+    .query("SELECT id FROM graph_entity WHERE type = 'obsidian_note' AND external_id = ?")
+    .get("obsidian:vault1#daily/2026-07-23.md") as { id: string } | null;
+  expect(entity).not.toBeNull();
 });

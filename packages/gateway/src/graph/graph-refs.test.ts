@@ -38,6 +38,22 @@ test("handles empty input", () => {
   expect(extractIssueRefs("")).toEqual({ numeric: [], ticketKeys: [] });
 });
 
+test("standards references in prose are not ticket keys", () => {
+  expect(
+    extractIssueRefs("encode as UTF-8 per RFC-2119, hash with SHA-256, scan CVE-2024-1234"),
+  ).toEqual({
+    numeric: [],
+    ticketKeys: [],
+  });
+});
+
+test("real tracker keys still match after the stoplist", () => {
+  expect(extractIssueRefs("NIM-88 and ABC-7 remain")).toEqual({
+    numeric: [],
+    ticketKeys: ["NIM-88", "ABC-7"],
+  });
+});
+
 test("extracts 7-to-40 character hex SHAs", () => {
   expect(extractCommitShas("see a1b2c3d and 0123456789abcdef0123456789abcdef01234567")).toEqual([
     "a1b2c3d",
