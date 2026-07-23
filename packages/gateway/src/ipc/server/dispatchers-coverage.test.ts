@@ -52,6 +52,7 @@ import {
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
+  tryDispatchIndexRegraphRpc,
   tryDispatchLanRpc,
   tryDispatchLlmRpc,
   tryDispatchMetricsRpc,
@@ -730,6 +731,33 @@ describe("tryDispatchIndexReembedRpc — error remapping", () => {
       // typed error from the inner dispatcher is fine
       expect(e).toBeInstanceOf(RpcMethodError);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IndexRegraph RPC — error catch
+// ---------------------------------------------------------------------------
+describe("tryDispatchIndexRegraphRpc — error remapping", () => {
+  test("index.regraph with unexpected params → IndexRegraphRpcError remapped to RpcMethodError", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const ctx = makeCtx({ localIndex });
+    let caught: unknown;
+    try {
+      // index.regraph takes no parameters — a non-empty params object trips the
+      // inner IndexRegraphRpcError(-32602), which the dispatcher must remap.
+      await tryDispatchIndexRegraphRpc(ctx, "index.regraph", { unexpected: 1 });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(RpcMethodError);
+    expect((caught as RpcMethodError).rpcCode).toBe(-32602);
+  });
+
+  test("index.regraph with valid wiring and no params delegates and returns the hit value", async () => {
+    const localIndex = new LocalIndex(trackedDb());
+    const ctx = makeCtx({ localIndex });
+    const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
+    expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
   });
 });
 

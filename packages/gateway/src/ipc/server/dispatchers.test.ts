@@ -48,6 +48,7 @@ import {
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
+  tryDispatchIndexRegraphRpc,
   tryDispatchLanRpc,
   tryDispatchLlmRpc,
   tryDispatchMetricsRpc,
@@ -396,6 +397,26 @@ describe("tryDispatchIndexReembedRpc", () => {
       // typed error from dispatcher is acceptable; we only want the
       // delegation code path covered.
     }
+  });
+});
+
+describe("tryDispatchIndexRegraphRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchIndexRegraphRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(tryDispatchIndexRegraphRpc(ctx, "index.regraph", {})).rejects.toThrow(
+      /requires LocalIndex/,
+    );
+  });
+  test("delegates index.regraph with valid wiring", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
+    expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
   });
 });
 
