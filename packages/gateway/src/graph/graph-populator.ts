@@ -520,17 +520,30 @@ function syncTimelineEventGraph(
 }
 
 /**
- * `syncGraphFromIndexedItem` does not receive the item's `modified_at`
- * directly — reading it back from the `item` table avoids widening
- * `IndexedItemGraphInput` a second time. The row is always written
- * immediately before the populator runs, so this read-back is always
- * populated.
+ * Read the item's event time back from the row written immediately before this
+ * populator call. `upsertIndexedItem` inserts and then calls the populator
+ * synchronously on the same handle, so the row is always present on the
+ * production path.
+ *
+ * A missing row therefore means the caller reached the populator without
+ * writing the item — a programming error, and the only way to get here is a
+ * direct `syncGraphFromIndexedItem` call that skipped the insert (an idiom six
+ * sibling test files already use for other item types). Throw rather than
+ * default: the correlation task correlates deployments to incidents on this
+ * timestamp, so a fabricated `Date.now()` would yield a confidently WRONG
+ * correlation instead of an obvious failure.
  */
 function occurredAtForItem(db: Database, itemId: string): number {
   const row = db.query("SELECT modified_at FROM item WHERE id = ?").get(itemId) as {
     modified_at: number;
   } | null;
-  return row?.modified_at ?? Date.now();
+  if (row === null) {
+    throw new Error(
+      `occurredAtForItem: no item row for "${itemId}" — the populator was called without ` +
+        "writing the item first; the timeline entity would carry a fabricated timestamp.",
+    );
+  }
+  return row.modified_at;
 }
 
 export function syncGraphFromIndexedItem(db: Database, row: IndexedItemGraphInput): void {
