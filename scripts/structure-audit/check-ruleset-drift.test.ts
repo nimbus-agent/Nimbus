@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   type DesiredRuleset,
+  decideExit,
   diffRuleset,
   mergeDesired,
   type SharedRuleset,
@@ -140,7 +141,7 @@ describe("diffRuleset", () => {
     expect(msg).toContain("OrganizationAdmin");
   });
 
-  test("flags bypass mismatch regardless of order (set comparison)", () => {
+  test("treats a reordered bypass set as a match (order-independent)", () => {
     const desired = mergeDesired(SHARED, {
       bypass_actor_types: ["OrganizationAdmin", "RepositoryAdmin"],
     });
@@ -151,5 +152,52 @@ describe("diffRuleset", () => {
     const result = diffRuleset(desired, live);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("decideExit", () => {
+  test("all repos unreachable → skip green", () => {
+    const result = decideExit({
+      queried: 0,
+      errors: [],
+      unreachable: [
+        "nimbus-client",
+        "nimbus-sdk",
+        "nimbus-vscode",
+        "nimbus-web-clipper",
+        "linux-repo",
+      ],
+    });
+    expect(result.code).toBe(0);
+    expect(result.message).toContain("skipped");
+  });
+
+  test("real drift on a queried repo is never masked by a different repo's gh failure (regression)", () => {
+    const result = decideExit({
+      queried: 4,
+      errors: ["nimbus-sdk: enforcement: expected active, got disabled"],
+      unreachable: ["nimbus-vscode"],
+    });
+    expect(result.code).toBe(1);
+    expect(result.message).toContain("nimbus-sdk: enforcement: expected active, got disabled");
+    expect(result.message).toContain("could not query");
+    expect(result.message).toContain("nimbus-vscode");
+  });
+
+  test("all repos queried, no drift → OK", () => {
+    const result = decideExit({ queried: 5, errors: [], unreachable: [] });
+    expect(result.code).toBe(0);
+    expect(result.message).toContain("OK (5 repos)");
+  });
+
+  test("some repos unreachable but no drift on the queried ones → OK with a warning", () => {
+    const result = decideExit({
+      queried: 3,
+      errors: [],
+      unreachable: ["nimbus-vscode", "nimbus-web-clipper"],
+    });
+    expect(result.code).toBe(0);
+    expect(result.message).toContain("OK (3 repos)");
+    expect(result.message).toContain("could not query");
   });
 });

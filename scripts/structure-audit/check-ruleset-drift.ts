@@ -146,52 +146,100 @@ export function loadDesiredFile(repoRoot: string): DesiredRulesetFile {
   return JSON.parse(raw) as DesiredRulesetFile;
 }
 
+/** A `gh` invocation's outcome — never throws; a missing binary/non-zero exit is `ok: false`. */
+interface GhResult {
+  ok: boolean;
+  stdout: string;
+}
+
+/** Wraps `Bun.spawnSync` so a missing `gh` binary or non-zero exit both surface as `ok: false`. */
+function runGh(args: string[]): GhResult {
+  try {
+    const proc = Bun.spawnSync(args);
+    if (!proc.success) return { ok: false, stdout: "" };
+    return { ok: true, stdout: new TextDecoder().decode(proc.stdout) };
+  } catch {
+    return { ok: false, stdout: "" };
+  }
+}
+
+/**
+ * Decides the CLI's exit code + message from what the per-repo loop observed.
+ *
+ * INVARIANT: real drift found on any successfully-queried repo is never
+ * discarded because a different repo's `gh` call failed. `queried === 0`
+ * (every repo unreachable) is the ONLY case that skips green — any drift
+ * recorded on a repo that WAS reachable always wins over partial coverage.
+ */
+export function decideExit(input: { queried: number; errors: string[]; unreachable: string[] }): {
+  code: 0 | 1;
+  message: string;
+} {
+  const { queried, errors, unreachable } = input;
+
+  if (queried === 0) {
+    return {
+      code: 0,
+      message:
+        "audit:ruleset-drift: skipped — gh unavailable or unauthenticated (needs org-read on nimbus-agent)",
+    };
+  }
+
+  if (errors.length > 0) {
+    const lines = errors.map((err) => `audit:ruleset-drift: ${err}`);
+    if (unreachable.length > 0) {
+      lines.push(`audit:ruleset-drift: WARNING — could not query: ${unreachable.join(", ")}`);
+    }
+    return { code: 1, message: lines.join("\n") };
+  }
+
+  if (unreachable.length > 0) {
+    return {
+      code: 0,
+      message: `audit:ruleset-drift: OK (${queried} repos) — WARNING: could not query ${unreachable.join(", ")}`,
+    };
+  }
+
+  return { code: 0, message: `audit:ruleset-drift: OK (${queried} repos)` };
+}
+
 if (import.meta.main) {
   const file = loadDesiredFile(process.cwd());
   const repoNames = Object.keys(file.repos);
   const allErrors: string[] = [];
-  let ghUnavailable = false;
+  const unreachable: string[] = [];
+  let queried = 0;
 
   for (const repo of repoNames) {
-    let listProc: ReturnType<typeof Bun.spawnSync>;
-    try {
-      listProc = Bun.spawnSync([
-        "gh",
-        "api",
-        `repos/nimbus-agent/${repo}/rulesets`,
-        "--jq",
-        `.[] | select(.name=="${file.shared.name}") | .id`,
-      ]);
-    } catch {
-      ghUnavailable = true;
-      break;
-    }
-    if (!listProc.success) {
-      ghUnavailable = true;
-      break;
+    const listResult = runGh([
+      "gh",
+      "api",
+      `repos/nimbus-agent/${repo}/rulesets`,
+      "--jq",
+      `.[] | select(.name=="${file.shared.name}") | .id`,
+    ]);
+    if (!listResult.ok) {
+      unreachable.push(repo);
+      continue;
     }
 
-    const id = new TextDecoder().decode(listProc.stdout).trim();
+    const id = listResult.stdout.trim();
     if (id === "") {
       // gh succeeded (authenticated, reachable) and simply found no matching
       // ruleset on this repo — that is real drift, not a fail-soft skip.
+      queried += 1;
       allErrors.push(`${repo}: no '${file.shared.name}' ruleset found`);
       continue;
     }
 
-    let detailProc: ReturnType<typeof Bun.spawnSync>;
-    try {
-      detailProc = Bun.spawnSync(["gh", "api", `repos/nimbus-agent/${repo}/rulesets/${id}`]);
-    } catch {
-      ghUnavailable = true;
-      break;
-    }
-    if (!detailProc.success) {
-      ghUnavailable = true;
-      break;
+    const detailResult = runGh(["gh", "api", `repos/nimbus-agent/${repo}/rulesets/${id}`]);
+    if (!detailResult.ok) {
+      unreachable.push(repo);
+      continue;
     }
 
-    const live: unknown = JSON.parse(new TextDecoder().decode(detailProc.stdout));
+    queried += 1;
+    const live: unknown = JSON.parse(detailResult.stdout);
     const overrides = file.repos[repo];
     if (overrides === undefined) continue;
     const desired = mergeDesired(file.shared, overrides);
@@ -199,16 +247,13 @@ if (import.meta.main) {
     for (const err of result.errors) allErrors.push(`${repo}: ${err}`);
   }
 
-  if (ghUnavailable) {
-    console.warn(
-      "audit:ruleset-drift: skipped — gh unavailable or unauthenticated (needs org-read on nimbus-agent)",
-    );
-    process.exit(0);
+  const outcome = decideExit({ queried, errors: allErrors, unreachable });
+  if (outcome.code === 1) {
+    console.error(outcome.message);
+  } else if (outcome.message.includes("skipped")) {
+    console.warn(outcome.message);
+  } else {
+    console.log(outcome.message);
   }
-
-  if (allErrors.length > 0) {
-    for (const err of allErrors) console.error(`audit:ruleset-drift: ${err}`);
-    process.exit(1);
-  }
-  console.log(`audit:ruleset-drift: OK (${repoNames.length} repos)`);
+  process.exit(outcome.code);
 }

@@ -67,11 +67,16 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
+      - name: Mint App token (Administration:Read on the active repos)
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: nimbus-agent
+          repositories: Nimbus,nimbus-client,nimbus-sdk,nimbus-vscode,nimbus-web-clipper
+          permission-administration: read
       - name: Audit ruleset drift across active repos
         env:
-          # Needs a token with administration:read on the 5 active code repos
-          # (GITHUB_TOKEN is scoped to this repo only and cannot read siblings'
-          # rulesets). Provision ORG_RULESET_READ_TOKEN as a repo secret — a
-          # fine-grained PAT or App token with Administration: Read on the org.
-          GH_TOKEN: ${{ secrets.ORG_RULESET_READ_TOKEN }}
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
         run: bun scripts/structure-audit/check-ruleset-drift.ts
