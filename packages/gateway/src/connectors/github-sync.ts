@@ -20,6 +20,10 @@ const SERVICE_ID = "github";
 const CURSOR_PREFIX = "nimbus-ghub1:";
 const USER_URL = "https://api.github.com/user";
 
+export function pullDetailUrl(repoFull: string, num: number): string {
+  return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}`;
+}
+
 function extractLabelNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -177,7 +181,7 @@ function modifiedMsFromGithubTimestamps(
   return fallbackMs;
 }
 
-function upsertFromPullRequest(
+export function upsertPr(
   ctx: SyncContext,
   repoFull: string,
   pr: Record<string, unknown>,
@@ -261,7 +265,7 @@ function processPullRequestPayload(
   if (pr === undefined) {
     return false;
   }
-  upsertFromPullRequest(ctx, fullName, pr, now);
+  upsertPr(ctx, fullName, pr, now);
   return true;
 }
 
