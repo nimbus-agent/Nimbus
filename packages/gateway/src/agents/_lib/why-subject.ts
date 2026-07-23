@@ -24,7 +24,11 @@ export type ResolvedRootPath = { repoRoot: string; filePath: string };
  * `git rev-parse`); `filePath` is root-relative POSIX for the same reason.
  *
  * Returning null is the security fence: a path outside every configured root
- * must produce a gap note and ZERO blame spawns (see blame-on-demand.ts).
+ * must produce a gap note and ZERO blame spawns (see blame-on-demand.ts). Both
+ * the absolute-path branch and the relative-path branch enforce containment
+ * via `relative()` + startsWith("..")/isAbsolute checks before ever touching
+ * `exists()` — a relative `../`-escape must be rejected regardless of whether
+ * the joined path happens to exist on disk.
  */
 export function matchConfiguredRoot(
   roots: readonly NimbusFilesystemRootToml[],
@@ -41,8 +45,11 @@ export function matchConfiguredRoot(
     return null;
   }
   for (const r of roots) {
-    if (exists(join(r.path, refPath))) {
-      return { repoRoot: r.path, filePath: refPath.replaceAll("\\", "/") };
+    const joined = join(r.path, refPath);
+    const rel = relative(resolve(r.path), resolve(joined));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) continue;
+    if (exists(joined)) {
+      return { repoRoot: r.path, filePath: rel.replaceAll("\\", "/") };
     }
   }
   return null;

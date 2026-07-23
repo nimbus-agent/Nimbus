@@ -83,3 +83,24 @@ test("an unresolvable ref yields null", () => {
   LocalIndex.ensureSchema(db);
   expect(resolveWhySubject(db, [root(ROOT)], { ref: "nothingHere" }, () => false)).toBeNull();
 });
+
+test("matchConfiguredRoot rejects a relative ..-escape even when the joined path exists — the escape fence", () => {
+  const escapeRef = path.join("..", "..", "etc", "hosts");
+  // exists() unconditionally returns true — proving the null verdict comes from
+  // containment rejection, not from a failed existence check.
+  expect(matchConfiguredRoot([root(ROOT)], escapeRef, () => true)).toBeNull();
+});
+
+test("matchConfiguredRoot normalizes a relative ref with a redundant ./-style segment that stays inside the root", () => {
+  const innerRef = path.join("src", "..", "src", "a.ts");
+  const resolvedTarget = path.resolve(path.join(ROOT, "src", "a.ts"));
+  const exists = (p: string): boolean => path.resolve(p) === resolvedTarget;
+  expect(matchConfiguredRoot([root(ROOT)], innerRef, exists)).toEqual({
+    repoRoot: ROOT,
+    filePath: "src/a.ts",
+  });
+});
+
+test("matchConfiguredRoot returns null for an empty roots list", () => {
+  expect(matchConfiguredRoot([], path.join("src", "a.ts"), () => true)).toBeNull();
+});
