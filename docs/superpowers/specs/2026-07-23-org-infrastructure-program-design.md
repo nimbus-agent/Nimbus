@@ -171,6 +171,16 @@ and `secret-health.yml`.
 P2(b) is therefore **propagation to the satellites**, not invention — a smaller
 job, and the same structural pattern as the CI diagnosis.
 
+**This has a design of record.**
+[`2026-07-19-github-app-migration-design.md`](./2026-07-19-github-app-migration-design.md)
+is sub-project 2 of 4 in the org secrets-management program and is what produced
+`nimbus-release-bot`. It already establishes the App's scope, the three PATs it
+retired (`RELEASE_PAT`, `RELEASE_PLEASE_PAT`, `PACKAGE_MANAGER_PAT`), and the
+two it deliberately did not. **P2(b) extends that design to the satellite repos;
+it does not re-derive it.** Read it before writing P2's plan — in particular its
+finding that an App installed on `nimbus-agent` can mint tokens for repos inside
+that org only, which is exactly why `VSCE_PAT` is out of reach.
+
 Two refinements this forces:
 
 - **`VSCE_PAT` cannot be replaced by a GitHub App.** It is an Azure DevOps token
@@ -259,6 +269,17 @@ rulesets** — no branch protection and no required checks — while `nimbus-sdk
 tags`. It is the narrow waist both the CLI and the VS Code extension depend on.
 This lands independently of the program, ahead of it.
 
+**Rulesets become code, not clicks.** Fixing `nimbus-client` by hand fixes one
+repo once; the org has already demonstrated that UI-configured settings drift
+(the 2026-06-23 org settings audit left UI-only items pending, and
+`nimbus-client`'s missing rulesets *are* that drift). So P1 checks the desired
+ruleset shape into the `.github` repo as a declarative file applied by a `gh api`
+script, plus a scheduled job that diffs live configuration against it and fails
+on divergence. That converts "add rulesets to `nimbus-client`" from a one-time
+task into a gated property, which is what the operating principle demands.
+Terraform is rejected as disproportionate for nine repos with no existing
+state-backend, and it would violate the Actions-only infra tier.
+
 ### P2 — Release Train
 
 Three parts:
@@ -277,6 +298,18 @@ Three parts:
    is the Stage-1 dance — eight waves, `0.7.0` → `0.11.0`, each hand-driven —
    automated.
 
+   **Creation must be idempotent.** If a consumption PR for version `X` is
+   already open, update its branch or do nothing — never open a second. Without
+   this, a re-run, a retried publish, or two dispatches racing produces duplicate
+   PRs and duplicate CI spend.
+
+   **The topology is a DAG and must stay one.** `sdk → client → {Nimbus,
+   vscode}`; nothing downstream publishes anything upstream consumes, so a
+   propagation cycle is not reachable by construction. This is a property to
+   preserve deliberately, not a risk to add cycle-detection for: if a future
+   package ever introduces a back-edge, the dispatch train needs a hop limit
+   before that package ships, not after.
+
 ### P3 — Review Layer
 
 Step 1: give `Nimbus` a `.coderabbit.yaml` whose `path_instructions` encode
@@ -285,6 +318,18 @@ Correction 1). Step 2: rationalize the three installed bots — SonarCloud is
 required and blocking (keep as-is), CodeRabbit becomes tuned, `google-labs-jules`
 is assessed. Step 3: decide on a Claude-based review action *after* measuring
 what the tuned config still misses.
+
+**There is a fourth reviewer already designed, and it is a Nimbus product.**
+[`2026-06-20-github-app-design.md`](./2026-06-20-github-app-design.md) specifies
+a first-party PR-check Action under `packages/github-actions/pr-check/` that
+posts a preflight verdict (active P1 incidents, failing CI on the target ref,
+merge conflicts) plus DORA posture as an `ok | warn | block` comment, consuming
+only the already-shipped read-only HTTP API. It is a Phase 12 commercial-anchor
+deliverable, so P3 does not own its schedule — but P3 is the natural place to
+**dogfood** it, and an org that ships a PR-check product while not running it on
+its own PRs is making an argument against itself. Flagged as an open decision
+rather than folded in, because pulling a Phase 12 product deliverable forward is
+a roadmap call, not an infrastructure one.
 
 ### P4a — Main-CI concurrency fix
 
@@ -305,6 +350,21 @@ are stale against it, secret-expiry countdown (`VSCE_PAT` 2026-12-01,
 writes markdown to the `.github` repo profile or a pinned issue — zero hosting.
 **Tier B** (a hosted receiver for a live view) is the only candidate in the whole
 program for a real webhook service, and is deferrable indefinitely.
+
+**Public-surface constraint.** The `.github` repo is **public**, so Tier A must
+not aggregate private-repo metadata (names, versions, activity) onto it — six
+private scaffolds plus `nimbus-statuspage`, `nimbus-raycast`,
+`nimbus-mcp-servers`, `nimbus-connector-registry`, `nimbus-recipes` and
+`create-nimbus-connector` would otherwise become publicly enumerable with commit
+cadence attached. Tier A therefore covers the nine public repos on a public
+surface, or all repos on a private one — not a mix.
+
+Secret **names** are explicitly *not* in scope for this constraint: they are
+already public by design in [`ci-secrets.md`](../../ci-secrets.md), which is the
+canonical inventory and lives in a public repo. Publishing an expiry countdown
+for a name an attacker can already read costs nothing and is the entire point of
+the surface. Likewise CI pass-rates and job durations are already public for
+public repos through the Actions UI.
 
 P5 precedes P4b because it supplies the measurements P4b must be justified
 against.
@@ -338,9 +398,27 @@ against.
   exactly this — it never reached Codecov, and was ultimately retired rather than
   rotated. Every workflow P1 promotes must have its secret path verified as
   *observed working*, not assumed.
+- **Never `secrets: inherit`; map secrets explicitly.** The org uses `inherit`
+  nowhere today, and P1 must not introduce it. Two reasons, and the second is the
+  load-bearing one: blanket inheritance widens what a called workflow can reach,
+  *and* it hides the failure mode above — an explicitly mapped secret that is
+  missing fails loudly at the call site, whereas an inherited one that never
+  arrives fails silently, which is precisely how `CODECOV_TOKEN` went unnoticed.
+- **Do not extend `pull_request_target`.** `labeler.yml` and `pr-title-lint.yml`
+  use it, which runs with base-repo secret access against PR-authored content.
+  That is pre-existing and out of scope to fix here, but no workflow P1 promotes
+  to org scope may be reachable from `pull_request_target` *and* require
+  release-tier secrets. Release-tier secrets stay behind the `release`
+  environment, as `ci-secrets.md` already establishes.
 - **Branch-only workflow changes need live proof.** A bare `workflow_dispatch`
   runs `main`'s version of the workflow and fakes a pass. Push the branch first,
   then `gh workflow run --ref <branch>`.
+- **Cross-repo reusable workflows have a harder dev loop than same-repo ones.**
+  A caller references `nimbus-agent/.github/.github/workflows/<file>.yml@<ref>`,
+  so testing an unmerged change means temporarily pointing the caller at
+  `@<dev-branch>`, proving it green, then flipping back to `@main` before merge.
+  The flip-back is the step that gets forgotten and pins production CI to a
+  branch — P1 adds a check that no caller references a non-`main` ref.
 - **A conflicting PR runs no `pull_request` workflows at all**, which presents as
   a green PR with suspiciously few checks. Check `mergeStateStatus` before
   trusting `gh pr checks` on anything in this program.
@@ -364,6 +442,18 @@ against.
   P2 and P5 link to it.
 - **No human-reviewer workflow** — `CODEOWNERS` routing, review SLAs and
   round-robin assignment are out of scope; there are no human reviewers.
+- **No security invariant applies to this program.** Worth stating, because a
+  review of this spec invoked I2, I13, I27 and I29 against it and none of them
+  reach. I1–I30 are runtime properties of the **gateway on a user's machine**:
+  I2 is the `HITL_REQUIRED_BACKING` consent gate in `engine/executor.ts`, I13 the
+  HTTP write allowlist, I27 the outbound share chokepoint, I29 the egress-ledger
+  append before `connectors.dispatch`. None governs GitHub Actions, org secrets,
+  or PR merges. In particular, **"human-in-the-loop for an agent's tool call" and
+  "human review before a PR merges" are different things that share a word** —
+  auto-merging a dependency bump does not weaken I2, and reasoning as if it did
+  is exactly the invariant drift the triple rule exists to prevent. Changes here
+  must still respect the invariants in any gateway code they touch; the program
+  itself introduces no wiring site, so it adds no invariant and retires none.
 
 ---
 
@@ -382,6 +472,16 @@ against.
    `nimbus-web-clipper`?** They are both extensions but target different hosts
    (VS Code vs MV3 browsers). If the shared surface turns out to be thin, two
    thin workflows beat one over-parameterized one.
+4. **Do downstream consumption PRs auto-merge on green, or wait for a human?**
+   P2 opens them automatically; whether they *land* automatically is a separate
+   call. Auto-merge maximizes the toil win and risks a bad version propagating
+   unattended; manual merge keeps a checkpoint on a repo with no other human
+   reviewer. A defensible middle is auto-merge for patch bumps only.
+   **This is a GitHub merge-policy question, not an I2 question** — see the note
+   under [Explicit non-goals](#explicit-non-goals).
+5. **Should P3 dogfood the first-party PR-check Action?** Pulling a Phase 12
+   product deliverable forward is a roadmap decision;
+   [`roadmap.md`](../../roadmap.md) wins on sequencing it.
 
 ---
 
