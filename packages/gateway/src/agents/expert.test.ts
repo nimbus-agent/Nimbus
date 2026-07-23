@@ -463,13 +463,40 @@ describe("runExpert — subIncidentResolved regression: entity exists but relati
       metadata: { service: "checkout" },
     });
 
+    // I-2: also index a real GitHub issue + a PR whose body says "closes #4" —
+    // this branch's graph populator now emits a genuine `pr -> issue "resolves"`
+    // edge for that. On unscoped code, `detectMissingRelationEmit(db, "resolves")`
+    // finds THIS edge (wrong endpoint type) and wrongly suppresses the incident
+    // lane's gap note — the exact silent-empty-lane bug this fixture proves fixed.
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "issue",
+      externalId: "acme/app#4",
+      title: "Login broken",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app" },
+    });
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Fix login",
+      bodyPreview: "closes #4",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app" },
+    });
+
     const ctx = { db, notify: () => {}, sessionId: "s-incident-entity-no-relation" };
     const brief = await runExpert({ topicOrFile: "auth" }, ctx);
 
     // The old `detectMissingEntityType`-only check would find `incident`
     // entities and silently drop this lane with no explanation at all. The
     // lane must still explain itself via a `missing_relation_emit` gap note
-    // keyed on the `resolves` relation it actually needs.
+    // keyed on the `resolves` relation it actually needs — even though a
+    // `resolves` edge now genuinely exists elsewhere in the graph (pr -> issue).
     const cats = brief.gaps.map((g) => g.category);
     expect(cats).toContain("missing_relation_emit");
     const relationGap = brief.gaps.find(

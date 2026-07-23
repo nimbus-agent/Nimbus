@@ -6,6 +6,7 @@ import {
   detectMissingConnector,
   detectMissingEntityType,
   detectMissingRelationEmit,
+  detectMissingRelationToEntityType,
   remediationForEntityType,
 } from "./gap-notes.ts";
 
@@ -116,6 +117,59 @@ describe("detectMissingRelationEmit", () => {
        VALUES ('e2', 'e1', 'reviewed', 1.0, 0)`,
     );
     expect(detectMissingRelationEmit(db, "reviewed")).toBeNull();
+  });
+});
+
+describe("detectMissingRelationToEntityType", () => {
+  test("returns a missing_relation_emit gap when no edge of the type targets the given entity type", () => {
+    const db = withSchema(freshDb());
+    const note = detectMissingRelationToEntityType(db, "resolves", "incident");
+    expect(note?.category).toBe("missing_relation_emit");
+    expect(note?.detail).toMatch(/`resolves`/);
+    expect(note?.detail).toMatch(/`incident`/);
+  });
+
+  test("includes the supplied remediation string when provided", () => {
+    const db = withSchema(freshDb());
+    const note = detectMissingRelationToEntityType(
+      db,
+      "resolves",
+      "incident",
+      "graph-populator follow-up",
+    );
+    expect(note?.remediation).toBe("graph-populator follow-up");
+  });
+
+  test("returns null when an edge of the type targets the given entity type", () => {
+    const db = withSchema(freshDb());
+    db.run(
+      `INSERT INTO graph_entity (id, type, external_id, label, service)
+       VALUES ('e1', 'incident', 'inc:1', 'Incident', 'pagerduty'),
+              ('e2', 'person', 'alice', 'Alice', 'github')`,
+    );
+    db.run(
+      `INSERT INTO graph_relation (from_id, to_id, type, weight, created_at)
+       VALUES ('e2', 'e1', 'resolves', 1.0, 0)`,
+    );
+    expect(detectMissingRelationToEntityType(db, "resolves", "incident")).toBeNull();
+  });
+
+  test("I-2: an edge of the type that targets a DIFFERENT entity type does not suppress the gap — the exact bug this fixes", () => {
+    const db = withSchema(freshDb());
+    // A real `pr -> issue "resolves"` edge exists (this branch's own new edge
+    // type), but nothing targets `incident`. The unscoped `detectMissingRelationEmit`
+    // would find this row and wrongly report no gap.
+    db.run(
+      `INSERT INTO graph_entity (id, type, external_id, label, service)
+       VALUES ('e1', 'issue', 'r/x#1', 'Issue', 'github'),
+              ('e2', 'pr', 'r/x#2', 'PR', 'github')`,
+    );
+    db.run(
+      `INSERT INTO graph_relation (from_id, to_id, type, weight, created_at)
+       VALUES ('e2', 'e1', 'resolves', 1.0, 0)`,
+    );
+    expect(detectMissingRelationEmit(db, "resolves")).toBeNull();
+    expect(detectMissingRelationToEntityType(db, "resolves", "incident")).not.toBeNull();
   });
 });
 

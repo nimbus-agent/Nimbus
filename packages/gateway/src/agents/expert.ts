@@ -6,6 +6,7 @@ import {
   detectMissingConnector,
   detectMissingEntityType,
   detectMissingRelationEmit,
+  detectMissingRelationToEntityType,
 } from "./_lib/gap-notes.ts";
 import { type SynthesizerLlm, synthesize } from "./_lib/synthesize.ts";
 
@@ -296,12 +297,16 @@ async function subIncidentResolved(db: Database, _input: string): Promise<SubAge
   const missingEntityGap = detectMissingEntityType(db, "incident");
   if (missingEntityGap !== null) return { gap: missingEntityGap };
   // `incident` entities existing is necessary but not sufficient: this lane's
-  // findings depend on the `resolves` relation (person -> incident), which no
-  // populator currently emits. Without this check, once incident entities
-  // exist the lane goes silently empty instead of explaining why.
-  const missingRelationGap = detectMissingRelationEmit(
+  // findings depend on a `resolves` edge targeting an `incident` (person ->
+  // incident), which no populator currently emits. Scoped to that endpoint
+  // (not `detectMissingRelationEmit`'s any-endpoint probe) because this
+  // branch made `pr -> issue "resolves"` edges real — an unscoped probe would
+  // find those and suppress this gap note even though this lane still has
+  // nothing, going silently empty instead of explaining why.
+  const missingRelationGap = detectMissingRelationToEntityType(
     db,
     "resolves",
+    "incident",
     "Tracked as a graph-populator follow-up on existing PagerDuty / Sentry connectors.",
   );
   if (missingRelationGap !== null) return { gap: missingRelationGap };

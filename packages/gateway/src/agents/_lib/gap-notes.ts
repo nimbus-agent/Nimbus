@@ -67,6 +67,41 @@ export function detectMissingRelationEmit(
   return note;
 }
 
+/**
+ * I-2: like `detectMissingRelationEmit`, but scoped to edges of `relationType`
+ * whose TARGET is `targetEntityType`. `detectMissingRelationEmit` probes for
+ * *any* `graph_relation` row of the given type, of any endpoint shape — once
+ * a second populator starts emitting the same relation type between different
+ * entity kinds (e.g. `pr -> issue "resolves"` alongside a future
+ * `person -> incident "resolves"`), that broad probe finds the unrelated edge
+ * and the gap note for the lane that still has nothing goes silently missing.
+ * Scoping to the endpoint the caller's lane actually reads keeps the two
+ * independent.
+ */
+export function detectMissingRelationToEntityType(
+  db: Database,
+  relationType: string,
+  targetEntityType: string,
+  remediation?: string,
+): GapNote | null {
+  const row = db
+    .query(
+      `SELECT 1 AS n
+         FROM graph_relation r
+         JOIN graph_entity e ON e.id = r.to_id
+        WHERE r.type = ? AND e.type = ?
+        LIMIT 1`,
+    )
+    .get(relationType, targetEntityType) as { n?: number } | null;
+  if (row !== null) return null;
+  const note: GapNote = {
+    category: "missing_relation_emit",
+    detail: `\`${relationType}\` edges targeting \`${targetEntityType}\` are defined in the schema but not yet emitted by the graph populator.`,
+  };
+  if (remediation !== undefined) note.remediation = remediation;
+  return note;
+}
+
 export function aggregateMissingEntityTypes(notes: GapNote[]): GapNote[] {
   const missing = notes.filter((n) => n.category === "missing_entity_type");
   if (missing.length < 2) return notes;
