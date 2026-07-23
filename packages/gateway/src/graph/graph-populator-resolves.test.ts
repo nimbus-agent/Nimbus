@@ -208,6 +208,29 @@ test("a GitHub PR body referencing #4, with the issue indexed under github-sync.
   expect(resolvesTargets(db)).toEqual(["github:acme/app#issue-4"]);
 });
 
+test("I-3: a GitHub closes #4 resolves via the indexed external_id path, not the metadata scan", () => {
+  const db = freshDb();
+  const now = Date.now();
+  // The issue is indexed under github-sync.ts's real externalId shape
+  // (`${repo}#issue-${n}`), but its OWN metadata.number is deliberately
+  // wrong (999, not 4). A metadata-scan-first lookup (`number=4 AND repo=...`)
+  // would never match this row — proving the resolution came from the fast,
+  // indexed external_id lookup (I-3's fix), not the metadata fallback.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: "acme/app#issue-4",
+    title: "Login broken",
+    bodyPreview: "",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: { number: 999, repo: "acme/app", state: "open", user: "octocat" },
+  });
+  seedGithubPr(db, "acme/app", 4, "Fix login", "closes #4", now);
+
+  expect(resolvesTargets(db)).toEqual(["github:acme/app#issue-4"]);
+});
+
 test("a GitHub PR body referencing #4 with no matching issue (real externalId shape) emits no edge", () => {
   const db = freshDb();
   const now = Date.now();
