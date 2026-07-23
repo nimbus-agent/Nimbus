@@ -58,9 +58,16 @@ This task must land first — every later task depends on it.
 - Consumes: nothing from earlier tasks.
 - Produces:
   - `CROSS_ITEM_RELATION_TYPES: readonly ["resolves", "mentions", "correlates_with"]` — module-private.
-  - `clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void` — module-private. Later tasks call this immediately before re-emitting a cross-item edge, so the emitting side stays authoritative for its own edges.
-  - `clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void` — module-private. The mirror image, for the case where the *target* of a cross-item edge is authoritative for whether the edge should still exist (Task 6's incident side).
-  - `clearRelationsTouchingEntity(db: Database, entityId: string): void` — unchanged signature, new behavior.
+  - `CROSS_ITEM_RELATION_TYPES` and the new `clearRelationsTouchingEntity` behavior (unchanged signature).
+
+**The two directional clear helpers are deliberately NOT introduced here.** `clearOutgoingRelationsOfType` first has a caller in Task 3, `clearIncomingRelationsOfType` in Task 6, and `biome.json` sets `noUnusedVariables: "error"` — which fires on unused module-private functions. Introducing them early makes this task fail `lint` / `preflight:fast` / the pre-commit hook, so each is defined in the task that first calls it. Their contracts are stated here so the design reads as a whole:
+
+| Helper | Introduced in | Contract |
+| --- | --- | --- |
+| `clearOutgoingRelationsOfType(db, fromId, relationType)` | Task 3 | Deletes `from_id = fromId AND type = relationType`. The *source* of a cross-item edge is authoritative for it. |
+| `clearIncomingRelationsOfType(db, toId, relationType)` | Task 6 | Deletes `to_id = toId AND type = relationType`. The mirror, for when the *target* decides whether the edge still belongs. |
+
+The two are disjoint in effect — one keys `from_id`, the other `to_id` — so each side stays authoritative for its own slice of a cross-item relation without racing the other.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -193,32 +200,11 @@ function clearRelationsTouchingEntity(db: Database, entityId: string): void {
     [entityId, entityId, ...CROSS_ITEM_RELATION_TYPES],
   );
 }
-
-/**
- * Clear one entity's outgoing edges of a single cross-item relation type.
- * Call this from the *emitting* side before re-emitting, so a reference
- * removed from a PR body or message body disappears from the graph.
- */
-function clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void {
-  dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type = ?", [fromId, relationType]);
-}
-
-/**
- * The mirror image, for a cross-item edge whose *target* decides whether the
- * edge still belongs. Task 6 needs this: an incident that moves in time or
- * changes service must drop the correlations pointing at it, and only the
- * incident's own sync knows that.
- */
-function clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void {
-  dbRun(db, "DELETE FROM graph_relation WHERE to_id = ? AND type = ?", [toId, relationType]);
-}
 ```
-
-The two clears are disjoint in effect — one keys on `from_id`, the other on `to_id` — so each side stays authoritative for its own slice of a cross-item relation without racing the other.
 
 Note the placeholder string is built from array *length* only — every value still binds, so `I9` holds.
 
-`clearOutgoingRelationsOfType` is unused until Task 3. Biome flags unused module-private functions, so add the emission call in Task 3 rather than leaving it dangling; if `bun run lint` complains at this step, proceed to Task 3 before pushing.
+Nothing else is added in this task — see the note above on why the two directional clear helpers land with their first callers.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -642,6 +628,21 @@ In `packages/gateway/src/graph/graph-populator.ts`, add the import:
 ```ts
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { type IssueRefs, extractIssueRefs } from "./graph-refs.ts";
+```
+
+Add the first directional clear helper (declared in Task 1, introduced here because this is its first caller):
+
+```ts
+/**
+ * Clear one entity's outgoing edges of a single cross-item relation type.
+ * Call this from the *emitting* side before re-emitting, so a reference
+ * removed from a PR body or message body disappears from the graph.
+ * `clearRelationsTouchingEntity` deliberately skips these types (Task 1),
+ * so this is the only thing that retires them.
+ */
+function clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void {
+  dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type = ?", [fromId, relationType]);
+}
 ```
 
 Add this helper above `syncPrGraph`:
@@ -1261,7 +1262,21 @@ Expected: FAIL — the first two tests get `[]`, and the two retirement tests fa
 
 - [ ] **Step 3: Implement the correlation**
 
-In `packages/gateway/src/graph/graph-populator.ts`, add above `syncTimelineEventGraph`:
+In `packages/gateway/src/graph/graph-populator.ts`, add the second directional clear helper (declared in Task 1, introduced here because this is its first caller):
+
+```ts
+/**
+ * The mirror of `clearOutgoingRelationsOfType`, for a cross-item edge whose
+ * *target* decides whether the edge still belongs: an incident that moves in
+ * time or changes service must drop the correlations pointing at it, and only
+ * the incident's own sync knows that.
+ */
+function clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void {
+  dbRun(db, "DELETE FROM graph_relation WHERE to_id = ? AND type = ?", [toId, relationType]);
+}
+```
+
+Then add above `syncTimelineEventGraph`:
 
 ```ts
 /** An incident this long after a deploy of the same service is treated as related. */
