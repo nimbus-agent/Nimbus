@@ -387,7 +387,11 @@ function requireWhyParams(params: unknown): WhyInput {
     throw new AgentsRpcError(-32602, "agents.why requires { ref: string, line?: number }");
   }
   const p = params as { ref?: unknown; line?: unknown };
-  if (typeof p.ref !== "string" || p.ref.length < MIN_REF_LEN || p.ref.length > MAX_REF_LEN) {
+  if (typeof p.ref !== "string") {
+    throw new AgentsRpcError(-32602, `ref must be a non-empty string up to ${MAX_REF_LEN} chars`);
+  }
+  const trimmed = p.ref.trim();
+  if (trimmed.length < MIN_REF_LEN || trimmed.length > MAX_REF_LEN) {
     throw new AgentsRpcError(-32602, `ref must be a non-empty string up to ${MAX_REF_LEN} chars`);
   }
   if (
@@ -396,7 +400,7 @@ function requireWhyParams(params: unknown): WhyInput {
   ) {
     throw new AgentsRpcError(-32602, "line must be a positive integer");
   }
-  return { ref: p.ref, ...(p.line === undefined ? {} : { line: p.line }) };
+  return { ref: trimmed, ...(p.line === undefined ? {} : { line: p.line }) };
 }
 
 function whyRoots(ctx: AgentsRpcContext) {

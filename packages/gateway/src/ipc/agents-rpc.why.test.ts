@@ -100,6 +100,14 @@ describe("dispatchAgentsRpc — agents.why", () => {
     await dispatchAgentsRpc("agents.why", { ref: "src/a.ts:1" }, ctx);
     expect(await waitForNotify(ctx.notify, ["why.briefReady", "why.briefError"])).toBe(true);
   });
+
+  test("agents.why rejects a whitespace-only ref", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.why", { ref: "   " }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+    });
+  });
 });
 
 describe("dispatchAgentsRpc — agents.whyPeek", () => {
@@ -160,9 +168,30 @@ describe("dispatchAgentsRpc — agents.whyPeek", () => {
     });
   });
 
-  test("agents.whyPeek never emits a notification (synchronous, no briefReady)", async () => {
+  test("agents.whyPeek never emits any notification (synchronous, no briefReady)", async () => {
     const ctx = makeCtx(freshDb());
     await dispatchAgentsRpc("agents.whyPeek", { ref: "src/a.ts:1" }, ctx);
-    expect(await waitForNotify(ctx.notify, ["whyPeek.briefReady"], 200)).toBe(false);
+    // Give any accidental async notify a chance to fire before asserting silence.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(ctx.notify.mock.calls.length).toBe(0);
+  });
+
+  test("agents.whyPeek trims a whitespace-padded ref and resolves like the trimmed value", async () => {
+    const out = await dispatchAgentsRpc(
+      "agents.whyPeek",
+      { ref: "  src/a.ts:1  " },
+      makeCtx(freshDb()),
+    );
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") {
+      const v = out.value as Record<string, unknown>;
+      expect(v).not.toHaveProperty("sessionId");
+      expect(v).toHaveProperty("subject");
+      expect(v).toHaveProperty("author");
+      expect(v).toHaveProperty("commitSha");
+      expect(v).toHaveProperty("pr");
+      expect(v).toHaveProperty("ticket");
+      expect(v).toHaveProperty("hasMore");
+    }
   });
 });
