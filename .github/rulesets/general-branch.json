@@ -1,15 +1,25 @@
 {
-  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs this against live config. P6 flips the contributor-two switches here — see docs/infrastructure-roadmap.md.",
-  "repos": ["Nimbus", "nimbus-client", "nimbus-sdk", "nimbus-vscode", "nimbus-web-clipper"],
-  "name": "General",
-  "target": "branch",
-  "enforcement": "active",
-  "pull_request": {
-    "allowed_merge_methods": ["squash"],
-    "dismiss_stale_reviews_on_push": true,
-    "required_review_thread_resolution": true,
-    "require_code_owner_review": false,
-    "require_last_push_approval": false,
-    "required_approving_review_count": 0
+  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs this against live config. P6 flips the contributor-two switches in `shared.pull_request`. `required_status_checks` and `code_quality` rules are per-repo CI shape and intentionally NOT diffed here.",
+  "shared": {
+    "name": "General",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions_ref_include": ["refs/heads/main"],
+    "required_rule_types": ["deletion", "non_fast_forward", "pull_request"],
+    "pull_request": {
+      "allowed_merge_methods": ["squash"],
+      "dismiss_stale_reviews_on_push": true,
+      "required_review_thread_resolution": true,
+      "require_code_owner_review": false,
+      "require_last_push_approval": false,
+      "required_approving_review_count": 0
+    }
+  },
+  "repos": {
+    "Nimbus": { "bypass_actor_types": ["OrganizationAdmin"] },
+    "nimbus-client": { "bypass_actor_types": [] },
+    "nimbus-sdk": { "bypass_actor_types": [] },
+    "nimbus-vscode": { "bypass_actor_types": ["OrganizationAdmin"] },
+    "nimbus-web-clipper": { "bypass_actor_types": ["OrganizationAdmin"] }
   }
 }

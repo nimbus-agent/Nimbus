@@ -21,6 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # PUBLIC repos only — the default GITHUB_TOKEN checkout works anonymously
+        # for public repos but cannot clone private ones, and a private entry
+        # would fail at checkout indistinguishably from real drift.
         repo:
           - nimbus-client
           - nimbus-sdk
@@ -49,4 +52,26 @@ jobs:
           bun-version: latest
 
       - name: Audit action pins in ${{ matrix.repo }}
-        run: bun scripts/structure-audit/check-action-sha-pins.ts --root ./target
+        run: bun scripts/structure-audit/check-action-sha-pins.ts --root target
+
+  ruleset-drift:
+    name: ruleset-drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - name: Audit ruleset drift across active repos
+        env:
+          # Needs a token with administration:read on the 5 active code repos
+          # (GITHUB_TOKEN is scoped to this repo only and cannot read siblings'
+          # rulesets). Provision ORG_RULESET_READ_TOKEN as a repo secret — a
+          # fine-grained PAT or App token with Administration: Read on the org.
+          GH_TOKEN: ${{ secrets.ORG_RULESET_READ_TOKEN }}
+        run: bun scripts/structure-audit/check-ruleset-drift.ts

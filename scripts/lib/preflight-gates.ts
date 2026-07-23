@@ -25,7 +25,6 @@ const FAST: readonly Gate[] = [
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   { name: "audit:consumed-by", cmd: ["bun", "run", "audit:consumed-by"], tier: "fast" },
-  { name: "audit:ruleset-drift", cmd: ["bun", "run", "audit:ruleset-drift"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
   {
     // Reads .jscpd.json (min-lines 5 / min-tokens 50 / threshold ratchet / shared
@@ -64,6 +63,7 @@ export const CI_ONLY_GATES: readonly string[] = [
   "regen-slo:check", // SLO doc regeneration check — doc-gen check run separately, not a code gate
   "build:sandbox-helper", // make native C helper — platform-specific (Linux) native build, not a portable gate
   "vitest", // bunx vitest — UI component tests (packages/ui), run via the separate Vitest runner
+  "audit:ruleset-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml (ruleset-drift job), never the local FAST tier
 ];
 
 export function selectGates(tier: GateTier): Gate[] {
