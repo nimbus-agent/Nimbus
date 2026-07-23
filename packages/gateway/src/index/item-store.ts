@@ -6,6 +6,9 @@ import { syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { RAW_META_MAX_BYTES } from "./constants.ts";
+import { itemPrimaryKey } from "./item-key.ts";
+
+export { itemPrimaryKey } from "./item-key.ts";
 
 export type IndexedItemRow = {
   id: string;
@@ -22,14 +25,6 @@ export type IndexedItemRow = {
   synced_at: number;
   pinned: number;
 };
-
-export function itemPrimaryKey(service: string, externalId: string): string {
-  const prefix = `${service}:`;
-  if (externalId.startsWith(prefix)) {
-    return externalId;
-  }
-  return `${service}:${externalId}`;
-}
 
 export function itemExternalIdFromInput(service: string, idOrExternal: string): string {
   const prefix = `${service}:`;

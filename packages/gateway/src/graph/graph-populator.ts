@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
   ensureGraphEntity,
   isItemLinkedGraphType,
@@ -59,6 +61,55 @@ function clearRelationsTouchingEntity(db: Database, entityId: string): void {
   );
 }
 
+/**
+ * Clear one entity's outgoing edges of a single cross-item relation type.
+ * Call this from the *emitting* side before re-emitting, so a reference
+ * removed from a PR body or message body disappears from the graph.
+ * `clearRelationsTouchingEntity` deliberately skips these types (Task 1),
+ * so this is the only thing that retires them.
+ */
+function clearOutgoingRelationsOfType(db: Database, fromId: string, relationType: string): void {
+  dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type = ?", [fromId, relationType]);
+}
+
+/**
+ * Resolve a PR/message reference to an existing `issue` graph entity.
+ * Numeric refs are scoped to the referring item's own repo and service —
+ * `#4` means a different issue in a different repo. Ticket keys are
+ * service-agnostic, since the tracker is usually not the forge.
+ */
+function findIssueEntityIds(
+  db: Database,
+  service: string,
+  repoFull: string | undefined,
+  refs: IssueRefs,
+): string[] {
+  const ids: string[] = [];
+
+  if (repoFull !== undefined) {
+    for (const n of refs.numeric) {
+      const ext = itemPrimaryKey(service, `${repoFull}#${n}`);
+      const row = db
+        .query("SELECT id FROM graph_entity WHERE type = 'issue' AND external_id = ? LIMIT 1")
+        .get(ext) as { id?: string } | null;
+      if (row?.id !== undefined) ids.push(row.id);
+    }
+  }
+
+  for (const key of refs.ticketKeys) {
+    const row = db
+      .query(
+        `SELECT id FROM graph_entity
+          WHERE type = 'issue' AND (external_id = ? OR external_id LIKE '%:' || ?)
+          ORDER BY id ASC LIMIT 1`,
+      )
+      .get(key, key) as { id?: string } | null;
+    if (row?.id !== undefined) ids.push(row.id);
+  }
+
+  return Array.from(new Set(ids));
+}
+
 function personDisplayName(db: Database, personId: string): string | null {
   const row = db.query("SELECT display_name FROM person WHERE id = ?").get(personId) as
     | { display_name: string | null }
@@ -113,6 +164,12 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
       metadata: { sha: mergeSha },
     });
     upsertGraphRelation(db, prEntityId, commitEntityId, "merged_as", now);
+  }
+
+  clearOutgoingRelationsOfType(db, prEntityId, "resolves");
+  const refs = extractIssueRefs(`${row.title}\n${row.bodyPreview ?? ""}`);
+  for (const issueId of findIssueEntityIds(db, row.service, repoFull, refs)) {
+    upsertGraphRelation(db, prEntityId, issueId, "resolves", now);
   }
 }
 
