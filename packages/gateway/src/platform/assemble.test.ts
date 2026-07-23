@@ -201,4 +201,28 @@ describe("assemblePlatformServices — in-process assembly", () => {
     services = await assemblePlatformServices(paths);
     expect(services.chatops).toBeUndefined();
   }, 30000);
+
+  // M-1: `loadNimbusServiceConfigsFromConfigDir` throws on a malformed
+  // [metrics.dora.*]/[ci.service.*] block. Before the fix, this call was
+  // unguarded at boot — a config typo aborted gateway startup entirely
+  // instead of degrading the one feature (timeline correlation) that reads it.
+  it("M-1: boots successfully despite a malformed [metrics.dora.*] block (missing required 'repos')", async () => {
+    const paths = makePaths();
+    const tomlPath = join(paths.configDir, "nimbus.toml");
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(
+      tomlPath,
+      [
+        "[metrics.dora.checkout]",
+        // 'repos' deliberately omitted — materializeOneServiceConfig throws
+        // "missing required 'repos'" (config/service-config-toml.ts).
+        'pagerduty_services = ["PSVC1"]',
+      ].join("\n"),
+    );
+
+    services = await assemblePlatformServices(paths);
+    expect(services).toBeDefined();
+    expect(typeof services.ipc.stop).toBe("function");
+  }, 30000);
 });
