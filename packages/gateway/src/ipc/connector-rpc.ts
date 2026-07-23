@@ -61,11 +61,18 @@ export async function dispatchConnectorRpc(options: {
         throw new ConnectorRpcError(-32603, "connector.addMcp requires a toolExecutor");
       }
       const addMcpRec = asRecord(params) ?? {};
+      // The payload MUST name the keys the handler actually consumes
+      // (`serviceId`/`commandLine`) — it used to read `command`/`args`, which no
+      // caller sends, so the owner was asked to authorize spawning an arbitrary
+      // local process while the prompt, the audit row and the egress-ledger row
+      // all rendered empty (#808). `commandLine` is the raw string the handler
+      // parses; showing it verbatim keeps the prompt identical to what was asked
+      // for, rather than a re-derivation that could disagree with it.
       const gateResult = await toolExecutor.gate({
         type: "connector.addMcp",
         payload: {
-          command: addMcpRec["command"],
-          args: addMcpRec["args"],
+          serviceId: addMcpRec["serviceId"],
+          commandLine: addMcpRec["commandLine"],
         },
       });
       if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
@@ -89,9 +96,13 @@ export async function dispatchConnectorRpc(options: {
       if (toolExecutor === undefined) {
         throw new ConnectorRpcError(-32603, "connector.remove requires a toolExecutor");
       }
+      // `serviceId`, not `service`: `handleConnectorRemove` resolves the id via
+      // `requireRegisteredSchedulerServiceId`, which reads `serviceId` only. The
+      // gate read `service`, so this destructive action (deletes index entries,
+      // clears Vault keys) also prompted blank (#808).
       const gateResult = await toolExecutor.gate({
         type: "connector.remove",
-        payload: { service: asRecord(params)?.["service"] },
+        payload: { serviceId: asRecord(params)?.["serviceId"] },
       });
       if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
       return handleConnectorRemove(ctx);

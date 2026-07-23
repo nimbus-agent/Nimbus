@@ -35,14 +35,25 @@ type GateResult =
   | { status: "rejected"; reason: string }
   | { status: "deferred"; reason: string };
 
+/**
+ * Records the FULL gate action, payload included.
+ *
+ * This stub used to keep only `{ type }`, which is exactly how #808 survived:
+ * both gated methods built their payload from parameter keys no caller sends,
+ * and every assertion here looked past the field that was empty. The payload is
+ * not decoration — `executor.gate()` feeds the same object to the consent
+ * prompt, the audit row (`auditPayload`) and the I29 egress-ledger row, so an
+ * empty payload means the owner authorizes, and the ledger attests to, nothing
+ * identifiable.
+ */
 function makeStubExecutor(gateResult: GateResult): {
   exec: ToolExecutor;
-  calls: Array<{ type: string }>;
+  calls: Array<{ type: string; payload: unknown }>;
 } {
-  const calls: Array<{ type: string }> = [];
+  const calls: Array<{ type: string; payload: unknown }> = [];
   const exec = {
-    async gate(args: { type: string }): Promise<GateResult> {
-      calls.push({ type: args.type });
+    async gate(args: { type: string; payload?: unknown }): Promise<GateResult> {
+      calls.push({ type: args.type, payload: args.payload });
       return gateResult;
     },
   } as unknown as ToolExecutor;
@@ -89,7 +100,13 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
     expect(r.value).toEqual({ status: "rejected", reason: "user declined" });
-    expect(calls).toEqual([{ type: "connector.addMcp" }]);
+    expect(calls).toEqual([
+      {
+        type: "connector.addMcp",
+        // The owner must see WHICH command they are authorizing a spawn of.
+        payload: { serviceId: "mcp_blocked", commandLine: "echo hi" },
+      },
+    ]);
     const row = db
       .query("SELECT service_id FROM user_mcp_connector WHERE service_id = ?")
       .get("mcp_blocked");
@@ -109,6 +126,33 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     if (r.kind !== "hit") return;
     expect(r.value).toEqual({ ok: true, serviceId: "mcp_ok" });
   });
+
+  test("the gated payload names the same keys handleConnectorAddMcp consumes", async () => {
+    // The regression guard for #808. The handler reads `serviceId`/`commandLine`
+    // and derives command+args itself; the gate previously read `command`/`args`
+    // straight off the params, which are never sent — so every field was
+    // `undefined` and JSON.stringify dropped them, leaving `"payload":{}` in the
+    // prompt, the audit row and the egress ledger.
+    const { exec, calls } = makeStubExecutor("proceed");
+    await dispatchConnectorRpc({
+      ...baseOpts({
+        toolExecutor: exec,
+        syncScheduler: { register: () => {} },
+        connectorMesh: { ensureUserMcpRunning: async () => {} },
+      }),
+      method: "connector.addMcp",
+      params: { serviceId: "mcp_probe", commandLine: "npx -y @evil/pkg" },
+    });
+
+    const payload = calls[0]?.payload as Record<string, unknown>;
+    // Asserted through a JSON round-trip because that is the transform the audit
+    // and egress sinks apply: a payload of all-`undefined` fields survives a
+    // naive toEqual against `{}` but is exactly the bug.
+    expect(JSON.parse(JSON.stringify(payload))).toEqual({
+      serviceId: "mcp_probe",
+      commandLine: "npx -y @evil/pkg",
+    });
+  });
 });
 
 describe("dispatchConnectorRpc — remove gate", () => {
@@ -117,7 +161,7 @@ describe("dispatchConnectorRpc — remove gate", () => {
       await dispatchConnectorRpc({
         ...baseOpts({}),
         method: "connector.remove",
-        params: { service: "github" },
+        params: { serviceId: "github" },
       });
       throw new Error("expected throw");
     } catch (e) {
@@ -130,11 +174,25 @@ describe("dispatchConnectorRpc — remove gate", () => {
     const r = await dispatchConnectorRpc({
       ...baseOpts({ toolExecutor: exec }),
       method: "connector.remove",
-      params: { service: "github" },
+      params: { serviceId: "github" },
     });
     expect(r.kind).toBe("hit");
     if (r.kind !== "hit") return;
     expect(r.value).toEqual({ status: "deferred", reason: "later" });
+  });
+
+  test("the gated payload names the service the handler will actually remove", async () => {
+    // Same defect as addMcp: the gate read `service` while
+    // `requireRegisteredSchedulerServiceId` reads `serviceId`, so the prompt for
+    // a destructive action (index entries deleted, Vault keys cleared) was blank.
+    const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "no" });
+    await dispatchConnectorRpc({
+      ...baseOpts({ toolExecutor: exec }),
+      method: "connector.remove",
+      params: { serviceId: "github" },
+    });
+
+    expect(JSON.parse(JSON.stringify(calls[0]?.payload))).toEqual({ serviceId: "github" });
   });
 });
 
