@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  // scripts/ is not a workspace package, so `bun run --filter '*' typecheck` never
+  // reaches it — 151 TypeScript files, several of them load-bearing (the structure
+  // audits that gate CI, and gen-agent-brief-fixtures.ts, which produces the
+  // conformance fixture @nimbus-dev/client validates against).
+  "include": ["**/*"],
+  // Deliberately NOT inheriting the base exclude: it drops **/*.test.ts, which would
+  // leave the audit tests both untypechecked and orphaned in editors.
+  "exclude": ["node_modules", "dist", "coverage"]
+}
