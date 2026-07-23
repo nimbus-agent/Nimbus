@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -415,6 +415,23 @@ describe("tryDispatchIndexRegraphRpc", () => {
     const db = trackedDb();
     const localIndex = new LocalIndex(db);
     const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
+    expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
+  });
+  test("delegates index.regraph with configDir present (the resolver-threading spread branch)", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const configDir = mkdtempSync(join(tmpdir(), "nimbus-dispatchers-regraph-"));
+    // TOML literal reused verbatim from index-regraph-rpc.test.ts case 2.
+    writeFileSync(
+      join(configDir, "nimbus.toml"),
+      `[ci.service.checkout]
+repos = ["github:acme/checkout"]
+pagerduty_services = ["PSVC1"]
+`,
+      "utf8",
+    );
+    const { ctx } = makeCtx({ localIndex, configDir });
     const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
     expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
   });
