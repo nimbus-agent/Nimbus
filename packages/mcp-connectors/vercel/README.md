@@ -25,8 +25,8 @@ touches the vault. The gateway-side syncable
 (`packages/gateway/src/connectors/vercel-sync.ts`) walks
 `GET /v6/deployments?limit=100` (paginated via `pagination.next`, capped 20
 pages) and upserts each deployment with metadata `{ uid, name, state, target,
-url, inspector_url, commit_sha, commit_message, commit_ref, pr_id, creator,
-created_at, canonical_url }`.
+url, inspector_url, commit_sha, commit_message, commit_ref, pr_id, repo,
+creator, created_at, canonical_url }`.
 
 Vault keys:
 
