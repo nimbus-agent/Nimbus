@@ -291,6 +291,7 @@ registration and treats it as part of the deliverable.
 | **P4a** | Main-CI concurrency fix | XS | Actions-only | Every commit on `main` has a completed CI run |
 | **P4b** | Latency | S–M | Actions-only | Per-job wall-clock tracked; regressions visible |
 | **P5** | Org Legibility | S | Actions-only | Dashboard regenerates on schedule; stale downstream and expiring secrets surface before they bite; `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md` |
+| **P6** | Access & Contribution Model | S–M | Actions-only | Every repo is reachable through a team; the contributor-two ruleset switches live in the checked-in config P1 drift-checks, so they cannot be flipped in the UI and forgotten |
 
 ### P1 — Org CI Foundation
 
@@ -472,24 +473,94 @@ two trims above, then land the gate that keeps both true.
 P5 precedes P4b because it supplies the measurements P4b must be justified
 against.
 
+### P6 — Access & Contribution Model
+
+The org is public and single-member; the goal is to be ready for contributor two
+*before* they arrive, not to reorganize around a hypothetical team.
+
+**The scaffolding already exists and is well shaped.** Three `closed` teams —
+`maintainers` (maintain on `Nimbus` + the package-manager channels, admin on
+nine others), `connector-authors` (write on the three connector-tooling repos),
+`community-contributors` (triage on `awesome-nimbus` + `nimbus-recipes`). Each
+contains exactly one member. Nothing needs redesigning; four things need
+finishing.
+
+**1. Six repos belong to no team.** `.github`, `linux-repo`, `nimbus-client`,
+`nimbus-sdk`, `nimbus-vscode`, `nimbus-web-clipper` — the entire npm narrow
+waist plus the org's shared-workflow home. Teams were created for the periphery
+and the monorepo and never extended to the publishing chain: the named pattern
+again, in org configuration rather than CI. Grant them before anyone needs
+adding, because there is currently no team to add a contributor *to*.
+
+**2. Four ruleset settings are solo-mode and become wrong silently.** Nimbus's
+`General` ruleset is `active`, and today all four are correct for one person:
+
+| Setting | Now | Breaks how, with contributors |
+| --- | --- | --- |
+| `required_approving_review_count` | `0` | Unreviewed merges |
+| `require_code_owner_review` | `false` | `CODEOWNERS` stays inert |
+| `require_last_push_approval` | `false` | A push can land after approval |
+| Bypass `OrganizationAdmin` | `always` | Invariant protections become advisory for admins |
+
+`CODEOWNERS` is already written, comprehensive, and honest about its own
+status — *"Today they are documentary; they become enforcing the moment a second
+maintainer gains write access."* It maps every invariant-bearing file: the HITL
+gate, the Vault, the sandbox runner, the Tauri allowlist, the HTTP write surface,
+`security-invariants.test.ts` itself. **Flipping `require_code_owner_review` is
+one boolean and the highest-value switch in this program** — a bot can flag an
+I2 violation, a required code-owner review prevents it.
+
+These are not flipped now (they would block a solo maintainer). They are written
+into the checked-in ruleset config P1 creates, commented as the
+contributor-two switch set, so the transition is one reviewed diff rather than
+four remembered UI clicks. **That is P6's gate.**
+
+**3. Inbound contribution licensing is undecided — and this one is urgent.**
+`CONTRIBUTING.md` contains no DCO, sign-off or CLA terms. The repo is public
+*now*, so the first outside PR can arrive any day, and retroactive sign-off
+collection is far worse than prospective. The dual license sharpens it: a
+contributor patching the MIT `nimbus-sdk` with work derived from reading the
+AGPL gateway creates exactly the infection the ecosystem roadmap's one-way rule
+("MIT into AGPL is fine; the reverse would infect") exists to prevent — today
+enforced by architecture, but by nothing a contributor agrees to. DCO is the
+lightweight standard; a CLA is heavier and is what would preserve relicensing
+optionality for any future commercial dual-licensing. **Decide before the first
+outside PR, not after.**
+
+**4. Two org settings and a plan ceiling.** `members_can_create_repositories` is
+`true` (should be `false`); `default_repository_permission` is `read`, which
+grants every future member baseline access to all six private repos (should be
+`none`, with access via teams). And on the **Free** plan, branch protection and
+rulesets do not apply to private repos at all — moot today, not moot with
+contributors. Options: accept, make them public, or move to Team. 2FA is already
+required org-wide.
+
 ---
 
 ## Sequence
 
-**P1 → P4a → P2 → P5 → P3 → P4b**
+**P1 → P6 → P2 → P5 → P3 → P4b**
 
-- **P1 first** — it creates the shared home everything else installs into, and it
-  is the cheapest.
-- **P4a second** — two lines, and until it lands, no other CI improvement can be
-  trusted to have been validated on `main`.
+- **P1 first** — it is the propagation mechanism, and it is the cheapest.
+- **P6 second** — it depends on P1's checked-in ruleset config as the place the
+  contributor-two switches live.
 - **P2 third** — highest toil payoff, and smaller than first estimated
   (Correction 3).
 - **P5 fourth** — small, and it instruments P4b.
-- **P3 fifth** — its first step is cheap; its second step needs evidence P3's
+- **P3 fifth** — its first step is cheap; its second step needs evidence the
   first step generates.
 - **P4b last** — measured, never guessed.
 
-`nimbus-client` rulesets land ahead of all of it, independently.
+**Three items ignore the sequence and should land immediately**, because each is
+tiny and each is currently costing something:
+
+1. **P4a** — the `main` concurrency fix. Two lines. Until it lands, no other CI
+   improvement can be trusted to have been validated on `main` at all.
+2. **`nimbus-client` rulesets** — the only active repo with zero branch
+   protection, and the narrow waist two consumers depend on.
+3. **The DCO/CLA decision** (P6 item 3) — the repo is public, so the first
+   outside PR can arrive before the program reaches P6, and prospective sign-off
+   is far cheaper than retroactive.
 
 ---
 
@@ -543,8 +614,14 @@ against.
   to it and never restates it.
 - **Not a secrets inventory.** [`ci-secrets.md`](../../ci-secrets.md) owns that;
   P2 and P5 link to it.
-- **No human-reviewer workflow** — `CODEOWNERS` routing, review SLAs and
-  round-robin assignment are out of scope; there are no human reviewers.
+- **No human-reviewer *routing* — while the org has one member.** Review SLAs,
+  round-robin assignment and reviewer load-balancing are out of scope, and the
+  **trigger to revisit is a second person holding write access**, not a date.
+  Stated conditionally on purpose: the org is public and actively preparing for
+  contributors (P6), so a flat exclusion here would read in six months as settled
+  policy rather than as a fact about today. `CODEOWNERS` itself is explicitly
+  *not* excluded — it is already authored, and P6 treats enabling it as the
+  cheapest control in the program.
 - **No security invariant applies to this program.** Worth stating, because a
   review of this spec invoked I2, I13, I27 and I29 against it and none of them
   reach. I1–I30 are runtime properties of the **gateway on a user's machine**:
@@ -585,6 +662,15 @@ against.
 5. **Should P3 dogfood the first-party PR-check Action?** Pulling a Phase 12
    product deliverable forward is a roadmap decision;
    [`roadmap.md`](../../roadmap.md) wins on sequencing it.
+6. **DCO or CLA?** DCO is a `Signed-off-by` line plus a bot — near-zero friction,
+   and sufficient to establish that a contributor had the right to submit. A CLA
+   additionally preserves relicensing optionality, which matters only if
+   commercial dual-licensing is ever on the table. DCO is the recommendation
+   absent that intent; the decision is the user's because it is a licensing
+   commitment, not a technical one.
+7. **Free plan, or Team?** Private-repo rulesets require Team ($4/user/month).
+   Six private repos are currently unprotectable. Accept, make them public, or
+   upgrade — deferrable until the first contributor needs private-repo access.
 
 ---
 
