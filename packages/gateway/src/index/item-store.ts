@@ -106,6 +106,7 @@ export function upsertIndexedItem(
     service: row.service,
     type: row.type,
     title: row.title,
+    bodyPreview: preview,
     authorId: row.authorId ?? null,
     metadata: row.metadata ?? {},
   });

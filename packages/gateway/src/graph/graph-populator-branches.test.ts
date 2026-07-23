@@ -80,6 +80,7 @@ describe("syncGraphFromIndexedItem — version guard", () => {
       service: "github",
       type: "pr",
       title: "My PR",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -97,6 +98,7 @@ describe("syncGraphFromIndexedItem — unknown type guard", () => {
       service: "unknown",
       type: "not_a_real_type",
       title: "Whatever",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -117,6 +119,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "Add feature",
+      bodyPreview: null,
       authorId: "user:42",
       metadata: {
         repo: "acme/app",
@@ -142,6 +145,7 @@ describe("syncPrGraph", () => {
       service: "gitlab",
       type: "pr",
       title: "MR title",
+      bodyPreview: null,
       authorId: null,
       metadata: { project: "group/project" },
     });
@@ -160,6 +164,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "No repo PR",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -176,6 +181,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "No author",
+      bodyPreview: null,
       authorId: "",
       metadata: {},
     });
@@ -191,6 +197,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "Open PR",
+      bodyPreview: null,
       authorId: null,
       metadata: { merged: false, merge_commit_sha: "abc123" },
     });
@@ -205,6 +212,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "Merged PR no sha",
+      bodyPreview: null,
       authorId: null,
       metadata: { merged: true },
     });
@@ -220,6 +228,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "Alice PR",
+      bodyPreview: null,
       authorId: "user:77",
       metadata: {},
     });
@@ -238,6 +247,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "PR with user meta",
+      bodyPreview: null,
       authorId: "user:88",
       metadata: { user: "bob_the_builder" },
     });
@@ -256,6 +266,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "PR fallback label",
+      bodyPreview: null,
       authorId: "raw:user:id:99",
       metadata: {},
     });
@@ -274,6 +285,7 @@ describe("syncPrGraph", () => {
       service: "github",
       type: "pr",
       title: "Whitespace name",
+      bodyPreview: null,
       authorId: "user:55",
       metadata: { user: "trimmed_fallback" },
     });
@@ -297,6 +309,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "Bug report",
+      bodyPreview: null,
       authorId: "user:10",
       metadata: { repo: "acme/app" },
     });
@@ -315,6 +328,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "No repo issue",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -331,6 +345,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "Anonymous issue",
+      bodyPreview: null,
       authorId: "",
       metadata: {},
     });
@@ -347,6 +362,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "Carol's issue",
+      bodyPreview: null,
       authorId: "user:33",
       metadata: {},
     });
@@ -364,6 +380,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "Issue user fallback",
+      bodyPreview: null,
       authorId: "no-such-person",
       metadata: { user: "dave_handle" },
     });
@@ -381,6 +398,7 @@ describe("syncIssueGraph", () => {
       service: "github",
       type: "issue",
       title: "Issue raw id",
+      bodyPreview: null,
       authorId: "raw:author:id",
       metadata: {},
     });
@@ -404,6 +422,7 @@ describe("syncMessageGraph", () => {
       service: "slack",
       type: "message",
       title: "Hello world",
+      bodyPreview: null,
       authorId: "user:slack:1",
       metadata: { channel: "C123GENERAL" },
     });
@@ -422,6 +441,7 @@ describe("syncMessageGraph", () => {
       service: "slack",
       type: "message",
       title: "Bot message",
+      bodyPreview: null,
       authorId: null,
       metadata: { channel: "C456BOT" },
     });
@@ -439,6 +459,7 @@ describe("syncMessageGraph", () => {
       service: "slack",
       type: "message",
       title: "DM message",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -454,6 +475,7 @@ describe("syncMessageGraph", () => {
       service: "slack",
       type: "message",
       title: "User meta fallback",
+      bodyPreview: null,
       authorId: "unknown:person:7",
       metadata: { user: "eva_user" },
     });
@@ -477,6 +499,7 @@ describe("syncGitCommitGraph", () => {
       service: "filesystem",
       type: "git_commit",
       title: "Missing sha",
+      bodyPreview: null,
       authorId: null,
       metadata: { repoRoot: "/home/user/project" },
     });
@@ -491,6 +514,7 @@ describe("syncGitCommitGraph", () => {
       service: "filesystem",
       type: "git_commit",
       title: "Some commit",
+      bodyPreview: null,
       authorId: null,
       metadata: { sha: "abc123def456" },
     });
@@ -507,6 +531,7 @@ describe("syncGitCommitGraph", () => {
       service: "filesystem",
       type: "git_commit",
       title: "Full commit",
+      bodyPreview: null,
       authorId: null,
       metadata: { sha: "deadcafe0000", repoRoot: "/home/user/project" },
     });
@@ -529,6 +554,7 @@ describe("syncDependencyGraph", () => {
       service: "filesystem",
       type: "dependency",
       title: "No name",
+      bodyPreview: null,
       authorId: null,
       metadata: { version: "1.0.0" },
     });
@@ -543,6 +569,7 @@ describe("syncDependencyGraph", () => {
       service: "filesystem",
       type: "dependency",
       title: "No version",
+      bodyPreview: null,
       authorId: null,
       metadata: { packageName: "lodash" },
     });
@@ -557,6 +584,7 @@ describe("syncDependencyGraph", () => {
       service: "filesystem",
       type: "dependency",
       title: "lodash@4.17.21",
+      bodyPreview: null,
       authorId: null,
       metadata: { packageName: "lodash", version: "4.17.21" },
     });
@@ -573,6 +601,7 @@ describe("syncDependencyGraph", () => {
       service: "filesystem",
       type: "dependency",
       title: "express@4.18.0",
+      bodyPreview: null,
       authorId: null,
       metadata: { packageName: "express", version: "4.18.0", repoRoot: "/home/user/app" },
     });
@@ -595,6 +624,7 @@ describe("syncCodeSymbolGraph", () => {
       service: "filesystem",
       type: "code_symbol",
       title: "myFunc",
+      bodyPreview: null,
       authorId: null,
       metadata: { name: "myFunc" },
     });
@@ -609,6 +639,7 @@ describe("syncCodeSymbolGraph", () => {
       service: "filesystem",
       type: "code_symbol",
       title: "unknown",
+      bodyPreview: null,
       authorId: null,
       metadata: { file: "src/index.ts" },
     });
@@ -623,6 +654,7 @@ describe("syncCodeSymbolGraph", () => {
       service: "filesystem",
       type: "code_symbol",
       title: "bareFunc",
+      bodyPreview: null,
       authorId: null,
       metadata: { file: "src/util.ts", name: "bareFunc" },
     });
@@ -643,6 +675,7 @@ describe("syncCodeSymbolGraph", () => {
       service: "filesystem",
       type: "code_symbol",
       title: "fullFunc",
+      bodyPreview: null,
       authorId: null,
       metadata: { file: "src/main.ts", name: "fullFunc", repoRoot: "/home/user/repo" },
     });
@@ -667,6 +700,7 @@ describe("syncApiEndpointGraph", () => {
       service: "openapi",
       type: "api_endpoint",
       title: "GET /health",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -691,6 +725,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note",
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "vault-abc" },
     });
@@ -709,6 +744,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note2",
+      bodyPreview: null,
       authorId: null,
       metadata: {},
     });
@@ -727,6 +763,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note3",
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "v3", resolved_wikilink_ids: "not-an-array" },
     });
@@ -741,6 +778,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note4",
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "v4", resolved_wikilink_ids: ["", "   "] },
     });
@@ -755,6 +793,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note5",
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "v5", resolved_wikilink_ids: [42, true, null] },
     });
@@ -770,6 +809,7 @@ describe("syncObsidianNoteGraph — extra branches", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: "Note6",
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "v6", resolved_wikilink_ids: ["obsidian:v6#NonExistent.md"] },
     });
@@ -791,6 +831,7 @@ describe("stringField edge cases (exercised via metadata lookup)", () => {
       service: "filesystem",
       type: "git_commit",
       title: "Numeric sha",
+      bodyPreview: null,
       authorId: null,
       metadata: { sha: 12345 },
     });
@@ -806,6 +847,7 @@ describe("stringField edge cases (exercised via metadata lookup)", () => {
       service: "filesystem",
       type: "git_commit",
       title: "Empty sha",
+      bodyPreview: null,
       authorId: null,
       metadata: { sha: "" },
     });

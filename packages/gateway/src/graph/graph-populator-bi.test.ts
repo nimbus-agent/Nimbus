@@ -48,6 +48,7 @@ test("data_model item emits a derived_from edge to its upstream key", () => {
     service: "looker",
     type: "data_model",
     title: "revenue",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "analytics.public.revenue", derivedFromKeys: ["dbt.marts.revenue"] },
   });
@@ -68,6 +69,7 @@ test("data_model without dataModelKey falls back to item id", () => {
     service: "dbt",
     type: "data_model",
     title: "orders",
+    bodyPreview: null,
     authorId: null,
     metadata: { derivedFromKeys: [] },
   });
@@ -86,6 +88,7 @@ test("data_model with no derivedFromKeys creates no edges", () => {
     service: "dbt",
     type: "data_model",
     title: "sessions",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "analytics.public.sessions" },
   });
@@ -108,6 +111,7 @@ test("dashboard item emits upstream_refs from each upstream data_model", () => {
     service: "tableau",
     type: "dashboard",
     title: "Q1 Revenue",
+    bodyPreview: null,
     authorId: null,
     metadata: { upstreamDataModelKeys: ["analytics.public.revenue"] },
   });
@@ -128,6 +132,7 @@ test("dashboard with no upstreamDataModelKeys creates no edges", () => {
     service: "tableau",
     type: "dashboard",
     title: "Empty dash",
+    bodyPreview: null,
     authorId: null,
     metadata: {},
   });
@@ -150,6 +155,7 @@ test("data_quality_test item emits a monitors edge to its table", () => {
     service: "montecarlo",
     type: "data_quality_test",
     title: "freshness breach on revenue",
+    bodyPreview: null,
     authorId: null,
     metadata: { monitoredDataModelKeys: ["analytics.public.revenue"] },
   });
@@ -170,6 +176,7 @@ test("data_quality_test with no monitoredDataModelKeys creates no edges", () => 
     service: "montecarlo",
     type: "data_quality_test",
     title: "schema drift alert",
+    bodyPreview: null,
     authorId: null,
     metadata: {},
   });
@@ -190,6 +197,7 @@ test("re-syncing data_model replaces stale derived_from edges (no leak)", () => 
     service: "dbt",
     type: "data_model",
     title: "orders",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "db.schema.orders", derivedFromKeys: ["old.upstream"] },
   });
@@ -198,6 +206,7 @@ test("re-syncing data_model replaces stale derived_from edges (no leak)", () => 
     service: "dbt",
     type: "data_model",
     title: "orders",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "db.schema.orders", derivedFromKeys: ["new.upstream"] },
   });
@@ -225,6 +234,7 @@ test("upstream_refs edge survives a data_model re-sync (cross-connector edge not
     service: "tableau",
     type: "dashboard",
     title: "Dash 1",
+    bodyPreview: null,
     authorId: null,
     metadata: { upstreamDataModelKeys: ["a.b.c"] },
   });
@@ -244,6 +254,7 @@ test("upstream_refs edge survives a data_model re-sync (cross-connector edge not
     service: "snowflake",
     type: "data_model",
     title: "a.b.c",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
   });
@@ -252,6 +263,7 @@ test("upstream_refs edge survives a data_model re-sync (cross-connector edge not
     service: "snowflake",
     type: "data_model",
     title: "a.b.c",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
   });
@@ -279,6 +291,7 @@ test("tableau upstream reference does not overwrite service of a snowflake-owned
     service: "snowflake",
     type: "data_model",
     title: "a.b.c",
+    bodyPreview: null,
     authorId: null,
     metadata: { dataModelKey: "a.b.c", derivedFromKeys: [] },
   });
@@ -295,6 +308,7 @@ test("tableau upstream reference does not overwrite service of a snowflake-owned
     service: "tableau",
     type: "dashboard",
     title: "Dash 1",
+    bodyPreview: null,
     authorId: null,
     metadata: { upstreamDataModelKeys: ["a.b.c"] },
   });
@@ -317,6 +331,7 @@ test("stringArrayField drops non-string entries in monitoredDataModelKeys", () =
     service: "bigeye",
     type: "data_quality_test",
     title: "mixed array test",
+    bodyPreview: null,
     authorId: null,
     metadata: { monitoredDataModelKeys: ["analytics.public.revenue", 42, null, true] },
   });

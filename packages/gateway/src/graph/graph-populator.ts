@@ -14,6 +14,7 @@ export type IndexedItemGraphInput = {
   service: string;
   type: string;
   title: string;
+  bodyPreview: string | null;
   authorId: string | null;
   metadata: Record<string, unknown>;
 };

@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { syncGraphFromIndexedItem } from "./graph-populator.ts";
 import { upsertGraphRelation } from "./relationship-graph.ts";
 
 function freshDb(): Database {
@@ -87,4 +88,26 @@ test("a re-sync still rebuilds the entity's own edges rather than duplicating th
   }
 
   expect(relationCount(db, "targets")).toBe(1);
+});
+
+test("the populator receives the item body", () => {
+  const db = freshDb();
+  const now = Date.now();
+
+  // Compiles only once IndexedItemGraphInput carries bodyPreview.
+  syncGraphFromIndexedItem(db, {
+    id: "github:acme/app#7",
+    service: "github",
+    type: "pr",
+    title: "Fix login",
+    bodyPreview: "closes #4",
+    authorId: null,
+    metadata: { repo: "acme/app" },
+  });
+
+  const pr = db.query("SELECT id FROM graph_entity WHERE type = 'pr' LIMIT 1").get() as {
+    id: string;
+  } | null;
+  expect(pr).not.toBeNull();
+  void now;
 });

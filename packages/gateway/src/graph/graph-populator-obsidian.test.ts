@@ -17,6 +17,7 @@ test("syncObsidianNoteGraph upserts an obsidian_note entity and backlink edges f
     service: "obsidian",
     type: "obsidian_note",
     title: "Other",
+    bodyPreview: null,
     authorId: null,
     metadata: { vault_id: "abc", resolved_wikilink_ids: [] },
   });
@@ -26,6 +27,7 @@ test("syncObsidianNoteGraph upserts an obsidian_note entity and backlink edges f
     service: "obsidian",
     type: "obsidian_note",
     title: "Welcome",
+    bodyPreview: null,
     authorId: null,
     metadata: { vault_id: "abc", resolved_wikilink_ids: [linkedId] },
   });
@@ -53,6 +55,7 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
       service: "obsidian",
       type: "obsidian_note",
       title: id,
+      bodyPreview: null,
       authorId: null,
       metadata: { vault_id: "abc", resolved_wikilink_ids: [] },
     });
@@ -63,6 +66,7 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
     service: "obsidian",
     type: "obsidian_note",
     title: "A",
+    bodyPreview: null,
     authorId: null,
     metadata: { vault_id: "abc", resolved_wikilink_ids: [b] },
   });
@@ -72,6 +76,7 @@ test("re-syncing a note replaces its outgoing backlink edges (no leak)", () => {
     service: "obsidian",
     type: "obsidian_note",
     title: "A",
+    bodyPreview: null,
     authorId: null,
     metadata: { vault_id: "abc", resolved_wikilink_ids: [c] },
   });

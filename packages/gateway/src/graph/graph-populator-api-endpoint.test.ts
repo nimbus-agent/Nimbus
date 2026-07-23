@@ -16,6 +16,7 @@ test("syncing an api_endpoint item creates an api_endpoint entity and a `targets
     service: "openapi",
     type: "api_endpoint",
     title: "GET /v1/payments",
+    bodyPreview: null,
     authorId: null,
     metadata: { service_name: "payments-api", spec_file: "/tmp/openapi.yaml" },
   });
