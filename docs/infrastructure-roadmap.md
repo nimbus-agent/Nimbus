@@ -54,7 +54,27 @@ Design of record:
 | P6 | Access & Contribution Model | ⬜ not started | Every repo reachable through a team; contributor-two switches live in checked-in config |
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
-land immediately: P4a, `nimbus-client` rulesets, and the DCO decision.
+land immediately: P4a, `nimbus-client` rulesets, and the contribution-licensing
+decision (CLA).
+
+### P1 progress log
+
+- **Main-CI concurrency (P4a)** — shipped: `cancel-in-progress` is now conditional
+  on `github.event_name == 'pull_request'`, so consecutive `main` merges no longer
+  cancel each other's validation.
+- **`nimbus-client` rulesets** — shipped: a `General` branch ruleset (id
+  `19635616`, active) now protects the narrow-waist repo that had none, matching
+  the shape the other active code repos share (squash-only, thread-resolution
+  required, zero required approvals in solo mode).
+- **First org drift sweep (2026-07-23)** — all 8 repos pass `audit:action-sha-pins`
+  (run locally as `bun scripts/structure-audit/check-action-sha-pins.ts --root
+  <checkout>` against fresh clones, pending the workflow's first post-merge run —
+  a net-new `workflow_dispatch` cannot fire on a feature branch). **Finding:** the
+  version drift noted in the design (`harden-runner` v2.20.0 vs v2.19.4,
+  `actions/checkout` v7.0.1 vs v7.0.0) is *staleness*, not *unpinning* — every ref
+  is correctly SHA-pinned, just to older SHAs. The SHA-pin gate is green and
+  structurally cannot detect staleness; a freshness check is a **Plan B**
+  follow-up.
 
 ---
 
