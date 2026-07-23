@@ -57,8 +57,8 @@ This task must land first — every later task depends on it.
 
 - Consumes: nothing from earlier tasks.
 - Produces:
-  - `CROSS_ITEM_RELATION_TYPES: readonly ["resolves", "mentions", "correlates_with"]` — module-private.
-  - `CROSS_ITEM_RELATION_TYPES` and the new `clearRelationsTouchingEntity` behavior (unchanged signature).
+  - `CROSS_ITEM_RELATION_TYPES` — module-private, `readonly string[]` frozen to `["resolves", "mentions", "correlates_with"]`.
+  - `clearRelationsTouchingEntity(db: Database, entityId: string): void` — unchanged signature, new behavior.
 
 **The two directional clear helpers are deliberately NOT introduced here.** `clearOutgoingRelationsOfType` first has a caller in Task 3, `clearIncomingRelationsOfType` in Task 6, and `biome.json` sets `noUnusedVariables: "error"` — which fires on unused module-private functions. Introducing them early makes this task fail `lint` / `preflight:fast` / the pre-commit hook, so each is defined in the task that first calls it. Their contracts are stated here so the design reads as a whole:
 
