@@ -21,12 +21,23 @@ export interface SyncContext {
    * [metrics.dora.<id>] / [ci.service.<id>] bindings. Optional: when absent
    * the graph populator falls back to `metadata.service`, so connectors and
    * tests that predate this compile and behave unchanged.
+   *
+   * F1: the return shape mirrors `metrics/service-identity.ts`'s
+   * `ServiceIdentityResolution` / `graph/graph-populator.ts`'s
+   * `ResolveServiceIdResult` — declared structurally here too rather than
+   * imported, keeping this module dependency-light. `excluded` (a config
+   * claimed the item but the I-1/F2 deploy-environment gate rejected it)
+   * must bind nothing; only `unknown` (nothing claims the item) falls back
+   * to `metadata.service`.
    */
   resolveServiceId?: (item: {
     readonly service: string;
     readonly type: string;
     readonly metadata: Record<string, unknown>;
-  }) => string | undefined;
+  }) =>
+    | { readonly kind: "bound"; readonly serviceId: string }
+    | { readonly kind: "excluded" }
+    | { readonly kind: "unknown" };
 }
 
 export interface Syncable {

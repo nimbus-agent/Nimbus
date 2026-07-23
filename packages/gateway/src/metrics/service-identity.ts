@@ -12,7 +12,27 @@ export type ServiceIdentityItem = {
   readonly metadata: Record<string, unknown>;
 };
 
-export type ServiceIdentityResolver = (item: ServiceIdentityItem) => string | undefined;
+/**
+ * F1: a bare `undefined` cannot distinguish "the deploy-environment gate
+ * explicitly excluded this item" from "nothing in the config map claims it
+ * at all" — and that ambiguity is exactly what let a gate-excluded preview
+ * deployment's `undefined` get silently re-bound by the graph populator's
+ * `?? stringField(row.metadata, "service")` fallback. The three cases are
+ * now distinguishable:
+ *   - `bound`    — a `ServiceConfig` claimed this item and it passed I-1's
+ *                  deploy-environment gate (or the gate doesn't apply).
+ *   - `excluded` — a `ServiceConfig` claimed this item but I-1 excluded it
+ *                  (non-prod environment, or F2's no-signal fail-closed
+ *                  case). The caller MUST bind nothing — never fall back.
+ *   - `unknown`  — nothing in the config map claims this item. The caller
+ *                  may still fall back to `metadata.service`, unchanged.
+ */
+export type ServiceIdentityResolution =
+  | { readonly kind: "bound"; readonly serviceId: string }
+  | { readonly kind: "excluded" }
+  | { readonly kind: "unknown" };
+
+export type ServiceIdentityResolver = (item: ServiceIdentityItem) => ServiceIdentityResolution;
 
 /** M-2: reported when two `ServiceConfig`s both claim the same binding key —
  * the resolver still picks deterministically (first by config-map iteration
@@ -94,31 +114,121 @@ function deploymentEnvironment(meta: Record<string, unknown>): string | undefine
  *
  * Only `deployment`-typed items are gated — an `incident` (or any other
  * item type) carrying `metadata.target`/`metadata.environment` by
- * coincidence is unaffected.
+ * coincidence is unaffected, and always resolves `bound` once a
+ * `ServiceConfig` claims it.
  *
- * DECISION (I-1, no-signal case): a deployment with NEITHER
- * `metadata.environment` NOR `metadata.target` is bound anyway (fail-open),
- * not excluded. Today's only two deployment sources are
- * `deployment/annotate.ts` (which always sets `metadata.environment`, and is
- * itself already DORA-gated by `deployEnvironments` before annotation) and
- * Vercel (`metadata.target`, always present in the git-integration payload
- * `mapVercelDeploymentToItem` maps). A future deployment connector that
- * emits neither key is genuinely unknown, not known-and-excluded — treating
- * "no signal" the same as "excluded" would silently drop ALL correlation for
- * that connector's deploys, a strictly worse failure mode than the narrow,
- * fixable over-emission this filter targets.
+ * F2 DECISION (no-signal case, REVISED — was fail-open): a deployment with
+ * NEITHER `metadata.environment` NOR `metadata.target` now resolves
+ * `excluded`, not `bound`. The prior fail-open reasoning leaned on Vercel
+ * "always" writing `target` — but this repo's own connector description
+ * (`packages/mcp-connectors/vercel/nimbus.extension.json`) documents
+ * `target` as `production/staging` only (no "always present" guarantee),
+ * and `vercel-deployment-mapping.ts` already treats it as possibly absent
+ * (`stringField(row, "target") ?? null`). If the Vercel API ever returns
+ * `target: null` for a preview deploy, fail-open would filter nothing while
+ * a passing test claimed it did. An unknown environment cannot be shown to
+ * be production, and a false "this deploy caused that incident" edge is
+ * worse than a missing one — so no signal now means no binding. This costs
+ * nothing real: `deployment/annotate.ts` (the CI path) already *requires*
+ * `environment` and throws without it, and Prefect's mapper
+ * (`prefect-deployment-mapping.ts`) writes no key this resolver binds on at
+ * all (no `repo`/`pagerduty_service_id`/`nimbus_service_id`), so its
+ * deployments never reached this function either before or after.
  */
-function deploymentEnvironmentAllowed(item: ServiceIdentityItem, cfg: ServiceConfig): boolean {
-  if (item.type !== "deployment") return true;
+function deploymentBindingResolution(
+  item: ServiceIdentityItem,
+  cfg: ServiceConfig,
+): ServiceIdentityResolution {
+  if (item.type !== "deployment") {
+    return { kind: "bound", serviceId: cfg.serviceId };
+  }
   const env = deploymentEnvironment(item.metadata);
-  if (env === undefined) return true;
-  return cfg.deployEnvironments.includes(env);
+  if (env === undefined) {
+    return { kind: "excluded" };
+  }
+  return cfg.deployEnvironments.includes(env)
+    ? { kind: "bound", serviceId: cfg.serviceId }
+    : { kind: "excluded" };
 }
 
 /** M-2: URN this candidate `ServiceConfig` matched, for the ambiguity warning. */
 function matchingRepoUrnKey(metadata: Record<string, unknown>, cfg: ServiceConfig): string {
   const urn = cfg.repos.find((u) => repoMetadataMatchesUrn(metadata, u));
   return urn === undefined ? "?" : `${urn.provider}:${urn.providerId}`;
+}
+
+/**
+ * F3: one entry per binding key that more than one `ServiceConfig` claims.
+ * `winner` mirrors the deterministic pick the resolution loop below makes
+ * (first by `configs` iteration order). `warned` is mutated at most once —
+ * ambiguity is a static property of the config map, so the decision to
+ * report it is made once per key for the resolver's whole lifetime, not
+ * once per item that happens to hit it (see F3 at the call sites below).
+ */
+type AmbiguousBindingCandidate = {
+  readonly warning: AmbiguousBindingWarning;
+  warned: boolean;
+};
+
+/**
+ * F3: precomputes which binding keys are ambiguous, once, from `configs`
+ * alone — independent of any item. `keysFor` extracts every key a given
+ * `ServiceConfig` claims (its `pagerdutyServices` list, or its `repos`
+ * rendered as `${provider}:${providerId}` strings); a key claimed by more
+ * than one config is ambiguous.
+ */
+function indexAmbiguousBindings(
+  configs: ReadonlyMap<string, ServiceConfig>,
+  bindingKind: AmbiguousBindingWarning["bindingKind"],
+  keysFor: (cfg: ServiceConfig) => Iterable<string>,
+): Map<string, AmbiguousBindingCandidate> {
+  const claimantsByKey = new Map<string, ServiceConfig[]>();
+  for (const cfg of configs.values()) {
+    for (const key of keysFor(cfg)) {
+      const claimants = claimantsByKey.get(key);
+      if (claimants === undefined) {
+        claimantsByKey.set(key, [cfg]);
+      } else {
+        claimants.push(cfg);
+      }
+    }
+  }
+
+  const ambiguous = new Map<string, AmbiguousBindingCandidate>();
+  for (const [key, claimants] of claimantsByKey) {
+    if (claimants.length > 1) {
+      const winner = claimants[0] as ServiceConfig;
+      ambiguous.set(key, {
+        warning: {
+          bindingKind,
+          key,
+          chosenServiceId: winner.serviceId,
+          candidateServiceIds: claimants.map((c) => c.serviceId),
+        },
+        warned: false,
+      });
+    }
+  }
+  return ambiguous;
+}
+
+/**
+ * F4: reports `candidate`'s ambiguity at most once (F3), and only for a
+ * `resolution` that actually bound — an ambiguity behind a deployment that
+ * I-1 excluded never produced the binding the warning would claim, so it
+ * must not be reported at all (the log would otherwise assert a
+ * `chosenServiceId` for a resolve that returned nothing).
+ */
+function reportAmbiguityIfBound(
+  candidate: AmbiguousBindingCandidate | undefined,
+  resolution: ServiceIdentityResolution,
+  onAmbiguousBinding: AmbiguousBindingWarner | undefined,
+): void {
+  if (candidate === undefined || candidate.warned || resolution.kind !== "bound") {
+    return;
+  }
+  candidate.warned = true;
+  onAmbiguousBinding?.(candidate.warning);
 }
 
 /**
@@ -134,27 +244,44 @@ function matchingRepoUrnKey(metadata: Record<string, unknown>, cfg: ServiceConfi
  *   3. `metadata.repo` / `metadata.project` — matched against the
  *      `ServiceConfig` whose `repos` contains a matching URN.
  *
- * A `deployment`-typed item additionally passes `deploymentEnvironmentAllowed`
- * against whichever `ServiceConfig` matched (I-1) — a non-prod deployment
- * resolves to `undefined` even though a config claims it, on every path.
+ * A `deployment`-typed item additionally passes `deploymentBindingResolution`
+ * against whichever `ServiceConfig` matched (I-1/F2) — a non-prod (or,
+ * since F2, environment-signal-less) deployment resolves `excluded` even
+ * though a config claims it, on every path.
  *
- * `onAmbiguousBinding` (M-2) fires when path 2 or 3 has more than one
- * candidate `ServiceConfig` claiming the same key; the resolution itself
- * stays deterministic (first by `configs` iteration order, unchanged).
+ * `onAmbiguousBinding` (M-2) fires when path 2 or 3's binding key has more
+ * than one candidate `ServiceConfig` claiming it; the resolution itself
+ * stays deterministic (first by `configs` iteration order, unchanged). F3:
+ * the ambiguity set is computed once, in this function body, not per item —
+ * so the callback fires at most once per ambiguous key for the resolver's
+ * lifetime, not once per item that resolves through it. F4: it only fires
+ * for a resolution that actually returned `bound`.
  *
- * Returns `undefined` when nothing binds, so the graph populator falls back
- * to `metadata.service` (today's behaviour, unchanged).
+ * Returns `{ kind: "unknown" }` when nothing in the config map claims the
+ * item — the graph populator falls back to `metadata.service` for that case
+ * only (today's behaviour, unchanged). `{ kind: "excluded" }` means a config
+ * claimed the item but I-1/F2 excluded it: the caller must bind nothing.
  */
 export function buildServiceIdentityResolver(
   configs: ReadonlyMap<string, ServiceConfig>,
   onAmbiguousBinding?: AmbiguousBindingWarner,
 ): ServiceIdentityResolver {
+  // F3: computed once here, from `configs` alone — see `indexAmbiguousBindings`.
+  const pagerdutyAmbiguity = indexAmbiguousBindings(
+    configs,
+    "pagerduty_service_id",
+    (cfg) => cfg.pagerdutyServices,
+  );
+  const repoUrnAmbiguity = indexAmbiguousBindings(configs, "repo_urn", (cfg) =>
+    cfg.repos.map((urn) => `${urn.provider}:${urn.providerId}`),
+  );
+
   return (item) => {
     const nimbusServiceId = stringField(item.metadata, "nimbus_service_id");
     if (nimbusServiceId !== undefined) {
       const cfg = configs.get(nimbusServiceId);
       if (cfg !== undefined) {
-        return deploymentEnvironmentAllowed(item, cfg) ? nimbusServiceId : undefined;
+        return deploymentBindingResolution(item, cfg);
       }
     }
 
@@ -165,15 +292,13 @@ export function buildServiceIdentityResolver(
       );
       if (claimants.length > 0) {
         const winner = claimants[0] as ServiceConfig;
-        if (claimants.length > 1) {
-          onAmbiguousBinding?.({
-            bindingKind: "pagerduty_service_id",
-            key: pagerdutyServiceId,
-            chosenServiceId: winner.serviceId,
-            candidateServiceIds: claimants.map((c) => c.serviceId),
-          });
-        }
-        return deploymentEnvironmentAllowed(item, winner) ? winner.serviceId : undefined;
+        const resolution = deploymentBindingResolution(item, winner);
+        reportAmbiguityIfBound(
+          pagerdutyAmbiguity.get(pagerdutyServiceId),
+          resolution,
+          onAmbiguousBinding,
+        );
+        return resolution;
       }
     }
 
@@ -182,17 +307,12 @@ export function buildServiceIdentityResolver(
     );
     if (repoClaimants.length > 0) {
       const winner = repoClaimants[0] as ServiceConfig;
-      if (repoClaimants.length > 1) {
-        onAmbiguousBinding?.({
-          bindingKind: "repo_urn",
-          key: matchingRepoUrnKey(item.metadata, winner),
-          chosenServiceId: winner.serviceId,
-          candidateServiceIds: repoClaimants.map((c) => c.serviceId),
-        });
-      }
-      return deploymentEnvironmentAllowed(item, winner) ? winner.serviceId : undefined;
+      const resolution = deploymentBindingResolution(item, winner);
+      const urnKey = matchingRepoUrnKey(item.metadata, winner);
+      reportAmbiguityIfBound(repoUrnAmbiguity.get(urnKey), resolution, onAmbiguousBinding);
+      return resolution;
     }
 
-    return undefined;
+    return { kind: "unknown" };
   };
 }

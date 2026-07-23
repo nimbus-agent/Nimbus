@@ -22,6 +22,25 @@ export type IndexedItemGraphInput = {
 };
 
 /**
+ * F1: structurally mirrors `metrics/service-identity.ts`'s
+ * `ServiceIdentityResolution` — declared independently here (not imported)
+ * for the same reason `ResolveServiceId` below is structural rather than an
+ * import: `graph/` must stay free of a `metrics/` import (`audit:boundaries`
+ * depends on this). `bound`/`excluded`/`unknown` are distinguished on
+ * purpose: `excluded` (a `ServiceConfig` claimed the item but I-1/F2's
+ * deploy-environment gate rejected it) must bind nothing, while `unknown`
+ * (nothing in the config map claims the item at all) is the only case where
+ * `syncTimelineEventGraph` may still fall back to `metadata.service`. A bare
+ * `undefined` could not tell these apart, which is exactly what let a
+ * gate-excluded preview deployment get silently re-bound via the
+ * `metadata.service` fallback.
+ */
+export type ResolveServiceIdResult =
+  | { readonly kind: "bound"; readonly serviceId: string }
+  | { readonly kind: "excluded" }
+  | { readonly kind: "unknown" };
+
+/**
  * Matches `SyncContext["resolveServiceId"]` (`sync/types.ts`). Threaded down
  * to `syncTimelineEventGraph` only — every other populator branch keys off
  * `metadata.repo`/`metadata.channel`/etc, not a service-identity binding.
@@ -30,7 +49,7 @@ export type ResolveServiceId = (item: {
   readonly service: string;
   readonly type: string;
   readonly metadata: Record<string, unknown>;
-}) => string | undefined;
+}) => ResolveServiceIdResult;
 
 function stringField(meta: Record<string, unknown>, key: string): string | undefined {
   const v = meta[key];
@@ -625,6 +644,28 @@ function timelineCounterparts(
 }
 
 /**
+ * F1: `resolveServiceId` returning `excluded` means a `ServiceConfig`
+ * claimed this item but I-1/F2's deploy-environment gate rejected it — the
+ * caller MUST bind nothing, so this must NOT fall back to
+ * `metadata.service`. Only `unknown` (nothing in the config map claims the
+ * item at all) or no resolver being wired at all falls back, exactly as
+ * before this fix. Falling back on `excluded` is precisely the bug F1 fixed:
+ * a gate-excluded preview deployment carrying `metadata.service` (e.g. from
+ * a future or third-party deploy connector) would otherwise silently
+ * re-bind and produce the false causal edge the gate exists to prevent.
+ */
+function resolveAffectedService(
+  row: IndexedItemGraphInput,
+  resolveServiceId: ResolveServiceId | undefined,
+): string | undefined {
+  const resolution = resolveServiceId?.(row);
+  if (resolution === undefined || resolution.kind === "unknown") {
+    return stringField(row.metadata, "service");
+  }
+  return resolution.kind === "bound" ? resolution.serviceId : undefined;
+}
+
+/**
  * Incidents and deployments are timeline anchors: the graph needs them as
  * entities so a change can be correlated with what it responded to or
  * caused. `occurredAt` is the item's `modified_at`, which every connector
@@ -638,7 +679,7 @@ function syncTimelineEventGraph(
   now: number,
   resolveServiceId: ResolveServiceId | undefined,
 ): void {
-  const affectedService = resolveServiceId?.(row) ?? stringField(row.metadata, "service");
+  const affectedService = resolveAffectedService(row, resolveServiceId);
   const entityId = upsertGraphEntity(db, {
     type: entityType,
     externalId: row.id,

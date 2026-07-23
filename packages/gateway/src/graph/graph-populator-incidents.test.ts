@@ -657,7 +657,11 @@ test("I-1: a Vercel preview deployment does not correlate, but a production depl
   ]);
 });
 
-test("I-1: a deployment with no environment signal at all still binds and correlates (fail-open decision)", () => {
+// F2: a deployment with no environment signal at all now resolves EXCLUDED
+// (fail CLOSED), not bound. Was "fail-open decision" before F2 — see
+// service-identity.ts's F2 doc comment for why the "Vercel always writes
+// target" assumption this used to rely on is not trustworthy.
+test("F2: a deployment with no environment signal at all does not correlate (fails closed)", () => {
   const db = freshDb();
   const t = Date.now();
   const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
@@ -684,7 +688,120 @@ test("I-1: a deployment with no environment signal at all still binds and correl
     metadata: { pagerduty_service_id: "PSVC1" },
   });
 
+  expect(correlations(db)).toEqual([]);
+});
+
+// F2: keep proving the converse — a deployment WITH a production signal
+// still correlates, so F2's fail-closed change didn't just silence
+// everything.
+test("F2: a deployment with an explicit production environment still correlates", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  upsertIndexedItemForSync(ctx, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-with-env-signal",
+    title: "Deploy checkout",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { repo: "acme/checkout", environment: "prod" },
+  });
+  upsertIndexedItemForSync(ctx, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-with-env-signal",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: { pagerduty_service_id: "PSVC1" },
+  });
+
   expect(correlations(db)).toEqual([
-    { from: "deployment:github:deploy-no-env-signal", to: "incident:pagerduty:PD-no-env-signal" },
+    {
+      from: "deployment:github:deploy-with-env-signal",
+      to: "incident:pagerduty:PD-with-env-signal",
+    },
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// F1: `resolveServiceId` returning "excluded" must bind nothing — the graph
+// populator must NOT fall back to `metadata.service` in that case. A bare
+// `undefined` couldn't tell "explicitly excluded" apart from "no binding
+// known", and the `?? stringField(row.metadata, "service")` fallback
+// silently re-bound a gate-excluded preview deployment from
+// `metadata.service`, producing the exact false causal edge I-1 exists to
+// prevent.
+// ---------------------------------------------------------------------------
+
+test("F1: a Vercel preview deployment carrying metadata.service does not correlate — the environment-gate exclusion is not bypassed by the metadata.service fallback", () => {
+  const db = freshDb();
+  const t = Date.now();
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  upsertIndexedItemForSync(ctx, {
+    service: "vercel",
+    type: "deployment",
+    externalId: "dpl_preview",
+    title: "Deploy checkout (preview)",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { repo: "acme/checkout", target: "preview", service: "checkout" },
+  });
+  upsertIndexedItemForSync(ctx, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-f1",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: { pagerduty_service_id: "PSVC1" },
+  });
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("F1: a deployment resolveServiceId can't claim (unknown) still falls back to metadata.service, unchanged", () => {
+  const db = freshDb();
+  const t = Date.now();
+  // No ServiceConfig binds "acme/other" or "PSVC-OTHER" — the resolver
+  // returns `unknown` for this deployment, which must still fall back.
+  const configs = new Map([["checkout", CHECKOUT_SERVICE_CONFIG]]);
+  const ctx = ctxWithResolver(db, configs);
+
+  upsertIndexedItemForSync(ctx, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-unknown-binding",
+    title: "Deploy other",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { service: "other-service" },
+  });
+  upsertIndexedItemForSync(ctx, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-unknown-binding",
+    title: "Other 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: { service: "other-service" },
+  });
+
+  expect(correlations(db)).toEqual([
+    {
+      from: "deployment:github:deploy-unknown-binding",
+      to: "incident:pagerduty:PD-unknown-binding",
+    },
   ]);
 });

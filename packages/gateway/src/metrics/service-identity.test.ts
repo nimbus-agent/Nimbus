@@ -28,9 +28,9 @@ describe("buildServiceIdentityResolver", () => {
         resolve({
           service: "deploy-annotate",
           type: "deployment",
-          metadata: { nimbus_service_id: "checkout" },
+          metadata: { nimbus_service_id: "checkout", environment: "prod" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
     it("falls through when the id does not name a known service", () => {
@@ -41,7 +41,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { nimbus_service_id: "unknown-svc" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
   });
 
@@ -56,10 +56,10 @@ describe("buildServiceIdentityResolver", () => {
           type: "incident",
           metadata: { pagerduty_service_id: "PSVC2" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
-    it("returns undefined when no ServiceConfig claims the pagerduty service id", () => {
+    it("returns unknown when no ServiceConfig claims the pagerduty service id", () => {
       const resolve = buildServiceIdentityResolver(configs(baseConfig()));
       expect(
         resolve({
@@ -67,7 +67,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "incident",
           metadata: { pagerduty_service_id: "PSVC-UNMAPPED" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
   });
 
@@ -87,7 +87,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "pr",
           metadata: { repo: "acme/checkout" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
     it("resolves a gitlab repo URN via metadata.project", () => {
@@ -105,7 +105,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "pr",
           metadata: { project: "group/checkout" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
     it("resolves a jenkins URN via metadata.jobName", () => {
@@ -123,7 +123,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "ci_run",
           metadata: { jobName: "checkout-pipeline" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
     it("never matches a circleci URN (no external id in this item shape)", () => {
@@ -141,10 +141,10 @@ describe("buildServiceIdentityResolver", () => {
           type: "ci_run",
           metadata: {},
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
 
-    it("returns undefined when no repo matches", () => {
+    it("returns unknown when no repo matches", () => {
       const resolve = buildServiceIdentityResolver(configs(baseConfig()));
       expect(
         resolve({
@@ -152,7 +152,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "pr",
           metadata: { repo: "acme/some-other-repo" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
   });
 
@@ -170,7 +170,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "incident",
           metadata: { nimbus_service_id: "search", pagerduty_service_id: "PSVC1" },
         }),
-      ).toBe("search");
+      ).toEqual({ kind: "bound", serviceId: "search" });
     });
 
     it("prefers pagerduty_service_id over a repo match", () => {
@@ -192,9 +192,9 @@ describe("buildServiceIdentityResolver", () => {
         resolve({
           service: "vercel",
           type: "deployment",
-          metadata: { pagerduty_service_id: "PSVC1", repo: "acme/other" },
+          metadata: { pagerduty_service_id: "PSVC1", repo: "acme/other", environment: "prod" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
   });
 
@@ -209,10 +209,10 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { repo: "acme/checkout", target: "production" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
-    it("does not bind a deployment whose metadata.target is excluded by deployEnvironments", () => {
+    it("excludes a deployment whose metadata.target is excluded by deployEnvironments", () => {
       const resolve = buildServiceIdentityResolver(
         configs(baseConfig({ deployEnvironments: ["prod"] })),
       );
@@ -222,7 +222,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { repo: "acme/checkout", target: "preview" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "excluded" });
     });
 
     it("prefers the canonical metadata.environment over metadata.target when both are present", () => {
@@ -235,10 +235,15 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { repo: "acme/checkout", environment: "staging", target: "preview" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
-    it("binds a deployment with no environment signal at all (fail-open)", () => {
+    // F2: a deployment with no environment signal at all now resolves
+    // `excluded` (fail CLOSED) — the prior fail-open behavior is exactly
+    // what this test used to assert; see service-identity.ts's F2 doc for
+    // why an unverified "Vercel always writes target" assumption is not
+    // trustworthy enough to bind on.
+    it("F2: excludes (fails closed) a deployment with no environment signal at all", () => {
       const resolve = buildServiceIdentityResolver(
         configs(baseConfig({ deployEnvironments: ["prod"] })),
       );
@@ -248,7 +253,20 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { repo: "acme/checkout" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "excluded" });
+    });
+
+    it("F2: still binds a deployment whose metadata.target is production", () => {
+      const resolve = buildServiceIdentityResolver(
+        configs(baseConfig({ deployEnvironments: ["prod"] })),
+      );
+      expect(
+        resolve({
+          service: "vercel",
+          type: "deployment",
+          metadata: { repo: "acme/checkout", target: "production" },
+        }),
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
     it("does not gate a non-deployment item type even when it carries a non-matching target", () => {
@@ -261,7 +279,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "incident",
           metadata: { repo: "acme/checkout", target: "preview" },
         }),
-      ).toBe("checkout");
+      ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
   });
 
@@ -280,7 +298,7 @@ describe("buildServiceIdentityResolver", () => {
         type: "incident",
         metadata: { pagerduty_service_id: "PSVC1" },
       });
-      expect(result).toBe("checkout");
+      expect(result).toEqual({ kind: "bound", serviceId: "checkout" });
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toMatchObject({
         bindingKind: "pagerduty_service_id",
@@ -312,7 +330,7 @@ describe("buildServiceIdentityResolver", () => {
         type: "pr",
         metadata: { repo: "acme/mono" },
       });
-      expect(result).toBe("checkout");
+      expect(result).toEqual({ kind: "bound", serviceId: "checkout" });
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toMatchObject({
         bindingKind: "repo_urn",
@@ -334,10 +352,81 @@ describe("buildServiceIdentityResolver", () => {
       });
       expect(warnings).toHaveLength(0);
     });
+
+    // F3: the resolver is built once and then called for every synced item —
+    // an ambiguous key hit by many items must still warn only once, not once
+    // per item.
+    it("F3: warns only once total across many items that all hit the same ambiguous key, not once per item", () => {
+      const warnings: unknown[] = [];
+      const resolve = buildServiceIdentityResolver(
+        configs(
+          baseConfig({ serviceId: "checkout", pagerdutyServices: ["PSVC1"] }),
+          baseConfig({ serviceId: "checkout-mono", pagerdutyServices: ["PSVC1"], repos: [] }),
+        ),
+        (w) => warnings.push(w),
+      );
+
+      for (let i = 0; i < 50; i++) {
+        resolve({
+          service: "pagerduty",
+          type: "incident",
+          metadata: { pagerduty_service_id: "PSVC1" },
+        });
+      }
+
+      expect(warnings).toHaveLength(1);
+    });
+
+    // F4: an ambiguous binding behind a deployment that the I-1/F2
+    // environment gate excludes must not be reported — the log would
+    // otherwise assert a `chosenServiceId` for a resolve that returned
+    // nothing. Once the SAME key later actually binds, it warns exactly
+    // once, for that bound resolution only.
+    it("F4: does not warn for an ambiguous binding the environment gate excluded; warns once it actually binds", () => {
+      const warnings: unknown[] = [];
+      const resolve = buildServiceIdentityResolver(
+        configs(
+          baseConfig({
+            serviceId: "checkout",
+            pagerdutyServices: [],
+            repos: [{ provider: "github", providerId: "acme/mono" }],
+            deployEnvironments: ["prod"],
+          }),
+          baseConfig({
+            serviceId: "billing",
+            pagerdutyServices: [],
+            repos: [{ provider: "github", providerId: "acme/mono" }],
+            deployEnvironments: ["prod"],
+          }),
+        ),
+        (w) => warnings.push(w),
+      );
+
+      const excluded = resolve({
+        service: "vercel",
+        type: "deployment",
+        metadata: { repo: "acme/mono", target: "preview" },
+      });
+      expect(excluded).toEqual({ kind: "excluded" });
+      expect(warnings).toHaveLength(0);
+
+      const bound = resolve({
+        service: "vercel",
+        type: "deployment",
+        metadata: { repo: "acme/mono", target: "production" },
+      });
+      expect(bound).toEqual({ kind: "bound", serviceId: "checkout" });
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        bindingKind: "repo_urn",
+        chosenServiceId: "checkout",
+        candidateServiceIds: ["checkout", "billing"],
+      });
+    });
   });
 
   describe("no match anywhere", () => {
-    it("returns undefined for an item with none of the bound fields", () => {
+    it("returns unknown for an item with none of the bound fields", () => {
       const resolve = buildServiceIdentityResolver(configs(baseConfig()));
       expect(
         resolve({
@@ -345,10 +434,10 @@ describe("buildServiceIdentityResolver", () => {
           type: "deployment",
           metadata: { uid: "dpl_123", state: "READY" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
 
-    it("returns undefined against an empty config map", () => {
+    it("returns unknown against an empty config map", () => {
       const resolve = buildServiceIdentityResolver(new Map());
       expect(
         resolve({
@@ -356,7 +445,7 @@ describe("buildServiceIdentityResolver", () => {
           type: "incident",
           metadata: { pagerduty_service_id: "PSVC1" },
         }),
-      ).toBeUndefined();
+      ).toEqual({ kind: "unknown" });
     });
   });
 });
