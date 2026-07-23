@@ -154,8 +154,10 @@ describe("runWhy", () => {
     const db = freshDb();
     seedWhyFixture(db, { issue: true, pr: true, blame: { lineNo: 42 } });
 
-    // Polysemy guard: a person→incident `resolves` edge between two extra
-    // entities must NOT surface in the ticket lane.
+    // Polysemy guard #1: a person→incident `resolves` edge between two extra
+    // entities, unconnected to the PR, must NOT surface in the ticket lane.
+    // (Excluded regardless of type scoping — `WHERE r.from_id = ?` alone
+    // would already reject it, since its from_id isn't the PR entity.)
     const personId = upsertGraphEntity(db, {
       type: "person",
       externalId: "person:bob",
@@ -168,12 +170,41 @@ describe("runWhy", () => {
     });
     upsertGraphRelation(db, personId, incidentId, "resolves", Date.now());
 
+    // Polysemy guard #2 (the falsifiable one): a stray `resolves` edge FROM
+    // THE PR ENTITY ITSELF to a non-issue entity. `WHERE r.from_id = ?` alone
+    // would happily include this row — only the `ie.type = 'issue'` join
+    // scope on the target endpoint excludes it. This is what makes the test
+    // fail if that type scope is removed.
+    const prRow = db.query("SELECT id FROM graph_entity WHERE type = 'pr' LIMIT 1").get() as {
+      id: string;
+    };
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "PD-100",
+      title: "Another unrelated incident",
+      bodyPreview: "",
+      modifiedAt: Date.now(),
+      syncedAt: Date.now(),
+      metadata: {},
+    });
+    const strayIncidentRow = db
+      .query(
+        `SELECT ge.id AS id FROM graph_entity ge
+           JOIN item i ON i.id = ge.external_id
+          WHERE ge.type = 'incident' AND i.external_id = 'PD-100'`,
+      )
+      .get() as { id: string };
+    const strayIncidentId = strayIncidentRow.id;
+    upsertGraphRelation(db, prRow.id, strayIncidentId, "resolves", Date.now());
+
     const brief = await runWhy({ ref: refAt(42) }, ctxFor(db));
 
     const ticketFindings = brief.findings.filter((f) => f.lane === "ticket");
     expect(ticketFindings).toHaveLength(1);
     expect(ticketFindings[0]?.title).toContain("NIM-88");
     expect(ticketFindings.every((f) => f.entityId !== incidentId)).toBe(true);
+    expect(ticketFindings.every((f) => f.entityId !== strayIncidentId)).toBe(true);
   });
 
   test("discussion lane: message → mentions → issue surfaces the thread", async () => {
