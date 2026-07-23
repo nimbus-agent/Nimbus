@@ -548,18 +548,26 @@ const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
 type TimelineRow = { id: string; occurred_at: number };
 
 /**
- * Counterparts within the window, ordered NEAREST-FIRST so `LIMIT 20` keeps the
- * most plausibly causal ones.
+ * Every counterpart within the window — unbounded. The 2-hour same-service
+ * window (`CORRELATION_WINDOW_MS`) is itself the only cap: it already bounds
+ * the result to genuine activity, so a row cap on top of it is not a safety
+ * net. Both call sites clear their entire owned direction before re-emitting
+ * (see `syncTimelineEventGraph`'s clear/emit pair), so this query's result
+ * MUST be the complete in-window set — a truncated re-emit after a full clear
+ * silently destroys edges the other side legitimately created. If a service
+ * genuinely produces 200 incidents within two hours of a deploy, 200 edges is
+ * the correct answer; ranking or truncating for display belongs to a reader
+ * (e.g. the `why` agent), where it is visible rather than destructive.
  *
- * The direction of "nearest" differs per side, which is why it is a parameter
- * rather than a constant. A deployment looks FORWARD (`[D, D+W]`), so nearest is
- * the earliest incident — `ASC`. An incident looks BACKWARD (`[I-W, I]`), so
- * nearest is the latest deployment — `DESC`. Using `ASC` for both silently keeps
- * the 20 most temporally DISTANT deploys before an incident and drops the ones
- * immediately preceding it.
+ * Results are still ordered NEAREST-FIRST, purely for determinism now that
+ * there is no cap for the ordering to protect. The direction of "nearest"
+ * differs per side, which is why it is a parameter rather than a constant. A
+ * deployment looks FORWARD (`[D, D+W]`), so nearest is the earliest incident
+ * — `ASC`. An incident looks BACKWARD (`[I-W, I]`), so nearest is the latest
+ * deployment — `DESC`.
  *
- * The `id` tie-break makes the ordering deterministic when two entities share a
- * timestamp; SQLite is stable in practice but does not guarantee it.
+ * The `id` tie-break makes the ordering deterministic when two entities share
+ * a timestamp; SQLite is stable in practice but does not guarantee it.
  */
 function timelineCounterparts(
   db: Database,
@@ -578,8 +586,7 @@ function timelineCounterparts(
         WHERE type = ?
           AND json_extract(metadata, '$.affectedService') = ?
           AND CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) BETWEEN ? AND ?
-        ORDER BY occurred_at ${order}, id ASC
-        LIMIT 20`,
+        ORDER BY occurred_at ${order}, id ASC`,
     )
     .all(counterpartType, affectedService, windowFrom, windowTo) as TimelineRow[];
 }

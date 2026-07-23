@@ -371,13 +371,14 @@ test("an incident fans in from every deployment of the same service in its windo
   ]);
 });
 
-test("an incident with more than 20 deployments in its window keeps the ones nearest to it", () => {
+test("an incident with more than 20 deployments in its window correlates with all of them, nearest included", () => {
   const db = freshDb();
   const t = Date.now();
 
   // 25 deployments of the same service, spread across the two hours before
   // the incident. d24 is nearest (4 minutes before); d00 is farthest (100
-  // minutes before) but still inside the window.
+  // minutes before) but still inside the window. There is no row cap: the
+  // 2-hour window is the only bound, so every one of the 25 must correlate.
   for (let i = 0; i < 25; i++) {
     const minutesBefore = 4 + 4 * (24 - i);
     const at = t - minutesBefore * 60 * 1000;
@@ -396,10 +397,71 @@ test("an incident with more than 20 deployments in its window keeps the ones nea
   seedIncident(db, t, "checkout");
 
   const rels = correlations(db);
-  expect(rels).toHaveLength(20);
-  // The nearest deploy is the most plausibly causal one and must survive
-  // the LIMIT 20 truncation.
+  expect(rels).toHaveLength(25);
+  // The nearest deploy (most plausibly causal) and the farthest-but-still-
+  // in-window deploy are both present — nothing is truncated.
   expect(rels.map((r) => r.from)).toContain("deployment:github:d24");
+  expect(rels.map((r) => r.from)).toContain("deployment:github:d00");
+});
+
+test("re-syncing the deployment after 30 incidents in its window preserves every correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+
+  for (let i = 0; i < 30; i++) {
+    const at = t + (i + 1) * 60 * 1000;
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: `PD-${i}`,
+      title: `Checkout 500s ${i}`,
+      bodyPreview: "",
+      modifiedAt: at,
+      syncedAt: at,
+      metadata: { service: "checkout" },
+    });
+  }
+
+  expect(correlations(db)).toHaveLength(30);
+
+  // Re-syncing the deployment clears its ENTIRE outgoing direction (every
+  // `correlates_with` edge from this deployment) and re-emits from scratch.
+  // A cap on the re-emit side would destroy the surplus edges the incident
+  // side legitimately created.
+  seedDeploy(db, t, "checkout");
+
+  expect(correlations(db)).toHaveLength(30);
+});
+
+test("re-syncing the incident after 30 deployments in its window preserves every correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+
+  for (let i = 0; i < 30; i++) {
+    const at = t - (i + 1) * 60 * 1000;
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "deployment",
+      externalId: `deploy-${i}`,
+      title: `Deploy checkout v${i}`,
+      bodyPreview: "",
+      modifiedAt: at,
+      syncedAt: at,
+      metadata: { service: "checkout" },
+    });
+  }
+
+  seedIncident(db, t, "checkout");
+  expect(correlations(db)).toHaveLength(30);
+
+  // Re-syncing the incident clears its ENTIRE incoming direction (every
+  // `correlates_with` edge into this incident) and re-emits from scratch.
+  // A cap on the re-emit side would destroy the surplus edges the
+  // deployment side legitimately created.
+  seedIncident(db, t, "checkout");
+
+  expect(correlations(db)).toHaveLength(30);
 });
 
 // ---------------------------------------------------------------------------
