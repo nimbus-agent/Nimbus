@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const IS_WIN = process.platform === "win32";
-const PROGRAM_FILES = process.env.ProgramFiles ?? "C:\\Program Files";
+const PROGRAM_FILES = process.env["ProgramFiles"] ?? "C:\\Program Files";
 
 function resolveBin(candidates: readonly string[]): string {
   for (const p of candidates) {
@@ -31,12 +31,12 @@ const res = spawnSync(BASH_BIN, [scriptPath], {
     // Prepend standard Bun path and Git paths to PATH for Windows Git Bash compatibility
     PATH: IS_WIN
       ? [
-          win32.join(process.env.USERPROFILE ?? "", ".bun", "bin"),
+          win32.join(process.env["USERPROFILE"] ?? "", ".bun", "bin"),
           win32.join(PROGRAM_FILES, "Git", "bin"),
           win32.join(PROGRAM_FILES, "Git", "usr", "bin"),
-          process.env.PATH ?? "",
+          process.env["PATH"] ?? "",
         ].join(delimiter)
-      : process.env.PATH,
+      : process.env["PATH"],
   },
 });
 

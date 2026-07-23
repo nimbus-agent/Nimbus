@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 function windowsTaskkillExe(): string {
-  const root = process.env.SystemRoot ?? String.raw`C:\Windows`;
+  const root = process.env["SystemRoot"] ?? String.raw`C:\Windows`;
   return join(root, "System32", "taskkill.exe");
 }
 

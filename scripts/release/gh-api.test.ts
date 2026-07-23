@@ -23,7 +23,7 @@ describe("createGitHubApi", () => {
     });
     const rel = await api.getReleaseByTag("v1.2.3");
     expect(cap.url).toBe("https://api.github.com/repos/o/r/releases/tags/v1.2.3");
-    expect(cap.headers?.authorization).toBe("Bearer t0");
+    expect(cap.headers?.["authorization"]).toBe("Bearer t0");
     expect(cap.headers?.["x-github-api-version"]).toBe("2022-11-28");
     expect(rel).toEqual({ tagName: "v1.2.3", assets: [{ name: "a", size: 3 }] });
   });
