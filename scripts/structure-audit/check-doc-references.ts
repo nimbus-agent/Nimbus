@@ -79,6 +79,7 @@ const DOCS_FILES = [
   "CLAUDE.md",
   "GEMINI.md",
   "docs/architecture.md",
+  "docs/infrastructure-roadmap.md",
   "docs/SECURITY.md",
   "docs/SECURITY-INVARIANTS.md",
   "docs/security-hardening.md",
