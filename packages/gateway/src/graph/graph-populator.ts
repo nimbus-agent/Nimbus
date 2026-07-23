@@ -354,14 +354,27 @@ function syncCodeSymbolGraph(db: Database, row: IndexedItemGraphInput, now: numb
   }
 }
 
-/** Resolve commit SHAs to `commit` entities by their `<service>:<sha>` external id. */
+/**
+ * Resolve commit SHAs to `commit` entities by their `<service>:<sha>` external id.
+ *
+ * The extracted string is treated as a PREFIX of the stored SHA, anchored to the
+ * start of the SHA portion. This is load-bearing: commits are indexed with full
+ * 40-character SHAs, but people cite them in chat as 7-character short SHAs — the
+ * exact case `COMMIT_SHA_RE`'s `{7,40}` bound exists to catch. An exact-suffix
+ * match (`LIKE '%:' || ?`) matches only full-length SHAs and silently emits
+ * nothing for every realistic short-SHA mention.
+ *
+ * When a short prefix is ambiguous across services the tie-break is arbitrary,
+ * the same limitation `findIssueEntityIds` carries for duplicate ticket keys.
+ */
 function findCommitEntityIds(db: Database, shas: readonly string[]): string[] {
   const ids: string[] = [];
   for (const sha of shas) {
     const row = db
       .query(
         `SELECT id FROM graph_entity
-          WHERE type = 'commit' AND external_id LIKE '%:' || ?
+          WHERE type = 'commit'
+            AND substr(external_id, instr(external_id, ':') + 1) LIKE ? || '%'
           ORDER BY id ASC LIMIT 1`,
       )
       .get(sha) as { id?: string } | null;
