@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { emitExpertBrief, rankExpertFindings, runExpert } from "./expert.ts";
 
@@ -402,7 +403,7 @@ describe("runExpert — subPrAuthored data path", () => {
 });
 
 describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", () => {
-  test("existing reviewed relation + incident entity produces no gap for those", async () => {
+  test("existing reviewed + resolves relations and an incident entity produce no gap for those", async () => {
     const db = makePopulatedDb();
     const now = Date.now();
     // Populate graph with 'reviewed' relation so subPrReviewed returns {}
@@ -420,11 +421,18 @@ describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", ()
       "reviewed",
       now,
     ]);
-    // Populate graph with 'incident' entity so subIncidentResolved returns {}
+    // Populate graph with 'incident' entity so the entity-type check passes,
+    // AND a 'resolves' relation so the relation-emit check also passes.
     db.run(
       "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
       ["ge:inc:1", "incident", "inc:1", "Incident", "pagerduty"],
     );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:person:1",
+      "ge:inc:1",
+      "resolves",
+      now,
+    ]);
 
     const ctx = { db, notify: () => {}, sessionId: "s-reviewed-inc" };
     const brief = await runExpert({ topicOrFile: "auth" }, ctx);
@@ -432,6 +440,42 @@ describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", ()
     const cats = brief.gaps.map((g) => g.category);
     expect(cats).not.toContain("missing_relation_emit");
     expect(cats).not.toContain("missing_entity_type");
+  });
+});
+
+describe("runExpert — subIncidentResolved regression: entity exists but relation does not", () => {
+  test("indexing a real PagerDuty-shaped incident item still surfaces a gap note (no silent empty lane)", async () => {
+    const db = makePopulatedDb();
+    const now = Date.now();
+
+    // Index a real PagerDuty-shaped incident item through the same
+    // item-store path a connector sync uses. This drives the real graph
+    // populator, so `incident` graph entities genuinely exist — nothing here
+    // fabricates a `resolves` relation, because no populator emits one.
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "PD-1",
+      title: "Checkout 500s",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { service: "checkout" },
+    });
+
+    const ctx = { db, notify: () => {}, sessionId: "s-incident-entity-no-relation" };
+    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
+
+    // The old `detectMissingEntityType`-only check would find `incident`
+    // entities and silently drop this lane with no explanation at all. The
+    // lane must still explain itself via a `missing_relation_emit` gap note
+    // keyed on the `resolves` relation it actually needs.
+    const cats = brief.gaps.map((g) => g.category);
+    expect(cats).toContain("missing_relation_emit");
+    const relationGap = brief.gaps.find(
+      (g) => g.category === "missing_relation_emit" && g.detail.includes("resolves"),
+    );
+    expect(relationGap).toBeDefined();
   });
 });
 

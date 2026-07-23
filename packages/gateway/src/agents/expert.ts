@@ -293,8 +293,18 @@ async function subPrReviewed(db: Database, _input: string): Promise<SubAgentResu
 }
 
 async function subIncidentResolved(db: Database, _input: string): Promise<SubAgentResult> {
-  const gap = detectMissingEntityType(db, "incident");
-  if (gap !== null) return { gap };
+  const missingEntityGap = detectMissingEntityType(db, "incident");
+  if (missingEntityGap !== null) return { gap: missingEntityGap };
+  // `incident` entities existing is necessary but not sufficient: this lane's
+  // findings depend on the `resolves` relation (person -> incident), which no
+  // populator currently emits. Without this check, once incident entities
+  // exist the lane goes silently empty instead of explaining why.
+  const missingRelationGap = detectMissingRelationEmit(
+    db,
+    "resolves",
+    "Tracked as a graph-populator follow-up on existing PagerDuty / Sentry connectors.",
+  );
+  if (missingRelationGap !== null) return { gap: missingRelationGap };
   return {};
 }
 
