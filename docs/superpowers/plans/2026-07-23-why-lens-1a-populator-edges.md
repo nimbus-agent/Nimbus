@@ -915,14 +915,27 @@ import { type IssueRefs, extractCommitShas, extractIssueRefs } from "./graph-ref
 Add this helper above `syncMessageGraph`:
 
 ```ts
-/** Resolve commit SHAs to `commit` entities by their `<service>:<sha>` external id. */
+/**
+ * Resolve commit SHAs to `commit` entities by their `<service>:<sha>` external id.
+ *
+ * The extracted string is treated as a PREFIX of the stored SHA, anchored to the
+ * start of the SHA portion. This is load-bearing: commits are indexed with full
+ * 40-character SHAs, but people cite them in chat as 7-character short SHAs — the
+ * exact case `COMMIT_SHA_RE`'s `{7,40}` bound exists to catch. An exact-suffix
+ * match (`LIKE '%:' || ?`) matches only full-length SHAs and silently emits
+ * nothing for every realistic short-SHA mention.
+ *
+ * When a short prefix is ambiguous across services the tie-break is arbitrary,
+ * the same limitation `findIssueEntityIds` carries for duplicate ticket keys.
+ */
 function findCommitEntityIds(db: Database, shas: readonly string[]): string[] {
   const ids: string[] = [];
   for (const sha of shas) {
     const row = db
       .query(
         `SELECT id FROM graph_entity
-          WHERE type = 'commit' AND external_id LIKE '%:' || ?
+          WHERE type = 'commit'
+            AND substr(external_id, instr(external_id, ':') + 1) LIKE ? || '%'
           ORDER BY id ASC LIMIT 1`,
       )
       .get(sha) as { id?: string } | null;
@@ -1746,6 +1759,11 @@ From `2026-07-23-why-lens-1a-populator-edges-feedback.md`.
 | 2 | Backfill ordering | **Fixed, different mechanism** — and it was a bug, not an optimization. |
 | 3 | Filter all-decimal 7-char SHAs | **Rejected**, with the arithmetic recorded in Task 4 Step 1. |
 | 4 | Expression index on JSON fields | **Deferred**, premise corrected below. |
+| 5 | *(found during execution, Task 4 review)* `findCommitEntityIds` could not match short SHAs | **Fixed** — see below. |
+
+**On #5 — the plan reproduced the very bug this phase exists to fix.** Task 4's review flagged the commit lookup as Critical, and a probe confirmed it: with a commit indexed at `github:a1b2c3d4e5f6…ab` (40 chars) and a message citing `a1b2c3d` (7 chars), `external_id LIKE '%:' || ?` returns `null` — it is an exact-*suffix* match, so it only ever matches full-length SHAs. `COMMIT_SHA_RE`'s `{7,40}` bound exists precisely to catch short SHAs, and the (10/16)⁷ rationale for keeping all-decimal candidates is about short SHAs — so the lookup silently discarded the dominant real-world case. The relation would have been "declared, populated, and still empty," one level below the failure this phase was written to close.
+
+Fixed by anchoring the extracted string as a prefix of the SHA portion: `substr(external_id, instr(external_id, ':') + 1) LIKE ? || '%'`. Verified to match a 7-character prefix, still match a full 40-character SHA, and reject a non-matching prefix. `findIssueEntityIds` is unaffected — a ticket key like `NIM-88` *is* the whole suffix, so exact-suffix matching is correct there.
 
 **On #2 — it was a latent test failure, not a speed-up.** The reviewer framed it as avoiding a second pass. Checking the actual sort order shows worse: `github:acme/app#1` (the PR) sorts *before* `github:acme/app#4` (the issue), so under id-only ordering the Task 7 Step 1 test would have processed the PR against a non-existent issue entity and asserted `1` against `0`. The plan shipped a failing test. Type-ordered slicing fixes it, and a dedicated test now pins the ordering hazard.
 
