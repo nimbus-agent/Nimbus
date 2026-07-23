@@ -357,6 +357,78 @@ function throwGithubRateLimitErrorIfApplicable(
   }
 }
 
+interface FallbackPrCandidate {
+  readonly externalId: string;
+  readonly repoFull: string;
+  readonly num: number;
+}
+
+const MAX_ENRICH_PER_TICK = 10;
+
+function selectFallbackPrCandidates(db: Database, limit: number): FallbackPrCandidate[] {
+  const rows = db
+    .query(
+      `SELECT external_id, title FROM item
+         WHERE service = 'github' AND type = 'pr' AND title LIKE 'PR #%'
+         ORDER BY modified_at DESC LIMIT ?`,
+    )
+    .all(limit * 3) as { external_id: string; title: string }[]; // over-select; JS filter is exact
+  const out: FallbackPrCandidate[] = [];
+  for (const r of rows) {
+    const hash = r.external_id.lastIndexOf("#");
+    if (hash <= 0) continue;
+    const repoFull = r.external_id.slice(0, hash);
+    const num = Number.parseInt(r.external_id.slice(hash + 1), 10);
+    if (!Number.isFinite(num)) continue;
+    if (r.title !== `PR #${String(num)}`) continue; // exact fallback only
+    out.push({ externalId: r.external_id, repoFull, num });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Re-fetches pull-request detail for any indexed `pr` row still carrying the
+ * id-only `PR #<num>` fallback title (the GitHub events feed omits `title`
+ * on `PullRequestEvent` payloads). Processes up to `MAX_ENRICH_PER_TICK`
+ * rows, newest-first, sequentially through the shared rate limiter.
+ */
+export async function enrichFallbackPrTitles(
+  ctx: SyncContext,
+  pat: string,
+  now: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<number> {
+  const candidates = selectFallbackPrCandidates(ctx.db, MAX_ENRICH_PER_TICK);
+  let enriched = 0;
+  for (const c of candidates) {
+    await ctx.rateLimiter.acquire("github");
+    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), {
+      headers: buildGithubEventHeaders(pat, null),
+    });
+    if (res.status === 401) {
+      throw new UnauthenticatedError("GitHub pull detail: unauthorized (401)");
+    }
+    throwGithubRateLimitErrorIfApplicable(ctx, res, "pull detail"); // may throw RateLimitError
+    if (!res.ok) {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await res.text()) as unknown;
+    } catch {
+      continue;
+    }
+    const pr = asRecord(parsed);
+    if (pr === undefined) {
+      continue;
+    }
+    upsertPr(ctx, c.repoFull, pr, now);
+    enriched += 1;
+  }
+  return enriched;
+}
+
 async function fetchAuthenticatedLogin(ctx: SyncContext, pat: string): Promise<string> {
   await ctx.rateLimiter.acquire("github");
   const res = await fetch(USER_URL, {
