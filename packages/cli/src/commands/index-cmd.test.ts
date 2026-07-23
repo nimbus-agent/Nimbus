@@ -44,6 +44,11 @@ describe("nimbus index — top-level dispatcher", () => {
     await expect(runIndexCmd(["reembed"])).rejects.toThrow(/--model/);
   });
 
+  it("help mentions the regraph subcommand", async () => {
+    await runIndexCmd(["help"]);
+    expect(out.stdout).toContain("nimbus index regraph");
+  });
+
   it("reembed without --yes / --dry-run prints planned action and returns", async () => {
     await runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2"]);
     expect(out.stdout).toMatch(/Planned reembed/);
@@ -344,5 +349,81 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
     await expect(
       runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--yes"]),
     ).rejects.toThrow(/network down/);
+  });
+});
+
+describe("nimbus index regraph — IPC flow", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("throws when gateway is not running", async () => {
+    setFixture({});
+    await expect(runIndexCmd(["regraph"])).rejects.toThrow(/Gateway is not running/);
+  });
+
+  it("calls index.regraph with null params and prints the summary line", async () => {
+    const mock = createMockIpcClient([{ scanned: 10, graphed: 8, skipped: 0 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: mock.client.call.bind(mock.client),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["regraph"]);
+    expect(mock.calls).toEqual([{ method: "index.regraph", params: null }]);
+    expect(out.stdout).toMatch(/regraph: scanned 10, graphed 8, skipped 0/);
+    expect(out.stderr).not.toMatch(/WARN/);
+  });
+
+  it("--json prints a single JSON line", async () => {
+    const mock = createMockIpcClient([{ scanned: 3, graphed: 3, skipped: 0 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: mock.client.call.bind(mock.client),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["regraph", "--json"]);
+    expect(JSON.parse(out.stdout.trim())).toEqual({ scanned: 3, graphed: 3, skipped: 0 });
+  });
+
+  it("prints a WARN line to stderr when skipped > 0", async () => {
+    const mock = createMockIpcClient([{ scanned: 5, graphed: 3, skipped: 2 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: mock.client.call.bind(mock.client),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["regraph"]);
+    expect(out.stderr).toMatch(/WARN: 2 item\(s\) failed to graph/);
+  });
+
+  it("rejects when the index.regraph call throws", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => {
+          throw new Error("network down");
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await expect(runIndexCmd(["regraph"])).rejects.toThrow(/network down/);
   });
 });

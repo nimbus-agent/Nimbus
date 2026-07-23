@@ -29,6 +29,7 @@ import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts"
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
+import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
@@ -547,6 +548,33 @@ export async function tryDispatchIndexReembedRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchIndexRegraphRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "index.regraph") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "index.regraph requires LocalIndex");
+  }
+  try {
+    const out = await dispatchIndexRegraphRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      ...(ctx.options.configDir === undefined ? {} : { configDir: ctx.options.configDir }),
+      logger: pino({ level: "info" }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IndexRegraphRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchProfileRpc(
   ctx: ServerCtx,
   method: string,
@@ -949,7 +977,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → policy → chatops → tribal → share → egress → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-regraph → policy → chatops → tribal → share → egress → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -962,6 +990,8 @@ async function dispatchPhase4PlatformGroup(
   if (profileOutcome !== phase4RpcSkipped) return profileOutcome;
   const indexReembedOutcome = await tryDispatchIndexReembedRpc(ctx, method, params);
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
+  const indexRegraphOutcome = await tryDispatchIndexRegraphRpc(ctx, method, params);
+  if (indexRegraphOutcome !== phase4RpcSkipped) return indexRegraphOutcome;
   const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);

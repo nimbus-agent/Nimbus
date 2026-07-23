@@ -137,6 +137,26 @@ async function runReembed(args: string[]): Promise<void> {
   }
 }
 
+type RegraphSummary = { scanned: number; graphed: number; skipped: number };
+
+async function runRegraph(args: string[]): Promise<void> {
+  const json = args.includes("--json");
+  const result = await withGatewayIpc((c) => c.call<RegraphSummary>("index.regraph", null));
+  if (json) {
+    console.log(JSON.stringify(result));
+  } else {
+    // `graphed` counts items that actually wrote graph rows, not items dispatched.
+    console.log(
+      `regraph: scanned ${String(result.scanned)}, graphed ${String(result.graphed)}, skipped ${String(result.skipped)}`,
+    );
+  }
+  if (result.skipped > 0) {
+    console.error(
+      `WARN: ${String(result.skipped)} item(s) failed to graph — see the gateway log for per-item errors.`,
+    );
+  }
+}
+
 function printIndexHelp(): void {
   console.log(`nimbus index — local index maintenance (Gateway IPC)
 
@@ -149,6 +169,9 @@ Usage:
                        [--dry-run]
                        [--yes]               (required for non-dry runs)
                        [--json]
+  nimbus index regraph [--json]
+                       Re-run the graph populator over every indexed item (backfills resolves/mentions/correlates_with)
+                       Note: 'graphed' counts items that actually wrote graph rows, not items dispatched.
 
 Models (v1):
   openai:text-embedding-3-small  (1536-dim; needs vault key openai.api_key)
@@ -169,6 +192,10 @@ export async function runIndexCmd(args: string[]): Promise<void> {
   }
   if (sub === "reembed") {
     await runReembed(tail);
+    return;
+  }
+  if (sub === "regraph") {
+    await runRegraph(tail);
     return;
   }
   throw new Error(`Unknown index subcommand: ${sub}. Try: nimbus index help`);
