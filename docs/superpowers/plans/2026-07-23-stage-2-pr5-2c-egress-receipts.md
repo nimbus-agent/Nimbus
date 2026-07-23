@@ -34,7 +34,7 @@
 
 ### Task 4: Proof-of-denial rendering (TDD)
 
-- `sidebar/egress.ts` `egressRowToItem`: blocked rows get `label` prefixed `⛔ `, `description` `blocked · <relative-time>`, tooltip gains "proof of denial — stopped before dispatch"; `contextValue: "nimbusEgressDenial"` for future menu wiring.
+- `sidebar/egress.ts` `egressRowToItem`: blocked rows get a `⛔` label prefix (with a trailing space), `description` `blocked · <relative-time>`, tooltip gains "proof of denial — stopped before dispatch"; `contextValue: "nimbusEgressDenial"` for future menu wiring.
 - Tests: blocked vs authorized rendering.
 
 ### Task 5: Full gates, push, PR
