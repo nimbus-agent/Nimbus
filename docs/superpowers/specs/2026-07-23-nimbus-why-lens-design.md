@@ -15,6 +15,7 @@
 - [Correction 1 — blame is not full-file](#correction-1--blame-is-not-full-file)
 - [Correction 2 — Wave 1a is already built at eight agents](#correction-2--wave-1a-is-already-built-at-eight-agents)
 - [Correction 3 — a 10-second hover is not a hover](#correction-3--a-10-second-hover-is-not-a-hover)
+- [Correction 4 — three of the six lanes ride edges nothing emits](#correction-4--three-of-the-six-lanes-ride-edges-nothing-emits)
 - [Design](#design)
   - [Landing sequence](#landing-sequence)
   - [The `why` agent](#the-why-agent)
@@ -56,8 +57,13 @@ Two surfaces:
 
 ## Why this is buildable today
 
-Every edge the agent traverses already exists in the index. **No new graph relation type, no new
-item type, no migration, no new invariant, no HITL action type.**
+Every relation type the agent traverses is already **declared** in the schema, and every item it
+reads is already **indexed**. **No new graph relation type, no new item type, no migration, no new
+invariant, no HITL action type.**
+
+Three of those relation types are declared but never written by any populator, so a prerequisite
+phase makes them real — see [Correction 4](#correction-4--three-of-the-six-lanes-ride-edges-nothing-emits).
+That is populator work on existing tables, not schema work.
 
 | Lane | Substrate in the index today |
 | --- | --- |
@@ -121,6 +127,49 @@ expect roughly 300 ms. A single entry point cannot serve both the CLI brief and 
 The surface therefore splits in two: a synchronous **peek** for the hover and the **full agent** for
 the click-through. See [The two gateway entry points](#the-two-gateway-entry-points).
 
+## Correction 4 — three of the six lanes ride edges nothing emits
+
+**Added 2026-07-23, after auditing every `upsertGraphRelation` call site in the gateway.**
+
+The relation types are all declared in the schema (V7/V12/V26/V27/V40). Only some are ever written.
+
+| | Relation types |
+| --- | --- |
+| **Emitted by a populator** | `authored`, `targets`, `in_repo`, `depends_on`, `belongs_to`, `upstream_refs`, `reviewed`, `posted`, `opened`, `monitors`, `merged_as`, `derived_from`, `defined_in`, `backlinks` |
+| **Declared but emitted by nothing** | `resolves`, `mentions`, `correlates_with`, `affects`, `triggers`, `tests`, `fires_on`, `assigned` |
+
+The original lane table put `subTicket` on `resolves` / `mentions`, `subDiscussion` on `mentions`,
+and `subDriver` on `correlates_with` / `affects`. **All three would return zero rows on every index,
+forever** — three of six lanes permanently dark, and the headline claim about the ticket, the thread
+and the incident hollow.
+
+**Decision: emit the missing edges in the graph populator first.** `why` then traverses real edges,
+and `impact.ts` plus every future agent inherits the same benefit. The alternative — reading the
+`item` table and `item_fts` heuristically from inside the agent — was rejected as reaching around
+the graph.
+
+This makes the populator a prerequisite **phase**, not a footnote. Grounding it surfaced three
+further constraints that shape its task list:
+
+1. **`clearRelationsTouchingEntity` clobbers cross-item edges.** Every sync function opens with
+   `DELETE FROM graph_relation WHERE from_id = ? OR to_id = ?`. Today that is safe only because
+   every existing edge is emitted by the sync of its *own* `from` entity. A `mentions` edge from a
+   message to a PR would be silently deleted the next time that PR re-syncs, and would not come back
+   until the message itself re-synced. The clear must be scoped to the relation types the calling
+   sync function actually owns, on `from_id` only, before any cross-item edge is trustworthy.
+2. **`IndexedItemGraphInput` carries no body.** It is `{id, service, type, title, authorId,
+   metadata}`. Parsing ticket references out of a PR body or mention references out of a message
+   body requires widening it with `bodyPreview` — one field, one call site (`index/item-store.ts`).
+3. **`incident` and `deployment` have no graph entities at all.** Both are indexed as items by real
+   connectors and both are listed in `ITEM_LINKED_ENTITY_TYPES`, but `syncGraphFromIndexedItem` has
+   no branch for either — so nothing is ever created to correlate. `correlates_with` therefore needs
+   the entities built first. This is also why `impact.ts`'s on-call and dashboard lanes are gap
+   notes today.
+
+**Consequence for the landing sequence:** gateway step 1 splits into **1a (populator edges)** and
+**1b (the agent)**. 1a is independently valuable and independently shippable — it lights up
+`impact.ts` on its own — and 1b depends on it.
+
 ---
 
 ## Design
@@ -130,17 +179,19 @@ the click-through. See [The two gateway entry points](#the-two-gateway-entry-poi
 | # | Repo | Ships | Gate |
 | --- | --- | --- | --- |
 | **0** *(external — owned by a separate workstream)* | `nimbus-sdk` / `nimbus-client` | Fix ESM `dist/index.js` under Node; push + publish `sdk 1.5.0`, then `client 0.7.0` | not planned here; only step 3 waits on it |
-| **1** | `Nimbus` | `why` agent, `agents.why` + `agents.whyPeek`, Tauri allowlist, `nimbus why` CLI | `bun run preflight` |
+| **1a** | `Nimbus` | Graph-populator edges: scoped relation clear, `resolves`, `mentions`, `incident` + `deployment` entities, `correlates_with`, backfill | `bun run preflight`; `impact.ts` suite green |
+| **1b** | `Nimbus` | `why` agent, `agents.why` + `agents.whyPeek`, Tauri allowlist, `nimbus why` CLI | `bun run preflight` |
 | **2** | `nimbus-sdk` **1.6.0** → `nimbus-client` **0.8.0** | `why` as the ninth agent | guard units, `MockClient` parity, conformance gate |
 | **3** | `nimbus-vscode` | hover provider + `nimbus.why` command | extension test suite + marketplace release |
 
-Step 1 is a hard prerequisite for step 2 — the SDK cannot promote a type the gateway has not
-defined. Step 0 is external to this spec and progresses independently; steps 1 and 2 do not wait on
-it, and step 3 does.
+Step 1a is a hard prerequisite for 1b (the lanes need real edges), and 1b for step 2 (the SDK cannot
+promote a type the gateway has not defined). Step 0 is external to this spec and progresses
+independently; steps 1a/1b/2 do not wait on it, and step 3 does.
 
-**Therefore this spec yields three implementation plans, not one** — step 1 (gateway), step 2 (the
-SDK + client hop), step 3 (the extension). Step 1 is the only one that can start immediately, and it
-delivers the roadmap's stated acceptance criterion on its own.
+**Therefore this spec yields four implementation plans, not one** — 1a (populator edges), 1b (the
+agent), 2 (the SDK + client hop), 3 (the extension). **1a can start immediately and is independently
+valuable**: it lights up `impact.ts`'s currently-dark lanes on its own, with no dependency on `why`.
+1b delivers the roadmap's stated acceptance criterion.
 
 ### The `why` agent
 
