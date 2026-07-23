@@ -162,6 +162,7 @@
     "audit:status-drift": "bun scripts/structure-audit/check-status-drift.ts",
     "audit:action-sha-pins": "bun scripts/structure-audit/check-action-sha-pins.ts",
     "audit:consumed-by": "bun scripts/structure-audit/check-consumed-by.ts",
+    "audit:ruleset-drift": "bun scripts/structure-audit/check-ruleset-drift.ts",
     "audit:secrets": "gitleaks detect --source . --no-banner --redact --exit-code 1",
     "audit:links": "lychee --no-progress --config lychee.toml \"docs/**/*.md\" \"*.md\"",
     "lint": "biome check --error-on-warnings .",
