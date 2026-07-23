@@ -69,7 +69,7 @@ The other eight repos have a hand-copied `ci.yml`.
 | `step-security/harden-runner` | `v2.20.0` | `v2.19.4` |
 | `actions/checkout` | `v7.0.1` | `v7.0.0` |
 
-And the sharpest evidence of the pattern: **Nimbus's own preflight runs
+And the sharpest evidence: **Nimbus's own preflight runs
 `audit:action-sha-pins`** — a gate built precisely to catch stale action pins —
 scoped to one repo, while the drift it exists to catch happens one repo over,
 unwatched. `audit:consumed-by` has the same shape and the same blind spot.
@@ -77,6 +77,43 @@ unwatched. `audit:consumed-by` has the same shape and the same blind spot.
 The org `.github` repo already hosts cross-repo composite actions
 (`verify-npm-provenance`, `probe-publish-token`), so the promotion path exists
 and was simply never extended to workflows.
+
+### The named pattern: controls stop where they were written
+
+The statement above is the symptom. Investigating three unrelated areas of this
+program turned up the same failure three times, and naming it changes what the
+sub-programs are for.
+
+| Control | Written in | Covers | Where the risk actually is | Propagation |
+| --- | --- | --- | --- | --- |
+| `audit:action-sha-pins`, `audit:consumed-by` | `Nimbus` | `Nimbus` | The satellites — pins already drifted | monorepo → satellites, never made |
+| `.coderabbit.yaml` (tuned, with `path_instructions`) | the 4 satellites | those 4 | `Nimbus` — 30 invariants, reviewed stock | satellites → monorepo, never made |
+| `ci-secrets.md` "canonical inventory of **every** secret" | when authored | the secrets known then | `secret-health.yml`'s own App credentials, absent from it | forward in time, never made |
+
+**Two of the three point in opposite directions.** That is the load-bearing
+detail. If every gap ran monorepo → satellites, the story would be "the monorepo
+is ahead and the satellites need to catch up," and the fix would be a
+propagation *direction*. It does not: the best-tuned review configuration in the
+org lives in the four smallest repos and never reached the largest. The third
+instance does not travel through space at all — it is a completeness claim that
+was true when written and was never re-checked.
+
+So the root cause is not that one repo is ahead. It is that **a control here is
+scoped to whatever context its author happened to be in, and nothing carries it
+further** — not to another repo, not to a later day. Each of the three was
+correct at the moment it was written and silently stopped being sufficient.
+
+This is the failure mode the
+[operating principle](#operating-principle) already targets, which is why it is
+borrowed rather than invented: a control that has stopped covering the risk looks
+exactly like a control that is passing. Only a gate that would go *red* can tell
+the difference.
+
+**Consequence for every sub-program below.** The question a sub-program must
+answer is not "does this control exist?" but **"what makes this control
+propagate?"** That is why each gate in the table below is org-wide or scheduled
+rather than repo-local, and it is the reason P1 is sequenced first — it is
+specifically the propagation mechanism, not merely a tidier `ci.yml`.
 
 **A second structural fact shapes P3.** There are no human reviewers. Of the last
 80 merged PRs org-wide: 61 by `asafgolombek`, 18 by `nimbus-release-bot[bot]`,
@@ -120,6 +157,12 @@ Nimbus-aware review is likely reachable by writing the monorepo a
 the PAL import ban. Days, not weeks. Whether a Claude-based review action is
 *still* needed afterwards becomes a genuine open decision, answered by evidence
 rather than pre-committed.
+
+This is instance 2 of
+[the named pattern](#the-named-pattern-controls-stop-where-they-were-written),
+and the one that runs satellites → monorepo. It is the reason that section can
+claim the org has no propagation mechanism in *either* direction rather than
+merely a lagging periphery.
 
 ---
 
@@ -250,6 +293,10 @@ registration and treats it as part of the deliverable.
 | **P5** | Org Legibility | S | Actions-only | Dashboard regenerates on schedule; stale downstream and expiring secrets surface before they bite; `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md` |
 
 ### P1 — Org CI Foundation
+
+**P1 is the propagation mechanism.** Everything else in the program is a control;
+this is the thing that carries controls past the repo they were written in. That
+is why it is first, and why "a tidier `ci.yml`" undersells it.
 
 Promote the reusable-workflow pattern from repo scope to org scope. The org
 `.github` repo gains `_ci-npm-package.yml` (consumed by `nimbus-sdk`,
@@ -402,10 +449,15 @@ Actions secret the workflows consume. Three are missing:
 
 **The two missing App credentials belong to `secret-health.yml` — the workflow
 whose job is monitoring secret health.** The monitor is invisible to the
-inventory it exists to serve, which is the same shape as `audit:action-sha-pins`
-auditing every repo except the drift next door. `nimbus-secret-auditor` is
-installed org-wide with `all` repository selection, so this is an App credential
-sitting outside the rotation inventory.
+inventory it exists to serve. `nimbus-secret-auditor` is installed org-wide with
+`all` repository selection, so this is an App credential sitting outside the
+rotation inventory.
+
+This is instance 3 of
+[the named pattern](#the-named-pattern-controls-stop-where-they-were-written) —
+the one that fails forward in time rather than across repos. The inventory was
+complete when written; `secret-health.yml` and `_perf.yml` added credentials
+afterwards and nothing carried the claim forward.
 
 A doc claiming completeness while incomplete is worse than one that is public,
 because the incompleteness is what people act on. **P5's gate therefore includes
