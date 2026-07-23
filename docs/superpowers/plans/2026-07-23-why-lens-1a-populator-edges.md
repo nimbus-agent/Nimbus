@@ -1094,11 +1094,31 @@ function syncTimelineEventGraph(
 `syncGraphFromIndexedItem` does not currently receive the item's `modified_at`. Rather than widen the input a second time, read it back — the row was written immediately before the populator call, so it is always present:
 
 ```ts
+/**
+ * Read the item's event time back from the row written immediately before this
+ * populator call. `upsertIndexedItem` inserts and then calls the populator
+ * synchronously on the same handle, so the row is always present on the
+ * production path.
+ *
+ * A missing row therefore means the caller reached the populator without
+ * writing the item — a programming error, and the only way to get here is a
+ * direct `syncGraphFromIndexedItem` call that skipped the insert (an idiom six
+ * sibling test files already use for other item types). Throw rather than
+ * default: Task 6 correlates deployments to incidents on this timestamp, so a
+ * fabricated `Date.now()` would yield a confidently WRONG correlation instead
+ * of an obvious failure.
+ */
 function occurredAtForItem(db: Database, itemId: string): number {
   const row = db.query("SELECT modified_at FROM item WHERE id = ?").get(itemId) as
     | { modified_at: number }
     | null;
-  return row?.modified_at ?? Date.now();
+  if (row === null) {
+    throw new Error(
+      `occurredAtForItem: no item row for "${itemId}" — the populator was called without ` +
+        "writing the item first; the timeline entity would carry a fabricated timestamp.",
+    );
+  }
+  return row.modified_at;
 }
 ```
 
@@ -1760,6 +1780,9 @@ From `2026-07-23-why-lens-1a-populator-edges-feedback.md`.
 | 3 | Filter all-decimal 7-char SHAs | **Rejected**, with the arithmetic recorded in Task 4 Step 1. |
 | 4 | Expression index on JSON fields | **Deferred**, premise corrected below. |
 | 5 | *(found during execution, Task 4 review)* `findCommitEntityIds` could not match short SHAs | **Fixed** — see below. |
+| 6 | *(found during execution, Task 5 review)* `occurredAtForItem` silently fabricated a `Date.now()` timestamp | **Fixed** — throws instead. |
+
+**On #6 — a silent default that would have produced a confidently wrong answer.** The plan's `occurredAtForItem` ended `?? Date.now()`. On the production path that branch is unreachable: `upsertIndexedItem` inserts the row and then calls the populator synchronously on the same `bun:sqlite` handle. But `syncGraphFromIndexedItem` is exported, and six sibling test files already call it directly with no item row — an established local idiom. None passes `incident`/`deployment` today, so the fallback is latent rather than live; the moment one does, the entity gets a fabricated `occurredAt`, and Task 6 correlates deployments to incidents *on that timestamp*. The failure mode is a wrong correlation, not a missing one — strictly worse than an error. Now throws with a message naming the cause.
 
 **On #5 — the plan reproduced the very bug this phase exists to fix.** Task 4's review flagged the commit lookup as Critical, and a probe confirmed it: with a commit indexed at `github:a1b2c3d4e5f6…ab` (40 chars) and a message citing `a1b2c3d` (7 chars), `external_id LIKE '%:' || ?` returns `null` — it is an exact-*suffix* match, so it only ever matches full-length SHAs. `COMMIT_SHA_RE`'s `{7,40}` bound exists precisely to catch short SHAs, and the (10/16)⁷ rationale for keeping all-decimal candidates is about short SHAs — so the lookup silently discarded the dominant real-world case. The relation would have been "declared, populated, and still empty," one level below the failure this phase was written to close.
 
