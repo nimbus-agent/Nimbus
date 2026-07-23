@@ -9,7 +9,11 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs (cheap, the branch head moved), but NEVER cancel a
+  # push to a protected branch: consecutive merges share this group key, so
+  # `true` here means merge N+1 kills merge N's validation and the commit that
+  # actually ships is never fully tested. Measured at 22 cancelled / 40 runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
