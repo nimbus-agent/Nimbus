@@ -241,3 +241,157 @@ test("re-syncing an incident out of the window retires the stale correlation", (
 
   expect(correlations(db)).toEqual([]);
 });
+
+test("re-syncing a deployment without a service retires the correlation it emitted", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The deployment's service classification is retracted.
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-9",
+    title: "Deploy checkout v2",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: {},
+  });
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("re-syncing an incident without a service retires the correlation pointing at it", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The incident's service classification is retracted.
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-1",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + HOUR,
+    syncedAt: t + HOUR,
+    metadata: {},
+  });
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("re-syncing a deployment far outside the window retires the correlation it emitted", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The deployment's true time turns out to be much earlier, well outside
+  // the incident's backward-looking window.
+  seedDeploy(db, t - 10 * HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("a deployment fans out to every incident of the same service in its window", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-1",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: t + 30 * 60 * 1000,
+    syncedAt: t + 30 * 60 * 1000,
+    metadata: { service: "checkout" },
+  });
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-2",
+    title: "Checkout 500s again",
+    bodyPreview: "",
+    modifiedAt: t + 90 * 60 * 1000,
+    syncedAt: t + 90 * 60 * 1000,
+    metadata: { service: "checkout" },
+  });
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-9", to: "incident:pagerduty:PD-1" },
+    { from: "deployment:github:deploy-9", to: "incident:pagerduty:PD-2" },
+  ]);
+});
+
+test("an incident fans in from every deployment of the same service in its window", () => {
+  const db = freshDb();
+  const t = Date.now();
+
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-1",
+    title: "Deploy checkout v1",
+    bodyPreview: "",
+    modifiedAt: t,
+    syncedAt: t,
+    metadata: { service: "checkout" },
+  });
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-2",
+    title: "Deploy checkout v2",
+    bodyPreview: "",
+    modifiedAt: t + 30 * 60 * 1000,
+    syncedAt: t + 30 * 60 * 1000,
+    metadata: { service: "checkout" },
+  });
+
+  seedIncident(db, t + HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-1", to: "incident:pagerduty:PD-1" },
+    { from: "deployment:github:deploy-2", to: "incident:pagerduty:PD-1" },
+  ]);
+});
+
+test("an incident with more than 20 deployments in its window keeps the ones nearest to it", () => {
+  const db = freshDb();
+  const t = Date.now();
+
+  // 25 deployments of the same service, spread across the two hours before
+  // the incident. d24 is nearest (4 minutes before); d00 is farthest (100
+  // minutes before) but still inside the window.
+  for (let i = 0; i < 25; i++) {
+    const minutesBefore = 4 + 4 * (24 - i);
+    const at = t - minutesBefore * 60 * 1000;
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "deployment",
+      externalId: `d${String(i).padStart(2, "0")}`,
+      title: `Deploy ${i}`,
+      bodyPreview: "",
+      modifiedAt: at,
+      syncedAt: at,
+      metadata: { service: "checkout" },
+    });
+  }
+
+  seedIncident(db, t, "checkout");
+
+  const rels = correlations(db);
+  expect(rels).toHaveLength(20);
+  // The nearest deploy is the most plausibly causal one and must survive
+  // the LIMIT 20 truncation.
+  expect(rels.map((r) => r.from)).toContain("deployment:github:d24");
+});

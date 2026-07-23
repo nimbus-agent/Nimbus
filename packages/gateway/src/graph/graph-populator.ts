@@ -509,13 +509,29 @@ const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 type TimelineRow = { id: string; occurred_at: number };
 
+/**
+ * Counterparts within the window, ordered NEAREST-FIRST so `LIMIT 20` keeps the
+ * most plausibly causal ones.
+ *
+ * The direction of "nearest" differs per side, which is why it is a parameter
+ * rather than a constant. A deployment looks FORWARD (`[D, D+W]`), so nearest is
+ * the earliest incident — `ASC`. An incident looks BACKWARD (`[I-W, I]`), so
+ * nearest is the latest deployment — `DESC`. Using `ASC` for both silently keeps
+ * the 20 most temporally DISTANT deploys before an incident and drops the ones
+ * immediately preceding it.
+ *
+ * The `id` tie-break makes the ordering deterministic when two entities share a
+ * timestamp; SQLite is stable in practice but does not guarantee it.
+ */
 function timelineCounterparts(
   db: Database,
   counterpartType: "incident" | "deployment",
   affectedService: string,
   windowFrom: number,
   windowTo: number,
+  nearestFirst: "ASC" | "DESC",
 ): TimelineRow[] {
+  const order = nearestFirst === "ASC" ? "ASC" : "DESC";
   return db
     .query(
       `SELECT id,
@@ -524,7 +540,7 @@ function timelineCounterparts(
         WHERE type = ?
           AND json_extract(metadata, '$.affectedService') = ?
           AND CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) BETWEEN ? AND ?
-        ORDER BY occurred_at ASC
+        ORDER BY occurred_at ${order}, id ASC
         LIMIT 20`,
     )
     .all(counterpartType, affectedService, windowFrom, windowTo) as TimelineRow[];
@@ -553,16 +569,33 @@ function syncTimelineEventGraph(
   });
   clearRelationsTouchingEntity(db, entityId);
 
+  // Retire first, unconditionally. These clears MUST precede the
+  // `affectedService === undefined` bail-out: an entity that previously had a
+  // service (and so emitted edges) and is re-synced without one would otherwise
+  // return before retiring them, leaving the graph asserting "this deploy caused
+  // that incident" while the deploy itself no longer claims any service.
+  //
+  // The pair is load-bearing because `clearRelationsTouchingEntity` skips
+  // `correlates_with` entirely. Each side owns one direction: a deployment owns
+  // its outgoing edges, an incident its incoming ones, and only that entity's
+  // own sync knows its current window and service.
+  if (entityType === "deployment") {
+    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
+  } else {
+    clearIncomingRelationsOfType(db, entityId, "correlates_with");
+  }
+
+  // A null service correlates with nothing. Bail out only AFTER the clears.
   if (affectedService === undefined) return;
 
   if (entityType === "deployment") {
-    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
     for (const inc of timelineCounterparts(
       db,
       "incident",
       affectedService,
       occurredAt,
       occurredAt + CORRELATION_WINDOW_MS,
+      "ASC", // forward window: nearest incident is the earliest after the deploy
     )) {
       upsertGraphRelation(db, entityId, inc.id, "correlates_with", now);
     }
@@ -571,19 +604,13 @@ function syncTimelineEventGraph(
 
   // An incident syncing after its deploy must still create the edge, and the
   // edge is always directed deployment -> incident.
-  //
-  // The incoming clear is load-bearing: `clearRelationsTouchingEntity` skips
-  // `correlates_with` (Task 1), so an incident that moved in time or changed
-  // service would otherwise keep every correlation it ever had. Only the
-  // incident's own sync knows its current window and service, so only it can
-  // retire those edges.
-  clearIncomingRelationsOfType(db, entityId, "correlates_with");
   for (const dep of timelineCounterparts(
     db,
     "deployment",
     affectedService,
     occurredAt - CORRELATION_WINDOW_MS,
     occurredAt,
+    "DESC", // backward window: nearest deploy is the latest before the incident
   )) {
     upsertGraphRelation(db, dep.id, entityId, "correlates_with", now);
   }
