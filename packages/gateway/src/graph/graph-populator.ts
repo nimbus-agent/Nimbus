@@ -87,6 +87,16 @@ function clearIncomingRelationsOfType(db: Database, toId: string, relationType: 
  * Numeric refs are scoped to the referring item's own repo and service —
  * `#4` means a different issue in a different repo. Ticket keys are
  * service-agnostic, since the tracker is usually not the forge.
+ *
+ * Numeric refs are matched primarily against the referenced item's own
+ * `metadata.number` + `metadata.repo` (a sub-select/join against `item`,
+ * since `graph_entity` itself carries no item metadata) rather than by
+ * reconstructing an `externalId` string: PRs and issues share GitHub's
+ * number space, so a forge-agnostic `<repo>#<n>` guess collides with the
+ * `<repo>#issue-<n>` shape github-sync.ts actually indexes issues under
+ * (see github-sync.ts `upsertFromIssue`/`upsertFromPullRequest`). The old
+ * exact-`external_id` lookup is kept as a fallback so any item indexed
+ * under that flat shape keeps resolving.
  */
 function findIssueEntityIds(
   db: Database,
@@ -98,6 +108,23 @@ function findIssueEntityIds(
 
   if (repoFull !== undefined) {
     for (const n of refs.numeric) {
+      const metaRow = db
+        .query(
+          `SELECT e.id AS id
+             FROM graph_entity e
+             JOIN item i ON i.id = e.external_id
+            WHERE e.type = 'issue'
+              AND e.service = ?
+              AND json_extract(i.metadata, '$.number') = ?
+              AND json_extract(i.metadata, '$.repo') = ?
+            LIMIT 1`,
+        )
+        .get(service, n, repoFull) as { id?: string } | null;
+      if (metaRow?.id !== undefined) {
+        ids.push(metaRow.id);
+        continue;
+      }
+
       const ext = itemPrimaryKey(service, `${repoFull}#${n}`);
       const row = db
         .query("SELECT id FROM graph_entity WHERE type = 'issue' AND external_id = ? LIMIT 1")

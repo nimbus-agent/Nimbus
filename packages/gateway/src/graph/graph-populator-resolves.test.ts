@@ -156,6 +156,66 @@ test("an incoming resolves edge survives the target issue's own re-sync", () => 
   expect(resolvesTargets(db)).toEqual(["github:acme/app#4"]);
 });
 
+// Fixtures below are built with the exact expressions github-sync.ts uses
+// to index PRs and issues (`${repoFull}#${num}` / `${repoFull}#issue-${num}`,
+// plus the same `number`/`repo` metadata keys), NOT hand-picked shapes — see
+// `upsertFromPullRequest`/`upsertFromIssue` in connectors/github-sync.ts.
+function seedGithubIssue(
+  db: Database,
+  repoFull: string,
+  num: number,
+  title: string,
+  at: number,
+): void {
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "issue",
+    externalId: `${repoFull}#issue-${String(num)}`,
+    title,
+    bodyPreview: "",
+    modifiedAt: at,
+    syncedAt: at,
+    metadata: { number: num, repo: repoFull, state: "open", user: "octocat" },
+  });
+}
+
+function seedGithubPr(
+  db: Database,
+  repoFull: string,
+  num: number,
+  title: string,
+  bodyPreview: string,
+  at: number,
+): void {
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "pr",
+    externalId: `${repoFull}#${String(num)}`,
+    title,
+    bodyPreview,
+    modifiedAt: at,
+    syncedAt: at,
+    metadata: { number: num, repo: repoFull, state: "open", draft: false, merged: false },
+  });
+}
+
+test("a GitHub PR body referencing #4, with the issue indexed under github-sync.ts's real externalId shape, emits a resolves edge", () => {
+  const db = freshDb();
+  const now = Date.now();
+  seedGithubIssue(db, "acme/app", 4, "Login broken", now);
+  seedGithubPr(db, "acme/app", 1, "Fix login", "closes #4", now);
+
+  expect(resolvesTargets(db)).toEqual(["github:acme/app#issue-4"]);
+});
+
+test("a GitHub PR body referencing #4 with no matching issue (real externalId shape) emits no edge", () => {
+  const db = freshDb();
+  const now = Date.now();
+  seedGithubPr(db, "acme/app", 1, "Fix login", "closes #4", now);
+
+  expect(resolvesTargets(db)).toEqual([]);
+});
+
 test("removing the reference from the PR body removes the edge on re-sync", () => {
   const db = freshDb();
   const now = Date.now();
