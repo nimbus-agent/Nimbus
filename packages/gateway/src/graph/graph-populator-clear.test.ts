@@ -92,7 +92,6 @@ test("a re-sync still rebuilds the entity's own edges rather than duplicating th
 
 test("the populator receives the item body", () => {
   const db = freshDb();
-  const now = Date.now();
 
   // Compiles only once IndexedItemGraphInput carries bodyPreview.
   syncGraphFromIndexedItem(db, {
@@ -109,5 +108,4 @@ test("the populator receives the item body", () => {
     id: string;
   } | null;
   expect(pr).not.toBeNull();
-  void now;
 });

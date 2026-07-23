@@ -13,6 +13,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
       service: "github",
       type: "pr",
       title: "Add retry logic",
+      bodyPreview: null,
       authorId: null,
       metadata: {
         repo: "nimbus-agent/payments",
@@ -41,6 +42,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
       service: "github",
       type: "pr",
       title: "WIP",
+      bodyPreview: null,
       authorId: null,
       metadata: { repo: "nimbus-agent/payments", merged: false },
     });
@@ -62,6 +64,7 @@ describe("graph-populator: pr → commit merged_as edge", () => {
       service: "github",
       type: "pr",
       title: "Squash-merge with no SHA echoed back",
+      bodyPreview: null,
       authorId: null,
       metadata: { repo: "nimbus-agent/payments", merged: true },
     });
