@@ -6,16 +6,20 @@ support building the hover `why` lens now?
 
 ## Recommendation: **don't build yet.**
 
-The lens's foundational lane is empty and its enrichment lanes are absent on a real,
-actively-used machine. Built today, the hover would render blank almost everywhere — the
-exact "correlation quality is data-dependent" failure the roadmap flagged, and strong
-support for Open Decision #3's doubt that the editor is even the right first surface.
+The lens's **precomputed** foundational lane is empty and its enrichment lanes are absent
+on a real, actively-used machine. This spike measured persisted index data only; whether an
+on-demand local `git blame` fallback could paper over the empty table was out of scope —
+but even a perfect fallback still lands on id-only PR titles, 5 issue joins, and zero
+conversation/incident sources, so the hover would carry almost nothing worth showing. That
+is the exact "correlation quality is data-dependent" failure the roadmap flagged, and
+strong support for Open Decision #3's doubt that the editor is even the right first
+surface.
 
 ## Measurements
 
 | Lane | Live value | Lens impact |
 | --- | --- | --- |
-| `git_blame_line` (V32) | **0 rows, 0 files** | The blame → commit → author chain — the lens's first hop — has no data at all. |
+| `git_blame_line` (V32) | **0 rows, 0 files** | The precomputed blame → commit → author lane has no data; any hover would depend entirely on on-demand blame (unmeasured here). |
 | Index items | 546: gmail 228, `ci_run` 214, `pr` 79, `file` 13, `folder` 5, `issue` 5, `web_clip` 2 | Only 5 services carry data out of ~95 registered connectors. |
 | Graph | 86 entities / 89 relations: `targets` 79, `opened` 5, `belongs_to` 5 | PR→issue joins exist for **5 issues total**; 1 person entity (vs 65 rows in `person`). |
 | PR titles | Literally `"PR #220"` | Even a working hover would display id-only titles — no human-readable summary lane. |
@@ -28,11 +32,15 @@ support for Open Decision #3's doubt that the editor is even the right first sur
    never scheduled?) and fix the pipeline. Without this the lens cannot take its first hop.
 2. **PR title enrichment** — `"PR #220"` titles make every downstream hover row unreadable;
    the GitHub connector needs to carry real titles before any UI consumes them.
-3. **At least one conversation/incident lane live** (Slack or Jira or PagerDuty credentials
-   on the machine) so "degrades gracefully" degrades to something rather than nothing.
-4. Re-run this spike; build when blame coverage on an active repo is non-trivial and the
-   blame→PR join rate on recent lines clears a bar worth demoing (suggest: ≥60% of lines in
-   a recently-active repo resolve to a PR).
+3. **At least one conversation lane (Slack/Teams) or incident-driver lane (PagerDuty,
+   Sentry, or another alerting source) live** on the machine, so "degrades gracefully"
+   degrades to something rather than nothing. Jira is the *ticket* lane — useful, but it
+   substitutes for neither the discussion thread nor the incident driver.
+4. Re-run this spike; build when the precompute lane clears a reproducible bar. Suggested
+   bar: sample the `git_blame_line` rows for files modified in the last 90 days in one
+   actively-developed indexed repo; **≥60% of those sampled rows must resolve to a PR**
+   (numerator: rows whose `commit_sha` joins to a `pr` item; denominator: the sampled
+   rows). If the blame table is still empty, the bar is unmet by definition.
 
 ## Notes
 
