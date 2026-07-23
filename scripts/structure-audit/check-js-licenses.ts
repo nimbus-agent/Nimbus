@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -98,7 +99,7 @@ async function* iteratePackageManifests(): AsyncGenerator<{ path: string; pkg: P
     yield* iterateHoisted(nm);
     return;
   }
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent[];
   try {
     entries = await readdir(storeRoot, { withFileTypes: true });
   } catch {
