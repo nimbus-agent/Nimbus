@@ -152,8 +152,12 @@ test("hasMore is false on this fixture (no mentions/depends_on/correlates_with) 
     { db, roots },
   );
   expect(before.hasMore).toBe(false);
-  // Slack message mentioning the ticket — shape per slack-sync.ts message items
-  // (confirmed externalId/metadata against 1a's graph-populator-mentions.test.ts seedMessage: "C1/1000.1" + {channel}).
+  // Slack message mentioning the ticket — follows 1a's
+  // graph-populator-mentions.test.ts seedMessage convention: externalId
+  // "C1/1000.1" + {channel} metadata. NOT slack-sync.ts's real shape (its
+  // externalId separator is `${ch}:${ts}`) — the difference is
+  // behavior-neutral here because no query predicate in this path parses
+  // the message externalId.
   const now = Date.now();
   upsertIndexedItem(db, {
     service: "slack",
