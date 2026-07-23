@@ -53,7 +53,7 @@
         "@clack/prompts": "^1.5.1",
         "@modelcontextprotocol/sdk": "1.29.0",
         "@nimbus-dev/client": "^0.5.0",
-        "@nimbus-dev/sdk": "^1.3.0",
+        "@nimbus-dev/sdk": "^1.5.0",
         "ink": "^7.0.6",
         "ink-text-input": "^6.0.0",
         "pino": "^10.3.1",
@@ -84,7 +84,7 @@
       "dependencies": {
         "@mastra/core": "^1.43.0",
         "@mastra/mcp": "^1.10.0",
-        "@nimbus-dev/sdk": "^1.4.0",
+        "@nimbus-dev/sdk": "^1.5.0",
         "@noble/hashes": "^2.2.0",
         "@scure/bip39": "^2.2.0",
         "@xenova/transformers": "^2.17.0",
@@ -1815,7 +1815,7 @@
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.5.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.3.0" } }, "sha512-DqIhRNGfwwNNUS9eqc2w3ggGhMB36xMYz4kh6TKut0rDDcOut/XNvIJIm7uqRbTfzMAuZQ9QAdTVGSMcy7uw1A=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.5.0", "", {}, "sha512-dAa87gn3CHNtJyb3mlg4dXqiLa56bFBiTR1+rtz8YoCPl8DUMyANpU/ZJ8Sym+6bovWuIrB1z8R9ETfKj6dRXw=="],
 
     "@nimbus/cli": ["@nimbus/cli@workspace:packages/cli"],
 
@@ -4334,6 +4334,194 @@
     "micromatch/picomatch": ["picomatch@2.3.2", "", {}, "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA=="],
 
     "msw/cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
+
+    "nimbus-mcp-airflow/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-apple/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-argocd/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-athena/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-aws/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-azure/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-bigeye/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-bigquery/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-bitbucket/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-bitrise/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-canva/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-circleci/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-cloud-logging/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-cloudwatch/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-codemagic/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-confluence/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-dagster/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-databricks/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-datadog/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-dataprofile/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-dbt/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-dependencytrack/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-discord/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-elasticsearch/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-fastmail/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-figma/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-firebase/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-flagsmith/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-flux/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-gcp/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-github/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-github-actions/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-gitlab/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-gmail/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-google-drive/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-google-meet/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-google-photos/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-grafana/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-great-expectations/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-greenhouse/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-hubspot/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-iac/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-imap/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-intercom/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-jenkins/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-jira/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-kubernetes/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-launchdarkly/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-lever/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-linear/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-localdb/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-looker/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-mendeley/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-mercury/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-metabase/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-miro/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-mlflow/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-monte-carlo/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-netlify/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-newrelic/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-notion/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-obsidian/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-onedrive/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-outlook/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-pagerduty/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-pipedrive/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-powerbi/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-prefect/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-protonmail/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-raindrop/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-ramp/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-readwise/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-sagemaker/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-salesforce/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-semgrep/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-sentry/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-slack/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-snowflake/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-snyk/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-sonarqube/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-stackoverflow/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-storybook/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-stripe/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-superset/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-tableau/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-teams/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-testflight/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-vercel/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-vertex-ai/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-wiz/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-workday/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-zendesk/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-zoom/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
+
+    "nimbus-mcp-zotero/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.4.0", "", {}, "sha512-kqHQyGrLUoBgZjyrse8gMjD5VMHCJ4Oe02DTlSAPLABQ4RbYNT75b45sxKdfqpuuiUqEfljFlLtv4hZNsWyGrg=="],
 
     "p-locate/p-limit": ["p-limit@2.3.0", "", { "dependencies": { "p-try": "^2.0.0" } }, "sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w=="],
 
