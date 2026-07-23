@@ -514,6 +514,17 @@ async function syncGithubUserEvents(
     }
   }
 
+  // Best-effort title enrichment for fallback-titled PRs (existing rows + this tick's title-less events).
+  try {
+    await enrichFallbackPrTitles(ctx, pat, now);
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR title enrichment pass failed (non-fatal)",
+    );
+  }
+
   const newEtag = res.headers.get("etag");
   const nextCursor = encodeCursor({ etag: newEtag, login });
 
