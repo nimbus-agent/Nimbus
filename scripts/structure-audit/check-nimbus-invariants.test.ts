@@ -126,7 +126,7 @@ describe("D11 — manifest-derived VAULT_KEY_RE", () => {
       "bitbucket.app_password",
       "datadog.app_key",
       "iac.enabled",
-    ]) {
+    ] as const) {
       expect(keys).toContain(sample);
       expect(`vault.set("${sample}", x)`).toMatch(/['"`][a-z0-9_]+\.[a-z0-9_]+['"`]/);
     }

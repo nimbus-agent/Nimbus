@@ -35,8 +35,10 @@ paths:
     const routes = [{ method: "GET" as const, path: "/v1/health" }];
     const issues = findOpenApiDrift(file, routes);
     expect(issues).toHaveLength(1);
-    expect(issues[0].kind).toBe("schema_without_handler");
-    expect(issues[0].path).toBe("/v1/ghost");
+    const issue = issues[0];
+    if (!issue) throw new Error("expected one drift issue");
+    expect(issue.kind).toBe("schema_without_handler");
+    expect(issue.path).toBe("/v1/ghost");
   });
 
   it("reports a handler-without-schema entry", () => {
@@ -52,8 +54,10 @@ paths:
     ];
     const issues = findOpenApiDrift(file, routes);
     expect(issues).toHaveLength(1);
-    expect(issues[0].kind).toBe("handler_without_schema");
-    expect(issues[0].path).toBe("/v1/orphan");
+    const issue = issues[0];
+    if (!issue) throw new Error("expected one drift issue");
+    expect(issue.kind).toBe("handler_without_schema");
+    expect(issue.path).toBe("/v1/orphan");
   });
 
   it("exempts paths with x-nimbus-status: reserved from handler check", () => {
