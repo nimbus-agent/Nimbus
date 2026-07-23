@@ -124,3 +124,120 @@ test("re-syncing an incident twice does not accumulate duplicate or stale relati
     .get(entity.id, entity.id) as { n: number };
   expect(relationCount.n).toBe(0);
 });
+
+const HOUR = 60 * 60 * 1000;
+
+function correlations(db: Database): Array<{ from: string; to: string }> {
+  return db
+    .query(
+      `SELECT f.type || ':' || f.external_id AS "from",
+              t.type || ':' || t.external_id AS "to"
+         FROM graph_relation r
+         JOIN graph_entity f ON f.id = r.from_id
+         JOIN graph_entity t ON t.id = r.to_id
+        WHERE r.type = 'correlates_with'
+        ORDER BY "from", "to"`,
+    )
+    .all() as Array<{ from: string; to: string }>;
+}
+
+function seedDeploy(db: Database, at: number, service: string): void {
+  upsertIndexedItem(db, {
+    service: "github",
+    type: "deployment",
+    externalId: "deploy-9",
+    title: "Deploy checkout v2",
+    bodyPreview: "",
+    modifiedAt: at,
+    syncedAt: at,
+    metadata: { service },
+  });
+}
+
+function seedIncident(db: Database, at: number, service: string): void {
+  upsertIndexedItem(db, {
+    service: "pagerduty",
+    type: "incident",
+    externalId: "PD-1",
+    title: "Checkout 500s",
+    bodyPreview: "",
+    modifiedAt: at,
+    syncedAt: at,
+    metadata: { service },
+  });
+}
+
+test("an incident shortly after a deploy of the same service correlates", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-9", to: "incident:pagerduty:PD-1" },
+  ]);
+});
+
+test("correlation is emitted regardless of which side syncs last", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedIncident(db, t + HOUR, "checkout");
+  seedDeploy(db, t, "checkout");
+
+  expect(correlations(db)).toEqual([
+    { from: "deployment:github:deploy-9", to: "incident:pagerduty:PD-1" },
+  ]);
+});
+
+test("an incident outside the window does not correlate", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + 5 * HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("an incident before the deploy does not correlate", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t - HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("a different service does not correlate", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "search");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("re-syncing an incident to a different service retires the stale correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The incident is re-classified against a different service.
+  seedIncident(db, t + HOUR, "search");
+
+  expect(correlations(db)).toEqual([]);
+});
+
+test("re-syncing an incident out of the window retires the stale correlation", () => {
+  const db = freshDb();
+  const t = Date.now();
+  seedDeploy(db, t, "checkout");
+  seedIncident(db, t + HOUR, "checkout");
+  expect(correlations(db)).toHaveLength(1);
+
+  // The incident's true start time turns out to be much later.
+  seedIncident(db, t + 5 * HOUR, "checkout");
+
+  expect(correlations(db)).toEqual([]);
+});

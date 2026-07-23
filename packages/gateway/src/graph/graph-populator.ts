@@ -73,6 +73,16 @@ function clearOutgoingRelationsOfType(db: Database, fromId: string, relationType
 }
 
 /**
+ * The mirror of `clearOutgoingRelationsOfType`, for a cross-item edge whose
+ * *target* decides whether the edge still belongs: an incident that moves in
+ * time or changes service must drop the correlations pointing at it, and only
+ * the incident's own sync knows that.
+ */
+function clearIncomingRelationsOfType(db: Database, toId: string, relationType: string): void {
+  dbRun(db, "DELETE FROM graph_relation WHERE to_id = ? AND type = ?", [toId, relationType]);
+}
+
+/**
  * Resolve a PR/message reference to an existing `issue` graph entity.
  * Numeric refs are scoped to the referring item's own repo and service —
  * `#4` means a different issue in a different repo. Ticket keys are
@@ -494,6 +504,32 @@ function syncDataQualityTestGraph(db: Database, row: IndexedItemGraphInput, now:
   }
 }
 
+/** An incident this long after a deploy of the same service is treated as related. */
+const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+type TimelineRow = { id: string; occurred_at: number };
+
+function timelineCounterparts(
+  db: Database,
+  counterpartType: "incident" | "deployment",
+  affectedService: string,
+  windowFrom: number,
+  windowTo: number,
+): TimelineRow[] {
+  return db
+    .query(
+      `SELECT id,
+              CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) AS occurred_at
+         FROM graph_entity
+        WHERE type = ?
+          AND json_extract(metadata, '$.affectedService') = ?
+          AND CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) BETWEEN ? AND ?
+        ORDER BY occurred_at ASC
+        LIMIT 20`,
+    )
+    .all(counterpartType, affectedService, windowFrom, windowTo) as TimelineRow[];
+}
+
 /**
  * Incidents and deployments are timeline anchors: the graph needs them as
  * entities so a change can be correlated with what it responded to or
@@ -516,7 +552,41 @@ function syncTimelineEventGraph(
     metadata: { occurredAt, affectedService: affectedService ?? null },
   });
   clearRelationsTouchingEntity(db, entityId);
-  void now;
+
+  if (affectedService === undefined) return;
+
+  if (entityType === "deployment") {
+    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
+    for (const inc of timelineCounterparts(
+      db,
+      "incident",
+      affectedService,
+      occurredAt,
+      occurredAt + CORRELATION_WINDOW_MS,
+    )) {
+      upsertGraphRelation(db, entityId, inc.id, "correlates_with", now);
+    }
+    return;
+  }
+
+  // An incident syncing after its deploy must still create the edge, and the
+  // edge is always directed deployment -> incident.
+  //
+  // The incoming clear is load-bearing: `clearRelationsTouchingEntity` skips
+  // `correlates_with` (Task 1), so an incident that moved in time or changed
+  // service would otherwise keep every correlation it ever had. Only the
+  // incident's own sync knows its current window and service, so only it can
+  // retire those edges.
+  clearIncomingRelationsOfType(db, entityId, "correlates_with");
+  for (const dep of timelineCounterparts(
+    db,
+    "deployment",
+    affectedService,
+    occurredAt - CORRELATION_WINDOW_MS,
+    occurredAt,
+  )) {
+    upsertGraphRelation(db, dep.id, entityId, "correlates_with", now);
+  }
 }
 
 /**
