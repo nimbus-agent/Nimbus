@@ -1317,13 +1317,31 @@ const CORRELATION_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 type TimelineRow = { id: string; occurred_at: number };
 
+/**
+ * Counterparts within the window, ordered NEAREST-FIRST so `LIMIT 20` keeps the
+ * most plausibly causal ones.
+ *
+ * The direction of "nearest" differs per side, which is why it is a parameter
+ * rather than a constant. A deployment looks FORWARD (`[D, D+W]`), so nearest is
+ * the earliest incident — `ASC`. An incident looks BACKWARD (`[I-W, I]`), so
+ * nearest is the latest deployment — `DESC`. Using `ASC` for both silently
+ * keeps the 20 most temporally DISTANT deploys before an incident and drops the
+ * ones immediately preceding it: with 25 deploys in the window, the deploy four
+ * minutes before the incident is discarded while twenty from two hours earlier
+ * are retained — precisely inverting "which deploy caused this?".
+ *
+ * The `id` tie-break makes the ordering deterministic when two entities share a
+ * timestamp; SQLite is stable in practice but does not guarantee it.
+ */
 function timelineCounterparts(
   db: Database,
   counterpartType: "incident" | "deployment",
   affectedService: string,
   windowFrom: number,
   windowTo: number,
+  nearestFirst: "ASC" | "DESC",
 ): TimelineRow[] {
+  const order = nearestFirst === "ASC" ? "ASC" : "DESC";
   return db
     .query(
       `SELECT id,
@@ -1332,7 +1350,7 @@ function timelineCounterparts(
         WHERE type = ?
           AND json_extract(metadata, '$.affectedService') = ?
           AND CAST(json_extract(metadata, '$.occurredAt') AS INTEGER) BETWEEN ? AND ?
-        ORDER BY occurred_at ASC
+        ORDER BY occurred_at ${order}, id ASC
         LIMIT 20`,
     )
     .all(counterpartType, affectedService, windowFrom, windowTo) as TimelineRow[];
@@ -1342,16 +1360,35 @@ function timelineCounterparts(
 Then replace the `void now;` line at the end of `syncTimelineEventGraph` with:
 
 ```ts
+  // Retire first, unconditionally. These clears MUST precede the
+  // `affectedService === undefined` bail-out: an entity that previously had a
+  // service (and so emitted edges) and is re-synced without one would otherwise
+  // return before retiring them, leaving the graph asserting "this deploy caused
+  // that incident" while the deploy itself no longer claims any service. The
+  // entity row updates to `affectedService: null`, but the orphaned edge
+  // survives forever.
+  //
+  // The pair is load-bearing because `clearRelationsTouchingEntity` skips
+  // `correlates_with` entirely (Task 1). Each side owns one direction: a
+  // deployment owns its outgoing edges, an incident its incoming ones, and only
+  // that entity's own sync knows its current window and service.
+  if (entityType === "deployment") {
+    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
+  } else {
+    clearIncomingRelationsOfType(db, entityId, "correlates_with");
+  }
+
+  // A null service correlates with nothing. Bail out only AFTER the clears.
   if (affectedService === undefined) return;
 
   if (entityType === "deployment") {
-    clearOutgoingRelationsOfType(db, entityId, "correlates_with");
     for (const inc of timelineCounterparts(
       db,
       "incident",
       affectedService,
       occurredAt,
       occurredAt + CORRELATION_WINDOW_MS,
+      "ASC", // forward window: nearest incident is the earliest after the deploy
     )) {
       upsertGraphRelation(db, entityId, inc.id, "correlates_with", now);
     }
@@ -1360,19 +1397,13 @@ Then replace the `void now;` line at the end of `syncTimelineEventGraph` with:
 
   // An incident syncing after its deploy must still create the edge, and the
   // edge is always directed deployment -> incident.
-  //
-  // The incoming clear is load-bearing: `clearRelationsTouchingEntity` skips
-  // `correlates_with` (Task 1), so an incident that moved in time or changed
-  // service would otherwise keep every correlation it ever had. Only the
-  // incident's own sync knows its current window and service, so only it can
-  // retire those edges.
-  clearIncomingRelationsOfType(db, entityId, "correlates_with");
   for (const dep of timelineCounterparts(
     db,
     "deployment",
     affectedService,
     occurredAt - CORRELATION_WINDOW_MS,
     occurredAt,
+    "DESC", // backward window: nearest deploy is the latest before the incident
   )) {
     upsertGraphRelation(db, dep.id, entityId, "correlates_with", now);
   }
@@ -1781,6 +1812,14 @@ From `2026-07-23-why-lens-1a-populator-edges-feedback.md`.
 | 4 | Expression index on JSON fields | **Deferred**, premise corrected below. |
 | 5 | *(found during execution, Task 4 review)* `findCommitEntityIds` could not match short SHAs | **Fixed** — see below. |
 | 6 | *(found during execution, Task 5 review)* `occurredAtForItem` silently fabricated a `Date.now()` timestamp | **Fixed** — throws instead. |
+| 7 | *(found during execution, Task 6 review)* the retirement clears sat behind an early return | **Fixed** — clears moved above the bail-out. |
+| 8 | *(found during execution, Task 6 review)* `LIMIT 20` kept the most DISTANT counterparts | **Fixed** — nearest-first ordering per side. |
+
+**On #7 — a retirement guard that could be skipped entirely.** `syncTimelineEventGraph` bailed out on `affectedService === undefined` *before* reaching its `clear*` call. An entity that previously had a service, emitted a `correlates_with` edge, and was then re-synced without one returned early and never retired the edge. Reproduced: after re-syncing a deployment with no `service`, its `graph_entity` row correctly reads `affectedService: null` while the correlation edge survives — the graph asserts "this deploy caused that incident" about a deploy that no longer claims any service. The clears now run unconditionally, before the bail-out.
+
+**On #8 — the truncation kept exactly the wrong counterparts.** `timelineCounterparts` ordered `occurred_at ASC` for both directions. That is correct looking forward from a deployment, but inverted looking backward from an incident: the incident-side window is `[I-W, I]`, so `ASC` retains the twenty *oldest* deploys and discards the ones immediately preceding the incident. Reproduced with 25 deploys in a two-hour window: the deploy four minutes before the incident was dropped while twenty from nearly two hours earlier were kept — precisely inverting "which deploy caused this?". The helper now takes a per-side `nearestFirst` direction (`ASC` forward, `DESC` backward) and adds an `id` tie-break so ordering is deterministic under equal timestamps rather than relying on SQLite's incidental stability.
+
+Both were plan-text defects reproduced verbatim by the implementer, not deviations.
 
 **On #6 — a silent default that would have produced a confidently wrong answer.** The plan's `occurredAtForItem` ended `?? Date.now()`. On the production path that branch is unreachable: `upsertIndexedItem` inserts the row and then calls the populator synchronously on the same `bun:sqlite` handle. But `syncGraphFromIndexedItem` is exported, and six sibling test files already call it directly with no item row — an established local idiom. None passes `incident`/`deployment` today, so the fallback is latent rather than live; the moment one does, the entity gets a fabricated `occurredAt`, and Task 6 correlates deployments to incidents *on that timestamp*. The failure mode is a wrong correlation, not a missing one — strictly worse than an error. Now throws with a message naming the cause.
 
