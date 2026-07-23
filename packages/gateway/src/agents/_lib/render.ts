@@ -15,6 +15,7 @@ import type {
   PreflightBrief,
   PreflightDownstream,
 } from "./findings.ts";
+import type { WhyBrief, WhyLane } from "./why-types.ts";
 
 function renderGaps(gaps: GapNote[]): string {
   if (gaps.length === 0) return "";
@@ -217,4 +218,45 @@ export function renderPreflight(brief: PreflightBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+const WHY_LANE_ORDER: readonly WhyLane[] = Object.freeze([
+  "authorship",
+  "pull_request",
+  "ticket",
+  "discussion",
+  "driver",
+  "downstream",
+]);
+const WHY_LANE_HEADINGS: Readonly<Record<WhyLane, string>> = Object.freeze({
+  authorship: "Authorship",
+  pull_request: "Pull request",
+  ticket: "Ticket",
+  discussion: "Discussion",
+  driver: "What drove it",
+  downstream: "Downstream",
+});
+
+export function renderWhy(brief: WhyBrief): string {
+  const lines: string[] = ["# Why"];
+  lines.push(
+    brief.subject === null
+      ? `_Could not resolve \`${brief.query.ref}\` to an indexed location._`
+      : `\`${brief.subject.filePath}${brief.subject.lineNo === null ? "" : `:${String(brief.subject.lineNo)}`}\` in \`${brief.subject.repoRoot}\``,
+  );
+  for (const lane of WHY_LANE_ORDER) {
+    const rows = brief.findings.filter((f) => f.lane === lane);
+    if (rows.length === 0) continue;
+    lines.push(`\n## ${WHY_LANE_HEADINGS[lane]}`);
+    for (const f of rows) {
+      const when =
+        f.occurredAt === null ? "" : ` — ${new Date(f.occurredAt).toISOString().slice(0, 10)}`;
+      const head = f.url === null ? `**${f.title}**` : `**[${f.title}](${f.url})**`;
+      lines.push(`- ${head}${when}\n  ${f.detail}`);
+    }
+  }
+  const gaps = renderGaps(brief.gaps);
+  if (gaps !== "") lines.push(gaps);
+  lines.push(renderLatency(brief.latencyMs));
+  return lines.join("\n");
 }

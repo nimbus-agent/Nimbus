@@ -18,7 +18,9 @@ import {
   renderImpact,
   renderJanitor,
   renderPreflight,
+  renderWhy,
 } from "./render.ts";
+import type { WhyBrief } from "./why-types.ts";
 
 export type SynthesizerLlm = {
   generateMarkdown: (prompt: string) => Promise<string | null>;
@@ -47,7 +49,8 @@ type SynthInput =
   | ConflictBrief
   | HuddleBrief
   | JanitorBrief
-  | PreflightBrief;
+  | PreflightBrief
+  | WhyBrief;
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
@@ -57,6 +60,7 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "conflict") return renderConflict(brief);
   if (brief.kind === "janitor") return renderJanitor(brief);
   if (brief.kind === "preflight") return renderPreflight(brief);
+  if (brief.kind === "why") return renderWhy(brief);
   return renderHuddle(brief);
 }
 
@@ -68,6 +72,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "conflict") return "agents.conflicts";
   if (brief.kind === "janitor") return "agents.janitor";
   if (brief.kind === "preflight") return "agents.preflight";
+  if (brief.kind === "why") return "agents.why";
   return "agents.huddle";
 }
 

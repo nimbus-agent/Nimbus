@@ -9,6 +9,7 @@ import type {
   PreflightBrief,
 } from "./findings.ts";
 import { type SynthesizerLlm, synthesize } from "./synthesize.ts";
+import type { WhyBrief } from "./why-types.ts";
 
 type AnyBrief =
   | ExpertBrief
@@ -18,7 +19,8 @@ type AnyBrief =
   | ConflictBrief
   | HuddleBrief
   | JanitorBrief
-  | PreflightBrief;
+  | PreflightBrief
+  | WhyBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;
