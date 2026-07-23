@@ -57,6 +57,7 @@ export const COMMAND_NAMES = [
   "verify-share",
   "voice",
   "watch",
+  "why",
   "workflow",
 ] as const;
 

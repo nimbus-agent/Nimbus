@@ -56,6 +56,7 @@ import {
   runVault,
   runVerifyShare,
   runWatch,
+  runWhyCli,
   runWorkflowCli,
   runWorkflowFromFile,
 } from "./commands/index.ts";
@@ -111,6 +112,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, CommandHandler>> = {
   session: runSession,
   workflow: runWorkflowCli,
   watch: runWatch,
+  why: runWhyCli,
   repl: runRepl,
   run: runWorkflowFromFile,
   scaffold: runScaffold,

@@ -52,4 +52,5 @@ export { runTui } from "./tui.tsx";
 export { runUpdate } from "./update.ts";
 export { runVault } from "./vault.ts";
 export { runWatch } from "./watch.ts";
+export { runWhyCli } from "./why.ts";
 export { runWorkflowCli } from "./workflow.ts";
