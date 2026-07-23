@@ -72,8 +72,24 @@ export function auditActionShaPins(repoRoot: string): AuditResult {
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Resolves the repository root to audit. Defaults to the process cwd so the
+ * local preflight gate is unchanged; `--root <path>` lets the org-wide sweep
+ * aim the same audited logic at a checkout of another repository.
+ */
+export function parseRootArg(argv: string[]): string {
+  const ix = argv.indexOf("--root");
+  if (ix === -1) return process.cwd();
+  const value = argv[ix + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error("--root requires a path");
+  }
+  return value;
+}
+
 if (import.meta.main) {
-  const result = auditActionShaPins(process.cwd());
+  const root = parseRootArg(process.argv.slice(2));
+  const result = auditActionShaPins(root);
   if (!result.ok) {
     for (const err of result.errors) console.error(`audit:action-sha-pins: ${err}`);
     process.exit(1);

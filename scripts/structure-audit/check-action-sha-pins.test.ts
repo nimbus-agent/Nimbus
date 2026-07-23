@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { auditActionShaPins } from "./check-action-sha-pins.ts";
+import { auditActionShaPins, parseRootArg } from "./check-action-sha-pins.ts";
 
 function makeRepo(layout: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "sha-pin-audit-"));
@@ -66,5 +66,19 @@ describe("auditActionShaPins", () => {
   test("returns ok on a repo with no workflow dirs", () => {
     const result = auditActionShaPins(makeRepo({ "README.md": "# x" }));
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("parseRootArg", () => {
+  test("defaults to cwd when --root is absent", () => {
+    expect(parseRootArg([])).toBe(process.cwd());
+  });
+
+  test("returns the path following --root", () => {
+    expect(parseRootArg(["--root", "/tmp/other-repo"])).toBe("/tmp/other-repo");
+  });
+
+  test("throws when --root is passed with no value", () => {
+    expect(() => parseRootArg(["--root"])).toThrow("--root requires a path");
   });
 });
