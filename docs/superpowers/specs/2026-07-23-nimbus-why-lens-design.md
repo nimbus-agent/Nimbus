@@ -106,10 +106,12 @@ finished branches hostage to a gateway agent that does not exist yet. The generi
 
 **Decision: ship Wave 1a unchanged at eight; `why` rides a later `sdk 1.6.0` → `client 0.8.0` hop.**
 
-**Blocking prerequisite, not scope:** the client's ESM `dist/index.js` throws under Node (a
+**External prerequisite — owned elsewhere:** the client's ESM `dist/index.js` throws under Node (a
 pre-existing SDK extensionless-specifier bug, newly hit). VS Code extensions run on Node, so the
-lens cannot work until that is fixed. It is tracked as landing step 0 and is independent of this
-spec.
+lens cannot work until that is fixed. **That fix, and the Wave 1a push/publish it gates, are being
+handled in a separate workstream and are not scope here.** This spec depends on their outcome but
+plans no work for them: it is listed as landing step 0 to make the dependency explicit, and only
+step 3 (the lens) waits on it.
 
 ## Correction 3 — a 10-second hover is not a hover
 
@@ -127,13 +129,18 @@ the click-through. See [The two gateway entry points](#the-two-gateway-entry-poi
 
 | # | Repo | Ships | Gate |
 | --- | --- | --- | --- |
-| **0** *(prereq — not this spec)* | `nimbus-client` | Fix ESM `dist/index.js` under Node; push + publish `sdk 1.5.0`, then `client 0.7.0` | existing client suite + provenance audit |
+| **0** *(external — owned by a separate workstream)* | `nimbus-sdk` / `nimbus-client` | Fix ESM `dist/index.js` under Node; push + publish `sdk 1.5.0`, then `client 0.7.0` | not planned here; only step 3 waits on it |
 | **1** | `Nimbus` | `why` agent, `agents.why` + `agents.whyPeek`, Tauri allowlist, `nimbus why` CLI | `bun run preflight` |
 | **2** | `nimbus-sdk` **1.6.0** → `nimbus-client` **0.8.0** | `why` as the ninth agent | guard units, `MockClient` parity, conformance gate |
 | **3** | `nimbus-vscode` | hover provider + `nimbus.why` command | extension test suite + marketplace release |
 
 Step 1 is a hard prerequisite for step 2 — the SDK cannot promote a type the gateway has not
-defined. Step 0 is independent and should land first regardless.
+defined. Step 0 is external to this spec and progresses independently; steps 1 and 2 do not wait on
+it, and step 3 does.
+
+**Therefore this spec yields three implementation plans, not one** — step 1 (gateway), step 2 (the
+SDK + client hop), step 3 (the extension). Step 1 is the only one that can start immediately, and it
+delivers the roadmap's stated acceptance criterion on its own.
 
 ### The `why` agent
 
