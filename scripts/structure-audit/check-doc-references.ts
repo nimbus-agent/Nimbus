@@ -187,7 +187,7 @@ async function scanDoc(docRel: string): Promise<Reference[]> {
       sourceLine: offsetToLine(text, offset),
       raw,
       target,
-      lineHint,
+      ...(lineHint !== undefined ? { lineHint } : {}),
     });
   }
 
@@ -199,7 +199,7 @@ async function scanDoc(docRel: string): Promise<Reference[]> {
       sourceLine: offsetToLine(text, offset),
       raw,
       target: path,
-      lineHint,
+      ...(lineHint !== undefined ? { lineHint } : {}),
     });
   }
 

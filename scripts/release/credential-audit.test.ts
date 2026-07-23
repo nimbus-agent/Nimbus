@@ -26,12 +26,16 @@ function entry(over: Partial<CredentialEntry> = {}): CredentialEntry {
 }
 
 function live(over: Partial<LiveSecret> = {}): LiveSecret {
+  // Org-scoped secrets never carry a `repo` (that's the whole point of the field
+  // being optional) — only default one in when the (possibly-overridden) scope is
+  // still "repo", so an org-scope override can't accidentally inherit "Nimbus".
+  const scope = over.scope ?? "repo";
   return {
     name: "TEST_SECRET",
-    scope: "repo",
-    repo: "Nimbus",
+    scope,
     product: "actions",
     updatedAt: "2026-07-19T00:00:00Z",
+    ...(scope === "repo" ? { repo: "Nimbus" } : {}),
     ...over,
   };
 }
@@ -145,7 +149,7 @@ describe("auditCredentials", () => {
   test("org visibility differs from declared warns, in either direction", () => {
     const wider = auditCredentials(
       [entry({ location: { scope: "org" }, expectedVisibility: "selected" })],
-      [live({ scope: "org", repo: undefined, visibility: "all" })],
+      [live({ scope: "org", visibility: "all" })],
       NOW,
     );
     const widerRow = find(wider, "TEST_SECRET");
@@ -154,7 +158,7 @@ describe("auditCredentials", () => {
 
     const narrower = auditCredentials(
       [entry({ location: { scope: "org" }, expectedVisibility: "all" })],
-      [live({ scope: "org", repo: undefined, visibility: "selected" })],
+      [live({ scope: "org", visibility: "selected" })],
       NOW,
     );
     const narrowerRow = find(narrower, "TEST_SECRET");
