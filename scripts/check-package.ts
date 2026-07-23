@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+export {};
+
 type RegistryDoc = {
   name?: string;
   time?: Record<string, string>;
@@ -59,7 +61,7 @@ if (!res.ok) {
 
 const doc = (await res.json()) as RegistryDoc;
 
-const created = doc.time?.created;
+const created = doc.time?.["created"];
 const versionCount = Object.keys(doc.versions ?? {}).length;
 const maintainers =
   (doc.maintainers ?? []).map((m) => m?.name ?? m?.email ?? "<anonymous>").join(", ") || "<none>";
