@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -772,6 +772,23 @@ describe("tryDispatchPhase4Rpc", () => {
       unknown
     >;
     expect(out["enabled"]).toBe(false);
+  });
+  test("filesystem.ensureRoot hit through chain (registers a git repo)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "disp-fs-"));
+    mkdirSync(join(dir, ".git"));
+    const cfg = mkdtempSync(join(tmpdir(), "disp-fs-cfg-"));
+    const { ctx } = makeCtx({ configDir: cfg });
+    const out = (await tryDispatchPhase4Rpc(ctx, "filesystem.ensureRoot", { path: dir }, "c1")) as {
+      path: string;
+      added: boolean;
+    };
+    expect(out.added).toBe(true);
+  });
+  test("filesystem.ensureRoot bubbles the configDir error via chain", async () => {
+    const { ctx } = makeCtx();
+    await expect(
+      tryDispatchPhase4Rpc(ctx, "filesystem.ensureRoot", { path: tmpdir() }, "c1"),
+    ).rejects.toThrow(/configDir is required/);
   });
   test("audit.verify falls through audit chain when not configured", async () => {
     const { ctx } = makeCtx();

@@ -26,6 +26,7 @@ import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts"
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
+import { dispatchFilesystemRpc, FilesystemRpcError } from "../filesystem-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
@@ -575,6 +576,29 @@ export async function tryDispatchIndexRegraphRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchFilesystemRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("filesystem.")) return phase4RpcSkipped;
+  if (ctx.options.configDir === undefined) {
+    throw new RpcMethodError(-32603, "configDir is required for filesystem.* RPCs");
+  }
+  try {
+    const out = await dispatchFilesystemRpc(method, params, {
+      configDir: ctx.options.configDir,
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof FilesystemRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchProfileRpc(
   ctx: ServerCtx,
   method: string,
@@ -992,6 +1016,8 @@ async function dispatchPhase4PlatformGroup(
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
   const indexRegraphOutcome = await tryDispatchIndexRegraphRpc(ctx, method, params);
   if (indexRegraphOutcome !== phase4RpcSkipped) return indexRegraphOutcome;
+  const filesystemOutcome = await tryDispatchFilesystemRpc(ctx, method, params);
+  if (filesystemOutcome !== phase4RpcSkipped) return filesystemOutcome;
   const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);
   if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
   const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
