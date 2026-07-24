@@ -156,14 +156,33 @@ network) behind a thin gh-reading shell:
   `releaseAsset` exists, plus its publish timestamp. (Stable = tag has no `-`,
   matching the publishers' own `!contains(head_branch, '-')` gate.)
 - `readChannelVersion(channel)` → one version string per kind:
-  - **brew / linux** — `gh api …/contents/<path>` (base64-decode) → regex `pattern`.
-  - **scoop** — same fetch → `JSON.parse` → `jsonKey`.
+  - **brew / scoop** — `gh api …/contents/<path>` (base64-decode) → regex
+    `pattern` (brew) or `JSON.parse` → `jsonKey` (scoop). Both are stable
+    single-version files.
+  - **linux** — reprepro emits `dists/stable/main/binary-amd64/Packages` **and**
+    `Packages.gz`; the uncompressed file is not guaranteed to exist (some apt
+    repos serve only the compressed list). The reader therefore reads whichever
+    is present — preferring `Packages`, falling back to `Packages.gz` with an
+    in-memory `Bun.gunzipSync` — then regexes the `Version:` control field.
+    **Impl step verifies against the live `linux-repo` which files reprepro
+    actually publishes**; if the pool layout proves more stable than the index,
+    listing `pool/main/n/nimbus-headless/` (exactly one `.deb` after the
+    workflow's `reprepro remove` + `includedeb`) and parsing the version from the
+    filename is the fallback reader.
   - **winget** — caught-up iff the version dir
     `manifests/n/NimbusAgent/Nimbus/<published>/` exists in `winget-pkgs`
-    **or** an open PR titled `…NimbusAgent.Nimbus …<published>` exists
-    (`gh pr list --repo microsoft/winget-pkgs --search`). Author-agnostic title
-    search — robust to whichever account holds `WINGET_PAT`. This is the literal
-    *"failed to open its downstream PR"* check.
+    **or** an open PR for that version exists. The PR check is an exact
+    **title** search, not a branch (`head:`) filter — wingetcreate's branch name
+    is not the package id, whereas its PR title is deterministic (`New version:
+    NimbusAgent.Nimbus version <published>`):
+    `gh pr list --repo microsoft/winget-pkgs --state open --search 'in:title
+    NimbusAgent.Nimbus <published>' --json number`. Author-agnostic — robust to
+    whichever account holds `WINGET_PAT`. This is the literal *"failed to open
+    its downstream PR"* check. The 6h grace window absorbs GitHub's few-minutes
+    search-index lag on a freshly-opened PR. **Benefit:** a winget PR that opened
+    but was later *closed/rejected* by Microsoft's validation leaves neither a
+    merged dir nor an open PR, so the gate correctly returns to **RED** — the
+    stale state is re-surfaced, not lost.
 - `compare(intended, published, channel, ages, graceHours)` → one of
   `ok | stale | phantom | indeterminate`. Pure semver + grace logic, no I/O.
 
@@ -174,6 +193,14 @@ edge fires iff published > channel AND release age > `graceHours`.
 
 Version comparison is **semver-aware** (not string equality): a channel ahead of
 `published` — e.g. a hotfix landed directly on a channel — is *not* stale.
+
+**Time is UTC epoch-ms throughout.** GitHub timestamps are `Z`-suffixed ISO-8601
+(`2026-07-24T18:53:46Z`); the age math is `Date.now() - new Date(ts).getTime()`,
+which is timezone-agnostic (both sides are UTC epoch ms). The reader never parses
+a timestamp lacking an explicit `Z`/offset (which JS would treat as local time),
+so a developer machine's clock offset cannot skew the grace-window decision.
+(This is a plain audit script, not a Workflow script, so `Date.now()` is
+available.)
 
 ### 4. Auth — none needed
 
@@ -205,8 +232,15 @@ A single channel read failing must **not** read as *stale*. The gate
 distinguishes:
 
 - **404** (channel file genuinely absent) → a real regression → **RED**.
-- **non-404** (transient 5xx / rate-limit / network) → **indeterminate**, not
-  stale — the `team-reachability` and CLA-coverage lesson.
+- **non-404** (transient 5xx / network) → **indeterminate**, not stale — the
+  `team-reachability` and CLA-coverage lesson.
+- **403 rate-limit** (`X-RateLimit-Remaining: 0` / secondary-limit) →
+  **indeterminate**, never stale. All reads go through `gh`, which authenticates
+  with the ambient token (`GH_TOKEN` / `GITHUB_TOKEN` locally, `github.token` in
+  CI) — so the request quota is the authenticated 5000/hr, not the unauthenticated
+  60/hr, and one run's handful of reads plus one `winget-pkgs` search sits far
+  under it. A 403 is therefore rare, but if it happens (e.g. a shared CI token
+  near its ceiling) it must read as *indeterminate*, not as a stale channel.
 - **version parse fails** (channel file format changed) → indeterminate + a loud
   `::warning::`; never silently "ok."
 - **nothing readable at all** (no `gh`, no auth) → `strictSkip` (soft green
@@ -214,8 +248,9 @@ distinguishes:
 
 Today `runGh` collapses 404 and transient 5xx into a single `ok:false`, so it
 cannot make the first distinction. **Phase 1 therefore includes a small
-`_gh-audit.ts` enhancement**: surface the `gh` / HTTP exit status so a caller can
-split a genuine 404 from a transient failure. This *also closes the CLA-coverage
+`_gh-audit.ts` enhancement**: surface the `gh` / HTTP status so a caller can
+split a genuine 404 from a transient failure (5xx, network, or a 403
+rate-limit). This *also closes the CLA-coverage
 robustness follow-up already recorded in the roadmap* (that gate currently treats
 any `gh` failure as "cla.yml absent"). One fix hardens two gates; the enhancement
 is additive and preserves every existing caller's behavior.
@@ -258,14 +293,22 @@ change, only a new reader kind:
   (`@nimbus-dev/sdk`, `@nimbus-dev/client`).
 - **downstreams** = consuming repos' `package.json` dependency on that package —
   `client ← sdk`; `cli` + `vscode ← client`.
-- **reader** parses `dependencies["@nimbus-dev/…"]`, strips the range, and
-  compares to the published version; caught-up iff dep ≥ published **or** an open
-  bump PR referencing it exists. Same grace + indeterminate model.
+- **reader** — reads the consumer's **lockfile** (`bun.lock` /
+  `package-lock.json`), not just the `package.json` range. A range like `^1.2.0`
+  *permits* a newer `1.3.0`, so stripping the caret and comparing `1.2.0` to a
+  published `1.3.0` would false-flag a repo that would resolve to `1.3.0` on the
+  next install. The lockfile carries the *resolved* version — the code that would
+  actually ship — which is the honest "caught up" signal. Caught-up iff the
+  resolved version ≥ published **or** an open bump PR referencing it exists. Same
+  grace + indeterminate model.
 
-**Open Phase-2 question (deferred to its own spec pass):** whether the `source`
-for a dep edge is npm `@latest` (what consumers actually install) or the upstream
-repo's latest git release tag. Resolve when Phase 2 is specced; it does not
-affect the Phase 1 engine.
+**Open Phase-2 questions (deferred to its own spec pass):**
+1. Whether the `source` for a dep edge is npm `@latest` (what consumers actually
+   install) or the upstream repo's latest git release tag.
+2. The exact lockfile parse per consumer (`bun.lock` is the Nimbus/vscode norm;
+   confirm each satellite's lockfile format and that it is committed).
+
+Neither affects the Phase 1 engine; both resolve when Phase 2 is specced.
 
 ---
 
