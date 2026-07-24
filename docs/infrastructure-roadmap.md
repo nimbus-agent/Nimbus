@@ -109,13 +109,19 @@ moves to P6).
 
 ### P6a progress log
 
-- **Delivered (2026-07-24):** the six teamless repos (`.github`, `linux-repo`,
-  the four npm narrow-waist repos) are granted to `maintainers`;
+- **Delivered (2026-07-24) — checked-in config + gates:** `.github/org-access.json`
+  (desired org settings + team-reachability exemptions); the two gates
+  `audit:org-settings-drift` + `audit:team-reachability` wired into
+  `org-drift-sweep` (fail-soft locally, `--strict` in CI); and the four
+  contributor-two switches recorded in the `$contributor_two` block of
+  `.github/rulesets/general-branch.json`.
+- **Pending apply (Task 7, org-owner):** grant the six teamless repos (`.github`,
+  `linux-repo`, the four npm narrow-waist repos) to `maintainers`; set
   `members_can_create_repositories` → false and `default_repository_permission`
-  → none; both are gated by `audit:org-settings-drift` +
-  `audit:team-reachability` in `org-drift-sweep` (fail-soft locally, `--strict`
-  in CI). The four contributor-two switches are recorded in the
-  `$contributor_two` block of `.github/rulesets/general-branch.json`.
+  → none; grant the `nimbus-release-bot` App `members: read`. Until then the two
+  new gates run **red** against the live org (they detect the un-applied state);
+  P6a is *done* only when a dispatched sweep proves them green, per this file's
+  own rule.
 - **Deferred:** the CLA (own spec) and a higher-privilege **bypass-actor audit**
   (the CI App token cannot read `bypass_actors`; a future owner-`gh`-run check,
   no PAT). Private-repo ruleset protection stays **blocked-on-Team** (Free plan).

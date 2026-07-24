@@ -107,6 +107,8 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
+          # org-settings-drift reads GET /orgs/nimbus-agent (org settings) — org-administration:read suffices.
+          permission-organization-administration: read
       - name: Audit org settings drift
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
@@ -132,6 +134,8 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
+          # team-reachability lists org teams + each team's repos — members:read. (Granted to the App at P6a apply time; until then this job's token mint fails, which is the expected pre-apply red.)
+          permission-members: read
       - name: Audit team reachability
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}

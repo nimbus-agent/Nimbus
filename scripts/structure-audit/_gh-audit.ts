@@ -10,6 +10,11 @@ export interface GhResult {
   stdout: string;
 }
 
+/** Narrow an unknown to a plain object (not null, not an array) before indexing it. */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 /** Wraps `Bun.spawnSync` so a missing `gh` binary or non-zero exit both surface as `ok: false`. */
 export function runGh(args: string[]): GhResult {
   try {

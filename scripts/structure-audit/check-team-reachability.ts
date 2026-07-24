@@ -43,7 +43,7 @@ if (import.meta.main) {
   const exempt = loadOrgAccess(process.cwd()).team_reachability.exempt;
   const label = "audit:team-reachability";
 
-  const softFail = () => {
+  const softFail = (): never => {
     const outcome = strictSkip(
       label,
       strict,

@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 
 export interface AuditResult {
   ok: boolean;
@@ -26,10 +26,6 @@ export interface OrgSettings {
 export interface OrgAccessFile {
   settings: OrgSettings;
   team_reachability: { exempt: string[] };
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 export function diffOrgSettings(desired: OrgSettings, live: unknown): AuditResult {

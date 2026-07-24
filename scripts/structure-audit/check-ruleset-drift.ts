@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 
 export interface AuditResult {
   ok: boolean;
@@ -49,10 +49,6 @@ export interface DesiredRulesetFile {
 
 /** What `diffRuleset` compares against live config — currently identical to the shared shape. */
 export type DesiredRuleset = SharedRuleset;
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 /** Structural equality for the JSON-shaped values a ruleset parameter can hold. */
 function sameValue(a: unknown, b: unknown): boolean {
