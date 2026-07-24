@@ -444,7 +444,7 @@ describe("github-sync — event filtering", () => {
     expect(rows[0].external_id).toBe("acme/app#20");
   });
 
-  test("PR with missing number inside pull_request is dropped at upsertFromPullRequest", async () => {
+  test("PR with missing number inside pull_request is dropped at upsertPr", async () => {
     fixture.fetchMock.respond("GET", USER_URL, { login: "octocat" });
     fixture.fetchMock.respond(
       "GET",
