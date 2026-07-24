@@ -19,6 +19,7 @@ const PARAMS: Record<string, Record<string, unknown>> = {
   huddle: { sinceMs: 259_200_000 },
   janitor: { resourceRef: "repo:acme/payments#branch/wip" },
   preflight: { ref: "HEAD", namespace: "payments" },
+  why: { ref: "src/payments/charge.ts:42" },
 };
 
 /**

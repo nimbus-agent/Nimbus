@@ -113,5 +113,20 @@
     ".findings.query.namespace:string",
     ".findings.query.ref:string",
     ".sessionId:string"
+  ],
+  "why": [
+    ".brief:string",
+    ".findings.agentVersion:number",
+    ".findings.findings[]:empty",
+    ".findings.gaps[].category:string",
+    ".findings.gaps[].detail:string",
+    ".findings.gaps[].remediation:string",
+    ".findings.generatedAt:number",
+    ".findings.kind:string",
+    ".findings.latencyMs:number",
+    ".findings.query.line:number",
+    ".findings.query.ref:string",
+    ".findings.subject:null",
+    ".sessionId:string"
   ]
 }
