@@ -440,6 +440,17 @@ Add to the `NimbusClient` class after `agentsPreflight`:
   }
 ```
 
+**No `timeoutMs` on `agentsWhyPeek` (deliberate).** Unlike `agentsWhy`, whose
+`timeoutMs` guards the *notification wait* for `why.briefReady` (which may never
+arrive), `agentsWhyPeek` is a plain request/response — `ipc.call` already
+applies the transport's **30 s default per-request timeout** (`ipc-transport.ts`,
+verified), so it cannot hang, and the gateway bounds its single `git blame`
+spawn at **20 s** (`BLAME_TIMEOUT_MS` + `AbortSignal.timeout`, verified). No
+synchronous client method (`searchRanked`, `metricsDora`, `queryItems`, `egress*`,
+…) takes a per-call `timeoutMs`; adding one only to `whyPeek` would break that
+convention, not improve parity. If a per-call override is ever wanted it belongs
+at the transport layer for all methods, not a `whyPeek` special case.
+
 - [ ] **Step 5: Run to verify PASS (after Task 6's mock lands the fixtures)** — the two validator tests pass now: `bun test src/agents-why.test.ts -t validateWhyPeek`. The `agentsWhy`/`agentsWhyPeek` mock tests pass once Task 6 implements the mock. Do Task 6 next, then run the full file.
 
 - [ ] **Step 6: Commit**
@@ -519,6 +530,8 @@ Expected: `0.12.0`.
 
 Work in the existing worktree `C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2` (branch `dev/asafgolombek/why-lens-step2-client-hop`). Confirm: `cd C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2 && git rev-parse --abbrev-ref HEAD`.
 
+**No Tauri change needed (verified).** `agents.why` and `agents.whyPeek` are already in the Tauri `ALLOWED_METHODS` allowlist (`packages/ui/src-tauri/src/gateway_bridge.rs`, added by #820, invariant I7) — the desktop UI can already reach them. Step 2 only changes where the *types* live and adds *client* methods; it introduces no new IPC method, so there is nothing to add to the allowlist and no `security-invariants.test.ts` count to bump.
+
 ### Task 8: Consume sdk 1.6.0 + re-export
 
 **Files:**
@@ -526,7 +539,17 @@ Work in the existing worktree `C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2
 - Modify: `packages/gateway/src/agents/_lib/findings.ts`
 - Modify: `packages/gateway/src/agents/_lib/why-types.ts`
 
-- [ ] **Step 1: Bump + install** — set `"@nimbus-dev/sdk": "^1.6.0"` in `packages/gateway/package.json`; from the repo root `bun install`. Expected: resolves 1.6.0.
+- [ ] **Step 0: Establish the baseline green (before any change).** Confirm the why suites pass on the unchanged worktree so a post-swap failure is unambiguously yours:
+```bash
+cd C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2
+bun install   # this worktree is git-ignored and may have NO node_modules of its own;
+              # install so it does not silently resolve against the PARENT repo's
+              # node_modules (a known worktree trap). Re-run if a later step 404s a dep.
+bun test packages/gateway/src/agents/ packages/gateway/src/ipc/agents-rpc.why.test.ts
+```
+Expected: PASS. Record the pass count — Step 4 must match it.
+
+- [ ] **Step 1: Bump + install** — set `"@nimbus-dev/sdk": "^1.6.0"` in `packages/gateway/package.json`; from the **worktree root** (`C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2`, not the main checkout) run `bun install`. Expected: resolves 1.6.0. If it does not, Phase 1 is not actually published on npm — stop and fix that gate first.
 
 - [ ] **Step 2: Add the why re-exports to `findings.ts`** — add `WhyBrief`, `WhyFinding`, `WhyLane`, `WhySubject`, `WhyPeek` to the `export type { … } from "@nimbus-dev/sdk"` block, and `isWhyBrief` to the `export { … } from "@nimbus-dev/sdk"` guards block.
 
@@ -553,7 +576,7 @@ bunx tsc --noEmit -p packages/gateway/tsconfig.json
 bun test packages/gateway/src/agents/ packages/gateway/src/ipc/agents-rpc.why.test.ts packages/gateway/test/e2e/scenarios/why.e2e.test.ts
 bun run audit:structure
 ```
-Expected: PASS, zero edits to any why test file. (tsc is the load-bearing check: if the SDK shapes drifted from `why.ts`/`why-peek.ts`'s producers, it fails here. `audit:structure` confirms no import cycle from the re-export.)
+Expected: PASS with the **same pass count as Step 0's baseline** and zero edits to any why test file. (tsc is the load-bearing check: if the SDK shapes drifted from `why.ts`/`why-peek.ts`'s producers, it fails here. `audit:structure` confirms no import cycle from the re-export.)
 
 - [ ] **Step 5: Commit**
 ```bash
