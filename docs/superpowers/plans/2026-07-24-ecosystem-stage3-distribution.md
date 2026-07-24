@@ -51,6 +51,7 @@ Work in `C:/gitrep/nimbus-vscode`. First: `cd C:/gitrep/nimbus-vscode && git swi
 - [ ] **Step 3: Green check.** `bun run typecheck && bun run lint && bun run test`. Expected: PASS (metadata only, no code touched).
 
 - [ ] **Step 4: Commit.**
+
 ```bash
 git add package.json
 git commit -m "feat(marketplace): re-cut listing for the on-call/incident ICP"
@@ -115,6 +116,7 @@ See the [Nimbus Ecosystem Roadmap](https://github.com/nimbus-agent/Nimbus/blob/m
 - [ ] **Step 4: Verify links + render.** `bunx markdownlint-cli2 README.md` if the repo has it (else skip); if lychee is installed, `~/.cargo/bin/lychee --offline README.md`. Expected: clean. Eyeball that no shipped-feature description now overclaims and the `why` lens is only under "not yet shipped".
 
 - [ ] **Step 5: Commit.**
+
 ```bash
 git add README.md
 git commit -m "docs(readme): lead with the ICP + ops commands + egress receipts; tease the why lens as upcoming"
@@ -125,6 +127,7 @@ git commit -m "docs(readme): lead with the ICP + ops commands + egress receipts;
 **Files:** Create `ROADMAP.md`.
 
 - [ ] **Step 1: Create `ROADMAP.md`:**
+
 ```markdown
 # nimbus-vscode — Roadmap
 
@@ -143,6 +146,7 @@ The product roadmap lives in the gateway repo:
 ```
 
 - [ ] **Step 2: Commit + open the PR.**
+
 ```bash
 git add ROADMAP.md
 git commit -m "docs: add ROADMAP pointer to the ecosystem roadmap + local slice"
@@ -159,6 +163,7 @@ Work in `C:/gitrep/nimbus-client`. `git switch main && git pull --ff-only && git
 ### Task 4: `nimbus-client/ROADMAP.md`
 
 - [ ] **Step 1: Create `ROADMAP.md`:**
+
 ```markdown
 # nimbus-client — Roadmap
 
@@ -177,6 +182,7 @@ The product roadmap lives in the gateway repo:
 ```
 
 - [ ] **Step 2: Commit + PR.**
+
 ```bash
 git add ROADMAP.md
 git commit -m "docs: add ROADMAP pointer to the ecosystem roadmap + local slice"
@@ -193,6 +199,7 @@ Work in `C:/gitrep/nimbus-sdk`. `git switch main && git pull --ff-only && git sw
 ### Task 5: `nimbus-sdk/ROADMAP.md`
 
 - [ ] **Step 1: Create `ROADMAP.md`:**
+
 ```markdown
 # nimbus-sdk — Roadmap
 
@@ -221,6 +228,7 @@ Work in `C:/gitrep/nimbus-web-clipper`. `git switch main && git pull --ff-only &
 ### Task 6: `nimbus-web-clipper/ROADMAP.md`
 
 - [ ] **Step 1: Create `ROADMAP.md`:**
+
 ```markdown
 # nimbus-web-clipper — Roadmap
 
@@ -251,6 +259,7 @@ Work in the existing worktree `C:/gitrep/Nimbus/.claude/worktrees/ecosystem-stag
 **Files:** Create `docs/launch-messaging.md`.
 
 - [ ] **Step 1: Create `docs/launch-messaging.md`** — a reusable messaging sheet (copy, not a launch):
+
 ```markdown
 # Nimbus — Launch messaging (reusable copy)
 
@@ -283,6 +292,7 @@ own index, with a verifiable record of what it did off your machine.
 ```
 
 - [ ] **Step 2: Commit.**
+
 ```bash
 git add docs/launch-messaging.md
 git commit -m "docs: launch-messaging sheet (three pillars + honesty guardrails)"
@@ -297,6 +307,7 @@ git commit -m "docs: launch-messaging sheet (three pillars + honesty guardrails)
 - [ ] **Step 2: Doc gates.** `bun run audit:doc-refs && bun run lint:markdown` (markdown gate is outside preflight — run it explicitly; the launch-messaging doc + roadmap edits must lint clean). If lychee is set up, run it over the changed docs and match CI's link total.
 
 - [ ] **Step 3: Commit + PR.**
+
 ```bash
 git add docs/ecosystem-roadmap.md
 git commit -m "docs(roadmap): Stage 3 distribution done (marketplace/cross-links/launch copy); demo GIF deferred to Stage 4"

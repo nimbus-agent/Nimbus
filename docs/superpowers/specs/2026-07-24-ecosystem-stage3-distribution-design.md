@@ -25,6 +25,7 @@ leading with what exists and is differentiated (ops commands + verifiable
 egress), with the `why` lens as a tease. Three deliverables (A/B/C below).
 
 **Non-goals:**
+
 - **The demo GIF** (roadmap Stage 3 bullet 2) is gated on the `nimbus-vscode`
   hover UI, which is unbuilt (Stage 4). Deferred, not in this pass.
 - **No publishing or posting.** This writes copy and metadata; releasing the
@@ -37,12 +38,14 @@ Reposition the listing for the ICP; lead with the shipped differentiators. Blend
 of "reposition the name" + "lead with the moat".
 
 **`package.json` fields:**
+
 - `displayName`: `"Nimbus — On-Call & Incident Agent"` (was "Nimbus Agent").
 - `description` (**≤200 chars** — marketplace search cards + listing previews truncate ~150–200 chars, so the full line must read whole before the cut; the earlier 231-char draft truncated mid-sentence): `"Private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of every action it takes off-device."` (~192 chars). Note "record of every **action it takes**" — not "everything that leaves your machine" — is the honesty-scoped wording (see C); do not widen it back to a network-level claim.
 - `categories`: `["AI", "Chat"]` — VS Code categories are a **fixed enum** and the ICP vocabulary can't live here; "Chat" is valid because the extension ships a chat participant. **`vsce`/packaging fails on an unrecognized category** — the plan MUST verify both against the current marketplace category list at authoring time; if "Chat" is not accepted, fall back to `["AI"]` (the ICP terms live in keywords regardless). Drop "Other".
 - `keywords`: keep `ai, agent, local-first, nimbus, privacy, mcp`; **add** `on-call, incident-response, sre, platform-engineering, observability, dora, deploy, egress, audit`.
 
 **`README.md` lead rewrite** (the marketplace listing body — the first screen is what converts): restructure the top so it opens with **who it's for + the differentiators**, not "generic AI agent":
+
 1. A one-line hero in the ICP's voice (mirror the new `description`).
 2. A short **"Built for incident response & platform work"** intro naming the ops slash-commands (`/incident` → catchup, `/deploys` → DORA, `/owns` → expert, `/blast` → impact) as the lead capability.
 3. **"A verifiable record of what left your machine"** — the egress receipts / audit ledger, framed as the moat (a claim no cloud assistant can make), scoped honestly (see C).
