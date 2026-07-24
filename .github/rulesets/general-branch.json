@@ -1,5 +1,14 @@
 {
   "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs `shared` against each repo in `repos`. P6 flips the contributor-two switches in `shared.pull_request`. NOT diffed: `required_status_checks`/`code_quality` (per-repo CI shape) and `bypass_actors` (the CI App token cannot read org-level bypass actors — see the P1 progress log). Intended bypass, for the future higher-privilege check: OrganizationAdmin on Nimbus/nimbus-vscode/nimbus-web-clipper; none on nimbus-client/nimbus-sdk.",
+  "$contributor_two": {
+    "note": "Solo-mode switches to flip when a second maintainer gains write access — one reviewed diff. Three live in shared.pull_request below and are already drift-gated; the bypass switch is not (the CI App token cannot read bypass_actors — see the roadmap).",
+    "switches": {
+      "shared.pull_request.required_approving_review_count": { "solo": 0, "team": 1 },
+      "shared.pull_request.require_code_owner_review": { "solo": false, "team": true },
+      "shared.pull_request.require_last_push_approval": { "solo": false, "team": true },
+      "bypass_actors.OrganizationAdmin.bypass_mode": { "solo": "always", "team": "pull_request" }
+    }
+  },
   "shared": {
     "name": "General",
     "target": "branch",
