@@ -29,7 +29,7 @@ jobs:
         id: apptoken
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.CLA_BOT_APP_ID }}
+          client-id: ${{ secrets.CLA_BOT_CLIENT_ID }}
           private-key: ${{ secrets.CLA_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
           repositories: ${{ github.event.repository.name }},.github
@@ -43,6 +43,6 @@ jobs:
           path-to-signatures: 'signatures/version1/cla.json'
           remote-repository-name: '.github'
           branch: 'cla-signatures'
-          allowlist: 'bot*,AsafGolombek'
+          allowlist: 'bot*,asafgolombek,claude'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-notsigned-prcomment: 'Thanks for your PR. Before it can be merged, please sign the [Individual CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/ICLA.md) by commenting exactly: **I have read the CLA Document and I hereby sign the CLA**. Contributing on behalf of an employer? See the [Corporate CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/CCLA.md).'
