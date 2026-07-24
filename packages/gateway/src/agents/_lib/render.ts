@@ -237,13 +237,17 @@ const WHY_LANE_HEADINGS: Readonly<Record<WhyLane, string>> = Object.freeze({
   downstream: "Downstream",
 });
 
+function renderWhySubjectLine(brief: WhyBrief): string {
+  if (brief.subject === null) {
+    return `_Could not resolve \`${brief.query.ref}\` to an indexed location._`;
+  }
+  const lineSuffix = brief.subject.lineNo === null ? "" : `:${String(brief.subject.lineNo)}`;
+  return `\`${brief.subject.filePath}${lineSuffix}\` in \`${brief.subject.repoRoot}\``;
+}
+
 export function renderWhy(brief: WhyBrief): string {
   const lines: string[] = ["# Why"];
-  lines.push(
-    brief.subject === null
-      ? `_Could not resolve \`${brief.query.ref}\` to an indexed location._`
-      : `\`${brief.subject.filePath}${brief.subject.lineNo === null ? "" : `:${String(brief.subject.lineNo)}`}\` in \`${brief.subject.repoRoot}\``,
-  );
+  lines.push(renderWhySubjectLine(brief));
   for (const lane of WHY_LANE_ORDER) {
     const rows = brief.findings.filter((f) => f.lane === lane);
     if (rows.length === 0) continue;

@@ -119,6 +119,17 @@ function seedWhyFixture(db: Database, parts: FixtureParts): void {
 }
 
 describe("runWhy", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    while (tempDirs.length > 0) {
+      const d = tempDirs.pop();
+      if (d !== undefined) {
+        await fs.rm(d, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("authorship lane: blame row → author + commit subject finding", async () => {
     const db = freshDb();
     seedWhyFixture(db, { commit: true, blame: { lineNo: 42 } });
@@ -384,17 +395,6 @@ describe("runWhy", () => {
     expect(brief.subject).toBeNull();
     expect(brief.findings).toEqual([]);
     expect(brief.gaps.length).toBeGreaterThan(0);
-  });
-
-  const tempDirs: string[] = [];
-
-  afterEach(async () => {
-    while (tempDirs.length > 0) {
-      const d = tempDirs.pop();
-      if (d !== undefined) {
-        await fs.rm(d, { recursive: true, force: true });
-      }
-    }
   });
 
   async function makeTempGitDir(): Promise<string> {

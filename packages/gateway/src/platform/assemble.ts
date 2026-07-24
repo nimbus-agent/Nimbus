@@ -1559,6 +1559,29 @@ function bootChatopsIntoAssembly(deps: {
   return chatopsBoot;
 }
 
+/**
+ * M-1: `loadNimbusServiceConfigsFromConfigDir` throws on any malformed
+ * `[metrics.dora.*]`/`[ci.service.*]` block (missing `repos`, unknown key, bad
+ * URN/regex, out-of-range window, invalid env name). Degrade to no service-identity
+ * bindings (timeline correlation falls back to plain `metadata.service`, as before
+ * this feature existed) rather than aborting gateway startup over a config typo.
+ */
+function loadServiceConfigsOrDegrade(
+  configDir: string,
+  logger: Logger,
+): ReturnType<typeof loadNimbusServiceConfigsFromConfigDir> {
+  try {
+    return loadNimbusServiceConfigsFromConfigDir(configDir);
+  } catch (err) {
+    logger.warn(
+      { err },
+      "failed to load [metrics.dora.*]/[ci.service.*] service configs — timeline " +
+        "correlation will fall back to metadata.service only until this is fixed",
+    );
+    return new Map();
+  }
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
@@ -1612,23 +1635,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
   // "PSVC1" vs. a forge's "checkout-web") resolve to the same `ServiceConfig.serviceId`.
   //
-  // M-1: `loadNimbusServiceConfigsFromConfigDir` throws on any malformed
-  // `[metrics.dora.*]`/`[ci.service.*]` block (missing `repos`, unknown key, bad
-  // URN/regex, out-of-range window, invalid env name). This is the only call site
-  // reached unconditionally at boot — degrade to no service-identity bindings
-  // (timeline correlation falls back to plain `metadata.service`, as before this
-  // feature existed) rather than aborting gateway startup over a config typo.
-  let serviceConfigs: ReturnType<typeof loadNimbusServiceConfigsFromConfigDir>;
-  try {
-    serviceConfigs = loadNimbusServiceConfigsFromConfigDir(paths.configDir);
-  } catch (err) {
-    syncLogger.warn(
-      { err },
-      "failed to load [metrics.dora.*]/[ci.service.*] service configs — timeline " +
-        "correlation will fall back to metadata.service only until this is fixed",
-    );
-    serviceConfigs = new Map();
-  }
+  // M-1 (see `loadServiceConfigsOrDegrade`): a malformed `[metrics.dora.*]`/
+  // `[ci.service.*]` block degrades to no service-identity bindings rather than
+  // aborting boot. This is the only call site reached unconditionally at boot.
+  const serviceConfigs = loadServiceConfigsOrDegrade(paths.configDir, syncLogger);
   // M-2: two ServiceConfigs claiming the same pagerdutyServices entry or repo URN
   // (a monorepo) resolve deterministically but silently otherwise; surface it the
   // same way `loadNimbusServiceConfigsFromConfigDir` already warns on duplicate ids.

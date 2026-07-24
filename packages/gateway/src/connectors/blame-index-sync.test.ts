@@ -79,12 +79,18 @@ describe("gitChangedSince", () => {
     const changes = await gitChangedSince(
       "/r",
       SHA_F,
-      fakeSpawn("M\0a.ts\0D\0b.ts\0R100\0old.ts\0new.ts\0", 0),
+      fakeSpawn("M\0a.ts\0D\0b.ts\0A\0c.ts\0R100\0old.ts\0new.ts\0", 0),
     );
     expect(changes).toContainEqual({ status: "M", path: "a.ts" });
     expect(changes).toContainEqual({ status: "D", path: "b.ts" });
+    expect(changes).toContainEqual({ status: "A", path: "c.ts" });
     expect(changes).toContainEqual({ status: "D", path: "old.ts" });
     expect(changes).toContainEqual({ status: "A", path: "new.ts", oldPath: "old.ts" });
+  });
+
+  test("maps an unknown status code (e.g. copy/type-change) to a modification", async () => {
+    const changes = await gitChangedSince("/r", SHA_F, fakeSpawn("T\0typed.ts\0", 0));
+    expect(changes).toEqual([{ status: "M", path: "typed.ts" }]);
   });
 
   test("returns [] on a non-zero exit", async () => {

@@ -244,7 +244,7 @@ function ticketRowsForPr(db: Database, prEntityId: string): TicketRow[] {
 // ---------------------------------------------------------------------------
 
 async function subAuthorship(db: Database, lane: LaneInput): Promise<SubAgentResult> {
-  if (lane.subject === null || lane.subject.lineNo === null) {
+  if (lane.subject?.lineNo == null) {
     return {
       gap: {
         category: "missing_relation_emit",

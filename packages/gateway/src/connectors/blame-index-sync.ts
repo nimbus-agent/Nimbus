@@ -86,6 +86,14 @@ export async function gitBlameWindowFiles(
   return [...seen];
 }
 
+/** Maps a `git diff --name-status` status code to a `BlameChange` status: `A`/`D`
+ * pass through; everything else (`M`, `C`, `T`, …) is treated as a modification. */
+function statusFromCode(code: string): BlameChange["status"] {
+  if (code === "A") return "A";
+  if (code === "D") return "D";
+  return "M";
+}
+
 /** Parsed `git diff --name-status -M <sinceSha> HEAD`. Renames (`R###`) expand
  * to a `D` of the old path plus an `A` of the new path (carrying `oldPath`). */
 export async function gitChangedSince(
@@ -105,13 +113,13 @@ export async function gitChangedSince(
     const st = toks[i] ?? "";
     if (st.startsWith("R")) {
       // rename: <status>\0<oldPath>\0<newPath>
-      changes.push({ status: "D", path: toks[i + 1] ?? "" });
-      changes.push({ status: "A", path: toks[i + 2] ?? "", oldPath: toks[i + 1] ?? "" });
+      changes.push(
+        { status: "D", path: toks[i + 1] ?? "" },
+        { status: "A", path: toks[i + 2] ?? "", oldPath: toks[i + 1] ?? "" },
+      );
       i += 3;
     } else {
-      const s = st.charAt(0);
-      const status = s === "A" ? "A" : s === "D" ? "D" : "M";
-      changes.push({ status, path: toks[i + 1] ?? "" });
+      changes.push({ status: statusFromCode(st.charAt(0)), path: toks[i + 1] ?? "" });
       i += 2;
     }
   }
@@ -176,6 +184,57 @@ async function blameOneFile(ctx: SyncContext, root: string, relFile: string): Pr
   return rows.length;
 }
 
+/** Full path (first run or rewritten history): blame every windowed file up to
+ * the per-tick cap. Returns the number of files that yielded blame rows. */
+async function blameRootFull(ctx: SyncContext, root: string, windowDays: number): Promise<number> {
+  const files = await gitBlameWindowFiles(root, windowDays);
+  if (files.length > MAX_BLAME_FILES) {
+    ctx.logger.info(
+      { service: SERVICE_ID, root, total: files.length, cap: MAX_BLAME_FILES },
+      "blame window exceeds per-tick cap; remainder picked up on later ticks",
+    );
+  }
+  let filesBlamed = 0;
+  for (const f of files.slice(0, MAX_BLAME_FILES)) {
+    if ((await blameOneFile(ctx, root, f)) > 0) filesBlamed += 1;
+  }
+  return filesBlamed;
+}
+
+/** Incremental path: re-blame each file changed since `last` (pruning deletions).
+ * Returns the number of files that yielded blame rows. */
+async function blameRootIncremental(ctx: SyncContext, root: string, last: string): Promise<number> {
+  let filesBlamed = 0;
+  for (const ch of await gitChangedSince(root, last)) {
+    if (ch.status === "D") {
+      pruneBlameForFile(ctx.db, root, ch.path);
+    } else if ((await blameOneFile(ctx, root, ch.path)) > 0) {
+      filesBlamed += 1;
+    }
+  }
+  return filesBlamed;
+}
+
+/** Blames one configured root for this tick, choosing the full or incremental path
+ * from the recorded cursor head. Returns the new head to record plus the count of
+ * files blamed, or `null` when the root is skippable (missing dir / not a git repo). */
+async function blameOneRoot(
+  ctx: SyncContext,
+  root: string,
+  last: string | undefined,
+  windowDays: number,
+): Promise<{ head: string; filesBlamed: number } | null> {
+  if (!existsSync(root) || !statSync(root).isDirectory()) return null;
+  const head = await gitHeadSha(root);
+  if (head === null) return null; // not a git repo / empty repo
+
+  const filesBlamed =
+    last === undefined || !(await isAncestor(root, last))
+      ? await blameRootFull(ctx, root, windowDays)
+      : await blameRootIncremental(ctx, root, last);
+  return { head, filesBlamed };
+}
+
 /**
  * A whole-file, `windowDays`-bounded blame indexer. Per configured filesystem
  * root that is a git repo, it blames every git-tracked file with a commit in the
@@ -203,34 +262,10 @@ export function createBlameIndexSyncable(options: BlameIndexSyncableOptions): Sy
 
       for (const rootCfg of options.roots) {
         const root = rootCfg.path;
-        if (!existsSync(root) || !statSync(root).isDirectory()) continue;
-        const head = await gitHeadSha(root);
-        if (head === null) continue; // not a git repo / empty repo
-
-        const last = heads[root];
-        if (last === undefined || !(await isAncestor(root, last))) {
-          // Full path (first run or rewritten history).
-          const files = await gitBlameWindowFiles(root, windowDays);
-          if (files.length > MAX_BLAME_FILES) {
-            ctx.logger.info(
-              { service: SERVICE_ID, root, total: files.length, cap: MAX_BLAME_FILES },
-              "blame window exceeds per-tick cap; remainder picked up on later ticks",
-            );
-          }
-          for (const f of files.slice(0, MAX_BLAME_FILES)) {
-            if ((await blameOneFile(ctx, root, f)) > 0) filesBlamed += 1;
-          }
-        } else {
-          // Incremental path.
-          for (const ch of await gitChangedSince(root, last)) {
-            if (ch.status === "D") {
-              pruneBlameForFile(ctx.db, root, ch.path);
-            } else if ((await blameOneFile(ctx, root, ch.path)) > 0) {
-              filesBlamed += 1;
-            }
-          }
-        }
-        nextHeads[root] = head;
+        const blamed = await blameOneRoot(ctx, root, heads[root], windowDays);
+        if (blamed === null) continue;
+        filesBlamed += blamed.filesBlamed;
+        nextHeads[root] = blamed.head;
       }
 
       return {

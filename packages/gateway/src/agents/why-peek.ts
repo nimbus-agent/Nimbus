@@ -118,7 +118,7 @@ export async function runWhyPeek(input: WhyInput, deps: WhyPeekDeps): Promise<Wh
   const { db, roots, spawn, exists } = deps;
   const whySubject = resolveWhySubject(db, roots, input, exists);
 
-  if (whySubject === null || whySubject.lineNo === null) {
+  if (whySubject?.lineNo == null) {
     return {
       subject: null,
       author: null,

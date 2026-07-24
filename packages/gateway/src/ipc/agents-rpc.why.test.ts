@@ -173,7 +173,7 @@ describe("dispatchAgentsRpc — agents.whyPeek", () => {
     await dispatchAgentsRpc("agents.whyPeek", { ref: "src/a.ts:1" }, ctx);
     // Give any accidental async notify a chance to fire before asserting silence.
     await new Promise((r) => setTimeout(r, 200));
-    expect(ctx.notify.mock.calls.length).toBe(0);
+    expect(ctx.notify.mock.calls).toHaveLength(0);
   });
 
   test("agents.whyPeek trims a whitespace-padded ref and resolves like the trimmed value", async () => {
