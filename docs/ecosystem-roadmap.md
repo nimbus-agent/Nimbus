@@ -366,14 +366,22 @@ the spike feeds [Open decision 3](#open-decisions) rather than closing it.
 
 Capability without discovery is what the 3-install number measures.
 
-- **Marketplace re-cut**: description, keywords and categories in the ICP's
-  vocabulary — incident response, on-call, SRE, platform engineering,
-  observability, deploy. Today those words appear nowhere.
-- **One demo GIF per headline claim.** The `why` lens is a single hover.
-- **Cross-link the clients.** Each client repo's `ROADMAP.md` is reduced to a
-  pointer to this file plus its own local slice.
-- **Launch on the trust story where it is honest** — scoped to
-  `authorized-actions`, never overclaimed as raw-syscall capture.
+> **Status 2026-07-24 — three of four done; the GIF deferred.** The copy/metadata
+> work landed as PRs; nothing was published or posted.
+
+- **Marketplace re-cut** ✅ — the `nimbus-vscode` listing (displayName /
+  description / categories / keywords + README lead) re-cut for the on-call /
+  incident ICP, leading with the ops slash-commands + the egress ledger, `why`
+  lens teased as upcoming. Was: those words appeared nowhere.
+- **One demo GIF per headline claim** ⏳ **deferred** — the `why` lens is a single
+  hover, but the hover UI is unbuilt (Stage 4). Gated on that slice; no GIF yet.
+- **Cross-link the clients** ✅ — a `ROADMAP.md` pointing to this file + a local
+  slice now lives in `nimbus-{vscode,client,sdk,web-clipper}`.
+- **Launch on the trust story where it is honest** ✅ — a "Why Nimbus" section in
+  the `nimbus-vscode` README + a reusable `docs/launch-messaging.md`, scoped to
+  the agent's *authorized/dispatched actions* (the egress ledger records what the
+  agent did off-device, not raw network traffic), never overclaimed as
+  raw-syscall / whole-machine capture.
 
 ---
 
