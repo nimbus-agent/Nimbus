@@ -87,8 +87,14 @@ typechecks.
   `WhyPeek`, `isWhyBrief`.
 
 `WhyInput` (`{ ref: string; line?: number }`) is a *request-params* type, not a
-result type; the client owns its own `WhyParams` (below), so `WhyInput` need
-not be promoted.
+result type, and is deliberately **not** promoted. The established convention
+(verified) is that all eight existing agents define their params **client-local**
+in `src/agents.ts` (`ExpertParams`, `ImpactParams`, `CatchupParams`, …) while
+only the **result** types (briefs) live in the SDK. Promoting only `why`'s
+params would be asymmetric with every other agent — it would *introduce* an
+inconsistency, not prevent drift — and the params shape is trivial (`{ ref;
+line? }`) with no speculative future fields (YAGNI). So the client owns its own
+`WhyParams`, the gateway keeps `WhyInput` local, exactly as the other agents do.
 
 ### Gateway — consume + re-export
 
@@ -106,6 +112,24 @@ not be promoted.
   the same names, now sourced from the SDK. `bunx tsc` is the proof the shapes
   still line up.
 
+**No new circular import.** The dependency direction is unchanged: `why-types.ts`
+already imports `AgentBriefBase` *from* `findings.ts`, and `findings.ts` imports
+only *from* `@nimbus-dev/sdk` (never from `why-types.ts`). Adding why re-exports
+keeps the one-way arrow `why-types.ts → findings.ts → sdk`. The existing
+`audit:structure` dependency-cruiser gate (no-cycles) is the backstop and must
+stay green.
+
+**No Tauri change.** `agents.why` and `agents.whyPeek` are **already** in the
+Tauri `ALLOWED_METHODS` allowlist (`gateway_bridge.rs`, added by #820, invariant
+I7) — verified present. Step 2 exposes them through the client, not the renderer,
+so it touches nothing under `packages/ui`.
+
+**The `line` boundary is already handled gateway-side** (a step-1b concern, not
+step 2): `why.ts` compiles `query.line` as `input.line ?? parseRef(input.ref).line`,
+where `parseRef` yields `number | null` — so an omitted `line` resolves cleanly
+to the parsed suffix or `null`. The client relays the gateway's `WhyBrief`
+verbatim; no undefined→null mapping is needed client-side.
+
 ### Client 0.12.0 — the two methods
 
 - `package.json` — bump `@nimbus-dev/sdk` to `^1.6.0`.
@@ -120,10 +144,22 @@ not be promoted.
     method** mirroring `searchRanked`: `const raw = await this.ipc.call("agents.whyPeek", { ref, line }); return validateWhyPeek("agents.whyPeek", raw);`.
 - `src/validate.ts` — add `validateWhyPeek` (shape-check the `WhyPeek` fields:
   nullable `subject`/`author`/`pr`/`ticket`, boolean `hasMore`), mirroring the
-  existing validators (e.g. `validateSessionRecall`).
+  existing validators (e.g. `validateSessionRecall`). Like every existing guard
+  it is **lenient about extra fields** (verified: `validate.ts` header — "Guards
+  check the required shape and are lenient about extra") — it validates the
+  required shape and passes unknown fields through, so a future gateway-side
+  addition to `WhyPeek` does not break an older client.
 - `src/mock-client.ts` — add a `why: WhyBrief` entry to the mock brief map and
   an `agentsWhyPeek` returning a deterministic `WhyPeek` fixture; the mock must
-  expose both new methods so the surface-parity guard stays balanced.
+  expose both new methods so the surface-parity guard stays balanced. The
+  fixtures are **high-fidelity** so downstream consumers (the VS Code hover UI
+  in step 3) get a representative shape to render against: the `WhyBrief` mock
+  carries at least one finding for **each of the six `WhyLane` values**, and the
+  `WhyPeek` mock returns a fully-populated result (non-null `subject`, `author`,
+  `commitSha`, `pr`, `ticket`, `hasMore: true`). One rich fixture per method,
+  matching the single-fixture convention of the other agent mocks — null/empty
+  edge cases stay the consumer's own test to construct (YAGNI on variant
+  fixtures here).
 - `src/index.ts` — re-export `WhyParams`/`WhyBrief`/`WhyPeek` types if the
   client barrels its public types (follow the existing convention).
 
