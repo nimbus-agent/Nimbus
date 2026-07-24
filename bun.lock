@@ -85,7 +85,7 @@
       "dependencies": {
         "@mastra/core": "^1.43.0",
         "@mastra/mcp": "^1.10.0",
-        "@nimbus-dev/sdk": "^1.5.0",
+        "@nimbus-dev/sdk": "^1.6.0",
         "@noble/hashes": "^2.2.0",
         "@scure/bip39": "^2.2.0",
         "@xenova/transformers": "^2.17.0",
@@ -4153,6 +4153,8 @@
     "@mswjs/interceptors/@open-draft/deferred-promise": ["@open-draft/deferred-promise@2.2.0", "", {}, "sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA=="],
 
     "@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.3.0", "", {}, "sha512-mCVlMLbYUowRLsw1dAcDp61AyoLSW6hrfbdrJim7ho3kg78rJlS0DYrKpqQxbng6E83NscJkUHlIFanxp0hp5g=="],
+
+    "@nimbus/gateway/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.6.0", "", {}, "sha512-dHPSNP7GuNgM6oo0el4oZhqx1Xbtbwi+2XSKLmBfUcBj4zDTIKyqX9JQpmmSU9eaQcZgQNC7u9o5CmQTa8g1qA=="],
 
     "@oxc-resolver/binding-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.0", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-l9Oo58x0HOP5znGzVhYW9U3e5wVuA4LAZU2AGezTmkhO1CgQRFDhDg4nneHsu/t3WniXg9QrG2nIXL/ZS8ln8Q=="],
 

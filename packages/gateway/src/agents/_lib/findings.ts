@@ -33,6 +33,11 @@ export type {
   JanitorPeerTouch,
   PreflightBrief,
   PreflightDownstream,
+  WhyBrief,
+  WhyFinding,
+  WhyLane,
+  WhyPeek,
+  WhySubject,
 } from "@nimbus-dev/sdk";
 
 export {
@@ -44,4 +49,5 @@ export {
   isImpactBrief,
   isJanitorBrief,
   isPreflightBrief,
+  isWhyBrief,
 } from "@nimbus-dev/sdk";
