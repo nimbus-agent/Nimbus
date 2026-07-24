@@ -45,7 +45,7 @@ Design of record:
 
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
-| P1 | Org CI Foundation | 🔨 in progress | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos |
+| P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
 | P2 | Release Train | ⬜ not started | A publish that fails to open its downstream PR fails a staleness check |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
