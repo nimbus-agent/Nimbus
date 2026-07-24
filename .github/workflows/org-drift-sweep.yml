@@ -140,3 +140,31 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
         run: bun scripts/structure-audit/check-team-reachability.ts --strict
+
+  cla-coverage:
+    name: cla-coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - name: Mint App token
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: nimbus-agent
+          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,awesome-nimbus,nimbus-recipes
+          # cla-coverage reads .github/workflows/cla.yml from each gated repo — contents:read.
+          permission-contents: read
+      - name: Audit CLA coverage
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+        run: bun scripts/structure-audit/check-cla-coverage.ts --strict

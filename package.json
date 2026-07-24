@@ -165,6 +165,7 @@
     "audit:ruleset-drift": "bun scripts/structure-audit/check-ruleset-drift.ts",
     "audit:org-settings-drift": "bun scripts/structure-audit/check-org-settings-drift.ts",
     "audit:team-reachability": "bun scripts/structure-audit/check-team-reachability.ts",
+    "audit:cla-coverage": "bun scripts/structure-audit/check-cla-coverage.ts",
     "audit:secrets": "gitleaks detect --source . --no-banner --redact --exit-code 1",
     "audit:links": "lychee --no-progress --config lychee.toml \"docs/**/*.md\" \"*.md\"",
     "lint": "biome check --error-on-warnings .",

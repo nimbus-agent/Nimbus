@@ -66,6 +66,7 @@ export const CI_ONLY_GATES: readonly string[] = [
   "audit:ruleset-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:org-settings-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:team-reachability", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
+  "audit:cla-coverage", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
 ];
 
 export function selectGates(tier: GateTier): Gate[] {
