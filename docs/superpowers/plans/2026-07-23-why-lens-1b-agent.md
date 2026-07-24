@@ -129,11 +129,13 @@ Expected: PASS. All Read/Edit operations from here on use the **worktree** absol
 ### Task 1: Why types + renderer + synthesis dispatch
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/why-types.ts`
 - Modify: `packages/gateway/src/agents/_lib/render.ts`, `_lib/synthesize.ts`, `_lib/emit-brief.ts`
 - Test: `packages/gateway/src/agents/_lib/render.why.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: `AgentBriefBase`, `GapNote` from `./findings.ts` (SDK re-export shim).
 - Produces (every later task relies on these exact names):
 
@@ -269,6 +271,7 @@ In `_lib/emit-brief.ts`: add `WhyBrief` to the `AnyBrief` union (import from `./
 ```bash
 bun test packages/gateway/src/agents/_lib/ && bunx tsc --noEmit -p packages/gateway/tsconfig.json
 ```
+
 Expected: PASS + clean. If `synthesize.ts` constrains its parameter to the same `AnyBrief`-style union, widen there too.
 
 - [ ] **Step 5: Commit**
@@ -285,10 +288,12 @@ git commit -m "feat(agents): why brief types, deterministic renderer, synthesis 
 The spec mandates: `subDownstream` overlaps `impact.ts`'s traversal; extract into `agents/_lib/` and refactor `impact.ts` to consume it **in the same PR**, with impact's suite passing unchanged (the honesty gate).
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/graph-traversals.ts`, `graph-traversals.test.ts`
 - Modify: `packages/gateway/src/agents/impact.ts:210-221` (the `subDownstreamCode` query)
 
 **Interfaces:**
+
 - Produces: `reverseDependsOn(db: Database, toEntityId: string, limit?: number): ReverseDependsOnRow[]` where `ReverseDependsOnRow = { entityId: string; label: string; serviceId: string }`.
 
 - [ ] **Step 1: Write the failing test** — `graph-traversals.test.ts`:
@@ -394,6 +399,7 @@ Then in `impact.ts` `subDownstreamCode` (lines 210-221): replace the inline quer
 ```bash
 bun test packages/gateway/src/agents/_lib/graph-traversals.test.ts packages/gateway/src/agents/impact.test.ts packages/gateway/test/e2e/scenarios/impact.e2e.test.ts && bunx tsc --noEmit -p packages/gateway/tsconfig.json
 ```
+
 Expected: PASS with zero edits to either impact test file.
 
 - [ ] **Step 5: Commit**
@@ -408,9 +414,11 @@ git commit -m "refactor(agents): extract shared reverse depends_on traversal for
 ### Task 3: Subject resolution (`parseRef` / `matchConfiguredRoot` / `resolveWhySubject`)
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/why-subject.ts`, `why-subject.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NimbusFilesystemRootToml` from `../../config/filesystem-toml.ts`; `WhySubject` from `./why-types.ts`.
 - Produces:
 
@@ -424,6 +432,7 @@ export function resolveWhySubject(db: Database, roots: readonly NimbusFilesystem
 `exists` is an injectable `existsSync` (default `node:fs` `existsSync`) so tests need no real files.
 
 Semantics (grounded in how blame rows are stored):
+
 - `parseRef`: a trailing `:<digits>` is a line suffix (`/^(.+):(\d+)$/` — the `.+` keeps `C:\repo\file.ts:42` working because the path capture is greedy). `input.line` overrides a suffix.
 - `matchConfiguredRoot`: absolute path → the first configured root that contains it (via `relative(root, abs)` not starting with `..` and not absolute), returning `repoRoot` = the **configured root path verbatim** (that is what `git_blame_line.repo_root` stores) and `filePath` root-relative POSIX. Relative path → the first root where `exists(join(root.path, refPath))`. No match → `null`. **This `null` is the path-escape fence** — Task 4 red-proves that no spawn can happen without a `ResolvedRootPath`.
 - `resolveWhySubject`: try path resolution first; if the ref has no separator and no dot-extension and path resolution failed, look up a `symbol` entity — exact `json_extract(metadata,'$.name') = ?`, then `label LIKE '%' || ? || '%' ORDER BY length(label) ASC, id ASC LIMIT 1` (mirroring `impact.ts:163-174`) — and take `metadata.file` + `metadata.repoRoot` from the entity and `lineNo` from the **item** row's `metadata.excerptStartLine` (`JOIN item i ON i.id = e.external_id`; entity metadata does not carry it). Null line is allowed.
@@ -636,9 +645,11 @@ git commit -m "feat(agents): why subject resolution — ref parsing, root matchi
 ### Task 4: On-demand single-line blame (`ensureBlameLine`) — with the red-proven fence
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/blame-on-demand.ts`, `blame-on-demand.test.ts`
 
 **Interfaces:**
+
 - Consumes: `lookupBlame`, `upsertBlameLines`, `BlameLookup` from `../../security/blame-store.ts`; `gitBlameLinePorcelain` (exported, spawn-injectable) from `../../connectors/filesystem-v2-sync.ts`; `ResolvedRootPath` from `./why-subject.ts`.
 - Produces:
 
@@ -653,6 +664,7 @@ export async function ensureBlameLine(
 ```
 
 Contract (spec §on-demand-blame, grounded):
+
 1. `lookupBlame` hit → return it, **zero spawns**.
 2. Miss → the caller can only have a `ResolvedRootPath` from `matchConfiguredRoot`, but defense-in-depth: re-verify `join(repoRoot, ".git")` exists (mirrors `isGitRepo`); missing → `null`, zero spawns.
 3. Spawn exactly one `gitBlameLinePorcelain(repoRoot, filePath, [{from: lineNo, to: lineNo}], spawn)` — that helper already carries the `AbortSignal.timeout(20 s)`, `-- <file>` argv discipline, and swallow-to-`[]` failure shape; **write no new spawn code**.
@@ -828,9 +840,11 @@ git commit -m "feat(agents): on-demand single-line blame with red-proven root fe
 ### Task 5: `agents.whyPeek` core (`runWhyPeek`)
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/why-peek.ts`, `why-peek.test.ts`
 
 **Interfaces:**
+
 - Consumes: `resolveWhySubject`, `ensureBlameLine`, `WhyPeek`, `WhyInput`, `NimbusFilesystemRootToml`.
 - Produces:
 
@@ -1092,9 +1106,11 @@ git commit -m "feat(agents): agents.whyPeek core — sub-300ms line-anchored pee
 ### Task 6: The `why` agent — six parallel lanes
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/why.ts`, `why.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above; `AgentCoordinator`/`SubTask` from `../engine/coordinator.ts`; `emitBriefWithSynthesis`; gap-notes helpers; `reverseDependsOn`.
 - Produces:
 
@@ -1111,7 +1127,7 @@ export async function runWhy(input: WhyInput, ctx: WhyContext): Promise<WhyBrief
 export function emitWhyBrief(input: WhyInput, ctx: WhyContext): Promise<{ sessionId: string }>;
 ```
 
-Structure is a line-for-line mirror of `impact.ts:53-127`: preflight `detectEmptyIndex`, resolve subject once, `AgentCoordinator` (`parentId: \`why:${ctx.sessionId}\``, `depth: 1`), six `makeSubAgent`-wrapped lanes, JSON-decode results, aggregate gaps, return the brief. `emitWhyBrief` = `emitBriefWithSynthesis({ sessionId, briefReadyMethod: "why.briefReady", briefErrorMethod: "why.briefError", notify, llm?, buildBrief: () => runWhy(input, ctx) })`.
+Structure is a line-for-line mirror of `impact.ts:53-127`: preflight `detectEmptyIndex`, resolve subject once, `AgentCoordinator` (`parentId: \`why:${ctx.sessionId}\``,`depth: 1`), six`makeSubAgent`-wrapped lanes, JSON-decode results, aggregate gaps, return the brief.`emitWhyBrief` = `emitBriefWithSynthesis({ sessionId, briefReadyMethod: "why.briefReady", briefErrorMethod: "why.briefError", notify, llm?, buildBrief: () => runWhy(input, ctx) })`.
 
 **Lane resolution pass (before the coordinator):** resolve subject; run `ensureBlameLine` **once** (it is the only spawn and two lanes need the SHA — running it inside parallel lanes could double-spawn on a cold line); package `{subject, blame}` and hand it to every lane. Lanes are then pure SQL.
 
@@ -1121,10 +1137,10 @@ The six lanes — each returns `{ findings?: WhyFinding[]; gap?: GapNote }`:
 | --- | --- |
 | `subAuthorship` | No subject/line → gap (`missing_relation_emit`-style detail "cannot anchor"). Blame null → gap `detail: "No blame available for this line (outside an indexed root, not a git repo, or git blame failed)."`. Else finding `{lane:"authorship", title: \`${authorName ?? "unknown"} · ${sha.slice(0,12)}\`, detail: commit subject via commitSubjectFor(...) ?? sha, occurredAt: authorTimeMs, url: null, entityId: commit entity id or null}`. |
 | `subPullRequest` | Blame SHA → `prForSha`. Also author person via `SELECT pe.label FROM graph_relation a JOIN graph_entity pe ON pe.id = a.from_id AND pe.type='person' WHERE a.to_id = ? AND a.type='authored' LIMIT 1`. Finding: PR title/number/url, detail includes the PR author label when found. No PR → gap `detectMissingRelationEmit(db, "merged_as", ...)` if the relation has no rows at all, else `{}` (PR simply not merged/indexed). **Reviewers: never promised** — when a PR is found, append the exact gap `expert.ts:287-291` uses: `detectMissingRelationEmit(db, "reviewed", "Tracked as a graph-populator follow-up; not gated on a specific Phase 5 wave.")` (grounding: no populator emits `reviewed`; the spec's "reviewer set" claim was ungrounded). |
-| `subTicket` | From the PR entity (if any): the `ticketForPr` query but `.all()` (up to 10), each → finding `{lane:"ticket", title: \`${key} ${title}\`, url, occurredAt: i.modified_at, entityId}`. No PR → `{}`. PR but zero rows → `detectMissingRelationToEntityType(db, "resolves", "issue", "PR bodies emit `resolves` since 1a — reference the ticket key in the PR body.")`. Both endpoints type-scoped (`pe.type='pr'`, `ie.type='issue'`) — `resolves` is polysemous. |
-| `subDiscussion` | Target ids = the found pr/issue/commit entity ids. Reverse `mentions`: `SELECT m.id, i.title, i.body_preview, i.url, i.modified_at FROM graph_relation r JOIN graph_entity m ON m.id=r.from_id AND m.type='message' JOIN item i ON i.id=m.external_id WHERE r.to_id IN (…) AND r.type='mentions' ORDER BY i.modified_at DESC LIMIT 20`. Zero rows and zero `mentions` rows overall → `detectMissingRelationEmit(db, "mentions", "Messages emit `mentions` since 1a — connect Slack/Teams and sync.")`; zero rows otherwise → `{}`. |
-| `subDriver` | Anchor = blame `authorTimeMs`; without it → `{}`. Incidents in `[t - DRIVER_WINDOW_MS, t]` (`DRIVER_WINDOW_MS = 48h` — a change "responds to" an incident that precedes it; 2 h is the deploy-correlation window, too tight for a human writing a fix): `SELECT e.id, e.label, i.url, CAST(json_extract(e.metadata,'$.occurredAt') AS INTEGER) AS occurred_at FROM graph_entity e JOIN item i ON i.id = e.external_id WHERE e.type='incident' AND occurred_at BETWEEN ? AND ? ORDER BY occurred_at DESC, e.id ASC LIMIT 10`. Enrich each with its correlated deployment (`correlates_with`, deployment→incident, `LIMIT 1`) in the detail. Zero incident entities at all → `detectMissingEntityType(db, "incident")`. Always append (when findings exist too) the permanent-gap honesty note: `detectMissingRelationEmit(db, "affects", "No populator emits `affects`; driver attribution is temporal (48 h window), not causal.")`. |
-| `subDownstream` | Symbols of the subject file: `SELECT id, label FROM graph_entity WHERE type='symbol' AND json_extract(metadata,'$.file') = ? AND json_extract(metadata,'$.repoRoot') = ? LIMIT 20`; for each, `reverseDependsOn(db, id, 25)` → findings `{lane:"downstream", title: r.label, detail: \`depends on ${symbolLabel}\`, entityId: r.entityId, url: null, occurredAt: null}` (dedupe by entityId). Zero symbols → gap `detail: "No indexed code symbols for this file — enable code_index on the root and sync."`. Symbols but zero dependents → the same remediation note `impact.ts:228-230` uses (symbol-level `depends_on` granularity). |
+| `subTicket` | From the PR entity (if any): the `ticketForPr` query but `.all()` (up to 10), each → finding `{lane:"ticket", title: \`${key} ${title}\`, url, occurredAt: i.modified_at, entityId}`. No PR →`{}`. PR but zero rows →`detectMissingRelationToEntityType(db, "resolves", "issue", "PR bodies emit `resolves` since 1a — reference the ticket key in the PR body.")`. Both endpoints type-scoped (`pe.type='pr'`,`ie.type='issue'`) —`resolves` is polysemous. |
+| `subDiscussion` | Target ids = the found pr/issue/commit entity ids. Reverse `mentions`: `SELECT m.id, i.title, i.body_preview, i.url, i.modified_at FROM graph_relation r JOIN graph_entity m ON m.id=r.from_id AND m.type='message' JOIN item i ON i.id=m.external_id WHERE r.to_id IN (…) AND r.type='mentions' ORDER BY i.modified_at DESC LIMIT 20`. Zero rows and zero `mentions` rows overall → `detectMissingRelationEmit(db, "mentions", "Messages emit`mentions`since 1a — connect Slack/Teams and sync.")`; zero rows otherwise → `{}`. |
+| `subDriver` | Anchor = blame `authorTimeMs`; without it → `{}`. Incidents in `[t - DRIVER_WINDOW_MS, t]` (`DRIVER_WINDOW_MS = 48h` — a change "responds to" an incident that precedes it; 2 h is the deploy-correlation window, too tight for a human writing a fix): `SELECT e.id, e.label, i.url, CAST(json_extract(e.metadata,'$.occurredAt') AS INTEGER) AS occurred_at FROM graph_entity e JOIN item i ON i.id = e.external_id WHERE e.type='incident' AND occurred_at BETWEEN ? AND ? ORDER BY occurred_at DESC, e.id ASC LIMIT 10`. Enrich each with its correlated deployment (`correlates_with`, deployment→incident, `LIMIT 1`) in the detail. Zero incident entities at all → `detectMissingEntityType(db, "incident")`. Always append (when findings exist too) the permanent-gap honesty note: `detectMissingRelationEmit(db, "affects", "No populator emits`affects`; driver attribution is temporal (48 h window), not causal.")`. |
+| `subDownstream` | Symbols of the subject file: `SELECT id, label FROM graph_entity WHERE type='symbol' AND json_extract(metadata,'$.file') = ? AND json_extract(metadata,'$.repoRoot') = ? LIMIT 20`; for each, `reverseDependsOn(db, id, 25)` → findings `{lane:"downstream", title: r.label, detail: \`depends on ${symbolLabel}\`, entityId: r.entityId, url: null, occurredAt: null}` (dedupe by entityId). Zero symbols → gap `detail: "No indexed code symbols for this file — enable code_index on the root and sync."`. Symbols but zero dependents → the same remediation note`impact.ts:228-230` uses (symbol-level `depends_on` granularity). |
 
 - [ ] **Step 1: Write the failing tests** — `why.test.ts`. One `describe` per lane against a fixture DB containing **only that lane's edges** (per the spec's test table), plus a degradation test. Build fixtures with the same connector-verbatim seeding as Task 5 (share a `seedWhyFixture(db, parts: {...})` local helper; do NOT hand-roll new shapes — reuse the Task 5 literals). Key cases:
 
@@ -1190,6 +1206,7 @@ Brief assembly mirrors `impact.ts:103-112`: `{ kind: "why", agentVersion: 1, gen
 ```bash
 bun test packages/gateway/src/agents/ && bunx tsc --noEmit -p packages/gateway/tsconfig.json
 ```
+
 Expected: PASS including all pre-existing agent suites.
 
 - [ ] **Step 5: Commit**
@@ -1206,11 +1223,13 @@ git commit -m "feat(agents): the why agent — six parallel lanes over the 1a gr
 **Before touching code, invoke the `nimbus-ipc` and `nimbus-tauri-allowlist` skills** (repo rule: consult before any `agents-rpc.ts` / `gateway_bridge.rs` change).
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts` (+ its test file `agents-rpc.test.ts` or a sibling `agents-rpc.why.test.ts`)
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs`
 - Modify: `packages/gateway/src/security-invariants.test.ts` (the TS mirror of the Rust count)
 
 **Interfaces:**
+
 - Produces: IPC `agents.why` (async, `{sessionId}`, emits `why.briefReady`/`why.briefError` pair) and `agents.whyPeek` (synchronous payload — the namespace's first, deliberately: same allowlist grouping per the spec's naming decision).
 
 - [ ] **Step 1: Write the failing tests** — `packages/gateway/src/ipc/agents-rpc.why.test.ts`, mirroring the existing per-method tests in `agents-rpc.test.ts` (read one first and copy its harness):
@@ -1284,6 +1303,7 @@ Add both to the `dispatchByMethod` map (`"agents.why": handleWhy, "agents.whyPee
 ```bash
 bun test packages/gateway/src/ipc/agents-rpc.why.test.ts packages/gateway/src/security-invariants.test.ts && bunx tsc --noEmit -p packages/gateway/tsconfig.json
 ```
+
 If a Rust toolchain is present, also `cargo test --manifest-path packages/ui/src-tauri/Cargo.toml allowlist` (CI runs it regardless; the TS mirror test catches the count drift either way).
 
 - [ ] **Step 6: Commit**
@@ -1298,11 +1318,13 @@ git commit -m "feat(ipc): agents.why + agents.whyPeek; Tauri allowlist 99 -> 101
 ### Task 8: `index.regraph` IPC + `nimbus index regraph` CLI
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/index-regraph-rpc.ts`, `index-regraph-rpc.test.ts`
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts`
 - Modify: `packages/cli/src/commands/index-cmd.ts` (+ its test if one exists — check for `index-cmd.test.ts` and extend)
 
 **Interfaces:**
+
 - Produces: IPC `index.regraph` (no params) → `{ scanned: number; graphed: number; skipped: number }`; CLI `nimbus index regraph [--json]`.
 
 **The 1a Critical trap this task exists to respect:** `nimbus index regraph` MUST pass `resolveServiceId` to `regraphAllItems` or the backfill **destroys `correlates_with` edges** (the resolver-bound entities re-sync without a resolver, `affectedService` goes null, and the retirement clears fire). Also pass a logger, and surface `skipped > 0` to the user. `graphed` means "actually wrote rows", not "dispatched" — say so in the help text.
@@ -1435,10 +1457,12 @@ git commit -m "feat(index): nimbus index regraph — resolver-threaded graph bac
 ### Task 9: `nimbus why` CLI
 
 **Files:**
+
 - Create: `packages/cli/src/commands/why.ts` (+ `why.test.ts` mirroring however `impact` is tested — check for `impact.test.ts` / dispatcher tests and copy the harness)
 - Modify: `packages/cli/src/commands/registry.ts` (`"why"` between `"watch"` and `"workflow"`), `packages/cli/src/commands/index.ts` (barrel), `packages/cli/src/index.ts` (`why: runWhyCli` in `COMMAND_HANDLERS` + import)
 
 **Interfaces:**
+
 - Consumes: `runAgentCli` from `../lib/agent-cli-dispatcher.ts`; `withGatewayIpc` from `../lib/with-gateway-ipc.ts`.
 - Produces: `runWhyCli(args: string[]): Promise<void>`.
 
@@ -1500,6 +1524,7 @@ export async function runWhyCli(args: string[]): Promise<void> {
 ```bash
 bun test packages/cli/src/ && bunx tsc --noEmit -p packages/cli/tsconfig.json && bun run audit:readme-cli
 ```
+
 Expected: PASS. (`audit:readme-cli` validates `docs/README.md` references against the registry — it goes red only if a doc names an unregistered command; adding the registry entry now keeps Task 12's docs green.)
 
 - [ ] **Step 5: Commit**
@@ -1514,6 +1539,7 @@ git commit -m "feat(cli): nimbus why <ref> [--line N] [--peek] [--json]"
 ### Task 10: Triaged 1a backlog — ticket-key prose stoplist + `REGRAPH_TYPE_ORDER`
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/graph-refs.ts`, `graph-refs.test.ts`
 - Modify: `packages/gateway/src/graph/regraph.ts`, `regraph.test.ts`
 
@@ -1587,6 +1613,7 @@ git commit -m "fix(graph): ticket-key standards stoplist + obsidian_note in regr
 ### Task 11: E2E + latency
 
 **Files:**
+
 - Create: `packages/gateway/test/e2e/scenarios/why.e2e.test.ts`
 
 Remember: this directory is **not typechecked** — run the tests; do not trust `tsc` for it.
@@ -1626,7 +1653,8 @@ git commit -m "test(agents): why e2e — lanes, degradation, HITL-free, <10s"
 ### Task 12: Docs
 
 **Files:**
-- Modify: `docs/cli-reference.md` — two sections in the established format (heading → prose → bash examples → Options table → Output line → Read-only line → `---`): `### \`nimbus why\`` under Team Intelligence (after `impact`), and a `regraph` row/paragraph in the `nimbus index` section beside `reembed`. Copy the `impact` section's anatomy exactly (`cli-reference.md:223-244`); for `why`, the Read-only line notes the one local `git blame` subprocess (root-fenced, cached, not a connector call).
+
+- Modify: `docs/cli-reference.md` — two sections in the established format (heading → prose → bash examples → Options table → Output line → Read-only line → `---`): `### \`nimbus why\`` under Team Intelligence (after `impact`), and a`regraph` row/paragraph in the `nimbus index` section beside `reembed`. Copy the`impact`section's anatomy exactly (`cli-reference.md:223-244`); for`why`, the Read-only line notes the one local`git blame` subprocess (root-fenced, cached, not a connector call).
 - Modify: `docs/architecture.md` — one row in the agent catalogue table (~line 1066-1080): Phase `S1` | Agent `why` | Command `nimbus why` | IPC `agents.why` / `agents.whyPeek` | Status shipped; plus the `agents.*` comment block (~:1163-1217) gains the two methods.
 - Modify: `docs/CHANGELOG.md` — dated entry under 2026-07 (connector-docs convention: deliveries go here, NOT the CLAUDE.md status line): the why agent + peek + CLI + `nimbus index regraph` + the 1a-backlog fixes, referencing why-lens step 1b.
 
@@ -1636,6 +1664,7 @@ git commit -m "test(agents): why e2e — lanes, degradation, HITL-free, <10s"
 ```bash
 bun run audit:readme-cli && bun run audit:doc-refs && bun run audit:status-drift
 ```
+
 Expected: PASS. If lychee is installed (`~/.cargo/bin/lychee`), run it over the changed docs and match CI's link total (gate the whole branch, not just edited files — review docs must not embed absolute `file:///C:/gitrep/...worktrees/` links).
 
 - [ ] **Step 3: Commit**
