@@ -68,10 +68,27 @@ existing `.github/workflows/org-drift-sweep.yml`**, reusing the
 under `.github/`. This is the same idiom as P1's `check-ruleset-drift.ts` and
 `check-action-sha-pins.ts`.
 
-Both new gates are **fail-soft** (exit 0 "skipped" when `gh` is unavailable /
-unauthorized, exactly like `ruleset-drift`) so they never false-block a local
-`preflight` or an external contributor, and are registered in `CI_ONLY_GATES`
-(network + App auth), not the fast tier.
+Both new gates are **fail-soft locally** (exit 0 "skipped" when `gh` is
+unavailable / unauthorized, like `ruleset-drift`) so they never false-block a
+local `preflight` or an external contributor, and are registered in
+`CI_ONLY_GATES` (network + App auth), not the fast tier.
+
+**CI visibility — a skip in the scheduled sweep is loud, not silent.** Fail-soft
+green is correct *locally* (a contributor has no `gh`/org auth) but wrong in the
+*scheduled CI sweep*: there the App token must work, so a skip means the token or
+a permission broke — precisely the "a control that silently passes is the enemy"
+failure. So:
+
+- On any skip, the script emits a GitHub Actions `::warning::` annotation (surfaces
+  in the run summary), not just a plain log line.
+- The `org-drift-sweep` jobs invoke the gates with a **`--strict`** flag (or the
+  gates detect `GITHUB_ACTIONS`): under strict mode a would-be skip becomes a
+  **red failure** with a clear "could not authenticate — the App token/permission
+  is broken" message. Local/`preflight` runs stay fail-soft green.
+- The same `--strict`-in-sweep treatment is applied to the existing
+  `ruleset-drift` job in the same PR — it shares the fail-soft `decideExit` and
+  the same silent-skip risk; keeping the three sweep gates consistent is a
+  one-line-per-job change.
 
 ---
 
@@ -93,10 +110,22 @@ role-agnostic.
 - CLI wrapper fetches, via the App token: all org repos
   (`GET /orgs/nimbus-agent/repos`) and, for each team, its repo grants
   (`GET /orgs/nimbus-agent/teams/{slug}/repos`), unions the grants, and diffs.
-- An explicit **exemption allowlist** (checked-in, empty initially) for any repo
-  intentionally reachable through no team — so an exemption is a reviewed diff,
-  never a silent gap.
-- Fail-soft on auth/network failure; fails **red** naming each teamless repo.
+  - **Must paginate.** The GitHub list endpoints default to 30 results per page,
+    so a bare call silently truncates once the org exceeds 30 repos — a truncated
+    list is a *false green* (a dropped repo looks reachable). Use `gh api
+    --paginate` (Link-header traversal) for both the repo and team-repo listings.
+    The org has 18 repos today; this is future-proofing against exactly the silent
+    gap the program exists to close.
+  - **Excludes archived repos.** An archived repo is read-only and needs no active
+    team maintenance, so the CLI filters `archived == true` out of `allRepos`
+    before diffing. (None are archived today; this keeps a future archive from
+    false-failing the gate.)
+- An explicit **exemption allowlist** — `team_reachability.exempt` in
+  `.github/org-access.json` (see Deliverable 2), a checked-in array, empty
+  initially — for any repo intentionally reachable through no team, so an
+  exemption is a reviewed diff, never a silent gap.
+- Fail-soft locally, **strict in CI** (see "CI visibility" below); fails **red**
+  naming each teamless repo.
 
 ### 2. Org-settings hardening + gate
 
@@ -105,16 +134,32 @@ role-agnostic.
 Both are safe today — the sole owner is unaffected by `default_repository_permission`
 and by the repo-creation restriction.
 
-**Gate — `.github/org-settings.json` + `scripts/structure-audit/check-org-settings-drift.ts`:**
+**Gate — `.github/org-access.json` + `scripts/structure-audit/check-org-settings-drift.ts`:**
 
-- `.github/org-settings.json` holds the desired values (a small, explicit set:
-  `members_can_create_repositories`, `default_repository_permission`; more can be
-  added later).
-- Pure fn `diffOrgSettings(desired, live): AuditResult` diffs declared vs live.
+- **One consolidated config file, `.github/org-access.json`**, is the single
+  source for org-access config. It holds two sections: `settings` (the desired
+  org-settings values — a small explicit set: `members_can_create_repositories`,
+  `default_repository_permission`; more can be added later) and
+  `team_reachability.exempt` (Deliverable 1's exemption array). Both new gates
+  read their own section of this one file:
+
+  ```json
+  {
+    "$comment": "Desired org-access config; audited by check-org-settings-drift.ts and check-team-reachability.ts.",
+    "settings": {
+      "members_can_create_repositories": false,
+      "default_repository_permission": "none"
+    },
+    "team_reachability": { "exempt": [] }
+  }
+  ```
+
+- Pure fn `diffOrgSettings(desired, live): AuditResult` diffs the `settings`
+  section against live.
 - CLI wrapper reads live settings via the App token
   (`GET /orgs/nimbus-agent`, covered by `organization_administration: read`).
-- Fail-soft; fails **red** on any reverted setting. This is the piece that stops
-  the two settings drifting back unwatched.
+- Fail-soft locally, **strict in CI**; fails **red** on any reverted setting.
+  This is the piece that stops the two settings drifting back unwatched.
 
 ### 3. Contributor-two switch set (checked-in, no new gate)
 
@@ -146,10 +191,20 @@ The fourth switch is the `bypass_actors` field the CI App token **cannot read**
 org-level actors, and `organization-administration: read` does not restore it;
 reading it needs `Administration: write`, which a read-only audit must not hold).
 Gating it needs an **org-owner credential**, not the App token. P6a documents the
-intended approach — a periodic check run with an org-owner credential, out of
-band from the App-token sweep — and does **not** build it. The switch isn't
-flipped until contributor two, so the gap is not load-bearing yet. Recorded as a
-roadmap follow-up.
+intended approach and does **not** build it, for two reasons: (a) a check that
+isn't scheduled and machine-enforced is not a "gate" by this program's bar, so it
+would not change P6a's done-definition; and (b) the switch is not flipped until
+contributor two, so the gap is not load-bearing yet.
+
+**Intended mechanism (correcting the review's PAT suggestion):** when built, it
+runs as a **local, owner-invoked** CLI check using the owner's **ambient `gh`
+auth** — no new PAT. The org owner's existing `gh` credentials already read
+`bypass_actors` correctly (verified during P1), and the secrets program is
+actively *retiring* PATs, so introducing a PAT-based flow — even a local one —
+cuts against the org's direction. The diff logic is cheap (the same
+`structure-audit` shape) and can be added as a small follow-up; it is deferred
+here to keep P6a scoped and because it earns nothing until contributor two.
+Recorded as a roadmap follow-up.
 
 ### 5. Roadmap update
 
@@ -201,11 +256,16 @@ documented follow-up rather than left silently skipping.
 
 - `check-team-reachability.test.ts` — the pure `findUnreachable` over fixtures:
   all-reachable → OK; a teamless repo → red naming it; an exempt teamless repo →
-  OK; empty inputs.
+  OK; an archived teamless repo → OK (excluded); empty inputs.
 - `check-org-settings-drift.test.ts` — `diffOrgSettings`: match → OK; a reverted
   setting → red naming the field with expected/got; a missing field → red.
-- Both CLI wrappers' `decideExit`-style fail-soft path covered (queried-zero →
-  skip green), mirroring `ruleset-drift`.
+- Fail-soft vs strict: the `decideExit`-style path returns skip-green when
+  unauthenticated **without** `--strict`, and a **red failure** with `--strict`
+  (the CI-sweep mode), for both gates. This is the test that pins the "loud in
+  CI" behavior.
+- Pagination is a CLI-wrapper concern (uses `gh api --paginate`); the pure
+  functions receive the already-complete list, so their tests pass fixtures large
+  enough to prove no 30-item assumption leaks into the pure logic.
 - Live validation post-apply: `gh workflow run org-drift-sweep.yml --ref main`
   and confirm `team-reachability` + `org-settings-drift` jobs are green.
 
@@ -215,10 +275,24 @@ documented follow-up rather than left silently skipping.
 
 1. The six teamless repos are granted to `maintainers`; the two org settings are
    flipped; the App has `members: read`.
-2. `.github/org-settings.json` and the `$contributor_two` block are checked in;
+2. `.github/org-access.json` and the `$contributor_two` block are checked in;
    both new gates are registered (`package.json` + `CI_ONLY_GATES`) and wired as
    jobs in `org-drift-sweep.yml`.
 3. A live `org-drift-sweep` run on `main` is **green** across all jobs, and each
    new gate would go **red** if its property regressed (a teamless repo; a
    reverted setting).
 4. The roadmap records P6a delivered plus the two documented deferrals.
+
+---
+
+## Design-review dispositions
+
+Responses to [the review](./2026-07-24-p6a-access-contribution-model-design-review.md):
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 1a | Archived-repo handling | **Fixed** — the reachability CLI excludes `archived == true` (none today; future-proofing). |
+| 1b | Pagination (30/page default) | **Fixed** — `gh api --paginate` mandated for the repo + team-repo listings; a truncated list is a false green, the exact anti-pattern. |
+| 2 | Fail-soft silent-green visibility | **Fixed** — `::warning::` on skip **and** `--strict` in the CI sweep turns a skip into a red failure (a skip there means the token broke); same treatment back-ported to `ruleset-drift`. |
+| 3 | Bypass-actor: build now, local PAT | **Deferred (refined).** Kept deferred — a non-scheduled check isn't a "gate" by this program's bar and the switch isn't live until contributor two. Corrected the mechanism: when built it uses the owner's **ambient `gh` auth, no PAT** (the secrets program is retiring PATs; owner `gh` already reads `bypass_actors`). |
+| 4 | Exemption allowlist location | **Fixed** — consolidated into one `.github/org-access.json` (`settings` + `team_reachability.exempt`), the single org-access config source. |
