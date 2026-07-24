@@ -73,7 +73,23 @@ architecture enforces.
   per-repo).
 - Versioning: the store path carries a version (`version1`). Bumping the CLA text
   materially bumps the version, which re-requires signatures — a deliberate,
-  visible event, not silent.
+  visible event, not silent. **Version-bump SOP:** a bump must update the CLA doc
+  **and** the `path-to-signatures` version in **all 7** workflows in **one
+  coordinated PR** — otherwise a contributor is blocked on a not-yet-bumped repo
+  while allowed on a bumped one. The `cla-coverage` gate (§4) asserts the version
+  string is identical across the 7 repos, so a partial bump goes red.
+- **Concurrent writes:** the action writes `cla.json` via a conditional API write
+  to one shared file; the action documents **no** retry/back-off. Two *new*
+  contributors signing within the same few seconds across different repos could
+  collide (`non-fast-forward`), failing one run. This is **low-severity** —
+  signing is a once-per-contributor-ever event, so the window is tiny — and
+  self-recovering: the affected contributor re-comments `recheck` (or re-signs).
+  The plan verifies the action's actual conflict behavior; no cross-repo write
+  serialization is built (disproportionate for the volume).
+- **Branch protection:** signatures live on the **non-default** `cla-signatures`
+  branch, so `.github`'s `main`-targeted `General` ruleset does **not** gate it —
+  the App token writes with plain `contents: write`, bypassing nothing on `main`.
+  Do **not** add branch protection to `cla-signatures` (it would block the bot).
 
 ### 3. The enforcement Action (`.github/workflows/cla.yml`, per repo)
 
@@ -87,20 +103,35 @@ policy):
 - **Runs** `contributor-assistant/github-action@<SHA>` configured with: the
   shared store (`remote-repository-name: .github`, `branch: cla-signatures`,
   `path-to-signatures`), the ICLA URL (`path-to-document`), a custom PR comment
-  that also links the **CCLA** path for corporate contributors, and an
-  **allowlist** of org members + bots (`dependabot[bot]`, the release bot, the
-  owner) so their PRs auto-pass and never block on a signature.
-- **Security invariant (`pull_request_target`):** this trigger runs with the base
-  repo's secrets **even on fork PRs**, so the workflow **must never check out or
-  execute PR head code** — it reads only PR metadata and the comment body.
-  Minimal `permissions:` (`contents: read`, `pull-requests: write`,
-  `statuses: write`, `actions: write`) and pinned action SHAs. Writing to the
-  signature store uses a separate scoped token, below — never the fork's code.
-- **Token:** writing the signature file to the shared store needs
-  `contents: write` on the `.github` repo. Supplied as a **GitHub App token
-  scoped to `contents: write`** on that one repo (no PAT — consistent with the
-  retiring-PATs stance). This may require an App permission/install step, like
-  P6a's `members: read` grant.
+  that also links the **CCLA** path for corporate contributors, and a **minimal
+  `allowlist`** — the `bot*` wildcard (covers `dependabot[bot]`, the release bot,
+  every bot) plus the single org owner's username. Keeping it to a pattern + one
+  name minimizes the per-file duplication across the 7 (byte-identical) workflows;
+  dynamic org-membership querying is a follow-up, YAGNI for a one-member org.
+- **All commit authors must sign, not just the PR sender.** A PR can carry commits
+  by multiple authors (co-authored-by, cherry-picks). The gate must require a
+  signature from **every unique commit author/committer** in the PR — an unsigned
+  co-author must not merge under a signed sender. The plan **verifies** that
+  `contributor-assistant` enforces this (it is the expected behavior); if it only
+  checks the sender, the plan adds a mitigation (a supplementary all-authors check
+  or requiring external PRs be single-author). This is a correctness requirement,
+  not a nicety.
+- **Security invariant (`pull_request_target`):** this trigger runs the **base
+  repo's** trusted workflow with base secrets **even on fork PRs**, so the workflow
+  **must never** check out the PR head (`github.event.pull_request.head.sha`/`.ref`)
+  and **must never** run repo scripts (`npm`/`bun`/`make` etc.) — it reads only PR
+  metadata and the comment body. This is exactly what keeps a fork PR from
+  exfiltrating the store token. Minimal `permissions:` and SHA-pinned actions.
+- **Token (corrected):** the action's **required** `PERSONAL_ACCESS_TOKEN` input
+  is fed a **minted GitHub App installation token** (via `create-github-app-token`
+  at run time) — so no long-lived PAT is ever stored, consistent with the
+  retiring-PATs stance. With a **remote** store the token's scope spans **both**
+  the store repo (`contents: write` on `.github`) **and** the PR repo
+  (`pull-requests: write`, `statuses: write`, `contents: read`) to post the
+  comment + status. That means one App installed on `.github` + the 7 gated repos
+  with those permissions — broader than a single repo, and likely needing an App
+  permission/install step (as P6a's `members: read` did). The plan confirms an
+  App token is accepted in the `PERSONAL_ACCESS_TOKEN` slot before rollout.
 
 ### 4. The gate — two layers (per the program's "goes red on regression" rule)
 
@@ -111,11 +142,13 @@ policy):
    gate that has been observed red, not merely assumed.
 2. **Coverage drift gate:** a new **`cla-coverage`** job in the existing
    `org-drift-sweep` asserts that each of the 7 gated repos has
-   `.github/workflows/cla.yml` present. This makes "the CLA is wired in every
-   gated repo" a checked, goes-red-on-regression property — so it cannot silently
-   stop at one repo (the exact "controls stop where they were written" pattern
-   the program exists to break). It reuses the P1/P6a `_gh-audit.ts` fail-soft /
-   `--strict`-in-CI plumbing and the App token.
+   `.github/workflows/cla.yml` present **and that its `path-to-signatures`
+   version string matches across all 7** (so a partial version bump — §2 — goes
+   red). This makes "the CLA is wired, and identically, in every gated repo" a
+   checked, goes-red-on-regression property — so it cannot silently stop at one
+   repo or drift between them (the exact "controls stop where they were written"
+   pattern the program exists to break). It reuses the P1/P6a `_gh-audit.ts`
+   fail-soft / `--strict`-in-CI plumbing and the App token.
 
 ### 5. `CONTRIBUTING.md`
 
@@ -172,8 +205,11 @@ catches a repo whose workflow (and thus its check) is missing.
 
 - **`pull_request_target` never runs PR code** (§3) — the one real security edge
   here; stated as an invariant, minimal-permissions, SHA-pinned.
-- **No PAT** — the store-write token is a scoped GitHub App token
-  (`contents: write` on `.github` only).
+- **No stored PAT** — the `PERSONAL_ACCESS_TOKEN` input receives a **minted** App
+  installation token (§3), never a long-lived PAT. The App's **private-key org
+  secret** is stored **`SELECTED`-scoped** to only the 7 gated repos (not `ALL`),
+  and because `pull_request_target` runs the trusted base workflow (never fork
+  code), a fork PR cannot read or exfiltrate it.
 - **SHA-pinned actions** — `contributor-assistant/github-action` and any others
   are pinned to a full 40-hex SHA; `audit:action-sha-pins` enforces it.
 - **No signature data off-machine** — stored in-repo, in the org.
@@ -190,3 +226,20 @@ catches a repo whose workflow (and thus its check) is missing.
 4. The `cla-coverage` sweep gate is green and would go **red** if a repo's
    `cla.yml` regressed.
 5. The roadmap records the CLA delivered + the CCLA-automation deferral.
+
+---
+
+## Design-review dispositions
+
+Responses to [the review](./2026-07-24-cla-design-review.md); the action's
+behaviour was verified against its published README.
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 1a | Concurrent writes to the shared `cla.json` | **Fixed (documented).** Confirmed the action documents no retry. Low-severity (signing is once-ever per contributor); recovery = re-comment `recheck`; plan verifies actual behaviour; no cross-repo serialization built (§2). |
+| 1b | Branch protection on the signature branch | **Fixed (clarified).** Signatures live on the non-default `cla-signatures` branch, so `.github`'s `main` ruleset doesn't gate it; App writes with plain `contents: write`; do not protect that branch (§2). |
+| 2 | App-token distribution + secret scoping | **Fixed (corrected).** Token story rewritten: a minted App token is fed to the required `PERSONAL_ACCESS_TOKEN` input (no stored PAT); the private-key org secret is `SELECTED`-scoped to the 7 repos; `pull_request_target` running trusted base code is what prevents fork exfiltration (§3, Security). |
+| 3 | `pull_request_target` never runs PR code | **Fixed (strengthened).** Invariant now names the exact anti-patterns (never checkout `head.sha`/`.ref`, never run `npm`/`bun`/`make`) (§3). |
+| 4 | All commit authors must sign, not just the sender | **Fixed (requirement + plan-verify).** Added as a correctness requirement; the plan verifies `contributor-assistant` enforces it and adds a mitigation if not (§3). |
+| 5 | Allowlist duplicated across 7 files → drift | **Fixed + partial defer.** Confirmed `bot*` wildcard works → allowlist shrinks to `bot*` + one owner name; 7 workflows byte-identical from one template; `cla-coverage` asserts consistency. Dynamic org-membership querying deferred (YAGNI, 1-member org) (§3). |
+| 6 | Version-bump SOP | **Fixed.** Added a coordinated-bump SOP; `cla-coverage` asserts the version string matches across the 7 repos so a partial bump goes red (§2). |
