@@ -62,7 +62,7 @@ function seededDb(): Database {
     metadata: {
       number: 412,
       repo: "acme/app",
-      state: "merged",
+      state: "closed",
       draft: false,
       merged: true,
       merge_commit_sha: SHA,
