@@ -938,6 +938,14 @@ becomes one reviewed diff instead of four remembered UI clicks."
 
 ### Task 7: Adopt DCO for inbound contributions
 
+> **SUPERSEDED (2026-07-24).** Open decision 6 was resolved in favour of a **CLA**,
+> not a DCO — a CLA preserves relicensing optionality for a possible future
+> commercial dual-licensing of the AGPL-3.0 core. This task (the `Signed-off-by`
+> DCO + `dco.yml` check) is **replaced, not amended**, per its own note below. P1
+> ships with Tasks 1–6 only; the CLA is a separate sub-effort tracked under **P6
+> (Access & Contribution Model)** in `docs/infrastructure-roadmap.md`. The DCO
+> steps below are retained for the record — **do not implement them.**
+
 **Files:**
 
 - Modify: `docs/CONTRIBUTING.md`

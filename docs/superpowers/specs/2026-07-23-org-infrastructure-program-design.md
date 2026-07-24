@@ -662,7 +662,11 @@ tiny and each is currently costing something:
 5. **Should P3 dogfood the first-party PR-check Action?** Pulling a Phase 12
    product deliverable forward is a roadmap decision;
    [`roadmap.md`](../../roadmap.md) wins on sequencing it.
-6. **DCO or CLA?** DCO is a `Signed-off-by` line plus a bot — near-zero friction,
+6. **DCO or CLA? — RESOLVED 2026-07-24: CLA.** Chosen to preserve relicensing
+   optionality for a possible future commercial dual-licensing of the AGPL-3.0
+   core. Implementation is a separate sub-effort under P6; the P1 plan's Task 7
+   (DCO) is superseded. Original framing retained below.
+   DCO is a `Signed-off-by` line plus a bot — near-zero friction,
    and sufficient to establish that a contributor had the right to submit. A CLA
    additionally preserves relicensing optionality, which matters only if
    commercial dual-licensing is ever on the table. DCO is the recommendation

@@ -55,7 +55,8 @@ Design of record:
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
 land immediately: P4a, `nimbus-client` rulesets, and the contribution-licensing
-decision (CLA).
+decision (resolved 2026-07-24 — **CLA**, see the P1 progress log; implementation
+moves to P6).
 
 ### P1 progress log
 
@@ -66,6 +67,14 @@ decision (CLA).
   `19635616`, active) now protects the narrow-waist repo that had none, matching
   the shape the other active code repos share (squash-only, thread-resolution
   required, zero required approvals in solo mode).
+- **Contribution-licensing decision (2026-07-24)** — resolved to a **CLA** over a
+  DCO. A CLA preserves relicensing optionality for any future commercial
+  dual-licensing of the AGPL-3.0 core; that optionality is the deciding factor,
+  since both mechanisms establish a contributor's right to submit. The P1 plan's
+  Task 7 (a `Signed-off-by` DCO + `dco.yml` check) is therefore **superseded, not
+  amended** — P1 ships with Tasks 1–6 only. The CLA is its own sub-effort (an
+  ICLA/CCLA text + a signature-capture bot) and moves to its natural home in **P6
+  (Access & Contribution Model)**; it is *not* a blocker for the P1 PR.
 - **First org drift sweep (2026-07-23)** — all 8 repos pass `audit:action-sha-pins`
   (run locally as `bun scripts/structure-audit/check-action-sha-pins.ts --root
   <checkout>` against fresh clones, pending the workflow's first post-merge run —
