@@ -226,6 +226,31 @@ For security vulnerabilities, **do not open a public issue** — see [`SECURITY.
 
 ---
 
+## Contributor License Agreement (CLA)
+
+Before your first pull request to a Nimbus public repo can merge, you must sign
+the CLA — a one-time, sign-by-comment step enforced by a required `CLA Assistant`
+check. The bot will prompt you; reply with exactly:
+
+```text
+I have read the CLA Document and I hereby sign the CLA
+```
+
+One signature covers all Nimbus public repos. See the
+[Individual CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/ICLA.md);
+contributing for an employer uses the
+[Corporate CLA](https://github.com/nimbus-agent/.github/blob/main/CLA/CCLA.md).
+
+**Why a CLA.** It grants a broad, relicensable license so the AGPL-3.0 core can
+be offered under more than one license in future — something a DCO cannot do.
+
+**MIT → AGPL is one-way.** The gateway/CLI/connectors are AGPL-3.0; `@nimbus-dev/sdk`
+and `@nimbus-dev/client` are MIT. Code may flow **MIT → AGPL** but never the
+reverse: a patch to the MIT packages must not be derived from AGPL-licensed parts
+of this repository. If unsure which side your change sits on, ask in the PR.
+
+---
+
 ## Questions
 
 Open a [GitHub Discussion](https://github.com/nimbus-agent/Nimbus/discussions) rather than an issue. Issues are for confirmed bugs and accepted feature requests.
