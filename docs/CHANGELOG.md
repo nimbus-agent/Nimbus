@@ -8,6 +8,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-24 — Whole-file blame indexer.** A new `blame` syncable populates `git_blame_line`
+  whole-file (one row per line, all languages) across git-tracked files changed in the last 90
+  days, per configured `[[filesystem.roots]]` git repo. Incremental via a per-repo last-blamed
+  HEAD cursor, with a full re-blame fallback on rewritten history; sequential and capped at 400
+  files/tick. Reuses the V32 table — no migration. Turns line-level blame from a sparse
+  security-scan byproduct into a real line-level substrate.
+
 - **2026-07-24 — GitHub connector PR-title enrichment.** GitHub connector now enriches indexed PR
   titles via a pull-detail fetch, replacing id-only `PR #N` fallbacks.
 

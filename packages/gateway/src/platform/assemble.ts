@@ -53,6 +53,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
+import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
 import {
   CONNECTOR_SERVICE_IDS,
   defaultSyncIntervalMsForService,
@@ -358,6 +359,8 @@ function registerFilesystemRootSyncables(
   );
   localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
   syncScheduler.register(createObsidianSyncable({ roots: fsV2Roots }));
+  localIndex.ensureConnectorSchedulerRegistration("blame", 10 * 60 * 1000, Date.now());
+  syncScheduler.register(createBlameIndexSyncable({ roots: fsV2Roots }));
 }
 
 interface SchedulerWithMeshOpts {
