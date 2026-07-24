@@ -1,6 +1,6 @@
 # Design Review: P6a — Access & Contribution Model (core) Design
 
-This document reviews [2026-07-24-p6a-access-contribution-model-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/org-infra-program/docs/superpowers/specs/2026-07-24-p6a-access-contribution-model-design.md) and captures suggestions, open questions, and potential improvements.
+This document reviews [2026-07-24-p6a-access-contribution-model-design.md](./2026-07-24-p6a-access-contribution-model-design.md) and captures suggestions, open questions, and potential improvements.
 
 ---
 
