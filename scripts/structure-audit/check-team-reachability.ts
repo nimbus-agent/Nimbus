@@ -44,7 +44,11 @@ if (import.meta.main) {
   const label = "audit:team-reachability";
 
   const softFail = () => {
-    const outcome = strictSkip(label, strict);
+    const outcome = strictSkip(
+      label,
+      strict,
+      "reachability indeterminate — could not read all teams/repos",
+    );
     if (outcome.code === 1) console.error(outcome.message);
     else console.warn(outcome.message);
     process.exit(outcome.code);

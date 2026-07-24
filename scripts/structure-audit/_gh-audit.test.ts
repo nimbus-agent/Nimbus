@@ -27,4 +27,25 @@ describe("strictSkip", () => {
     expect(out.message).toContain("::error::");
     expect(out.message).toContain("could not authenticate");
   });
+  test("uses a gate-specific reason when provided (soft)", () => {
+    const out = strictSkip(
+      "audit:x",
+      false,
+      "reachability indeterminate — could not read all teams/repos",
+    );
+    expect(out.code).toBe(0);
+    expect(out.message).toContain("::warning::");
+    expect(out.message).toContain("reachability indeterminate");
+    expect(out.message).not.toContain("gh unavailable");
+  });
+  test("uses a gate-specific reason when provided (strict)", () => {
+    const out = strictSkip(
+      "audit:x",
+      true,
+      "reachability indeterminate — could not read all teams/repos",
+    );
+    expect(out.code).toBe(1);
+    expect(out.message).toContain("::error::");
+    expect(out.message).toContain("reachability indeterminate");
+  });
 });

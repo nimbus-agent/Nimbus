@@ -41,8 +41,23 @@ export interface AuditOutcome {
  * App permission). Soft skip locally; in the CI sweep (`strict`) the token must
  * work, so this is a loud red — a silent green here is the failure mode P6a's
  * review flagged. Both messages carry an Actions annotation prefix.
+ *
+ * An optional `reason` overrides the default "nothing was readable" framing
+ * for a gate-specific outcome — e.g. reachability needs every team's repo
+ * list, so a partial read (some calls succeeded, a later one failed) is
+ * indeterminate rather than "nothing readable". Omitting `reason` keeps the
+ * default message byte-identical to before.
  */
-export function strictSkip(label: string, strict: boolean): AuditOutcome {
+export function strictSkip(label: string, strict: boolean, reason?: string): AuditOutcome {
+  // A gate-specific reason: something WAS read but the gate cannot complete
+  // (e.g. reachability needs every team's repo list — a partial read is
+  // indeterminate, not "nothing readable").
+  if (reason !== undefined) {
+    return strict
+      ? { code: 1, message: `::error::${label}: ${reason}` }
+      : { code: 0, message: `::warning::${label}: skipped — ${reason}` };
+  }
+  // Default: nothing was readable at all (no `gh`, no auth, or a broken token).
   if (strict) {
     return {
       code: 1,
