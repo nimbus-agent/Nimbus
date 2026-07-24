@@ -84,6 +84,8 @@ Or trace any line's provenance — who wrote it, the PR, the ticket, the inciden
 nimbus why src/auth.ts:42
 ```
 
+`nimbus why` reads from your local index, so the file must live inside a configured `[[filesystem.roots]]` root with code indexing on (`code_index = true`) that has been synced.
+
 ### Run it fully offline
 
 Nimbus needs an LLM, but it does **not** require a cloud one. Point it at a local model and nothing — not even prompts — leaves the machine:
