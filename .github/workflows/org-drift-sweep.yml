@@ -67,7 +67,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
-      - name: Mint App token (Administration:Read on the active repos)
+      - name: Mint App token (Administration + Org-administration read on the active repos)
         id: apptoken
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -75,7 +75,14 @@ jobs:
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
           repositories: Nimbus,nimbus-client,nimbus-sdk,nimbus-vscode,nimbus-web-clipper
+          # Administration:read is what `GET /repos/{o}/{r}/rulesets` needs. But a
+          # repo-scoped token with only that permission returns an EMPTY
+          # `bypass_actors` for org-level actors (e.g. OrganizationAdmin), which
+          # made the bypass_actor_types diff false-fail on the repos that carry
+          # that bypass. Org-administration:read (the App already holds it) gives
+          # the token the org context to resolve those actors.
           permission-administration: read
+          permission-organization-administration: read
       - name: Audit ruleset drift across active repos
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
