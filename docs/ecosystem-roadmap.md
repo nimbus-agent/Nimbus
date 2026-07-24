@@ -26,6 +26,7 @@ web clipper, statuspage, and whatever comes next).
 - [Stage 1 — Open the waist](#stage-1--open-the-waist)
 - [Stage 2 — Re-cut the surfaces for the ICP](#stage-2--re-cut-the-surfaces-for-the-icp)
 - [Stage 3 — Distribution](#stage-3--distribution)
+- [Stage 4 — Reach the surfaces still dark](#stage-4--reach-the-surfaces-still-dark)
 - [The headline](#the-headline)
 - [Explicit non-goals](#explicit-non-goals)
 - [Open decisions](#open-decisions)
@@ -159,6 +160,7 @@ This is why Stage 0 exists at all, and why it comes first.
 | `nimbus-web-clipper` | Chrome + Firefox MV3, over the paired HTTP surface | — |
 | `nimbus-raycast` | Raycast quick-ask | — |
 | `nimbus-statuspage` | On-call/status pages from indexed incidents + DORA | — |
+| `nimbus-mcp-servers` | *Proposed* — home for the 95 connectors if they leave the monorepo ([Open decision 5](#open-decisions)) | AGPL-3.0 |
 
 **The contract flows one way, and licensing fixes the direction.** The SDK and
 client are MIT; the gateway is AGPL-3.0. MIT into AGPL is fine; the reverse would
@@ -345,16 +347,18 @@ the spike feeds [Open decision 3](#open-decisions) rather than closing it.
   `onDidReceiveFeedback` / `disambiguation`.
 - **Cross-client:** `metrics.dora` and `deploy.preflight` in
   `nimbus-statuspage`; `agents.*` in `nimbus-raycast`. Neither repo was touched
-  in the VS Code slice.
+  in the VS Code slice. **Now tracked in
+  [Stage 4](#stage-4--reach-the-surfaces-still-dark).**
 - **Gateway-side follow-ups surfaced by the spike:** id-only PR titles are
   enriched ([#817](https://github.com/nimbus-agent/Nimbus/pull/817), merged) and
   the blame lane populates on demand ([#819](https://github.com/nimbus-agent/Nimbus/pull/819),
-  merged); root registration is in review ([#822](https://github.com/nimbus-agent/Nimbus/pull/822)).
+  merged); root registration is merged ([#822](https://github.com/nimbus-agent/Nimbus/pull/822)).
 - **`why` lens reachability:** the lens ships on gateway + CLI
   ([#820](https://github.com/nimbus-agent/Nimbus/pull/820), merged); step 2
   promotes its types to `@nimbus-dev/sdk` 1.6.0 (published) and exposes it
-  through `@nimbus-dev/client` 0.12.0 (in review). Remaining after that: the
-  `nimbus-vscode` hover UI.
+  through `@nimbus-dev/client` 0.12.0 (`agentsWhy` / `agentsWhyPeek`, published).
+  Remaining after that — the `nimbus-vscode` hover UI — is tracked in
+  [Stage 4](#stage-4--reach-the-surfaces-still-dark).
 
 ---
 
@@ -370,6 +374,28 @@ Capability without discovery is what the 3-install number measures.
   pointer to this file plus its own local slice.
 - **Launch on the trust story where it is honest** — scoped to
   `authorized-actions`, never overclaimed as raw-syscall capture.
+
+---
+
+## Stage 4 — reach the surfaces still dark
+
+**Goal:** capability now reachable from npm (Stage 1) and re-cut for the ICP in
+*one* client (Stage 2) reaches the surfaces the repo map names but no work has
+touched — plus the one new surface the incident-response ICP is missing.
+
+Same operating principle: **each row ends in a gate.**
+
+| Surface | What ships | Depends on | Gate |
+| --- | --- | --- | --- |
+| **`why` lens** | The `nimbus-vscode` hover UI, once the blame data supports it — the client method already ships in `@nimbus-dev/client` `0.12.0` (`agentsWhy` / `agentsWhyPeek`) | [Stage 2a](#2a--the-why-lens-spiked-then-built-2026-07-24)'s data-density bar + a `nimbus-vscode` slice | ≥60% blame→PR on a live repo · hover consumes `agentsWhy`/`agentsWhyPeek` · one demo GIF |
+| **`nimbus-postmortem`** | The *after-incident* surface: a client renders a Blameless/incident.io-schema timeline. The **agent** (`postmortem.*`, composing `catchup` + `metrics.dora` + local terminal history) is **net-new gateway work — see [`roadmap.md`](./roadmap.md)**; this doc owns only the render surface | a `postmortem.*` gateway agent + a client method | surface renders a non-empty timeline against a golden fixture; empty windows degrade honestly |
+| **`nimbus-raycast`** | `agents.*` quick-ask (expert/impact/catchup) + `nimbus why` | client `^0.11.0` (`agents.*`); the `why` methods (`0.12.0`) | a Raycast command returns a real brief against a live gateway |
+| **`nimbus-statuspage`** | On-call/status page from `metrics.dora` + `deploy.preflight` + indexed incidents | client `^0.10.0` (has both) | page renders live DORA + incident data, no mock |
+
+This supersedes the **Cross-client** bullet under
+[Left open from Stage 2](#left-open-from-stage-2). The `nimbus-postmortem` row
+is gated on an engine outside this doc's control, so it is sequenced *after* its
+agent lands in [`roadmap.md`](./roadmap.md) — tracked here only as a surface.
 
 ---
 
@@ -395,11 +421,12 @@ lands — but organise the story around the lens.
 > claim.
 >
 > **Update 2026-07-24:** the banner now exists as a capability. The spike's
-> prerequisites landed (#817/#819 merged, #822 in review), the `why` lens shipped
+> prerequisites landed (#817/#819/#822 merged), the `why` lens shipped
 > on gateway + CLI (#820), and step 2 routes it through the waist —
-> `@nimbus-dev/sdk` 1.6.0 (published) → `@nimbus-dev/client` 0.12.0 (in review). The
+> `@nimbus-dev/sdk` 1.6.0 (published) → `@nimbus-dev/client` 0.12.0 (published). The
 > "Buildable → After Stage 1" cell is now *built*; what's left for the banner is
-> the `nimbus-vscode` hover UI and one demo GIF (Stage 3), not the capability.
+> the `nimbus-vscode` hover UI and one demo GIF, tracked as a surface in
+> [Stage 4](#stage-4--reach-the-surfaces-still-dark), not the capability.
 > The data-density caveat stays a live quality question, not a reachability one.
 
 **Why the lens and not the moat.** Verifiable egress is the stronger asset: a
@@ -462,6 +489,17 @@ receipts are why they stay and why procurement signs.
    (2026-07-23):** 37 methods in 8 days, ~4.6/day. The ~1.25/month figure
    measured *attention*, not difficulty — the work was never throughput-bound.
    Stage 2 and 3 should not be sequenced as though it were.
+5. **Do the 95 connectors leave the monorepo?** Motive: decouple connector
+   release cadence from the gateway, isolate third-party dependency conflicts,
+   lower the bar for community contribution. Cost: the gateway imports
+   connectors as workspace members (`packages/mcp-connectors/*`); a split means
+   cross-repo typecheck, published `@nimbus-mcp/*` scoped packages, Changesets
+   release automation, and a version-compatibility contract between gateway and
+   connector packages. **This is spec-sized, not a roadmap bullet** —
+   recommendation: hold until a connector's cadence or a dependency conflict
+   actually forces it (neither has yet). **Gate if pursued:** gateway CI green
+   consuming published `@nimbus-mcp/*` packages, with the connector
+   contract-test suite running in the new `nimbus-mcp-servers` repo.
 
 ---
 
