@@ -318,7 +318,9 @@ property.
 
 - [ ] **Step 1: Write the desired config file**
 
-Create `.github/org-access.json`:
+Create `.github/org-access.json`. Note `$comment` is a **valid JSON string key**
+(the same convention `general-branch.json` already uses), *not* a JS `//` comment
+— so `JSON.parse` handles it natively and no special/relaxed parser is needed:
 
 ```json
 {
@@ -814,6 +816,16 @@ enforced in shared.pull_request; the bypass switch is documented but not gated."
 **Why:** The gates only become the promised drift check when the scheduled sweep
 runs them against live config with a real token, loud on failure.
 
+> **Separate jobs, by design — do not consolidate into one sequential job.** Each
+> gate is its own job (like the existing `ruleset-drift` job and the `sha-pins`
+> matrix) so that: (a) the Actions UI shows a per-gate red/green at a glance —
+> you see *which* control regressed without reading logs; (b) all three gates run
+> **every** sweep regardless of each other — a single `set -e` job would stop at
+> the first failure and you'd lose the other gates' results that run; (c) they
+> run in parallel, so wall-clock is one job's time, not the sum. The cost is a
+> little extra runner setup + three token mints on a **weekly** schedule —
+> negligible, and three mints are nowhere near any App-token rate limit.
+
 - [ ] **Step 1: Add `--strict` to the existing ruleset-drift job**
 
 In `.github/workflows/org-drift-sweep.yml`, find the ruleset-drift job's run step
@@ -1076,3 +1088,15 @@ is touched, so `audit:coverage-floor` is N/A.
 | Bypass-actor audit deferred + documented | 6 (roadmap) |
 | App `members: read` dependency + live validation | 7 |
 | Roadmap update | 6 |
+
+---
+
+## Plan-review dispositions
+
+Responses to [the plan review](./2026-07-24-p6a-access-contribution-model-review.md):
+
+| # | Point | Disposition |
+| --- | --- | --- |
+| 1 | Consolidate the three sweep jobs into one sequential job | **Deferred (declined), documented.** Separate jobs give per-gate red/green at a glance, run in parallel (wall-clock = one job), and — critically — all run every sweep, where a single `set -e` job would drop later gates when an earlier fails. Weekly runner overhead + three token mints are negligible and nowhere near a rate limit. Rationale added to Task 5 so it isn't "optimized" away later. |
+| 2 | `actions/checkout` `# v7.0.1` looks wrong (official is v4.x) | **No change — verified correct.** SHA `3d3c42e5…` *is* checkout v7.0.1 (exact match), which is the current latest; the org already pins it. The "v4.x" belief is outdated. |
+| 3 | Handle malformed / commented JSON in `loadOrgAccess` | **Deferred, with a correction.** `$comment` is a valid JSON *key*, not a JS comment, so `JSON.parse` is safe (clarified in Task 2). Defensive parse-error wrapping would be a consistency cleanup across *all* structure-audit loaders (`loadDesiredFile` doesn't do it either), low-value for a CI-validated checked-in file that fails loudly if broken — out of scope for P6a. |
