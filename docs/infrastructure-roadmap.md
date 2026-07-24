@@ -115,18 +115,20 @@ moves to P6).
   `org-drift-sweep` (fail-soft locally, `--strict` in CI); and the four
   contributor-two switches recorded in the `$contributor_two` block of
   `.github/rulesets/general-branch.json`.
-- **Pending apply (Task 7, org-owner):** grant the six teamless repos (`.github`,
-  `linux-repo`, the four npm narrow-waist repos) to `maintainers`; set
+- **Applied (2026-07-24, org-owner):** the six teamless repos (`.github`,
+  `linux-repo`, the four npm narrow-waist repos) are granted to `maintainers`;
   `members_can_create_repositories` → false and `default_repository_permission`
-  → none; grant the `nimbus-release-bot` App `members: read`. Until then the two
-  new gates run **red** against the live org (they detect the un-applied state);
-  P6a is *done* only when a dispatched sweep proves them green, per this file's
-  own rule.
+  → none; the `nimbus-release-bot` App granted `members: read`.
+- **Proven green end-to-end (run 30071156534):** a dispatched `org-drift-sweep`
+  is green across all 11 jobs — `sha-pins` (8), `ruleset-drift`,
+  `org-settings-drift`, and `team-reachability` — with the two new gates
+  authenticating via their scoped App tokens (org-administration read /
+  members read). Both were **red** before the apply (they detect the un-applied
+  state) and green after: the gate would go red on regression, which is this
+  file's definition of *done*.
 - **Deferred:** the CLA (own spec) and a higher-privilege **bypass-actor audit**
   (the CI App token cannot read `bypass_actors`; a future owner-`gh`-run check,
   no PAT). Private-repo ruleset protection stays **blocked-on-Team** (Free plan).
-- **Dependency:** the `nimbus-release-bot` App needs `members: read` for the
-  reachability job (granted at apply time).
 
 ---
 
