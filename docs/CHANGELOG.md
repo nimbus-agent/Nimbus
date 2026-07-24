@@ -8,6 +8,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-24 — `nimbus index add <path>` registers a blame root.** New local-only
+  `filesystem.ensureRoot` IPC method + `nimbus index add` CLI register a git repo as a
+  blame/index root (persisted to `registered-roots.json`, merged with `[[filesystem.roots]]` on
+  next start, TOML wins) — no hand-editing `nimbus.toml`. LAN-forbidden (I5); rejects any path
+  that is not an existing `.git` directory.
+
 - **2026-07-24 — Whole-file blame indexer.** A new `blame` syncable populates `git_blame_line`
   whole-file (one row per line, all languages) across git-tracked files changed in the last 90
   days, per configured `[[filesystem.roots]]` git repo. Incremental via a per-repo last-blamed
