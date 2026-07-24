@@ -1,5 +1,13 @@
 # Nimbus Ecosystem Roadmap
 
+> **✅ COMPLETE — 2026-07-24.** This document's job is done: it sealed the narrow
+> waist (Stage 0), opened it (Stage 1: client 15 → 52 methods), re-cut the VS Code
+> surface for the ICP (Stage 2), and distributed it (Stage 3). The remaining
+> surface work — the `why`-lens hover UI, `nimbus-raycast`, `nimbus-statuspage`,
+> `nimbus-postmortem` — is no longer sequenced here; each is owned by its own
+> repo's `ROADMAP.md`. This file is kept as the historical record of *why the
+> ecosystem work was ordered the way it was*, not as a live plan.
+
 The delivery spine for everything **outside** the gateway: `@nimbus-dev/sdk`,
 `@nimbus-dev/client`, and the client surfaces built on them (VS Code, Raycast,
 web clipper, statuspage, and whatever comes next).
@@ -26,7 +34,6 @@ web clipper, statuspage, and whatever comes next).
 - [Stage 1 — Open the waist](#stage-1--open-the-waist)
 - [Stage 2 — Re-cut the surfaces for the ICP](#stage-2--re-cut-the-surfaces-for-the-icp)
 - [Stage 3 — Distribution](#stage-3--distribution)
-- [Stage 4 — Reach the surfaces still dark](#stage-4--reach-the-surfaces-still-dark)
 - [The headline](#the-headline)
 - [Explicit non-goals](#explicit-non-goals)
 - [Open decisions](#open-decisions)
@@ -347,8 +354,7 @@ the spike feeds [Open decision 3](#open-decisions) rather than closing it.
   `onDidReceiveFeedback` / `disambiguation`.
 - **Cross-client:** `metrics.dora` and `deploy.preflight` in
   `nimbus-statuspage`; `agents.*` in `nimbus-raycast`. Neither repo was touched
-  in the VS Code slice. **Now tracked in
-  [Stage 4](#stage-4--reach-the-surfaces-still-dark).**
+  in the VS Code slice. **Now owned by each client repo's own `ROADMAP.md`.**
 - **Gateway-side follow-ups surfaced by the spike:** id-only PR titles are
   enriched ([#817](https://github.com/nimbus-agent/Nimbus/pull/817), merged) and
   the blame lane populates on demand ([#819](https://github.com/nimbus-agent/Nimbus/pull/819),
@@ -357,8 +363,8 @@ the spike feeds [Open decision 3](#open-decisions) rather than closing it.
   ([#820](https://github.com/nimbus-agent/Nimbus/pull/820), merged); step 2
   promotes its types to `@nimbus-dev/sdk` 1.6.0 (published) and exposes it
   through `@nimbus-dev/client` 0.12.0 (`agentsWhy` / `agentsWhyPeek`, published).
-  Remaining after that — the `nimbus-vscode` hover UI — is tracked in
-  [Stage 4](#stage-4--reach-the-surfaces-still-dark).
+  Remaining after that — the `nimbus-vscode` hover UI — is owned by
+  `nimbus-vscode`'s own `ROADMAP.md`.
 
 ---
 
@@ -374,7 +380,8 @@ Capability without discovery is what the 3-install number measures.
   incident ICP, leading with the ops slash-commands + the egress ledger, `why`
   lens teased as upcoming. Was: those words appeared nowhere.
 - **One demo GIF per headline claim** ⏳ **deferred** — the `why` lens is a single
-  hover, but the hover UI is unbuilt (Stage 4). Gated on that slice; no GIF yet.
+  hover, but the hover UI is unbuilt (now owned by `nimbus-vscode`'s `ROADMAP.md`).
+  Gated on that slice; no GIF yet.
 - **Cross-link the clients** ✅ — a `ROADMAP.md` pointing to this file + a local
   slice now lives in `nimbus-{vscode,client,sdk,web-clipper}`.
 - **Launch on the trust story where it is honest** ✅ — a "Why Nimbus" section in
@@ -382,28 +389,6 @@ Capability without discovery is what the 3-install number measures.
   the agent's *authorized/dispatched actions* (the egress ledger records what the
   agent did off-device, not raw network traffic), never overclaimed as
   raw-syscall / whole-machine capture.
-
----
-
-## Stage 4 — reach the surfaces still dark
-
-**Goal:** capability now reachable from npm (Stage 1) and re-cut for the ICP in
-*one* client (Stage 2) reaches the surfaces the repo map names but no work has
-touched — plus the one new surface the incident-response ICP is missing.
-
-Same operating principle: **each row ends in a gate.**
-
-| Surface | What ships | Depends on | Gate |
-| --- | --- | --- | --- |
-| **`why` lens** | The `nimbus-vscode` hover UI, once the blame data supports it — the client method already ships in `@nimbus-dev/client` `0.12.0` (`agentsWhy` / `agentsWhyPeek`) | [Stage 2a](#2a--the-why-lens-spiked-then-built-2026-07-24)'s data-density bar + a `nimbus-vscode` slice | ≥60% blame→PR on a live repo · hover consumes `agentsWhy`/`agentsWhyPeek` · one demo GIF |
-| **`nimbus-postmortem`** | The *after-incident* surface: a client renders a Blameless/incident.io-schema timeline. The **agent** (`postmortem.*`, composing `catchup` + `metrics.dora` + local terminal history) is **net-new gateway work — see [`roadmap.md`](./roadmap.md)**; this doc owns only the render surface | a `postmortem.*` gateway agent + a client method | surface renders a non-empty timeline against a golden fixture; empty windows degrade honestly |
-| **`nimbus-raycast`** | `agents.*` quick-ask (expert/impact/catchup) + `nimbus why` | client `^0.11.0` (`agents.*`); the `why` methods (`0.12.0`) | a Raycast command returns a real brief against a live gateway |
-| **`nimbus-statuspage`** | On-call/status page from `metrics.dora` + `deploy.preflight` + indexed incidents | client `^0.10.0` (has both) | page renders live DORA + incident data, no mock |
-
-This supersedes the **Cross-client** bullet under
-[Left open from Stage 2](#left-open-from-stage-2). The `nimbus-postmortem` row
-is gated on an engine outside this doc's control, so it is sequenced *after* its
-agent lands in [`roadmap.md`](./roadmap.md) — tracked here only as a surface.
 
 ---
 
@@ -433,8 +418,8 @@ lands — but organise the story around the lens.
 > on gateway + CLI (#820), and step 2 routes it through the waist —
 > `@nimbus-dev/sdk` 1.6.0 (published) → `@nimbus-dev/client` 0.12.0 (published). The
 > "Buildable → After Stage 1" cell is now *built*; what's left for the banner is
-> the `nimbus-vscode` hover UI and one demo GIF, tracked as a surface in
-> [Stage 4](#stage-4--reach-the-surfaces-still-dark), not the capability.
+> the `nimbus-vscode` hover UI and one demo GIF, now owned by `nimbus-vscode`'s
+> own `ROADMAP.md`, not the capability.
 > The data-density caveat stays a live quality question, not a reachability one.
 
 **Why the lens and not the moat.** Verifiable egress is the stronger asset: a
