@@ -219,10 +219,12 @@ runs in local `preflight` for anyone authenticated (fail-soft when not).
   --strict`.
 - `package.json` script alias **`audit:release-staleness`** →
   `bun scripts/structure-audit/check-release-staleness.ts`.
-- Registered in `scripts/lib/preflight-gates.ts` alongside the other drift gates
-  (fail-soft locally, so an unauthenticated contributor is never blocked; the
-  drift-manifest test that would otherwise fail on an unregistered CI gate stays
-  green).
+- Registered in `scripts/lib/preflight-gates.ts` in **`CI_ONLY_GATES`** — where
+  the sibling `audit:*-drift` / `cla-coverage` gates live (they need network +
+  `gh`, so they never run in the local FAST tier). This satisfies the
+  `scripts/preflight.test.ts` drift guard and documents intent. The gate *script*
+  is still fail-soft when invoked directly, so an unauthenticated contributor who
+  runs it locally is never blocked.
 
 ---
 
