@@ -137,6 +137,60 @@ test("a symbol ref resolving to an out-of-roots repoRoot → null subject and ZE
   expect(spawns).toBe(0);
 });
 
+test("a resolvable file ref WITHOUT a line number → null peek (blame needs a line to anchor)", async () => {
+  const db = seededDb();
+  // Absolute path inside a configured root but with no `:line` suffix →
+  // resolveWhySubject returns a subject whose lineNo is null. runWhyPeek cannot
+  // anchor blame without a line, so it degrades to an all-null peek. This
+  // exercises the `whySubject?.lineNo == null` guard's subject-present branch.
+  let spawns = 0;
+  const spy = ((..._a: unknown[]) => {
+    spawns += 1;
+    throw new Error("must not spawn");
+  }) as typeof Bun.spawn;
+  const peek = await runWhyPeek(
+    { ref: path.join(ROOT, "src", "retry.ts") },
+    { db, roots, spawn: spy },
+  );
+  expect(peek.subject).toBeNull();
+  expect(peek.author).toBeNull();
+  expect(peek.hasMore).toBe(false);
+  expect(spawns).toBe(0);
+});
+
+test("blame present but the commit is unlinked (no commit entity / PR / ticket) → author only", async () => {
+  const db = seededDb();
+  // A blame row whose sha exists in NO graph_entity/PR/ticket — exercises the
+  // negative branches of the blame → commit → PR → ticket walk (commitEntity
+  // null, prForSha null, so pr/ticket stay null) while still returning the
+  // author from the seeded blame row.
+  const ORPHAN_SHA = "f".repeat(40);
+  upsertBlameLines(db, ROOT, "src/orphan.ts", [
+    {
+      lineNo: 5,
+      commitSha: ORPHAN_SHA,
+      authorName: "bob",
+      authorEmail: "bob@example.com",
+      authorTimeMs: 1_700_000_000_000,
+    },
+  ]);
+  let spawns = 0;
+  const spy = ((..._a: unknown[]) => {
+    spawns += 1;
+    throw new Error("must not spawn");
+  }) as typeof Bun.spawn;
+  const peek = await runWhyPeek(
+    { ref: `${path.join(ROOT, "src", "orphan.ts")}:5` },
+    { db, roots, spawn: spy },
+  );
+  expect(peek.author).toBe("bob");
+  expect(peek.commitSha).toBe(ORPHAN_SHA);
+  expect(peek.commitSubject).toBeNull();
+  expect(peek.pr).toBeNull();
+  expect(peek.ticket).toBeNull();
+  expect(spawns).toBe(0);
+});
+
 test("no blame row and no git dir → nulls, not an error", async () => {
   const db = seededDb();
   const peek = await runWhyPeek({ ref: `${path.join(ROOT, "src", "other.ts")}:9` }, { db, roots });
