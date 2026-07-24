@@ -40,6 +40,11 @@ describe("nimbus index — top-level dispatcher", () => {
     await expect(runIndexCmd(["bogus"])).rejects.toThrow(/Unknown index subcommand/);
   });
 
+  it("help mentions index add", async () => {
+    await runIndexCmd(["help"]);
+    expect(out.stdout).toContain("nimbus index add");
+  });
+
   it("reembed without --model throws usage error", async () => {
     await expect(runIndexCmd(["reembed"])).rejects.toThrow(/--model/);
   });
@@ -74,6 +79,66 @@ describe("nimbus index — top-level dispatcher", () => {
     expect(out.stdout).toContain("slack");
     expect(out.stdout).toContain("100");
     expect(out.stdout).toContain("16");
+  });
+});
+
+describe("nimbus index add — IPC flow", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("throws usage error when no path is given", async () => {
+    await expect(runIndexCmd(["add"])).rejects.toThrow(/Usage: nimbus index add/);
+  });
+
+  it("throws usage error when the arg looks like a flag", async () => {
+    await expect(runIndexCmd(["add", "--bogus"])).rejects.toThrow(/Usage: nimbus index add/);
+  });
+
+  it("throws when gateway is not running", async () => {
+    setFixture({});
+    await expect(runIndexCmd(["add", "."])).rejects.toThrow(/Gateway is not running/);
+  });
+
+  it("calls filesystem.ensureRoot with the resolved path and reports registration", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          return { path: "/abs/repo", added: true };
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["add", "some/repo"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("filesystem.ensureRoot");
+    const params = calls[0]?.params as { path: string };
+    expect(typeof params.path).toBe("string");
+    // resolved to an absolute path before the call
+    expect(params.path).not.toBe("some/repo");
+    expect(out.stdout).toMatch(/Registered blame root: \/abs\/repo/);
+  });
+
+  it("reports 'Already registered' when added is false", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async () => ({ path: "/abs/repo", added: false }),
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runIndexCmd(["add", "some/repo"]);
+    expect(out.stdout).toMatch(/Already registered: \/abs\/repo/);
   });
 });
 

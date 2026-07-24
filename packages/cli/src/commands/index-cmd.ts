@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
@@ -157,10 +158,26 @@ async function runRegraph(args: string[]): Promise<void> {
   }
 }
 
+async function runIndexAdd(args: string[]): Promise<void> {
+  const raw = args[0];
+  if (raw === undefined || raw === "" || raw.startsWith("-")) {
+    throw new Error("Usage: nimbus index add <path>");
+  }
+  const path = resolve(raw);
+  const result = await withGatewayIpc((c) =>
+    c.call<{ path: string; added: boolean }>("filesystem.ensureRoot", { path }),
+  );
+  console.log(
+    result.added ? `Registered blame root: ${result.path}` : `Already registered: ${result.path}`,
+  );
+}
+
 function printIndexHelp(): void {
   console.log(`nimbus index — local index maintenance (Gateway IPC)
 
 Usage:
+  nimbus index add <path>            register a local git repo as a blame/index root
+
   nimbus index reembed --model <id>
                        [--item-type <key>]   ("service:type" exact, or "type" alone)
                        [--service <name>]
@@ -188,6 +205,10 @@ export async function runIndexCmd(args: string[]): Promise<void> {
   const tail = args.slice(1);
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
     printIndexHelp();
+    return;
+  }
+  if (sub === "add") {
+    await runIndexAdd(tail);
     return;
   }
   if (sub === "reembed") {

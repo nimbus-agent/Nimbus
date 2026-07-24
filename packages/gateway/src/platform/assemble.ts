@@ -120,6 +120,7 @@ import {
   type SemanticSearchDeps,
 } from "../index/local-index.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { loadRegisteredRoots, mergeRoots } from "../index/registered-roots-store.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
@@ -343,24 +344,32 @@ function registerFilesystemRootSyncables(
   syncScheduler: SyncScheduler,
   localIndex: LocalIndex,
   configDir: string,
-  fsV2Roots: ReturnType<typeof loadNimbusFilesystemRootsFromConfigDir>,
+  tomlRoots: ReturnType<typeof loadNimbusFilesystemRootsFromConfigDir>,
+  registeredRoots: ReturnType<typeof loadNimbusFilesystemRootsFromConfigDir>,
 ): void {
-  if (fsV2Roots.length === 0) {
-    return;
+  // filesystem-v2 (git commits + optional symbols/deps per the root's own flags) and the blame
+  // indexer act on the full set — a CLI-registered blame root needs git_commit items so its blame
+  // SHAs resolve (the why-lens join). TOML wins on collision; a missing folder is dropped.
+  const allRoots = mergeRoots(tomlRoots, registeredRoots);
+  if (allRoots.length > 0) {
+    localIndex.ensureConnectorSchedulerRegistration("filesystem", 10 * 60 * 1000, Date.now());
+    syncScheduler.register(createFilesystemV2Syncable({ roots: allRoots }));
+    localIndex.ensureConnectorSchedulerRegistration("blame", 10 * 60 * 1000, Date.now());
+    syncScheduler.register(createBlameIndexSyncable({ roots: allRoots }));
   }
-  localIndex.ensureConnectorSchedulerRegistration("filesystem", 10 * 60 * 1000, Date.now());
-  syncScheduler.register(createFilesystemV2Syncable({ roots: fsV2Roots }));
-  localIndex.ensureConnectorSchedulerRegistration("openapi", 10 * 60 * 1000, Date.now());
-  syncScheduler.register(
-    createOpenapiIndexerSyncable({
-      roots: fsV2Roots,
-      config: loadOpenapiConfig(configDir),
-    }),
-  );
-  localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
-  syncScheduler.register(createObsidianSyncable({ roots: fsV2Roots }));
-  localIndex.ensureConnectorSchedulerRegistration("blame", 10 * 60 * 1000, Date.now());
-  syncScheduler.register(createBlameIndexSyncable({ roots: fsV2Roots }));
+  // OpenAPI spec indexing and Obsidian vault semantics are opt-in via [[filesystem.roots]] only:
+  // `nimbus index add <repo>` registers a blame/index root, NOT an API-spec source or a note vault.
+  if (tomlRoots.length > 0) {
+    localIndex.ensureConnectorSchedulerRegistration("openapi", 10 * 60 * 1000, Date.now());
+    syncScheduler.register(
+      createOpenapiIndexerSyncable({
+        roots: tomlRoots,
+        config: loadOpenapiConfig(configDir),
+      }),
+    );
+    localIndex.ensureConnectorSchedulerRegistration("obsidian", 10 * 60 * 1000, Date.now());
+    syncScheduler.register(createObsidianSyncable({ roots: tomlRoots }));
+  }
 }
 
 interface SchedulerWithMeshOpts {
@@ -411,14 +420,23 @@ async function createSchedulerWithMesh(
       evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
     },
   });
-  const fsV2Roots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
-  registerFilesystemRootSyncables(syncScheduler, localIndex, paths.configDir, fsV2Roots);
+  const tomlRoots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
+  const registeredRoots = loadRegisteredRoots(paths.configDir);
+  registerFilesystemRootSyncables(
+    syncScheduler,
+    localIndex,
+    paths.configDir,
+    tomlRoots,
+    registeredRoots,
+  );
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
     healthDb: db,
     auditDb: db,
     logger: syncLogger,
-    obsidianVaultPaths: fsV2Roots.map((r) => r.path),
+    // Obsidian vault semantics are opt-in via [[filesystem.roots]] only — CLI-registered blame
+    // roots must not be silently treated as note vaults.
+    obsidianVaultPaths: tomlRoots.map((r) => r.path),
     isConnectorAllowed,
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);

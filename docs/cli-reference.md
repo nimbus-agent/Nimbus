@@ -1771,6 +1771,19 @@ nimbus db prune --yes
 
 ## Index Maintenance
 
+### `nimbus index add <path>`
+
+Register a local git repository as a blame/index root without hand-editing `nimbus.toml`. The path is resolved to an absolute path and sent to the Gateway, which canonicalizes it, verifies it is an existing directory containing a `.git` entry, and persists it to `registered-roots.json`. The registered root is merged with the `[[filesystem.roots]]` TOML set on the next Gateway start (TOML wins on collision), at which point the git-commit, blame, and other filesystem syncables begin indexing it.
+
+```bash
+nimbus index add .
+nimbus index add /path/to/repo
+```
+
+Output is `Registered blame root: <path>` for a new root, or `Already registered: <path>` if it was already present (idempotent).
+
+**Security:** `filesystem.ensureRoot` is CLI-only — the `filesystem` namespace is in `FORBIDDEN_OVER_LAN` (invariant I5), so a remote peer can never register an indexing root on your machine. A path that is not an existing directory, or lacks a `.git` entry, is rejected (this structurally rejects roots like `C:\` or `/`).
+
 ### `nimbus index reembed`
 
 Selectively re-embed indexed items to a target embedding model. Useful when switching between local MiniLM (384-dim, `vec_items_384`) and OpenAI `text-embedding-3-small` (1536-dim, `vec_items_1536`) — both tables can coexist; this command backfills missing chunks for a chosen model.

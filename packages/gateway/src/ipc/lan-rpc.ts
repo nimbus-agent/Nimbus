@@ -12,6 +12,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "updater",
   "lan",
   "profile",
+  "filesystem", // Stage 2a — local-only blame-root registration, never over LAN (I5 defense-in-depth)
   "chatops", // Slice 5 — local/Tauri-read-only bot lifecycle; never answerable over the wire
   "tribal", // Slice 6c — local/Tauri-read-only knowledge extraction + owner-HITL capture; never over the wire
   // Slice 8 — share: create is the I27 owner-HITL outbound chokepoint; prune deletes local

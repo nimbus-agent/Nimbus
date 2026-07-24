@@ -2,6 +2,24 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.26.0](https://github.com/nimbus-agent/Nimbus/compare/v0.25.0...v0.26.0) (2026-07-24)
+
+
+### Features
+
+* **agents:** the why lens — why agent, whyPeek, on-demand blame + index regraph (step 1b) ([#820](https://github.com/nimbus-agent/Nimbus/issues/820)) ([940cb2e](https://github.com/nimbus-agent/Nimbus/commit/940cb2e01c5c8ecb853c2d359c203022457a7efd))
+* **blame:** whole-file 90-day blame indexer (Stage 2a un-park PR B) ([#819](https://github.com/nimbus-agent/Nimbus/issues/819)) ([4bcc076](https://github.com/nimbus-agent/Nimbus/commit/4bcc0767d5e1bb452789baff27f6aee98c517a91))
+* **github:** enrich fallback 'PR #N' titles via pull-detail fetch ([#817](https://github.com/nimbus-agent/Nimbus/issues/817)) ([465bee0](https://github.com/nimbus-agent/Nimbus/commit/465bee092dcc732d72b52fd9b93adeb758edceba))
+* **graph:** make resolves, mentions and correlates_with real (why-lens step 1a) ([#813](https://github.com/nimbus-agent/Nimbus/issues/813)) ([44e1c38](https://github.com/nimbus-agent/Nimbus/commit/44e1c384243354593ecbcea32df5b4af6a843b0c))
+* nimbus index add + filesystem.ensureRoot — register blame roots (Stage 2a PR C) ([#822](https://github.com/nimbus-agent/Nimbus/issues/822)) ([67a9f75](https://github.com/nimbus-agent/Nimbus/commit/67a9f75cd2765c3f3f751b9db90f04f718fa265a))
+
+
+### Bug Fixes
+
+* **agents:** report why a janitor resourceRef was rejected ([#805](https://github.com/nimbus-agent/Nimbus/issues/805)) ([1b002b5](https://github.com/nimbus-agent/Nimbus/commit/1b002b516180b8ba039a5279d8db50d03e7e9227))
+* **ipc:** the connector HITL prompts named params no caller sends ([#811](https://github.com/nimbus-agent/Nimbus/issues/811)) ([cc2b07f](https://github.com/nimbus-agent/Nimbus/commit/cc2b07fb65e49bacc8cc208d8b84986527d2ae65))
+* **secrets:** VSCE_PAT deadline is its expiry (2026-09-20), not the decommission ([#803](https://github.com/nimbus-agent/Nimbus/issues/803)) ([bdb79f8](https://github.com/nimbus-agent/Nimbus/commit/bdb79f858de97f7e68d519de62c2c32d496866ff))
+
 ## [0.25.0](https://github.com/nimbus-agent/Nimbus/compare/v0.24.0...v0.25.0) (2026-07-22)
 
 

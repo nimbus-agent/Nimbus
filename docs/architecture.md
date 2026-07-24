@@ -1186,6 +1186,8 @@ const streamReq: JSONRPCRequest = {
 //   emits security.scanProgress / security.scanDone / security.scanError; CLI-only, FORBIDDEN_OVER_LAN (ipc/security-rpc.ts)
 // index.reembed / index.reembedCancel — long-running re-embed job; CLI-only (I5/I7);
 //   emits index.reembedProgress / index.reembedDone / index.reembedError (ipc/index-reembed-rpc.ts)
+// filesystem.ensureRoot — register a local git repo as a blame/index root; CLI-only,
+//   FORBIDDEN_OVER_LAN (I5); persists to registered-roots.json, effective next start (ipc/filesystem-rpc.ts)
 //
 // Phase 6 surfaces (Team; full signatures in the nimbus-ipc skill registry):
 // federation.* — consent-scoped peer federation; LAN admits read-only answers (query / expertise / policy /

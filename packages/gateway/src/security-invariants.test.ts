@@ -137,6 +137,16 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(() => checkLanMethodAllowed("share.verify", peer)).not.toThrow();
   });
 
+  test("FORBIDDEN_OVER_LAN blocks filesystem.ensureRoot (Stage 2a)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // Blame-root registration is a local-only owner action; a remote peer must never be able
+    // to add an indexing root on this machine.
+    expect(() => checkLanMethodAllowed("filesystem.ensureRoot", peer)).toThrow(
+      /ERR_METHOD_NOT_ALLOWED/,
+    );
+  });
+
   test("admits the team-vault wire methods but FORBIDS team-vault/HITL management over LAN (Slice 2)", async () => {
     const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
     const peer = { peerId: "peer:x", writeAllowed: true };
