@@ -100,9 +100,8 @@ that would make these representations inaccurate in any respect.
 
 ## 7. Governing Law and Jurisdiction
 
-This Agreement is governed by, and construed in accordance with, the laws of
-`[GOVERNING JURISDICTION — owner to choose, e.g. the State of Delaware, USA]`,
-without regard to its conflict-of-laws principles. Any legal action or proceeding
-arising under or in connection with this Agreement shall be brought exclusively in
-the courts located in `[FORUM — city/county and state/country]`, and You consent
-to the personal jurisdiction and venue of those courts.
+This Agreement is governed by, and construed in accordance with, the laws of the
+State of Israel, without regard to its conflict-of-laws principles. Any legal
+action or proceeding arising under or in connection with this Agreement shall be
+brought exclusively in the competent courts of Tel Aviv-Jaffa, Israel, and You
+consent to the personal jurisdiction and venue of those courts.

@@ -60,11 +60,11 @@ The Corporation designates a point of contact for CLA administration:
 
 ## 7. Governing Law and Jurisdiction
 
-This Agreement is governed by, and construed in accordance with, the laws of
-`[GOVERNING JURISDICTION — owner to choose, e.g. the State of Delaware, USA]`,
-without regard to its conflict-of-laws principles, and any action arising under it
-shall be brought exclusively in the courts located in `[FORUM — city/county and
-state/country]` (the same governing law and forum as the Nimbus Individual CLA).
+This Agreement is governed by, and construed in accordance with, the laws of the
+State of Israel, without regard to its conflict-of-laws principles, and any action
+arising under it shall be brought exclusively in the competent courts of Tel
+Aviv-Jaffa, Israel (the same governing law and forum as the Nimbus Individual
+CLA).
 
 ---
 
