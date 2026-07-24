@@ -68,8 +68,8 @@ means the consolidation has a gate to land against instead of a hope.
 | `scripts/structure-audit/check-ruleset-drift.test.ts` (create) | Unit tests for the pure diff |
 | `package.json` (modify) | Register `audit:ruleset-drift` |
 | `scripts/lib/preflight-gates.ts` (modify) | Register the new gate so the manifest drift test passes |
-| `docs/CONTRIBUTING.md` (modify) | DCO sign-off terms |
-| `.github/workflows/dco.yml` (create) | Enforce `Signed-off-by` on PR commits |
+| ~~`docs/CONTRIBUTING.md` (modify)~~ | ~~DCO sign-off terms~~ — SUPERSEDED (Task 7): decision resolved to a CLA; not implemented here |
+| ~~`.github/workflows/dco.yml` (create)~~ | ~~Enforce `Signed-off-by` on PR commits~~ — SUPERSEDED (Task 7); the CLA moves to P6 |
 
 ---
 
@@ -191,9 +191,7 @@ gh api --method POST repos/nimbus-agent/nimbus-client/rulesets \
   "target": "branch",
   "enforcement": "active",
   "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-  "bypass_actors": [
-    { "actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "always" }
-  ],
+  "bypass_actors": [],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
@@ -655,28 +653,35 @@ diff instead of four remembered UI clicks.
 
 - [ ] **Step 1: Write the desired-shape file**
 
-Create `.github/rulesets/general-branch.json`:
+Create `.github/rulesets/general-branch.json`. The file is a `shared` shape plus
+per-repo `overrides` (each repo's expected `bypass_actor_types`), which is what
+`loadDesiredFile()` + `mergeDesired()` consume — not a flat top-level ruleset:
 
 ```json
 {
-  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs this against live config. P6 flips the contributor-two switches here — see docs/infrastructure-roadmap.md.",
-  "repos": [
-    "Nimbus",
-    "nimbus-client",
-    "nimbus-sdk",
-    "nimbus-vscode",
-    "nimbus-web-clipper"
-  ],
-  "name": "General",
-  "target": "branch",
-  "enforcement": "active",
-  "pull_request": {
-    "allowed_merge_methods": ["squash"],
-    "dismiss_stale_reviews_on_push": true,
-    "required_review_thread_resolution": true,
-    "require_code_owner_review": false,
-    "require_last_push_approval": false,
-    "required_approving_review_count": 0
+  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs this against live config. P6 flips the contributor-two switches in `shared.pull_request`.",
+  "shared": {
+    "name": "General",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions_ref_include": ["refs/heads/main"],
+    "conditions_ref_exclude": [],
+    "required_rule_types": ["deletion", "non_fast_forward", "pull_request"],
+    "pull_request": {
+      "allowed_merge_methods": ["squash"],
+      "dismiss_stale_reviews_on_push": true,
+      "required_review_thread_resolution": true,
+      "require_code_owner_review": false,
+      "require_last_push_approval": false,
+      "required_approving_review_count": 0
+    }
+  },
+  "repos": {
+    "Nimbus": { "bypass_actor_types": ["OrganizationAdmin"] },
+    "nimbus-client": { "bypass_actor_types": [] },
+    "nimbus-sdk": { "bypass_actor_types": [] },
+    "nimbus-vscode": { "bypass_actor_types": ["OrganizationAdmin"] },
+    "nimbus-web-clipper": { "bypass_actor_types": ["OrganizationAdmin"] }
   }
 }
 ```
@@ -895,10 +900,14 @@ Add next to the other `audit:` entries:
 - [ ] **Step 7: Register it in the preflight manifest**
 
 **This is mandatory** — `scripts/lib/preflight-gates.ts` has a drift test that
-fails if a CI gate is missing from the manifest. Add to the `fast` tier array:
+fails if a script is neither a registered gate nor explicitly exempted. This gate
+needs network + `gh` auth + org-read, which local `preflight` and external
+contributors lack, so it does **not** belong in the `fast` tier — it runs only in
+the scheduled `org-drift-sweep.yml` (the `ruleset-drift` job). Register it in the
+`CI_ONLY_GATES` exemption array instead:
 
 ```typescript
-  { name: "audit:ruleset-drift", cmd: ["bun", "run", "audit:ruleset-drift"], tier: "fast" },
+  "audit:ruleset-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml (ruleset-drift job), never the local FAST tier
 ```
 
 - [ ] **Step 8: Run the gate live against the real org**
@@ -1079,7 +1088,9 @@ nothing a contributor agreed to."
 
 Before opening the PR, run the full local gate set — `test:ci` is **not** it:
 
-- [ ] `bun run preflight:fast` — all fast-tier gates including the two new ones
+- [ ] `bun run preflight:fast` — all fast-tier gates (this includes the new
+      `--root` sha-pin change; `audit:ruleset-drift` is **CI-only**, not fast-tier,
+      and is run separately below)
 - [ ] `bun test scripts/structure-audit/` — the new and modified audit tests
 - [ ] `bun run lint:markdown` — expect `0 error(s)`
 - [ ] `bun run audit:doc-refs` — expect **16 docs**

@@ -29,6 +29,7 @@ export interface SharedRuleset {
   target: string;
   enforcement: string;
   conditions_ref_include: string[];
+  conditions_ref_exclude: string[];
   required_rule_types: string[];
   pull_request: Record<string, unknown>;
 }
@@ -99,6 +100,16 @@ export function diffRuleset(desired: DesiredRuleset, live: unknown): AuditResult
     );
   }
 
+  // A live `exclude` that names the default branch exempts it from the whole
+  // ruleset — a total bypass that leaves `include` intact, so it must be diffed
+  // too or the gate stays green while protection is silently gone.
+  const liveExclude = stringArray(refName["exclude"]);
+  if (!sameSet(liveExclude, desired.conditions_ref_exclude)) {
+    errors.push(
+      `conditions.ref_name.exclude: expected ${JSON.stringify(desired.conditions_ref_exclude)}, got ${JSON.stringify(liveExclude)}`,
+    );
+  }
+
   const rules = Array.isArray(live["rules"]) ? live["rules"] : [];
   const liveRuleTypes = new Set(
     rules
@@ -112,6 +123,11 @@ export function diffRuleset(desired: DesiredRuleset, live: unknown): AuditResult
     }
   }
 
+  // We pin the *set of bypass actor types* — adding or removing any bypass actor
+  // is caught. We do NOT yet pin each actor's `bypass_mode` (`always` vs
+  // `pull_request`): tightening/loosening the mode of an already-permitted actor
+  // type is a narrower vector, and pinning it needs a richer per-actor declared
+  // shape. Tracked as a follow-up in docs/infrastructure-roadmap.md.
   const bypassActors = Array.isArray(live["bypass_actors"]) ? live["bypass_actors"] : [];
   const liveBypassTypes = bypassActors
     .filter(isRecord)

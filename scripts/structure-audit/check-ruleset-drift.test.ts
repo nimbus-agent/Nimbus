@@ -13,6 +13,7 @@ const SHARED: SharedRuleset = {
   target: "branch",
   enforcement: "active",
   conditions_ref_include: ["refs/heads/main"],
+  conditions_ref_exclude: [],
   required_rule_types: ["deletion", "non_fast_forward", "pull_request"],
   pull_request: {
     allowed_merge_methods: ["squash"],
@@ -105,6 +106,18 @@ describe("diffRuleset", () => {
     const result = diffRuleset(desired, live);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+
+  test("flags a live exclude that exempts the default branch", () => {
+    const live = {
+      ...liveRuleset(),
+      conditions: { ref_name: { include: ["refs/heads/main"], exclude: ["refs/heads/main"] } },
+    };
+    const result = diffRuleset(DESIRED, live);
+    expect(result.ok).toBe(false);
+    const msg = result.errors.join("\n");
+    expect(msg).toContain("conditions.ref_name.exclude");
+    expect(msg).toContain("refs/heads/main");
   });
 
   test("flags a wrong conditions.ref_name.include", () => {

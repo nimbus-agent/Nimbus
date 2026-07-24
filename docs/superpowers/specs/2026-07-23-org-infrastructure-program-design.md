@@ -70,9 +70,12 @@ The other eight repos have a hand-copied `ci.yml`.
 | `actions/checkout` | `v7.0.1` | `v7.0.0` |
 
 And the sharpest evidence: **Nimbus's own preflight runs
-`audit:action-sha-pins`** — a gate built precisely to catch stale action pins —
-scoped to one repo, while the drift it exists to catch happens one repo over,
-unwatched. `audit:consumed-by` has the same shape and the same blind spot.
+`audit:action-sha-pins`** — a gate built to reject *unpinned* action refs (tags
+or branches instead of a full 40-char commit SHA) — scoped to one repo, while the
+same unpinning risk sits one repo over, unwatched. `audit:consumed-by` has the
+same shape and the same blind spot. (Note the gate checks *that* a ref is
+SHA-pinned, not that the SHA is *current*; detecting stale-but-pinned refs is a
+separate freshness follow-up — see `docs/infrastructure-roadmap.md`.)
 
 The org `.github` repo already hosts cross-repo composite actions
 (`verify-npm-provenance`, `probe-publish-token`), so the promotion path exists
@@ -171,7 +174,7 @@ merely a lagging periphery.
 The initial framing proposed a merge queue. Challenged for evidence, it does not
 survive — but chasing it surfaced a worse problem.
 
-**Last 40 `ci.yml` runs on `main`: 16 success, 1 failure, 22 cancelled.**
+**Last 39 `ci.yml` runs on `main`: 16 success, 1 failure, 22 cancelled.**
 
 `ci.yml` sets `concurrency.group: ${{ github.workflow }}-${{ github.ref }}` with
 `cancel-in-progress: true`. That is correct for PR branches and harmful on
@@ -180,7 +183,7 @@ and the next merge kills it.
 
 On 2026-07-21, three PRs merged at 18:33:21, 18:33:33 and 18:33:46 — twelve
 seconds apart. Two of those three runs were cancelled by the next merge. **The
-single main-branch CI failure across all 40 runs is timestamped 18:33 on
+single main-branch CI failure across all 39 runs is timestamped 18:33 on
 2026-07-21**, on that same batch.
 
 Treat the failure correlation as suggestive, not conclusive (n=1). The
@@ -285,7 +288,7 @@ registration and treats it as part of the deliverable.
 
 | | Sub-program | Size | Infra tier | Gate |
 | --- | --- | --- | --- | --- |
-| **P1** | Org CI Foundation | S–M | Actions-only | Org-wide SHA-pin + workflow-drift sweep goes red on any repo |
+| **P1** | Org CI Foundation | S–M | Actions-only | Scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos |
 | **P2** | Release Train | S–M | Actions + existing release-bot App | A publish that fails to open its downstream PR fails a scheduled staleness check |
 | **P3** | Review Layer | S–M | Actions-only | An invariant violation is caught in CI, not only in local `preflight` |
 | **P4a** | Main-CI concurrency fix | XS | Actions-only | Every commit on `main` has a completed CI run |
@@ -515,17 +518,18 @@ into the checked-in ruleset config P1 creates, commented as the
 contributor-two switch set, so the transition is one reviewed diff rather than
 four remembered UI clicks. **That is P6's gate.**
 
-**3. Inbound contribution licensing is undecided — and this one is urgent.**
-`CONTRIBUTING.md` contains no DCO, sign-off or CLA terms. The repo is public
-*now*, so the first outside PR can arrive any day, and retroactive sign-off
-collection is far worse than prospective. The dual license sharpens it: a
-contributor patching the MIT `nimbus-sdk` with work derived from reading the
-AGPL gateway creates exactly the infection the ecosystem roadmap's one-way rule
-("MIT into AGPL is fine; the reverse would infect") exists to prevent — today
-enforced by architecture, but by nothing a contributor agrees to. DCO is the
-lightweight standard; a CLA is heavier and is what would preserve relicensing
-optionality for any future commercial dual-licensing. **Decide before the first
-outside PR, not after.**
+**3. Inbound contribution licensing — RESOLVED 2026-07-24: a CLA (see open
+decision 6). Implementation moves to P6.** `CONTRIBUTING.md` contains no DCO,
+sign-off or CLA terms. The repo is public *now*, so the first outside PR can
+arrive any day, and retroactive sign-off collection is far worse than
+prospective. The dual license sharpens it: a contributor patching the MIT
+`nimbus-sdk` with work derived from reading the AGPL gateway creates exactly the
+infection the ecosystem roadmap's one-way rule ("MIT into AGPL is fine; the
+reverse would infect") exists to prevent — today enforced by architecture, but
+by nothing a contributor agrees to. A **CLA** was chosen over a DCO because it
+additionally preserves relicensing optionality for any future commercial
+dual-licensing; it is a P6 sub-effort (ICLA/CCLA text + a signature bot), not a
+P1 blocker.
 
 **4. Two org settings and a plan ceiling.** `members_can_create_repositories` is
 `true` (should be `false`); `default_repository_permission` is `read`, which
@@ -558,9 +562,10 @@ tiny and each is currently costing something:
    improvement can be trusted to have been validated on `main` at all.
 2. **`nimbus-client` rulesets** — the only active repo with zero branch
    protection, and the narrow waist two consumers depend on.
-3. **The DCO/CLA decision** (P6 item 3) — the repo is public, so the first
-   outside PR can arrive before the program reaches P6, and prospective sign-off
-   is far cheaper than retroactive.
+3. **The contribution-licensing decision** (P6 item 3) — **resolved 2026-07-24 to
+   a CLA** (open decision 6). The *decision* landed immediately, as intended; the
+   CLA *implementation* (ICLA/CCLA text + a signature bot) moves to P6 and is not
+   a P1 blocker.
 
 ---
 

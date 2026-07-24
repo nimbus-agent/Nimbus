@@ -5,6 +5,7 @@
     "target": "branch",
     "enforcement": "active",
     "conditions_ref_include": ["refs/heads/main"],
+    "conditions_ref_exclude": [],
     "required_rule_types": ["deletion", "non_fast_forward", "pull_request"],
     "pull_request": {
       "allowed_merge_methods": ["squash"],

@@ -45,10 +45,10 @@ Design of record:
 
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
-| P1 | Org CI Foundation | 🔨 in progress | Org-wide SHA-pin + ruleset drift sweep goes red on any repo |
+| P1 | Org CI Foundation | 🔨 in progress | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos |
 | P2 | Release Train | ⬜ not started | A publish that fails to open its downstream PR fails a staleness check |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
-| P4a | Main-CI concurrency | ⬜ not started | Every commit on `main` has a completed CI run |
+| P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ⬜ not started | Per-job wall-clock tracked; regressions visible |
 | P5 | Org Legibility | ⬜ not started | `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md` |
 | P6 | Access & Contribution Model | ⬜ not started | Every repo reachable through a team; contributor-two switches live in checked-in config |
@@ -75,6 +75,12 @@ moves to P6).
   amended** — P1 ships with Tasks 1–6 only. The CLA is its own sub-effort (an
   ICLA/CCLA text + a signature-capture bot) and moves to its natural home in **P6
   (Access & Contribution Model)**; it is *not* a blocker for the P1 PR.
+- **Ruleset-drift coverage** — the diff pins name/target/enforcement,
+  `ref_name.include` **and `ref_name.exclude`** (an `exclude` naming the default
+  branch is a silent total-bypass), the required rule types, the bypass **actor
+  type set**, and the pull-request parameters. **Follow-up:** it does not yet pin
+  each bypass actor's `bypass_mode` (`always` vs `pull_request`) — a narrower
+  loosen-in-place vector that needs a richer per-actor declared shape.
 - **First org drift sweep (2026-07-23)** — all 8 repos pass `audit:action-sha-pins`
   (run locally as `bun scripts/structure-audit/check-action-sha-pins.ts --root
   <checkout>` against fresh clones, pending the workflow's first post-merge run —
