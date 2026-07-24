@@ -1,7 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { V32_GIT_BLAME_LINE_SQL } from "../index/git-blame-line-v32-sql.ts";
-import { lookupBlame, parseBlamePorcelain, upsertBlameLines } from "./blame-store.ts";
+import {
+  lookupBlame,
+  parseBlamePorcelain,
+  pruneBlameForFile,
+  upsertBlameLines,
+} from "./blame-store.ts";
 
 function db(): Database {
   const d = new Database(":memory:");
@@ -60,5 +65,59 @@ describe("upsertBlameLines + lookupBlame", () => {
     upsertBlameLines(d, "/repo", "src/x.ts", rows);
     const n = d.query("SELECT COUNT(*) AS c FROM git_blame_line").get() as { c: number };
     expect(n.c).toBe(2);
+  });
+});
+
+describe("pruneBlameForFile", () => {
+  test("removes only the given file's rows", () => {
+    const d = db();
+    upsertBlameLines(d, "/repo", "a.ts", [
+      {
+        lineNo: 1,
+        commitSha: "a".repeat(40),
+        authorName: "x",
+        authorEmail: "x@y",
+        authorTimeMs: 1,
+      },
+    ]);
+    upsertBlameLines(d, "/repo", "b.ts", [
+      {
+        lineNo: 1,
+        commitSha: "b".repeat(40),
+        authorName: "x",
+        authorEmail: "x@y",
+        authorTimeMs: 1,
+      },
+    ]);
+
+    pruneBlameForFile(d, "/repo", "a.ts");
+
+    expect(
+      d.query("SELECT COUNT(*) AS c FROM git_blame_line WHERE file_path='a.ts'").get(),
+    ).toEqual({ c: 0 });
+    expect(
+      d.query("SELECT COUNT(*) AS c FROM git_blame_line WHERE file_path='b.ts'").get(),
+    ).toEqual({ c: 1 });
+  });
+
+  test("scopes the delete to the given repo_root", () => {
+    const d = db();
+    const rows = [
+      {
+        lineNo: 1,
+        commitSha: "c".repeat(40),
+        authorName: "x",
+        authorEmail: "x@y",
+        authorTimeMs: 1,
+      },
+    ];
+    upsertBlameLines(d, "/repo-1", "a.ts", rows);
+    upsertBlameLines(d, "/repo-2", "a.ts", rows);
+
+    pruneBlameForFile(d, "/repo-1", "a.ts");
+
+    expect(
+      d.query("SELECT COUNT(*) AS c FROM git_blame_line WHERE repo_root='/repo-2'").get(),
+    ).toEqual({ c: 1 });
   });
 });

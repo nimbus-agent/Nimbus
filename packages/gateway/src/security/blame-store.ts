@@ -81,6 +81,15 @@ export function upsertBlameLines(
   }
 }
 
+/** Deletes all blame rows for one `(repo_root, file_path)` — the incremental
+ * indexer's idempotent per-file re-blame + stale/deleted-file cleanup. */
+export function pruneBlameForFile(db: Database, repoRoot: string, filePath: string): void {
+  dbRun(db, `DELETE FROM git_blame_line WHERE repo_root = ? AND file_path = ?`, [
+    repoRoot,
+    filePath,
+  ]);
+}
+
 export interface BlameLookup {
   readonly commitSha: string;
   readonly authorName: string | null;
