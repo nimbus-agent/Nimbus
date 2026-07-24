@@ -57,6 +57,10 @@ jobs:
       # healthy run (nothing pending) it no-ops. The tag is created with the App token, which
       # — unlike GITHUB_TOKEN — DOES trigger the tag-driven release.yml build.
       - name: Reconcile phantom release (create missing tag + relabel)
+        # `always()`: this is the recovery path — it must run even when the
+        # release-please step above errored (the very failure it recovers from),
+        # not just on success. Skipped only if the job is cancelled outright.
+        if: ${{ always() }}
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -78,12 +82,20 @@ jobs:
               continue
             fi
             tag="v${ver}"
-            if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
-              echo "${tag} already exists — relabelling PR #${num} only."
-            else
+            # Resolve the tag to its COMMIT (the commits endpoint dereferences both
+            # lightweight and annotated tags); empty => the tag does not exist.
+            existing=$(gh api "repos/${REPO}/commits/${tag}" --jq '.sha' 2>/dev/null || true)
+            if [ -z "$existing" ]; then
               echo "Phantom detected: PR #${num} merged as ${ver} but ${tag} is missing. Creating it."
               gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${tag}" -f sha="${sha}"
               echo "Created ${tag} at ${sha} (App token → triggers release.yml)."
+            elif [ "$existing" != "$sha" ]; then
+              # Tag name exists but points elsewhere — do NOT relabel, or we would mark the
+              # PR released against the wrong tree. Surface it for a human instead.
+              echo "::warning::${tag} exists but points at ${existing}, not PR #${num}'s merge commit ${sha}; not relabelling — needs manual review."
+              continue
+            else
+              echo "${tag} already points at ${sha} — relabelling PR #${num} only."
             fi
             gh pr edit "$num" --repo "$REPO" \
               --add-label "autorelease: tagged" --remove-label "autorelease: pending"
