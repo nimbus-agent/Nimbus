@@ -231,9 +231,10 @@ git commit -m "fix(audit): cla-coverage treats a non-404 read as indeterminate, 
 
 **Interfaces:**
 - Produces:
+  - `compareSemver(a: string, b: string): number | null` (never throws; null on unparseable)
   - `parseBrewVersion(rb: string): string | null`
   - `parseScoopVersion(json: string): string | null`
-  - `parseLinuxVersion(packages: string): string | null`
+  - `parseLinuxVersion(packages: string, pkgName?: string): string | null`
   - `interface ReleaseInfo { tag: string; prerelease: boolean; draft: boolean; assets: string[]; publishedAt: string }`
   - `interface PublishedRelease { version: string; publishedAt: string }`
   - `selectPublished(releases: ReleaseInfo[], asset: string): PublishedRelease | null`
@@ -245,6 +246,7 @@ git commit -m "fix(audit): cla-coverage treats a non-404 read as indeterminate, 
 ```ts
 import { describe, expect, test } from "bun:test";
 import {
+  compareSemver,
   parseBrewVersion,
   parseScoopVersion,
   parseLinuxVersion,
@@ -273,12 +275,34 @@ describe("parseScoopVersion", () => {
 });
 
 describe("parseLinuxVersion", () => {
-  test("reads the Version: control field from a Packages file", () => {
+  test("reads the Version: field from the nimbus-headless block", () => {
     const pkgs = "Package: nimbus-headless\nVersion: 0.26.0\nArchitecture: amd64\n";
     expect(parseLinuxVersion(pkgs)).toBe("0.26.0");
   });
-  test("null when no Version field", () => {
-    expect(parseLinuxVersion("Package: nimbus-headless\n")).toBeNull();
+  test("picks the nimbus-headless block, not another package that sorts first", () => {
+    const pkgs =
+      "Package: aardvark-tool\nVersion: 9.9.9\nArchitecture: amd64\n\n" +
+      "Package: nimbus-headless\nVersion: 0.26.0\nArchitecture: amd64\n";
+    expect(parseLinuxVersion(pkgs)).toBe("0.26.0");
+  });
+  test("strips a Debian epoch prefix and revision suffix to the core version", () => {
+    const pkgs = "Package: nimbus-headless\nVersion: 1:0.26.0-1\nArchitecture: amd64\n";
+    expect(parseLinuxVersion(pkgs)).toBe("0.26.0");
+  });
+  test("null when the package block is absent", () => {
+    expect(parseLinuxVersion("Package: something-else\nVersion: 1.0.0\n")).toBeNull();
+  });
+});
+
+describe("compareSemver", () => {
+  test("orders valid versions (v-prefix tolerated)", () => {
+    expect(compareSemver("v0.26.0", "0.25.0")).toBe(1);
+    expect(compareSemver("0.25.0", "0.26.0")).toBe(-1);
+    expect(compareSemver("0.26.0", "0.26.0")).toBe(0);
+  });
+  test("returns null (never throws) on an unparseable version", () => {
+    expect(compareSemver("not-a-version", "0.26.0")).toBeNull();
+    expect(compareSemver("0.26.0", "garbage")).toBeNull();
   });
 });
 
@@ -322,10 +346,13 @@ describe("selectPublished", () => {
 });
 
 describe("wingetDirPath", () => {
-  test("derives the manifests path from the package id", () => {
+  test("derives the manifests path from a two-part package id", () => {
     expect(wingetDirPath("NimbusAgent.Nimbus", "0.26.0")).toBe(
       "manifests/n/NimbusAgent/Nimbus/0.26.0",
     );
+  });
+  test("maps every dot-segment to its own path segment (multi-part id)", () => {
+    expect(wingetDirPath("Acme.Tools.Cli", "1.2.3")).toBe("manifests/a/Acme/Tools/Cli/1.2.3");
   });
 });
 
@@ -370,6 +397,20 @@ export function stripV(version: string): string {
   return version.replace(/^v/, "");
 }
 
+/**
+ * Semver ordering that never throws. `Bun.semver.order` throws on an unparseable
+ * version ("Invalid SemVer: ..."), and channel files are external — a format
+ * quirk must degrade to "indeterminate", not crash the whole audit. Returns
+ * -1 | 0 | 1, or null when either side is not valid semver.
+ */
+export function compareSemver(a: string, b: string): number | null {
+  try {
+    return Bun.semver.order(stripV(a), stripV(b));
+  } catch {
+    return null;
+  }
+}
+
 /** `version "X.Y.Z"` from a Homebrew Formula .rb. */
 export function parseBrewVersion(rb: string): string | null {
   return rb.match(/version\s+"([^"]+)"/)?.[1] ?? null;
@@ -389,9 +430,25 @@ export function parseScoopVersion(json: string): string | null {
   }
 }
 
-/** First `Version:` control field from an apt Packages list. */
-export function parseLinuxVersion(packages: string): string | null {
-  return packages.match(/^Version:\s*(.+)$/m)?.[1]?.trim() ?? null;
+/**
+ * The upstream version of `pkgName` from an apt Packages index. The index lists
+ * every package as a double-newline-separated block, so we scope to the block
+ * whose `Package:` field equals `pkgName` (a future second package must not be
+ * read by position). The Debian `Version:` field may carry an epoch (`N:`) and a
+ * revision (`-N`); both are stripped to the core upstream version so it compares
+ * as semver. (The current build emits a plain `0.26.0`; the stripping is
+ * defensive — verify against the live linux-repo at impl time.)
+ */
+export function parseLinuxVersion(packages: string, pkgName = "nimbus-headless"): string | null {
+  for (const block of packages.split(/\n\n+/)) {
+    if (block.match(new RegExp(`^Package:\\s*${pkgName}\\s*$`, "m"))) {
+      const raw = block.match(/^Version:\s*(.+)$/m)?.[1]?.trim();
+      if (!raw) return null;
+      // strip epoch "N:" prefix and "-revision" suffix -> core upstream version
+      return raw.replace(/^\d+:/, "").replace(/-.*$/, "");
+    }
+  }
+  return null;
 }
 
 export interface ReleaseInfo {
@@ -417,17 +474,23 @@ export function selectPublished(releases: ReleaseInfo[], asset: string): Publish
     (r) => !r.draft && !r.prerelease && stable.test(r.tag) && r.assets.includes(asset),
   );
   if (eligible.length === 0) return null;
-  eligible.sort((a, b) => Bun.semver.order(stripV(b.tag), stripV(a.tag)));
+  // Tags are pre-filtered to `vX.Y.Z`, so compareSemver never returns null here;
+  // `?? 0` keeps the comparator total-typed for the sort.
+  eligible.sort((a, b) => compareSemver(b.tag, a.tag) ?? 0);
   const top = eligible[0];
   return top ? { version: stripV(top.tag), publishedAt: top.publishedAt } : null;
 }
 
-/** winget-pkgs manifests path: manifests/<first-letter>/<Publisher>/<Package>/<version>. */
+/**
+ * winget-pkgs manifests path. Every dot-segment of the package id becomes its
+ * own directory: `NimbusAgent.Nimbus` -> `manifests/n/NimbusAgent/Nimbus/<ver>`,
+ * `Acme.Tools.Cli` -> `manifests/a/Acme/Tools/Cli/<ver>`. The first segment's
+ * lowercased first letter is the top bucket.
+ */
 export function wingetDirPath(packageId: string, version: string): string {
-  const [publisher, ...rest] = packageId.split(".");
-  const pkg = rest.join(".");
-  const letter = (publisher ?? "").charAt(0).toLowerCase();
-  return `manifests/${letter}/${publisher}/${pkg}/${version}`;
+  const segments = packageId.split(".");
+  const letter = (segments[0] ?? "").charAt(0).toLowerCase();
+  return `manifests/${letter}/${segments.join("/")}/${version}`;
 }
 
 /**
@@ -549,6 +612,16 @@ describe("evaluateTrain", () => {
     const r = evaluateTrain({ ...green, channels: [ch({ kind: "brew", status: "absent" })] });
     expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("stale");
   });
+
+  test("unparseable channel version => indeterminate, never a crash", () => {
+    const r = evaluateTrain({ ...green, channels: [ch({ kind: "brew", version: "not-a-version" })] });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("indeterminate");
+  });
+
+  test("unparseable manifest version => phantom edge indeterminate, never a crash", () => {
+    const r = evaluateTrain({ ...green, intended: "not-a-version", channels: [] });
+    expect(r.find((e) => e.edge === "t:phantom")?.verdict).toBe("indeterminate");
+  });
 });
 
 describe("decideExit", () => {
@@ -613,7 +686,12 @@ export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
   const pubVer = i.published ? stripV(i.published.version) : null;
 
   // --- phantom edge: intended must have a matching built (asset-bearing) release ---
-  const intendedAhead = pubVer === null || Bun.semver.order(stripV(i.intended), pubVer) > 0;
+  const phantomOrder = pubVer === null ? null : compareSemver(i.intended, pubVer);
+  if (pubVer !== null && phantomOrder === null) {
+    // manifest version itself is unparseable — cannot judge; do not crash.
+    results.push({ edge: `${i.name}:phantom`, verdict: "indeterminate", detail: `manifest version ${i.intended} is not valid semver` });
+  } else {
+  const intendedAhead = pubVer === null || (phantomOrder ?? 0) > 0;
   if (intendedAhead) {
     if (i.intendedBumpAgeHours > i.graceHours) {
       results.push({
@@ -635,6 +713,7 @@ export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
       detail: `manifest ${i.intended} matches published ${i.published?.version}`,
     });
   }
+  } // end phantom-judgeable branch
 
   // --- channel edges: only meaningful once a release is published AND past grace ---
   if (pubVer === null) return results;
@@ -664,11 +743,16 @@ export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
     }
     const chVer = ch.version ? stripV(ch.version) : null;
     if (chVer === null) {
-      results.push({ edge, verdict: "indeterminate", detail: "channel version unparseable" });
+      results.push({ edge, verdict: "indeterminate", detail: "channel version missing" });
+      continue;
+    }
+    const ord = compareSemver(chVer, pubVer);
+    if (ord === null) {
+      results.push({ edge, verdict: "indeterminate", detail: `channel version ${chVer} not comparable to ${pubVer}` });
       continue;
     }
     results.push(
-      Bun.semver.order(chVer, pubVer) >= 0
+      ord >= 0
         ? { edge, verdict: "ok", detail: `${ch.kind} ${chVer} >= published ${pubVer}` }
         : { edge, verdict: "stale", detail: `${ch.kind} ${chVer} < published ${pubVer}` },
     );
@@ -754,9 +838,20 @@ git commit -m "feat(audit): release-staleness evaluation engine (grace-aware, fa
 - [ ] **Step 2: Write the failing test** for the manifest loader — add to `check-release-staleness.test.ts`:
 
 ```ts
-import { loadTrainManifest } from "./check-release-staleness.ts";
+import { ageHours, loadTrainManifest } from "./check-release-staleness.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+describe("ageHours", () => {
+  test("a valid past timestamp yields a finite non-negative age", () => {
+    const h = ageHours("2020-01-01T00:00:00Z");
+    expect(Number.isFinite(h)).toBe(true);
+    expect(h).toBeGreaterThan(0);
+  });
+  test("an unparseable timestamp fails closed to +Infinity", () => {
+    expect(ageHours("not-a-date")).toBe(Number.POSITIVE_INFINITY);
+  });
+});
 
 describe("loadTrainManifest", () => {
   test("parses graceHours + trains", () => {
@@ -815,9 +910,16 @@ export function loadTrainManifest(json: string): TrainManifest {
 Then the age helper + gh readers + `import.meta.main` shell:
 
 ```ts
-/** Hours between an ISO-8601 (Z-suffixed) timestamp and now, UTC epoch-ms math. */
+/**
+ * Hours between an ISO-8601 (Z-suffixed) timestamp and now, UTC epoch-ms math.
+ * An unparseable date yields `+Infinity` (fail-CLOSED): a NaN age would satisfy
+ * `NaN > graceHours === false` and silently mask a phantom/stale state as "ok",
+ * so an unreadable timestamp instead forces the aged-check to fire.
+ */
 export function ageHours(isoZ: string): number {
-  return (Date.now() - new Date(isoZ).getTime()) / 3_600_000;
+  const t = new Date(isoZ).getTime();
+  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
+  return (Date.now() - t) / 3_600_000;
 }
 
 /** Decode a GitHub contents API base64 `.content` envelope to UTF-8 text. */
@@ -923,9 +1025,14 @@ async function readChannel(ch: ChannelSpec, publishedVersion: string | null): Pr
 async function tryLinuxGz(ch: ChannelSpec): Promise<ChannelReading | null> {
   const gz = runGh(["gh", "api", `repos/${ch.repo}/contents/${ch.path}.gz`, "--jq", ".content"]);
   if (!gz.ok) return null;
-  const bytes = Buffer.from(gz.stdout.replace(/\s/g, ""), "base64");
-  const text = new TextDecoder().decode(Bun.gunzipSync(bytes));
-  return { kind: ch.kind, status: "read", version: parseLinuxVersion(text), covered: null };
+  try {
+    const bytes = Buffer.from(gz.stdout.replace(/\s/g, ""), "base64");
+    const text = new TextDecoder().decode(Bun.gunzipSync(bytes));
+    return { kind: ch.kind, status: "read", version: parseLinuxVersion(text), covered: null };
+  } catch {
+    // corrupt / non-gzip payload — transient, not a staleness finding
+    return { kind: ch.kind, status: "indeterminate", version: null, covered: null };
+  }
 }
 ```
 
@@ -1050,4 +1157,14 @@ git commit -m "ci(infra): add release-staleness job to org-drift-sweep (P2 Relea
 
 **Placeholder scan:** no TBD/TODO; every code step shows complete code. ✓
 
-**Type consistency:** `PublishedRelease`, `ReleaseInfo`, `ChannelReading`, `EdgeResult`, `TrainEvalInput`, `TrainManifest`/`TrainSpec`/`ChannelSpec` are defined once (Tasks 3–5) and used consistently. `evaluateTrain`/`decideExit`/`selectPublished`/`resolveWingetCoverage`/`loadTrainManifest`/`classifyReadFailure`/`parseHttpStatus` names match across tasks. ✓
+**Type consistency:** `PublishedRelease`, `ReleaseInfo`, `ChannelReading`, `EdgeResult`, `TrainEvalInput`, `TrainManifest`/`TrainSpec`/`ChannelSpec` are defined once (Tasks 3–5) and used consistently. `evaluateTrain`/`decideExit`/`selectPublished`/`resolveWingetCoverage`/`loadTrainManifest`/`classifyReadFailure`/`parseHttpStatus`/`compareSemver`/`ageHours` names match across tasks. ✓
+
+## Review disposition (plan hardening pass)
+
+All five points from the plan review were **fixed** (none deferred — all in-scope Phase-1 robustness):
+
+1. **`Bun.semver.order` crash on non-semver** (confirmed live: it throws `Invalid SemVer`) → new `compareSemver` (Task 3) returns `null` instead of throwing; `evaluateTrain` maps `null` to an `indeterminate` verdict (Task 4). Used in `selectPublished` too.
+2. **`tryLinuxGz` throw on corrupt gzip** → wrapped in try/catch → `indeterminate` reading (Task 5).
+3. **`ageHours` NaN masking** → an unparseable timestamp now returns `+Infinity` (fail-closed, so the aged-check fires rather than silently reading "ok") (Task 5).
+4. **Linux multi-package index** → `parseLinuxVersion` now scopes to the `nimbus-headless` `Package:` block (not position) (Task 3).
+5. **Open Q1 (multi-part winget ids)** → `wingetDirPath` now maps every dot-segment to its own path segment (correct for `NimbusAgent.Nimbus` today, future-proof). **Open Q2 (Debian epoch/revision)** → `parseLinuxVersion` strips a `N:` epoch and `-rev` suffix to the core version; residual oddities degrade to `indeterminate` via `compareSemver`, never a crash. Both verified-against-live-repo notes retained.
