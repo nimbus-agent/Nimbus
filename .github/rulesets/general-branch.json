@@ -1,5 +1,5 @@
 {
-  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs this against live config. P6 flips the contributor-two switches in `shared.pull_request`. `required_status_checks` and `code_quality` rules are per-repo CI shape and intentionally NOT diffed here.",
+  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs `shared` against each repo in `repos`. P6 flips the contributor-two switches in `shared.pull_request`. NOT diffed: `required_status_checks`/`code_quality` (per-repo CI shape) and `bypass_actors` (the CI App token cannot read org-level bypass actors — see the P1 progress log). Intended bypass, for the future higher-privilege check: OrganizationAdmin on Nimbus/nimbus-vscode/nimbus-web-clipper; none on nimbus-client/nimbus-sdk.",
   "shared": {
     "name": "General",
     "target": "branch",
@@ -16,11 +16,5 @@
       "required_approving_review_count": 0
     }
   },
-  "repos": {
-    "Nimbus": { "bypass_actor_types": ["OrganizationAdmin"] },
-    "nimbus-client": { "bypass_actor_types": [] },
-    "nimbus-sdk": { "bypass_actor_types": [] },
-    "nimbus-vscode": { "bypass_actor_types": ["OrganizationAdmin"] },
-    "nimbus-web-clipper": { "bypass_actor_types": ["OrganizationAdmin"] }
-  }
+  "repos": ["Nimbus", "nimbus-client", "nimbus-sdk", "nimbus-vscode", "nimbus-web-clipper"]
 }

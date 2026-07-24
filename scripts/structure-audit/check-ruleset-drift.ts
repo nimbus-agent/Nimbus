@@ -34,21 +34,19 @@ export interface SharedRuleset {
   pull_request: Record<string, unknown>;
 }
 
-/** The per-repo overrides layered on top of `SharedRuleset`. */
-export interface RepoRulesetOverrides {
-  bypass_actor_types: string[];
-}
-
-/** The on-disk shape of `.github/rulesets/general-branch.json`. */
+/**
+ * The on-disk shape of `.github/rulesets/general-branch.json`: one shared
+ * declared ruleset plus the flat list of repos it is asserted against. There are
+ * no per-repo overrides — bypass actors are intentionally not diffed (see
+ * `diffRuleset` / the P1 progress log), and everything else is uniform.
+ */
 export interface DesiredRulesetFile {
   shared: SharedRuleset;
-  repos: Record<string, RepoRulesetOverrides>;
+  repos: string[];
 }
 
-/** `SharedRuleset` merged with one repo's overrides — what `diffRuleset` compares against live config. */
-export interface DesiredRuleset extends SharedRuleset {
-  bypass_actor_types: string[];
-}
+/** What `diffRuleset` compares against live config — currently identical to the shared shape. */
+export type DesiredRuleset = SharedRuleset;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -69,13 +67,6 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 
 function stringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-}
-
-export function mergeDesired(
-  shared: SharedRuleset,
-  overrides: RepoRulesetOverrides,
-): DesiredRuleset {
-  return { ...shared, bypass_actor_types: overrides.bypass_actor_types };
 }
 
 export function diffRuleset(desired: DesiredRuleset, live: unknown): AuditResult {
@@ -123,21 +114,15 @@ export function diffRuleset(desired: DesiredRuleset, live: unknown): AuditResult
     }
   }
 
-  // We pin the *set of bypass actor types* — adding or removing any bypass actor
-  // is caught. We do NOT yet pin each actor's `bypass_mode` (`always` vs
-  // `pull_request`): tightening/loosening the mode of an already-permitted actor
-  // type is a narrower vector, and pinning it needs a richer per-actor declared
-  // shape. Tracked as a follow-up in docs/infrastructure-roadmap.md.
-  const bypassActors = Array.isArray(live["bypass_actors"]) ? live["bypass_actors"] : [];
-  const liveBypassTypes = bypassActors
-    .filter(isRecord)
-    .map((a) => a["actor_type"])
-    .filter((t): t is string => typeof t === "string");
-  if (!sameSet(liveBypassTypes, desired.bypass_actor_types)) {
-    errors.push(
-      `bypass_actor_types: expected ${JSON.stringify(desired.bypass_actor_types)}, got ${JSON.stringify(liveBypassTypes)}`,
-    );
-  }
+  // Bypass actors are intentionally NOT diffed. The CI credential is a repo-
+  // scoped App installation token with `Administration: read`, which returns an
+  // EMPTY `bypass_actors` for org-level actors (OrganizationAdmin) — proven live
+  // that even adding `organization-administration: read` does not restore it, and
+  // reading them would need `Administration: write`, which an audit gate must not
+  // hold. Diffing the field against a declared value therefore false-fails on
+  // every repo that carries an org-level bypass. Auditing bypass actors is a
+  // follow-up requiring a higher-privilege context (see the P1 progress log in
+  // docs/infrastructure-roadmap.md).
 
   const prRule = rules.find((r) => isRecord(r) && r["type"] === "pull_request");
   if (!isRecord(prRule)) {
@@ -221,7 +206,7 @@ export function decideExit(input: { queried: number; errors: string[]; unreachab
 
 if (import.meta.main) {
   const file = loadDesiredFile(process.cwd());
-  const repoNames = Object.keys(file.repos);
+  const repoNames = file.repos;
   const allErrors: string[] = [];
   const unreachable: string[] = [];
   let queried = 0;
@@ -256,10 +241,7 @@ if (import.meta.main) {
 
     queried += 1;
     const live: unknown = JSON.parse(detailResult.stdout);
-    const overrides = file.repos[repo];
-    if (overrides === undefined) continue;
-    const desired = mergeDesired(file.shared, overrides);
-    const result = diffRuleset(desired, live);
+    const result = diffRuleset(file.shared, live);
     for (const err of result.errors) allErrors.push(`${repo}: ${err}`);
   }
 

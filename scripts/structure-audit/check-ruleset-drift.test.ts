@@ -4,7 +4,6 @@ import {
   type DesiredRuleset,
   decideExit,
   diffRuleset,
-  mergeDesired,
   type SharedRuleset,
 } from "./check-ruleset-drift.ts";
 
@@ -25,7 +24,7 @@ const SHARED: SharedRuleset = {
   },
 };
 
-const DESIRED: DesiredRuleset = mergeDesired(SHARED, { bypass_actor_types: [] });
+const DESIRED: DesiredRuleset = SHARED;
 
 function liveRuleset(overrides: Record<string, unknown> = {}) {
   return {
@@ -97,13 +96,15 @@ describe("diffRuleset", () => {
     expect(result.errors.join("\n")).toContain("no pull_request rule present");
   });
 
-  test("passes when conditions + bypass + protection rules all match", () => {
-    const desired = mergeDesired(SHARED, { bypass_actor_types: ["OrganizationAdmin"] });
+  test("ignores bypass_actors — the CI token cannot read org-level actors", () => {
+    // A live ruleset carrying an OrganizationAdmin bypass must NOT be flagged:
+    // the repo-scoped App token returns an empty `bypass_actors` regardless, so
+    // diffing it would false-fail. See the note in diffRuleset.
     const live = {
       ...liveRuleset(),
       bypass_actors: [{ actor_type: "OrganizationAdmin" }],
     };
-    const result = diffRuleset(desired, live);
+    const result = diffRuleset(DESIRED, live);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
   });
@@ -139,32 +140,6 @@ describe("diffRuleset", () => {
     const result = diffRuleset(DESIRED, live);
     expect(result.ok).toBe(false);
     expect(result.errors.join("\n")).toContain("missing required rule: deletion");
-  });
-
-  test("flags a bypass_actor_types mismatch", () => {
-    const desired = mergeDesired(SHARED, { bypass_actor_types: [] });
-    const live = {
-      ...liveRuleset(),
-      bypass_actors: [{ actor_type: "OrganizationAdmin" }],
-    };
-    const result = diffRuleset(desired, live);
-    expect(result.ok).toBe(false);
-    const msg = result.errors.join("\n");
-    expect(msg).toContain("bypass_actor_types");
-    expect(msg).toContain("OrganizationAdmin");
-  });
-
-  test("treats a reordered bypass set as a match (order-independent)", () => {
-    const desired = mergeDesired(SHARED, {
-      bypass_actor_types: ["OrganizationAdmin", "RepositoryAdmin"],
-    });
-    const live = {
-      ...liveRuleset(),
-      bypass_actors: [{ actor_type: "RepositoryAdmin" }, { actor_type: "OrganizationAdmin" }],
-    };
-    const result = diffRuleset(desired, live);
-    expect(result.ok).toBe(true);
-    expect(result.errors).toEqual([]);
   });
 });
 

@@ -77,10 +77,26 @@ moves to P6).
   (Access & Contribution Model)**; it is *not* a blocker for the P1 PR.
 - **Ruleset-drift coverage** — the diff pins name/target/enforcement,
   `ref_name.include` **and `ref_name.exclude`** (an `exclude` naming the default
-  branch is a silent total-bypass), the required rule types, the bypass **actor
-  type set**, and the pull-request parameters. **Follow-up:** it does not yet pin
-  each bypass actor's `bypass_mode` (`always` vs `pull_request`) — a narrower
-  loosen-in-place vector that needs a richer per-actor declared shape.
+  branch is a silent total-bypass), the required rule types, and the pull-request
+  parameters. **Bypass actors are deliberately NOT diffed** (finding from the
+  first live run, below): the CI credential is a repo-scoped App installation
+  token with `Administration: read`, and GitHub returns an **empty
+  `bypass_actors`** to it for org-level actors (`OrganizationAdmin`). Proven live
+  that adding `organization-administration: read` does **not** restore it, and
+  reading the field otherwise needs `Administration: write` — which a read-only
+  audit gate must not hold. Diffing it therefore false-failed on every repo that
+  carries an org-level bypass. **Follow-up:** audit bypass actors from a
+  higher-privilege context (a scheduled org-owner credential, not the sweep's App
+  token). The intended shape is recorded in `.github/rulesets/general-branch.json`:
+  `OrganizationAdmin` on Nimbus/nimbus-vscode/nimbus-web-clipper, none on
+  nimbus-client/nimbus-sdk.
+- **First post-merge sweep run (2026-07-24)** — P1 merged (#818), so the
+  net-new `workflow_dispatch` could finally fire. **`sha-pins`: green across all 8
+  repos** — the propagation mechanism works end-to-end. **`ruleset-drift`:** the
+  App-token path works (token mint succeeds once `nimbus-release-bot` has
+  `Administration: read` and is installed on all 5 repos), and the audit then
+  surfaced the `bypass_actors` token-visibility limitation above — closed by
+  dropping that one field from the diff. Every other check reads reliably.
 - **First org drift sweep (2026-07-23)** — all 8 repos pass `audit:action-sha-pins`
   (run locally as `bun scripts/structure-audit/check-action-sha-pins.ts --root
   <checkout>` against fresh clones, pending the workflow's first post-merge run —
