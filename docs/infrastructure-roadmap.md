@@ -41,7 +41,7 @@ go red tells them apart.
 ## Sub-programs
 
 Design of record:
-[`superpowers/specs/2026-07-23-org-infrastructure-program-design.md`](./superpowers/specs/2026-07-23-org-infrastructure-program-design.md).
+`superpowers/specs/2026-07-23-org-infrastructure-program-design.md`.
 
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |

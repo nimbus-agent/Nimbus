@@ -78,6 +78,12 @@ nimbus connector sync github
 nimbus ask "what PRs did I open in the last 7 days?"
 ```
 
+Or trace any line's provenance — who wrote it, the PR, the ticket, the incident it responded to, and what breaks downstream:
+
+```bash
+nimbus why src/auth.ts:42
+```
+
 ### Run it fully offline
 
 Nimbus needs an LLM, but it does **not** require a cloud one. Point it at a local model and nothing — not even prompts — leaves the machine:

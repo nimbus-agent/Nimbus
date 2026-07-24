@@ -185,10 +185,10 @@ types. Stage 0 uses the dependency that is already there.
 **Goal:** one source of truth for the ecosystem's core data contract, enforced by
 a test that fails when the layers drift.
 
-> **Implementation plan:** [`superpowers/plans/2026-07-20-stage-0-real-schema.md`](./superpowers/plans/2026-07-20-stage-0-real-schema.md)
+> **Implementation plan:** `superpowers/plans/2026-07-20-stage-0-real-schema.md`
 > — five tasks across four repos, with the two npm release hops sequenced. Tasks 1–2 (gateway)
 > shipped in [#780](https://github.com/nimbus-agent/Nimbus/pull/780); Tasks 3–5 (client, VS Code)
-> remain. Design: [`superpowers/specs/2026-07-20-stage-0-real-schema-design.md`](./superpowers/specs/2026-07-20-stage-0-real-schema-design.md).
+> remain. Design: `superpowers/specs/2026-07-20-stage-0-real-schema-design.md`.
 
 **Why first:** it fixes a live user-visible bug, it is days rather than weeks, and
 it installs the safety net *before* Stage 1 starts writing against ~200 RPCs.
@@ -336,7 +336,7 @@ Extension version is the release that carries the item.
 The hover lens (author, PR, ticket, thread, incident, dependents per line) was
 the stage's headline, but its quality is data-dependent, so a read-only spike
 ran against a live index before any UI work —
-[findings](./superpowers/specs/2026-07-23-stage-2a-data-spike-findings.md),
+findings,
 merged as [#815](https://github.com/nimbus-agent/Nimbus/pull/815). Verdict:
 **don't build yet.** The precomputed `git_blame_line` lane had zero rows on an
 actively-used machine, PR titles were id-only (`"PR #220"`), PR→issue graph
@@ -473,7 +473,7 @@ receipts are why they stay and why procurement signs.
    the *before* (blast radius pre-push) and the *after* (postmortem), with the
    incident itself owned elsewhere. **Sharpened, not closed, by the Stage 2a
    spike (2026-07-23):** the data cannot support the lens on *any* surface yet
-   ([findings](./superpowers/specs/2026-07-23-stage-2a-data-spike-findings.md)),
+   (findings),
    and the *before* job is already served by `/blast` (Stage 2b). Decide the
    surface only after the spike's prerequisites are met and its re-run bar
    clears.

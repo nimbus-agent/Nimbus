@@ -51,8 +51,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   positives like `RFC 2119`/`ISO 8601` as issue-key matches) and `obsidian_note` added to
   `REGRAPH_TYPE_ORDER` (notes are `backlinks` targets and must be graphed before anything that
   references one). Spec:
-  [`docs/superpowers/specs/2026-07-23-nimbus-why-lens-design.md`](./superpowers/specs/2026-07-23-nimbus-why-lens-design.md);
-  plan: [`docs/superpowers/plans/2026-07-23-why-lens-1b-agent.md`](./superpowers/plans/2026-07-23-why-lens-1b-agent.md).
+  `docs/superpowers/specs/2026-07-23-nimbus-why-lens-design.md`;
+  plan: `docs/superpowers/plans/2026-07-23-why-lens-1b-agent.md`.
 
 - **2026-07-23 — Ecosystem Stage 1 complete: the client surface goes 15 → 52 methods.** The gateway
   dispatches ~212 JSON-RPC methods; `@nimbus-dev/client` exposed 15 of them, so entire namespaces
@@ -100,8 +100,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `briefs: disabled (enable [briefs] in nimbus.toml)` line (threaded through the `clip.status` IPC
   as `briefsEnabled`) — otherwise a paired browser's first brief request would silently 404 with no
   hint why. **No new invariant, no migration** (`research_brief` reuses the `item` table). Spec:
-  [`docs/superpowers/specs/2026-07-21-research-briefs-design.md`](./superpowers/specs/2026-07-21-research-briefs-design.md);
-  plan: [`docs/superpowers/plans/2026-07-21-research-briefs-gateway.md`](./superpowers/plans/2026-07-21-research-briefs-gateway.md).
+  `docs/superpowers/specs/2026-07-21-research-briefs-design.md`;
+  plan: `docs/superpowers/plans/2026-07-21-research-briefs-gateway.md`.
 
 - **2026-07-20 — `index.queryItems` now returns camelCase `NimbusItem` rows, not raw SQLite columns
   (breaking IPC contract change).** `rpcIndexQueryItems` used to hand back raw `SELECT * FROM item`
