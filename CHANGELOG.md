@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [0.27.0](https://github.com/nimbus-agent/Nimbus/compare/v0.26.0...v0.27.0) (2026-07-24)
+
+
+### Features
+
+* **infra:** P6a access model — team-reachability + org-settings drift gates ([#826](https://github.com/nimbus-agent/Nimbus/issues/826)) ([52afca3](https://github.com/nimbus-agent/Nimbus/commit/52afca34746045f202545d0bf0d55d70483d4afa))
+
 ## [0.26.0](https://github.com/nimbus-agent/Nimbus/compare/v0.25.0...v0.26.0) (2026-07-24)
 
 
