@@ -159,7 +159,7 @@ test("an incoming resolves edge survives the target issue's own re-sync", () => 
 // Fixtures below are built with the exact expressions github-sync.ts uses
 // to index PRs and issues (`${repoFull}#${num}` / `${repoFull}#issue-${num}`,
 // plus the same `number`/`repo` metadata keys), NOT hand-picked shapes — see
-// `upsertFromPullRequest`/`upsertFromIssue` in connectors/github-sync.ts.
+// `upsertPr`/`upsertFromIssue` in connectors/github-sync.ts.
 function seedGithubIssue(
   db: Database,
   repoFull: string,

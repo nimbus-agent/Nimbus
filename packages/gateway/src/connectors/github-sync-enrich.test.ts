@@ -143,6 +143,23 @@ describe("enrichFallbackPrTitles", () => {
     expect(titleOf(db, "acme/app#7")).toBe("PR #7");
   });
 
+  test("a real title that merely starts with the fallback shape is not clobbered", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxFor(db);
+    seedPrRow(db, "acme/app", 1, "PR #1 revert", 1000);
+    const fetchImpl = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ number: 1, title: "Fix the retry loop" }), {
+          status: 200,
+        }),
+      )) as unknown as typeof fetch;
+
+    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+
+    expect(n).toBe(0);
+    expect(titleOf(db, "acme/app#1")).toBe("PR #1 revert");
+  });
+
   test("a malformed JSON response is skipped, not enriched", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);
@@ -154,5 +171,18 @@ describe("enrichFallbackPrTitles", () => {
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#8")).toBe("PR #8");
+  });
+
+  test("valid JSON that is not an object (e.g. an array) is skipped, not enriched", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxFor(db);
+    seedPrRow(db, "acme/app", 10, "PR #10", 1000);
+    const fetchImpl = (() =>
+      Promise.resolve(new Response("[1,2,3]", { status: 200 }))) as unknown as typeof fetch;
+
+    const n = await enrichFallbackPrTitles(ctx, "pat", 2000, fetchImpl);
+
+    expect(n).toBe(0);
+    expect(titleOf(db, "acme/app#10")).toBe("PR #10");
   });
 });
