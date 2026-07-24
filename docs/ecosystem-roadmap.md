@@ -308,18 +308,19 @@ Extension version is the release that carries the item.
 
 ### 2a — the `why` lens: spiked, then built (2026-07-24)
 
-> **Update, 2026-07-24 — the lens is built and now reachable through the client.**
+> **Update, 2026-07-24 — the lens is built; step 2 wires it to the client.**
 > The prerequisites the spike named have landed: PR-title enrichment
 > ([#817](https://github.com/nimbus-agent/Nimbus/pull/817)) and the on-demand
 > blame indexer ([#819](https://github.com/nimbus-agent/Nimbus/pull/819)) are
-> merged, with root registration in flight
+> merged, with root registration in review
 > ([#822](https://github.com/nimbus-agent/Nimbus/pull/822)). On that basis the
 > lens itself shipped on the gateway + CLI — the `why` agent, `whyPeek`, and
 > `nimbus why` ([#820](https://github.com/nimbus-agent/Nimbus/pull/820)) — and
-> **step 2** exposes it through the narrow waist: `agents.why` / `agents.whyPeek`
-> now flow through `@nimbus-dev/sdk` 1.6.0 → `@nimbus-dev/client` 0.12.0, so the
-> VS Code hover UI can consume it. What remains is the editor UI itself (a
-> `nimbus-vscode` slice) and the demo, not the capability. The correlation-quality
+> **step 2** routes it through the narrow waist: `agents.why` / `agents.whyPeek`
+> flow through `@nimbus-dev/sdk` 1.6.0 (published) → `@nimbus-dev/client` 0.12.0
+> (in review), after which the VS Code hover UI can consume it. What remains is
+> the editor UI itself (a `nimbus-vscode` slice) and the demo, not the
+> capability. The correlation-quality
 > caveat still holds — it is a data-density question the roadmap tracks, not a
 > reason the lens is unreachable. The spike record below is kept as written.
 
@@ -345,13 +346,15 @@ the spike feeds [Open decision 3](#open-decisions) rather than closing it.
 - **Cross-client:** `metrics.dora` and `deploy.preflight` in
   `nimbus-statuspage`; `agents.*` in `nimbus-raycast`. Neither repo was touched
   in the VS Code slice.
-- **Gateway-side follow-ups surfaced by the spike:** ✅ addressed — id-only PR
-  titles are enriched ([#817](https://github.com/nimbus-agent/Nimbus/pull/817)),
-  the blame lane populates on demand ([#819](https://github.com/nimbus-agent/Nimbus/pull/819)),
-  and root registration lands the pipeline ([#822](https://github.com/nimbus-agent/Nimbus/pull/822)).
-- **`why` lens reachability:** ✅ done — the lens ships on gateway + CLI
-  ([#820](https://github.com/nimbus-agent/Nimbus/pull/820)) and is exposed through
-  `@nimbus-dev/client` 0.12.0 (step 2). Remaining: the `nimbus-vscode` hover UI.
+- **Gateway-side follow-ups surfaced by the spike:** id-only PR titles are
+  enriched ([#817](https://github.com/nimbus-agent/Nimbus/pull/817), merged) and
+  the blame lane populates on demand ([#819](https://github.com/nimbus-agent/Nimbus/pull/819),
+  merged); root registration is in review ([#822](https://github.com/nimbus-agent/Nimbus/pull/822)).
+- **`why` lens reachability:** the lens ships on gateway + CLI
+  ([#820](https://github.com/nimbus-agent/Nimbus/pull/820), merged); step 2
+  promotes its types to `@nimbus-dev/sdk` 1.6.0 (published) and exposes it
+  through `@nimbus-dev/client` 0.12.0 (in review). Remaining after that: the
+  `nimbus-vscode` hover UI.
 
 ---
 
@@ -392,8 +395,9 @@ lands — but organise the story around the lens.
 > claim.
 >
 > **Update 2026-07-24:** the banner now exists as a capability. The spike's
-> prerequisites landed (#817/#819/#822), the `why` lens shipped on gateway + CLI
-> (#820), and step 2 made it reachable through `@nimbus-dev/client` 0.12.0. The
+> prerequisites landed (#817/#819 merged, #822 in review), the `why` lens shipped
+> on gateway + CLI (#820), and step 2 routes it through the waist —
+> `@nimbus-dev/sdk` 1.6.0 (published) → `@nimbus-dev/client` 0.12.0 (in review). The
 > "Buildable → After Stage 1" cell is now *built*; what's left for the banner is
 > the `nimbus-vscode` hover UI and one demo GIF (Stage 3), not the capability.
 > The data-density caveat stays a live quality question, not a reachability one.

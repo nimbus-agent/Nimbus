@@ -1,6 +1,6 @@
 # Design Review: Why-lens step 2 — client-hop
 
-This document reviews [2026-07-24-why-lens-step2-client-hop-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2/docs/superpowers/specs/2026-07-24-why-lens-step2-client-hop-design.md) and notes questions, suggestions, and improvements.
+This document reviews [2026-07-24-why-lens-step2-client-hop-design.md](./2026-07-24-why-lens-step2-client-hop-design.md) and notes questions, suggestions, and improvements.
 
 ---
 
@@ -23,7 +23,7 @@ This document reviews [2026-07-24-why-lens-step2-client-hop-design.md](file:///C
 ### Tauri `ALLOWED_METHODS` Check (Invariant I7)
 
 - **Observation:** While the immediate target is the VS Code extension via the client, the desktop app (Tauri) might eventually want to display the hover lens.
-- **Question:** Do `agents.why` and `agents.whyPeek` need to be explicitly added to `ALLOWED_METHODS` in [gateway_bridge.rs](file:///C:/gitrep/Nimbus/packages/ui/src-tauri/src/gateway_bridge.rs)? Even if Tauri support is a future goal, checking if the current IPC setup guards these methods at the Tauri boundary is a good pre-flight step.
+- **Question:** Do `agents.why` and `agents.whyPeek` need to be explicitly added to `ALLOWED_METHODS` in [gateway_bridge.rs](../../../packages/ui/src-tauri/src/gateway_bridge.rs)? Even if Tauri support is a future goal, checking if the current IPC setup guards these methods at the Tauri boundary is a good pre-flight step.
 
 ### Circular Dependency Risk
 

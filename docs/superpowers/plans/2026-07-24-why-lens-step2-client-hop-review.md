@@ -1,6 +1,6 @@
 # Design Review: Why-lens step 2 — SDK → client hop — Implementation Plan
 
-This document reviews [2026-07-24-why-lens-step2-client-hop.md](file:///C:/gitrep/Nimbus/.claude/worktrees/why-lens-step2/docs/superpowers/plans/2026-07-24-why-lens-step2-client-hop.md) and identifies open questions, potential improvements, and suggestions.
+This document reviews [2026-07-24-why-lens-step2-client-hop.md](./2026-07-24-why-lens-step2-client-hop.md) and identifies open questions, potential improvements, and suggestions.
 
 ---
 
