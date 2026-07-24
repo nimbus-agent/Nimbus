@@ -107,6 +107,34 @@ test("a symbol entity whose metadata repoRoot is NOT among the configured roots 
   expect(subject).toBeNull();
 });
 
+test("a symbol entity whose repoRoot IS configured but whose file ..-escapes the root resolves to null — the symbol-branch file fence", () => {
+  const db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  const now = Date.now();
+  // repoRoot is the configured root (passes the first fence), but the `file`
+  // metadata traverses out of it — a poisoned/malformed symbol row must not
+  // become a blame-spawn path pointing outside the root. Mirrors the
+  // matchConfiguredRoot ..-escape fence for the caller-path branch.
+  upsertIndexedItem(db, {
+    service: "filesystem",
+    type: "code_symbol",
+    externalId: `sym:${ROOT}:../../etc/passwd:retryBackoff:function`,
+    title: "retryBackoff (function)",
+    bodyPreview: "../../etc/passwd\nexport function retryBackoff() {",
+    modifiedAt: now,
+    syncedAt: now,
+    metadata: {
+      name: "retryBackoff",
+      kind: "function",
+      file: "../../etc/passwd",
+      repoRoot: ROOT,
+      excerptStartLine: 42,
+    },
+  });
+  const subject = resolveWhySubject(db, [root(ROOT)], { ref: "retryBackoff" }, () => false);
+  expect(subject).toBeNull();
+});
+
 test("lookupSymbol's LIKE fallback resolves a partial token against the label", () => {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);

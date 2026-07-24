@@ -32,9 +32,10 @@ export type ResolvedRootPath = { repoRoot: string; filePath: string };
  *
  * NOTE: `resolveWhySubject`'s symbol branch below is a SECOND path to a
  * blame-spawn subject that does not go through this function — it enforces
- * its own equivalent containment check (`sym.repoRoot` must match a
- * currently configured root) inline, since a symbol's `repoRoot` comes
- * verbatim from `graph_entity` metadata, not from resolving a caller path.
+ * its own equivalent containment check inline (both `sym.repoRoot` must match
+ * a currently configured root AND `sym.file` must stay within that root),
+ * since a symbol's `repoRoot`/`file` come verbatim from `graph_entity`
+ * metadata, not from resolving a caller path.
  */
 export function matchConfiguredRoot(
   roots: readonly NimbusFilesystemRootToml[],
@@ -135,6 +136,13 @@ export function resolveWhySubject(
     // handing it out as a blame-spawn subject.
     const inConfiguredRoots = roots.some((r) => resolve(r.path) === resolve(sym.repoRoot));
     if (!inConfiguredRoots) return null;
+    // Second half of the symbol-branch fence: `sym.file` is also verbatim
+    // `graph_entity` metadata, so re-verify it stays WITHIN `sym.repoRoot`
+    // before it becomes a blame-spawn path — a poisoned/`../`-bearing file
+    // component must be rejected exactly like the matchConfiguredRoot branch
+    // rejects an escaping caller path (parity with lines 44-61).
+    const relFile = relative(resolve(sym.repoRoot), resolve(join(sym.repoRoot, sym.file)));
+    if (relFile === "" || relFile.startsWith("..") || isAbsolute(relFile)) return null;
     return {
       repoRoot: sym.repoRoot,
       filePath: sym.file,
