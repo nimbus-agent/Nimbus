@@ -1,12 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { extensionProcessEnv } from "../extensions/spawn-env.ts";
 import {
+  createBlameIndexSyncable,
   gitBlameWholeFile,
   gitBlameWindowFiles,
   gitChangedSince,
   gitHeadSha,
   isAncestor,
 } from "./blame-index-sync.ts";
+import {
+  createMemoryIndexDb,
+  createStubVault,
+  syncTestContext,
+} from "./connector-sync-test-helpers.ts";
 
 /** A Bun.spawn stand-in returning a fixed exit code + stdout. */
 function fakeSpawn(out: string, code: number): typeof Bun.spawn {
@@ -100,5 +110,147 @@ describe("gitBlameWholeFile", () => {
 
   test("returns [] on a non-zero exit", async () => {
     expect(await gitBlameWholeFile("/r", "x.ts", fakeSpawn("", 128))).toEqual([]);
+  });
+});
+
+// --- Integration: a real temp git repo (real subprocesses, real SQLite) ---
+
+const GIT_ENV = extensionProcessEnv({
+  GIT_AUTHOR_NAME: "T",
+  GIT_AUTHOR_EMAIL: "t@x.dev",
+  GIT_COMMITTER_NAME: "T",
+  GIT_COMMITTER_EMAIL: "t@x.dev",
+});
+
+function git(root: string, ...args: string[]): void {
+  const res = Bun.spawnSync(["git", "-C", root, ...args], { env: GIT_ENV });
+  if (res.exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${res.stderr.toString()}`);
+  }
+}
+
+function blameRootConfig(path: string) {
+  return { path, gitAware: true, codeIndex: false, dependencyGraph: false, exclude: [] };
+}
+
+function countBlame(
+  db: ReturnType<typeof createMemoryIndexDb>,
+  root: string,
+  file: string,
+): number {
+  const row = db
+    .query("SELECT COUNT(*) AS c FROM git_blame_line WHERE repo_root = ? AND file_path = ?")
+    .get(root, file) as { c: number };
+  return row.c;
+}
+
+describe("createBlameIndexSyncable (real repo)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function newRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), "blame-idx-"));
+    dirs.push(root);
+    git(root, "init", "-q");
+    return root;
+  }
+
+  test("noop when there are no roots", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [] });
+    const res = await syncable.sync(ctx, null);
+    expect(res.itemsUpserted).toBe(0);
+    expect(res.cursor).toBeNull();
+  });
+
+  test("full path: blames the window files into git_blame_line + encodes a cursor", async () => {
+    const root = newRepo();
+    writeFileSync(join(root, "x.ts"), "const a = 1\nconst b = 2\n");
+    writeFileSync(join(root, "y.ts"), "export const c = 3\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
+
+    const res = await syncable.sync(ctx, null);
+
+    expect(countBlame(db, root, "x.ts")).toBe(2);
+    expect(countBlame(db, root, "y.ts")).toBe(1);
+    expect(res.itemsUpserted).toBe(2); // two files blamed this tick
+    expect(res.cursor).toContain("nimbus-blame1:");
+  });
+
+  test("incremental path: only changed files re-blamed, deleted file pruned", async () => {
+    const root = newRepo();
+    writeFileSync(join(root, "a.ts"), "1\n2\n");
+    writeFileSync(join(root, "b.ts"), "keep\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "c1");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
+    const first = await syncable.sync(ctx, null);
+    expect(countBlame(db, root, "a.ts")).toBe(2);
+    expect(countBlame(db, root, "b.ts")).toBe(1);
+
+    // Second commit: modify a.ts (grows to 3 lines), delete b.ts, add c.ts.
+    writeFileSync(join(root, "a.ts"), "1\n2\n3\n");
+    rmSync(join(root, "b.ts"));
+    writeFileSync(join(root, "c.ts"), "new\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "c2");
+
+    const second = await syncable.sync(ctx, first.cursor);
+
+    expect(countBlame(db, root, "a.ts")).toBe(3); // re-blamed
+    expect(countBlame(db, root, "b.ts")).toBe(0); // pruned on delete
+    expect(countBlame(db, root, "c.ts")).toBe(1); // added
+    expect(second.cursor).toContain("nimbus-blame1:");
+  });
+
+  test("history rewrite: a non-ancestor cursor falls back to a full re-blame", async () => {
+    const root = newRepo();
+    writeFileSync(join(root, "a.ts"), "1\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "c1");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
+    const first = await syncable.sync(ctx, null);
+    expect(countBlame(db, root, "a.ts")).toBe(1);
+
+    // Rewrite history so the recorded head is no longer an ancestor of HEAD.
+    writeFileSync(join(root, "a.ts"), "1\n2\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "--amend", "-m", "c1-amended");
+
+    const second = await syncable.sync(ctx, first.cursor);
+
+    // Full re-blame ran (isAncestor(false) → window path), picking up the 2 lines.
+    expect(countBlame(db, root, "a.ts")).toBe(2);
+    expect(second.itemsUpserted).toBeGreaterThan(0);
+  });
+
+  test("skips a root that is not a git repository", async () => {
+    const plain = mkdtempSync(join(tmpdir(), "blame-plain-"));
+    dirs.push(plain);
+    writeFileSync(join(plain, "a.ts"), "1\n");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(plain)], windowDays: 90 });
+    const res = await syncable.sync(ctx, null);
+
+    expect(res.itemsUpserted).toBe(0);
+    expect(countBlame(db, plain, "a.ts")).toBe(0);
   });
 });

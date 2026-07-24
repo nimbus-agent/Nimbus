@@ -14,6 +14,7 @@ export type Provider =
   | "circleci"
   | "pagerduty"
   | "filesystem"
+  | "blame"
   | "kubernetes"
   | "aws"
   | "azure"
@@ -106,6 +107,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   circleci: { requestsPerMinute: 60, burstSize: 10 },
   pagerduty: { requestsPerMinute: 60, burstSize: 10 },
   filesystem: { requestsPerMinute: 120, burstSize: 20 },
+  blame: { requestsPerMinute: 120, burstSize: 20 },
   kubernetes: { requestsPerMinute: 60, burstSize: 10 },
   aws: { requestsPerMinute: 40, burstSize: 8 },
   azure: { requestsPerMinute: 40, burstSize: 8 },

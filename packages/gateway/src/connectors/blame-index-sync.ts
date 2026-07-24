@@ -1,5 +1,16 @@
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { extensionProcessEnv } from "../extensions/spawn-env.ts";
-import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
+import {
+  type BlameRow,
+  parseBlamePorcelain,
+  pruneBlameForFile,
+  upsertBlameLines,
+} from "../security/blame-store.ts";
+import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 type SpawnFn = typeof Bun.spawn;
 const GIT_TIMEOUT_MS = 30_000;
@@ -116,4 +127,119 @@ export async function gitBlameWholeFile(
   const { code, out } = await runGit(root, ["blame", "--line-porcelain", "--", relFile], spawn);
   if (code !== 0) return [];
   return parseBlamePorcelain(out);
+}
+
+// --- The Syncable ---
+
+const SERVICE_ID = "blame";
+const CURSOR_PREFIX = "nimbus-blame1:";
+const DEFAULT_WINDOW_DAYS = 90;
+/** Per-root per-tick cap. Bounds a first-run full index on a large repo; the
+ * remainder is picked up by later ticks' incremental path (or the next full run,
+ * which re-evaluates the cap). Files are processed sequentially — one `git blame`
+ * subprocess at a time — so there is no FD/CPU storm. */
+const MAX_BLAME_FILES = 400;
+
+interface BlameCursor {
+  readonly heads: Record<string, string>;
+}
+
+function decodeCursor(raw: string | null): BlameCursor {
+  if (raw === null) return { heads: {} };
+  const parsed = decodeNimbusJsonCursorPayload(raw, CURSOR_PREFIX);
+  if (parsed !== null && typeof parsed === "object" && "heads" in parsed) {
+    const heads = (parsed as { heads: unknown }).heads;
+    if (heads !== null && typeof heads === "object") {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(heads as Record<string, unknown>)) {
+        if (typeof v === "string") out[k] = v;
+      }
+      return { heads: out };
+    }
+  }
+  return { heads: {} };
+}
+
+export type BlameIndexSyncableOptions = {
+  roots: readonly NimbusFilesystemRootToml[];
+  windowDays?: number;
+};
+
+/** Re-blames one file whole, idempotently: prune first (also cleans a stale or
+ * deleted file), then re-blame if it still exists on disk. Returns the blamed
+ * line count (0 = file gone / no blame). */
+async function blameOneFile(ctx: SyncContext, root: string, relFile: string): Promise<number> {
+  pruneBlameForFile(ctx.db, root, relFile);
+  if (!existsSync(join(root, relFile))) return 0; // deleted/renamed-away: skip the spawn
+  const rows = await gitBlameWholeFile(root, relFile);
+  if (rows.length > 0) upsertBlameLines(ctx.db, root, relFile, rows);
+  return rows.length;
+}
+
+/**
+ * A whole-file, `windowDays`-bounded blame indexer. Per configured filesystem
+ * root that is a git repo, it blames every git-tracked file with a commit in the
+ * window (all languages), storing one `git_blame_line` row per line. Incremental
+ * via a per-repo last-blamed HEAD cursor; falls back to a full re-blame when the
+ * recorded head is no longer an ancestor of HEAD (history rewrite). Reuses the
+ * V32 `git_blame_line` table — no migration.
+ */
+export function createBlameIndexSyncable(options: BlameIndexSyncableOptions): Syncable {
+  const windowDays = options.windowDays ?? DEFAULT_WINDOW_DAYS;
+  return {
+    serviceId: SERVICE_ID,
+    defaultIntervalMs: 10 * 60 * 1000,
+    initialSyncDepthDays: DEFAULT_WINDOW_DAYS,
+    async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
+      const t0 = performance.now();
+      if (options.roots.length === 0) {
+        return syncNoopResult(cursor, t0);
+      }
+      await ctx.rateLimiter.acquire(SERVICE_ID);
+
+      const { heads } = decodeCursor(cursor);
+      const nextHeads: Record<string, string> = { ...heads };
+      let filesBlamed = 0; // itemsUpserted unit: files blamed this tick
+
+      for (const rootCfg of options.roots) {
+        const root = rootCfg.path;
+        if (!existsSync(root) || !statSync(root).isDirectory()) continue;
+        const head = await gitHeadSha(root);
+        if (head === null) continue; // not a git repo / empty repo
+
+        const last = heads[root];
+        if (last === undefined || !(await isAncestor(root, last))) {
+          // Full path (first run or rewritten history).
+          const files = await gitBlameWindowFiles(root, windowDays);
+          if (files.length > MAX_BLAME_FILES) {
+            ctx.logger.info(
+              { service: SERVICE_ID, root, total: files.length, cap: MAX_BLAME_FILES },
+              "blame window exceeds per-tick cap; remainder picked up on later ticks",
+            );
+          }
+          for (const f of files.slice(0, MAX_BLAME_FILES)) {
+            if ((await blameOneFile(ctx, root, f)) > 0) filesBlamed += 1;
+          }
+        } else {
+          // Incremental path.
+          for (const ch of await gitChangedSince(root, last)) {
+            if (ch.status === "D") {
+              pruneBlameForFile(ctx.db, root, ch.path);
+            } else if ((await blameOneFile(ctx, root, ch.path)) > 0) {
+              filesBlamed += 1;
+            }
+          }
+        }
+        nextHeads[root] = head;
+      }
+
+      return {
+        cursor: encodeNimbusJsonCursor(CURSOR_PREFIX, { heads: nextHeads }),
+        itemsUpserted: filesBlamed,
+        itemsDeleted: 0,
+        hasMore: false,
+        durationMs: Math.round(performance.now() - t0),
+      };
+    },
+  };
 }
