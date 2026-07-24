@@ -120,6 +120,7 @@ import {
   type SemanticSearchDeps,
 } from "../index/local-index.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { loadRegisteredRoots, mergeRoots } from "../index/registered-roots-store.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
@@ -411,7 +412,10 @@ async function createSchedulerWithMesh(
       evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
     },
   });
-  const fsV2Roots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
+  const fsV2Roots = mergeRoots(
+    loadNimbusFilesystemRootsFromConfigDir(paths.configDir),
+    loadRegisteredRoots(paths.configDir),
+  );
   registerFilesystemRootSyncables(syncScheduler, localIndex, paths.configDir, fsV2Roots);
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
