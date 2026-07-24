@@ -38,18 +38,18 @@ of "reposition the name" + "lead with the moat".
 
 **`package.json` fields:**
 - `displayName`: `"Nimbus — On-Call & Incident Agent"` (was "Nimbus Agent").
-- `description`: `"Your private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of everything it sends off your machine that no cloud assistant can match."` (≤ the marketplace 200-ish char sweet spot; trim if the packager warns).
-- `categories`: `["AI", "Chat"]` (VS Code categories are a fixed enum — the ICP vocabulary can't live here; "Chat" is valid because the extension ships a chat participant; drop "Other").
+- `description` (**≤200 chars** — marketplace search cards + listing previews truncate ~150–200 chars, so the full line must read whole before the cut; the earlier 231-char draft truncated mid-sentence): `"Private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of every action it takes off-device."` (~192 chars). Note "record of every **action it takes**" — not "everything that leaves your machine" — is the honesty-scoped wording (see C); do not widen it back to a network-level claim.
+- `categories`: `["AI", "Chat"]` — VS Code categories are a **fixed enum** and the ICP vocabulary can't live here; "Chat" is valid because the extension ships a chat participant. **`vsce`/packaging fails on an unrecognized category** — the plan MUST verify both against the current marketplace category list at authoring time; if "Chat" is not accepted, fall back to `["AI"]` (the ICP terms live in keywords regardless). Drop "Other".
 - `keywords`: keep `ai, agent, local-first, nimbus, privacy, mcp`; **add** `on-call, incident-response, sre, platform-engineering, observability, dora, deploy, egress, audit`.
 
 **`README.md` lead rewrite** (the marketplace listing body — the first screen is what converts): restructure the top so it opens with **who it's for + the differentiators**, not "generic AI agent":
 1. A one-line hero in the ICP's voice (mirror the new `description`).
 2. A short **"Built for incident response & platform work"** intro naming the ops slash-commands (`/incident` → catchup, `/deploys` → DORA, `/owns` → expert, `/blast` → impact) as the lead capability.
 3. **"A verifiable record of what left your machine"** — the egress receipts / audit ledger, framed as the moat (a claim no cloud assistant can make), scoped honestly (see C).
-4. A one-line **"`why` lens — coming"** tease (author/PR/ticket/incident per line), linking the ecosystem-roadmap.
-5. THEN the existing general features (Ask, Search, chat participant, dev-workflow trio, walkthrough) — kept, reordered below the differentiators, not deleted.
+4. THEN the existing general features (Ask, Search, chat participant, dev-workflow trio, walkthrough) — kept, reordered below the differentiators, not deleted.
+5. The **`why` lens tease goes LAST, under an explicit `## On the roadmap` (or "Coming soon") heading** — clearly marked as **not yet shipped**, one line (author/PR/ticket/incident per line) linking the ecosystem-roadmap. It must NOT appear in the shipped-feature list: a user installing this version seeing "why lens" among the features and not finding it earns a 1-star "advertised a feature that isn't there" review.
 
-Keep the exact feature descriptions accurate (no overclaiming an unbuilt feature as shipped). The Copilot-vocabulary trap (`/explain` `/fix` `/test`) stays as a secondary "also works like a general assistant" line, not the lead.
+Keep every shipped-feature description accurate — **no unbuilt feature described as present**. The Copilot-vocabulary trap (`/explain` `/fix` `/test`) stays as a secondary "also works like a general assistant" line, not the lead.
 
 ## B — Cross-link the client ROADMAPs
 
@@ -70,26 +70,43 @@ The product roadmap lives in the gateway repo:
 ## This repo's slice
 
 - **Role:** <e.g. the typed IPC wrapper every client consumes / the VS Code surface / …>
-- **Current:** <version + one line of status, e.g. `@nimbus-dev/client` 0.12.0 — 52 methods incl. `agents.why`/`whyPeek`>
-- **Next here:** <the repo-local next step, e.g. the `why` hover UI (Stage 4)>
+- **Released:** <where, NO pinned version — e.g. "on npm (`@nimbus-dev/client`); see [Releases](../../releases) for the current version"> — a hardcoded `0.x.y` here drifts the moment the package publishes again; point at the releases page instead.
+- **Next here:** <the repo-local next step, e.g. "the `why` hover UI (Stage 4)">
 ```
 
-`nimbus-agent/Nimbus` is public, so the deep link resolves for external
-visitors. Per-repo one-liners are filled from each repo's actual role/version at
-authoring time.
+**No pinned versions in these files** (they update rarely; a hardcoded minor/patch
+goes stale immediately) — describe the role + link the releases page. The
+ecosystem-roadmap deep link uses `/blob/main/` deliberately: it must track the
+*living* roadmap, and `main` is the confirmed, stable default branch of the
+public `nimbus-agent/Nimbus` repo. A commit-SHA permalink would pin a stale
+snapshot; relative links are impossible across repos. If the default branch is
+ever renamed, GitHub auto-redirects `/blob/main/` and the links here are updated
+in the same change.
 
 ## C — Launch trust-story copy
 
 Two artifacts, **copy only** (nothing posted):
 
 1. **A "Why Nimbus" section in the `nimbus-vscode` README** — the honest trust
-   story: Nimbus keeps a **verifiable, signed record of everything the agent
-   sent off your machine** (the egress ledger), a claim structurally impossible
-   for a cloud assistant (completeness of an egress record can only be
-   established at the point of departure, under the user's control). **Scoped
-   exactly:** it records the agent's *authorized actions* — never overclaimed as
-   raw-syscall / whole-machine capture. This is the differentiator that "sells to
-   the buyer and earns procurement's signature."
+   story: Nimbus keeps a **verifiable, signed record of every outbound action the
+   agent takes** (the egress ledger), a claim structurally impossible for a cloud
+   assistant (completeness *for the agent's actions* can only be established at
+   the point of departure, under the user's control). **The boundary is stated
+   explicitly and must not be softened into a whole-machine claim:**
+   - **What it records:** every action the agent *dispatches* through its
+     executor chokepoint — one appended, hash-chained `egress_ledger` row per
+     gated action *before* it leaves (invariant I29). That is the exact, provable
+     scope.
+   - **What it is NOT:** a network firewall or host DLP. It does **not** monitor
+     raw TCP/UDP sockets or HTTP made *outside* the agent framework — e.g. by the
+     OS, other local processes, or a user-added **unsandboxed** MCP server. (Nimbus
+     first-party connectors run sandboxed (I15), but the ledger's claim is about
+     *the agent's dispatched actions*, not every byte on the wire.)
+
+   The honest one-liner is *"a signed, verifiable record of what the agent did
+   off your machine"* — never *"everything that left your machine."* This is the
+   differentiator that "sells to the buyer and earns procurement's signature,"
+   and it only holds if the scope is stated, not blurred.
 2. **`docs/launch-messaging.md`** in the Nimbus repo — a reusable messaging
    sheet: the one-liner, the three-pillar frame (banner = `why` lens; moat =
    egress receipts; multiplier = LM tools), the ICP-vs-generic positioning
