@@ -16,6 +16,7 @@
 - **No pinned versions in `ROADMAP.md`.** Describe the role + link the Releases page; a hardcoded `0.x.y` drifts on the next publish.
 - **`description` ≤ ~200 chars** (marketplace cards truncate ~150–200).
 - **Branch hygiene:** each repo gets its own `dev/asafgolombek/stage3-*` branch; never commit on `main`. The Nimbus worktree branch already exists.
+- **Preflight the tooling once** (all verified present in this environment): `gh auth status` must show logged-in before any `git push` / `gh pr create` — if `gh` is unavailable or the token expired, open each PR manually from the branch's compare URL (`https://github.com/nimbus-agent/<repo>/compare/main...<branch>`). The five client repos are sibling checkouts under `C:/gitrep/` (writable). Run `bun install` in a repo only if a fresh checkout lacks `node_modules`.
 
 ---
 
@@ -45,7 +46,7 @@ Work in `C:/gitrep/nimbus-vscode`. First: `cd C:/gitrep/nimbus-vscode && git swi
   - `categories` (lines 25–28): `["AI", "Other"]` → `["AI", "Chat"]`.
   - `keywords` (lines 29–36): keep `ai, agent, local-first, nimbus, privacy, mcp`; **add** `on-call, incident-response, sre, platform-engineering, observability, dora, deploy, egress, audit`.
 
-- [ ] **Step 2: Validate categories + package.** `cd C:/gitrep/nimbus-vscode && bun run package` (`bunx vsce package --no-dependencies`). Expected: PASS. **`vsce` fails on an unknown category** — if it rejects `"Chat"`, set `categories` to `["AI"]` and re-run (the ICP terms are in keywords regardless). Also confirm no "description too long" warning; trim if warned.
+- [ ] **Step 2: Validate categories + package.** `cd C:/gitrep/nimbus-vscode && bun run package` (`bunx vsce package --no-dependencies`; `@vscode/vsce` is a devDep — if this fails on missing modules, run `bun install` first). Expected: PASS. **`vsce` fails on an unknown category** — if it rejects `"Chat"`, set `categories` to `["AI"]` and re-run (the ICP terms are in keywords regardless). Also confirm no "description too long" warning; trim if warned.
 
 - [ ] **Step 3: Green check.** `bun run typecheck && bun run lint && bun run test`. Expected: PASS (metadata only, no code touched).
 
@@ -309,7 +310,7 @@ gh pr create --base main --title "docs: ecosystem Stage 3 — distribution (laun
 
 - [ ] `nimbus-vscode`: `bun run package` succeeds (categories valid, description not over-length); `typecheck`/`lint`/`test` green; README has no shipped-claim for the `why` lens (it's only under "On the roadmap").
 - [ ] Every `ROADMAP.md` deep link (`/blob/main/docs/ecosystem-roadmap.md`) resolves against the public repo; no pinned versions anywhere.
-- [ ] Egress wording audit: grep the vscode README + `launch-messaging.md` for "everything that left" / "every byte" / "firewall" — the honest scoping ("what the agent did off your machine", "dispatched actions") must be the only framing.
+- [ ] Egress wording audit — search the vscode README + `launch-messaging.md` for the forbidden framings `everything that left` / `every byte` / `firewall` (shell-agnostic: the **Grep tool** / ripgrep is always available; or `grep -rniE` in Bash; or `Select-String -Pattern` in PowerShell). The honest scoping ("what the agent did off your machine", "dispatched actions") must be the only framing.
 - [ ] Nimbus PR: `audit:doc-refs` + `lint:markdown` clean.
 - [ ] No `vsce publish`, no release, no posting anywhere.
 
