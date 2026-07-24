@@ -134,11 +134,11 @@ moves to P6).
 
 - **Delivered (config + gate):** broad-relicensable ICLA + CCLA drafted
   (`docs/cla/`, pending ratification), the reusable `cla.yml` template, the
-  `cla-coverage` drift gate (all 7 public repos have `cla.yml` at one version),
+  `cla-coverage` drift gate (all 6 public repos have `cla.yml` at one version),
   and `CONTRIBUTING.md` terms.
 - **Pending apply (org-owner):** ratify the CLA wording; create the dedicated CLA
   App + `SELECTED` private-key secret; create the `.github` `cla-signatures`
-  branch + deploy `CLA/ICLA.md`/`CLA/CCLA.md`; deploy `cla.yml` to all 7 repos;
+  branch + deploy `CLA/ICLA.md`/`CLA/CCLA.md`; deploy `cla.yml` to all 6 repos;
   make the `CLA Assistant` check required in each ruleset; **red-prove** with a
   test PR; confirm `cla-coverage` green.
 - **Deferred:** CCLA employee-roster automation; private repos; retroactive

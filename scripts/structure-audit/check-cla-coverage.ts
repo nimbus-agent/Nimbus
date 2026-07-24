@@ -21,7 +21,6 @@ const GATED_REPOS = [
   "nimbus-vscode",
   "nimbus-web-clipper",
   "awesome-nimbus",
-  "nimbus-recipes",
 ];
 
 /**

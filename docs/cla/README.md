@@ -31,8 +31,8 @@ To bump it (materially changed text → re-require signatures):
    Nimbus repo under `docs/cla/`; `.github/CLA/` is the *deployed* copy — edit
    `docs/cla/` and redeploy, don't diverge them.
 2. In **one** coordinated change, bump `version1` → `version2` in the `cla.yml`
-   of **all 7** gated repos.
-3. `audit:cla-coverage` asserts the version matches across all 7 — a partial bump
+   of **all 6** gated repos.
+3. `audit:cla-coverage` asserts the version matches across all 6 — a partial bump
    goes red.
 
 Never bump one repo at a time: a contributor would be blocked on a bumped repo

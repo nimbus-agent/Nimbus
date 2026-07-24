@@ -161,7 +161,7 @@ jobs:
           client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: nimbus-agent
-          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,awesome-nimbus,nimbus-recipes
+          repositories: Nimbus,nimbus-sdk,nimbus-client,nimbus-vscode,nimbus-web-clipper,awesome-nimbus
           # cla-coverage reads .github/workflows/cla.yml from each gated repo — contents:read.
           permission-contents: read
       - name: Audit CLA coverage
