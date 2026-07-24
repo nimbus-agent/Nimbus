@@ -188,4 +188,14 @@ describe("decideExit", () => {
     expect(result.message).toContain("OK (3 repos)");
     expect(result.message).toContain("could not query");
   });
+
+  test("total skip is soft green by default but hard red under strict", () => {
+    const soft = decideExit({ queried: 0, errors: [], unreachable: ["nimbus-sdk"] });
+    expect(soft.code).toBe(0);
+    expect(soft.message).toContain("skipped");
+
+    const hard = decideExit({ queried: 0, errors: [], unreachable: ["nimbus-sdk"], strict: true });
+    expect(hard.code).toBe(1);
+    expect(hard.message).toContain("could not authenticate");
+  });
 });

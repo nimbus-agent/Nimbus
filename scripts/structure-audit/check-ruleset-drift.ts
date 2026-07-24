@@ -18,6 +18,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+
 export interface AuditResult {
   ok: boolean;
   errors: string[];
@@ -147,23 +149,6 @@ export function loadDesiredFile(repoRoot: string): DesiredRulesetFile {
   return JSON.parse(raw) as DesiredRulesetFile;
 }
 
-/** A `gh` invocation's outcome — never throws; a missing binary/non-zero exit is `ok: false`. */
-interface GhResult {
-  ok: boolean;
-  stdout: string;
-}
-
-/** Wraps `Bun.spawnSync` so a missing `gh` binary or non-zero exit both surface as `ok: false`. */
-function runGh(args: string[]): GhResult {
-  try {
-    const proc = Bun.spawnSync(args);
-    if (!proc.success) return { ok: false, stdout: "" };
-    return { ok: true, stdout: new TextDecoder().decode(proc.stdout) };
-  } catch {
-    return { ok: false, stdout: "" };
-  }
-}
-
 /**
  * Decides the CLI's exit code + message from what the per-repo loop observed.
  *
@@ -172,18 +157,16 @@ function runGh(args: string[]): GhResult {
  * (every repo unreachable) is the ONLY case that skips green — any drift
  * recorded on a repo that WAS reachable always wins over partial coverage.
  */
-export function decideExit(input: { queried: number; errors: string[]; unreachable: string[] }): {
-  code: 0 | 1;
-  message: string;
-} {
-  const { queried, errors, unreachable } = input;
+export function decideExit(input: {
+  queried: number;
+  errors: string[];
+  unreachable: string[];
+  strict?: boolean;
+}): { code: 0 | 1; message: string } {
+  const { queried, errors, unreachable, strict = false } = input;
 
   if (queried === 0) {
-    return {
-      code: 0,
-      message:
-        "audit:ruleset-drift: skipped — gh unavailable or unauthenticated (needs org-read on nimbus-agent)",
-    };
+    return strictSkip("audit:ruleset-drift", strict);
   }
 
   if (errors.length > 0) {
@@ -245,7 +228,8 @@ if (import.meta.main) {
     for (const err of result.errors) allErrors.push(`${repo}: ${err}`);
   }
 
-  const outcome = decideExit({ queried, errors: allErrors, unreachable });
+  const strict = isStrict(process.argv.slice(2), process.env);
+  const outcome = decideExit({ queried, errors: allErrors, unreachable, strict });
   if (outcome.code === 1) {
     console.error(outcome.message);
   } else if (outcome.message.includes("skipped")) {
