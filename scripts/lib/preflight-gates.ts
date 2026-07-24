@@ -64,6 +64,7 @@ export const CI_ONLY_GATES: readonly string[] = [
   "build:sandbox-helper", // make native C helper — platform-specific (Linux) native build, not a portable gate
   "vitest", // bunx vitest — UI component tests (packages/ui), run via the separate Vitest runner
   "audit:ruleset-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
+  "audit:org-settings-drift", // needs network + gh auth + org-read; runs only in org-drift-sweep.yml with --strict, never the local FAST tier
 ];
 
 export function selectGates(tier: GateTier): Gate[] {

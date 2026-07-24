@@ -1,0 +1,8 @@
+{
+  "$comment": "Desired org-access config. `settings` is audited by check-org-settings-drift.ts; `team_reachability.exempt` by check-team-reachability.ts. See docs/infrastructure-roadmap.md.",
+  "settings": {
+    "members_can_create_repositories": false,
+    "default_repository_permission": "none"
+  },
+  "team_reachability": { "exempt": [] }
+}
