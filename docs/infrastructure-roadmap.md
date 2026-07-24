@@ -142,7 +142,11 @@ moves to P6).
   make the `CLA Assistant` check required in each ruleset; **red-prove** with a
   test PR; confirm `cla-coverage` green.
 - **Deferred:** CCLA employee-roster automation; private repos; retroactive
-  signatures. See `docs/superpowers/specs/2026-07-24-cla-design.md`.
+  signatures. See `docs/superpowers/specs/2026-07-24-cla-design.md`. Robustness
+  follow-up: `check-cla-coverage` treats any per-repo `gh` failure as "cla.yml
+  absent" (a public-repo 404 is genuine, but a transient 5xx/rate-limit would
+  false-red until the next run) — surface the `gh` exit code in `_gh-audit.ts`
+  and treat a non-404 failure as indeterminate, like `team-reachability`.
 
 ---
 

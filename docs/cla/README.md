@@ -27,7 +27,9 @@ MIT → AGPL one-way rule.
 The CLA text version lives in `path-to-signatures` (`signatures/version1/...`).
 To bump it (materially changed text → re-require signatures):
 
-1. Update the CLA doc(s) in `.github/CLA/`.
+1. Update the CLA doc(s). **Source of truth:** the canonical drafts live in the
+   Nimbus repo under `docs/cla/`; `.github/CLA/` is the *deployed* copy — edit
+   `docs/cla/` and redeploy, don't diverge them.
 2. In **one** coordinated change, bump `version1` → `version2` in the `cla.yml`
    of **all 7** gated repos.
 3. `audit:cla-coverage` asserts the version matches across all 7 — a partial bump
