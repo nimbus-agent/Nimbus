@@ -240,6 +240,56 @@ describe("createBlameIndexSyncable (real repo)", () => {
     expect(second.itemsUpserted).toBeGreaterThan(0);
   });
 
+  test("a malformed cursor is ignored and the tick runs the full path", async () => {
+    const root = newRepo();
+    writeFileSync(join(root, "x.ts"), "a\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
+
+    const res = await syncable.sync(ctx, "not-a-valid-cursor");
+
+    expect(countBlame(db, root, "x.ts")).toBe(1);
+    expect(res.cursor).toContain("nimbus-blame1:");
+  });
+
+  test("an empty (zero-line) file is not counted but does not error", async () => {
+    const root = newRepo();
+    writeFileSync(join(root, "empty.ts"), "");
+    writeFileSync(join(root, "one.ts"), "a\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({ roots: [blameRootConfig(root)], windowDays: 90 });
+
+    const res = await syncable.sync(ctx, null);
+
+    expect(countBlame(db, root, "empty.ts")).toBe(0);
+    expect(countBlame(db, root, "one.ts")).toBe(1);
+    expect(res.itemsUpserted).toBe(1); // only the non-empty file counts
+  });
+
+  test("skips a root path that is a file, not a directory", async () => {
+    const root = newRepo();
+    const filePath = join(root, "a-file.ts");
+    writeFileSync(filePath, "x\n");
+
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}));
+    const syncable = createBlameIndexSyncable({
+      roots: [blameRootConfig(filePath)],
+      windowDays: 90,
+    });
+    const res = await syncable.sync(ctx, null);
+
+    expect(res.itemsUpserted).toBe(0);
+  });
+
   test("skips a root that is not a git repository", async () => {
     const plain = mkdtempSync(join(tmpdir(), "blame-plain-"));
     dirs.push(plain);
