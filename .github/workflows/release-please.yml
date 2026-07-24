@@ -35,9 +35,57 @@ jobs:
           repositories: Nimbus
           permission-contents: write
           permission-pull-requests: write
+          # `issues: write` is required to flip the `autorelease:` labels on the
+          # release PR (labels are an issues-API concept for GitHub Apps) — both
+          # for release-please's own pending→tagged flip and the reconcile step below.
+          permission-issues: write
 
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release-please
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ steps.app-token.outputs.token }}
+
+      # Phantom-release guard. release-please in this repo intermittently merges the
+      # "chore: release main" PR (bumping the manifest) but never creates the tag/GitHub
+      # Release — an internal parse error breaks its release-creation phase, after which it
+      # aborts every run with "untagged, merged release PRs outstanding". The symptom is a
+      # merged release PR left labelled `autorelease: pending` with no matching tag. This
+      # step automates the standing manual recovery (create the tag + relabel), so releases
+      # ship hands-free regardless of why the native step misfired. It is idempotent: on a
+      # healthy run (nothing pending) it no-ops. The tag is created with the App token, which
+      # — unlike GITHUB_TOKEN — DOES trigger the tag-driven release.yml build.
+      - name: Reconcile phantom release (create missing tag + relabel)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pending=$(gh pr list --repo "$REPO" --state merged --label "autorelease: pending" \
+                      --json number,mergeCommit --jq '.[] | [.number, .mergeCommit.oid] | @tsv')
+          if [ -z "$pending" ]; then
+            echo "No untagged, merged release PRs — nothing to reconcile."
+            exit 0
+          fi
+          while IFS=$'\t' read -r num sha; do
+            [ -n "${num:-}" ] || continue
+            ver=$(gh api "repos/${REPO}/contents/.release-please-manifest.json?ref=${sha}" \
+                    --jq '.content' | tr -d '\n' | base64 -d | jq -r '."."')
+            if [ -z "$ver" ] || [ "$ver" = "null" ]; then
+              echo "::warning::could not read manifest version for PR #${num} at ${sha}; skipping"
+              continue
+            fi
+            tag="v${ver}"
+            if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "${tag} already exists — relabelling PR #${num} only."
+            else
+              echo "Phantom detected: PR #${num} merged as ${ver} but ${tag} is missing. Creating it."
+              gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${tag}" -f sha="${sha}"
+              echo "Created ${tag} at ${sha} (App token → triggers release.yml)."
+            fi
+            gh pr edit "$num" --repo "$REPO" \
+              --add-label "autorelease: tagged" --remove-label "autorelease: pending"
+            echo "Relabelled PR #${num}: autorelease: pending → tagged."
+          done <<< "$pending"
