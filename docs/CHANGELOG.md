@@ -8,7 +8,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-07-23 — GitHub connector PR-title enrichment.** GitHub connector now enriches indexed PR
+- **2026-07-24 — GitHub connector PR-title enrichment.** GitHub connector now enriches indexed PR
   titles via a pull-detail fetch, replacing id-only `PR #N` fallbacks.
 
 - **2026-07-23 — Ecosystem Stage 1 complete: the client surface goes 15 → 52 methods.** The gateway
