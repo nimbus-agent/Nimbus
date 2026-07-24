@@ -161,6 +161,32 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     hardDeadline: null,
     note: "This system's own credential. Tracked here like any other.",
   },
+  {
+    name: "CLA_BOT_CLIENT_ID",
+    state: "required",
+    location: { scope: "org" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/cla.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    expectedVisibility: "all",
+    note: "Org secret, visibility all — client ID for the CLA assistant GitHub App.",
+  },
+  {
+    name: "CLA_BOT_PRIVATE_KEY",
+    state: "required",
+    location: { scope: "org" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/cla.yml"],
+    maxAgeDays: 365,
+    hardDeadline: null,
+    expectedVisibility: "selected",
+    note: "Org secret scoped to repos needing CLA verification — private key for the CLA assistant GitHub App.",
+  },
 
   // --- Nimbus: release-path PATs (retired 2026-07-22) ---
   {

@@ -118,12 +118,14 @@ PRs gate on Ubuntu (`pr-quality`); pushes run the full Windows/macOS/Linux matri
 ## Command Reference
 
 ### Key Build and Setup Commands
-*   `bun install` — Install dependencies
-*   `bun run lint` — Lint and format check (Biome)
-*   `bun run typecheck` — Typecheck typescript definitions
-*   `bun run preflight:fast` — Cheap static checks, typecheck, linting
-*   `bun run preflight` — Full CI checks and test suites
+
+- `bun install` — Install dependencies
+- `bun run lint` — Lint and format check (Biome)
+- `bun run typecheck` — Typecheck typescript definitions
+- `bun run preflight:fast` — Cheap static checks, typecheck, linting
+- `bun run preflight` — Full CI checks and test suites
 
 ### Key Test Commands
-*   `bun test` — Run all gateway & packages tests
-*   `bun test packages/gateway/src/...` — Test a specific path
+
+- `bun test` — Run all gateway & packages tests
+- `bun test packages/gateway/src/...` — Test a specific path
