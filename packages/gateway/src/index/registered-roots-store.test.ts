@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,6 +43,26 @@ describe("addRegisteredRoot + loadRegisteredRoots", () => {
     expect(addRegisteredRoot(cfg, a)).toBe(true);
     expect(addRegisteredRoot(cfg, b)).toBe(true);
     expect(new Set(loadRegisteredRoots(cfg).map((r) => r.path))).toEqual(new Set([a, b]));
+  });
+});
+
+describe("loadRegisteredRoots — malformed file handling", () => {
+  test("a non-array JSON payload yields no roots", () => {
+    const cfg = mkdtempSync(join(tmpdir(), "rr-"));
+    writeFileSync(join(cfg, "registered-roots.json"), JSON.stringify({ not: "an array" }), "utf8");
+    expect(loadRegisteredRoots(cfg)).toEqual([]);
+  });
+
+  test("malformed JSON yields no roots (no throw)", () => {
+    const cfg = mkdtempSync(join(tmpdir(), "rr-"));
+    writeFileSync(join(cfg, "registered-roots.json"), "not json at all", "utf8");
+    expect(loadRegisteredRoots(cfg)).toEqual([]);
+  });
+
+  test("non-string array entries are filtered out", () => {
+    const cfg = mkdtempSync(join(tmpdir(), "rr-"));
+    writeFileSync(join(cfg, "registered-roots.json"), JSON.stringify([1, "/ok", null]), "utf8");
+    expect(loadRegisteredRoots(cfg).map((r) => r.path)).toEqual(["/ok"]);
   });
 });
 
