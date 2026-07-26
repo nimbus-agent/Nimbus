@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  type ConsumerReading,
+  evaluatePackage,
   matchesBumpPr,
   parseNpmLatest,
   resolvedFromBunLock,
@@ -168,5 +170,139 @@ describe("matchesBumpPr", () => {
   });
   test("no open PRs => false", () => {
     expect(matchesBumpPr([], pkg)).toBe(false);
+  });
+});
+
+const consumer = (over: Partial<ConsumerReading>): ConsumerReading => ({
+  repo: "nimbus-agent/nimbus-vscode",
+  status: "read",
+  resolved: null,
+  bumpPrOpen: false,
+  ...over,
+});
+
+describe("evaluatePackage", () => {
+  const green = {
+    name: "sdk",
+    npm: "@nimbus-dev/sdk",
+    taggedRelease: { version: "1.6.0", publishedAt: "x" },
+    taggedReleaseAgeHours: 48,
+    latest: { version: "1.6.0", publishedAt: "x" },
+    latestAgeHours: 48,
+    graceHours: 6,
+  };
+
+  test("tag and npm equal + consumer current => all ok", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ resolved: "1.6.0" })],
+    });
+    expect(r.every((e) => e.verdict === "ok")).toBe(true);
+  });
+
+  test("tag ahead of npm past grace => publish phantom", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: { version: "1.7.0", publishedAt: "x" },
+      consumers: [],
+    });
+    expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("phantom");
+  });
+
+  test("tag ahead of npm within grace => ok (publish window)", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: { version: "1.7.0", publishedAt: "x" },
+      taggedReleaseAgeHours: 1,
+      consumers: [],
+    });
+    expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("ok");
+  });
+
+  test("consumer behind past grace => stale", () => {
+    const r = evaluatePackage({ ...green, consumers: [consumer({ resolved: "1.5.2" })] });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("stale");
+  });
+
+  test("consumer behind but the npm version is within grace => ok", () => {
+    const r = evaluatePackage({
+      ...green,
+      latestAgeHours: 2,
+      consumers: [consumer({ resolved: "1.5.2" })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("ok");
+  });
+
+  test("consumer behind but a bump PR is open => ok", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ resolved: "1.5.2", bumpPrOpen: true })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("ok");
+  });
+
+  test("consumer behind but the PR list was unreadable => indeterminate, not stale", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ resolved: "1.5.2", bumpPrOpen: null })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("indeterminate");
+  });
+
+  test("consumer ahead of npm => ok, never stale", () => {
+    const r = evaluatePackage({ ...green, consumers: [consumer({ resolved: "1.7.0" })] });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("ok");
+  });
+
+  test("npm unreadable => every edge indeterminate, never stale", () => {
+    const r = evaluatePackage({
+      ...green,
+      latest: null,
+      latestAgeHours: null,
+      consumers: [consumer({ resolved: "1.0.0" })],
+    });
+    expect(r.every((e) => e.verdict === "indeterminate")).toBe(true);
+  });
+
+  test("transient consumer read => indeterminate", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ status: "indeterminate" })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("indeterminate");
+  });
+
+  test("absent lockfile => stale", () => {
+    const r = evaluatePackage({ ...green, consumers: [consumer({ status: "absent" })] });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("stale");
+  });
+
+  test("lockfile parsed but package is not a dependency => indeterminate naming the manifest", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ status: "not-a-dependency" })],
+    });
+    const e = r.find((x) => x.edge === "sdk:nimbus-vscode");
+    expect(e?.verdict).toBe("indeterminate");
+    expect(e?.detail).toContain("manifest error");
+    expect(e?.detail).toContain("release-train.json");
+  });
+
+  test("unparseable resolved version => indeterminate, never a crash", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ resolved: "not-a-version" })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("indeterminate");
+  });
+
+  test("no tagged release => publish edge indeterminate, not phantom", () => {
+    const r = evaluatePackage({
+      ...green,
+      taggedRelease: null,
+      taggedReleaseAgeHours: null,
+      consumers: [],
+    });
+    expect(r.find((e) => e.edge === "sdk:publish")?.verdict).toBe("indeterminate");
   });
 });
