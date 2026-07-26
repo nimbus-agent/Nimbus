@@ -273,6 +273,12 @@ describe("ageHours", () => {
   test("an unparseable timestamp fails closed to +Infinity", () => {
     expect(ageHours("not-a-date")).toBe(Number.POSITIVE_INFINITY);
   });
+  test("a timestamp with no timezone fails closed rather than being read as local", () => {
+    expect(ageHours("2026-07-26T12:00:00")).toBe(Number.POSITIVE_INFINITY);
+  });
+  test("an explicit numeric offset is accepted", () => {
+    expect(Number.isFinite(ageHours("2020-01-01T00:00:00+02:00"))).toBe(true);
+  });
 });
 
 describe("loadTrainManifest", () => {

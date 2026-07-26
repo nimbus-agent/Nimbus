@@ -11,24 +11,29 @@
  */
 
 import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import {
+  ageHours,
+  compareSemver,
+  decideExit,
+  type EdgeResult,
+  type PublishedRelease,
+  type ReleaseInfo,
+  stripV,
+} from "./_release-train-core.ts";
 
-export function stripV(version: string): string {
-  return version.replace(/^v/, "");
-}
-
-/**
- * Semver ordering that never throws. `Bun.semver.order` throws on an unparseable
- * version ("Invalid SemVer: ..."), and channel files are external — a format
- * quirk must degrade to "indeterminate", not crash the whole audit. Returns
- * -1 | 0 | 1, or null when either side is not valid semver.
- */
-export function compareSemver(a: string, b: string): number | null {
-  try {
-    return Bun.semver.order(stripV(a), stripV(b));
-  } catch {
-    return null;
-  }
-}
+// The primitives live in the leaf core module (so the Phase 2 dependency readers
+// can share them without an import cycle), but they are re-exported here so this
+// module path stays the single entry point for the gate's callers and tests.
+export {
+  ageHours,
+  compareSemver,
+  decideExit,
+  type EdgeResult,
+  type EdgeVerdict,
+  type PublishedRelease,
+  type ReleaseInfo,
+  stripV,
+} from "./_release-train-core.ts";
 
 /** `version "X.Y.Z"` from a Homebrew Formula .rb. */
 export function parseBrewVersion(rb: string): string | null {
@@ -67,18 +72,6 @@ export function parseLinuxVersion(packages: string, pkgName = "nimbus-headless")
     }
   }
   return null;
-}
-
-export interface ReleaseInfo {
-  tag: string;
-  prerelease: boolean;
-  draft: boolean;
-  assets: string[];
-  publishedAt: string;
-}
-export interface PublishedRelease {
-  version: string;
-  publishedAt: string;
 }
 
 /**
@@ -126,12 +119,6 @@ export function resolveWingetCoverage(
   return { status: "indeterminate", covered: false };
 }
 
-export type EdgeVerdict = "ok" | "stale" | "phantom" | "indeterminate";
-export interface EdgeResult {
-  edge: string;
-  verdict: EdgeVerdict;
-  detail: string;
-}
 export interface ChannelReading {
   kind: string;
   status: "read" | "absent" | "indeterminate";
@@ -233,32 +220,6 @@ export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
   return results;
 }
 
-/**
- * Exit decision. Any stale/phantom edge => red. Otherwise green with a warning
- * per indeterminate edge — EXCEPT a run where nothing was evaluable (no ok, only
- * indeterminate) under --strict is red: "indeterminate" must not read as "all
- * clear" in the scheduled sweep (the team-reachability rule).
- */
-export function decideExit(
-  results: EdgeResult[],
-  strict: boolean,
-): { code: 0 | 1; messages: string[] } {
-  const messages: string[] = [];
-  const hard = results.filter((r) => r.verdict === "phantom" || r.verdict === "stale");
-  const indet = results.filter((r) => r.verdict === "indeterminate");
-  const ok = results.filter((r) => r.verdict === "ok");
-  for (const r of hard) messages.push(`::error::${r.edge}: ${r.detail}`);
-  for (const r of indet) messages.push(`::warning::${r.edge}: ${r.detail} (indeterminate)`);
-  if (hard.length > 0) return { code: 1, messages };
-  if (ok.length === 0 && indet.length > 0 && strict) {
-    messages.push(
-      "::error::release-staleness: indeterminate — nothing could be evaluated (all reads failed transiently)",
-    );
-    return { code: 1, messages };
-  }
-  return { code: 0, messages };
-}
-
 export interface ChannelSpec {
   kind: "brew" | "scoop" | "linux" | "winget";
   repo?: string;
@@ -291,18 +252,6 @@ export function loadTrainManifest(json: string): TrainManifest {
     throw new Error("release-train.json: expected { graceHours: number, trains: [...] }");
   }
   return parsed as unknown as TrainManifest;
-}
-
-/**
- * Hours between an ISO-8601 (Z-suffixed) timestamp and now, UTC epoch-ms math.
- * An unparseable date yields `+Infinity` (fail-CLOSED): a NaN age would satisfy
- * `NaN > graceHours === false` and silently mask a phantom/stale state as "ok",
- * so an unreadable timestamp instead forces the aged-check to fire.
- */
-export function ageHours(isoZ: string): number {
-  const t = new Date(isoZ).getTime();
-  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
-  return (Date.now() - t) / 3_600_000;
 }
 
 /** Decode a GitHub contents API base64 `.content` envelope to UTF-8 text. */
