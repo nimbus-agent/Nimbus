@@ -46,8 +46,11 @@ recording; no code is owed.
 
 ## Effort 1 — `audit:secret-inventory`
 
-**Property:** every secret a workflow in this repo consumes appears in **both**
-inventories — `scripts/release/credential-registry.ts` and `docs/ci-secrets.md`.
+**Property:** every **non-excluded** secret a workflow in this repo consumes
+appears in **both** inventories — `scripts/release/credential-registry.ts` and
+`docs/ci-secrets.md`. The exclusion list is `GITHUB_TOKEN` alone (see
+*Exclusions* below); it is Actions-provided and so cannot be missing from an
+inventory of things an operator must provision.
 
 ### There are two inventories, and only one of them had drifted
 
@@ -177,9 +180,12 @@ covered and counting it would be a false finding.
 
 **`verified_allowed` breaks the pattern approach, and running it proved so.**
 Whether an action's creator is a verified Marketplace partner is not derivable
-from any API. The live allowlist has `verified_allowed: true` and five refs
-(`dessant/lock-threads`, `oven-sh/setup-bun`, `googleapis/release-please-action`,
-`bencherdev/bencher`) that are covered *only* by it. The first implementation
+from any API. The live allowlist has `verified_allowed: true` and five
+*occurrences* — across four distinct actions (`dessant/lock-threads`,
+`oven-sh/setup-bun`, `googleapis/release-please-action`, `bencherdev/bencher`,
+the last used by two workflows) — that are covered *only* by it. The count is
+occurrences and the message lists unique names, which is why the two numbers
+differ. The first implementation
 called that `indeterminate`, which under the program's own strict rule is red —
 making the gate **permanently red for a reason nobody can fix**. A gate that is
 always red is one everybody learns to ignore, which is precisely the failure
@@ -325,8 +331,11 @@ with `path_instructions` scoped to what actually differs per area:
 - `packages/gateway/src/**/*.test.ts` and `security-invariants.test.ts` — the
   triple rule: a new structural defense lands with wiring **and** docs **and** a
   test in the same commit.
-- `scripts/structure-audit/**` — gates fail soft locally and hard under
-  `--strict`; an unreadable input degrades to indeterminate, never to a finding.
+- `scripts/structure-audit/**` — a NETWORK-backed gate fails soft locally and
+  hard under `--strict`; a purely local, deterministic gate (no token, no
+  network — `audit:secret-inventory`) simply fails on a finding and has no
+  strict mode. In both, an unreadable or unparseable input degrades to
+  indeterminate, never to a finding.
 - `packages/mcp-connectors/**` — connectors depend only on `@nimbus-dev/sdk`;
   the engine never calls cloud APIs directly.
 
