@@ -85,7 +85,26 @@ job that used to consume one of those PATs now runs a mint step first:
     repositories: <only the repos this job writes>
     permission-contents: write
     # permission-pull-requests: write   # release-please.yml only
+    # permission-issues: write          # release-please.yml only — `autorelease:` label flips
+    # permission-workflows: write       # release-please.yml only — see below
 ```
+
+> **`workflows: write` is load-bearing for tagging, which is not obvious.**
+> GitHub refuses to let a GitHub App create a ref pointing at a commit whose
+> `.github/workflows/**` differs from the default branch unless the App holds
+> `Workflows: write` — it counts as the App "creating or updating a workflow".
+> A release tag always points at the release PR's merge commit, which falls
+> behind `main` as soon as any later PR touches a workflow file, so this fires
+> on exactly the releases we care about. REST reports it only as an opaque
+> `403 Resource not accessible by integration`; the response header
+> `X-Accepted-Github-Permissions: contents=write; contents=write,workflows=write`
+> is what names the real requirement. Note the App permission is **Workflows**
+> ("Update GitHub Action workflow files"), *not* **Actions** ("Workflows,
+> workflow runs and artifacts") — the two are easy to confuse in the App UI.
+>
+> The `secret-health.yml` probe therefore mints with the **superset** of every
+> permission a real consumer requests. A permission the probe omits is one it
+> cannot detect being revoked — the probe would stay green while releases break.
 
 and uses `${{ steps.app-token.outputs.token }}` in place of the retired PAT.
 Each minted token is an **installation access token**: scoped to exactly the
