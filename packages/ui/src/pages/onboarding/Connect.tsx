@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
 import type { ConnectorSummary } from "../../ipc/types";
 import { useNimbusStore } from "../../store";

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { type ReactNode, useCallback, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
 import { useIpcSubscription } from "../../hooks/useIpcSubscription";
 import type { ConnectorStatus } from "../../ipc/types";

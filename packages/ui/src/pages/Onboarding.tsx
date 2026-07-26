@@ -1,4 +1,4 @@
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation } from "react-router";
 
 const STEPS = [
   { path: "welcome", label: "Welcome" },

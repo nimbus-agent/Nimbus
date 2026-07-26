@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { useCallback, useEffect } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet, useNavigate } from "react-router";
 import { Sidebar } from "../components/chrome/Sidebar";
 import { GatewayOfflineBanner } from "../components/GatewayOfflineBanner";
 import { HotkeyFailedBanner } from "../components/HotkeyFailedBanner";

@@ -1,5 +1,5 @@
 import { type PropsWithChildren, useEffect, useRef } from "react";
-import { type NavigateFunction, useNavigate } from "react-router-dom";
+import { type NavigateFunction, useNavigate } from "react-router";
 import { createIpcClient } from "../ipc/client";
 import type { ConnectionState, DiagSnapshot } from "../ipc/types";
 import { useNimbusStore } from "../store";
