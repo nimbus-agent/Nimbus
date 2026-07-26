@@ -46,7 +46,7 @@ Design of record:
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
-| P2 | Release Train | ⬜ not started | A publish that fails to open its downstream PR fails a staleness check |
+| P2 | Release Train | 🔨 Phase 1 shipped | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Remaining: Phase 2 (dependency-DAG edges) |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ⬜ not started | Per-job wall-clock tracked; regressions visible |
@@ -142,11 +142,37 @@ moves to P6).
   make the `CLA Assistant` check required in each ruleset; **red-prove** with a
   test PR; confirm `cla-coverage` green.
 - **Deferred:** CCLA employee-roster automation; private repos; retroactive
-  signatures. See `docs/superpowers/specs/2026-07-24-cla-design.md`. Robustness
-  follow-up: `check-cla-coverage` treats any per-repo `gh` failure as "cla.yml
-  absent" (a public-repo 404 is genuine, but a transient 5xx/rate-limit would
-  false-red until the next run) — surface the `gh` exit code in `_gh-audit.ts`
-  and treat a non-404 failure as indeterminate, like `team-reachability`.
+  signatures. See `docs/superpowers/specs/2026-07-24-cla-design.md`.
+- **Robustness follow-up — CLOSED (2026-07-26, in P2 Phase 1):**
+  `check-cla-coverage` used to treat any per-repo `gh` failure as "cla.yml
+  absent", so a transient 5xx/rate-limit would false-red until the next run.
+  `_gh-audit.ts` now surfaces the HTTP status and `classifyReadFailure` treats
+  a non-404 as indeterminate, like `team-reachability`.
+
+### P2 progress log
+
+- **Delivered (Phase 1 — channel staleness):** `.github/release-train.json`
+  declares the propagation edges; `audit:release-staleness`
+  (`scripts/structure-audit/check-release-staleness.ts`) reads three heads —
+  intended (release-please manifest + its bump age), published (latest Release
+  actually carrying its `SHA256SUMS` asset), distributed (each channel's live
+  file, or winget dir-or-open-PR) — and emits a per-edge verdict. A new
+  `release-staleness` job runs it `--strict` on the weekly `org-drift-sweep`
+  cron. Public reads only, so no App token is minted.
+- **Design decisions that matter:** the phantom edge gates on the *bump
+  commit's* age, not the release's, so a normal build window is never red;
+  winget counts as caught-up on a merged dir **or** an open PR, so the gate
+  never waits on Microsoft's merge; every unreadable or unparseable input
+  degrades to `indeterminate`, never `stale`; and under `--strict` a run that
+  evaluated *nothing* is red, so "indeterminate" cannot read as "all clear".
+- **Live proof (2026-07-26, pre-merge):** the gate went **red on a genuine
+  phantom** — `.release-please-manifest.json` on `main` claims `0.27.0`, but no
+  `v0.27.0` tag or Release exists (latest built: `v0.26.0`), bump 54h old. All
+  four channel edges evaluated `ok`. This is the recurring manual-tag-push
+  failure mode the sub-program exists to catch, caught on the first live run.
+- **Remaining:** Phase 2 (dependency-DAG edges — sdk/client → consumers). The
+  sub-program is *done* only once the `release-staleness` job has run green in
+  a scheduled sweep on `main`; record that run number here.
 
 ---
 

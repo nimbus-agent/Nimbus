@@ -8,6 +8,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-26 — P2 Release Train Phase 1: the `release-staleness` gate.** A declarative
+  `.github/release-train.json` lists every propagation edge; `audit:release-staleness` reads three
+  version heads — intended (release-please manifest + its bump-commit age), published (the latest
+  Release actually carrying its `SHA256SUMS` asset), distributed (each channel's live file, or
+  winget dir-or-open-PR) — and goes red when a channel lags past the 6h grace window, or when a
+  release *phantoms* (manifest bumped, nothing built). Runs `--strict` as a new job on the weekly
+  `org-drift-sweep` cron; all reads are public, so no App token is minted. Unreadable or
+  unparseable inputs degrade to `indeterminate`, never `stale`; under `--strict` a run that
+  evaluated nothing is red, so indeterminate cannot read as "all clear". Its first live run caught
+  a genuine phantom: the manifest claims `0.27.0` with no `v0.27.0` tag or Release built. Also
+  closes the CLA-coverage robustness follow-up — `_gh-audit.ts` now surfaces the `gh` HTTP status,
+  and a non-404 per-repo read failure is indeterminate rather than "cla.yml absent".
+
 - **2026-07-24 — `nimbus index add <path>` registers a blame root.** New local-only
   `filesystem.ensureRoot` IPC method + `nimbus index add` CLI register a git repo as a
   blame/index root (persisted to `registered-roots.json`, merged with `[[filesystem.roots]]` on
