@@ -46,6 +46,11 @@ a plain repository secret.
 | ~~`CODECOV_TOKEN`~~ | **Retired 2026-07-21** — uploads use OIDC | — | — |
 | `SCORECARD_TOKEN` | OSSF Scorecard (optional) | Fine-grained PAT — read-only | `scorecard.yml` |
 | `NIMBUS_CHECKS_TOKEN` | Cross-workflow check runs (optional) | Fine-grained PAT — Checks: RW | `ci.yml`, `_test-suite.yml` |
+| `SECRET_AUDITOR_CLIENT_ID` | Minting the read-only auditor App token | GitHub App client ID | `secret-health.yml` |
+| `SECRET_AUDITOR_PRIVATE_KEY` | Minting the read-only auditor App token | GitHub App private key (PEM) | `secret-health.yml` |
+| `CLA_BOT_CLIENT_ID` | Minting CLA Assistant App tokens | GitHub App client ID | `cla.yml` |
+| `CLA_BOT_PRIVATE_KEY` | Minting CLA Assistant App tokens | GitHub App private key (PEM) | `cla.yml` |
+| `BENCHER_API_KEY` | Benchmark upload (optional) | Bencher service token | `_perf.yml`, `_perf-reference.yml` |
 | `GITHUB_TOKEN` | — | **Automatic**, no action needed | all |
 
 `GITHUB_TOKEN` is injected by Actions automatically; it is never set by hand.

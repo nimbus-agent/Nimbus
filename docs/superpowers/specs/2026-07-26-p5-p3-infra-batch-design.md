@@ -46,21 +46,47 @@ recording; no code is owed.
 
 ## Effort 1 — `audit:secret-inventory`
 
-**Property:** every secret a workflow in this repo consumes is documented in
-`docs/ci-secrets.md`.
+**Property:** every secret a workflow in this repo consumes appears in **both**
+inventories — `scripts/release/credential-registry.ts` and `docs/ci-secrets.md`.
 
-**Why it matters here specifically.** Row 3 of the roadmap's opening table names
-`ci-secrets.md`'s completeness claim as a control that stopped where it was
-written — the doc did not cover `secret-health.yml`'s *own* credentials. That
-drift is still present today, along with four more:
+### There are two inventories, and only one of them had drifted
 
-| Undocumented secret | Introduced by |
-| --- | --- |
-| `SECRET_AUDITOR_CLIENT_ID` | the secret-health probe itself |
-| `SECRET_AUDITOR_PRIVATE_KEY` | the secret-health probe itself |
-| `CLA_BOT_CLIENT_ID` | the CLA program |
-| `CLA_BOT_PRIVATE_KEY` | the CLA program |
-| `BENCHER_API_KEY` | the benchmark workflow |
+The first draft of this design asserted that row 3 of the roadmap's opening
+table — `ci-secrets.md` not covering `secret-health.yml`'s *own* credentials —
+was still unfixed. **Reading the code disproved that**, and the correction is
+worth recording because it changes what the gate should check.
+
+There are two inventories with different jobs:
+
+- `scripts/release/credential-registry.ts` — the **authoritative**,
+  machine-checked manifest: state, owner, type, rotation policy, consuming
+  workflows. `credential-audit.ts` already gates *live org secret → registry*.
+  `ci-secrets.md` says so itself: "when they disagree, the manifest is right."
+- `docs/ci-secrets.md` — the narrative: what each credential is for and how to
+  mint it. The page consulted during an incident.
+
+All five secrets below are **already in the registry**. The drift is narrative
+only — they never reached the page that opens with "This page is the canonical
+inventory of every GitHub Actions secret the Nimbus workflows consume":
+
+| Missing from the prose doc | Introduced by | In the registry? |
+| --- | --- | --- |
+| `SECRET_AUDITOR_CLIENT_ID` | the secret-health probe itself | yes |
+| `SECRET_AUDITOR_PRIVATE_KEY` | the secret-health probe itself | yes |
+| `CLA_BOT_CLIENT_ID` | the CLA program | yes |
+| `CLA_BOT_PRIVATE_KEY` | the CLA program | yes |
+| `BENCHER_API_KEY` | the benchmark workflow | yes |
+
+So the gate asserts membership in **both**, and its finding says **which** is
+missing — because the two failures need different repairs. Absent from the doc
+is "add a row to a table". Absent from the registry is "this credential is
+unmanaged: no owner, no rotation policy, and `secret-health` is not watching
+it." Collapsing them into one message would let the serious case hide behind
+the cosmetic one.
+
+Neither existing check covers this axis: `credential-audit` compares *live org
+secrets* to the registry, so a secret referenced by a workflow but never
+provisioned — or provisioned and never documented — is nobody's finding today.
 
 ### Direction: one-way, deliberately
 
@@ -92,8 +118,10 @@ Pure function over already-read text, mirroring `check-release-staleness.ts`:
 - `documentedSecrets(doc: string): Set<string>` — every backtick-quoted
   `UPPER_SNAKE` token in `ci-secrets.md`. Deliberately loose: the doc's shape is
   prose plus a table, and a parser tied to the table would break the moment
-  someone documents a secret in a paragraph.
-- `evaluateInventory(used, documented, exclusions): Finding[]`.
+  someone documents a secret in a paragraph. A struck-through retired entry
+  still counts — that is a deliberate record, not an omission.
+- `evaluateInventory(used, documented, registered, exclusions): Finding[]`,
+  where each finding carries `missingFrom: "doc" | "registry" | "both"`.
 
 **This gate is local and runs on every PR**, unlike the sweep gates — it reads
 only checked-in files, needs no token, and is deterministic. It therefore joins
@@ -143,26 +171,52 @@ An action reference `owner/repo@ref` (or `owner/repo/path@ref`) is covered when:
 Local `./...` and Docker `docker://...` references are not subject to the
 allowlist and are ignored.
 
-**`verified_allowed` is the honest hard case.** Whether an action's creator is a
-verified GitHub partner is not derivable from the repo's own API response. When
-`verified_allowed` is true and a reference is not otherwise covered, the verdict
-is **`indeterminate`, never a finding** — the same fail-closed-toward-silence
-rule the rest of the program uses for anything unreadable. Reporting it as a
-violation would produce false reds on legitimately-permitted verified actions;
-reporting it as covered would reintroduce the blind spot. Saying "cannot tell"
-is the only honest option, and under `--strict` a run that could evaluate
-nothing is red anyway.
+Actions owned by the **same org as the consuming repo** are always permitted by
+GitHub regardless of the allowlist, so `nimbus-agent/.github/actions/*` is
+covered and counting it would be a false finding.
+
+**`verified_allowed` breaks the pattern approach, and running it proved so.**
+Whether an action's creator is a verified Marketplace partner is not derivable
+from any API. The live allowlist has `verified_allowed: true` and five refs
+(`dessant/lock-threads`, `oven-sh/setup-bun`, `googleapis/release-please-action`,
+`bencherdev/bencher`) that are covered *only* by it. The first implementation
+called that `indeterminate`, which under the program's own strict rule is red —
+making the gate **permanently red for a reason nobody can fix**. A gate that is
+always red is one everybody learns to ignore, which is precisely the failure
+this sub-program exists to prevent.
+
+So the design gains a fifth verdict, `unverifiable`, which warns but is **never
+red**. The distinction is real: `indeterminate` means a read failed and may
+succeed next run, so strict-red is right; `unverifiable` means the answer can
+never arrive.
+
+### The direct half — `startup_failure` detection
+
+Inferring permission from patterns is the weak half. The strong half asks the
+observable question instead: **is any workflow currently failing to start?**
+
+`repos/{repo}/actions/runs` carries a `startup_failure` conclusion for exactly
+the condition that took the CLA down — GitHub rejected the workflow before any
+job ran. That needs no knowledge of verified-creator status, and it catches
+causes the pattern check cannot see at all, such as invalid workflow YAML.
+
+Scoped to each workflow's **most recent** run, so a since-fixed historical
+failure does not red the sweep forever: the question is "can this start *now*",
+not "has it ever failed". Any workflow whose latest run is `startup_failure` is
+a hard finding.
 
 ### Verdicts
 
-`ok` / `not-permitted` (a finding) / `indeterminate`. Reuses `classifyReadFailure`
-and the `--strict` / `strictSkip` contract from `_gh-audit.ts`; runs as a new
-job on `org-drift-sweep`.
+`ok` / `not-permitted` (finding) / `unverifiable` (warn, never red) /
+`indeterminate` (strict-red) / `skipped`, plus the independent startup-failure
+findings. Reuses `classifyReadFailure` and the `--strict` / `strictSkip`
+contract; runs as a new job on `org-drift-sweep`.
 
 **Expected on arrival: green.** The allowlist was repaired on 2026-07-26, so
-this gate cannot red-prove against production. It is therefore red-proved by
-**unit test** — a fixture repo whose workflow uses an unpermitted action — and
-the live run is the green-after half of the evidence.
+this gate cannot red-prove against production. It is red-proved by **unit
+test** — including a fixture reproducing the exact CLA case, where adding
+`contributor-assistant/github-action@*` flips `not-permitted` to `ok` — and the
+live run is the green-after half.
 
 ---
 
@@ -260,16 +314,20 @@ config is a reasonable P5 follow-up, and is explicitly **not** in this batch.
 Each gate follows the established pattern: table-driven unit tests over pure
 functions, no network, in `scripts/structure-audit/<name>.test.ts`.
 
-- **secret-inventory** — reference found in `secrets.X` and `secrets['X']`
-  forms; `GITHUB_TOKEN` excluded; a documented secret passes; an undocumented
-  one is a finding naming the workflow; the reverse-direction census never
-  produces a finding; the committed pair (`.github/workflows/**` +
-  `docs/ci-secrets.md`) is clean.
+- **secret-inventory** — reference found in `secrets.X`, `secrets['X']` and
+  `secrets["X"]` forms; one secret attributed to every workflow naming it,
+  without duplicates; `GITHUB_TOKEN` excluded; each of the three
+  `missingFrom` values produced by the right input; an inventory entry with no
+  local consumer never becomes a finding; the committed tree
+  (`.github/workflows/**` + `docs/ci-secrets.md` + the registry) is clean.
 - **actions-allowlist** — `owner/*`, exact, `@ref` and trailing-`*` patterns;
-  `github_owned_allowed` covering `actions/checkout`; local `./` and
-  `docker://` ignored; an unpermitted action is a finding; `verified_allowed`
-  with an uncovered reference is `indeterminate`; a non-`selected` repo is
-  skipped.
+  `github_owned_allowed` covering `actions/checkout`; same-org actions always
+  permitted; local `./` and `docker://` ignored; an unpermitted action is a
+  finding; the CLA case specifically (adding the pattern flips the verdict);
+  `verified_allowed` with an uncovered reference is `unverifiable`, never a
+  finding; a non-`selected` repo is skipped. For the startup-failure half: a
+  latest-run failure is reported, a since-fixed historical one is not, a
+  newly-broken workflow is, and an ordinary test `failure` is not.
 - **sha-pin freshness** — equal SHAs are `ok`; a differing SHA past grace is
   `stale`; differing but within grace is `ok`; an unreadable release, a repo
   with no releases, and an underivable tag SHA are each `indeterminate`.
