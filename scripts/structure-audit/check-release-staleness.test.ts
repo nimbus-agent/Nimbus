@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  type ChannelReading,
   compareSemver,
+  decideExit,
+  evaluateTrain,
   parseBrewVersion,
   parseLinuxVersion,
   parseScoopVersion,
@@ -126,5 +129,133 @@ describe("resolveWingetCoverage", () => {
   test("indeterminate when either signal is unknown and neither is true", () => {
     expect(resolveWingetCoverage(null, false)).toEqual({ status: "indeterminate", covered: false });
     expect(resolveWingetCoverage(false, null)).toEqual({ status: "indeterminate", covered: false });
+  });
+});
+
+const ch = (over: Partial<ChannelReading>): ChannelReading => ({
+  kind: "brew",
+  status: "read",
+  version: null,
+  covered: null,
+  ...over,
+});
+
+describe("evaluateTrain", () => {
+  const green = {
+    name: "t",
+    intended: "0.26.0",
+    intendedBumpAgeHours: 48,
+    published: { version: "0.26.0", publishedAt: "x" },
+    publishedAgeHours: 48,
+    graceHours: 6,
+  };
+
+  test("all heads equal + channels current => all ok", () => {
+    const r = evaluateTrain({
+      ...green,
+      channels: [
+        ch({ kind: "brew", version: "0.26.0" }),
+        ch({ kind: "scoop", version: "0.26.0" }),
+        ch({ kind: "linux", version: "0.26.0" }),
+        ch({ kind: "winget", version: null, covered: true }),
+      ],
+    });
+    expect(r.every((e) => e.verdict === "ok")).toBe(true);
+  });
+
+  test("channel behind published, past grace => stale", () => {
+    const r = evaluateTrain({ ...green, channels: [ch({ kind: "brew", version: "0.25.0" })] });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("stale");
+  });
+
+  test("channel behind published but within grace => ok", () => {
+    const r = evaluateTrain({
+      ...green,
+      publishedAgeHours: 2,
+      channels: [ch({ kind: "brew", version: "0.25.0" })],
+    });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("ok");
+  });
+
+  test("manifest ahead of published + aged bump => phantom", () => {
+    const r = evaluateTrain({
+      ...green,
+      intended: "0.27.0",
+      published: { version: "0.26.0", publishedAt: "x" },
+      channels: [],
+    });
+    expect(r.find((e) => e.edge === "t:phantom")?.verdict).toBe("phantom");
+  });
+
+  test("manifest ahead but bump within grace => ok (build window)", () => {
+    const r = evaluateTrain({
+      ...green,
+      intended: "0.27.0",
+      intendedBumpAgeHours: 1,
+      published: { version: "0.26.0", publishedAt: "x" },
+      channels: [],
+    });
+    expect(r.find((e) => e.edge === "t:phantom")?.verdict).toBe("ok");
+  });
+
+  test("winget not covered, past grace => stale", () => {
+    const r = evaluateTrain({
+      ...green,
+      channels: [ch({ kind: "winget", version: null, covered: false })],
+    });
+    expect(r.find((e) => e.edge === "t:winget")?.verdict).toBe("stale");
+  });
+
+  test("transient channel read => indeterminate, never stale", () => {
+    const r = evaluateTrain({
+      ...green,
+      channels: [ch({ kind: "brew", status: "indeterminate" })],
+    });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("indeterminate");
+  });
+
+  test("absent channel file, past grace => stale", () => {
+    const r = evaluateTrain({ ...green, channels: [ch({ kind: "brew", status: "absent" })] });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("stale");
+  });
+
+  test("unparseable channel version => indeterminate, never a crash", () => {
+    const r = evaluateTrain({
+      ...green,
+      channels: [ch({ kind: "brew", version: "not-a-version" })],
+    });
+    expect(r.find((e) => e.edge === "t:brew")?.verdict).toBe("indeterminate");
+  });
+
+  test("unparseable manifest version => phantom edge indeterminate, never a crash", () => {
+    const r = evaluateTrain({ ...green, intended: "not-a-version", channels: [] });
+    expect(r.find((e) => e.edge === "t:phantom")?.verdict).toBe("indeterminate");
+  });
+});
+
+describe("decideExit", () => {
+  test("a stale or phantom edge => exit 1 with ::error::", () => {
+    const out = decideExit([{ edge: "t:brew", verdict: "stale", detail: "d" }], true);
+    expect(out.code).toBe(1);
+    expect(out.messages.join("\n")).toContain("::error::");
+  });
+  test("only ok + indeterminate => exit 0 with a warning", () => {
+    const out = decideExit(
+      [
+        { edge: "t:brew", verdict: "ok", detail: "d" },
+        { edge: "t:scoop", verdict: "indeterminate", detail: "d" },
+      ],
+      true,
+    );
+    expect(out.code).toBe(0);
+    expect(out.messages.join("\n")).toContain("::warning::");
+  });
+  test("everything indeterminate under --strict => exit 1 (not 'all clear')", () => {
+    const out = decideExit([{ edge: "t:brew", verdict: "indeterminate", detail: "d" }], true);
+    expect(out.code).toBe(1);
+  });
+  test("everything indeterminate when NOT strict => exit 0 (soft)", () => {
+    const out = decideExit([{ edge: "t:brew", verdict: "indeterminate", detail: "d" }], false);
+    expect(out.code).toBe(0);
   });
 });

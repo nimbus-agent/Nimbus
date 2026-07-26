@@ -123,3 +123,136 @@ export function resolveWingetCoverage(
   if (dir === false && pr === false) return { status: "read", covered: false };
   return { status: "indeterminate", covered: false };
 }
+
+export type EdgeVerdict = "ok" | "stale" | "phantom" | "indeterminate";
+export interface EdgeResult {
+  edge: string;
+  verdict: EdgeVerdict;
+  detail: string;
+}
+export interface ChannelReading {
+  kind: string;
+  status: "read" | "absent" | "indeterminate";
+  /** version-file channels (brew/scoop/linux); null for winget or unread. */
+  version: string | null;
+  /** winget only: is the published version covered; null otherwise. */
+  covered: boolean | null;
+}
+export interface TrainEvalInput {
+  name: string;
+  intended: string;
+  intendedBumpAgeHours: number;
+  published: PublishedRelease | null;
+  publishedAgeHours: number | null;
+  channels: ChannelReading[];
+  graceHours: number;
+}
+
+/**
+ * The phantom edge: the release-please manifest says vN, so a built Release
+ * carrying assets must exist for vN. "Manifest ahead of published" is legitimate
+ * only inside the build window, hence the grace check on the bump's own age.
+ */
+function evaluatePhantomEdge(i: TrainEvalInput, pubVer: string | null): EdgeResult {
+  const edge = `${i.name}:phantom`;
+  const order = pubVer === null ? null : compareSemver(i.intended, pubVer);
+  if (pubVer !== null && order === null) {
+    // The manifest version itself is unparseable — cannot judge; do not crash.
+    return {
+      edge,
+      verdict: "indeterminate",
+      detail: `manifest version ${i.intended} is not valid semver`,
+    };
+  }
+  const intendedAhead = pubVer === null || (order ?? 0) > 0;
+  if (!intendedAhead) {
+    return { edge, verdict: "ok", detail: `manifest ${i.intended} matches published ${pubVer}` };
+  }
+  if (i.intendedBumpAgeHours > i.graceHours) {
+    return {
+      edge,
+      verdict: "phantom",
+      detail: `manifest ${i.intended} has no built Release with assets (latest published: ${i.published?.version ?? "none"}); bump is ${Math.round(i.intendedBumpAgeHours)}h old (> ${i.graceHours}h grace)`,
+    };
+  }
+  return {
+    edge,
+    verdict: "ok",
+    detail: `manifest ${i.intended} ahead of published ${i.published?.version ?? "none"} but within ${i.graceHours}h grace`,
+  };
+}
+
+/** One channel edge: has this distribution channel caught up to `pubVer` yet? */
+function evaluateChannelEdge(ch: ChannelReading, edge: string, pubVer: string): EdgeResult {
+  if (ch.status === "indeterminate") {
+    return { edge, verdict: "indeterminate", detail: "channel read failed transiently" };
+  }
+  if (ch.status === "absent") {
+    return { edge, verdict: "stale", detail: "channel file/dir absent" };
+  }
+  if (ch.kind === "winget") {
+    return ch.covered
+      ? { edge, verdict: "ok", detail: `winget covers ${pubVer} (merged dir or open PR)` }
+      : { edge, verdict: "stale", detail: `no winget dir and no open PR for ${pubVer}` };
+  }
+  const chVer = ch.version ? stripV(ch.version) : null;
+  if (chVer === null) {
+    return { edge, verdict: "indeterminate", detail: "channel version missing" };
+  }
+  const ord = compareSemver(chVer, pubVer);
+  if (ord === null) {
+    return {
+      edge,
+      verdict: "indeterminate",
+      detail: `channel version ${chVer} not comparable to ${pubVer}`,
+    };
+  }
+  return ord >= 0
+    ? { edge, verdict: "ok", detail: `${ch.kind} ${chVer} >= published ${pubVer}` }
+    : { edge, verdict: "stale", detail: `${ch.kind} ${chVer} < published ${pubVer}` };
+}
+
+export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
+  const pubVer = i.published ? stripV(i.published.version) : null;
+  const results: EdgeResult[] = [evaluatePhantomEdge(i, pubVer)];
+
+  // Channel edges are only meaningful once something is actually published.
+  if (pubVer === null) return results;
+  const pastGrace = i.publishedAgeHours !== null && i.publishedAgeHours > i.graceHours;
+
+  for (const ch of i.channels) {
+    const edge = `${i.name}:${ch.kind}`;
+    results.push(
+      pastGrace
+        ? evaluateChannelEdge(ch, edge, pubVer)
+        : { edge, verdict: "ok", detail: `within ${i.graceHours}h grace` },
+    );
+  }
+  return results;
+}
+
+/**
+ * Exit decision. Any stale/phantom edge => red. Otherwise green with a warning
+ * per indeterminate edge — EXCEPT a run where nothing was evaluable (no ok, only
+ * indeterminate) under --strict is red: "indeterminate" must not read as "all
+ * clear" in the scheduled sweep (the team-reachability rule).
+ */
+export function decideExit(
+  results: EdgeResult[],
+  strict: boolean,
+): { code: 0 | 1; messages: string[] } {
+  const messages: string[] = [];
+  const hard = results.filter((r) => r.verdict === "phantom" || r.verdict === "stale");
+  const indet = results.filter((r) => r.verdict === "indeterminate");
+  const ok = results.filter((r) => r.verdict === "ok");
+  for (const r of hard) messages.push(`::error::${r.edge}: ${r.detail}`);
+  for (const r of indet) messages.push(`::warning::${r.edge}: ${r.detail} (indeterminate)`);
+  if (hard.length > 0) return { code: 1, messages };
+  if (ok.length === 0 && indet.length > 0 && strict) {
+    messages.push(
+      "::error::release-staleness: indeterminate — nothing could be evaluated (all reads failed transiently)",
+    );
+    return { code: 1, messages };
+  }
+  return { code: 0, messages };
+}
