@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
+  ageHours,
   type ChannelReading,
   compareSemver,
   decideExit,
   evaluateTrain,
+  loadTrainManifest,
   parseBrewVersion,
   parseLinuxVersion,
   parseScoopVersion,
@@ -257,5 +261,38 @@ describe("decideExit", () => {
   test("everything indeterminate when NOT strict => exit 0 (soft)", () => {
     const out = decideExit([{ edge: "t:brew", verdict: "indeterminate", detail: "d" }], false);
     expect(out.code).toBe(0);
+  });
+});
+
+describe("ageHours", () => {
+  test("a valid past timestamp yields a finite non-negative age", () => {
+    const h = ageHours("2020-01-01T00:00:00Z");
+    expect(Number.isFinite(h)).toBe(true);
+    expect(h).toBeGreaterThan(0);
+  });
+  test("an unparseable timestamp fails closed to +Infinity", () => {
+    expect(ageHours("not-a-date")).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("loadTrainManifest", () => {
+  test("parses graceHours + trains", () => {
+    const m = loadTrainManifest(
+      '{"graceHours":6,"trains":[{"name":"x","source":{"manifestRepo":"a/b","manifestFile":"m.json","manifestKey":".","releaseAsset":"S"},"channels":[]}]}',
+    );
+    expect(m.graceHours).toBe(6);
+    expect(m.trains[0]?.name).toBe("x");
+  });
+  test("throws on a malformed manifest", () => {
+    expect(() => loadTrainManifest("{}")).toThrow();
+  });
+  test("the committed .github/release-train.json is valid", () => {
+    const raw = readFileSync(
+      join(import.meta.dir, "..", "..", ".github", "release-train.json"),
+      "utf8",
+    );
+    const m = loadTrainManifest(raw);
+    expect(m.trains.length).toBeGreaterThan(0);
+    expect(m.trains[0]?.channels.some((c) => c.kind === "winget")).toBe(true);
   });
 });

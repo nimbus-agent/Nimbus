@@ -1,0 +1,25 @@
+{
+  "$comment": "P2 Release Train edges. audit:release-staleness reads each downstream's LIVE version and fails when it lags the published source past graceHours. See docs/infrastructure-roadmap.md P2 + docs/superpowers/specs/2026-07-24-p2-release-train-design.md.",
+  "graceHours": 6,
+  "trains": [
+    {
+      "name": "nimbus-gateway",
+      "source": {
+        "manifestRepo": "nimbus-agent/Nimbus",
+        "manifestFile": ".release-please-manifest.json",
+        "manifestKey": ".",
+        "releaseAsset": "SHA256SUMS"
+      },
+      "channels": [
+        { "kind": "brew", "repo": "nimbus-agent/homebrew-tap", "path": "Formula/nimbus.rb" },
+        { "kind": "scoop", "repo": "nimbus-agent/scoop-bucket", "path": "bucket/nimbus.json" },
+        {
+          "kind": "linux",
+          "repo": "nimbus-agent/linux-repo",
+          "path": "apt/dists/stable/main/binary-amd64/Packages"
+        },
+        { "kind": "winget", "package": "NimbusAgent.Nimbus", "wingetRepo": "microsoft/winget-pkgs" }
+      ]
+    }
+  ]
+}

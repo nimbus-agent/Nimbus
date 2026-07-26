@@ -10,6 +10,8 @@
  * docs/superpowers/specs/2026-07-24-p2-release-train-design.md.
  */
 
+import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+
 export function stripV(version: string): string {
   return version.replace(/^v/, "");
 }
@@ -255,4 +257,221 @@ export function decideExit(
     return { code: 1, messages };
   }
   return { code: 0, messages };
+}
+
+export interface ChannelSpec {
+  kind: "brew" | "scoop" | "linux" | "winget";
+  repo?: string;
+  path?: string;
+  package?: string;
+  wingetRepo?: string;
+}
+export interface TrainSpec {
+  name: string;
+  source: {
+    manifestRepo: string;
+    manifestFile: string;
+    manifestKey: string;
+    releaseAsset: string;
+  };
+  channels: ChannelSpec[];
+}
+export interface TrainManifest {
+  graceHours: number;
+  trains: TrainSpec[];
+}
+
+export function loadTrainManifest(json: string): TrainManifest {
+  const parsed: unknown = JSON.parse(json);
+  if (
+    !isRecord(parsed) ||
+    typeof parsed["graceHours"] !== "number" ||
+    !Array.isArray(parsed["trains"])
+  ) {
+    throw new Error("release-train.json: expected { graceHours: number, trains: [...] }");
+  }
+  return parsed as unknown as TrainManifest;
+}
+
+/**
+ * Hours between an ISO-8601 (Z-suffixed) timestamp and now, UTC epoch-ms math.
+ * An unparseable date yields `+Infinity` (fail-CLOSED): a NaN age would satisfy
+ * `NaN > graceHours === false` and silently mask a phantom/stale state as "ok",
+ * so an unreadable timestamp instead forces the aged-check to fire.
+ */
+export function ageHours(isoZ: string): number {
+  const t = new Date(isoZ).getTime();
+  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
+  return (Date.now() - t) / 3_600_000;
+}
+
+/** Decode a GitHub contents API base64 `.content` envelope to UTF-8 text. */
+function decodeContents(base64Envelope: string): string {
+  return Buffer.from(base64Envelope.replace(/\s/g, ""), "base64").toString("utf8");
+}
+
+/** Fallback: some apt repos serve only Packages.gz — decode it in-memory. */
+function tryLinuxGz(ch: ChannelSpec): ChannelReading | null {
+  const gz = runGh(["gh", "api", `repos/${ch.repo}/contents/${ch.path}.gz`, "--jq", ".content"]);
+  if (!gz.ok) return null;
+  try {
+    const bytes = Buffer.from(gz.stdout.replace(/\s/g, ""), "base64");
+    const text = new TextDecoder().decode(Bun.gunzipSync(bytes));
+    return { kind: ch.kind, status: "read", version: parseLinuxVersion(text), covered: null };
+  } catch {
+    // corrupt / non-gzip payload — transient, not a staleness finding
+    return { kind: ch.kind, status: "indeterminate", version: null, covered: null };
+  }
+}
+
+/** winget coverage: is `publishedVersion` merged as a manifest dir, or PR-open? */
+function readWingetChannel(ch: ChannelSpec, publishedVersion: string | null): ChannelReading {
+  // Nothing published yet => nothing for winget to be behind.
+  if (!publishedVersion) return { kind: "winget", status: "read", version: null, covered: true };
+  const dirRes = runGh([
+    "gh",
+    "api",
+    `repos/${ch.wingetRepo}/contents/${wingetDirPath(ch.package ?? "", publishedVersion)}`,
+    "--jq",
+    "length",
+  ]);
+  const dir = dirRes.ok ? true : classifyReadFailure(dirRes.httpStatus) === "absent" ? false : null;
+  let pr: boolean | null = false;
+  if (dir !== true) {
+    const prRes = runGh([
+      "gh",
+      "pr",
+      "list",
+      "--repo",
+      ch.wingetRepo ?? "",
+      "--state",
+      "open",
+      "--search",
+      `in:title ${ch.package} ${publishedVersion}`,
+      "--json",
+      "number",
+      "--jq",
+      "length",
+    ]);
+    pr = prRes.ok ? Number(prRes.stdout.trim()) > 0 : null;
+  }
+  const { status, covered } = resolveWingetCoverage(dir, pr);
+  return { kind: "winget", status, version: null, covered };
+}
+
+/** Read one channel's live version (or winget coverage). Public reads only. */
+function readChannel(ch: ChannelSpec, publishedVersion: string | null): ChannelReading {
+  if (ch.kind === "winget") return readWingetChannel(ch, publishedVersion);
+
+  const res = runGh(["gh", "api", `repos/${ch.repo}/contents/${ch.path}`, "--jq", ".content"]);
+  if (!res.ok) {
+    const linuxGz = ch.kind === "linux" ? tryLinuxGz(ch) : null;
+    if (linuxGz !== null) return linuxGz;
+    return {
+      kind: ch.kind,
+      status: classifyReadFailure(res.httpStatus),
+      version: null,
+      covered: null,
+    };
+  }
+  const text = decodeContents(res.stdout);
+  const version =
+    ch.kind === "brew"
+      ? parseBrewVersion(text)
+      : ch.kind === "scoop"
+        ? parseScoopVersion(text)
+        : parseLinuxVersion(text);
+  return { kind: ch.kind, status: "read", version, covered: null };
+}
+
+/** The intended head: the version release-please claims on main, + its bump age. */
+function readIntended(train: TrainSpec): { intended: string; intendedBumpAgeHours: number } {
+  const manRes = runGh([
+    "gh",
+    "api",
+    `repos/${train.source.manifestRepo}/contents/${train.source.manifestFile}?ref=main`,
+    "--jq",
+    ".content",
+  ]);
+  const intendedJson = manRes.ok ? decodeContents(manRes.stdout) : "{}";
+  const intendedParsed: unknown = JSON.parse(intendedJson);
+  const intended =
+    isRecord(intendedParsed) && typeof intendedParsed[train.source.manifestKey] === "string"
+      ? (intendedParsed[train.source.manifestKey] as string)
+      : "";
+
+  const bumpRes = runGh([
+    "gh",
+    "api",
+    `repos/${train.source.manifestRepo}/commits?path=${train.source.manifestFile}&per_page=1`,
+    "--jq",
+    ".[0].commit.committer.date",
+  ]);
+  const intendedBumpAgeHours =
+    bumpRes.ok && bumpRes.stdout.trim()
+      ? ageHours(bumpRes.stdout.trim())
+      : Number.POSITIVE_INFINITY;
+  return { intended, intendedBumpAgeHours };
+}
+
+/** The published head: the latest stable Release that actually carries assets. */
+function readPublished(train: TrainSpec): PublishedRelease | null {
+  const relRes = runGh([
+    "gh",
+    "api",
+    `repos/${train.source.manifestRepo}/releases?per_page=100`,
+    "--jq",
+    "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
+  ]);
+  if (!relRes.ok) return null;
+  const rels: unknown = JSON.parse(relRes.stdout);
+  if (!Array.isArray(rels)) return null;
+  return selectPublished(rels as ReleaseInfo[], train.source.releaseAsset);
+}
+
+if (import.meta.main) {
+  const strict = isStrict(process.argv.slice(2), process.env);
+  const label = "audit:release-staleness";
+
+  // Reachability probe (mirrors cla-coverage): one public read. If gh/network is
+  // unavailable at all, soft-skip locally / red in strict.
+  const probe = runGh(["gh", "api", "repos/nimbus-agent/Nimbus", "--jq", ".name"]);
+  if (!probe.ok) {
+    const outcome = strictSkip(label, strict);
+    if (outcome.code === 1) console.error(outcome.message);
+    else console.warn(outcome.message);
+    process.exit(outcome.code);
+  }
+
+  const manifest = loadTrainManifest(
+    await Bun.file(new URL("../../.github/release-train.json", import.meta.url)).text(),
+  );
+
+  const allResults: EdgeResult[] = [];
+  for (const train of manifest.trains) {
+    const { intended, intendedBumpAgeHours } = readIntended(train);
+    const published = readPublished(train);
+    const publishedAgeHours = published ? ageHours(published.publishedAt) : null;
+    const channels = train.channels.map((ch) => readChannel(ch, published?.version ?? null));
+
+    allResults.push(
+      ...evaluateTrain({
+        name: train.name,
+        intended,
+        intendedBumpAgeHours,
+        published,
+        publishedAgeHours,
+        channels,
+        graceHours: manifest.graceHours,
+      }),
+    );
+  }
+
+  const out = decideExit(allResults, strict);
+  for (const m of out.messages) (m.startsWith("::error::") ? console.error : console.warn)(m);
+  if (out.code === 0) {
+    const current = allResults.filter((r) => r.verdict === "ok").length;
+    console.log(`${label}: OK (${current} edges current)`);
+  }
+  process.exit(out.code);
 }
