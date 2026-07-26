@@ -20,6 +20,16 @@ import {
   type ReleaseInfo,
   stripV,
 } from "./_release-train-core.ts";
+import {
+  type ConsumerReading,
+  evaluatePackage,
+  matchesBumpPr,
+  type NpmLatest,
+  type PrRef,
+  parseNpmLatest,
+  resolvedFromBunLock,
+  selectTaggedRelease,
+} from "./_release-train-dep.ts";
 
 // The primitives live in the leaf core module (so the Phase 2 dependency readers
 // can share them without an import cycle), but they are re-exported here so this
@@ -398,6 +408,105 @@ function readPublished(train: TrainSpec): PublishedRelease | null {
   return selectPublished(rels as ReleaseInfo[], train.source.releaseAsset);
 }
 
+/**
+ * npm `@latest` + its publish time. Bounded by an explicit 5s timeout: the
+ * registry is the only dependency here that is neither GitHub nor local, and an
+ * unbounded fetch would hang the sweep job (and a local run, which is worse).
+ * Any timeout, non-200, or malformed body degrades to null -> indeterminate.
+ */
+async function readNpmLatest(pkg: string): Promise<NpmLatest | null> {
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg}`, {
+      signal: AbortSignal.timeout(5000),
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    return parseNpmLatest(await res.text());
+  } catch {
+    return null;
+  }
+}
+
+/** The upstream repo's highest release whose tag matches the package pattern. */
+function readTaggedRelease(pkg: PackageSpec): PublishedRelease | null {
+  const res = runGh([
+    "gh",
+    "api",
+    `repos/${pkg.repo}/releases?per_page=100`,
+    "--jq",
+    "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
+  ]);
+  if (!res.ok) return null;
+  try {
+    const rels: unknown = JSON.parse(res.stdout);
+    if (!Array.isArray(rels)) return null;
+    return selectTaggedRelease(rels as ReleaseInfo[], pkg.tagPattern);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How many open PRs we ask for. Named so the truncation guard below can compare
+ * against the exact same number.
+ */
+const PR_LIST_LIMIT = 100;
+
+/**
+ * Is there an open PR in `repo` that looks like a bump of `npm`?
+ * `null` means "cannot tell" — the caller must degrade to indeterminate rather
+ * than concluding "no bump PR", which would turn an unknown into a `stale`.
+ *
+ * Deliberately NOT `gh pr list --search`: matching happens in memory (see
+ * `matchesBumpPr`) so the gate does not depend on GitHub's opaque relevance
+ * ranker, per the design review. The cost of that choice is the page limit
+ * below, which is why truncation is detected instead of ignored.
+ */
+function readBumpPrOpen(repo: string, npm: string): boolean | null {
+  const res = runGh([
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--limit",
+    String(PR_LIST_LIMIT),
+    "--json",
+    "title,headRefName",
+  ]);
+  if (!res.ok) return null;
+  try {
+    const prs: unknown = JSON.parse(res.stdout);
+    if (!Array.isArray(prs)) return null;
+    if (matchesBumpPr(prs as PrRef[], npm)) return true;
+    // A full page means the list may have been cut off, so "not found" is not
+    // trustworthy — report unknown rather than a false negative that would
+    // present as staleness.
+    return prs.length >= PR_LIST_LIMIT ? null : false;
+  } catch {
+    return null;
+  }
+}
+
+/** One consumer's lockfile-resolved version of `npm`. */
+function readConsumer(c: ConsumerSpec, npm: string): ConsumerReading {
+  const res = runGh(["gh", "api", `repos/${c.repo}/contents/${c.lockfile}`, "--jq", ".content"]);
+  if (!res.ok) {
+    // 404 => the lockfile itself is missing (a real finding). Anything else is
+    // transient and must not be reported as staleness.
+    const kind = classifyReadFailure(res.httpStatus);
+    return { repo: c.repo, status: kind, resolved: null, bumpPrOpen: false };
+  }
+  const resolved = resolvedFromBunLock(decodeContents(res.stdout), npm);
+  if (resolved === null) {
+    // Parsed fine, no entry for the package => the manifest is wrong, not the repo.
+    return { repo: c.repo, status: "not-a-dependency", resolved: null, bumpPrOpen: false };
+  }
+  return { repo: c.repo, status: "read", resolved, bumpPrOpen: readBumpPrOpen(c.repo, npm) };
+}
+
 if (import.meta.main) {
   const strict = isStrict(process.argv.slice(2), process.env);
   const label = "audit:release-staleness";
@@ -431,6 +540,25 @@ if (import.meta.main) {
         published,
         publishedAgeHours,
         channels,
+        graceHours: manifest.graceHours,
+      }),
+    );
+  }
+
+  for (const pkg of manifest.packages) {
+    const latest = await readNpmLatest(pkg.npm);
+    const taggedRelease = readTaggedRelease(pkg);
+    const consumers = pkg.consumers.map((c) => readConsumer(c, pkg.npm));
+
+    allResults.push(
+      ...evaluatePackage({
+        name: pkg.name,
+        npm: pkg.npm,
+        taggedRelease,
+        taggedReleaseAgeHours: taggedRelease ? ageHours(taggedRelease.publishedAt) : null,
+        latest,
+        latestAgeHours: latest ? ageHours(latest.publishedAt) : null,
+        consumers,
         graceHours: manifest.graceHours,
       }),
     );
