@@ -1,12 +1,24 @@
 name: Security
 
 on:
+  # Trivy uploads its SARIF per-ref, so main's Code Scanning alerts only refresh
+  # when this workflow runs *on main*. Without a push trigger a merged fix left
+  # the alerts open until the next nightly — three HIGH advisories stayed listed
+  # for a day after the upgrade that cleared them — and a vulnerability reaching
+  # main was invisible for just as long. Merges are low-volume; re-scan on each.
+  push:
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
   schedule:
     # Nightly at 02:00 UTC
     - cron: "0 2 * * *"
   workflow_dispatch:
+
+concurrency:
+  # Per-commit on push (never evict a queued scan), per-ref on PR.
+  group: security-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

@@ -162,6 +162,34 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     note: "This system's own credential. Tracked here like any other.",
   },
 
+  // --- Nimbus: CLA bot ---
+  {
+    name: "CLA_BOT_CLIENT_ID",
+    state: "required",
+    location: { scope: "org" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/cla.yml"],
+    maxAgeDays: null,
+    hardDeadline: null,
+    expectedVisibility: "selected",
+    note: "Org secret (2026-07-24). Mints the CLA Assistant App token that writes the signature store. Like RELEASE_BOT_CLIENT_ID the client ID is public (readable from GET /apps/{slug}), so age is the wrong alarm — but kept visibility:selected to match its private key rather than widening one half of a pair.",
+  },
+  {
+    name: "CLA_BOT_PRIVATE_KEY",
+    state: "required",
+    location: { scope: "org" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [".github/workflows/cla.yml"],
+    maxAgeDays: 365,
+    hardDeadline: null,
+    expectedVisibility: "selected",
+    note: "Org secret (2026-07-24) SCOPED to the repos running the CLA gate. Mints 1-hour installation tokens for the CLA Assistant App; no schedule expiry, rotate on suspicion.",
+  },
+
   // --- Nimbus: release-path PATs (retired 2026-07-22) ---
   {
     name: "RELEASE_PAT",

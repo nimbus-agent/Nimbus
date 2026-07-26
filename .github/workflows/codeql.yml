@@ -12,14 +12,19 @@ on:
 permissions:
   contents: read
 
-# Cancel an in-flight CodeQL run when a newer commit lands on the same ref.
+# Cancel an in-flight CodeQL run when a newer commit lands on the same PR ref.
 # Prevents the "1 configuration not found" PR-comment race where a stale PR
 # analysis predates a newer main analysis and the alert-correlation engine
-# can't match them. `cancel-in-progress: true` is safe here because every
-# trigger re-uploads the SARIF; the latest run is always the authoritative one.
+# can't match them. Safe for PRs because every trigger re-uploads the SARIF;
+# the latest run is always the authoritative one.
+#
+# Pushes get a per-COMMIT group instead, for the same reason as ci.yml: a
+# shared group lets a newer merge evict the previous *pending* run, which for
+# CodeQL means main's SARIF is never re-uploaded and its alerts silently go
+# stale against a commit that no longer exists.
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

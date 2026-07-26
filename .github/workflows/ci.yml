@@ -8,11 +8,18 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded PR runs (cheap, the branch head moved), but NEVER cancel a
-  # push to a protected branch: consecutive merges share this group key, so
-  # `true` here means merge N+1 kills merge N's validation and the commit that
-  # actually ships is never fully tested. Measured at 22 cancelled / 40 runs.
+  # PRs share a per-ref group, so a superseded run is cancelled (cheap — the
+  # branch head moved). Pushes get a per-COMMIT group so they never share a
+  # group at all.
+  #
+  # `cancel-in-progress: false` alone is NOT enough for pushes: it only keeps
+  # the *in-progress* run alive. GitHub still allows one pending run per group
+  # and "any previously pending workflow in the concurrency group is
+  # cancelled" when a newer one arrives. Consecutive merges therefore evicted
+  # each other while queued and lost their validation entirely — 33 of 60 push
+  # runs cancelled with ZERO jobs, so the commits that actually shipped were
+  # never tested. A per-SHA group means every merge commit validates on its own.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
