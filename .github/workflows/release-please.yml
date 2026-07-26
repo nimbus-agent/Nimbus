@@ -39,6 +39,20 @@ jobs:
           # release PR (labels are an issues-API concept for GitHub Apps) — both
           # for release-please's own pending→tagged flip and the reconcile step below.
           permission-issues: write
+          # `workflows: write` is required to CREATE THE TAG, which is not obvious.
+          # GitHub refuses to let a GitHub App create a ref pointing at a commit whose
+          # `.github/workflows/**` differs from the default branch, unless the App holds
+          # `workflows: write` — it counts as the App "creating or updating a workflow".
+          # A release tag always points at the release PR's merge commit, which falls
+          # behind main the moment any later PR touches a workflow file, so this fires on
+          # exactly the releases we care about. REST reports it only as an opaque
+          # `403 Resource not accessible by integration` on `POST /git/refs`; the git
+          # transport spells it out ("refusing to allow a GitHub App to create or update
+          # workflow ... without `workflows` permission"). Proven by probe: the same token
+          # creating the same ref shape at main's head returns 201, and at PR #827's merge
+          # commit returns 403. This must stay in lockstep with the App's granted
+          # permissions: minting fails outright if the App lacks `Workflows: write`.
+          permission-workflows: write
 
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please
@@ -49,8 +63,13 @@ jobs:
 
       # Phantom-release guard. release-please in this repo intermittently merges the
       # "chore: release main" PR (bumping the manifest) but never creates the tag/GitHub
-      # Release — an internal parse error breaks its release-creation phase, after which it
-      # aborts every run with "untagged, merged release PRs outstanding". The symptom is a
+      # Release — its release-creation phase fails, after which it aborts every run with
+      # "untagged, merged release PRs outstanding". Since the switch to the App token that
+      # failure is consistent with the `workflows: write` gate documented on the mint step
+      # above (release-please tags the release PR's merge commit, which is exactly the
+      # blocked shape), so granting that permission may fix it at the source and reduce
+      # this step to a safety net; the phantoms predating the App had some other cause and
+      # were never attributed. The symptom is the same either way: a
       # merged release PR left labelled `autorelease: pending` with no matching tag. This
       # step automates the standing manual recovery (create the tag + relabel), so releases
       # ship hands-free regardless of why the native step misfired. It is idempotent: on a
