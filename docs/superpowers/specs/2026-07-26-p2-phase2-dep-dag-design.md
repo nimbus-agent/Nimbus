@@ -147,10 +147,10 @@ existing `runGh` path.
 
 | Reader | Source | Notes |
 | --- | --- | --- |
-| `npmLatest(pkg)` | `GET https://registry.npmjs.org/<pkg>` | **New network dependency** — Phase 1 was `gh`-only |
+| `npmLatest(pkg)` | `GET https://registry.npmjs.org/<pkg>` | **New network dependency** — Phase 1 was `gh`-only; 5s timeout |
 | `selectTaggedRelease(releases, pattern)` | `gh api repos/<repo>/releases` | pure; skips drafts + prereleases |
-| `resolvedFromBunLock(text, pkg)` | `gh api .../contents/<lockfile>` | pure |
-| `hasOpenBumpPr(repo, pkg)` | `gh pr list --state open --search` | mirrors the winget rule |
+| `resolvedFromBunLock(text, pkg)` | `gh api .../contents/<lockfile>` | pure; resolutions section only |
+| `matchesBumpPr(prs, pkg)` | `gh pr list --json title,headRefName` | pure; mirrors the winget rule |
 
 `npmLatest` fetches the **full** registry document, not `/<pkg>/latest`. The
 `/latest` endpoint omits `time`, and the grace rule needs the publish
@@ -159,17 +159,62 @@ in one request (~48 KB, verified 2026-07-26). It returns
 `{ version, publishedAt } | null` — `null` on any transport or shape failure,
 which the evaluator maps to `indeterminate`.
 
-### `resolvedFromBunLock` returns the **minimum**, not the hoisted version
+**Timeout is mandatory.** The request carries
+`AbortSignal.timeout(5000)`, and any non-200 status, timeout, or malformed body
+resolves to `null` → `indeterminate` with a message naming the cause. The
+registry is the one dependency in this gate that is neither GitHub nor local,
+so an unbounded `fetch` would let a slow registry hang the sweep job — and the
+gate is runnable locally, where a hang is worse than a red.
 
-A `bun.lock` can carry the same package at several versions — a hoisted entry
-plus per-workspace overrides. This is not hypothetical: on 2026-07-26 this
-monorepo held `@nimbus-dev/sdk` hoisted at `1.5.0` while ~100 connector
-workspaces pinned `1.4.0` beneath it.
+`hasOpenBumpPr` does **not** rely on GitHub's search-query semantics. It lists
+open PRs with `gh pr list --repo <repo> --state open --json title,headRefName
+--limit 100` and matches in memory, case-insensitively, against both the title
+and the branch name, accepting either the full package name
+(`@nimbus-dev/sdk`) or its short name (`sdk`). Dependabot, Renovate and humans
+all title bump PRs differently ("Bump @nimbus-dev/sdk from 1.5.0 to 1.6.0",
+"chore(deps): upgrade sdk"), and `--search` would make the gate's behaviour
+depend on an opaque relevance ranker. Matching locally also makes the predicate
+a **pure function** over `{title, headRefName}[]`, so every naming variant is
+table-testable without network.
 
-The reader therefore collects every resolved version for the package and returns
-the **lowest**. The oldest version that actually ships is the honest "caught up"
-signal; reporting the hoisted version would call that tree current when most of
-it was two minors behind.
+### `resolvedFromBunLock` — parse the resolutions section, scoped to our own workspaces
+
+A `bun.lock` (Bun v1.2+, JSON) has **two** sections that both mention a package,
+and only one of them carries a resolved version:
+
+```text
+workspaces: { "packages/cli": { name, dependencies: { "@nimbus-dev/sdk": "^1.5.0" } } }
+                                                       └─ a RANGE, never parse this
+"@nimbus-dev/sdk":                    ["@nimbus-dev/sdk@1.6.0", "", {}, "sha512-…"]
+"nimbus-mcp-github/@nimbus-dev/sdk":  ["@nimbus-dev/sdk@1.4.0", …]
+"@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.3.0", …]
+ └─ resolution keys; the version lives in element [0] as "<name>@<version>"
+```
+
+The reader parses **only** the resolution entries — element `[0]` of each array
+value — never the workspace `dependencies` maps. A range and a resolution are
+both `"@nimbus-dev/sdk"`-keyed, so a scan that is not section-aware will happily
+return `^1.5.0` and compare a caret string as a version.
+
+**Which resolution entries count.** Not all of them. A resolution key is a
+dependency *path*: an unprefixed key is the hoisted copy, and `<prefix>/<pkg>`
+is the copy `<prefix>` resolved. Some prefixes are the repo's **own
+workspaces** (`nimbus-mcp-github/…`), and some are **third-party packages that
+happen to bundle the same dep** (`@nimbus-dev/client/@nimbus-dev/sdk`).
+
+Only the first kind is this edge's business. In this monorepo today the hoisted
+`@nimbus-dev/sdk` is `1.6.0` while the copy nested under the external
+`@nimbus-dev/client` is `1.3.0` — reporting `1.3.0` as "Nimbus's resolved sdk"
+would be wrong, since no Nimbus code resolves it. Conversely the ~100
+connector workspaces really did sit at `1.4.0` under a hoisted `1.5.0` earlier
+on 2026-07-26, and that *is* this edge's business.
+
+So the rule is: **the minimum over the hoisted entry plus every entry whose
+prefix is one of the consumer's own workspace names.** Workspace names are
+derivable from the same file — `Object.values(lock.workspaces).map(w => w.name)`
+— so no extra fetch is needed. The oldest version *our* code resolves is the
+honest "caught up" signal; the hoisted entry alone would call the tree current
+while most of it lagged.
 
 ## Failure model
 
@@ -181,7 +226,21 @@ Unchanged from Phase 1, and fail-closed in the same direction:
   `classifyReadFailure`.
 - Package present in the manifest but absent from a consumer's lockfile →
   `indeterminate`, not `ok`: a consumer that no longer depends on the package is
-  a manifest error, not a passing edge.
+  a manifest error, not a passing edge. **This case must not share a message
+  with a failed read.** When the lockfile fetched and parsed cleanly and simply
+  contains no entry for the package, the detail reads
+  `manifest error: <repo> does not depend on <pkg> — remove this consumer from
+  release-train.json`, so the operator edits the manifest instead of chasing a
+  network or parse fault. A read failure keeps the transient wording.
+
+  The **verdict** stays `indeterminate` rather than becoming a hard failure,
+  deliberately: a fifth verdict would ripple through `decideExit` and the strict
+  rule for one configuration mistake. The trade-off is real and worth naming —
+  unlike a transient, this condition never self-heals, so it warns forever if
+  nobody reads warnings. That is mitigated by the wording above and by the
+  strict rule (a run with no `ok` edges is red anyway); if a stale manifest
+  entry is ever observed surviving more than a sweep or two, promote it to a
+  hard failure rather than leaving a permanent warning.
 - Unparseable version on either side → `indeterminate` (`compareSemver`
   returns `null`; it never throws).
 - Under `--strict`, a run where nothing was evaluable is **red** — a Phase-2
@@ -211,8 +270,14 @@ Table-driven unit tests over the pure functions, matching Phase 1's file layout
   `dist-tags`, missing `time` entry, malformed JSON.
 - `selectTaggedRelease` — component-prefixed match, drafts/prereleases skipped,
   non-matching tags ignored, highest wins, empty → `null`.
-- `resolvedFromBunLock` — single entry; **multiple entries → minimum**; nested
-  workspace entries; package absent → `null`.
+- `resolvedFromBunLock` — hoisted entry only; **own-workspace entry lower than
+  hoisted → minimum wins**; **a lower version nested under a third-party
+  prefix is IGNORED** (the live `@nimbus-dev/client/@nimbus-dev/sdk@1.3.0`
+  case); a range in the `workspaces` section is never mistaken for a resolution
+  (`"^1.5.0"` must not parse as a version); package absent → `null`.
+- `matchesBumpPr` — full-name title match, short-name title match, branch-name
+  match, case-insensitive, and a non-match (an unrelated open PR must not count
+  as an in-flight bump).
 - `evaluatePackage` — every verdict: publish phantom, publish within grace,
   consumer stale, consumer current, consumer stale-but-PR-open, each
   indeterminate path.
