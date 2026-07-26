@@ -1,0 +1,126 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/configure/
+#
+# The four satellite repos (nimbus-sdk, nimbus-client, nimbus-vscode,
+# nimbus-web-clipper) have each carried a tuned config since they were created.
+# This monorepo — the one with 30 security invariants and a structural HITL gate
+# — got stock review until now. That is instance 2 of the pattern named at the
+# top of docs/infrastructure-roadmap.md, running satellites -> monorepo.
+#
+# ADVISORY BY DESIGN. CodeRabbit is not a required check and must not become
+# one: a false positive should cost a comment, never a blocked merge. The
+# machine-checked rules live in `bun run preflight` and
+# scripts/structure-audit/*; this file tells the reviewer what the repo's
+# invariants MEAN so its prose comments are useful rather than generic.
+#
+# Invariant ids below refer to docs/SECURITY-INVARIANTS.md (I1-I30; I28 is
+# reserved). Keep them in sync — scripts/structure-audit/check-coderabbit-config.test.ts
+# fails if this file cites an invariant that does not exist there.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/*.lock"
+    - "!bun.lock"
+    - "!packages/docs/dist/**"
+    - "!**/__snapshots__/**"
+  path_instructions:
+    - path: "packages/gateway/src/engine/**"
+      instructions: >-
+        The HITL (human-in-the-loop) consent gate is STRUCTURAL, not a
+        convention. Flag anything that: adds an action type to the executor's
+        gated path without adding it to the frozen HITL_REQUIRED_BACKING set
+        (I2); branches on `payload.mcpToolId` rather than `action.type` when
+        deciding whether to gate (I3) — the tool id is caller-influenced and
+        must never drive the decision; assigns `hitlStatus` anywhere except the
+        consent gate itself (I4); or makes the gate configurable, bypassable, or
+        conditional on a flag. Also flag any new `connectors.dispatch` call site
+        outside executor.ts — every gated action appends one egress-ledger row
+        BEFORE dispatch, and an append failure must ABORT rather than dispatch
+        (I29). LLM-facing tool results go through `wrapToolOutput` (I11); a raw
+        result reaching the model is a prompt-injection regression.
+    - path: "packages/gateway/src/ipc/**"
+      instructions: >-
+        Every HTTP POST/PUT/DELETE must be in WRITE_ROUTE_ALLOWLIST with bearer
+        auth (I13) — the local HTTP API is read-only apart from sanctioned
+        carve-outs. Flag a new write route that skips the allowlist, and flag any
+        method exposed to the renderer without a deliberate note about the Tauri
+        ALLOWED_METHODS decision (I7): renderer-reachable RCE-class methods
+        (`vault.*`, `extension.install`) are the exact chain a single allowlist
+        mistake opened before. Federated/LAN-reachable methods need the same
+        scrutiny — answering a peer happens only through the query gate (I17).
+    - path: "packages/gateway/src/**"
+      instructions: >-
+        No `any` — use `unknown` for external data plus a type guard; TypeScript
+        strict is non-negotiable. Credentials live in the Vault ONLY and must
+        never reach logs, IPC payloads, config files, or test fixtures. Never
+        import `platform/win32`, `platform/darwin`, or `platform/linux` from
+        business logic: OS-specific code is reached through `PlatformServices`
+        (the PAL rule), so flag a raw `process.platform` branch outside
+        `platform/`. SQLite writes go through `dbRun`/`dbExec`/`dbStmtRun` with
+        bound parameters; identifiers via `escapeIdentifier` (I9, I14). Compare
+        hashes, MACs, pairing codes and tokens with the constant-time helper
+        (I10), never `===`.
+    - path: "packages/gateway/src/**/*.test.ts"
+      instructions: >-
+        Enforce the TRIPLE RULE for any structural defense: production wiring,
+        a row in docs/SECURITY-INVARIANTS.md, and an enforcement test in
+        security-invariants.test.ts all land in the SAME commit — a defense
+        defined but never wired looks identical to one that works, and an audit
+        previously found three of those. When a guard asserts on source text,
+        check it cannot pass on a leftover import: assert the CALL
+        (`helper(`), not the bare name. Prefer dependency injection over
+        `mock.module`, which is process-global and leaks across files in the
+        combined CI run.
+    - path: "packages/mcp-connectors/**"
+      instructions: >-
+        Connectors are first-party MCP servers whose only dependency is the
+        published `@nimbus-dev/sdk` — flag a new runtime dependency, and flag
+        any import from the gateway. The engine must never call a cloud API
+        directly; that is what these exist for. Write-capable tools must be
+        declared so the HITL gate and the federated invoke gate can see them
+        (I26): a peer must never be able to trigger a connector write.
+    - path: "scripts/structure-audit/**"
+      instructions: >-
+        These are the org's gates, so their failure modes matter more than their
+        happy paths. A gate must fail SOFT locally and hard under `--strict` /
+        GITHUB_ACTIONS. Any unreadable or unparseable input degrades to
+        `indeterminate` — never to a finding: a transient 5xx must not
+        manufacture drift. Distinguish a 404 ("absent", a real finding) from any
+        other read failure via `classifyReadFailure`. Flag a comparison that can
+        throw on malformed input (`Bun.semver.order` throws; use the wrapper
+        that returns null). Flag a new gate that is not registered in
+        scripts/lib/preflight-gates.ts or CI_ONLY_GATES — the drift test exists
+        because an unregistered gate silently never runs.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Every `uses:` must be pinned to a full 40-character commit SHA with the
+        version in a trailing comment. Flag a moving tag. Remember an action
+        must also be permitted by the repo's Actions allowlist, which is set to
+        `selected` here — an unpermitted action fails the workflow at STARTUP,
+        before any job runs, so a required check from it never reports. Flag a
+        step that captures `gh api` output and tests it with `-z`: gh writes its
+        error body to stdout, so a failed call leaves the variable non-empty.
+    - path: "packages/ui/src-tauri/**"
+      instructions: >-
+        ALLOWED_METHODS is a security boundary (I7) — adding a method here
+        exposes it to the renderer. RCE-class methods must stay out. The renderer
+        CSP must not gain `unsafe-inline` or `unsafe-eval` (I8).
+    - path: "docs/**"
+      instructions: >-
+        Status lines, invariant counts, schema versions and release numbers go
+        stale across releases. When a doc states a version, phase, or invariant
+        ceiling, check it against the change in the same PR. CLAUDE.md and
+        GEMINI.md mirror each other — a change to commands, roadmap rows, or
+        non-negotiables belongs in both.
+chat:
+  auto_reply: true
