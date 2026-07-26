@@ -41,10 +41,12 @@
 ## Task 1: `_gh-audit.ts` — surface HTTP status + shared read classifier
 
 **Files:**
+
 - Modify: `scripts/structure-audit/_gh-audit.ts`
 - Test: `scripts/structure-audit/_gh-audit.test.ts`
 
 **Interfaces:**
+
 - Produces: `GhResult` gains `stderr: string` and `httpStatus?: number` (additive — existing `.ok`/`.stdout` callers unchanged). `parseHttpStatus(stderr: string): number | undefined`. `classifyReadFailure(httpStatus: number | undefined): "absent" | "indeterminate"`.
 
 - [ ] **Step 1: Write the failing tests** — append to `scripts/structure-audit/_gh-audit.test.ts`:
@@ -143,10 +145,12 @@ git commit -m "feat(audit): surface gh HTTP status + shared read classifier in _
 ## Task 2: CLA-coverage robustness — non-404 failure is indeterminate
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-cla-coverage.ts`
 - Test: `scripts/structure-audit/check-cla-coverage.test.ts`
 
 **Interfaces:**
+
 - Consumes: `classifyReadFailure` (Task 1).
 - Produces: no signature change to `diffClaCoverage`; the `import.meta.main` shell now short-circuits to `strictSkip` with a reason when any per-repo read fails with a non-404 status.
 
@@ -226,10 +230,12 @@ git commit -m "fix(audit): cla-coverage treats a non-404 read as indeterminate, 
 ## Task 3: Release-staleness pure readers — version parsers, published selector, winget resolver
 
 **Files:**
+
 - Create: `scripts/structure-audit/check-release-staleness.ts`
 - Test: `scripts/structure-audit/check-release-staleness.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `compareSemver(a: string, b: string): number | null` (never throws; null on unparseable)
   - `parseBrewVersion(rb: string): string | null`
@@ -526,10 +532,12 @@ git commit -m "feat(audit): release-staleness pure readers (brew/scoop/linux/pub
 ## Task 4: The evaluation engine — `evaluateTrain` + `decideExit`
 
 **Files:**
+
 - Modify: `scripts/structure-audit/check-release-staleness.ts`
 - Test: `scripts/structure-audit/check-release-staleness.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PublishedRelease` (Task 3).
 - Produces:
   - `type EdgeVerdict = "ok" | "stale" | "phantom" | "indeterminate"`
@@ -799,6 +807,7 @@ git commit -m "feat(audit): release-staleness evaluation engine (grace-aware, fa
 ## Task 5: The manifest + `loadTrainManifest` + the gh-reading shell + registration
 
 **Files:**
+
 - Create: `.github/release-train.json`
 - Modify: `scripts/structure-audit/check-release-staleness.ts` (add `loadTrainManifest` + `import.meta.main` shell)
 - Test: `scripts/structure-audit/check-release-staleness.test.ts` (`loadTrainManifest`)
@@ -806,6 +815,7 @@ git commit -m "feat(audit): release-staleness evaluation engine (grace-aware, fa
 - Modify: `scripts/lib/preflight-gates.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 3–4, plus `runGh` / `isStrict` / `strictSkip` / `classifyReadFailure` / `isRecord` from `_gh-audit.ts`.
 - Produces: `interface TrainManifest { graceHours: number; trains: TrainSpec[] }`; `loadTrainManifest(json: string): TrainManifest`.
 
@@ -1065,9 +1075,11 @@ git commit -m "feat(audit): release-train manifest + gh-reading shell + gate reg
 ## Task 6: Wire the org-drift-sweep job + preflight + live proof
 
 **Files:**
+
 - Modify: `.github/workflows/org-drift-sweep.yml`
 
 **Interfaces:**
+
 - Consumes: the `audit:release-staleness` gate (Task 5).
 
 - [ ] **Step 1: Add the job** — append to `.github/workflows/org-drift-sweep.yml` (after the `cla-coverage` job). No App-token mint — public reads use the default `github.token`:
@@ -1109,8 +1121,9 @@ Expected: all green. (If `preflight:fast` soft-warns on the network gates locall
 
 Run: `GH_TOKEN=$(gh auth token) bun scripts/structure-audit/check-release-staleness.ts`
 Expected: one of two correct outcomes —
-  - **GREEN** (`audit:release-staleness: OK`) if `v0.27.0` (or whatever the manifest claims) is published-with-assets and every channel has caught up; **or**
-  - **RED** with a specific `::error::nimbus-gateway:phantom` or `:<channel>` line if there is a genuine live gap (the spec's documented 0.27.0-vs-0.26.0 heads-up — a real phantom the gate correctly surfaces).
+
+- **GREEN** (`audit:release-staleness: OK`) if `v0.27.0` (or whatever the manifest claims) is published-with-assets and every channel has caught up; **or**
+- **RED** with a specific `::error::nimbus-gateway:phantom` or `:<channel>` line if there is a genuine live gap (the spec's documented 0.27.0-vs-0.26.0 heads-up — a real phantom the gate correctly surfaces).
 
 Record which outcome occurred in the PR description. A RED here is the gate working — do **not** "fix" the gate to make it green; if it is a real phantom, note it for the release playbook. If GREEN, proceed.
 
@@ -1140,6 +1153,7 @@ git commit -m "ci(infra): add release-staleness job to org-drift-sweep (P2 Relea
 ## Self-Review
 
 **Spec coverage:**
+
 - Three heads (intended/published/distributed) → Task 3 (`selectPublished`) + Task 4 (`evaluateTrain`). ✓
 - Declarative manifest → Task 5 (`.github/release-train.json` + `loadTrainManifest`). ✓
 - Grace window + PR-opened-for-winget → Task 4 (grace gating) + Task 3 (`resolveWingetCoverage`) + Task 5 (`readChannel` winget dir/PR). ✓

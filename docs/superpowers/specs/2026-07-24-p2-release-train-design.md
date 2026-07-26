@@ -90,7 +90,7 @@ were).
 
 Every train has three version "heads" a healthy pipeline keeps equal:
 
-```
+```text
 intended            published                     distributed
 (main claims)       (actually built)              (reached users)
 ────────────────    ──────────────────────        ───────────────────────────────
@@ -305,6 +305,7 @@ change, only a new reader kind:
   grace + indeterminate model.
 
 **Open Phase-2 questions (deferred to its own spec pass):**
+
 1. Whether the `source` for a dep edge is npm `@latest` (what consumers actually
    install) or the upstream repo's latest git release tag.
 2. The exact lockfile parse per consumer (`bun.lock` is the Nimbus/vscode norm;
