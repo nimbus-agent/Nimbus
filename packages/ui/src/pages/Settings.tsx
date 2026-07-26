@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import { SettingsSidebar } from "../components/settings/SettingsSidebar";
 
 export function Settings(): ReactNode {

@@ -5,7 +5,7 @@ import {
   Navigate,
   Route,
   RouterProvider,
-} from "react-router-dom";
+} from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
 import { Dashboard } from "./pages/Dashboard";
 import { HitlPopup } from "./pages/HitlPopup";

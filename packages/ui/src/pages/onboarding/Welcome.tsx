@@ -1,5 +1,5 @@
 import type React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
 
 export function Welcome() {
