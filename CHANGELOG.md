@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.1.0](https://github.com/nimbus-agent/Nimbus/compare/v1.0.1...v1.1.0) (2026-07-26)
+
+
+### Features
+
+* **audit:** P2 Release Train Phase 2 — dependency-DAG edges ([#843](https://github.com/nimbus-agent/Nimbus/issues/843)) ([1e8c9ea](https://github.com/nimbus-agent/Nimbus/commit/1e8c9eafdcde6a9f338ce87a613d19e417de8dfa))
+
 ## [1.0.1](https://github.com/nimbus-agent/Nimbus/compare/v1.0.0...v1.0.1) (2026-07-26)
 
 
