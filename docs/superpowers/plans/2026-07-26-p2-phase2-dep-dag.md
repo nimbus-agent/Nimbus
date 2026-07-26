@@ -184,11 +184,59 @@ Expected: exit 0. A "declared but never read" error means a symbol was re-export
 Run: `bun test scripts/structure-audit/check-release-staleness.test.ts`
 Expected: PASS with the **same 39 tests** as Step 1. A behaviour change here means the move was not verbatim.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Harden `ageHours` against a timezone-less timestamp**
+
+Only now that the move is proven verbatim. `ageHours` is already timezone-safe
+for well-formed input — `Date.now()` and `new Date(iso).getTime()` are both UTC
+epoch-ms, so no offset can creep in. The gap is narrower and nastier: a string
+*without* a `Z` or offset (`"2026-07-26T12:00:00"`) parses as **local time**
+and silently yields an age that is wrong by the machine's UTC offset — up to 14
+hours, enough to move an edge across a 6-hour grace boundary, and it differs
+between a developer's laptop and a UTC CI runner.
+
+The Global Constraints already forbid such a timestamp. Make that enforced
+rather than merely documented. Add to `_release-train-core.ts`:
+
+```ts
+/** ISO-8601 with an explicit UTC designator or numeric offset. */
+const HAS_TIMEZONE = /(?:Z|[+-]\d{2}:?\d{2})$/;
+```
+
+and change the guard inside `ageHours` to:
+
+```ts
+export function ageHours(isoZ: string): number {
+  // A timestamp without an explicit zone would be parsed as LOCAL time, making
+  // the age differ between a laptop and a UTC runner. Treat it as unreadable
+  // and fail CLOSED, exactly like an unparseable date.
+  if (!HAS_TIMEZONE.test(isoZ.trim())) return Number.POSITIVE_INFINITY;
+  const t = new Date(isoZ).getTime();
+  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
+  return (Date.now() - t) / 3_600_000;
+}
+```
+
+Add to `scripts/structure-audit/check-release-staleness.test.ts`, inside the
+existing `ageHours` describe block:
+
+```ts
+  test("a timestamp with no timezone fails closed rather than being read as local", () => {
+    expect(ageHours("2026-07-26T12:00:00")).toBe(Number.POSITIVE_INFINITY);
+  });
+  test("an explicit numeric offset is accepted", () => {
+    expect(Number.isFinite(ageHours("2020-01-01T00:00:00+02:00"))).toBe(true);
+  });
+```
+
+Run: `bun test scripts/structure-audit/check-release-staleness.test.ts`
+Expected: PASS, **41 tests** (39 + 2). Both real sources — GitHub `published_at`
+and npm `time[version]` — are `Z`-suffixed, so no production edge changes.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-bunx biome check scripts
-git add scripts/structure-audit/_release-train-core.ts scripts/structure-audit/check-release-staleness.ts
+bunx tsc -p scripts/tsconfig.json --noEmit && bunx biome check scripts
+git add scripts/structure-audit/_release-train-core.ts scripts/structure-audit/check-release-staleness.ts scripts/structure-audit/check-release-staleness.test.ts
 git commit -m "refactor(audit): extract release-train primitives into a leaf core module"
 ```
 
@@ -224,6 +272,7 @@ import {
   parseNpmLatest,
   resolvedFromBunLock,
   selectTaggedRelease,
+  stripTrailingCommas,
 } from "./_release-train-dep.ts";
 
 describe("parseNpmLatest", () => {
@@ -340,6 +389,25 @@ describe("resolvedFromBunLock", () => {
   });
 });
 
+describe("stripTrailingCommas", () => {
+  test("removes trailing commas before } and ]", () => {
+    expect(JSON.parse(stripTrailingCommas('{"a":[1,2,],"b":{"c":1,},}'))).toEqual({
+      a: [1, 2],
+      b: { c: 1 },
+    });
+  });
+  test("does NOT touch a comma inside a string value", () => {
+    // The naive regex /,(\s*[}\]])/g corrupts this silently — it parses, but
+    // with the comma eaten. That is the bug this function exists to avoid.
+    const src = JSON.stringify({ note: "a comma, }" });
+    expect(JSON.parse(stripTrailingCommas(src)).note).toBe("a comma, }");
+  });
+  test("handles escaped quotes inside strings", () => {
+    const src = '{"k":"he said \\", }"}';
+    expect(JSON.parse(stripTrailingCommas(src)).k).toBe('he said ", }');
+  });
+});
+
 describe("matchesBumpPr", () => {
   const pkg = "@nimbus-dev/sdk";
   test("matches the full package name in a title", () => {
@@ -431,6 +499,46 @@ export function selectTaggedRelease(
   return eligible[0] ?? null;
 }
 
+/**
+ * Remove trailing commas so a real bun.lock (which is JSONC-ish and DOES carry
+ * them) survives `JSON.parse`.
+ *
+ * This walks the text tracking string state rather than using a regex. The
+ * obvious `text.replace(/,(\s*[}\]])/g, "$1")` is WRONG in a way that fails
+ * silently: it also strips a comma inside a string value that happens to end
+ * with `, }`, so `"note: a comma, }"` parses cleanly as `"note: a comma }"`.
+ * A corrupted-but-parseable lockfile is precisely the class of defect this gate
+ * exists to prevent, so the parser must not introduce one.
+ */
+export function stripTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] as string;
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j] as string)) j++;
+      const next = text[j];
+      if (next === "}" || next === "]") continue; // trailing comma — drop it
+    }
+    out += ch;
+  }
+  return out;
+}
+
 /** Workspace package names declared by a parsed bun.lock (`workspaces[].name`). */
 function workspaceNames(lock: Record<string, unknown>): Set<string> {
   const names = new Set<string>();
@@ -460,9 +568,7 @@ function workspaceNames(lock: Record<string, unknown>): Set<string> {
 export function resolvedFromBunLock(text: string, pkg: string): string | null {
   let parsed: unknown;
   try {
-    // A real bun.lock is JSONC-ish and DOES contain trailing commas, so plain
-    // JSON.parse throws on it. Strip `,` before a closing brace/bracket first.
-    parsed = JSON.parse(text.replace(/,(\s*[}\]])/g, "$1"));
+    parsed = JSON.parse(stripTrailingCommas(text));
   } catch {
     return null;
   }
@@ -514,7 +620,7 @@ export function matchesBumpPr(prs: readonly PrRef[], pkg: string): boolean {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `bun test scripts/structure-audit/_release-train-dep.test.ts`
-Expected: PASS, 18 tests.
+Expected: PASS, 21 tests (4 parseNpmLatest + 4 selectTaggedRelease + 5 resolvedFromBunLock + 5 matchesBumpPr + 3 stripTrailingCommas).
 
 - [ ] **Step 5: Commit**
 
@@ -616,6 +722,14 @@ describe("evaluatePackage", () => {
     expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("ok");
   });
 
+  test("consumer behind but the PR list was unreadable => indeterminate, not stale", () => {
+    const r = evaluatePackage({
+      ...green,
+      consumers: [consumer({ resolved: "1.5.2", bumpPrOpen: null })],
+    });
+    expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("indeterminate");
+  });
+
   test("consumer ahead of npm => ok, never stale", () => {
     const r = evaluatePackage({ ...green, consumers: [consumer({ resolved: "1.7.0" })] });
     expect(r.find((e) => e.edge === "sdk:nimbus-vscode")?.verdict).toBe("ok");
@@ -697,7 +811,8 @@ export interface ConsumerReading {
    */
   status: "read" | "absent" | "indeterminate" | "not-a-dependency";
   resolved: string | null;
-  bumpPrOpen: boolean;
+  /** `null` = could not determine (read failed, or the PR list may be truncated). */
+  bumpPrOpen: boolean | null;
 }
 
 export interface PackageEvalInput {
@@ -798,8 +913,18 @@ function evaluateConsumerEdge(
   if (!pastGrace) {
     return { edge, verdict: "ok", detail: `npm ${latest.version} within ${graceHours}h grace` };
   }
-  if (c.bumpPrOpen) {
+  if (c.bumpPrOpen === true) {
     return { edge, verdict: "ok", detail: `${c.resolved} < ${latest.version} but a bump PR is open` };
+  }
+  if (c.bumpPrOpen === null) {
+    // We know it is behind, but not whether a bump is already in flight. Report
+    // unknown rather than staleness — an unread PR list must not manufacture a
+    // finding.
+    return {
+      edge,
+      verdict: "indeterminate",
+      detail: `${c.resolved} < npm ${latest.version}, but the open-PR list could not be read conclusively`,
+    };
   }
   return {
     edge,
@@ -826,7 +951,7 @@ export function evaluatePackage(i: PackageEvalInput): EdgeResult[] {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `bun test scripts/structure-audit/_release-train-dep.test.ts`
-Expected: PASS, 31 tests.
+Expected: PASS, 35 tests (21 from Task 2 + 14 evaluatePackage).
 
 - [ ] **Step 5: Commit**
 
@@ -963,7 +1088,7 @@ export function loadTrainManifest(json: string): TrainManifest {
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `bun test scripts/structure-audit/check-release-staleness.test.ts`
-Expected: PASS, 42 tests.
+Expected: PASS, 44 tests (41 after Task 1 + 3 manifest).
 
 - [ ] **Step 6: Commit**
 
@@ -1042,8 +1167,21 @@ function readTaggedRelease(pkg: PackageSpec): PublishedRelease | null {
   }
 }
 
-/** Is there an open PR in `repo` that looks like a bump of `npm`? */
-function readBumpPrOpen(repo: string, npm: string): boolean {
+/** How many open PRs we ask for. Exported-as-const so the truncation guard below
+ *  can compare against the exact same number. */
+const PR_LIST_LIMIT = 100;
+
+/**
+ * Is there an open PR in `repo` that looks like a bump of `npm`?
+ * `null` means "cannot tell" — the caller must degrade to indeterminate rather
+ * than concluding "no bump PR", which would turn an unknown into a `stale`.
+ *
+ * Deliberately NOT `gh pr list --search`: matching happens in memory (see
+ * `matchesBumpPr`) so the gate does not depend on GitHub's opaque relevance
+ * ranker, per the design review. The cost of that choice is the page limit
+ * below, which is why truncation is detected instead of ignored.
+ */
+function readBumpPrOpen(repo: string, npm: string): boolean | null {
   const res = runGh([
     "gh",
     "pr",
@@ -1053,16 +1191,21 @@ function readBumpPrOpen(repo: string, npm: string): boolean {
     "--state",
     "open",
     "--limit",
-    "100",
+    String(PR_LIST_LIMIT),
     "--json",
     "title,headRefName",
   ]);
-  if (!res.ok) return false;
+  if (!res.ok) return null;
   try {
     const prs: unknown = JSON.parse(res.stdout);
-    return Array.isArray(prs) ? matchesBumpPr(prs as PrRef[], npm) : false;
+    if (!Array.isArray(prs)) return null;
+    if (matchesBumpPr(prs as PrRef[], npm)) return true;
+    // A full page means the list may have been cut off, so "not found" is not
+    // trustworthy — report unknown rather than a false negative that would
+    // present as staleness.
+    return prs.length >= PR_LIST_LIMIT ? null : false;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -1120,7 +1263,7 @@ In the `import.meta.main` block of `check-release-staleness.ts`, insert this loo
 - [ ] **Step 3: Typecheck, lint, and run the whole audit suite**
 
 Run: `bunx tsc -p scripts/tsconfig.json --noEmit && bunx biome check scripts .github && bun test scripts/structure-audit/`
-Expected: typecheck exit 0, biome clean, all tests PASS (Phase 1's 42 + Phase 2's 31).
+Expected: typecheck exit 0, biome clean, all tests PASS (44 in check-release-staleness.test.ts + 35 in _release-train-dep.test.ts = 79).
 
 - [ ] **Step 4: Live proof — run the gate against the real graph**
 
