@@ -36,6 +36,25 @@ import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_g
  */
 export const DEFAULT_GRACE_DAYS = 30;
 
+/**
+ * Actions whose pin deliberately tracks a named REF rather than a release.
+ *
+ * "Latest release" is the right yardstick for most actions and the wrong one
+ * for some. `dtolnay/rust-toolchain` is pinned here against its `stable`
+ * branch (the trailing `# stable` comment says so), and its newest *release*,
+ * `v1`, currently sits **12 commits behind** that branch — so measuring the pin
+ * against `v1` would report a correctly-updated pin as stale, and "fixing" it
+ * would move the pin backwards in code age to satisfy the gate.
+ *
+ * A gate that can only be satisfied by making the repo worse is a broken gate,
+ * so these are compared against the ref they actually track. Keep the map tiny:
+ * an entry here is a claim about intent, and the trailing comment in the
+ * workflow must agree with it.
+ */
+export const TRACKED_REF_OVERRIDES: Readonly<Record<string, string>> = {
+  "dtolnay/rust-toolchain": "heads/stable",
+};
+
 export interface PinnedAction {
   ownerRepo: string;
   sha: string;
@@ -290,6 +309,25 @@ if (import.meta.main) {
   for (const pin of collectPinnedActions(files)) {
     let entry = cache.get(pin.ownerRepo);
     if (!entry) {
+      const trackedRef = TRACKED_REF_OVERRIDES[pin.ownerRepo];
+      if (trackedRef !== undefined) {
+        // Compare against the ref the pin actually tracks. No release exists to
+        // date it, so the ref's own head commit supplies `availableSince`.
+        const refRes = runGh(["gh", "api", `repos/${pin.ownerRepo}/git/ref/${trackedRef}`]);
+        const sha = refRes.ok ? parseTagSha(refRes.stdout) : null;
+        let since = "";
+        if (sha !== null) {
+          const c = runGh(["gh", "api", `repos/${pin.ownerRepo}/commits/${sha}`]);
+          since = (c.ok ? parseCommitDate(c.stdout) : null) ?? "";
+        }
+        entry =
+          sha === null
+            ? { latest: null, sha: null }
+            : { latest: { tag: trackedRef.replace(/^heads\//, ""), publishedAt: since }, sha };
+        cache.set(pin.ownerRepo, entry);
+        results.push(evaluatePin(pin, entry.latest, entry.sha, DEFAULT_GRACE_DAYS));
+        continue;
+      }
       const relRes = runGh(["gh", "api", `repos/${pin.ownerRepo}/releases/latest`]);
       if (!relRes.ok && classifyReadFailure(relRes.httpStatus) === "absent") {
         // The repo publishes no releases at all (our own `nimbus-agent/.github`
