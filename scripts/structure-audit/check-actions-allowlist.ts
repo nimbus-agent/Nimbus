@@ -23,7 +23,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 
 export interface WorkflowFile {
   path: string;
@@ -235,6 +235,51 @@ export function latestStartupFailures(runs: readonly RunSummary[]): string[] {
     .sort();
 }
 
+export interface WorkflowRef {
+  id: number;
+  name: string;
+  state: string;
+}
+
+/**
+ * The repo's workflows.
+ *
+ * Needed because `actions/runs` returns the newest runs REPO-WIDE, so a quiet
+ * workflow falls off the page entirely. Measured on this repo: 26 workflows,
+ * but the newest 100 runs covered only 13 of them — the gate would have been
+ * blind to half, plausibly including `cla.yml`, which runs only on PRs and is
+ * the exact outage this gate exists to catch. Each workflow's latest run is
+ * therefore fetched individually.
+ */
+export function parseWorkflows(json: string): WorkflowRef[] | null {
+  try {
+    const p: unknown = JSON.parse(json);
+    if (!isRecord(p)) return null;
+    const list = p["workflows"];
+    if (!Array.isArray(list)) return null;
+    const out: WorkflowRef[] = [];
+    for (const w of list) {
+      if (!isRecord(w)) continue;
+      const id = w["id"];
+      const name = w["name"];
+      const state = w["state"];
+      if (typeof id !== "number" || typeof name !== "string") continue;
+      out.push({ id, name, state: typeof state === "string" ? state : "active" });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A disabled workflow cannot run, so its last-ever run being a startup failure
+ * is history rather than a live defect. Only active workflows are asked.
+ */
+export function isActiveWorkflow(w: WorkflowRef): boolean {
+  return w.state === "active";
+}
+
 export function parseRuns(json: string): RunSummary[] | null {
   try {
     const p: unknown = JSON.parse(json);
@@ -290,40 +335,79 @@ if (import.meta.main) {
   const label = "audit:actions-allowlist";
   const repo = "nimbus-agent/Nimbus";
 
-  const probe = runGh(["gh", "api", `repos/${repo}/actions/permissions`]);
-  if (!probe.ok) {
-    // A 404 here means the token cannot read Actions settings, not that the
-    // repo is unprotected — never a finding.
+  // The two halves need DIFFERENT permissions and are evaluated independently.
+  //
+  // `actions/permissions` needs repo Administration on a GitHub App token, and
+  // the workflow `permissions:` block has no `administration` scope at all — so
+  // `github.token` may simply be unable to read it. Making that fatal would put
+  // the sweep permanently red for a reason nobody can fix from CI, so an
+  // unreadable allowlist degrades to a warning and the startup-failure half
+  // (which needs only `actions: read`) still runs. Only if BOTH are unreadable
+  // is there nothing to say.
+  const permRes = runGh(["gh", "api", `repos/${repo}/actions/permissions`]);
+  const allowedActions = permRes.ok ? parsePermissions(permRes.stdout) : null;
+
+  let result: AllowlistResult | null = null;
+  if (permRes.ok) {
+    let selected: SelectedActions | null = null;
+    if (allowedActions === "selected") {
+      const selRes = runGh(["gh", "api", `repos/${repo}/actions/permissions/selected-actions`]);
+      selected = selRes.ok ? parseSelectedActions(selRes.stdout) : null;
+    }
+    const refs = collectActionRefs(
+      readWorkflows(join(import.meta.dir, "..", "..", ".github", "workflows")),
+    );
+    result = evaluateAllowlist(repo, allowedActions, selected, refs);
+  }
+
+  // The direct half: a workflow that cannot start says so itself. Asked PER
+  // WORKFLOW, because `actions/runs` returns the newest runs repo-wide and a
+  // quiet workflow drops off the page (26 workflows here; the newest 100 runs
+  // covered 13).
+  const wfRes = runGh(["gh", "api", `repos/${repo}/actions/workflows?per_page=100`]);
+  const workflows = wfRes.ok ? parseWorkflows(wfRes.stdout) : null;
+  let broken: string[] | null = null;
+  if (workflows !== null) {
+    const latest: RunSummary[] = [];
+    let anyRunReadFailed = false;
+    for (const w of workflows.filter(isActiveWorkflow)) {
+      const r = runGh(["gh", "api", `repos/${repo}/actions/workflows/${w.id}/runs?per_page=1`]);
+      if (!r.ok) {
+        anyRunReadFailed = true;
+        continue;
+      }
+      const parsed = parseRuns(r.stdout);
+      if (parsed === null) {
+        anyRunReadFailed = true;
+        continue;
+      }
+      latest.push(...parsed);
+    }
+    // A partial read cannot prove absence: the one workflow we failed to read
+    // might be the broken one. Report unknown rather than a false all-clear.
+    broken = anyRunReadFailed && latest.length === 0 ? null : latestStartupFailures(latest);
+    if (anyRunReadFailed) {
+      console.warn(`::warning::${label}: some workflow run lists were unreadable`);
+    }
+  }
+
+  if (result === null && broken === null) {
     const outcome = strictSkip(
       label,
       strict,
-      classifyReadFailure(probe.httpStatus) === "absent"
-        ? "Actions permissions not readable with this token"
-        : undefined,
+      "neither the Actions allowlist nor the workflow run list was readable",
     );
     if (outcome.code === 1) console.error(outcome.message);
     else console.warn(outcome.message);
     process.exit(outcome.code);
   }
-
-  const allowedActions = parsePermissions(probe.stdout);
-  let selected: SelectedActions | null = null;
-  if (allowedActions === "selected") {
-    const selRes = runGh(["gh", "api", `repos/${repo}/actions/permissions/selected-actions`]);
-    selected = selRes.ok ? parseSelectedActions(selRes.stdout) : null;
+  if (result === null) {
+    console.warn(
+      `::warning::${label}: Actions allowlist unreadable with this token (needs Administration:read) — startup-failure detection still ran`,
+    );
   }
 
-  const refs = collectActionRefs(
-    readWorkflows(join(import.meta.dir, "..", "..", ".github", "workflows")),
-  );
-  const result = evaluateAllowlist(repo, allowedActions, selected, refs);
-
-  // The direct half: a workflow that cannot start says so itself.
-  const runsRes = runGh(["gh", "api", `repos/${repo}/actions/runs?per_page=100`]);
-  const runs = runsRes.ok ? parseRuns(runsRes.stdout) : null;
-  const broken = runs === null ? null : latestStartupFailures(runs);
-
-  for (const f of result.findings) {
+  for (const f of result?.findings ?? []) {
     console.error(
       `::error file=.github/workflows/${f.workflow}::${f.ref} is used by ${f.workflow} but is NOT permitted by ${repo}'s Actions allowlist — the workflow will fail at startup, before any job runs`,
     );
@@ -334,18 +418,21 @@ if (import.meta.main) {
     );
   }
 
-  const hardFail = result.verdict === "not-permitted" || (broken?.length ?? 0) > 0;
-  if (hardFail) {
-    console.error(`${label}: FAILED — ${result.detail}; ${broken?.length ?? 0} workflow(s) broken`);
+  const detail = result?.detail ?? "allowlist not evaluated";
+  if (result?.verdict === "not-permitted" || (broken?.length ?? 0) > 0) {
+    console.error(`${label}: FAILED — ${detail}; ${broken?.length ?? 0} workflow(s) broken`);
     process.exit(1);
   }
-  if (result.verdict === "indeterminate" || broken === null) {
-    console.warn(`::warning::${label}: ${result.detail} (indeterminate)`);
+  // `indeterminate` is a TRANSIENT read failure and so may be strict-red;
+  // `unverifiable` is permanent (see the verdict docs) and never is.
+  if (result?.verdict === "indeterminate") {
+    console.warn(`::warning::${label}: ${detail} (indeterminate)`);
     process.exit(strict ? 1 : 0);
   }
-  if (result.verdict === "unverifiable") {
-    // Never red: a permanent unknown, not a transient one. See the verdict docs.
-    console.warn(`::warning::${label}: ${result.detail}`);
+  if (result?.verdict === "unverifiable") {
+    console.warn(`::warning::${label}: ${detail}`);
   }
-  console.log(`${label}: OK — ${repo}: ${result.detail}; no workflow is failing at startup`);
+  console.log(
+    `${label}: OK — ${repo}: ${detail}; ${broken === null ? "startup state unknown" : `${broken.length} workflow(s) failing at startup`}`,
+  );
 }

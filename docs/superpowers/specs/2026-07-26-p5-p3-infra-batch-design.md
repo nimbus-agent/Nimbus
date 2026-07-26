@@ -205,6 +205,40 @@ failure does not red the sweep forever: the question is "can this start *now*",
 not "has it ever failed". Any workflow whose latest run is `startup_failure` is
 a hard finding.
 
+**Runs are fetched per workflow, not repo-wide** (review finding). The obvious
+`actions/runs?per_page=100` returns the newest runs across the WHOLE repo, so a
+quiet workflow falls off the page: measured here, 26 workflows but only 13
+represented in the newest 100 runs. The gate would have been blind to half of
+them — including `cla.yml`, which runs only on PRs, and the scheduled nightly
+jobs. Each active workflow's latest run is therefore fetched individually
+(`actions/workflows/{id}/runs?per_page=1`); disabled workflows are skipped,
+since one that cannot run has history rather than a live defect. A partial read
+reports unknown rather than a false all-clear — the workflow that failed to read
+might be the broken one.
+
+Fixing this immediately paid for itself: the per-workflow fetch found **"Lock
+Threads" failing at startup nightly since at least 2026-07-24**, because
+`dessant/lock-threads` is absent from `patterns_allowed`. That is a second live
+instance of the CLA failure mode, and the repo-wide window could not see it.
+It also corrects an assumption in this design: the five refs classified
+`unverifiable` were presumed permitted via `verified_allowed`, and at least one
+is not — which is precisely why the startup-failure half is the authoritative
+one.
+
+### The two halves are evaluated independently
+
+`actions/permissions` wants repo **Administration** on an App token, and the
+workflow `permissions:` block has **no `administration` scope at all**, so
+`github.token` may be unable to read it. Making that fatal would put the sweep
+permanently red for a reason nobody can fix from CI — the failure mode this
+design already rejected once for `verified_allowed`.
+
+So an unreadable allowlist degrades to a warning and the startup-failure half
+still runs on `actions: read` alone. Only when BOTH are unreadable is there
+nothing to say, which is the existing `strictSkip` path. The allowlist half can
+be enabled later by minting the release-bot App token with
+`permission-administration: read`, exactly as `ruleset-drift` already does.
+
 ### Verdicts
 
 `ok` / `not-permitted` (finding) / `unverifiable` (warn, never red) /

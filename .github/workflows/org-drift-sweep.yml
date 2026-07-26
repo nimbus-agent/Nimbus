@@ -194,6 +194,17 @@ jobs:
     name: actions-allowlist
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # `actions: read` covers the workflow + run lists, which is the half that
+    # matters most. The Actions ALLOWLIST endpoint additionally wants repo
+    # Administration, and the GITHUB_TOKEN permissions block has no
+    # `administration` scope at all — so that half may be unreadable here. The
+    # audit degrades to a warning in that case rather than failing, so the
+    # startup-failure detection still runs. To enable the allowlist half, mint
+    # the release-bot App token with `permission-administration: read` (see the
+    # ruleset-drift job above) and pass it as GH_TOKEN instead.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout Nimbus
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

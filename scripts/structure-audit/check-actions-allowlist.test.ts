@@ -3,11 +3,13 @@ import { describe, expect, test } from "bun:test";
 import {
   collectActionRefs,
   evaluateAllowlist,
+  isActiveWorkflow,
   isCoveredByPatterns,
   latestStartupFailures,
   parsePermissions,
   parseRuns,
   parseSelectedActions,
+  parseWorkflows,
   type RunSummary,
   type SelectedActions,
 } from "./check-actions-allowlist.ts";
@@ -191,6 +193,25 @@ describe("latestStartupFailures", () => {
 
   test("no runs => nothing broken", () => {
     expect(latestStartupFailures([])).toEqual([]);
+  });
+});
+
+describe("parseWorkflows / isActiveWorkflow", () => {
+  test("reads id, name and state", () => {
+    const w = parseWorkflows('{"workflows":[{"id":7,"name":"cla","state":"active"}]}');
+    expect(w).toEqual([{ id: 7, name: "cla", state: "active" }]);
+  });
+
+  test("a disabled workflow is not asked — it cannot run, so a stale failure is history", () => {
+    expect(isActiveWorkflow({ id: 1, name: "x", state: "disabled_manually" })).toBe(false);
+    expect(isActiveWorkflow({ id: 1, name: "x", state: "active" })).toBe(true);
+  });
+
+  test("null on malformed json; entries missing id or name are dropped", () => {
+    expect(parseWorkflows("{nope")).toBeNull();
+    expect(parseWorkflows('{"workflows":[{"name":"no-id"},{"id":2,"name":"ok"}]}')).toEqual([
+      { id: 2, name: "ok", state: "active" },
+    ]);
   });
 });
 
