@@ -1,6 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { useIpcSubscription } from "../../../hooks/useIpcSubscription";
 import { createIpcClient } from "../../../ipc/client";
 import type {

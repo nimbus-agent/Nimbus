@@ -1,7 +1,7 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { List, type RowComponentProps } from "react-window";
 import { AuditFilterChips } from "../../components/settings/audit/AuditFilterChips";
 import { PanelError } from "../../components/settings/PanelError";
