@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.0.1](https://github.com/nimbus-agent/Nimbus/compare/v1.0.0...v1.0.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **ci:** stop pending-run eviction silently cancelling main's validation ([#840](https://github.com/nimbus-agent/Nimbus/issues/840)) ([7ce8815](https://github.com/nimbus-agent/Nimbus/commit/7ce8815952858b16f367b98941539375e0af105e))
+
 ## [1.0.0](https://github.com/nimbus-agent/Nimbus/compare/v0.27.0...v1.0.0) (2026-07-26)
 
 
