@@ -92,10 +92,15 @@ reviews:
     - path: "scripts/structure-audit/**"
       instructions: >-
         These are the org's gates, so their failure modes matter more than their
-        happy paths. A gate must fail SOFT locally and hard under `--strict` /
-        GITHUB_ACTIONS. Any unreadable or unparseable input degrades to
-        `indeterminate` — never to a finding: a transient 5xx must not
-        manufacture drift. Distinguish a 404 ("absent", a real finding) from any
+        happy paths. A NETWORK-backed gate must fail SOFT locally and hard under
+        `--strict` / GITHUB_ACTIONS. A purely local, deterministic gate — no
+        token, no network, reading only checked-in files — simply fails on a
+        finding and has no strict mode; do not ask for one. Any unreadable or
+        unparseable input degrades to `indeterminate` — never to a finding: a
+        transient 5xx must not manufacture drift. Distinguish a PERMANENT
+        unknown (no API can answer) from a TRANSIENT one (a read failed): only
+        the transient kind may be strict-red, or the gate is red forever and
+        everybody learns to ignore it. Distinguish a 404 ("absent", a real finding) from any
         other read failure via `classifyReadFailure`. Flag a comparison that can
         throw on malformed input (`Bun.semver.order` throws; use the wrapper
         that returns null). Flag a new gate that is not registered in
