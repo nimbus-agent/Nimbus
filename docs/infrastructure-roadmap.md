@@ -76,7 +76,7 @@ Design of record:
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
-| P2 | Release Train | 🔨 Phase 1 done | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Remaining: Phase 2 (dependency-DAG edges) |
+| P2 | Release Train | ✅ Phase 1 done (run 30210246814) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Remaining: Phase 2 (dependency-DAG edges) |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ⬜ not started | Per-job wall-clock tracked; regressions visible |
@@ -255,11 +255,23 @@ moves to P6).
        read-only way to prove a ruleset was *not* involved. It exonerated the
        "Protected release tags" ruleset here and prevented a pointless
        weakening of it.
-- **Remaining:** Phase 2 (dependency-DAG edges — sdk/client → consumers). The
-  sub-program is *done* only once the `release-staleness` job has run green in
-  a scheduled sweep on `main`; **record that run number here** (dispatch
-  `org-drift-sweep.yml` — it is green locally against live state as of the
-  entry above, so this is the last formality).
+- **Phase 1 is DONE by this file's own bar (2026-07-26): green in CI, run
+  30210246814.** A dispatched `org-drift-sweep` ran the `release-staleness` job
+  on `main` and it passed. Red-before / green-after on a real defect, then green
+  in the scheduled harness — that is the full definition of *done* for a gate
+  here, not "the code merged".
+- **The same run surfaced a separate, unrelated defect:** the `cla-coverage`
+  job failed — and it failed at the **App-token mint**, so its audit never ran.
+  The mint requests six repos; the App's installation does not include
+  `awesome-nimbus`. The CLA program grew its gated list to six while the App's
+  repository access stayed at five, and because P6a's green sweep predates both
+  new jobs, **this was `cla-coverage`'s first-ever real execution**. Fifth
+  instance of the pattern at the top of this file, second in one day. Fix is
+  org-owner: add `awesome-nimbus` to the `nimbus-release-bot` installation.
+- **Remaining:** Phase 2 (dependency-DAG edges — sdk/client → consumers).
+  Specced, reviewed, planned and plan-reviewed on the branch
+  `dev/asafgolombek/p2-phase2-dep-dag` (design + plan, both dated 2026-07-26);
+  not yet implemented, and not yet on `main`.
 
 ### P5 progress log
 
@@ -281,8 +293,15 @@ sub-programs — record them here so the motivation is not lost:
   actually asks for, so **a permission the probe omits is one it cannot detect
   being lost**. Fixed in #837; the general rule — a health probe must exercise
   the superset of what it guards — belongs in this sub-program.
-- **Known inventory item with a deadline:** `VSCE_PAT` expires **2026-12-01**,
+- **Known inventory item with a deadline:** `VSCE_PAT` expires **2026-09-20**,
   and three release PATs retired during the App migration were never deleted.
+  The date is the token's **own expiry**, per
+  `scripts/release/credential-registry.ts`, which is the SSoT. It is *not*
+  2026-12-01 — that is the Azure DevOps global-PAT decommission, which does not
+  apply because this token was confirmed org-scoped in the ADO portal
+  (2026-07-22, nimbus-vscode#34). An earlier revision of this file carried the
+  December date; at 90-day lead that would have stayed silent past the expiry
+  that actually bites.
 
 ---
 
