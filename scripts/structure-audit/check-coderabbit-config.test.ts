@@ -22,6 +22,16 @@ function loadConfig(): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+interface InstructionEntry {
+  path: string;
+  instructions: string;
+}
+
+function instructionEntries(): InstructionEntry[] {
+  const reviews = loadConfig()["reviews"] as Record<string, unknown>;
+  return reviews["path_instructions"] as InstructionEntry[];
+}
+
 describe("the monorepo's .coderabbit.yaml", () => {
   test("exists — the four satellites have one and this repo carries the invariants", () => {
     expect(existsSync(CONFIG)).toBe(true);
@@ -39,11 +49,14 @@ describe("the monorepo's .coderabbit.yaml", () => {
   });
 
   test("every path_instructions entry has a real path and non-trivial instructions", () => {
-    const reviews = loadConfig()["reviews"] as Record<string, unknown>;
-    const entries = reviews["path_instructions"] as { path: string; instructions: string }[];
+    const entries = instructionEntries();
     expect(entries.length).toBeGreaterThan(0);
     for (const e of entries) {
       expect(typeof e.path).toBe("string");
+      // `typeof` before `.length`: the TS cast is erased at runtime, and an
+      // ARRAY of 80+ elements would satisfy a bare length check while being an
+      // invalid CodeRabbit instruction value.
+      expect(typeof e.instructions).toBe("string");
       expect(e.instructions.length).toBeGreaterThan(80);
       // The glob's first literal segment must exist on disk, so a renamed
       // directory cannot leave an instruction silently matching nothing.
@@ -54,8 +67,7 @@ describe("the monorepo's .coderabbit.yaml", () => {
     }
   });
 
-  test("every invariant it cites exists in docs/SECURITY-INVARIANTS.md", () => {
-    const text = readFileSync(CONFIG, "utf8");
+  test("every invariant cited in an instruction exists in docs/SECURITY-INVARIANTS.md", () => {
     const doc = readFileSync(join(ROOT, "docs", "SECURITY-INVARIANTS.md"), "utf8");
 
     // Real invariants are `## I<n> — ...` headings. Mentions elsewhere in the
@@ -66,10 +78,16 @@ describe("the monorepo's .coderabbit.yaml", () => {
     );
     expect(defined.size).toBeGreaterThan(20);
 
+    // Scan the PARSED instruction values with a bare `\bI\d+\b`, not the raw
+    // YAML for parenthesised ids. The narrower form only saw `(I2)` and would
+    // have let `enforce I31` or `(I30/I31)` through — precisely the stale
+    // guidance this test exists to catch. Parsing also scopes the scan to
+    // instructions, so the file's header comment (which legitimately mentions
+    // the I1-I30 range and the reserved I28) is not swept in.
     const cited = new Set(
-      [...text.matchAll(/\(([I\d, ]*I\d+)\)/g)]
-        .flatMap((m) => (m[1] ?? "").split(/[,\s]+/))
-        .filter((s) => /^I\d+$/.test(s)),
+      instructionEntries().flatMap((e) =>
+        [...e.instructions.matchAll(/\bI\d+\b/g)].map((m) => m[0]),
+      ),
     );
     expect(cited.size).toBeGreaterThan(0);
 
@@ -81,9 +99,7 @@ describe("the monorepo's .coderabbit.yaml", () => {
     // I28 is reserved for a parked branch, not a live defense. The file's header
     // comment may SAY that (it is useful context for whoever edits this next);
     // what must not happen is an instruction asking the reviewer to enforce it.
-    const reviews = loadConfig()["reviews"] as Record<string, unknown>;
-    const entries = reviews["path_instructions"] as { instructions: string }[];
-    const offending = entries.filter((e) => /\bI28\b/.test(e.instructions));
+    const offending = instructionEntries().filter((e) => /\bI28\b/.test(e.instructions));
     expect(offending).toEqual([]);
   });
 });
