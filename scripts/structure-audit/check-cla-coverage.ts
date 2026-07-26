@@ -7,11 +7,17 @@
  * strict-in-CI contract as the other org-drift-sweep gates.
  */
 
-import { isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { classifyReadFailure, type GhResult, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 
 export interface AuditResult {
   ok: boolean;
   errors: string[];
+}
+
+/** Classify one per-repo contents read into read / absent / indeterminate. */
+export function classifyRepoRead(res: GhResult): { kind: "read" | "absent" | "indeterminate" } {
+  if (res.ok) return { kind: "read" };
+  return { kind: classifyReadFailure(res.httpStatus) };
 }
 
 const GATED_REPOS = [
@@ -83,9 +89,23 @@ if (import.meta.main) {
       "--jq",
       ".content",
     ]);
-    // Reachability already confirmed by the probe → a failure here is a genuine
-    // 404 (file absent), recorded as `null` and flagged by diffClaCoverage.
-    if (!res.ok) {
+    // Only a 404 means "cla.yml absent" (a real finding). A transient failure
+    // (5xx, 403 rate-limit, network) must NOT be recorded as absence — that
+    // would turn a blip into a fake "repo lost its CLA gate" red. The probe
+    // above proves reachability at one instant; it cannot vouch for every
+    // subsequent call, so each read is classified on its own status.
+    const cls = classifyRepoRead(res);
+    if (cls.kind === "indeterminate") {
+      const outcome = strictSkip(
+        label,
+        strict,
+        `cla-coverage indeterminate — ${repo} read failed transiently (HTTP ${res.httpStatus ?? "?"})`,
+      );
+      if (outcome.code === 1) console.error(outcome.message);
+      else console.warn(outcome.message);
+      process.exit(outcome.code);
+    }
+    if (cls.kind === "absent") {
       live[repo] = null;
       continue;
     }

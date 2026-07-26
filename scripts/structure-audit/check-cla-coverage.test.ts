@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { diffClaCoverage } from "./check-cla-coverage.ts";
+import { classifyRepoRead, diffClaCoverage } from "./check-cla-coverage.ts";
 
 const REPOS = ["Nimbus", "nimbus-sdk", "nimbus-client"];
 
@@ -45,5 +45,21 @@ describe("diffClaCoverage", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.errors.join("\n")).toContain("nimbus-client");
+  });
+});
+
+describe("classifyRepoRead", () => {
+  test("ok read yields the parsed value", () => {
+    expect(classifyRepoRead({ ok: true, stdout: "x", stderr: "" })).toEqual({ kind: "read" });
+  });
+  test("404 read is absent (a genuine finding)", () => {
+    expect(
+      classifyRepoRead({ ok: false, stdout: "", stderr: "(HTTP 404)", httpStatus: 404 }),
+    ).toEqual({ kind: "absent" });
+  });
+  test("500 read is indeterminate, not absent", () => {
+    expect(
+      classifyRepoRead({ ok: false, stdout: "", stderr: "(HTTP 500)", httpStatus: 500 }),
+    ).toEqual({ kind: "indeterminate" });
   });
 });
