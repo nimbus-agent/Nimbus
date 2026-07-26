@@ -93,11 +93,33 @@ jobs:
             # (This is why v0.27.0 sat unreleased.) So: assign ONLY on a zero exit,
             # and additionally require the value to look like a commit sha, so no
             # future error-body shape can impersonate a resolved tag.
+            # Three outcomes must stay distinct — collapsing them is what broke this
+            # step in the first place:
+            #   exit 0            -> the tag resolves; compare it to the merge commit
+            #   HTTP 404 or 422   -> genuinely absent; this is the phantom, so create it
+            #   anything else     -> auth / rate-limit / network: we CANNOT tell whether
+            #                        the tag exists, so fail loudly instead of guessing
+            #                        (creating a tag on a bad read is unrecoverable).
+            # NOTE: a missing ref on the commits endpoint returns **422** ("No commit
+            # found for SHA"), not 404 — verified live. Treating only 404 as absent
+            # would make every real phantom fatal and defeat the recovery entirely.
+            set +e
+            out=$(gh api "repos/${REPO}/commits/${tag}" --jq '.sha' 2>&1)
+            rc=$?
+            set -e
             existing=""
-            if out=$(gh api "repos/${REPO}/commits/${tag}" --jq '.sha' 2>/dev/null); then
+            if [ "$rc" -eq 0 ]; then
               existing="$out"
+              if ! [[ "$existing" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::${tag} lookup returned a non-sha payload: ${out}"
+                exit 1
+              fi
+            elif grep -qE '\(HTTP (404|422)\)' <<<"$out"; then
+              existing=""
+            else
+              echo "::error::${tag} lookup failed and it is NOT a missing-tag response — refusing to guess: ${out}"
+              exit 1
             fi
-            [[ "$existing" =~ ^[0-9a-f]{40}$ ]] || existing=""
             if [ -z "$existing" ]; then
               echo "Phantom detected: PR #${num} merged as ${ver} but ${tag} is missing. Creating it."
               gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${tag}" -f sha="${sha}"
