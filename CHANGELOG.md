@@ -2,6 +2,24 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.0.0](https://github.com/nimbus-agent/Nimbus/compare/v0.27.0...v1.0.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **security:** clear all high advisories (react-router v8, postcss, brace-expansion) + scope cla.yml permissions ([#835](https://github.com/nimbus-agent/Nimbus/issues/835))
+
+### Features
+
+* **infra:** P2 Release Train Phase 1 — release-staleness gate ([#836](https://github.com/nimbus-agent/Nimbus/issues/836)) ([98b0327](https://github.com/nimbus-agent/Nimbus/commit/98b03278380e946c36c4ae2c0038321969d2ff83))
+
+
+### Bug Fixes
+
+* **release:** reconcile step never detected a missing tag (gh writes 422 to stdout) ([#834](https://github.com/nimbus-agent/Nimbus/issues/834)) ([ffcec8e](https://github.com/nimbus-agent/Nimbus/commit/ffcec8eab8370ab6b8f908e0646a0f3975bd2194))
+* **release:** request workflows:write so the App can create the release tag ([#837](https://github.com/nimbus-agent/Nimbus/issues/837)) ([2be97d7](https://github.com/nimbus-agent/Nimbus/commit/2be97d743861edb2764d707f349522161f9cf077))
+* **security:** clear all high advisories (react-router v8, postcss, brace-expansion) + scope cla.yml permissions ([#835](https://github.com/nimbus-agent/Nimbus/issues/835)) ([7d2129e](https://github.com/nimbus-agent/Nimbus/commit/7d2129e62387e4de74159befbc6db1f85440d9fa))
+
 ## [0.27.0](https://github.com/nimbus-agent/Nimbus/compare/v0.26.0...v0.27.0) (2026-07-24)
 
 
