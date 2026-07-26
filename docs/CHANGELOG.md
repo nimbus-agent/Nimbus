@@ -8,6 +8,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-26 — P2 Release Train Phase 2: dependency-DAG edges.** `audit:release-staleness`
+  now also watches the npm propagation graph. A `<pkg>:publish` edge compares each upstream's
+  component-prefixed release tag to npm `@latest`, catching a package that is tagged but never
+  published; a `<pkg>:<consumer>` edge compares every consuming repo's **lockfile-resolved**
+  version to npm `@latest`, since a semver range misleads in both directions (a caret permits
+  newer, but a caret on a `0.x` pins the minor). The lockfile reader counts only the hoisted
+  entry plus the consumer's own workspaces, so a copy nested inside a third-party package is
+  never mistaken for what local code resolves. Registry reads carry a 5s timeout and degrade to
+  indeterminate; bump PRs already open count as caught-up. Ships red on confirmed drift — the
+  CLI resolves client 0.5.0 against a published 0.12.1.
 - **2026-07-26 — P2 Release Train Phase 1: the `release-staleness` gate.** A declarative
   `.github/release-train.json` lists every propagation edge; `audit:release-staleness` reads three
   version heads — intended (release-please manifest + its bump-commit age), published (the latest

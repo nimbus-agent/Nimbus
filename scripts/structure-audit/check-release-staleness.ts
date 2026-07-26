@@ -11,24 +11,39 @@
  */
 
 import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import {
+  ageHours,
+  compareSemver,
+  decideExit,
+  type EdgeResult,
+  type PublishedRelease,
+  type ReleaseInfo,
+  stripV,
+} from "./_release-train-core.ts";
+import {
+  type ConsumerReading,
+  evaluatePackage,
+  matchesBumpPr,
+  type NpmLatest,
+  type PrRef,
+  parseNpmLatest,
+  resolvedFromBunLock,
+  selectTaggedRelease,
+} from "./_release-train-dep.ts";
 
-export function stripV(version: string): string {
-  return version.replace(/^v/, "");
-}
-
-/**
- * Semver ordering that never throws. `Bun.semver.order` throws on an unparseable
- * version ("Invalid SemVer: ..."), and channel files are external — a format
- * quirk must degrade to "indeterminate", not crash the whole audit. Returns
- * -1 | 0 | 1, or null when either side is not valid semver.
- */
-export function compareSemver(a: string, b: string): number | null {
-  try {
-    return Bun.semver.order(stripV(a), stripV(b));
-  } catch {
-    return null;
-  }
-}
+// The primitives live in the leaf core module (so the Phase 2 dependency readers
+// can share them without an import cycle), but they are re-exported here so this
+// module path stays the single entry point for the gate's callers and tests.
+export {
+  ageHours,
+  compareSemver,
+  decideExit,
+  type EdgeResult,
+  type EdgeVerdict,
+  type PublishedRelease,
+  type ReleaseInfo,
+  stripV,
+} from "./_release-train-core.ts";
 
 /** `version "X.Y.Z"` from a Homebrew Formula .rb. */
 export function parseBrewVersion(rb: string): string | null {
@@ -67,18 +82,6 @@ export function parseLinuxVersion(packages: string, pkgName = "nimbus-headless")
     }
   }
   return null;
-}
-
-export interface ReleaseInfo {
-  tag: string;
-  prerelease: boolean;
-  draft: boolean;
-  assets: string[];
-  publishedAt: string;
-}
-export interface PublishedRelease {
-  version: string;
-  publishedAt: string;
 }
 
 /**
@@ -126,12 +129,6 @@ export function resolveWingetCoverage(
   return { status: "indeterminate", covered: false };
 }
 
-export type EdgeVerdict = "ok" | "stale" | "phantom" | "indeterminate";
-export interface EdgeResult {
-  edge: string;
-  verdict: EdgeVerdict;
-  detail: string;
-}
 export interface ChannelReading {
   kind: string;
   status: "read" | "absent" | "indeterminate";
@@ -233,32 +230,6 @@ export function evaluateTrain(i: TrainEvalInput): EdgeResult[] {
   return results;
 }
 
-/**
- * Exit decision. Any stale/phantom edge => red. Otherwise green with a warning
- * per indeterminate edge — EXCEPT a run where nothing was evaluable (no ok, only
- * indeterminate) under --strict is red: "indeterminate" must not read as "all
- * clear" in the scheduled sweep (the team-reachability rule).
- */
-export function decideExit(
-  results: EdgeResult[],
-  strict: boolean,
-): { code: 0 | 1; messages: string[] } {
-  const messages: string[] = [];
-  const hard = results.filter((r) => r.verdict === "phantom" || r.verdict === "stale");
-  const indet = results.filter((r) => r.verdict === "indeterminate");
-  const ok = results.filter((r) => r.verdict === "ok");
-  for (const r of hard) messages.push(`::error::${r.edge}: ${r.detail}`);
-  for (const r of indet) messages.push(`::warning::${r.edge}: ${r.detail} (indeterminate)`);
-  if (hard.length > 0) return { code: 1, messages };
-  if (ok.length === 0 && indet.length > 0 && strict) {
-    messages.push(
-      "::error::release-staleness: indeterminate — nothing could be evaluated (all reads failed transiently)",
-    );
-    return { code: 1, messages };
-  }
-  return { code: 0, messages };
-}
-
 export interface ChannelSpec {
   kind: "brew" | "scoop" | "linux" | "winget";
   repo?: string;
@@ -276,9 +247,22 @@ export interface TrainSpec {
   };
   channels: ChannelSpec[];
 }
+export interface ConsumerSpec {
+  repo: string;
+  lockfile: string;
+}
+export interface PackageSpec {
+  name: string;
+  npm: string;
+  repo: string;
+  /** Anchored regex with ONE capture group holding the bare version. */
+  tagPattern: string;
+  consumers: ConsumerSpec[];
+}
 export interface TrainManifest {
   graceHours: number;
   trains: TrainSpec[];
+  packages: PackageSpec[];
 }
 
 export function loadTrainManifest(json: string): TrainManifest {
@@ -290,19 +274,14 @@ export function loadTrainManifest(json: string): TrainManifest {
   ) {
     throw new Error("release-train.json: expected { graceHours: number, trains: [...] }");
   }
-  return parsed as unknown as TrainManifest;
-}
-
-/**
- * Hours between an ISO-8601 (Z-suffixed) timestamp and now, UTC epoch-ms math.
- * An unparseable date yields `+Infinity` (fail-CLOSED): a NaN age would satisfy
- * `NaN > graceHours === false` and silently mask a phantom/stale state as "ok",
- * so an unreadable timestamp instead forces the aged-check to fire.
- */
-export function ageHours(isoZ: string): number {
-  const t = new Date(isoZ).getTime();
-  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY;
-  return (Date.now() - t) / 3_600_000;
+  // `packages` is optional on disk but always an array in memory, so callers
+  // never branch on undefined. A present-but-wrong-shaped value is a hard error
+  // rather than a silent empty list, which would make the Phase 2 edges vanish.
+  const pkgs = parsed["packages"];
+  if (pkgs !== undefined && !Array.isArray(pkgs)) {
+    throw new Error("release-train.json: `packages` must be an array when present");
+  }
+  return { ...(parsed as unknown as TrainManifest), packages: (pkgs ?? []) as PackageSpec[] };
 }
 
 /** Decode a GitHub contents API base64 `.content` envelope to UTF-8 text. */
@@ -429,6 +408,105 @@ function readPublished(train: TrainSpec): PublishedRelease | null {
   return selectPublished(rels as ReleaseInfo[], train.source.releaseAsset);
 }
 
+/**
+ * npm `@latest` + its publish time. Bounded by an explicit 5s timeout: the
+ * registry is the only dependency here that is neither GitHub nor local, and an
+ * unbounded fetch would hang the sweep job (and a local run, which is worse).
+ * Any timeout, non-200, or malformed body degrades to null -> indeterminate.
+ */
+async function readNpmLatest(pkg: string): Promise<NpmLatest | null> {
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg}`, {
+      signal: AbortSignal.timeout(5000),
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    return parseNpmLatest(await res.text());
+  } catch {
+    return null;
+  }
+}
+
+/** The upstream repo's highest release whose tag matches the package pattern. */
+function readTaggedRelease(pkg: PackageSpec): PublishedRelease | null {
+  const res = runGh([
+    "gh",
+    "api",
+    `repos/${pkg.repo}/releases?per_page=100`,
+    "--jq",
+    "[.[] | {tag: .tag_name, prerelease: .prerelease, draft: .draft, publishedAt: .published_at, assets: [.assets[].name]}]",
+  ]);
+  if (!res.ok) return null;
+  try {
+    const rels: unknown = JSON.parse(res.stdout);
+    if (!Array.isArray(rels)) return null;
+    return selectTaggedRelease(rels as ReleaseInfo[], pkg.tagPattern);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How many open PRs we ask for. Named so the truncation guard below can compare
+ * against the exact same number.
+ */
+const PR_LIST_LIMIT = 100;
+
+/**
+ * Is there an open PR in `repo` that looks like a bump of `npm`?
+ * `null` means "cannot tell" — the caller must degrade to indeterminate rather
+ * than concluding "no bump PR", which would turn an unknown into a `stale`.
+ *
+ * Deliberately NOT `gh pr list --search`: matching happens in memory (see
+ * `matchesBumpPr`) so the gate does not depend on GitHub's opaque relevance
+ * ranker, per the design review. The cost of that choice is the page limit
+ * below, which is why truncation is detected instead of ignored.
+ */
+function readBumpPrOpen(repo: string, npm: string): boolean | null {
+  const res = runGh([
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--limit",
+    String(PR_LIST_LIMIT),
+    "--json",
+    "title,headRefName",
+  ]);
+  if (!res.ok) return null;
+  try {
+    const prs: unknown = JSON.parse(res.stdout);
+    if (!Array.isArray(prs)) return null;
+    if (matchesBumpPr(prs as PrRef[], npm)) return true;
+    // A full page means the list may have been cut off, so "not found" is not
+    // trustworthy — report unknown rather than a false negative that would
+    // present as staleness.
+    return prs.length >= PR_LIST_LIMIT ? null : false;
+  } catch {
+    return null;
+  }
+}
+
+/** One consumer's lockfile-resolved version of `npm`. */
+function readConsumer(c: ConsumerSpec, npm: string): ConsumerReading {
+  const res = runGh(["gh", "api", `repos/${c.repo}/contents/${c.lockfile}`, "--jq", ".content"]);
+  if (!res.ok) {
+    // 404 => the lockfile itself is missing (a real finding). Anything else is
+    // transient and must not be reported as staleness.
+    const kind = classifyReadFailure(res.httpStatus);
+    return { repo: c.repo, status: kind, resolved: null, bumpPrOpen: false };
+  }
+  const resolved = resolvedFromBunLock(decodeContents(res.stdout), npm);
+  if (resolved === null) {
+    // Parsed fine, no entry for the package => the manifest is wrong, not the repo.
+    return { repo: c.repo, status: "not-a-dependency", resolved: null, bumpPrOpen: false };
+  }
+  return { repo: c.repo, status: "read", resolved, bumpPrOpen: readBumpPrOpen(c.repo, npm) };
+}
+
 if (import.meta.main) {
   const strict = isStrict(process.argv.slice(2), process.env);
   const label = "audit:release-staleness";
@@ -462,6 +540,25 @@ if (import.meta.main) {
         published,
         publishedAgeHours,
         channels,
+        graceHours: manifest.graceHours,
+      }),
+    );
+  }
+
+  for (const pkg of manifest.packages) {
+    const latest = await readNpmLatest(pkg.npm);
+    const taggedRelease = readTaggedRelease(pkg);
+    const consumers = pkg.consumers.map((c) => readConsumer(c, pkg.npm));
+
+    allResults.push(
+      ...evaluatePackage({
+        name: pkg.name,
+        npm: pkg.npm,
+        taggedRelease,
+        taggedReleaseAgeHours: taggedRelease ? ageHours(taggedRelease.publishedAt) : null,
+        latest,
+        latestAgeHours: latest ? ageHours(latest.publishedAt) : null,
+        consumers,
         graceHours: manifest.graceHours,
       }),
     );

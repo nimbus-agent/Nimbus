@@ -76,7 +76,7 @@ Design of record:
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
-| P2 | Release Train | ✅ Phase 1 done (run 30210246814) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Remaining: Phase 2 (dependency-DAG edges) |
+| P2 | Release Train | ✅ done (Phase 1 run 30210246814) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Phase 2 adds npm publish-phantom + consumer-lag edges. |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ⬜ not started | Per-job wall-clock tracked; regressions visible |
@@ -268,10 +268,36 @@ moves to P6).
   new jobs, **this was `cla-coverage`'s first-ever real execution**. Fifth
   instance of the pattern at the top of this file, second in one day. Fix is
   org-owner: add `awesome-nimbus` to the `nimbus-release-bot` installation.
-- **Remaining:** Phase 2 (dependency-DAG edges — sdk/client → consumers).
-  Specced, reviewed, planned and plan-reviewed on the branch
-  `dev/asafgolombek/p2-phase2-dep-dag` (design + plan, both dated 2026-07-26);
-  not yet implemented, and not yet on `main`.
+- **Delivered (Phase 2 — dependency DAG, 2026-07-26):** `.github/release-train.json`
+  gains `packages[]`; two new edge kinds run in the same gate. `<pkg>:publish`
+  compares the upstream component-prefixed release tag to npm `@latest`,
+  catching "tagged but never published" — the npm analogue of the release
+  phantom. `<pkg>:<consumer>` compares each consumer's **lockfile-resolved**
+  version to npm `@latest`, because a range misleads in both directions:
+  `^1.2.0` permits a newer `1.3.0`, while a caret on a `0.x` pins the minor, so
+  `^0.5.0` cannot reach `0.12.1` at all.
+- **The lockfile reader is workspace-scoped, not global.** A bun.lock resolution
+  key is a dependency *path*, so a lower version nested under a third-party
+  package is that package's business, not ours. The reader takes the minimum
+  over the hoisted entry plus entries whose prefix is one of the consumer's own
+  workspace names. Getting this wrong reports a version no local code resolves —
+  confirmed live: Nimbus's hoisted sdk is `1.6.0` while the copy inside
+  `@nimbus-dev/client` is `1.3.0`, and the gate correctly reads `1.6.0`.
+- **Shipped RED on real drift (2026-07-26 16:41Z):** `client:Nimbus`
+  (0.5.0 vs npm 0.12.1) and `client:nimbus-vscode` (0.11.0 vs 0.12.1), both past
+  a 52h-old publish. Confirmed drift, not deliberate pins. Both `:publish` edges
+  green. Bumping those consumers is separate remediation work.
+- **The sdk edges were green on that run for the right reason, and the timing is
+  the point.** `@nimbus-dev/sdk` 1.7.0 had been published 0.8h earlier, so the
+  6h grace window suppressed all three consumer edges even though every one of
+  them is behind it (nimbus-vscode 1.5.2, nimbus-client and Nimbus 1.6.0). That
+  is the rule working — a package published minutes ago must not red its whole
+  consumer set — but it means those three edges go red once grace expires unless
+  they are bumped, and the drift is larger than the design's snapshot recorded.
+- **Remaining:** the sweep proof. Phase 1's bar for *done* is green in the
+  scheduled harness, which Phase 2 cannot show while it is legitimately red;
+  dispatch `org-drift-sweep.yml` after the consumer bumps land and record the
+  run number here, same as Phase 1.
 
 ### P5 progress log
 

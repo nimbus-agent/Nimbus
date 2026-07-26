@@ -21,5 +21,28 @@
         { "kind": "winget", "package": "NimbusAgent.Nimbus", "wingetRepo": "microsoft/winget-pkgs" }
       ]
     }
+  ],
+  "packages": [
+    {
+      "name": "sdk",
+      "npm": "@nimbus-dev/sdk",
+      "repo": "nimbus-agent/nimbus-sdk",
+      "tagPattern": "^sdk-v(\\d+\\.\\d+\\.\\d+)$",
+      "consumers": [
+        { "repo": "nimbus-agent/nimbus-client", "lockfile": "bun.lock" },
+        { "repo": "nimbus-agent/nimbus-vscode", "lockfile": "bun.lock" },
+        { "repo": "nimbus-agent/Nimbus", "lockfile": "bun.lock" }
+      ]
+    },
+    {
+      "name": "client",
+      "npm": "@nimbus-dev/client",
+      "repo": "nimbus-agent/nimbus-client",
+      "tagPattern": "^client-v(\\d+\\.\\d+\\.\\d+)$",
+      "consumers": [
+        { "repo": "nimbus-agent/nimbus-vscode", "lockfile": "bun.lock" },
+        { "repo": "nimbus-agent/Nimbus", "lockfile": "bun.lock" }
+      ]
+    }
   ]
 }

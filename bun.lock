@@ -1817,7 +1817,7 @@
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.5.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.3.0" } }, "sha512-DqIhRNGfwwNNUS9eqc2w3ggGhMB36xMYz4kh6TKut0rDDcOut/XNvIJIm7uqRbTfzMAuZQ9QAdTVGSMcy7uw1A=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.6.0", "", {}, "sha512-dHPSNP7GuNgM6oo0el4oZhqx1Xbtbwi+2XSKLmBfUcBj4zDTIKyqX9JQpmmSU9eaQcZgQNC7u9o5CmQTa8g1qA=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.7.0", "", {}, "sha512-ApS6UElKIGABnqWZsBQvKptlERDI5B18NfQFFZSLk/prEDd8473pR6H/17SMi96fk7/1bp4HgYI5ioqVr6Y2dA=="],
 
     "@nimbus/cli": ["@nimbus/cli@workspace:packages/cli"],
 
