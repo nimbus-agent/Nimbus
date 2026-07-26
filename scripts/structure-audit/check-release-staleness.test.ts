@@ -301,4 +301,26 @@ describe("loadTrainManifest", () => {
     expect(m.trains.length).toBeGreaterThan(0);
     expect(m.trains[0]?.channels.some((c) => c.kind === "winget")).toBe(true);
   });
+  test("parses packages[] with consumers", () => {
+    const m = loadTrainManifest(
+      '{"graceHours":6,"trains":[],"packages":[{"name":"sdk","npm":"@x/sdk","repo":"o/r","tagPattern":"^sdk-v(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)$","consumers":[{"repo":"o/c","lockfile":"bun.lock"}]}]}',
+    );
+    expect(m.packages[0]?.name).toBe("sdk");
+    expect(m.packages[0]?.consumers[0]?.lockfile).toBe("bun.lock");
+  });
+  test("throws when packages is present but not an array", () => {
+    expect(() => loadTrainManifest('{"graceHours":6,"trains":[],"packages":{}}')).toThrow();
+  });
+  test("the committed manifest declares both packages with a capture-group tagPattern", () => {
+    const raw = readFileSync(
+      join(import.meta.dir, "..", "..", ".github", "release-train.json"),
+      "utf8",
+    );
+    const m = loadTrainManifest(raw);
+    expect(m.packages.map((p) => p.name).sort()).toEqual(["client", "sdk"]);
+    for (const p of m.packages) {
+      expect(p.tagPattern).toContain("(");
+      expect(p.consumers.length).toBeGreaterThan(0);
+    }
+  });
 });

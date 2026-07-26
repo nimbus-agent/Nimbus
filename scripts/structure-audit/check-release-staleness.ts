@@ -237,9 +237,22 @@ export interface TrainSpec {
   };
   channels: ChannelSpec[];
 }
+export interface ConsumerSpec {
+  repo: string;
+  lockfile: string;
+}
+export interface PackageSpec {
+  name: string;
+  npm: string;
+  repo: string;
+  /** Anchored regex with ONE capture group holding the bare version. */
+  tagPattern: string;
+  consumers: ConsumerSpec[];
+}
 export interface TrainManifest {
   graceHours: number;
   trains: TrainSpec[];
+  packages: PackageSpec[];
 }
 
 export function loadTrainManifest(json: string): TrainManifest {
@@ -251,7 +264,14 @@ export function loadTrainManifest(json: string): TrainManifest {
   ) {
     throw new Error("release-train.json: expected { graceHours: number, trains: [...] }");
   }
-  return parsed as unknown as TrainManifest;
+  // `packages` is optional on disk but always an array in memory, so callers
+  // never branch on undefined. A present-but-wrong-shaped value is a hard error
+  // rather than a silent empty list, which would make the Phase 2 edges vanish.
+  const pkgs = parsed["packages"];
+  if (pkgs !== undefined && !Array.isArray(pkgs)) {
+    throw new Error("release-train.json: `packages` must be an array when present");
+  }
+  return { ...(parsed as unknown as TrainManifest), packages: (pkgs ?? []) as PackageSpec[] };
 }
 
 /** Decode a GitHub contents API base64 `.content` envelope to UTF-8 text. */
