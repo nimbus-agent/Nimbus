@@ -8,6 +8,10 @@
 export interface GhResult {
   ok: boolean;
   stdout: string;
+  /** Captured stderr (gh writes "(HTTP NNN)" here on failure). "" on success or spawn error. */
+  stderr: string;
+  /** Parsed HTTP status when the call failed with one; undefined otherwise. */
+  httpStatus?: number | undefined;
 }
 
 /** Narrow an unknown to a plain object (not null, not an array) before indexing it. */
@@ -15,14 +19,32 @@ export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** Pull the numeric status out of gh's `... (HTTP NNN)` error line. */
+export function parseHttpStatus(stderr: string): number | undefined {
+  const m = stderr.match(/\(HTTP (\d{3})\)/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * A failed public read is either a genuine 404 (the thing is absent — a real
+ * finding) or a transient failure (5xx, 403 rate-limit, network) that must NOT
+ * be read as a finding. Mirrors the team-reachability "indeterminate" rule.
+ */
+export function classifyReadFailure(httpStatus: number | undefined): "absent" | "indeterminate" {
+  return httpStatus === 404 ? "absent" : "indeterminate";
+}
+
 /** Wraps `Bun.spawnSync` so a missing `gh` binary or non-zero exit both surface as `ok: false`. */
 export function runGh(args: string[]): GhResult {
   try {
     const proc = Bun.spawnSync(args);
-    if (!proc.success) return { ok: false, stdout: "" };
-    return { ok: true, stdout: new TextDecoder().decode(proc.stdout) };
+    const stderr = new TextDecoder().decode(proc.stderr);
+    if (!proc.success) {
+      return { ok: false, stdout: "", stderr, httpStatus: parseHttpStatus(stderr) };
+    }
+    return { ok: true, stdout: new TextDecoder().decode(proc.stdout), stderr };
   } catch {
-    return { ok: false, stdout: "" };
+    return { ok: false, stdout: "", stderr: "" };
   }
 }
 
