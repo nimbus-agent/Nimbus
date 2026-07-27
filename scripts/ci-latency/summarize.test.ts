@@ -62,12 +62,14 @@ describe("summarize", () => {
   });
 
   test("execSpread is p90 minus median — the job's own noise band", () => {
-    // Nearest-rank p90 excludes the single worst outlier: with 10 samples and rank=9,
-    // p90 is the 9th value, not the max.
-    const m = summarize([2, 2, 2, 2, 2, 2, 2, 2, 2, 20].map((e) => obs({ exec: e })));
+    // Nearest-rank p90 of 10 values is the 9th: 9. Median is 5.5. So the band
+    // is 3.5 — a POSITIVE assertion of the number the whole tolerance
+    // mechanism rests on. The 20 is deliberately excluded by p90, which is the
+    // outlier-resistance this statistic exists for.
+    const m = summarize([1, 2, 3, 4, 5, 6, 7, 8, 9, 20].map((e) => obs({ exec: e })));
     const s = m.get("Nimbus :: CI :: Unit + Coverage");
-    expect(s?.execMedian).toBe(2);
-    expect(s?.execSpread).toBe(0);
+    expect(s?.execMedian).toBe(5.5);
+    expect(s?.execSpread).toBe(3.5);
   });
 
   test("a stable job has a near-zero spread", () => {
