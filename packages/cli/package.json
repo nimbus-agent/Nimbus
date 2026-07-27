@@ -16,7 +16,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@clack/prompts": "^1.5.1",
+    "@clack/prompts": "^1.7.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@nimbus-dev/client": "^0.12.1",
     "@nimbus-dev/sdk": "^1.5.0",
