@@ -115,6 +115,17 @@ describe("evaluatePin", () => {
     expect(r.verdict).toBe("stale");
   });
 
+  test("an EMPTY publishedAt yields stale — which is why a caller must never fabricate one", () => {
+    // `daysSince("")` fails closed to +Infinity, so handing evaluatePin a
+    // dated result built from a FAILED read would manufacture a `stale` finding
+    // out of a transient error. The tracked-ref branch therefore builds
+    // `latest` only once both the ref read and the commit-date read succeed,
+    // and otherwise passes null so this path reports indeterminate instead.
+    const r = evaluatePin(pin({ sha }), { tag: "stable", publishedAt: "" }, "b".repeat(40), 30);
+    expect(r.verdict).toBe("stale");
+    expect(evaluatePin(pin({ sha }), null, "b".repeat(40), 30).verdict).toBe("indeterminate");
+  });
+
   test("a timestamp with no timezone also fails closed", () => {
     const r = evaluatePin(
       pin({ sha }),

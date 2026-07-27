@@ -40,7 +40,7 @@ runs:
     #
     # SKIPPED ON WINDOWS: Bun's monorepo layout under
     # `node_modules/.bun/<pkg>@<version>+<hash>/node_modules/<pkg>/` relies on
-    # NT junctions, which `actions/cache@v5`'s tar pack/restore does not preserve
+    # NT junctions, which this action's tar pack/restore does not preserve
     # correctly. A restored tree on Windows produces EPERM reads on `.bun/...`
     # paths and yields stripped-down ambient `@types/bun` / `@types/node`
     # declarations (e.g. `Response.text/ok/status` go missing), failing

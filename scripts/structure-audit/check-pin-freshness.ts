@@ -313,15 +313,23 @@ if (import.meta.main) {
       if (trackedRef !== undefined) {
         // Compare against the ref the pin actually tracks. No release exists to
         // date it, so the ref's own head commit supplies `availableSince`.
+        //
+        // BOTH reads must succeed before a dated result is built. Passing an
+        // empty `publishedAt` through would make `daysSince` fail closed to
+        // +Infinity and turn a transient read failure into a manufactured
+        // `stale` — an unreadable input must degrade to `indeterminate`, never
+        // to a finding.
         const refRes = runGh(["gh", "api", `repos/${pin.ownerRepo}/git/ref/${trackedRef}`]);
         const sha = refRes.ok ? parseTagSha(refRes.stdout) : null;
-        let since = "";
-        if (sha !== null) {
-          const c = runGh(["gh", "api", `repos/${pin.ownerRepo}/commits/${sha}`]);
-          since = (c.ok ? parseCommitDate(c.stdout) : null) ?? "";
-        }
-        entry =
+        const since =
           sha === null
+            ? null
+            : (() => {
+                const c = runGh(["gh", "api", `repos/${pin.ownerRepo}/commits/${sha}`]);
+                return c.ok ? parseCommitDate(c.stdout) : null;
+              })();
+        entry =
+          sha === null || since === null
             ? { latest: null, sha: null }
             : { latest: { tag: trackedRef.replace(/^heads\//, ""), publishedAt: since }, sha };
         cache.set(pin.ownerRepo, entry);
