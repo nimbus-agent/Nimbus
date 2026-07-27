@@ -270,8 +270,15 @@ client one, so none blocked the stage:
 - `connector.addMcp`'s consent payload reads `command`/`args`, which the
   `{ serviceId, commandLine }` params never populate — so the security prompt
   renders blank. Filed against the gateway.
-- `connector.configChanged` is emitted but not exposed; clients poll instead.
-- `workflow.run({ stream: true })` emits chunks that no public API surfaces.
+- ~~`connector.configChanged` is emitted but not exposed; clients poll instead.~~
+  **Closed.** Both payload contracts are pinned in `docs/architecture.md`, and
+  `@nimbus-dev/client` exposes `subscribeConnectorConfigChanged`.
+- ~~`workflow.run({ stream: true })` emits chunks that no public API surfaces.~~
+  **Closed — surfaced, not retired**, via `workflowRunStream`. One gateway-side
+  limitation remains and is the reason it is not a full `askStream` equivalent:
+  workflow chunks ride the UNTAGGED `agent.chunk`, so a client cannot attribute a
+  chunk to a run and must keep one streaming workflow per connection. Adding a
+  stream id to those chunks is the fix, and is gateway work.
 
 **Permanently out of bounds:** `vault.*` and `db.*` are gateway-internal and must
 never be surfaced to a client. Anything the gateway marks CLI-only stays CLI-only

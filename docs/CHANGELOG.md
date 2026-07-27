@@ -8,6 +8,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-27 — Rust toolchain CI hardening, and two notification contracts pinned.**
+  The `Cargo deny` job died in `Setup Rust` on run 30232465108 — a TLS reset from
+  static.rust-lang.org on an unretried `rustup toolchain install`, of which there were four
+  copies. The failing one was **redundant**: `cargo-deny-action` is a Docker action on
+  `rust:1.85.0-alpine3.20` carrying its own cargo, so that step is deleted outright. The
+  three genuine ones now go through `.github/actions/setup-rust-toolchain`, which retries
+  three times with backoff and propagates the last exit code. Pre-warming was ruled out by
+  experiment, not assumption: rustup re-syncs the channel manifest on every
+  `toolchain install`, even for an already-installed pinned version. The action parses
+  `channel` and `components` from `rust-toolchain.toml`, so the 1.95.0 pin is no longer
+  copy-pasted into `codeql.yml` and `security.yml`; `setup-rust-tauri` also stops installing
+  `stable` and then pulling 1.95.0 down a second time. `dtolnay/rust-toolchain` is now unused
+  and its dependabot + pin-freshness entries are retired, with the pin-freshness test replaced
+  by one that fails when an override names an action the repo no longer pins.
+  **Notification contracts** (nimbus-agent/Nimbus#809, #810) are now recorded in
+  [`architecture.md`](./architecture.md) from the emit sites: `connector.configChanged`
+  carries the full post-mutation snapshot, and `workflow.run({ stream: true })` reuses the
+  **untagged** `agent.chunk` — the same method `engine.askStream` uses, so chunks cannot be
+  attributed to a run and a client must keep one streaming workflow per connection.
+  `@nimbus-dev/client` consumes both. Also fixes **#812**: the connector-auth OAuth suite
+  depended on winning a module-load race for `Config`'s env snapshot, and on a machine with
+  Google OAuth configured it fell through the fail-closed guard into a real PKCE round-trip.
+
 - **2026-07-26 — P2 Release Train Phase 2: dependency-DAG edges.** `audit:release-staleness`
   now also watches the npm propagation graph. A `<pkg>:publish` edge compares each upstream's
   component-prefixed release tag to npm `@latest`, catching a package that is tagged but never
