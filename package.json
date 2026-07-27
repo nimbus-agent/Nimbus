@@ -255,7 +255,7 @@
     "js-yaml": "^4.3.0",
     "jscpd": "^5.0.12",
     "knip": "^6.27.0",
-    "markdownlint-cli2": "^0.22.1",
+    "markdownlint-cli2": "^0.23.2",
     "tweetnacl": "^1.0.3",
     "typescript": "^6.0.3",
     "yaml": "^2.9.0"
