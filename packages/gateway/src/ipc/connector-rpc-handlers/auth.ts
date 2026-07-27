@@ -25,6 +25,7 @@ import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
 import { type PKCEOptions, runPKCEFlow } from "../../auth/pkce.ts";
 import { Config } from "../../config.ts";
 import {
+  type ConnectorOAuthProfile,
   type ConnectorServiceId,
   defaultSyncIntervalMsForService,
   oauthProfileForService,
@@ -44,7 +45,12 @@ import {
   parseServiceArg,
   registerAtlassianApiConnectorAuth,
 } from "../connector-rpc-shared.ts";
-import type { ConnectorRpcHandlerContext, ConnectorRpcHit } from "./context.ts";
+import type {
+  ConnectorRpcHandlerContext,
+  ConnectorRpcHit,
+  OAuthClientConfig,
+  OAuthClientConfigResolver,
+} from "./context.ts";
 
 /** Returns the trimmed string value of `raw`, or `""` if it is not a non-empty string. */
 function extractStringField(raw: unknown): string {
@@ -540,18 +546,15 @@ async function connectorAuthBitbucket(
   return authSuccess("bitbucket");
 }
 
-interface OAuthClientConfig {
-  readonly clientId: string;
-  readonly emptyClientIdMessage: string;
-  /** Present when the provider has a config-driven client secret AND it is set. */
-  readonly clientSecret?: string;
-  /** Present when the provider's `clientSecret` is `required` (for the missing-secret error). */
-  readonly clientSecretMissingHelp?: string;
-}
-
-function oauthClientConfigForProvider(
-  profile: ReturnType<typeof oauthProfileForService>,
-): OAuthClientConfig {
+/**
+ * The `Config`-backed resolver: one arm per OAuth provider.
+ *
+ * Exported so the per-provider arms can be asserted directly. Reaching them through
+ * `handleConnectorAuth` instead means relying on every client id being empty, which is
+ * a property of the developer's environment rather than of this switch — and when it
+ * does not hold, the call falls through into a real PKCE round-trip (issue #812).
+ */
+export function oauthClientConfigForProvider(profile: ConnectorOAuthProfile): OAuthClientConfig {
   switch (profile.provider) {
     case "google":
       return {
@@ -647,9 +650,10 @@ async function connectorAuthOAuthPkce(
   vault: NimbusVault,
   localIndex: LocalIndex,
   openUrl: (url: string) => Promise<void>,
+  resolveClientConfig: OAuthClientConfigResolver = oauthClientConfigForProvider,
 ): Promise<ConnectorRpcHit> {
   const profile = oauthProfileForService(id);
-  const config = oauthClientConfigForProvider(profile);
+  const config = resolveClientConfig(profile);
   if (config.clientId === "") {
     throw new ConnectorRpcError(-32602, config.emptyClientIdMessage);
   }
@@ -764,5 +768,12 @@ export async function handleConnectorAuth(
   if (patHandler !== undefined) {
     return patHandler(ctx);
   }
-  return connectorAuthOAuthPkce(id, rec, vault, localIndex, openUrl);
+  return connectorAuthOAuthPkce(
+    id,
+    rec,
+    vault,
+    localIndex,
+    openUrl,
+    ctx.resolveOAuthClientConfig ?? oauthClientConfigForProvider,
+  );
 }
