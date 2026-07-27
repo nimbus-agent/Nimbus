@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.2.0](https://github.com/nimbus-agent/Nimbus/compare/v1.1.0...v1.2.0) (2026-07-27)
+
+
+### Features
+
+* **audit:** P4b — measure CI latency before tuning anything ([#877](https://github.com/nimbus-agent/Nimbus/issues/877)) ([6ffe23f](https://github.com/nimbus-agent/Nimbus/commit/6ffe23f3f0f9d94601ff4b9a23a48b3d3fc3f2a7))
+
+
+### Bug Fixes
+
+* **ci:** retry the Rust toolchain install, drop the redundant one, and close [#809](https://github.com/nimbus-agent/Nimbus/issues/809)/[#810](https://github.com/nimbus-agent/Nimbus/issues/810)/[#812](https://github.com/nimbus-agent/Nimbus/issues/812) ([#855](https://github.com/nimbus-agent/Nimbus/issues/855)) ([bb729c5](https://github.com/nimbus-agent/Nimbus/commit/bb729c5b55f3d64823a29e1b15bdd7e6c85a110a))
+* **release:** publish the install scripts and stable-name aliases users are told to download ([#881](https://github.com/nimbus-agent/Nimbus/issues/881)) ([fdbc246](https://github.com/nimbus-agent/Nimbus/commit/fdbc2467bfa503a208d2f463e2b786f9cb4885e8))
+
 ## [1.1.0](https://github.com/nimbus-agent/Nimbus/compare/v1.0.1...v1.1.0) (2026-07-26)
 
 
