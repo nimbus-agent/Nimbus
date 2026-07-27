@@ -40,20 +40,21 @@ export const DEFAULT_GRACE_DAYS = 30;
  * Actions whose pin deliberately tracks a named REF rather than a release.
  *
  * "Latest release" is the right yardstick for most actions and the wrong one
- * for some. `dtolnay/rust-toolchain` is pinned here against its `stable`
- * branch (the trailing `# stable` comment says so), and its newest *release*,
- * `v1`, currently sits **12 commits behind** that branch — so measuring the pin
- * against `v1` would report a correctly-updated pin as stale, and "fixing" it
+ * for some — an action pinned to a branch whose newest *release* sits behind
+ * that branch would be reported stale while correctly updated, and "fixing" it
  * would move the pin backwards in code age to satisfy the gate.
  *
  * A gate that can only be satisfied by making the repo worse is a broken gate,
  * so these are compared against the ref they actually track. Keep the map tiny:
  * an entry here is a claim about intent, and the trailing comment in the
  * workflow must agree with it.
+ *
+ * Currently empty. Its only entry was `dtolnay/rust-toolchain` (pinned to
+ * `heads/stable`), retired when the Rust setup moved to the in-repo
+ * `.github/actions/setup-rust-toolchain`. The mechanism stays because the
+ * branch-pinned case it handles is a recurring one, not because it is in use.
  */
-export const TRACKED_REF_OVERRIDES: Readonly<Record<string, string>> = {
-  "dtolnay/rust-toolchain": "heads/stable",
-};
+export const TRACKED_REF_OVERRIDES: Readonly<Record<string, string>> = {};
 
 export interface PinnedAction {
   ownerRepo: string;

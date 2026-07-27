@@ -57,7 +57,6 @@ updates:
           - "actions/*"
           - "github/codeql-action"
           - "aquasecurity/trivy-action"
-          - "dtolnay/rust-toolchain"
           - "oven-sh/setup-bun"
           - "softprops/action-gh-release"
           - "dorny/test-reporter"

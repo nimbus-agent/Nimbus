@@ -26,10 +26,12 @@ runs:
           librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
           libsecret-tools gnome-keyring
 
+    # Was `dtolnay/rust-toolchain` with no `toolchain:` input, which defaults to
+    # `stable` — so this installed latest stable and then rust-toolchain.toml
+    # pulled 1.95.0 down a second time on the first `cargo fmt`. Two toolchains,
+    # two unretried downloads. The shared action installs the pinned one once.
     - name: Setup Rust
-      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      with:
-        components: rustfmt, clippy
+      uses: ./.github/actions/setup-rust-toolchain
 
     - name: Rust cache (Tauri)
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
