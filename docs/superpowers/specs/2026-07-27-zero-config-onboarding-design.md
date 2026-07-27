@@ -92,9 +92,45 @@ A new CLI command that makes the existing path reachable in one step.
 Constraints:
 
 - **Idempotent.** Re-running is safe.
-- **Never clobbers.** Merges into an existing `nimbus.toml` and reports what it
-  changed. A user's existing roots, connectors, and LLM settings survive.
+- **Never clobbers.** A user's existing roots, connectors, and LLM settings
+  survive, along with their comments and formatting.
 - **No credentials, no LLM, no network.**
+
+#### Append-only, never rewrite
+
+`nimbus init` would be the **first production code that writes `nimbus.toml`** —
+verified: `filesystem-toml.ts`, `nimbus-toml-connectors.ts`, and
+`nimbus-toml-workday.ts` all read the file and nothing writes it. The parser is
+also a bespoke section scanner (`forEachSectionEntry`,
+`parseNimbusTomlFilesystemRoots`), not a round-trippable TOML library, so there
+is no serializer to write back through.
+
+That rules the usual approach out and points at a safer one:
+
+- **Append a `[[filesystem.roots]]` block to the end of the file**, or create the
+  file if absent. Appending cannot reorder keys, cannot strip comments, and
+  cannot reformat anything the user wrote — it structurally avoids the whole
+  corruption class rather than mitigating it.
+- **Read before appending.** `parseNimbusTomlFilesystemRoots` already returns the
+  existing roots, so `init` checks for the target path and no-ops if present.
+  That is where idempotency comes from.
+- **Back up to `nimbus.toml.bak` before the write.** Cheap insurance even though
+  append-only makes loss unlikely.
+
+Explicitly **not** adding a TOML serializer dependency for this. It would be a
+new runtime dependency on the critical path for a single append.
+
+#### Choosing the `file:line` to print
+
+Not a filesystem heuristic. `nimbus why` resolves a **symbol in the index**, so
+picking a file by extension or size can still land on something unindexed or
+uninteresting. Instead, after sync, query the index for an indexed code symbol
+and print that location.
+
+This is guaranteed to resolve, needs no per-language extension allowlist, and
+cannot pick a lockfile or a binary asset — those never become code symbols. It
+also inherently satisfies the "point at something already indexed" requirement
+that background indexing (below) would otherwise impose.
 
 ### 2. Make "no LLM" a stated mode
 
@@ -107,6 +143,9 @@ So it is legible as a deliberate mode rather than something degraded.
 
 Separately, `nimbus ask` genuinely requires an LLM. It should fail with a helpful
 message naming both routes (local Ollama, or a provider key) — not a stack trace.
+The gateway returns a distinguishable error and the CLI renders the guidance;
+the error uses the **existing JSON-RPC numeric-code convention** already in use
+across the IPC layer, rather than introducing a parallel string-enum scheme.
 
 ### 3. README rewrite
 
@@ -127,6 +166,23 @@ This test is the guarantee that the launch demo works on a stranger's machine,
 and it fails loudly if anyone reintroduces a gate. It also settles an open
 question below.
 
+**Isolation is a hard requirement:** the test must never read or write the
+developer's real config directory or the OS keychain (DPAPI / Keychain /
+libsecret). Two notes on mechanism, both verified:
+
+- There is **no `NIMBUS_CONFIG_DIR` override today.** `platform/paths.ts` derives
+  `configDir` from `%APPDATA%` on Windows and `XDG_CONFIG_HOME` / `~/.config`
+  elsewhere. Isolation therefore comes from overriding those, from injecting
+  `PlatformServices` (the documented PAL seam), or from adding a real config-dir
+  override — and adding one is itself a small piece of work this plan must
+  account for rather than assume.
+- The vault seam already exists: `vault/mock.ts` is the established in-memory
+  adapter used by existing suites.
+
+The repo-wide `[test] preload` (`scripts/test-preload/hermetic-credentials.ts`)
+already blanks credential env vars before any test module loads, so an inherited
+provider key cannot silently satisfy the "no LLM" precondition.
+
 ### 5. Measurement — deliberately non-invasive
 
 Release-asset download counts per release, star/fork velocity, and docs-site
@@ -144,10 +200,21 @@ oversight.
 Both are answered by implementation rather than discussion:
 
 1. **Does the gateway daemon boot cleanly with no `[llm]` block at all?** The
-   agent path is verified; process startup is not. The §4 e2e test settles it.
-2. **Is first sync on a large repo fast enough to feel instant?** If not,
-   `nimbus init` should index a bounded subset first and continue in the
-   background, so the printed next command works immediately.
+   agent path is verified, and config parsing reads `[llm]` through
+   `forEachSectionEntry(source, "[llm]", …)` — a section scanner, so an absent
+   section is simply never visited. That is strong evidence but not proof for
+   process startup. The §4 e2e test settles it, plus a config unit test for the
+   empty-config lifecycle.
+2. **Is first sync on a large repo fast enough to feel instant?** Deliberately
+   left to measurement rather than pre-solved. A prioritise-then-background
+   scheme (index recently-changed files first, continue the rest in the
+   background) is the obvious fix *if* it is needed, but building it before
+   measuring is the same "rebuild onboarding before knowing where users drop"
+   trap this spec exists to avoid. Measure first; build only on evidence.
+
+   One constraint applies regardless of the outcome: the printed next command
+   must point at something already indexed. That falls out of selecting the
+   `file:line` from the index (§1) rather than from the filesystem.
 
 ---
 
