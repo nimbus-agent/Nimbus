@@ -376,7 +376,7 @@ export function summarize(obs: readonly JobObservation[]): Map<string, KeySummar
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `bun test scripts/ci-latency/summarize.test.ts`
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1128,7 +1128,7 @@ export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectRes
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `bun test scripts/ci-latency/collect.test.ts`
-Expected: PASS, 15 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Commit**
 
