@@ -827,7 +827,7 @@ git commit -m "feat(audit): ci-latency evaluate — per-key band, exec-only gati
 **Interfaces:**
 
 - Consumes: `runGh`, `isRecord` from `../structure-audit/_gh-audit.ts`; `RUN_LIST_PAGE`, `MAX_RUNS_PER_WORKFLOW`, `SAMPLE_EVENT`, `AUDITED_REPOS`.
-- Produces: `parseRunMeta(json: string): RunMeta[]`, `selectRuns(runs: readonly RunMeta[]): RunMeta[]`, `parseJobObservations(json, repo, workflow, runStartedAt): JobObservation[]`, `collectRepo(repo: string): CollectResult`, `collectAll(repos?: readonly string[]): CollectResult`, and `interface CollectResult { observations: JobObservation[]; attempted: number; readFailures: number; sawNeedsWorkflow: boolean }`.
+- Produces: `parseRunMeta(json: string): RunMeta[]`, `selectRuns(runs: readonly RunMeta[]): RunMeta[]`, `parseJobObservations(json, repo, workflow, runStartedAt): JobObservation[]`, `collectRepo(repo: string): CollectResult`, `collectAll(repos?: readonly string[]): CollectResult`, and `interface CollectResult { observations: JobObservation[]; attempted: number; readFailures: number; sawNonZeroDagWait: boolean }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -978,7 +978,7 @@ export interface CollectResult {
   attempted: number;
   readFailures: number;
   /** True once any observation carried a non-zero dagWait — the created_at guard. */
-  sawNeedsWorkflow: boolean;
+  sawNonZeroDagWait: boolean;
 }
 
 export function parseRunMeta(json: string): RunMeta[] {
@@ -1075,7 +1075,7 @@ export function collectRepo(repo: string): CollectResult {
     observations: [],
     attempted: 0,
     readFailures: 0,
-    sawNeedsWorkflow: false,
+    sawNonZeroDagWait: false,
   };
   const res = runGh([
     "gh",
@@ -1087,7 +1087,7 @@ export function collectRepo(repo: string): CollectResult {
   const out: JobObservation[] = [];
   let attempted = 0;
   let readFailures = 0;
-  let sawNeedsWorkflow = false;
+  let sawNonZeroDagWait = false;
 
   for (const run of selectRuns(parseRunMeta(res.stdout))) {
     attempted++;
@@ -1101,10 +1101,10 @@ export function collectRepo(repo: string): CollectResult {
       continue;
     }
     const obs = parseJobObservations(jobs.stdout, repo, run.name, run.runStartedAt);
-    if (obs.some((o) => o.dagWait > 0)) sawNeedsWorkflow = true;
+    if (obs.some((o) => o.dagWait > 0)) sawNonZeroDagWait = true;
     out.push(...obs);
   }
-  return { observations: out, attempted, readFailures, sawNeedsWorkflow };
+  return { observations: out, attempted, readFailures, sawNonZeroDagWait };
 }
 
 export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectResult {
@@ -1112,14 +1112,14 @@ export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectRes
     observations: [],
     attempted: 0,
     readFailures: 0,
-    sawNeedsWorkflow: false,
+    sawNonZeroDagWait: false,
   };
   for (const repo of repos) {
     const r = collectRepo(repo);
     merged.observations.push(...r.observations);
     merged.attempted += r.attempted;
     merged.readFailures += r.readFailures;
-    merged.sawNeedsWorkflow ||= r.sawNeedsWorkflow;
+    merged.sawNonZeroDagWait ||= r.sawNonZeroDagWait;
   }
   return merged;
 }
@@ -1197,7 +1197,7 @@ if (import.meta.main) {
   const label = "audit:ci-latency";
 
   const collected = collectAll();
-  const { observations, attempted, readFailures, sawNeedsWorkflow } = collected;
+  const { observations, attempted, readFailures, sawNonZeroDagWait } = collected;
 
   if (observations.length === 0) {
     // Nothing readable at all: no gh, no auth, or a total API outage.
@@ -1227,7 +1227,7 @@ if (import.meta.main) {
   // ever changes, dagWait silently goes to zero everywhere and `queue` quietly
   // re-absorbs dependency execution — with no error anywhere. Warn, never fail:
   // an upstream API change is not something a contributor's PR can fix.
-  if (!sawNeedsWorkflow) {
+  if (!sawNonZeroDagWait) {
     console.warn(
       `::warning::${label}: dagWait is zero for every observation — the created_at eligibility assumption may have changed; queue figures may now include dependency execution`,
     );
@@ -1449,7 +1449,7 @@ git commit -m "docs(infra): record P4b — CI latency measurement shipped"
 - Per-key noise band replacing a flat tolerance → Task 3 stores `execSpread`, Task 4 applies `max(MIN_ABSOLUTE_DELTA, spread)`. ✓
 - `MIN_ABSOLUTE_DELTA` floor for sub-minute jobs → Task 4 test. ✓
 - `unstable` observation at `UNSTABLE_SPREAD_RATIO` → Task 4. ✓
-- Ratchet down needs `MIN_SAMPLES_FOR_RATCHET` (5) vs 3 to gate → Task 3 test. ✓
+- Ratchet down needs `MIN_SAMPLES_FOR_RATCHET` (7) vs 3 to gate → Task 3 test. ✓
 - Spread travels down with the median → Task 3 test. ✓
 - Stale baseline entry / new key are never failures → Task 4 tests. ✓
 - Org-wide, 9 repos → Task 1 `AUDITED_REPOS` (mirrors the sha-pins matrix). ✓

@@ -217,7 +217,23 @@ Unchanged from the rest of the program, and fail-closed in the same direction:
 - A key observed but absent from the baseline → recorded on the next
   `--update-baseline`; never a failure on first sight.
 - Under `--strict`, a run where nothing was evaluable is red (the existing
-  team-reachability rule).
+  team-reachability rule) — except when every read SUCCEEDED and the window
+  simply held no eligible job. That is reported as "no CI activity to measure,
+  not an auth failure", because the default wording blames the token and would
+  send whoever reads the sweep hunting a credential that is fine.
+- **A partial sample is worse than no sample.** Failed job-list reads are
+  counted, not merely tolerated: the survivors of a partial collection are
+  whichever runs happened to succeed, so their median can be biased and the gate
+  could manufacture a regression from it. Past `MAX_READ_FAILURE_RATIO` (25% of
+  attempts) the run **skips gating entirely** rather than gate on degraded data.
+  A failed run-*list* read counts as one attempt and one failure, so losing a
+  whole repo can trip the guard.
+- **The `created_at` eligibility assumption is monitored, not assumed.** If no
+  observation anywhere carries a non-zero `dagWait`, the run warns that the
+  assumption may have changed. It cannot prove this — it observes the signal
+  (zero `dagWait` everywhere), not the cause (whether any sampled workflow
+  declares `needs:`), and it warns rather than fails, because an upstream API
+  change is not something a contributor can fix.
 
 ## Expected outcome on arrival
 
@@ -230,10 +246,19 @@ fixture whose median exceeds baseline past both thresholds must fail, and one
 that exceeds only the ratio or only the absolute delta must pass. The live run
 is the green-after half only.
 
-The first genuinely useful output is the **queue observation**, which already
-has a finding to report: ~80% of wall-clock is contention, which is an
-owner-actionable signal (raise concurrency or cut job count) and the input the
-eventual tuning slice must be justified against.
+The first genuinely useful output is the **queue and DAG-wait observations**,
+which already have a finding to report: on the sampled 73.8-minute run the
+longest runner queue was 31.6 min and the longest DAG wait 33.9 min, against a
+longest single-job execution of 12.3 min. Both are owner-actionable in different
+ways — contention says raise concurrency or cut job count, DAG wait says shorten
+the dependency chain — and together they are the input the eventual tuning slice
+must be justified against.
+
+(An earlier revision summarised this as "~80% of wall-clock is contention".
+That restated the same error the caveat at the top of this document corrects:
+it folds DAG wait, which is dependencies doing real work, into contention. The
+two maxima belong to different jobs and cannot be added, so no single percentage
+describes the run.)
 
 ## Out of scope
 

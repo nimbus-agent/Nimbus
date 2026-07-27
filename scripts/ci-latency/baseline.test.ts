@@ -108,6 +108,38 @@ describe("computeUpdatedBaseline", () => {
     expect(next.entries.has("k")).toBe(false);
   });
 
+  test("a NARROWER spread cannot tighten the gate without ratchet evidence", () => {
+    // The evidence rule guards the EFFECTIVE threshold
+    // (median + max(1, spread)), not the median alone. Here the median is
+    // unchanged but the spread halves, which would drop the threshold from
+    // 10 + 4 = 14 to 10 + 2 = 12 — a real tightening. A median-only check
+    // would let it through, since 10 < 10 is false.
+    const next = computeUpdatedBaseline(
+      base({ k: { execMedian: 10, execSpread: 4 } }),
+      new Map([["k", sum({ key: "k", execMedian: 10, execSpread: 2, samples: 4 })]]),
+      now,
+    );
+    expect(next.entries.get("k")).toEqual({ execMedian: 10, execSpread: 4 });
+  });
+
+  test("a narrower spread IS accepted once the evidence threshold is met", () => {
+    const next = computeUpdatedBaseline(
+      base({ k: { execMedian: 10, execSpread: 4 } }),
+      new Map([["k", sum({ key: "k", execMedian: 10, execSpread: 2, samples: 9 })]]),
+      now,
+    );
+    expect(next.entries.get("k")).toEqual({ execMedian: 10, execSpread: 2 });
+  });
+
+  test("a WIDER spread is accepted unconditionally — loosening needs no evidence", () => {
+    const next = computeUpdatedBaseline(
+      base({ k: { execMedian: 10, execSpread: 2 } }),
+      new Map([["k", sum({ key: "k", execMedian: 10, execSpread: 6, samples: 4 })]]),
+      now,
+    );
+    expect(next.entries.get("k")).toEqual({ execMedian: 10, execSpread: 6 });
+  });
+
   test("a sparse key retains its existing entry rather than being deleted", () => {
     // A rarely-run workflow (e.g. Release) can be legitimately observed but
     // sparse in any given window. Deleting it here would let it come back as

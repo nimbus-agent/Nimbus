@@ -43,8 +43,7 @@ the failure would be invisible: `dagWait` would quietly go to zero everywhere an
 `queue` would re-absorb dependency execution, with no error anywhere.
 
 **Added to the plan (Task 5 + Task 6):** if the whole collection produces
-**zero** observations with a non-zero `dagWait` while at least one sampled
-workflow declares `needs:`, the shell emits
+**zero** observations with a non-zero `dagWait`, the shell emits
 `::warning::ci-latency: dagWait is zero everywhere — the created_at eligibility
 assumption may have changed; queue figures may now include dependency execution`.
 
@@ -134,7 +133,7 @@ would silently stop watching most of the org.
   `MAX_RUNS_PER_WORKFLOW` (12); `MIN_SAMPLES_FOR_RATCHET` 5 → 7;
   `MAX_READ_FAILURE_RATIO` (0.25) added.
 - **Task 5** — group runs by workflow and cap per workflow; return
-  `{ observations, readFailures, attempted, sawNeedsWorkflow }`; new tests for
+  `{ observations, readFailures, attempted, sawNonZeroDagWait }`; new tests for
   the per-workflow cap and for failure counting.
 - **Task 6** — warn on read failures, skip gating past the failure ratio, and
   emit the `dagWait`-is-zero-everywhere guard.

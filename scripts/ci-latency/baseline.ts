@@ -7,7 +7,7 @@
  * own tolerance, which is exactly backwards.
  */
 
-import { MIN_SAMPLES, MIN_SAMPLES_FOR_RATCHET } from "./constants.ts";
+import { MIN_ABSOLUTE_DELTA_MIN, MIN_SAMPLES, MIN_SAMPLES_FOR_RATCHET } from "./constants.ts";
 import type { BaselineEntry, KeySummary, LatencyBaseline } from "./types.ts";
 
 interface RawBaseline {
@@ -71,6 +71,16 @@ function round2(n: number): number {
  * deleted, and keeping it would strand a baseline entry nothing can ever
  * satisfy.
  */
+/**
+ * The threshold a key is actually judged against: `evaluate` fails a key when
+ * its median exceeds `execMedian + max(MIN_ABSOLUTE_DELTA_MIN, execSpread)`.
+ * The ratchet must reason about this number rather than the median alone,
+ * because a narrower spread tightens the gate just as a lower median does.
+ */
+function effectiveLimit(e: { execMedian: number; execSpread: number }): number {
+  return e.execMedian + Math.max(MIN_ABSOLUTE_DELTA_MIN, e.execSpread);
+}
+
 export function computeUpdatedBaseline(
   current: LatencyBaseline,
   summaries: ReadonlyMap<string, KeySummary>,
@@ -83,7 +93,13 @@ export function computeUpdatedBaseline(
       if (prev) entries.set(key, prev);
       continue;
     }
-    if (prev && s.execMedian < prev.execMedian && s.samples < MIN_SAMPLES_FOR_RATCHET) {
+    // The evidence rule guards the EFFECTIVE gate threshold, not the median
+    // alone. The threshold a key is judged against is
+    // `execMedian + max(MIN_ABSOLUTE_DELTA_MIN, execSpread)`, so a run with an
+    // unchanged median but a NARROWER spread also tightens the gate — and would
+    // slip through a median-only check. Any decrease in the effective limit
+    // needs `MIN_SAMPLES_FOR_RATCHET` evidence; raising it stays unconditional.
+    if (prev && s.samples < MIN_SAMPLES_FOR_RATCHET && effectiveLimit(s) < effectiveLimit(prev)) {
       entries.set(key, prev);
       continue;
     }

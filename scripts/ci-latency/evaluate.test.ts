@@ -89,6 +89,31 @@ describe("evaluate", () => {
     expect(r.regressions).toEqual([]);
   });
 
+  test("an unstable key CAN still regress — the label is not an exemption", () => {
+    // Deliberate, and the opposite rule would be worse: exempting unstable keys
+    // would hand permanent immunity to the slowest jobs in the repo (the real
+    // `Unit + Coverage — windows-2025` carries a ~10min band and qualifies as
+    // unstable). Because the band is its own historical spread, reaching a
+    // regression means it got MORE than ~10 minutes slower — exactly when it
+    // should fail. Unstable: 20 > 0.5 × 30. Regression: 30 > 13.2 + max(1, 10.5).
+    const r = evaluate(
+      new Map([["k", sum({ key: "k", execMedian: 30, execSpread: 20 })]]),
+      base({ k: { execMedian: 13.2, execSpread: 10.5 } }),
+    );
+    expect(kinds(r, "k")).toContain("unstable");
+    expect(r.regressions.map((f) => f.key)).toEqual(["k"]);
+  });
+
+  test("an unstable key inside its wide band does NOT regress", () => {
+    // The contrast case: +8min on a 10.5min band is normal noise for this job.
+    const r = evaluate(
+      new Map([["k", sum({ key: "k", execMedian: 21, execSpread: 12 })]]),
+      base({ k: { execMedian: 13.2, execSpread: 10.5 } }),
+    );
+    expect(kinds(r, "k")).toContain("unstable");
+    expect(r.regressions).toEqual([]);
+  });
+
   test("a stable job is not reported unstable", () => {
     const r = evaluate(
       new Map([["k", sum({ key: "k", execMedian: 12, execSpread: 1 })]]),

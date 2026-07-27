@@ -1,11 +1,21 @@
 /**
- * The gate decision. ONLY `regression` can fail the run.
+ * The gate decision. ONLY a `regression` finding can fail the run.
  *
- * `queue`, `dagWait` and `unstable` are deliberately observation-only: none is
- * caused by the change under test. Queue wait moves with how many PRs happen to
- * be open, and a flaky job is flaky regardless of the diff — failing a
- * contributor for either would report a condition they cannot fix, which the
- * infrastructure roadmap names as the way a gate becomes one everybody ignores.
+ * `insufficient-data`, `new-key`, `stale-baseline-entry` and `unstable` are
+ * reported and never fail, and `queue`/`dagWait` are surfaced by the shell
+ * rather than classified here at all. None of them is caused by the change
+ * under test — queue wait moves with how many runs are in flight — and the
+ * infrastructure roadmap names reporting an unfixable condition as the way a
+ * gate becomes one everybody ignores.
+ *
+ * `unstable` is a LABEL on a key, NOT an exemption — a deliberate choice, since
+ * the alternative is worse. An unstable key can still produce a `regression`,
+ * because its allowed band is already its own (wide) historical spread: the
+ * noisiest job in this repo carries a ~10-minute band, so it can only fail by
+ * getting more than ten minutes slower, which is precisely when it should. The
+ * opposite rule — exempting unstable keys — would hand permanent immunity to
+ * the slowest, most-worth-watching jobs, which is how a latency gate ends up
+ * measuring only the jobs that never mattered. `evaluate.test.ts` pins this.
  */
 
 import { MIN_ABSOLUTE_DELTA_MIN, MIN_SAMPLES, UNSTABLE_SPREAD_RATIO } from "./constants.ts";

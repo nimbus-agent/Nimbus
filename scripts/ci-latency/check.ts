@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { isStrict, strictSkip } from "../structure-audit/_gh-audit.ts";
 import { computeUpdatedBaseline, parseBaseline, serializeBaseline } from "./baseline.ts";
 import { collectAll } from "./collect.ts";
-import { MAX_READ_FAILURE_RATIO, MIN_REPORTED_QUEUE_MIN } from "./constants.ts";
+import { MAX_READ_FAILURE_RATIO, MIN_REPORTED_QUEUE_MIN, SAMPLE_EVENT } from "./constants.ts";
 import { evaluate } from "./evaluate.ts";
 import { summarize } from "./summarize.ts";
 
@@ -48,8 +48,20 @@ if (import.meta.main) {
   const { observations, attempted, readFailures, sawNonZeroDagWait } = collected;
 
   if (observations.length === 0) {
-    // Nothing readable at all: no gh, no auth, or a total API outage.
-    const outcome = strictSkip(label, strict);
+    // Two very different causes reach zero observations, and `strictSkip`'s
+    // default message names only one of them ("could not authenticate — the App
+    // token or a required permission is broken"). If every read SUCCEEDED there
+    // is nothing wrong with the token: the window simply held no eligible
+    // successful `push` job. Reporting that as an auth failure would send
+    // whoever reads the sweep hunting a credential that is fine.
+    const readsSucceeded = attempted > 0 && readFailures === 0;
+    const outcome = strictSkip(
+      label,
+      strict,
+      readsSucceeded
+        ? `all ${attempted} read(s) succeeded but no eligible successful ${SAMPLE_EVENT} job was found in the window — no CI activity to measure, not an auth failure`
+        : undefined,
+    );
     if (outcome.code === 1) console.error(outcome.message);
     else console.warn(outcome.message);
     process.exit(outcome.code);

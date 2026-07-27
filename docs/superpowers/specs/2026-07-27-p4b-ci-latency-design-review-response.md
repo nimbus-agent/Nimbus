@@ -118,8 +118,9 @@ verification") was already the design.
 **But the residual risk is real** and worth closing: `MIN_SAMPLES` is 3, and
 three consecutive hot-cache runs is an entirely plausible window. Two changes:
 
-- Ratcheting **down** requires `MIN_SAMPLES_FOR_RATCHET` (5) samples — more than
-  the 3 needed to *gate*. Lowering a threshold should demand more evidence than
+- Ratcheting **down** requires `MIN_SAMPLES_FOR_RATCHET` samples — more than the
+  3 needed to *gate*. (Shipped as **7**, raised from the 5 proposed here once the
+  per-workflow sampling window made that depth reachable.) Lowering a threshold should demand more evidence than
   enforcing one, since the cost of a wrong lower bound is a permanently red gate.
 - The recorded `spread` travels down with the median, so a newly-lowered
   baseline keeps its noise band and cannot become unachievable by construction.
