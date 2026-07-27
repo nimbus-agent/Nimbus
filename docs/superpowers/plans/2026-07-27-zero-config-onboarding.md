@@ -168,6 +168,24 @@ test("hasFilesystemRoot ignores a commented-out root", () => {
   expect(hasFilesystemRoot('# path = "/repo/a"\n', "/repo/a")).toBe(false);
 });
 
+test("hasFilesystemRoot ignores a path key under a different table", () => {
+  // Otherwise init reports "already configured" and silently never adds the root.
+  const src = ['[some_other_section]', 'path = "/repo/a"', ''].join("\n");
+  expect(hasFilesystemRoot(src, "/repo/a")).toBe(false);
+});
+
+test("a Windows-style path survives the write/read round-trip", () => {
+  // The writer emits TOML `\\` escapes; the gateway's parseString un-escapes
+  // only `\"`, NOT `\\`. The round-trip holds because expandPath calls
+  // resolve(), which normalises the doubled separators — verified, but
+  // incidental, so it is pinned here rather than assumed.
+  const win = ["C:", "gitrep", "Nimbus"].join(String.fromCharCode(92));
+  appendFilesystemRoot(dir, win);
+  const written = readFileSync(join(dir, "nimbus.toml"), "utf8");
+  expect(hasFilesystemRoot(written, win)).toBe(true);
+  expect(appendFilesystemRoot(dir, win).status).toBe("already-present");
+});
+
 test("preserves comments, formatting, and unrelated sections verbatim", () => {
   // The whole reason this is append-only: a parse/serialize cycle would lose these.
   const original = ['# my notes', '', '[llm]', 'prefer_local = true  # keep me', ''].join("\n");
@@ -232,17 +250,36 @@ export type AppendRootResult = {
  */
 export function hasFilesystemRoot(source: string, rootPath: string): boolean {
   const target = resolve(rootPath);
-  return source.split(/\r?\n/).some((line) => {
+  let table = "";
+  for (const line of source.split(/\r?\n/)) {
     const hash = line.indexOf("#");
     const code = (hash < 0 ? line : line.slice(0, hash)).trim();
-    if (!code.startsWith("path")) return false;
+
+    // Track the current table so a `path = …` under some OTHER section can never
+    // be mistaken for a configured root. Only `[[filesystem.roots]]` defines a
+    // `path` key today, so this is latent rather than live — but it is five lines
+    // for correct-by-construction instead of correct-by-coincidence, and the
+    // failure mode it prevents is silent: `init` would report "already
+    // configured" and never add the root.
+    if (code.startsWith("[") && code.endsWith("]")) {
+      table = code;
+      continue;
+    }
+    if (table !== "[[filesystem.roots]]") continue;
+    if (!code.startsWith("path")) continue;
+
     const eq = code.indexOf("=");
-    if (eq <= 0) return false;
+    if (eq <= 0) continue;
     const raw = code.slice(eq + 1).trim();
-    if (raw.length < 2) return false;
-    const unquoted = raw.slice(1, -1);
-    return resolve(unquoted) === target;
-  });
+    if (raw.length < 2) continue;
+
+    // `resolve()` is load-bearing, not cosmetic: on Windows the writer emits
+    // TOML `\\` escapes which the gateway's parseString does NOT un-escape, so
+    // this value can carry doubled separators. resolve() normalises them, which
+    // is why the round-trip holds. Pinned by the Windows test above.
+    if (resolve(raw.slice(1, -1)) === target) return true;
+  }
+  return false;
 }
 
 /**
@@ -442,7 +479,11 @@ If `start_line` cannot be referenced in `WHERE` on this SQLite build, repeat the
 
 Per the boundary note above, either:
 
-- **(a)** add a read-only IPC method returning `DemoSymbol | null` for a given root — following the `nimbus-ipc` skill for naming, the runtime validator, and the Tauri-allowlist decision (a read-only index query is renderer-safe, but the decision must be explicit); or
+- **(a)** add a read-only IPC method returning `DemoSymbol | null` for a given root — following the `nimbus-ipc` skill for naming, the runtime validator, and the Tauri-allowlist decision (a read-only index query is renderer-safe, but the decision must be explicit).
+
+  **Locate the real files first.** There is no `packages/gateway/src/ipc/schema.ts` and no `packages/gateway/src/ipc/handlers/why.ts` — the IPC layer is organised as `packages/gateway/src/ipc/*-rpc.ts` plus `ipc/server/dispatchers.ts`. Follow the `nimbus-ipc` skill and the shape of a neighbouring `*-rpc.ts`; do not create the paths above.
+
+  `init` must also degrade when the daemon is not running: fall back to the generic next step rather than erroring; or
 - **(b)** record in the task's commit message that `init` prints a generic next step, and that this picker is currently unused by the CLI.
 
 Do not skip this step silently.
@@ -734,13 +775,18 @@ test("init works with no credentials and no LLM configured", async () => {
   // real config, and no NIMBUS_OAUTH_*/API key is set. The repo-wide test
   // preload also blanks inherited credentials, so a stray provider key cannot
   // silently satisfy the no-LLM precondition.
+  // Hard kill after 15s. Without it, a CLI that blocks on an unexpected prompt
+  // hangs the whole CI job instead of failing — and "the runner never finished"
+  // is far more expensive to diagnose than an explicit timeout failure.
   const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "init"], {
     cwd: join(root, "repo"),
     env: { ...process.env, NIMBUS_CONFIG_DIR: join(root, "config"), NIMBUS_QUIET: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
+  const timer = setTimeout(() => proc.kill(), 15_000);
   const code = await proc.exited;
+  clearTimeout(timer);
   const out = await new Response(proc.stdout).text();
 
   expect(code).toBe(0);
