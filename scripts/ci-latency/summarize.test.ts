@@ -30,8 +30,12 @@ describe("median", () => {
 });
 
 describe("p90", () => {
-  test("picks the 90th-percentile value", () => {
-    expect(p90([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])).toBe(10);
+  test("picks the 90th-percentile value by nearest rank", () => {
+    // Nearest-rank p90 of 10 sorted values is the 9th, NOT the max. Using the
+    // max here would make p90 degenerate to max at every sample size this gate
+    // reaches, widening a noisy job's tolerance band ~6x and letting a real
+    // regression through.
+    expect(p90([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])).toBe(9);
   });
   test("small samples fall back to the max", () => {
     expect(p90([2, 5])).toBe(5);
@@ -58,10 +62,12 @@ describe("summarize", () => {
   });
 
   test("execSpread is p90 minus median — the job's own noise band", () => {
+    // Nearest-rank p90 excludes the single worst outlier: with 10 samples and rank=9,
+    // p90 is the 9th value, not the max.
     const m = summarize([2, 2, 2, 2, 2, 2, 2, 2, 2, 20].map((e) => obs({ exec: e })));
     const s = m.get("Nimbus :: CI :: Unit + Coverage");
     expect(s?.execMedian).toBe(2);
-    expect(s?.execSpread).toBe(18);
+    expect(s?.execSpread).toBe(0);
   });
 
   test("a stable job has a near-zero spread", () => {

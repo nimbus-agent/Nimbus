@@ -28,7 +28,7 @@ export function median(xs: readonly number[]): number {
 export function p90(xs: readonly number[]): number {
   if (xs.length === 0) return 0;
   const s = [...xs].sort((a, b) => a - b);
-  const rank = Math.ceil(0.9 * (s.length + 1));
+  const rank = Math.ceil(0.9 * s.length);
   return s[Math.min(rank, s.length) - 1] as number;
 }
 
