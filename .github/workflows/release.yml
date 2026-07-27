@@ -592,6 +592,41 @@ jobs:
           cp scripts/release/nimbus-verify.sh                                   dist/stage/
           cp scripts/release/nimbus-verify.ps1                                  dist/stage/
 
+          # Install scripts, as STANDALONE assets — not just bundled inside the
+          # archives. README.md's quickstart tells people to fetch these straight
+          # off the release:
+          #   curl .../releases/latest/download/install.sh
+          #   irm   .../releases/latest/download/install.ps1
+          # `install.ps1` was never staged here, so that URL 404'd and the entire
+          # Windows quickstart was dead — a platform-equality break (non-negotiable
+          # #5) sitting on the front page. Staging all four keeps the documented
+          # URLs true on every future release instead of depending on which files
+          # happened to survive from an earlier one.
+          cp scripts/install/unix/install.sh                                    dist/stage/
+          cp scripts/install/unix/uninstall.sh                                  dist/stage/
+          cp scripts/install/windows/install.ps1                                dist/stage/
+          cp scripts/install/windows/uninstall.ps1                              dist/stage/
+
+          # Stable-name aliases for the AppImage and .deb.
+          #
+          # `releases/latest/download/<name>` resolves an EXACT asset name — it does
+          # not glob — so a versioned filename can never be linked from docs that
+          # outlive one release. install.mdx and verify-your-download.mdx already
+          # publish the unversioned names below, and every one of those URLs 404'd.
+          # Aliasing here (rather than versioning the docs) keeps those commands
+          # copy-pasteable forever.
+          #
+          # Safe for the signatures: GPG detached `.asc` signs CONTENT, not the
+          # filename, so `gpg --verify Nimbus-x86_64.AppImage.asc
+          # Nimbus-x86_64.AppImage` validates. And because this runs BEFORE
+          # SHA256SUMS is computed over `dist/stage/*`, both names are listed and
+          # `sha256sum -c` works whichever one the user downloaded.
+          V="${GITHUB_REF_NAME#v}"
+          cp "dist/stage/nimbus-headless-${V}-x86_64.AppImage"     dist/stage/Nimbus-x86_64.AppImage
+          cp "dist/stage/nimbus-headless-${V}-x86_64.AppImage.asc" dist/stage/Nimbus-x86_64.AppImage.asc
+          cp "dist/stage/nimbus-headless_${V}_amd64.deb"           dist/stage/nimbus_amd64.deb
+          cp "dist/stage/nimbus-headless_${V}_amd64.deb.asc"       dist/stage/nimbus_amd64.deb.asc
+
           ls -la dist/stage/
 
       - name: Compute SHA256SUMS
