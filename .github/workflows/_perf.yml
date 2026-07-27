@@ -223,7 +223,7 @@ jobs:
             github.event.schedule == '0 4 * * 0'
           )
         continue-on-error: true # advisory: an install hiccup on any leg must never red the perf job
-        uses: bencherdev/bencher@5f9d4cf890255c35e0354af1ed325108a6a0babd # v0.6.8
+        uses: bencherdev/bencher@4c83b25441d145ee273adaf74be30f2382e6ba85 # v0.6.11
 
       - name: Emit Bencher BMF
         id: bencher-emit
