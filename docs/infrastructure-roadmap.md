@@ -79,7 +79,7 @@ Design of record:
 | P2 | Release Train | ✅ done (Phase 1 run 30210246814) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Phase 2 adds npm publish-phantom + consumer-lag edges. |
 | P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
-| P4b | Latency | ⬜ not started | Per-job wall-clock tracked; regressions visible |
+| P4b | Latency | 🔨 measurement shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning is deliberately NOT in this slice — the first measurement showed execution is not the binding constraint. |
 | P5 | Org Legibility | ⬜ not started | `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md`. **Second gate added 2026-07-26:** an Actions-allowlist check that fails when a required workflow's action is not permitted to run |
 | P6 | Access & Contribution Model | 🔨 P6a + CLA done | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos. Remaining: bypass-actor audit |
 
@@ -298,6 +298,44 @@ moves to P6).
   scheduled harness, which Phase 2 cannot show while it is legitimately red;
   dispatch `org-drift-sweep.yml` after the consumer bumps land and record the
   run number here, same as Phase 1.
+
+### P4b progress log
+
+- **Delivered (measurement, 2026-07-27):** `audit:ci-latency` collects per-job
+  timings from the Actions API across all 9 org repos and gates execution
+  against a committed baseline (`docs/structure-audit/ci-latency-baseline.json`),
+  mirroring `audit:coverage-floor`.
+- **The first measurement contradicted the design of record's hunch.** That
+  document proposed cache tuning, matrix sharding and finer path filters. On the
+  slowest sampled run (73.8min) the longest single job *executed* for 12.3min,
+  while the longest DAG wait was 33.9min and the longest runner queue 31.6min —
+  so execution is not the binding constraint, and sharding would worsen it by
+  adding jobs to the same contended pool. Principle #3 ("only against
+  measurement, never against a hunch") earned its keep on first use.
+- **An earlier revision of the design claimed "~80% of wall-clock is queueing".
+  That was wrong** and the design review caught it: it measured
+  `started_at − run_started_at`, which charges a job for its *dependencies'*
+  execution. A job's `created_at` tracks eligibility, so `started_at − created_at`
+  is DAG-free contention and the DAG cost is recorded separately. Contention is
+  real but concentrated almost entirely on **macOS** runners.
+- **Tolerance is a per-key noise band, not a constant.** Measured spreads
+  (`p90 − median`) over 11 samples: `Static — ubuntu` 0.2, `Unit + Coverage —
+  ubuntu` 2.0min, `Unit + Coverage — windows` **10.77**. No global constant fits
+  both, so the baseline stores each job's own spread and the gate allows
+  `max(1min, spread)`. A job whose spread exceeds half its median is reported
+  `unstable` — observed, never failed, since flakiness is not caused by the
+  contributor's change.
+- **Baseline coverage:** the generated baseline contains **194 keys from 1806
+  observations across 6 repos**. Three of the nine audited repos (`linux-repo`,
+  `homebrew-tap`, `scoop-bucket`) contribute nothing because they have zero
+  successful `push`-event runs — their automation is dispatch-triggered. This is
+  expected, not a gap.
+- **The gate ships green by construction:** the baseline is generated from the
+  same window the check reads, so nothing can exceed it on the first run. The
+  red-proof is the unit test in `scripts/ci-latency/evaluate.test.ts`, not the
+  live run.
+- **Remaining:** the tuning slice itself, which must be justified against this
+  data. The clearest lead is macOS runner contention.
 
 ### P5 progress log
 
