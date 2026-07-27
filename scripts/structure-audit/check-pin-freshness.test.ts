@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -215,11 +215,15 @@ describe("TRACKED_REF_OVERRIDES", () => {
 
     const dir = join(import.meta.dir, "..", "..", ".github");
     const files: WorkflowFile[] = [];
+    // `withFileTypes` so the directory test comes from the entry readdir already
+    // returned. A separate `statSync(full)` followed by `readFileSync(full)` is a
+    // check-then-use pair on the same path — CodeQL js/file-system-race, high.
     const walk = (d: string): void => {
-      for (const entry of readdirSync(d)) {
-        const full = join(d, entry);
-        if (statSync(full).isDirectory()) walk(full);
-        else if (entry.endsWith(".yml") || entry.endsWith(".yaml")) {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".yml") || entry.name.endsWith(".yaml")) {
           files.push({ path: full, text: readFileSync(full, "utf8") });
         }
       }
