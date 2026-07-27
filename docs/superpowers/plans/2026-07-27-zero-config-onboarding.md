@@ -26,10 +26,12 @@
 Without this the e2e test in Task 6 cannot isolate. `createDarwinPaths()` reads `homedir()` with **no env seam at all**, so on macOS a test would silently use the developer's real config directory.
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/paths.ts`
 - Test: `packages/gateway/src/platform/paths.test.ts`
 
 **Interfaces:**
+
 - Consumes: `processEnvGet` from `./env-access.ts`; existing `PlatformPaths` type.
 - Produces: all three of `createWindowsPaths()`, `createDarwinPaths()`, `createLinuxPaths()` honour `NIMBUS_CONFIG_DIR` for the `configDir` field only. Other fields are unchanged.
 
@@ -118,10 +120,12 @@ git commit -m "feat(platform): add NIMBUS_CONFIG_DIR override for configDir"
 **This lives in the CLI, not the gateway.** Config authoring is a client concern, the gateway never writes config, and **the CLI may not import gateway source** (IPC only). That boundary also means this module cannot reuse `parseNimbusTomlFilesystemRoots`; its already-present check must be self-contained, which is why `hasFilesystemRoot` is scoped narrowly to exactly that question.
 
 **Files:**
+
 - Create: `packages/cli/src/commands/_lib/toml-append.ts`
 - Create: `packages/cli/src/commands/_lib/toml-append.test.ts`
 
 **Interfaces:**
+
 - Consumes: `node:fs`, `node:path` only. No gateway imports.
 - Produces:
   - `hasFilesystemRoot(source: string, rootPath: string): boolean`
@@ -304,10 +308,12 @@ git commit -m "feat(cli): append-only writer for [[filesystem.roots]]"
 Selecting by file extension can land on a lockfile or something unindexed. `nimbus why` resolves a *symbol in the index*, so query the index instead — a lockfile never becomes a symbol.
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/demo-symbol.ts`
 - Create: `packages/gateway/src/agents/_lib/demo-symbol.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Database` from `bun:sqlite`; the `graph_entity` + `item` schema used by `why-subject.ts`.
 - Produces: `pickDemoSymbol(db: Database, repoRoot: string): DemoSymbol | null` where `type DemoSymbol = { file: string; line: number; name: string }`.
 
@@ -453,12 +459,14 @@ git commit -m "feat(agents): pick the demo why-subject from the index"
 ### Task 4: `nimbus init` command
 
 **Files:**
+
 - Create: `packages/cli/src/commands/init.ts`
 - Create: `packages/cli/src/commands/init.test.ts`
 - Modify: `packages/cli/src/index.ts` (add to `COMMAND_HANDLERS`)
 - Modify: `packages/cli/src/commands/registry.ts` (add to `COMMAND_NAMES`)
 
 **Interfaces:**
+
 - Consumes: `appendFilesystemRoot`, `hasFilesystemRoot`, `AppendRootResult` from `./_lib/toml-append.ts` (Task 2, CLI-side — no gateway import); `getCliPlatformPaths()` from `../paths.ts`.
 - Produces: `initPlan(opts: InitOptions): InitPlan` and `runInit(args: string[]): Promise<void>`, registered as `init`.
 
@@ -591,10 +599,12 @@ git commit -m "feat(cli): add nimbus init for zero-config onboarding"
 ### Task 5: Honest no-LLM messaging
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts`
 - Modify: `packages/gateway/src/agents/_lib/synthesize.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `synthesize(brief, opts)`.
 - Produces: unchanged signature. When `opts.llm === undefined`, the returned Markdown gains a trailing footer line.
 
@@ -692,9 +702,11 @@ git commit -m "feat: label the no-LLM mode and make nimbus ask fail with guidanc
 ### Task 6: The e2e test that is the funnel
 
 **Files:**
+
 - Create: `packages/cli/test/e2e/zero-config-onboarding.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NIMBUS_CONFIG_DIR` (Task 1), `nimbus init` (Task 4).
 
 - [ ] **Step 1: Write the test**
