@@ -63,8 +63,43 @@ Two lessons this file should carry:
    was indistinguishable from absence of the signal entirely.
 
 The follow-up gate this implies — an Actions-allowlist drift check that would
-fail when a required workflow's action is not permitted to run — is recorded
-under [P5](#p5-progress-log).
+fail when a required workflow's action is not permitted to run — shipped in #845
+and is recorded under [P5](#p5-progress-log). On its first correct run it found
+a second live instance of the same failure mode.
+
+### A gate must never report a permanent mismatch as a fixable failure (2026-07-27)
+
+Promoted from a code comment to an operating rule because it was hit **four
+times in one batch**, each time in a different gate, each time as a genuine
+design error rather than a slip:
+
+1. `audit:actions-allowlist` — `verified_allowed` is on and no API exposes
+   verified-creator status, so the pattern check was permanently
+   `indeterminate`, i.e. permanently red under `--strict`.
+2. `audit:pin-freshness` — a repo publishing **no releases** (our own
+   `nimbus-agent/.github` composite actions) can never be "behind" one.
+3. `audit:pin-freshness` again — `dtolnay/rust-toolchain` is pinned to the
+   `stable` branch, whose newest *release* sits 12 commits **behind** it, so
+   satisfying the gate would have meant moving the pin backwards in code age.
+4. `audit:pin-freshness` a third time — a failed commit-date read fell through
+   as an empty timestamp, which fails closed to `+Infinity` and manufactured a
+   `stale` finding out of a transient API error.
+
+**The rule.** Distinguish a **transient** unknown (a read failed and may succeed
+next run) from a **permanent** one (no API can answer, or the question does not
+apply). Only the transient kind may be strict-red; the permanent kind warns, is
+skipped, or is measured against the thing the code actually tracks. And an
+unreadable input degrades to `indeterminate` — never to a finding.
+
+**Why it matters more than it sounds.** A gate that is always red is one
+everybody learns to ignore, which is indistinguishable from having no gate — the
+exact failure this document exists to prevent. The fourth instance is the
+sharpest: a gate whose only route to green is making the repo worse is not a
+strict gate, it is a broken one.
+
+Instance 4 was caught by CodeRabbit citing `_Source: Path instructions_` — the
+`.coderabbit.yaml` rule shipped in #846, one PR earlier. The review layer caught
+a violation of a rule the review layer had just been taught.
 
 ---
 
@@ -76,11 +111,11 @@ Design of record:
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
-| P2 | Release Train | ✅ done (Phase 1 run 30210246814) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, or when a release phantoms (manifest bumped, nothing built). Red-proved on a real phantom and green after (`OK (5 edges current)`). Phase 2 adds npm publish-phantom + consumer-lag edges. |
-| P3 | Review Layer | ⬜ not started | An invariant violation is caught in CI, not only in local `preflight` |
+| P2 | Release Train | ✅ done — both phases (run 30231918767) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, when a release phantoms, when an npm package is tagged but unpublished, or when a consumer's **lockfile-resolved** dependency lags npm `@latest`. Red-proved on a real phantom and on three real dependency edges; green after both, `OK (12 edges current)`. |
+| P3 | Review Layer | 🔨 first step done (#846) | The monorepo now carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban — closing the satellites→monorepo direction of the pattern above. **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | 🔨 measurement shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning is deliberately NOT in this slice — the first measurement showed execution is not the binding constraint. |
-| P5 | Org Legibility | ⬜ not started | `audit:secret-inventory` fails on any workflow secret missing from `ci-secrets.md`. **Second gate added 2026-07-26:** an Actions-allowlist check that fails when a required workflow's action is not permitted to run |
+| P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
 | P6 | Access & Contribution Model | 🔨 P6a + CLA done | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos. Remaining: bypass-actor audit |
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
@@ -135,7 +170,16 @@ moves to P6).
   `actions/checkout` v7.0.1 vs v7.0.0) is *staleness*, not *unpinning* — every ref
   is correctly SHA-pinned, just to older SHAs. The SHA-pin gate is green and
   structurally cannot detect staleness; a freshness check is a **Plan B**
-  follow-up.
+  follow-up. **Plan B delivered 2026-07-27 (#847 gate, #851 remediation):**
+  `audit:pin-freshness` compares each SHA-pinned action against the thing it
+  actually tracks — the latest release, or, for a pin that deliberately follows a
+  named ref, that ref — with a 30-day grace window (not the release train's 6
+  hours: a pin moves when a human or Dependabot gets to it, and an hours-long
+  window would mean a permanently red sweep). It shipped red on three genuinely
+  stale pins, which #851 refreshed, and is green in the sweep at 30/30 current.
+  Grace is measured from the target COMMIT's date rather than the release's,
+  because a rolling major tag like `v1` was published years ago and would
+  otherwise report a wildly misleading age.
 
 ### P6a progress log
 
@@ -294,10 +338,22 @@ moves to P6).
   is the rule working — a package published minutes ago must not red its whole
   consumer set — but it means those three edges go red once grace expires unless
   they are bumped, and the drift is larger than the design's snapshot recorded.
-- **Remaining:** the sweep proof. Phase 1's bar for *done* is green in the
-  scheduled harness, which Phase 2 cannot show while it is legitimately red;
-  dispatch `org-drift-sweep.yml` after the consumer bumps land and record the
-  run number here, same as Phase 1.
+- **Phase 2 is DONE by this file's own bar (2026-07-27): green in CI, run
+  30231918767.** A dispatched `org-drift-sweep` ran `release-staleness` on
+  `main` and it passed — **`OK (12 edges current)`**: Phase 1's five channel
+  edges plus Phase 2's seven dependency edges. Red-before / green-after on real
+  drift, then green in the scheduled harness.
+- **What made it green was remediation, not a gate change.** All three edges the
+  gate shipped red on were fixed at the source: `@nimbus-dev/client` 0.5.0 →
+  0.12.1 in `packages/cli` (#848), and the sdk/client bumps in
+  `nimbus-client#38` + `nimbus-vscode#58`. The `0.x` cases needed a **manifest**
+  edit — a caret on a `0.x` pins the minor, so `^0.5.0` could never reach
+  0.12.1 — while the `1.x` cases needed only a lockfile refresh. That asymmetry
+  is exactly why the gate reads the lockfile rather than the declared range.
+- **The same run was the first fully green sweep: 15/15 jobs**, including
+  `cla-coverage`, which had failed at the App-token mint on every previous run
+  (the installation did not cover `awesome-nimbus`). It also carried the first
+  scheduled runs of the two P5 gates and of `pin-freshness`.
 
 ### P4b progress log
 
@@ -344,10 +400,49 @@ moves to P6).
 
 ### P5 progress log
 
-Not started. Two gates are already specified by findings from other
-sub-programs — record them here so the motivation is not lost:
+**Both specified gates are delivered and green in the sweep (2026-07-27, run
+30231918767).** They shipped in #845 alongside the batch spec
+`docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
 
-- **`audit:actions-allowlist`** (from the CLA outage, 2026-07-26). For every
+- **Delivered — `audit:secret-inventory` (#845).** Asserts every secret this
+  repo's workflows consume appears in BOTH inventories:
+  `scripts/release/credential-registry.ts` (authoritative — owner, rotation
+  policy, the `secret-health` watch-list) and `docs/ci-secrets.md` (the
+  narrative read during an incident). The finding says WHICH is missing, because
+  the repairs differ: "add a row to a table" versus "this credential is
+  unmanaged". Deliberately one-directional — `ci-secrets.md` is an ORG-WIDE
+  inventory documenting `VSCE_PAT`/`OVSX_PAT`/`NPM_TOKEN` for other repos'
+  workflows, so gating the reverse direction could only be satisfied by deleting
+  true information. Unlike the sweep gates it is local and deterministic, so it
+  runs on every PR from the preflight fast tier — and therefore had to be green
+  at merge. Red-before/green-after inside its own PR: five secrets reached the
+  prose doc, among them the secret-health probe's own credentials and the CLA
+  bot's pair. **Correction worth keeping:** this was first written up as row 3
+  of the table at the top of this file still being unfixed. Reading the code
+  disproved that — all five were already in the registry, so the drift was
+  *narrative*, not unmanaged credentials.
+- **Delivered — `audit:actions-allowlist` (#845).** Two halves. The pattern half
+  compares each `uses:` against `patterns_allowed` / `github_owned_allowed` /
+  same-org. The **direct** half — the one that actually closes the hole — reports
+  any workflow whose MOST RECENT run ended in `startup_failure`, which needs no
+  knowledge of verified-creator status and also catches invalid workflow YAML.
+  Scoped to the latest run so a since-fixed failure does not red the sweep
+  forever.
+- **It found a second live instance of the CLA failure mode on its first correct
+  run (2026-07-26).** `Lock Threads` had been rejected at startup every night
+  since at least 2026-07-24 because `dessant/lock-threads` was absent from
+  `patterns_allowed`. Fixed by adding the pattern (a full-replace PUT re-sending
+  all 14 existing entries), and proved by dispatch: the workflow now completes
+  `success`, and the gate reports `0 workflow(s) failing at startup`.
+- **The repo-wide run window was the reason nothing saw it.** The first
+  implementation read `actions/runs?per_page=100`, which returns the newest runs
+  across the WHOLE repo — 26 workflows here, but only 13 represented in that
+  window. Each active workflow's latest run is now fetched individually.
+- **`secret-health` permission superset** — already fixed in #837; only the
+  general rule needed recording (below).
+
+- **Original motivation, kept for the record — `audit:actions-allowlist`** (from
+  the CLA outage, 2026-07-26). For every
   repo whose `allowed_actions` is `selected`, assert that every action `uses:`d
   by a workflow in that repo is permitted by `patterns_allowed` (accounting for
   `github_owned_allowed` / `verified_allowed`). Would have caught the two-day

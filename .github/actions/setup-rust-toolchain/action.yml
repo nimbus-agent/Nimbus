@@ -1,0 +1,111 @@
+name: Setup Rust toolchain
+description: >
+  Install the repo-pinned Rust toolchain, retrying the download. Channel and
+  components come from rust-toolchain.toml, the single source of truth.
+
+runs:
+  using: composite
+  steps:
+    # Why this exists rather than `dtolnay/rust-toolchain`:
+    #
+    #  1. Retry. `rustup toolchain install` is a single unretried fetch from
+    #     static.rust-lang.org. A TLS reset there ("Connection reset by peer",
+    #     os error 104) failed the whole `Cargo deny` job in run 30232465108 —
+    #     cargo-deny itself never ran. `continue-on-error` is not available to
+    #     composite-action steps, so the retry has to be in-script; this mirrors
+    #     the retry-once shape already used in ci.yml / _test-suite.yml / _perf.yml
+    #     and, like those, PROPAGATES the last attempt's exit code so a genuine
+    #     failure still fails the job.
+    #
+    #     Pre-warming and letting a second install no-op does NOT work: rustup
+    #     re-syncs the channel manifest on every `toolchain install`, even for an
+    #     already-installed pinned version. Verified by pointing RUSTUP_DIST_SERVER
+    #     at an unresolvable host with 1.95.0 already on disk — it still failed.
+    #
+    #  2. One place to bump the version. The 1.95.0 pin used to be copy-pasted
+    #     into codeql.yml and security.yml, and rust-toolchain.toml carried a
+    #     "when bumping this, also update ..." comment. Reading the file removes
+    #     the drift instead of documenting it.
+    - name: Install Rust toolchain (retry on transient download failure)
+      shell: bash
+      env:
+        # rustup falls back to copy+rename when a hardlink across filesystems
+        # fails, which is the norm on hosted runners. Carried over from dtolnay's
+        # action; without it the install can fail on Windows runners.
+        RUSTUP_PERMIT_COPY_RENAME: "1"
+      run: |
+        set -uo pipefail
+
+        toml="${GITHUB_WORKSPACE}/rust-toolchain.toml"
+        if [ ! -f "$toml" ]; then
+          echo "rust-toolchain.toml not found at $toml" >&2
+          exit 1
+        fi
+
+        # channel = "1.95.0"
+        channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$toml" | head -n1)"
+        if [ -z "$channel" ]; then
+          echo "could not parse [toolchain].channel from $toml" >&2
+          exit 1
+        fi
+
+        # components = ["rustfmt", "clippy"] -> --component rustfmt --component clippy
+        #
+        # Installed up front on every caller, not just the ones that run fmt/clippy.
+        # rustup would otherwise materialise them lazily on the first in-repo cargo
+        # call — a second unretried download, which is the failure mode this action
+        # exists to remove.
+        comp_raw="$(sed -n 's/^[[:space:]]*components[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' "$toml" |
+          head -n1 | sed 's/["[:space:]]//g')"
+        comp_flags=()
+        if [ -n "$comp_raw" ]; then
+          IFS=',' read -ra comps <<< "$comp_raw"
+          for c in "${comps[@]}"; do
+            [ -n "$c" ] && comp_flags+=(--component "$c")
+          done
+        fi
+
+        echo "Installing Rust $channel${comp_raw:+ (components: $comp_raw)}"
+
+        # Defensive: every GitHub-hosted runner image ships rustup, so this is a
+        # fallback for self-hosted. curl already retries here.
+        if ! command -v rustup >/dev/null 2>&1; then
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location \
+            --silent --show-error --fail https://sh.rustup.rs |
+            sh -s -- --default-toolchain none -y
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$CARGO_HOME/bin:$PATH"
+        fi
+
+        for attempt in 1 2 3; do
+          rustup toolchain install "$channel" --profile minimal --no-self-update \
+            ${comp_flags[@]+"${comp_flags[@]}"}
+          code=$?
+          if [ "$code" -eq 0 ]; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "All 3 attempts to install Rust $channel failed (exit $code)" >&2
+            exit "$code"
+          fi
+          delay=$((attempt * 10))
+          echo "Toolchain install attempt $attempt failed (exit $code), retrying in ${delay}s..."
+          sleep "$delay"
+        done
+
+        # Best-effort, exactly as upstream does it: in-repo commands already pick
+        # the pinned toolchain up from rust-toolchain.toml, so a failure here is
+        # not fatal. See dtolnay/rust-toolchain#127.
+        rustup default "$channel" || echo "rustup default failed (non-fatal)"
+
+        # Match upstream's environment so build behaviour and cache sizes do not
+        # change with this swap.
+        if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+        fi
+        if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+          echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+        fi
+
+        rustc "+$channel" --version --verbose

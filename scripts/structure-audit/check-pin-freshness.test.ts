@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   collectPinnedActions,
@@ -11,6 +13,7 @@ import {
   parseTagSha,
   summarize,
   TRACKED_REF_OVERRIDES,
+  type WorkflowFile,
 } from "./check-pin-freshness.ts";
 
 const pin = (over: Partial<PinnedAction> = {}): PinnedAction => ({
@@ -200,10 +203,37 @@ describe("TRACKED_REF_OVERRIDES", () => {
     expect(Object.keys(TRACKED_REF_OVERRIDES).length).toBeLessThanOrEqual(3);
   });
 
-  test("rust-toolchain is tracked against stable, the ref its pin comment names", () => {
-    // Its newest release `v1` sits behind the `stable` branch, so comparing
-    // against the release would demand moving the pin BACKWARDS to go green.
-    expect(TRACKED_REF_OVERRIDES["dtolnay/rust-toolchain"]).toBe("heads/stable");
+  test("every override names an action this repo still pins", () => {
+    // An override is a claim about an action we USE. When the Rust setup moved
+    // to the in-repo .github/actions/setup-rust-toolchain, the
+    // `dtolnay/rust-toolchain` entry became a claim about nothing — dead config
+    // that no other gate would have caught, because a stale override is silently
+    // never consulted. This asserts the map against the real .github tree so a
+    // retired action cannot leave one behind.
+    const keys = Object.keys(TRACKED_REF_OVERRIDES);
+    if (keys.length === 0) return;
+
+    const dir = join(import.meta.dir, "..", "..", ".github");
+    const files: WorkflowFile[] = [];
+    // `withFileTypes` so the directory test comes from the entry readdir already
+    // returned. A separate `statSync(full)` followed by `readFileSync(full)` is a
+    // check-then-use pair on the same path — CodeQL js/file-system-race, high.
+    const walk = (d: string): void => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".yml") || entry.name.endsWith(".yaml")) {
+          files.push({ path: full, text: readFileSync(full, "utf8") });
+        }
+      }
+    };
+    walk(dir);
+
+    const pinned = new Set(collectPinnedActions(files).map((p) => p.ownerRepo));
+    for (const k of keys) {
+      expect(pinned.has(k), `${k} is in TRACKED_REF_OVERRIDES but no longer pinned`).toBe(true);
+    }
   });
 });
 

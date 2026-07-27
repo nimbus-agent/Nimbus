@@ -1152,6 +1152,32 @@ const streamReq: JSONRPCRequest = {
 // Notification: { method: "engine.streamDone",  params: { streamId, meta } }
 // Notification: { method: "engine.streamError", params: { streamId, error } }
 
+// Streaming workflow run — `workflow.run({ stream: true })` reuses the SAME
+// `agent.chunk` notification as `engine.askStream`; there is no workflow-specific
+// chunk method. Emitted per step from `ipc/server/inline-handlers.ts`
+// (`sendAgentChunkIfStreaming`), which is a no-op when `stream` is falsy.
+// workflow.run(params: {
+//   name: string, triggeredBy?: string, dryRun?: boolean,
+//   stream?: boolean,                          // opt in to agent.chunk
+//   sessionId?: string, agent?: string,
+//   paramsOverride?: Record<string, Record<string, unknown>>  // keyed by step label
+// }) -> WorkflowRunResult
+// Notification: { method: "agent.chunk", params: { text: string } }
+//
+// Because the chunk method is shared, a client that runs a workflow and an ask
+// concurrently on ONE connection cannot attribute chunks to either. Clients that
+// need both at once should use separate connections until a stream id is added.
+
+// Connector config mutations — emitted from `ipc/connector-rpc-handlers/lifecycle.ts`
+// (`emitConfigChanged`) after setConfig / pause / resume / setInterval. Carries the
+// full post-mutation snapshot, so a client can reconcile a row without re-reading
+// `connector.listStatus`. Suppressed when the session registered no notify sink, or
+// when the service has no persisted status row yet.
+// Notification: { method: "connector.configChanged", params: {
+//   service: string, intervalMs: number,
+//   depth: "metadata_only" | "summary" | "full", enabled: boolean
+// } }
+
 // Session rehydration (Phase 4 WS6)
 // engine.getSessionTranscript(params: { sessionId, limit? }) -> { turns: AgentTurn[] }
 // engine.cancelStream(params: { streamId }) -> { ok: true }

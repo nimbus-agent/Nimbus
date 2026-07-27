@@ -155,12 +155,36 @@ describe("runUpdate dispatcher", () => {
     clearFixture();
   });
 
+  // Every dispatcher test passes `{ channel: null }` EXPLICITLY. Omitting it
+  // lets `runUpdate` call the real `resolveDistributionChannel()`, which reads
+  // the ambient `NIMBUS_DISTRIBUTION_CHANNEL` env var — so on a machine that has
+  // it set (a dev box that installed the .msi, say) the dispatcher
+  // short-circuits with an upgrade hint and never opens IPC, and all of these
+  // fail with an empty call list. CI passes only because the var is unset there,
+  // which makes the coverage accidental rather than guaranteed.
+  it("still dispatches with an install channel set in the environment", async () => {
+    // The real regression guard: force the exact ambient state that broke these
+    // tests and assert the dispatcher STILL reaches IPC. Fails if anyone drops
+    // the explicit `{ channel: null }` again.
+    const prev = process.env["NIMBUS_DISTRIBUTION_CHANNEL"];
+    process.env["NIMBUS_DISTRIBUTION_CHANNEL"] = "msi";
+    try {
+      const mock = createMockIpcClient([null]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await runUpdate(["--yes"], { channel: null });
+      expect(mock.calls.map((c) => c.method)).toEqual(["updater.applyUpdate"]);
+    } finally {
+      if (prev === undefined) delete process.env["NIMBUS_DISTRIBUTION_CHANNEL"];
+      else process.env["NIMBUS_DISTRIBUTION_CHANNEL"] = prev;
+    }
+  });
+
   it("--check routes through withGatewayIpc to updater.checkNow", async () => {
     const mock = createMockIpcClient([
       { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runUpdate(["--check"]);
+    await runUpdate(["--check"], { channel: null });
     expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow"]);
     expect(out.stdout).toContain("current: 0.1.0");
     expect(process.exitCode).toBe(0);
@@ -169,7 +193,7 @@ describe("runUpdate dispatcher", () => {
   it("--yes applies without prompting", async () => {
     const mock = createMockIpcClient([null]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runUpdate(["--yes"]);
+    await runUpdate(["--yes"], { channel: null });
     expect(mock.calls.map((c) => c.method)).toEqual(["updater.applyUpdate"]);
     expect(out.stdout).toContain("Update applied. Gateway will restart.");
   });
@@ -179,7 +203,7 @@ describe("runUpdate dispatcher", () => {
       { currentVersion: "0.1.0", latestVersion: "0.1.0", updateAvailable: false },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runUpdate([]);
+    await runUpdate([], { channel: null });
     expect(out.stdout).toContain("No update available.");
   });
 
@@ -193,7 +217,7 @@ describe("runUpdate dispatcher", () => {
       },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runUpdate([]);
+    await runUpdate([], { channel: null });
     expect(out.stdout).toContain("Aborted.");
   });
 
@@ -208,7 +232,7 @@ describe("runUpdate dispatcher", () => {
       },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runUpdate([]);
+    await runUpdate([], { channel: null });
     expect(out.stdout).toContain("Release notes: Performance improvements");
     expect(out.stdout).toContain("Aborted.");
   });
@@ -230,7 +254,7 @@ describe("runUpdate dispatcher", () => {
         null, // updater.applyUpdate
       ]);
       setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-      await runUpdate([]);
+      await runUpdate([], { channel: null });
       expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow", "updater.applyUpdate"]);
       expect(out.stdout).toContain("Update applied. Gateway will restart.");
     } finally {
@@ -260,7 +284,7 @@ describe("runUpdate dispatcher", () => {
         process.stdin.emit("data", Buffer.from("yes\n"));
       }, 20);
       try {
-        await runUpdate([]);
+        await runUpdate([], { channel: null });
       } finally {
         clearTimeout(emitTimer);
       }
@@ -287,7 +311,7 @@ describe("runUpdate dispatcher", () => {
         },
       ]);
       setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-      await runUpdate([]);
+      await runUpdate([], { channel: null });
       expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow"]);
       expect(out.stdout).toContain("Aborted.");
     } finally {

@@ -14,6 +14,11 @@ production = false
 timeout = 30000
 smol = false
 coverage = false
+# Runs before every test file — and before anything can import config.ts, whose `Config`
+# snapshots process.env once at first import. Blanks the developer's real credentials so no
+# test can inherit them and reach a live provider. See the file header and issue #812, where
+# a test suite made a real OAuth round-trip to Google with the developer's own client secret.
+preload = ["./scripts/test-preload/hermetic-credentials.ts"]
 
 [test.coverageThreshold]
 lines = 80

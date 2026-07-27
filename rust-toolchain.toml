@@ -5,8 +5,10 @@
 # stabilized in Rust 1.85+. We pin 1.95 (April 2026 stable) to match the MSRV
 # declared in packages/ui/src-tauri/Cargo.toml.
 #
-# When bumping this, also update the `toolchain:` input in:
-#   .github/workflows/codeql.yml
-#   .github/workflows/security.yml
+# This file is the single source of truth for CI too: the shared
+# .github/actions/setup-rust-toolchain composite action parses `channel` and
+# `components` straight out of it, so bumping the version here is the whole
+# change. (It used to be copy-pasted into codeql.yml and security.yml, which is
+# what this comment used to remind you about.)
 channel = "1.95.0"
 components = ["rustfmt", "clippy"]

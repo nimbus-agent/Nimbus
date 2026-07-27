@@ -178,9 +178,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable (SHA-pinned; version driven by input below)
-        with:
-          toolchain: "1.95.0"
+        uses: ./.github/actions/setup-rust-toolchain
 
       - name: Cache cargo-audit binary
         id: cargo-audit-cache
@@ -219,11 +217,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable (SHA-pinned; version driven by input below)
-        with:
-          toolchain: "1.95.0"
-
+      # Deliberately no "Setup Rust" step here. cargo-deny-action is a *Docker*
+      # action (rust:1.85.0-alpine3.20) that brings its own cargo and resolves
+      # rust-toolchain.toml inside the container, so a host toolchain is never
+      # consulted. The host install was pure cost — and in run 30232465108 it was
+      # the step that failed (a static.rust-lang.org TLS reset), taking the job
+      # down before cargo-deny ever ran. Do not re-add it.
       - name: Run cargo deny
         # Pinned to v2.0.17 (cargo-deny 0.19.2). The previous pin at
         # e2f4ede (v2.0.4) bundled a cargo-deny version that couldn't

@@ -57,9 +57,7 @@ jobs:
 
       - name: Setup Rust (Rust only)
         if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable (SHA-pinned; version driven by input below)
-        with:
-          toolchain: "1.95.0"
+        uses: ./.github/actions/setup-rust-toolchain
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
