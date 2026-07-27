@@ -320,7 +320,7 @@ moves to P6).
   real but concentrated almost entirely on **macOS** runners.
 - **Tolerance is a per-key noise band, not a constant.** Measured spreads
   (`p90 − median`) over 11 samples: `Static — ubuntu` 0.2, `Unit + Coverage —
-  ubuntu` 2.0min, `Unit + Coverage — windows` **10.77**. No global constant fits
+  ubuntu` 0.29, `Unit + Coverage — windows` **10.77**. No global constant fits
   both, so the baseline stores each job's own spread and the gate allows
   `max(1min, spread)`. A job whose spread exceeds half its median is reported
   `unstable` — observed, never failed, since flakiness is not caused by the
