@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.1.1](https://github.com/nimbus-agent/Nimbus/compare/v1.1.0...v1.1.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **ci:** retry the Rust toolchain install, drop the redundant one, and close [#809](https://github.com/nimbus-agent/Nimbus/issues/809)/[#810](https://github.com/nimbus-agent/Nimbus/issues/810)/[#812](https://github.com/nimbus-agent/Nimbus/issues/812) ([#855](https://github.com/nimbus-agent/Nimbus/issues/855)) ([bb729c5](https://github.com/nimbus-agent/Nimbus/commit/bb729c5b55f3d64823a29e1b15bdd7e6c85a110a))
+
 ## [1.1.0](https://github.com/nimbus-agent/Nimbus/compare/v1.0.1...v1.1.0) (2026-07-26)
 
 
