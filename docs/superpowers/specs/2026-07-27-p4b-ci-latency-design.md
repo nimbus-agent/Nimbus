@@ -19,23 +19,29 @@ slowest recent `CI` run (30215198584, push, 2026-07-27):
 | --- | --- |
 | Total wall-clock | **73.8 min** |
 | Longest single job **execution** | **12.3 min** |
-| Longest job **wait for a runner** | **58.7 min** |
-| Summed execution across all jobs | 166.5 min |
+| Longest **DAG wait** (blocked by `needs`) | **33.9 min** |
+| Longest **runner queue** (true contention) | **31.6 min** |
 
-**About 80% of the wall-clock is queueing, not computing.** Cache tuning and
-finer path filters shorten execution, which is not the binding constraint.
-Matrix *sharding* would actively make it worse: more jobs contending for the
-same runner pool. The binding constraint is total queued job-minutes against
-available concurrency.
+**Execution is not the binding constraint.** Cache tuning and finer path filters
+shorten execution, which is already only ~12 min on the critical path. Matrix
+*sharding* would actively make it worse: more jobs contending for the same
+runner pool.
 
-Two caveats stated up front, because a single number must not become its own
+Three caveats stated up front, because a single number must not become its own
 hunch:
 
-1. That run happened during a burst with seven PRs in flight, so contention was
+1. **An earlier revision of this spec claimed "~80% of wall-clock is queueing".
+   That was wrong**, and the design review caught it. It measured
+   `started_at − run_started_at`, which charges a job for its *dependencies'
+   execution* as though it were idle waiting. Decomposed correctly, the 73.8 min
+   splits into DAG wait (dependencies doing real work) and genuine runner
+   contention. The conclusion holds — execution is not the constraint — but on a
+   smaller margin than first stated.
+2. Contention is concentrated almost entirely on **macOS** jobs, which is a
+   specific and actionable signal for the eventual tuning slice.
+3. That run happened during a burst with seven PRs in flight, so contention was
    atypically high. One sample cannot separate "slow" from "congested" — which
    is exactly why P4b's gate is *tracking*, not a one-off tune.
-2. Run-level admission queueing is **zero** (`run_started_at == created_at` on
-   every sampled run). The waiting is per-*job*, waiting for a runner.
 
 ## Goal
 
@@ -46,15 +52,25 @@ after measurement, and the numbers above show why that ordering was right.
 
 ## What is measured
 
-Two metrics per job, kept **separate**, because they have different causes and
-different fixes:
+**Three** metrics per job, kept separate, because each has a different cause and
+a different fix:
 
 | Metric | Definition | Cause of a regression |
 | --- | --- | --- |
 | **exec** | `job.completed_at − job.started_at` | slower code, tests, or install |
-| **queue** | `job.started_at − run.run_started_at` | more concurrent jobs, or less concurrency |
+| **queue** | `job.started_at − job.created_at` | more concurrent jobs, or less concurrency |
+| **dagWait** | `job.created_at − run.run_started_at` | a deeper or slower dependency chain |
 
-Conflating them is what produced the misleading "CI takes 74 minutes" reading.
+The third metric and the corrected `queue` definition both come from the design
+review. A job's `created_at` tracks **eligibility**, not run start: root jobs are
+created at `run_started_at`, while a job gated by `needs` is created only once
+its dependencies finish (verified live). So `started_at − created_at` is pure
+runner contention with the DAG excluded, and the DAG cost is recorded separately
+rather than silently folded into "queue".
+
+This matters because the naive definition (`started_at − run_started_at`)
+charges every downstream job for its dependencies' execution, which is what
+produced the incorrect "80% is queueing" headline above.
 
 ### Only `exec` is gated — `queue` is observed
 
@@ -97,21 +113,44 @@ cache states, so mixing them compares unlike things.
 
 ### 2. Runner variance
 
-Even trivial jobs vary **1.3–1.9×** run-to-run (measured over the same window).
-A percentage threshold tight enough to catch a real 20% regression would fire
-constantly on noise, and a flaky gate is an ignored gate.
+Variance is wildly uneven across jobs, so **no single global constant works.**
+Eleven samples per job on `push`-to-default:
 
-**Resolution.** A key fails only when **both** conditions hold:
+| job | median | observed spread (max−min) |
+| --- | --- | --- |
+| `Static — ubuntu-24.04` | 4.6 min | **0.7 min** |
+| `Unit + Coverage — ubuntu-24.04` | 12.2 min | **2.0 min** |
+| `Unit + Coverage — windows-2025` | 13.2 min | **14.5 min** |
 
-- the observed median exceeds `baseline × (1 + TOLERANCE)` (TOLERANCE = 0.5), and
-- the absolute increase exceeds `MIN_ABSOLUTE_DELTA` (1 minute).
+An earlier revision used a flat 50% tolerance. The review correctly flagged it as
+far too loose for long jobs — a 15-minute job would need a 7.5-minute regression
+to fail. But the obvious fixes fail too: a global absolute cap (~3 min) would
+make `Unit + Coverage — windows-2025` fire constantly, since its *honest*
+run-to-run spread is 14.5 minutes.
 
-The absolute floor exists because ratios are meaningless on fast jobs: a
-0.3 min → 0.5 min job is +67% and completely irrelevant. Requiring both means the
-gate fires on "this job got materially slower", not on "this job jittered".
+**Resolution — a per-key noise band, measured rather than guessed.** The
+collector already gathers N samples per key, so the baseline stores the job's own
+spread alongside its median:
 
-Medians, never means: a single 58-minute outlier from a contended run would drag
-a mean past any threshold.
+```ts
+allowedIncrease = max(MIN_ABSOLUTE_DELTA, baseline.spread)   // spread = p90 − median
+fail when observedMedian > baseline.median + allowedIncrease
+```
+
+Tight exactly where the data is tight (Ubuntu Unit+Coverage: ~+2 min, so a
+4-minute regression now fails — under the flat rule it needed 6.1) and lenient
+exactly where the job is genuinely noisy. `MIN_ABSOLUTE_DELTA` (1 min) survives
+as the floor, because both ratios and small bands are meaningless on a
+0.3-minute job.
+
+Medians, never means: a single outlier from a contended run would drag a mean
+past any threshold.
+
+**Instability is observed, not gated.** A key whose spread exceeds 50% of its
+median is reported as `unstable` — `Unit + Coverage — windows-2025` qualifies
+today. A job that unpredictable is a real problem, but it is a *flakiness*
+problem; failing a PR for it would punish a contributor for something their
+change did not cause. Same rule as `queue`.
 
 ## Shape
 
@@ -132,6 +171,16 @@ baseline drops to the new median on the next `--update-baseline`, so a later
 regression from the improved state is caught. It never rises automatically —
 that would let latency drift upward one tolerated step at a time, which is the
 failure mode a ratchet exists to prevent.
+
+**Lowering demands more evidence than enforcing.** Ratcheting *down* requires
+`MIN_SAMPLES_FOR_RATCHET` (5) samples, versus the 3 needed to gate: three
+consecutive hot-cache runs is a plausible window, and the cost of a wrongly-low
+bound is a permanently red gate. The recorded `spread` travels down with the
+median, so a newly-lowered baseline keeps its noise band and cannot become
+unachievable by construction. (A `--max-drop` guard is the cheap follow-up if a
+bad ratchet is ever observed; `--update-baseline` is already an explicit human
+action producing a reviewable diff, so a second in-command approval step would
+add ceremony without adding a check.)
 
 ### Scope: org-wide from the start
 
