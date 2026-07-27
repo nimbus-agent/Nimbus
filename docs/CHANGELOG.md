@@ -30,6 +30,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `@nimbus-dev/client` consumes both. Also fixes **#812**: the connector-auth OAuth suite
   depended on winning a module-load race for `Config`'s env snapshot, and on a machine with
   Google OAuth configured it fell through the fail-closed guard into a real PKCE round-trip.
+  **Tests are now hermetic against real credentials by construction** — a `[test] preload`
+  (`scripts/test-preload/hermetic-credentials.ts`) blanks credential-shaped `NIMBUS_*` /
+  `OPENAI_*` / `ANTHROPIC_*` env vars before any test module loads, and therefore before
+  anything can import `config.ts` and freeze its snapshot. Per-file blanking cannot close that
+  class, because "am I the first file to load config.ts?" is not something a test file can
+  know; a preload is ordered ahead of all of them by construction. It announces the NAMES it
+  blanked (never values), so the next occurrence is visible rather than silent, and a wired-in
+  test asserts the preload actually ran. Tests that set a credential themselves are unaffected —
+  only inheritance from the developer's shell is removed, which no test may depend on since CI
+  has none set.
 
 - **2026-07-26 — P2 Release Train Phase 2: dependency-DAG edges.** `audit:release-staleness`
   now also watches the npm propagation graph. A `<pkg>:publish` edge compares each upstream's

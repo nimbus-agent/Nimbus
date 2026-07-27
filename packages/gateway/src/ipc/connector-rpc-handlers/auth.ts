@@ -650,7 +650,10 @@ async function connectorAuthOAuthPkce(
   vault: NimbusVault,
   localIndex: LocalIndex,
   openUrl: (url: string) => Promise<void>,
-  resolveClientConfig: OAuthClientConfigResolver = oauthClientConfigForProvider,
+  // Required, not defaulted. `handleConnectorAuth` is the only caller and already resolves the
+  // fallback; a default here would duplicate that and be permanently unreachable — dead code
+  // that reads like a safety net.
+  resolveClientConfig: OAuthClientConfigResolver,
 ): Promise<ConnectorRpcHit> {
   const profile = oauthProfileForService(id);
   const config = resolveClientConfig(profile);
