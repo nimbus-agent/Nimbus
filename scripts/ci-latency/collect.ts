@@ -7,7 +7,13 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { AUDITED_REPOS, MAX_RUNS_PER_WORKFLOW, RUN_LIST_PAGE, SAMPLE_EVENT } from "./constants.ts";
+import {
+  AUDITED_REPOS,
+  MAX_JOB_PAGES,
+  MAX_RUNS_PER_WORKFLOW,
+  RUN_LIST_PAGE,
+  SAMPLE_EVENT,
+} from "./constants.ts";
 import type { JobObservation } from "./types.ts";
 
 const MS_PER_MIN = 60_000;
@@ -24,7 +30,7 @@ export interface CollectResult {
   attempted: number;
   readFailures: number;
   /** True once any observation carried a non-zero dagWait — the created_at guard. */
-  sawNeedsWorkflow: boolean;
+  sawNonZeroDagWait: boolean;
 }
 
 export function parseRunMeta(json: string): RunMeta[] {
@@ -98,7 +104,7 @@ export function parseJobObservations(
         repo,
         workflow,
         job: name,
-        exec,
+        exec: Math.max(0, exec),
         queue: Math.max(0, queue),
         dagWait: Math.max(0, dagWait),
       });
@@ -110,6 +116,34 @@ export function parseJobObservations(
 }
 
 /**
+ * Pulls `total_count` off a `jobs` page. `per_page=100` truncates silently —
+ * confirmed live on a 105-job run — and this is how the collector knows more
+ * pages remain. Returns `null` rather than 0 on malformed JSON so a paging
+ * loop can tell "nothing there" from "unreadable" and refuse to page forever.
+ */
+export function parseJobsTotalCount(json: string): number | null {
+  try {
+    const p: unknown = JSON.parse(json);
+    if (!isRecord(p)) return null;
+    const tc = p["total_count"];
+    return typeof tc === "number" ? tc : null;
+  } catch {
+    return null;
+  }
+}
+
+/** How many `jobs` entries one page actually returned, success or not. */
+function parseJobsPageCount(json: string): number {
+  try {
+    const p: unknown = JSON.parse(json);
+    if (!isRecord(p) || !Array.isArray(p["jobs"])) return 0;
+    return p["jobs"].length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * All observations for one repo. An unreadable repo yields none — never a
  * finding — but read failures are COUNTED, because a partial sample is more
  * dangerous than no sample: the survivors are whichever runs happened to
@@ -117,40 +151,61 @@ export function parseJobObservations(
  * regression from it.
  */
 export function collectRepo(repo: string): CollectResult {
-  const empty: CollectResult = {
-    observations: [],
-    attempted: 0,
-    readFailures: 0,
-    sawNeedsWorkflow: false,
-  };
   const res = runGh([
     "gh",
     "api",
     `repos/nimbus-agent/${repo}/actions/runs?per_page=${RUN_LIST_PAGE}&event=${SAMPLE_EVENT}&status=success`,
   ]);
-  if (!res.ok) return empty;
+  if (!res.ok) {
+    // A failed run-LIST read must still count against the degradation guard:
+    // losing a whole repo silently is worse than losing one run within it.
+    return { observations: [], attempted: 1, readFailures: 1, sawNonZeroDagWait: false };
+  }
 
   const out: JobObservation[] = [];
   let attempted = 0;
   let readFailures = 0;
-  let sawNeedsWorkflow = false;
+  let sawNonZeroDagWait = false;
 
   for (const run of selectRuns(parseRunMeta(res.stdout))) {
     attempted++;
-    const jobs = runGh([
+    const firstPage = runGh([
       "gh",
       "api",
       `repos/nimbus-agent/${repo}/actions/runs/${run.id}/jobs?per_page=100`,
     ]);
-    if (!jobs.ok) {
+    if (!firstPage.ok) {
       readFailures++;
       continue;
     }
-    const obs = parseJobObservations(jobs.stdout, repo, run.name, run.runStartedAt);
-    if (obs.some((o) => o.dagWait > 0)) sawNeedsWorkflow = true;
+    const obs = parseJobObservations(firstPage.stdout, repo, run.name, run.runStartedAt);
+    if (obs.some((o) => o.dagWait > 0)) sawNonZeroDagWait = true;
     out.push(...obs);
+
+    // Page through until every job is retrieved. Bounded by MAX_JOB_PAGES so a
+    // bad/wildly-wrong total_count can never spin the loop forever.
+    const total = parseJobsTotalCount(firstPage.stdout);
+    let fetched = parseJobsPageCount(firstPage.stdout);
+    let page = 1;
+    while (total !== null && fetched < total && page < MAX_JOB_PAGES) {
+      page++;
+      attempted++;
+      const nextPage = runGh([
+        "gh",
+        "api",
+        `repos/nimbus-agent/${repo}/actions/runs/${run.id}/jobs?per_page=100&page=${page}`,
+      ]);
+      if (!nextPage.ok) {
+        readFailures++;
+        break;
+      }
+      const more = parseJobObservations(nextPage.stdout, repo, run.name, run.runStartedAt);
+      if (more.some((o) => o.dagWait > 0)) sawNonZeroDagWait = true;
+      out.push(...more);
+      fetched += parseJobsPageCount(nextPage.stdout);
+    }
   }
-  return { observations: out, attempted, readFailures, sawNeedsWorkflow };
+  return { observations: out, attempted, readFailures, sawNonZeroDagWait };
 }
 
 export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectResult {
@@ -158,14 +213,14 @@ export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectRes
     observations: [],
     attempted: 0,
     readFailures: 0,
-    sawNeedsWorkflow: false,
+    sawNonZeroDagWait: false,
   };
   for (const repo of repos) {
     const r = collectRepo(repo);
     merged.observations.push(...r.observations);
     merged.attempted += r.attempted;
     merged.readFailures += r.readFailures;
-    merged.sawNeedsWorkflow ||= r.sawNeedsWorkflow;
+    merged.sawNonZeroDagWait ||= r.sawNonZeroDagWait;
   }
   return merged;
 }

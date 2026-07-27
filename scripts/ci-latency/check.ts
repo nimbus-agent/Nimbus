@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { isStrict, strictSkip } from "../structure-audit/_gh-audit.ts";
 import { computeUpdatedBaseline, parseBaseline, serializeBaseline } from "./baseline.ts";
 import { collectAll } from "./collect.ts";
-import { MAX_READ_FAILURE_RATIO } from "./constants.ts";
+import { MAX_READ_FAILURE_RATIO, MIN_REPORTED_QUEUE_MIN } from "./constants.ts";
 import { evaluate } from "./evaluate.ts";
 import { summarize } from "./summarize.ts";
 
@@ -45,7 +45,7 @@ if (import.meta.main) {
   const label = "audit:ci-latency";
 
   const collected = collectAll();
-  const { observations, attempted, readFailures, sawNeedsWorkflow } = collected;
+  const { observations, attempted, readFailures, sawNonZeroDagWait } = collected;
 
   if (observations.length === 0) {
     // Nothing readable at all: no gh, no auth, or a total API outage.
@@ -74,10 +74,12 @@ if (import.meta.main) {
   // The created_at eligibility assumption is undocumented API behaviour. If it
   // ever changes, dagWait silently goes to zero everywhere and `queue` quietly
   // re-absorbs dependency execution — with no error anywhere. Warn, never fail:
-  // an upstream API change is not something a contributor's PR can fix.
-  if (!sawNeedsWorkflow) {
+  // an upstream API change is not something a contributor's PR can fix. A
+  // window sampling only root jobs (no `needs:` anywhere in it) would ALSO show
+  // this, so the wording only reports the observation, not a conclusion.
+  if (!sawNonZeroDagWait) {
     console.warn(
-      `::warning::${label}: dagWait is zero for every observation — the created_at eligibility assumption may have changed; queue figures may now include dependency execution`,
+      `::warning::${label}: no observation carried a non-zero dagWait — if any sampled workflow uses \`needs:\`, the created_at eligibility assumption may have changed`,
     );
   }
 
@@ -97,9 +99,15 @@ if (import.meta.main) {
 
   // Observational lines first, so a red is read in context.
   const worstQueue = [...summaries.values()].sort((a, b) => b.queueMedian - a.queueMedian)[0];
-  if (worstQueue && worstQueue.queueMedian > 1) {
+  if (worstQueue && worstQueue.queueMedian > MIN_REPORTED_QUEUE_MIN) {
     console.warn(
       `::warning::${label}: worst median runner queue ${worstQueue.queueMedian.toFixed(1)}m on "${worstQueue.key}" — contention, not a code regression`,
+    );
+  }
+  const worstDagWait = [...summaries.values()].sort((a, b) => b.dagWaitMedian - a.dagWaitMedian)[0];
+  if (worstDagWait && worstDagWait.dagWaitMedian > MIN_REPORTED_QUEUE_MIN) {
+    console.warn(
+      `::warning::${label}: worst median DAG wait ${worstDagWait.dagWaitMedian.toFixed(1)}m on "${worstDagWait.key}" — dependency chain depth, not a code regression`,
     );
   }
   for (const f of result.findings) {

@@ -1,6 +1,6 @@
 # P4b — CI latency: measure before tuning
 
-**Status:** design approved 2026-07-27, not yet implemented.
+**Status:** implemented and shipped 2026-07-27 (`audit:ci-latency`).
 **Sub-program:** [P4b Latency](../../infrastructure-roadmap.md#sub-programs) — the
 last un-started entry in the program.
 **Program design of record:** `2026-07-23-org-infrastructure-program-design.md`
@@ -114,19 +114,20 @@ cache states, so mixing them compares unlike things.
 ### 2. Runner variance
 
 Variance is wildly uneven across jobs, so **no single global constant works.**
-Eleven samples per job on `push`-to-default:
+From the shipped, committed baseline (`docs/structure-audit/ci-latency-baseline.json`,
+regenerated 2026-07-27), `push`-to-default:
 
-| job | median | observed spread (max−min) |
+| job | median | observed spread (p90 − median) |
 | --- | --- | --- |
-| `Static — ubuntu-24.04` | 4.6 min | **0.7 min** |
-| `Unit + Coverage — ubuntu-24.04` | 12.2 min | **2.0 min** |
-| `Unit + Coverage — windows-2025` | 13.2 min | **14.5 min** |
+| `Static — ubuntu-24.04` | 4.6 min | **0.15 min** |
+| `Unit + Coverage — ubuntu-24.04` | 12.2 min | **0.22 min** |
+| `Unit + Coverage — windows-2025` | 13.2 min | **10.48 min** |
 
 An earlier revision used a flat 50% tolerance. The review correctly flagged it as
 far too loose for long jobs — a 15-minute job would need a 7.5-minute regression
 to fail. But the obvious fixes fail too: a global absolute cap (~3 min) would
 make `Unit + Coverage — windows-2025` fire constantly, since its *honest*
-run-to-run spread is 14.5 minutes.
+run-to-run spread is over 10 minutes.
 
 **Resolution — a per-key noise band, measured rather than guessed.** The
 collector already gathers N samples per key, so the baseline stores the job's own
@@ -137,11 +138,11 @@ allowedIncrease = max(MIN_ABSOLUTE_DELTA, baseline.spread)   // spread = p90 −
 fail when observedMedian > baseline.median + allowedIncrease
 ```
 
-Tight exactly where the data is tight (Ubuntu Unit+Coverage: ~+2 min, so a
-4-minute regression now fails — under the flat rule it needed 6.1) and lenient
-exactly where the job is genuinely noisy. `MIN_ABSOLUTE_DELTA` (1 min) survives
-as the floor, because both ratios and small bands are meaningless on a
-0.3-minute job.
+Tight exactly where the data is tight (Ubuntu Unit+Coverage: spread 0.22 min,
+floored to the 1-minute `MIN_ABSOLUTE_DELTA`, so a 4-minute regression now
+fails — under the flat rule it needed 6.1) and lenient exactly where the job is
+genuinely noisy. `MIN_ABSOLUTE_DELTA` (1 min) survives as the floor, because
+both ratios and small bands are meaningless on a 0.3-minute job.
 
 Medians, never means: a single outlier from a contended run would drag a mean
 past any threshold.
@@ -173,23 +174,29 @@ that would let latency drift upward one tolerated step at a time, which is the
 failure mode a ratchet exists to prevent.
 
 **Lowering demands more evidence than enforcing.** Ratcheting *down* requires
-`MIN_SAMPLES_FOR_RATCHET` (5) samples, versus the 3 needed to gate: three
-consecutive hot-cache runs is a plausible window, and the cost of a wrongly-low
-bound is a permanently red gate. The recorded `spread` travels down with the
-median, so a newly-lowered baseline keeps its noise band and cannot become
-unachievable by construction. (A `--max-drop` guard is the cheap follow-up if a
-bad ratchet is ever observed; `--update-baseline` is already an explicit human
-action producing a reviewable diff, so a second in-command approval step would
-add ceremony without adding a check.)
+`MIN_SAMPLES_FOR_RATCHET` (7) samples, versus the 3 needed to gate — 7 is
+affordable only because sampling is capped per WORKFLOW rather than per repo
+(a flat per-repo cap left `CI` with 4 of 30 runs and made every threshold above
+5 unreachable). Lowering demands more evidence than gating because the cost of
+a wrongly-low bound is a permanently red gate. The recorded `spread` travels
+down with the median, so a newly-lowered baseline keeps its noise band and
+cannot become unachievable by construction. (A `--max-drop` guard is the cheap
+follow-up if a bad ratchet is ever observed; `--update-baseline` is already an
+explicit human action producing a reviewable diff, so a second in-command
+approval step would add ceremony without adding a check.)
 
 ### Scope: org-wide from the start
 
-All 8 public org repos, keyed `(repo, workflow, job)`. The roadmap's founding
-observation is that controls stop where they were written, and a Nimbus-only
-latency gate would be the fifth instance of exactly that. API cost is bounded:
-one `runs` call per repo plus one `jobs` call per sampled run, capped at
-`MAX_RUNS_PER_REPO` (30), so ~250 requests against a 5000/hr authenticated
-limit.
+All 9 audited org repos (the 8-repo `sha-pins` matrix in `org-drift-sweep.yml`
+plus `Nimbus` itself, which that matrix excludes only because it is the
+checkout host for the other jobs, not an audit target), keyed
+`(repo, workflow, job)`. The roadmap's founding observation is that controls
+stop where they were written, and a Nimbus-only latency gate would be the
+fifth instance of exactly that. API cost is bounded: one `runs` call per repo
+(`RUN_LIST_PAGE` = 100, the API max in one page) plus one or more `jobs` calls
+per sampled run, capped at `MAX_RUNS_PER_WORKFLOW` (12) runs per workflow —
+capping per workflow rather than per repo is what makes `MIN_SAMPLES_FOR_RATCHET`
+(7) reachable at all.
 
 ### Where it runs
 

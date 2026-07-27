@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseJobObservations, parseRunMeta, selectRuns } from "./collect.ts";
+import { parseJobObservations, parseJobsTotalCount, parseRunMeta, selectRuns } from "./collect.ts";
 
 describe("parseRunMeta", () => {
   test("reads id, workflow name and run_started_at", () => {
@@ -111,5 +111,44 @@ describe("parseJobObservations", () => {
     const [o] = parseJobObservations(payload([job()]), "nimbus-sdk", "Release", t0);
     expect(o?.repo).toBe("nimbus-sdk");
     expect(o?.workflow).toBe("Release");
+  });
+
+  test("clamps a negative exec (clock skew) to zero, same as queue and dagWait", () => {
+    const [o] = parseJobObservations(
+      payload([job({ started_at: "2026-07-27T10:12:00Z", completed_at: "2026-07-27T10:02:00Z" })]),
+      "Nimbus",
+      "CI",
+      t0,
+    );
+    expect(o?.exec).toBe(0);
+  });
+});
+
+describe("parseJobsTotalCount", () => {
+  test("reads total_count off a jobs page", () => {
+    expect(parseJobsTotalCount('{"total_count":105,"jobs":[]}')).toBe(105);
+  });
+
+  test("null on malformed JSON — never mistaken for a real zero", () => {
+    expect(parseJobsTotalCount("{nope")).toBeNull();
+  });
+
+  test("null when total_count is missing or the wrong type", () => {
+    expect(parseJobsTotalCount('{"jobs":[]}')).toBeNull();
+    expect(parseJobsTotalCount('{"total_count":"105","jobs":[]}')).toBeNull();
+  });
+
+  test("a page reporting more jobs than it returned is the collector's paging trigger", () => {
+    // Confirmed live: Nimbus run 30232465196 reports total_count 105 but a
+    // single per_page=100 page returns only 100 — the collector must page
+    // again whenever total_count exceeds what came back on the page.
+    const page = JSON.stringify({
+      total_count: 105,
+      jobs: Array.from({ length: 100 }, () => ({ conclusion: "success" })),
+    });
+    const total = parseJobsTotalCount(page);
+    const returned = (JSON.parse(page) as { jobs: unknown[] }).jobs.length;
+    expect(total).toBe(105);
+    expect(returned).toBeLessThan(total as number);
   });
 });

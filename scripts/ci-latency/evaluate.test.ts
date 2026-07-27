@@ -29,11 +29,12 @@ describe("evaluate", () => {
   });
 
   test("a regression beyond the band fails", () => {
-    // Ubuntu Unit+Coverage: median 12.2, spread 2.0 — a 4-minute regression must
-    // fail. Under a flat 50% tolerance it needed 6.1 and would have passed.
+    // Ubuntu Unit+Coverage: median 12.2, spread 0.22 (below the 1-minute
+    // MIN_ABSOLUTE_DELTA floor) — a 4-minute regression must fail. Under a flat
+    // 50% tolerance it needed 6.1 and would have passed.
     const r = evaluate(
       new Map([["k", sum({ key: "k", execMedian: 16.2 })]]),
-      base({ k: { execMedian: 12.2, execSpread: 2 } }),
+      base({ k: { execMedian: 12.2, execSpread: 0.22 } }),
     );
     expect(r.regressions.map((f) => f.key)).toEqual(["k"]);
     expect(r.regressions[0]?.detail).toContain("12.2");

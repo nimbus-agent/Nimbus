@@ -60,8 +60,16 @@ function round2(n: number): number {
  * because a wrongly-low bound produces a permanently red gate and three
  * consecutive hot-cache runs is a plausible window.
  *
- * A key absent from the current window is dropped: it was renamed or deleted,
- * and keeping it would strand a baseline entry nothing can ever satisfy.
+ * A key OBSERVED but too sparse to trust (`samples < MIN_SAMPLES`) retains its
+ * existing baseline entry rather than being deleted — a quiet-fortnight
+ * regeneration of a rarely-run workflow (e.g. `Release`) must not make that key
+ * vanish and come back as an ungated `new-key`, which is a false green in the
+ * ratchet's own favour. A sparse key with no prior entry has nothing to
+ * preserve and is still omitted.
+ *
+ * A key ABSENT from the current window entirely is dropped: it was renamed or
+ * deleted, and keeping it would strand a baseline entry nothing can ever
+ * satisfy.
  */
 export function computeUpdatedBaseline(
   current: LatencyBaseline,
@@ -70,8 +78,11 @@ export function computeUpdatedBaseline(
 ): LatencyBaseline {
   const entries = new Map<string, BaselineEntry>();
   for (const [key, s] of summaries) {
-    if (s.samples < MIN_SAMPLES) continue;
     const prev = current.entries.get(key);
+    if (s.samples < MIN_SAMPLES) {
+      if (prev) entries.set(key, prev);
+      continue;
+    }
     if (prev && s.execMedian < prev.execMedian && s.samples < MIN_SAMPLES_FOR_RATCHET) {
       entries.set(key, prev);
       continue;

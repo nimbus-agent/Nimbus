@@ -319,17 +319,22 @@ moves to P6).
   is DAG-free contention and the DAG cost is recorded separately. Contention is
   real but concentrated almost entirely on **macOS** runners.
 - **Tolerance is a per-key noise band, not a constant.** Measured spreads
-  (`p90 − median`) over 11 samples: `Static — ubuntu` 0.2, `Unit + Coverage —
-  ubuntu` 0.29, `Unit + Coverage — windows` **10.77**. No global constant fits
-  both, so the baseline stores each job's own spread and the gate allows
-  `max(1min, spread)`. A job whose spread exceeds half its median is reported
-  `unstable` — observed, never failed, since flakiness is not caused by the
-  contributor's change.
-- **Baseline coverage:** the generated baseline contains **194 keys from 1806
+  (`p90 − median`) in the committed baseline: `Static — ubuntu` 0.15, `Unit +
+  Coverage — ubuntu` 0.22, `Unit + Coverage — windows` **10.48**. No global
+  constant fits both, so the baseline stores each job's own spread and the gate
+  allows `max(1min, spread)`. A job whose spread exceeds half its median is
+  reported `unstable` — observed, never failed, since flakiness is not caused
+  by the contributor's change.
+- **Baseline coverage:** the generated baseline contains **197 keys from 1778
   observations across 6 repos**. Three of the nine audited repos (`linux-repo`,
   `homebrew-tap`, `scoop-bucket`) contribute nothing because they have zero
   successful `push`-event runs — their automation is dispatch-triggered. This is
-  expected, not a gap.
+  expected, not a gap. An earlier collection paged only the first 100 jobs of
+  each run, which silently dropped every job past that cutoff — including all
+  three `E2E Desktop` legs, exactly the deepest-DAG, longest-tail jobs the gate
+  exists to watch. The collector now pages through `total_count`, capped at
+  `MAX_JOB_PAGES` (5) per run, and `Nimbus :: CI :: E2E Desktop — {ubuntu,macos,
+  windows}` now appear in the baseline.
 - **The gate ships green by construction:** the baseline is generated from the
   same window the check reads, so nothing can exceed it on the first run. The
   red-proof is the unit test in `scripts/ci-latency/evaluate.test.ts`, not the

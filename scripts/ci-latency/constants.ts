@@ -34,6 +34,14 @@ export const RUN_LIST_PAGE = 100;
 export const MAX_RUNS_PER_WORKFLOW = 12;
 
 /**
+ * Caps how many `jobs` pages a single run's job list can page through. A run
+ * with >100 jobs (a wide matrix) needs more than one page to be fully counted,
+ * but a bad or wildly wrong `total_count` from the API must not spin the
+ * collector forever — 5 pages (500 jobs) is far beyond any real run.
+ */
+export const MAX_JOB_PAGES = 5;
+
+/**
  * Past this share of failed job reads the sample is degraded: the survivors are
  * whichever runs happened to succeed, so their median could be biased and the
  * gate could manufacture a regression. Skip gating instead.
@@ -43,7 +51,15 @@ export const MAX_READ_FAILURE_RATIO = 0.25;
 /** PR runs execute a different job set with different cache state. */
 export const SAMPLE_EVENT = "push";
 
-/** The org repos audited, mirroring the sha-pins matrix in org-drift-sweep.yml. */
+/** Below this many minutes a worst-observed line is not worth printing. */
+export const MIN_REPORTED_QUEUE_MIN = 1;
+
+/**
+ * The org repos audited: the 8-repo `sha-pins` matrix in `org-drift-sweep.yml`
+ * plus `Nimbus` itself — that matrix excludes Nimbus because it is the checkout
+ * host for the other jobs, not an audit target, but a latency gate that skipped
+ * the repo it exists to protect would miss most of what motivates it.
+ */
 export const AUDITED_REPOS: readonly string[] = [
   "Nimbus",
   "nimbus-client",

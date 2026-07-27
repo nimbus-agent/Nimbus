@@ -108,6 +108,27 @@ describe("computeUpdatedBaseline", () => {
     expect(next.entries.has("k")).toBe(false);
   });
 
+  test("a sparse key retains its existing entry rather than being deleted", () => {
+    // A rarely-run workflow (e.g. Release) can be legitimately observed but
+    // sparse in any given window. Deleting it here would let it come back as
+    // an ungated `new-key` on the next check — a false green.
+    const next = computeUpdatedBaseline(
+      base({ k: { execMedian: 5, execSpread: 1 } }),
+      new Map([["k", sum({ key: "k", samples: 1, execMedian: 99 })]]),
+      now,
+    );
+    expect(next.entries.get("k")).toEqual({ execMedian: 5, execSpread: 1 });
+  });
+
+  test("a sparse key with no existing entry is still not added", () => {
+    const next = computeUpdatedBaseline(
+      base({}),
+      new Map([["k", sum({ key: "k", samples: 1, execMedian: 99 })]]),
+      now,
+    );
+    expect(next.entries.has("k")).toBe(false);
+  });
+
   test("stamps generated_at", () => {
     expect(computeUpdatedBaseline(base({}), new Map(), now).generated_at).toBe(now);
   });
