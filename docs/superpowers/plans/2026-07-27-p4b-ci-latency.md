@@ -25,12 +25,21 @@
 
 | Constant | Value | Why |
 | --- | --- | --- |
-| `MIN_SAMPLES` | 3 | fewer observations is `insufficient-data`, skipped not failed |
-| `MIN_SAMPLES_FOR_RATCHET` | 5 | lowering a bound demands more evidence than enforcing one |
+| `MIN_SAMPLES` | 3 | fewer observations is `insufficient-data`, skipped not failed; 71% of keys qualify |
+| `MIN_SAMPLES_FOR_RATCHET` | 7 | lowering a bound demands more evidence than enforcing one |
 | `MIN_ABSOLUTE_DELTA_MIN` | 1 | ratios are meaningless on a 0.3-min job |
 | `UNSTABLE_SPREAD_RATIO` | 0.5 | spread > 50% of median ⇒ reported `unstable`, never failed |
-| `MAX_RUNS_PER_REPO` | 30 | bounds API cost to ~250 requests |
+| `RUN_LIST_PAGE` | 100 | one cheap list request at the API maximum |
+| `MAX_RUNS_PER_WORKFLOW` | 12 | caps the *expensive* job fetches where the volume is |
+| `MAX_READ_FAILURE_RATIO` | 0.25 | past this the sample is degraded — skip gating, never gate on it |
 | `SAMPLE_EVENT` | `"push"` | PR runs execute a different job set; mixing compares unlike things |
+
+**Why the window is per-workflow, not per-repo.** An earlier revision capped 30
+runs per *repo*. Measured: those 30 push runs span 8 workflows, so `CI` itself
+got only **4** — and no CI job could ever exceed 4 samples, which left just
+**2% of keys** able to ratchet and made any threshold above 5 unreachable. At a
+100-run list, `CI` gets **12**. Capping the job fetches per workflow buys that
+depth without the ~900 requests a flat 100-per-repo would have cost.
 
 ---
 
@@ -75,11 +84,15 @@
 export const MIN_SAMPLES = 3;
 
 /**
- * Lowering a baseline needs MORE evidence than enforcing one: three consecutive
+ * Lowering a baseline needs MORE evidence than enforcing one: a few consecutive
  * hot-cache runs is a plausible window, and the cost of a wrongly-low bound is a
  * permanently red gate.
+ *
+ * 7 is affordable only because sampling is capped per WORKFLOW rather than per
+ * repo — under the old per-repo window a stable CI job could reach at most 4
+ * samples, which made every threshold above 5 unreachable and the ratchet dead.
  */
-export const MIN_SAMPLES_FOR_RATCHET = 5;
+export const MIN_SAMPLES_FOR_RATCHET = 7;
 
 /** Ratios and small noise bands are both meaningless on a sub-minute job. */
 export const MIN_ABSOLUTE_DELTA_MIN = 1;
@@ -87,8 +100,21 @@ export const MIN_ABSOLUTE_DELTA_MIN = 1;
 /** spread > this × median ⇒ reported `unstable` (observed, never failed). */
 export const UNSTABLE_SPREAD_RATIO = 0.5;
 
-/** Bounds API cost: ~1 + MAX_RUNS_PER_REPO requests per repo. */
-export const MAX_RUNS_PER_REPO = 30;
+/** One cheap list request at the API maximum. */
+export const RUN_LIST_PAGE = 100;
+
+/**
+ * Caps the EXPENSIVE per-run job fetches, and does so per workflow so a busy
+ * workflow cannot starve a quiet one out of the sample.
+ */
+export const MAX_RUNS_PER_WORKFLOW = 12;
+
+/**
+ * Past this share of failed job reads the sample is degraded: the survivors are
+ * whichever runs happened to succeed, so their median could be biased and the
+ * gate could manufacture a regression. Skip gating instead.
+ */
+export const MAX_READ_FAILURE_RATIO = 0.25;
 
 /** PR runs execute a different job set with different cache state. */
 export const SAMPLE_EVENT = "push";
@@ -439,11 +465,11 @@ describe("computeUpdatedBaseline", () => {
   });
 
   test("does NOT ratchet down on too few samples", () => {
-    // Three hot-cache runs is a plausible window; lowering demands more evidence
-    // than gating does.
+    // A few hot-cache runs is a plausible window; lowering demands more evidence
+    // than gating does. 6 < MIN_SAMPLES_FOR_RATCHET (7).
     const next = computeUpdatedBaseline(
       base({ k: { execMedian: 10, execSpread: 2 } }),
-      new Map([["k", sum({ key: "k", execMedian: 6, samples: 4 })]]),
+      new Map([["k", sum({ key: "k", execMedian: 6, samples: 6 })]]),
       now,
     );
     expect(next.entries.get("k")?.execMedian).toBe(10);
@@ -800,25 +826,55 @@ git commit -m "feat(audit): ci-latency evaluate — per-key band, exec-only gati
 
 **Interfaces:**
 
-- Consumes: `runGh`, `isRecord` from `../structure-audit/_gh-audit.ts`; `MAX_RUNS_PER_REPO`, `SAMPLE_EVENT`, `AUDITED_REPOS`.
-- Produces: `parseRunIds(json: string): string[]`, `parseJobObservations(json: string, repo: string, workflow: string, runStartedAt: string): JobObservation[]`, `collectRepo(repo: string): JobObservation[]`, `collectAll(repos?: readonly string[]): JobObservation[]`.
+- Consumes: `runGh`, `isRecord` from `../structure-audit/_gh-audit.ts`; `RUN_LIST_PAGE`, `MAX_RUNS_PER_WORKFLOW`, `SAMPLE_EVENT`, `AUDITED_REPOS`.
+- Produces: `parseRunMeta(json: string): RunMeta[]`, `selectRuns(runs: readonly RunMeta[]): RunMeta[]`, `parseJobObservations(json, repo, workflow, runStartedAt): JobObservation[]`, `collectRepo(repo: string): CollectResult`, `collectAll(repos?: readonly string[]): CollectResult`, and `interface CollectResult { observations: JobObservation[]; attempted: number; readFailures: number; sawNeedsWorkflow: boolean }`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 import { describe, expect, test } from "bun:test";
 
-import { parseJobObservations, parseRunIds } from "./collect.ts";
+import { parseJobObservations, parseRunMeta, selectRuns } from "./collect.ts";
 
-describe("parseRunIds", () => {
-  test("reads ids from the runs payload", () => {
-    expect(parseRunIds('{"workflow_runs":[{"id":1},{"id":2}]}')).toEqual(["1", "2"]);
+describe("parseRunMeta", () => {
+  test("reads id, workflow name and run_started_at", () => {
+    const m = parseRunMeta(
+      '{"workflow_runs":[{"id":1,"name":"CI","run_started_at":"2026-07-27T10:00:00Z"}]}',
+    );
+    expect(m).toEqual([{ id: "1", name: "CI", runStartedAt: "2026-07-27T10:00:00Z" }]);
   });
   test("empty on malformed JSON — an unreadable list is never a finding", () => {
-    expect(parseRunIds("{nope")).toEqual([]);
+    expect(parseRunMeta("{nope")).toEqual([]);
   });
-  test("skips entries with no numeric id", () => {
-    expect(parseRunIds('{"workflow_runs":[{"id":"x"},{"id":7}]}')).toEqual(["7"]);
+  test("skips entries missing any required field", () => {
+    expect(parseRunMeta('{"workflow_runs":[{"id":"x","name":"CI","run_started_at":"t"}]}')).toEqual(
+      [],
+    );
+  });
+});
+
+describe("selectRuns", () => {
+  const run = (name: string, i: number) => ({ id: `${name}-${i}`, name, runStartedAt: "t" });
+
+  test("caps per WORKFLOW, so a busy workflow cannot starve a quiet one", () => {
+    // The whole reason this exists: a flat per-repo cap gave CI only 4 of 30
+    // runs, which made every ratchet threshold above 5 unreachable.
+    const runs = [
+      ...Array.from({ length: 40 }, (_, i) => run("Scorecard", i)),
+      ...Array.from({ length: 40 }, (_, i) => run("CI", i)),
+    ];
+    const sel = selectRuns(runs);
+    expect(sel.filter((r) => r.name === "CI")).toHaveLength(12);
+    expect(sel.filter((r) => r.name === "Scorecard")).toHaveLength(12);
+  });
+
+  test("keeps every run of a workflow that has fewer than the cap", () => {
+    expect(selectRuns([run("CI", 1), run("CI", 2)])).toHaveLength(2);
+  });
+
+  test("preserves API order (newest first) within a workflow", () => {
+    const sel = selectRuns(Array.from({ length: 20 }, (_, i) => run("CI", i)));
+    expect(sel[0]?.id).toBe("CI-0");
   });
 });
 
@@ -900,23 +956,69 @@ Expected: FAIL — module `./collect.ts` does not exist.
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { AUDITED_REPOS, MAX_RUNS_PER_REPO, SAMPLE_EVENT } from "./constants.ts";
+import {
+  AUDITED_REPOS,
+  MAX_RUNS_PER_WORKFLOW,
+  RUN_LIST_PAGE,
+  SAMPLE_EVENT,
+} from "./constants.ts";
 import type { JobObservation } from "./types.ts";
 
 const MS_PER_MIN = 60_000;
 
-export function parseRunIds(json: string): string[] {
+export interface RunMeta {
+  id: string;
+  name: string;
+  runStartedAt: string;
+}
+
+export interface CollectResult {
+  observations: JobObservation[];
+  /** Job-list fetches attempted, for the failure-ratio check. */
+  attempted: number;
+  readFailures: number;
+  /** True once any observation carried a non-zero dagWait — the created_at guard. */
+  sawNeedsWorkflow: boolean;
+}
+
+export function parseRunMeta(json: string): RunMeta[] {
   try {
     const p: unknown = JSON.parse(json);
     if (!isRecord(p) || !Array.isArray(p["workflow_runs"])) return [];
-    const out: string[] = [];
+    const out: RunMeta[] = [];
     for (const r of p["workflow_runs"]) {
-      if (isRecord(r) && typeof r["id"] === "number") out.push(String(r["id"]));
+      if (!isRecord(r)) continue;
+      const id = r["id"];
+      const name = r["name"];
+      const started = r["run_started_at"];
+      if (typeof id !== "number" || typeof name !== "string" || typeof started !== "string") {
+        continue;
+      }
+      out.push({ id: String(id), name, runStartedAt: started });
     }
     return out;
   } catch {
     return [];
   }
+}
+
+/**
+ * Keep at most `MAX_RUNS_PER_WORKFLOW` runs of each workflow.
+ *
+ * Capping per workflow rather than per repo is the whole point: a flat per-repo
+ * cap let the noisiest workflow consume the window, leaving `CI` with 4 of 30
+ * runs and every ratchet threshold above 5 permanently unreachable.
+ */
+export function selectRuns(runs: readonly RunMeta[]): RunMeta[] {
+  const seen = new Map<string, number>();
+  const out: RunMeta[] = [];
+  for (const r of runs) {
+    const n = seen.get(r.name) ?? 0;
+    if (n >= MAX_RUNS_PER_WORKFLOW) continue;
+    seen.set(r.name, n + 1);
+    out.push(r);
+  }
+  return out;
 }
 
 function minutesBetween(later: unknown, earlier: unknown): number | null {
@@ -961,61 +1063,72 @@ export function parseJobObservations(
   }
 }
 
-interface RunMeta {
-  id: string;
-  name: string;
-  runStartedAt: string;
-}
-
-function parseRunMeta(json: string): RunMeta[] {
-  try {
-    const p: unknown = JSON.parse(json);
-    if (!isRecord(p) || !Array.isArray(p["workflow_runs"])) return [];
-    const out: RunMeta[] = [];
-    for (const r of p["workflow_runs"]) {
-      if (!isRecord(r)) continue;
-      const id = r["id"];
-      const name = r["name"];
-      const started = r["run_started_at"];
-      if (typeof id !== "number" || typeof name !== "string" || typeof started !== "string") continue;
-      out.push({ id: String(id), name, runStartedAt: started });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
-/** All observations for one repo. An unreadable repo yields none — never a finding. */
-export function collectRepo(repo: string): JobObservation[] {
+/**
+ * All observations for one repo. An unreadable repo yields none — never a
+ * finding — but read failures are COUNTED, because a partial sample is more
+ * dangerous than no sample: the survivors are whichever runs happened to
+ * succeed, so their median can be biased and the gate could manufacture a
+ * regression from it.
+ */
+export function collectRepo(repo: string): CollectResult {
+  const empty: CollectResult = {
+    observations: [],
+    attempted: 0,
+    readFailures: 0,
+    sawNeedsWorkflow: false,
+  };
   const res = runGh([
     "gh",
     "api",
-    `repos/nimbus-agent/${repo}/actions/runs?per_page=${MAX_RUNS_PER_REPO}&event=${SAMPLE_EVENT}&status=success`,
+    `repos/nimbus-agent/${repo}/actions/runs?per_page=${RUN_LIST_PAGE}&event=${SAMPLE_EVENT}&status=success`,
   ]);
-  if (!res.ok) return [];
+  if (!res.ok) return empty;
+
   const out: JobObservation[] = [];
-  for (const run of parseRunMeta(res.stdout)) {
+  let attempted = 0;
+  let readFailures = 0;
+  let sawNeedsWorkflow = false;
+
+  for (const run of selectRuns(parseRunMeta(res.stdout))) {
+    attempted++;
     const jobs = runGh([
       "gh",
       "api",
       `repos/nimbus-agent/${repo}/actions/runs/${run.id}/jobs?per_page=100`,
     ]);
-    if (!jobs.ok) continue;
-    out.push(...parseJobObservations(jobs.stdout, repo, run.name, run.runStartedAt));
+    if (!jobs.ok) {
+      readFailures++;
+      continue;
+    }
+    const obs = parseJobObservations(jobs.stdout, repo, run.name, run.runStartedAt);
+    if (obs.some((o) => o.dagWait > 0)) sawNeedsWorkflow = true;
+    out.push(...obs);
   }
-  return out;
+  return { observations: out, attempted, readFailures, sawNeedsWorkflow };
 }
 
-export function collectAll(repos: readonly string[] = AUDITED_REPOS): JobObservation[] {
-  return repos.flatMap((r) => collectRepo(r));
+export function collectAll(repos: readonly string[] = AUDITED_REPOS): CollectResult {
+  const merged: CollectResult = {
+    observations: [],
+    attempted: 0,
+    readFailures: 0,
+    sawNeedsWorkflow: false,
+  };
+  for (const repo of repos) {
+    const r = collectRepo(repo);
+    merged.observations.push(...r.observations);
+    merged.attempted += r.attempted;
+    merged.readFailures += r.readFailures;
+    merged.sawNeedsWorkflow ||= r.sawNeedsWorkflow;
+  }
+  return merged;
 }
 ```
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `bun test scripts/ci-latency/collect.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1061,6 +1174,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isStrict, strictSkip } from "../structure-audit/_gh-audit.ts";
+import { MAX_READ_FAILURE_RATIO } from "./constants.ts";
 import { computeUpdatedBaseline, parseBaseline, serializeBaseline } from "./baseline.ts";
 import { collectAll } from "./collect.ts";
 import { evaluate } from "./evaluate.ts";
@@ -1082,13 +1196,41 @@ if (import.meta.main) {
   const updateMode = argv.includes("--update-baseline");
   const label = "audit:ci-latency";
 
-  const observations = collectAll();
+  const collected = collectAll();
+  const { observations, attempted, readFailures, sawNeedsWorkflow } = collected;
+
   if (observations.length === 0) {
     // Nothing readable at all: no gh, no auth, or a total API outage.
     const outcome = strictSkip(label, strict);
     if (outcome.code === 1) console.error(outcome.message);
     else console.warn(outcome.message);
     process.exit(outcome.code);
+  }
+
+  if (readFailures > 0) {
+    console.warn(`::warning::${label}: ${readFailures}/${attempted} job-list read(s) failed`);
+  }
+  // A partial sample is worse than none: the survivors are whichever runs
+  // happened to succeed, so gating on their median could manufacture a
+  // regression. Degrade to a skip rather than gate on degraded data.
+  if (attempted > 0 && readFailures / attempted > MAX_READ_FAILURE_RATIO) {
+    const outcome = strictSkip(
+      label,
+      strict,
+      `${readFailures}/${attempted} job reads failed — sample too degraded to gate on`,
+    );
+    if (outcome.code === 1) console.error(outcome.message);
+    else console.warn(outcome.message);
+    process.exit(outcome.code);
+  }
+  // The created_at eligibility assumption is undocumented API behaviour. If it
+  // ever changes, dagWait silently goes to zero everywhere and `queue` quietly
+  // re-absorbs dependency execution — with no error anywhere. Warn, never fail:
+  // an upstream API change is not something a contributor's PR can fix.
+  if (!sawNeedsWorkflow) {
+    console.warn(
+      `::warning::${label}: dagWait is zero for every observation — the created_at eligibility assumption may have changed; queue figures may now include dependency execution`,
+    );
   }
 
   const summaries = summarize(observations);
