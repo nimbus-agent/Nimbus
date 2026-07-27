@@ -1,62 +1,142 @@
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Grouping policy — why this file looks the way it does.
+#
+# A weekly run used to open ~20 separate PRs, and each one triggers the full
+# pr-quality matrix. They share a concurrency group, so they mostly cancelled each
+# other: every PR sat BLOCKED with CANCELLED checks and none could merge. The fix is
+# to stop generating twenty PRs, not to widen CI.
+#
+# Three things caused the fan-out, all fixed below:
+#   1. `cargo` had no groups at all -> one PR per crate (5 of them).
+#   2. The `actions` group listed `github/codeql-action`, which does NOT match the
+#      sub-action paths actually used (`github/codeql-action/init`, `/analyze`,
+#      `/upload-sarif`). Nor did it list `bencherdev/bencher`, `step-security/*`,
+#      `EmbarkStudios/*`. Everything unlisted got its own PR.
+#   3. `bun` grouped only five families, so every other package was its own PR.
+#
+# Shape: ONE catch-all minor+patch PR per ecosystem, listed FIRST so it wins —
+# Dependabot assigns a dependency to the first group it matches. Majors are
+# deliberately left out of it: a major needs to be read, and burying one in a
+# 30-package PR is how a breaking change lands unnoticed. The major-only groups
+# after it exist where packages must move together or not at all.
 version: 2
 updates:
   - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
-    # Vite 8 + @vitejs/plugin-react 6 must land together; plugin-react@6 peers vite@^8.
     ignore:
+      # Vite 8 + @vitejs/plugin-react 6 must land together; plugin-react@6 peers vite@^8.
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
       - dependency-name: "@vitejs/plugin-react"
         update-types: ["version-update:semver-major"]
+      # TypeScript 7 is blocked on the docs toolchain, verified rather than assumed:
+      # `bun run typecheck` under 7.0.2 crashes @astrojs/language-server with
+      # "undefined is not an object (evaluating 'this.ts.sys.fileExists')" — TS 7
+      # drops the `ts.sys` surface it reaches into. @astrojs/check also still declares
+      # `typescript: ^5.0.0 || ^6.0.0`, so this is upstream's stated range, not a
+      # local quirk. Revisit when @astrojs/check ships TS 7 support; CLAUDE.md and
+      # GEMINI.md both pin "TypeScript 6.x strict" and must move with it.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
+      # First = wins. Everything routine collapses into a single PR.
+      all-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Majors only from here down: coupled sets that break if split across PRs.
+      #
+      # react + react-dom is not hypothetical. Dependabot opened a react-dom
+      # 19.2.7 -> 19.2.8 PR with no matching react bump; React refuses to boot on a
+      # version mismatch ("must have the exact same version"), and that PR alone
+      # failed 47 of 74 UI test files. The minor/patch catch-all above already keeps
+      # them in one PR; this covers the major case, which would otherwise split.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - "major"
       ui-testing:
         patterns:
           - "jsdom"
           - "vitest"
-          - "@vitest/coverage-v8"
+          - "@vitest/*"
           - "@testing-library/*"
+        update-types:
+          - "major"
       tooling:
         patterns:
           - "@biomejs/biome"
           - "typescript"
+        update-types:
+          - "major"
       playwright:
         patterns:
           - "playwright"
           - "@playwright/*"
+        update-types:
+          - "major"
       tauri-js:
         patterns:
           - "@tauri-apps/*"
+        update-types:
+          - "major"
       types:
         patterns:
           - "@types/*"
+        update-types:
+          - "major"
 
   - package-ecosystem: "cargo"
     directory: "/packages/ui/src-tauri"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      # Was ungrouped entirely — the single biggest source of the fan-out, since
+      # every transitive crate bump arrived as its own PR.
+      cargo-all-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(ci)"
     groups:
-      actions:
+      # `*` rather than a hand-maintained roster. The old list named
+      # `github/codeql-action`, which does not match the `github/codeql-action/init`
+      # form the workflows actually use, so the CodeQL bumps escaped the group and
+      # arrived as three separate PRs that each had to be merged in lockstep anyway
+      # (init/autobuild/analyze must share a version). A roster of action names is
+      # exactly the kind of list that silently stops matching.
+      actions-all:
         patterns:
-          - "actions/*"
-          - "github/codeql-action"
-          - "aquasecurity/trivy-action"
-          - "oven-sh/setup-bun"
-          - "softprops/action-gh-release"
-          - "dorny/test-reporter"
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
