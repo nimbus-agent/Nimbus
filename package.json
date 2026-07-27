@@ -163,6 +163,8 @@
     "audit:status-drift": "bun scripts/structure-audit/check-status-drift.ts",
     "audit:action-sha-pins": "bun scripts/structure-audit/check-action-sha-pins.ts",
     "audit:pin-freshness": "bun scripts/structure-audit/check-pin-freshness.ts",
+    "audit:ci-latency": "bun scripts/ci-latency/check.ts",
+    "audit:ci-latency:update-baseline": "bun scripts/ci-latency/check.ts --update-baseline",
     "audit:consumed-by": "bun scripts/structure-audit/check-consumed-by.ts",
     "audit:ruleset-drift": "bun scripts/structure-audit/check-ruleset-drift.ts",
     "audit:org-settings-drift": "bun scripts/structure-audit/check-org-settings-drift.ts",

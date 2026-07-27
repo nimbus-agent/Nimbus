@@ -1,0 +1,782 @@
+{
+  "version": 1,
+  "generated_at": "2026-07-27T16:23:22.420Z",
+  "entries": {
+    ".github :: CI :: Test composite actions": {
+      "execMedian": 0.23,
+      "execSpread": 0.05
+    },
+    "Nimbus :: CI :: CI — Rust/Tauri (macos-15)": {
+      "execMedian": 1.17,
+      "execSpread": 0.17
+    },
+    "Nimbus :: CI :: CI — Rust/Tauri (ubuntu-24.04)": {
+      "execMedian": 1.27,
+      "execSpread": 0.42
+    },
+    "Nimbus :: CI :: CI — Rust/Tauri (windows-2025)": {
+      "execMedian": 1.72,
+      "execSpread": 0.28
+    },
+    "Nimbus :: CI :: CI — Structure audit / structure": {
+      "execMedian": 0.83,
+      "execSpread": 0.06
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Agents (macos-15)": {
+      "execMedian": 1.28,
+      "execSpread": 0.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Config (macos-15)": {
+      "execMedian": 1.18,
+      "execSpread": 0.16
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — DB layer (macos-15)": {
+      "execMedian": 1.31,
+      "execSpread": 0.19
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Deployment (macos-15)": {
+      "execMedian": 1.27,
+      "execSpread": 0.17
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Doctor (macos-15)": {
+      "execMedian": 1.22,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Embedding (macos-15)": {
+      "execMedian": 1.23,
+      "execSpread": 0.23
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Engine (macos-15)": {
+      "execMedian": 1.28,
+      "execSpread": 0.1
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Extensions (macos-15)": {
+      "execMedian": 1.25,
+      "execSpread": 0.15
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Health (macos-15)": {
+      "execMedian": 1.21,
+      "execSpread": 0.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — LAN (macos-15)": {
+      "execMedian": 1.23,
+      "execSpread": 0.23
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — MCP (macos-15)": {
+      "execMedian": 1.26,
+      "execSpread": 0.13
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Metrics (macos-15)": {
+      "execMedian": 1.35,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — People (macos-15)": {
+      "execMedian": 1.13,
+      "execSpread": 0.13
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Perf (macos-15)": {
+      "execMedian": 1.32,
+      "execSpread": 0.15
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Preflight (macos-15)": {
+      "execMedian": 1.29,
+      "execSpread": 0.42
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Rate limiter (macos-15)": {
+      "execMedian": 1.23,
+      "execSpread": 0.17
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Sandbox (macos-15)": {
+      "execMedian": 1.25,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Sync scheduler (macos-15)": {
+      "execMedian": 1.23,
+      "execSpread": 0.27
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — TUI (macos-15)": {
+      "execMedian": 1.33,
+      "execSpread": 0.15
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Telemetry (macos-15)": {
+      "execMedian": 1.25,
+      "execSpread": 0.1
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Updater (macos-15)": {
+      "execMedian": 1.23,
+      "execSpread": 0.3
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Vault (macos-15)": {
+      "execMedian": 1.26,
+      "execSpread": 0.16
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Watcher (macos-15)": {
+      "execMedian": 1.31,
+      "execSpread": 0.24
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Coverage — Workflow (macos-15)": {
+      "execMedian": 1.24,
+      "execSpread": 0.22
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / E2E CLI — macos-15": {
+      "execMedian": 1.36,
+      "execSpread": 0.21
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / E2E Gateway — macos-15": {
+      "execMedian": 1.3,
+      "execSpread": 0.22
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Integration — macos-15": {
+      "execMedian": 1.28,
+      "execSpread": 0.43
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Static — macos-15": {
+      "execMedian": 4.53,
+      "execSpread": 0.76
+    },
+    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Unit + Coverage — macos-15": {
+      "execMedian": 4.91,
+      "execSpread": 0.24
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Agents (ubuntu-24.04)": {
+      "execMedian": 0.79,
+      "execSpread": 0.04
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Config (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — DB layer (ubuntu-24.04)": {
+      "execMedian": 0.78,
+      "execSpread": 0.07
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Deployment (ubuntu-24.04)": {
+      "execMedian": 0.78,
+      "execSpread": 0.05
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Doctor (ubuntu-24.04)": {
+      "execMedian": 0.72,
+      "execSpread": 0.05
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Embedding (ubuntu-24.04)": {
+      "execMedian": 0.75,
+      "execSpread": 0.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Engine (ubuntu-24.04)": {
+      "execMedian": 0.71,
+      "execSpread": 0.11
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Extensions (ubuntu-24.04)": {
+      "execMedian": 0.72,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Health (ubuntu-24.04)": {
+      "execMedian": 0.62,
+      "execSpread": 0.18
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — LAN (ubuntu-24.04)": {
+      "execMedian": 0.85,
+      "execSpread": 0.03
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — MCP (ubuntu-24.04)": {
+      "execMedian": 0.69,
+      "execSpread": 0.14
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Metrics (ubuntu-24.04)": {
+      "execMedian": 0.72,
+      "execSpread": 0.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — People (ubuntu-24.04)": {
+      "execMedian": 0.77,
+      "execSpread": 0.03
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Perf (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.17
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Preflight (ubuntu-24.04)": {
+      "execMedian": 0.7,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Rate limiter (ubuntu-24.04)": {
+      "execMedian": 0.7,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Sandbox (ubuntu-24.04)": {
+      "execMedian": 0.88,
+      "execSpread": 0.18
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Sync scheduler (ubuntu-24.04)": {
+      "execMedian": 0.67,
+      "execSpread": 0.18
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — TUI (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Telemetry (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.11
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Updater (ubuntu-24.04)": {
+      "execMedian": 0.77,
+      "execSpread": 0.03
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Vault (ubuntu-24.04)": {
+      "execMedian": 1.08,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Watcher (ubuntu-24.04)": {
+      "execMedian": 0.63,
+      "execSpread": 0.15
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Coverage — Workflow (ubuntu-24.04)": {
+      "execMedian": 0.71,
+      "execSpread": 0.06
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / E2E CLI — ubuntu-24.04": {
+      "execMedian": 1.08,
+      "execSpread": 0.38
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / E2E Gateway — ubuntu-24.04": {
+      "execMedian": 1.18,
+      "execSpread": 0.27
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Integration — ubuntu-24.04": {
+      "execMedian": 1.14,
+      "execSpread": 0.26
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Packaging — ubuntu-24.04": {
+      "execMedian": 1.32,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Static — ubuntu-24.04": {
+      "execMedian": 4.57,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Unit + Coverage — ubuntu-24.04": {
+      "execMedian": 12.26,
+      "execSpread": 0.29
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Agents (windows-2025)": {
+      "execMedian": 2.38,
+      "execSpread": 0.23
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Config (windows-2025)": {
+      "execMedian": 2.45,
+      "execSpread": 1.08
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — DB layer (windows-2025)": {
+      "execMedian": 2.86,
+      "execSpread": 1.17
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Deployment (windows-2025)": {
+      "execMedian": 2.16,
+      "execSpread": 0.44
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Doctor (windows-2025)": {
+      "execMedian": 2.03,
+      "execSpread": 0.45
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Embedding (windows-2025)": {
+      "execMedian": 2.39,
+      "execSpread": 0.83
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Engine (windows-2025)": {
+      "execMedian": 2.08,
+      "execSpread": 0.28
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Extensions (windows-2025)": {
+      "execMedian": 2.23,
+      "execSpread": 0.34
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Health (windows-2025)": {
+      "execMedian": 2.2,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — LAN (windows-2025)": {
+      "execMedian": 2.13,
+      "execSpread": 0.75
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — MCP (windows-2025)": {
+      "execMedian": 2.27,
+      "execSpread": 0.18
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Metrics (windows-2025)": {
+      "execMedian": 2.32,
+      "execSpread": 0.67
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — People (windows-2025)": {
+      "execMedian": 2.16,
+      "execSpread": 0.44
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Perf (windows-2025)": {
+      "execMedian": 2.25,
+      "execSpread": 0.22
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Preflight (windows-2025)": {
+      "execMedian": 2.35,
+      "execSpread": 0.47
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Rate limiter (windows-2025)": {
+      "execMedian": 2.18,
+      "execSpread": 0.78
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Sandbox (windows-2025)": {
+      "execMedian": 2.17,
+      "execSpread": 0.42
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Sync scheduler (windows-2025)": {
+      "execMedian": 2.22,
+      "execSpread": 0.53
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — TUI (windows-2025)": {
+      "execMedian": 2.19,
+      "execSpread": 0.26
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Telemetry (windows-2025)": {
+      "execMedian": 2.14,
+      "execSpread": 0.39
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Updater (windows-2025)": {
+      "execMedian": 2.35,
+      "execSpread": 0.55
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Vault (windows-2025)": {
+      "execMedian": 2.22,
+      "execSpread": 0.28
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Watcher (windows-2025)": {
+      "execMedian": 2.23,
+      "execSpread": 0.1
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Coverage — Workflow (windows-2025)": {
+      "execMedian": 2.13,
+      "execSpread": 0.34
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / E2E CLI — windows-2025": {
+      "execMedian": 2.53,
+      "execSpread": 0.12
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / E2E Gateway — windows-2025": {
+      "execMedian": 2.26,
+      "execSpread": 0.96
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Integration — windows-2025": {
+      "execMedian": 2.92,
+      "execSpread": 0.52
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Static — windows-2025": {
+      "execMedian": 6.81,
+      "execSpread": 0.99
+    },
+    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Unit + Coverage — windows-2025": {
+      "execMedian": 12.87,
+      "execSpread": 10.77
+    },
+    "Nimbus :: CI :: Detect changes": {
+      "execMedian": 0.25,
+      "execSpread": 0.02
+    },
+    "Nimbus :: CodeQL :: Analyze (javascript-typescript)": {
+      "execMedian": 3.52,
+      "execSpread": 0.2
+    },
+    "Nimbus :: CodeQL :: Analyze (rust)": {
+      "execMedian": 1.8,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Docs Quality :: Bencher Report": {
+      "execMedian": 0,
+      "execSpread": 0
+    },
+    "Nimbus :: Docs Quality :: Cast transcript tripwire": {
+      "execMedian": 0.7,
+      "execSpread": 0.05
+    },
+    "Nimbus :: Docs Quality :: OG card render": {
+      "execMedian": 0.68,
+      "execSpread": 0.02
+    },
+    "Nimbus :: Docs Quality :: Package READMEs audit": {
+      "execMedian": 0.57,
+      "execSpread": 0.14
+    },
+    "Nimbus :: Docs Quality :: README CLI-command tripwire": {
+      "execMedian": 0.65,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Docs Quality :: SVG asset audit": {
+      "execMedian": 0.68,
+      "execSpread": 0.11
+    },
+    "Nimbus :: Docs Quality :: Starlight build test": {
+      "execMedian": 0.64,
+      "execSpread": 0.09
+    },
+    "Nimbus :: Docs Quality :: lychee link check": {
+      "execMedian": 0.67,
+      "execSpread": 0.17
+    },
+    "Nimbus :: Docs Quality :: markdownlint-cli2": {
+      "execMedian": 0.62,
+      "execSpread": 0.12
+    },
+    "Nimbus :: Performance Benchmarks :: Bench (macos-15)": {
+      "execMedian": 32.58,
+      "execSpread": 4.34
+    },
+    "Nimbus :: Performance Benchmarks :: Bench (ubuntu-24.04)": {
+      "execMedian": 11.77,
+      "execSpread": 0.12
+    },
+    "Nimbus :: Performance Benchmarks :: Bench (windows-2025)": {
+      "execMedian": 26.98,
+      "execSpread": 0.99
+    },
+    "Nimbus :: Performance Benchmarks :: Decide whether to run the bench matrix": {
+      "execMedian": 0.05,
+      "execSpread": 0.02
+    },
+    "Nimbus :: Release :: Build .msi (Windows)": {
+      "execMedian": 1.27,
+      "execSpread": 0.01
+    },
+    "Nimbus :: Release :: Build .pkg (macOS)": {
+      "execMedian": 0.69,
+      "execSpread": 0.06
+    },
+    "Nimbus :: Release :: Build CLI — linux": {
+      "execMedian": 0.69,
+      "execSpread": 0.11
+    },
+    "Nimbus :: Release :: Build CLI — macos": {
+      "execMedian": 2,
+      "execSpread": 0.43
+    },
+    "Nimbus :: Release :: Build CLI — macos-arm64": {
+      "execMedian": 1.33,
+      "execSpread": 0.23
+    },
+    "Nimbus :: Release :: Build CLI — windows": {
+      "execMedian": 2.33,
+      "execSpread": 0.46
+    },
+    "Nimbus :: Release :: Build Gateway — linux": {
+      "execMedian": 0.84,
+      "execSpread": 0.04
+    },
+    "Nimbus :: Release :: Build Gateway — macos": {
+      "execMedian": 2.63,
+      "execSpread": 1.08
+    },
+    "Nimbus :: Release :: Build Gateway — macos-arm64": {
+      "execMedian": 1.22,
+      "execSpread": 0.15
+    },
+    "Nimbus :: Release :: Build Gateway — windows": {
+      "execMedian": 2.13,
+      "execSpread": 0.08
+    },
+    "Nimbus :: Release :: Publish GitHub Release": {
+      "execMedian": 2.75,
+      "execSpread": 0.12
+    },
+    "Nimbus :: Release :: Publish updater manifest": {
+      "execMedian": 0.78,
+      "execSpread": 0.1
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Agents (ubuntu-24.04)": {
+      "execMedian": 0.78,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Config (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.05
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — DB layer (ubuntu-24.04)": {
+      "execMedian": 0.85,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Deployment (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.06
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Doctor (ubuntu-24.04)": {
+      "execMedian": 0.71,
+      "execSpread": 0.23
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Embedding (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Engine (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.13
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Extensions (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.09
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Health (ubuntu-24.04)": {
+      "execMedian": 0.63,
+      "execSpread": 0.03
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — LAN (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.06
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — MCP (ubuntu-24.04)": {
+      "execMedian": 0.83,
+      "execSpread": 0.03
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Metrics (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.08
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — People (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.14
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Perf (ubuntu-24.04)": {
+      "execMedian": 0.78,
+      "execSpread": 0.1
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Preflight (ubuntu-24.04)": {
+      "execMedian": 0.79,
+      "execSpread": 0.06
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Rate limiter (ubuntu-24.04)": {
+      "execMedian": 0.74,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Sandbox (ubuntu-24.04)": {
+      "execMedian": 0.93,
+      "execSpread": 0.13
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Sync scheduler (ubuntu-24.04)": {
+      "execMedian": 0.75,
+      "execSpread": 0.08
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — TUI (ubuntu-24.04)": {
+      "execMedian": 0.92,
+      "execSpread": 0.03
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Telemetry (ubuntu-24.04)": {
+      "execMedian": 0.73,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Updater (ubuntu-24.04)": {
+      "execMedian": 0.67,
+      "execSpread": 0.32
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Vault (ubuntu-24.04)": {
+      "execMedian": 1.09,
+      "execSpread": 0.06
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Watcher (ubuntu-24.04)": {
+      "execMedian": 0.68,
+      "execSpread": 0.12
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Coverage — Workflow (ubuntu-24.04)": {
+      "execMedian": 0.64,
+      "execSpread": 0.14
+    },
+    "Nimbus :: Release :: Test suite (release gate) / E2E CLI — ubuntu-24.04": {
+      "execMedian": 1.02,
+      "execSpread": 0.21
+    },
+    "Nimbus :: Release :: Test suite (release gate) / E2E Gateway — ubuntu-24.04": {
+      "execMedian": 1.12,
+      "execSpread": 0.85
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Integration — ubuntu-24.04": {
+      "execMedian": 1.23,
+      "execSpread": 0.02
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Static — ubuntu-24.04": {
+      "execMedian": 4.48,
+      "execSpread": 0.17
+    },
+    "Nimbus :: Release :: Test suite (release gate) / Unit + Coverage — ubuntu-24.04": {
+      "execMedian": 14.72,
+      "execSpread": 3.58
+    },
+    "Nimbus :: Release :: Validate": {
+      "execMedian": 4.17,
+      "execSpread": 0.05
+    },
+    "Nimbus :: Scorecard supply-chain security :: Bencher Report": {
+      "execMedian": 0,
+      "execSpread": 0
+    },
+    "Nimbus :: Scorecard supply-chain security :: Scorecard analysis": {
+      "execMedian": 0.68,
+      "execSpread": 0.18
+    },
+    "Nimbus :: Security :: Cargo audit (Tauri)": {
+      "execMedian": 0.53,
+      "execSpread": 0.04
+    },
+    "Nimbus :: Security :: Cargo deny (licenses + advisories + bans)": {
+      "execMedian": 1.05,
+      "execSpread": 0.05
+    },
+    "Nimbus :: Security :: Dependency audit": {
+      "execMedian": 0.66,
+      "execSpread": 0.07
+    },
+    "Nimbus :: Security :: Gateway audit JSON + connector.remove vault restore": {
+      "execMedian": 0.65,
+      "execSpread": 0.12
+    },
+    "Nimbus :: Security :: Gitleaks secret scan": {
+      "execMedian": 0.33,
+      "execSpread": 0.03
+    },
+    "Nimbus :: Security :: JS license compliance": {
+      "execMedian": 0.68,
+      "execSpread": 0.03
+    },
+    "Nimbus :: Security :: Trivy vulnerability scan": {
+      "execMedian": 0.91,
+      "execSpread": 0.13
+    },
+    "Nimbus :: release-please :: Bencher Report": {
+      "execMedian": 0,
+      "execSpread": 0
+    },
+    "Nimbus :: release-please :: release-please": {
+      "execMedian": 0.47,
+      "execSpread": 1.75
+    },
+    "nimbus-client :: CI :: build-test (macos-latest)": {
+      "execMedian": 0.47,
+      "execSpread": 0.08
+    },
+    "nimbus-client :: CI :: build-test (ubuntu-24.04)": {
+      "execMedian": 0.36,
+      "execSpread": 0.11
+    },
+    "nimbus-client :: CI :: build-test (windows-latest)": {
+      "execMedian": 1.03,
+      "execSpread": 0.53
+    },
+    "nimbus-client :: CodeQL :: Analyze (javascript-typescript)": {
+      "execMedian": 1.21,
+      "execSpread": 0.04
+    },
+    "nimbus-client :: Release :: publish": {
+      "execMedian": 0.88,
+      "execSpread": 0.77
+    },
+    "nimbus-client :: Release :: release-please": {
+      "execMedian": 0.32,
+      "execSpread": 0.13
+    },
+    "nimbus-client :: SonarQube Cloud :: SonarQube Cloud analysis": {
+      "execMedian": 1.18,
+      "execSpread": 0.1
+    },
+    "nimbus-sdk :: CI :: build-test": {
+      "execMedian": 0.31,
+      "execSpread": 0.13
+    },
+    "nimbus-sdk :: CI :: build-test (macos-15)": {
+      "execMedian": 0.36,
+      "execSpread": 0.03
+    },
+    "nimbus-sdk :: CI :: build-test (ubuntu-24.04)": {
+      "execMedian": 0.29,
+      "execSpread": 0.04
+    },
+    "nimbus-sdk :: CI :: build-test (windows-2025)": {
+      "execMedian": 0.82,
+      "execSpread": 0.12
+    },
+    "nimbus-sdk :: CI :: ci-complete": {
+      "execMedian": 0.22,
+      "execSpread": 0.05
+    },
+    "nimbus-sdk :: CI :: node-smoke (macos-15, 22)": {
+      "execMedian": 0.33,
+      "execSpread": 0
+    },
+    "nimbus-sdk :: CI :: node-smoke (macos-15, 24)": {
+      "execMedian": 0.31,
+      "execSpread": 0.02
+    },
+    "nimbus-sdk :: CI :: node-smoke (ubuntu-24.04, 22)": {
+      "execMedian": 0.25,
+      "execSpread": 0.07
+    },
+    "nimbus-sdk :: CI :: node-smoke (ubuntu-24.04, 24)": {
+      "execMedian": 0.25,
+      "execSpread": 0.05
+    },
+    "nimbus-sdk :: CI :: node-smoke (windows-2025, 22)": {
+      "execMedian": 0.58,
+      "execSpread": 0.1
+    },
+    "nimbus-sdk :: CI :: node-smoke (windows-2025, 24)": {
+      "execMedian": 0.62,
+      "execSpread": 0.68
+    },
+    "nimbus-sdk :: CodeQL :: Analyze (javascript-typescript)": {
+      "execMedian": 1.38,
+      "execSpread": 0.06
+    },
+    "nimbus-sdk :: Release :: publish": {
+      "execMedian": 1.05,
+      "execSpread": 0.63
+    },
+    "nimbus-sdk :: Release :: release-please": {
+      "execMedian": 0.28,
+      "execSpread": 0.14
+    },
+    "nimbus-sdk :: SonarQube Cloud :: SonarQube Cloud analysis": {
+      "execMedian": 1.18,
+      "execSpread": 0.05
+    },
+    "nimbus-vscode :: CI :: build-test": {
+      "execMedian": 0.48,
+      "execSpread": 0.03
+    },
+    "nimbus-vscode :: CI :: windows-check": {
+      "execMedian": 1.38,
+      "execSpread": 0.21
+    },
+    "nimbus-vscode :: CodeQL :: Analyze (javascript-typescript)": {
+      "execMedian": 1.48,
+      "execSpread": 0.17
+    },
+    "nimbus-vscode :: Publish VS Code Extension :: Mirror .vsix on GitHub Release": {
+      "execMedian": 0.23,
+      "execSpread": 0.11
+    },
+    "nimbus-vscode :: Publish VS Code Extension :: Publish to VS Code Marketplace + Open VSX": {
+      "execMedian": 0.78,
+      "execSpread": 0.32
+    },
+    "nimbus-vscode :: SonarQube Cloud :: SonarQube Cloud analysis": {
+      "execMedian": 1.51,
+      "execSpread": 0.13
+    },
+    "nimbus-vscode :: release-please :: release-please": {
+      "execMedian": 0.3,
+      "execSpread": 0.12
+    },
+    "nimbus-web-clipper :: CI :: build-test": {
+      "execMedian": 0.47,
+      "execSpread": 0.05
+    },
+    "nimbus-web-clipper :: CodeQL :: Analyze (javascript-typescript)": {
+      "execMedian": 1.35,
+      "execSpread": 0.07
+    },
+    "nimbus-web-clipper :: SonarQube Cloud :: SonarQube Cloud analysis": {
+      "execMedian": 1.36,
+      "execSpread": 0.11
+    }
+  }
+}
