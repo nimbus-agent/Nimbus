@@ -85,18 +85,32 @@ jobs:
       - name: Pick matrix
         id: pick
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
           FULL='["ubuntu-24.04","macos-14","windows-2022"]'
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "matrix=$FULL" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)
+          # Use the SHAs from the PR payload rather than an `origin/<branch>`
+          # tracking ref: actions/checkout does not reliably map remote branch
+          # refs on a pull_request checkout, and `origin/main` can fail with
+          # "ambiguous argument". Both SHAs are present because fetch-depth: 0.
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
           if echo "$CHANGED" | grep -qE '^(scripts/install/|scripts/package-linux-installers\.ts|\.github/workflows/(install-smoke|release)\.yml)'; then
             echo "matrix=$FULL" >> "$GITHUB_OUTPUT"
           else
             echo 'matrix=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
           fi
 ```
+
+Values are passed through `env:` rather than interpolated directly into the
+script body. GitHub expressions are substituted as raw text before `bash` runs,
+so interpolating a ref name inline is a script-injection seam; the SHAs here are
+hex and safe, but `env:` is the pattern this repo's Scorecard posture expects.
 
 Then change the `smoke` job header to consume it:
 
@@ -171,10 +185,21 @@ Insert this step immediately after the existing "Run install.sh + verify (Unix)"
           git add -A && git commit -q -m "add auth helpers"
 
           nimbus init | tee "$RUNNER_TEMP/init.log"
+          # `nimbus init` EXITS 0 even when indexing fails: syncAndPickDemo()
+          # catches every error and degrades to null, by design, because the
+          # config edit is the durable half of the work. So the exit code proves
+          # nothing here and these string assertions are load-bearing.
           if grep -q "indexing did not complete" "$RUNNER_TEMP/init.log"; then
             echo "::error::nimbus init reported that indexing did not complete"; exit 1
           fi
+          # Positive proof, and race-free: "Try it:" is printed ONLY when
+          # index.demoSymbol returned a real symbol, which requires a populated
+          # index. The generic "Next:" block is what an empty index produces.
+          grep -q "Try it:" "$RUNNER_TEMP/init.log" || {
+            echo "::error::nimbus init did not produce a demo symbol — index is empty"; exit 1; }
 
+          # Regression guard for #895 specifically: this exact invocation
+          # returned "Invalid serviceId" and exit 1 before the fix.
           nimbus connector sync filesystem
           nimbus why auth.ts:1 | tee "$RUNNER_TEMP/why.log"
           grep -q "## Authorship" "$RUNNER_TEMP/why.log" || {
@@ -211,10 +236,20 @@ Insert the equivalent immediately after the existing "Run install.ps1 + verify (
 
           $init = nimbus init 2>&1 | Out-String
           Write-Host $init
+          # `nimbus init` exits 0 even when indexing fails (syncAndPickDemo
+          # degrades to null by design), so these string checks are the real
+          # assertions — the exit code proves nothing.
           if ($init -match "indexing did not complete") {
             Write-Error "nimbus init reported that indexing did not complete"; exit 1
           }
+          # Positive, race-free proof: "Try it:" appears only when
+          # index.demoSymbol returned a real symbol from a populated index.
+          if ($init -notmatch "Try it:") {
+            Write-Error "nimbus init did not produce a demo symbol — index is empty"; exit 1
+          }
 
+          # Regression guard for #895: this exact call returned
+          # "Invalid serviceId" and exit 1 before the fix.
           nimbus connector sync filesystem
           $why = nimbus why auth.ts:1 2>&1 | Out-String
           Write-Host $why
@@ -337,11 +372,24 @@ describe("classifyConnector", () => {
     expect(row.hasTests).toBe(false);
   });
 
-  it("counts a spawn-based connector as making outbound calls", () => {
+  it("counts a CLI-backed connector reached via the shared helper", () => {
+    // Real shape: kubernetes/src/server.ts never calls fetch — it routes
+    // through shared/run-cli-json.ts to shell out to kubectl.
     const row = classifyConnector({
       id: "kubernetes",
       files: ["server.ts"],
-      sources: ["const p = Bun.spawn(['kubectl', 'get', 'pods']); reg.tool('k8s', h);"],
+      sources: ["const out = await runCliJson(kubectlBase(), kubeEnv()); reg.tool('k8s', h);"],
+    });
+    expect(row.makesOutboundCalls).toBe(true);
+    expect(row.tier).toBe("implemented");
+  });
+
+  it("counts a connector using the shared REST fetcher factory", () => {
+    // Real shape: github/src/server.ts builds its client via makeRestFetcher.
+    const row = classifyConnector({
+      id: "github",
+      files: ["server.ts"],
+      sources: ["const f = makeRestFetcher({ apiBase: GH_API }); reg.tool('gh', h);"],
     });
     expect(row.makesOutboundCalls).toBe(true);
   });
@@ -402,7 +450,24 @@ export type ClassifyInput = {
 };
 
 const TOOL_REGISTRATION = /\b(reg|registrar)\.tool\(|registerTool\(|register[A-Z]\w*Tools?\(/;
-const OUTBOUND_CALL = /\bfetch\w*\(|Bun\.spawn\(|execFile\(|spawnSync\(/;
+
+/**
+ * Outbound-call detection — case-insensitive and helper-aware on purpose.
+ *
+ * Connectors here rarely call `fetch` directly; they route through
+ * `mcp-connectors/shared/`: `fetchWithTimeout`, `fetchBearerJson` and
+ * `makeRestFetcher` for HTTP, and `runCliJson` / `runCliOk` /
+ * `runCliOkThrowing` for CLI-backed connectors (kubernetes shells out to
+ * kubectl; aws, gcp, azure and iac do the same). Matching only `\bfetch(`
+ * would file every CLI-backed connector as `unknown` and understate the
+ * product — the exact false negative this audit exists to avoid.
+ *
+ * There are deliberately NO cloud-SDK patterns: `packages/mcp-connectors/`
+ * has zero cloud-SDK runtime dependencies (verified 2026-07-28), and the
+ * published SDK is dep-free by policy. Adding speculative SDK regexes would
+ * only create false positives.
+ */
+const OUTBOUND_CALL = /fetch\w*\(|Bun\.spawn\(|execFile\(|spawnSync\(|runCli\w*\(/i;
 
 export function classifyConnector(input: ClassifyInput): ConnectorEvidence {
   const blob = input.sources.join("\n");
@@ -436,7 +501,7 @@ export function summarize(rows: readonly ConnectorEvidence[]): {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test scripts/audit/connector-verification.test.ts`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Add the disk-reading CLI entry point**
 
@@ -487,6 +552,13 @@ Run: `bun run scripts/audit/connector-verification.ts | tail -20`
 Expected: a table plus a final counts line. **Write the `tier1` and `total` numbers down** — they are the input to Task 3 and to the launch copy decision.
 
 Investigate by hand any connector reported `unknown`; the regexes are heuristics and a false negative there would understate the product.
+
+Check these six first — they were confirmed during planning to make **no direct
+`fetch` call**, and are the most likely false negatives if the helper patterns
+above are ever narrowed: `aws`, `azure`, `gcp`, `iac`, `kubernetes`, `obsidian`.
+`kubernetes` is the known-good reference — it reaches `kubectl` through
+`runCliJson`, so it must classify as `implemented` or better. If it comes back
+`unknown`, the regex is wrong, not the connector.
 
 - [ ] **Step 7: Typecheck and lint**
 
@@ -598,12 +670,19 @@ Never run this against the real config — use the isolation pattern proven in t
 ```bash
 export SANDBOX="$(mktemp -d)"
 export APPDATA="$SANDBOX/roaming" LOCALAPPDATA="$SANDBOX/local"
+export NIMBUS_CONFIG_DIR="$SANDBOX/config"
 export NIMBUS_GATEWAY_SOCKET="/tmp/nimbus-doctor-check.sock"
-mkdir -p "$APPDATA" "$LOCALAPPDATA"
+mkdir -p "$APPDATA" "$LOCALAPPDATA" "$NIMBUS_CONFIG_DIR"
 nimbus doctor | tee "$SANDBOX/doctor.txt"
 ```
 
-On Windows, set the same three variables in PowerShell and use `\\.\pipe\nimbus-doctor-check`.
+On Windows, set the same four variables in PowerShell and use `\\.\pipe\nimbus-doctor-check`.
+
+`NIMBUS_CONFIG_DIR` is belt-and-braces, and the ordering matters: it moves the
+**config dir only** — `platform/paths.ts` deliberately leaves `dataDir` on
+`APPDATA`/`LOCALAPPDATA` so a test-isolation mistake cannot silently repoint a
+live gateway's database. Setting `NIMBUS_CONFIG_DIR` alone is therefore *not*
+isolation; the OS variables are the load-bearing ones.
 
 - [ ] **Step 2: Audit the captured output**
 
