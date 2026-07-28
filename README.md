@@ -63,32 +63,28 @@ nimbus --version
 
 Every release artefact is GPG-signed (key `5A20457CCD8B53FFAA945240886ADA6B487CAB6E`) with a SHA-256 manifest and build-provenance attestations — see [Verify your download](https://nimbus-agent.dev/user-guide/verify-your-download/). Homebrew and Scoop taps are also available (see the [install guide](https://nimbus-agent.dev/user-guide/install/)).
 
-**2. Connect a service** — the fastest path is a token-based connector like GitHub:
+**2. Index a repo you already have** — no account, no token, no API key:
 
 ```bash
-nimbus connector auth github --token <your_PAT>
-nimbus connector sync github
+cd ~/code/your-project
+nimbus init
 ```
 
-(OAuth services — Google Drive, Gmail, Slack, … — use `nimbus connector add <service>`, which opens your browser. See [Connect a service](https://nimbus-agent.dev/user-guide/connect-service/).)
+`nimbus init` adds the repo to `nimbus.toml` with code indexing on, starts the gateway, and indexes it. It appends to your config — it never rewrites it, so your comments and existing settings survive (and it keeps a `nimbus.toml.bak`).
 
-**3. Ask:**
-
-```bash
-nimbus ask "what PRs did I open in the last 7 days?"
-```
-
-Or trace any line's provenance — who wrote it, the PR, the ticket, the incident it responded to, and what breaks downstream:
+**3. Trace a line's provenance** — who wrote it, the PR, the ticket, the incident it responded to, and what breaks downstream:
 
 ```bash
 nimbus why src/auth.ts:42
 ```
 
-`nimbus why` reads from your local index, so the file must live inside a configured `[[filesystem.roots]]` root with code indexing on (`code_index = true`) that has been synced.
+`nimbus init` prints a real `file:line` from your own repo to try first. This works with no credentials and no LLM configured.
 
-### Run it fully offline
+### Optional: add an LLM
 
-Nimbus needs an LLM, but it does **not** require a cloud one. Point it at a local model and nothing — not even prompts — leaves the machine:
+Indexing, `nimbus why`, and the agent briefs all work with **no LLM configured** — briefs render deterministically. An LLM buys you two things: `nimbus ask` (natural-language queries), and prose synthesis that rewrites those briefs into more readable narrative.
+
+It does **not** have to be a cloud one. Point Nimbus at a local model and nothing — not even prompts — leaves the machine:
 
 ```toml
 # ~/.config/nimbus/nimbus.toml
@@ -98,6 +94,18 @@ local_model  = "llama3.1"     # served by Ollama on http://127.0.0.1:11434
 ```
 
 See [Local & air-gapped LLM setup](https://nimbus-agent.dev/user-guide/first-run-setup/).
+
+### Optional: connect a cloud service
+
+To correlate across GitHub, Jira, PagerDuty, Slack and ~80 others, add a connector. The fastest path is a token-based one like GitHub:
+
+```bash
+nimbus connector auth github --token <your_PAT>
+nimbus connector sync github
+nimbus ask "what PRs did I open in the last 7 days?"
+```
+
+(OAuth services — Google Drive, Gmail, Slack, … — use `nimbus connector add <service>`, which opens your browser. See [Connect a service](https://nimbus-agent.dev/user-guide/connect-service/).)
 
 ## How it works
 

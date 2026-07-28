@@ -232,6 +232,24 @@ management and autostart are your responsibility when using this method.
 
 ## Next steps
 
-Once `nimbus --version` prints a version number, continue to
-[First-run setup](/user-guide/first-run-setup/) to launch the desktop app and
-connect your first service.
+Once `nimbus --version` prints a version number, the fastest path to something
+useful needs no account, no token, and no API key — index a repository you
+already have:
+
+```bash
+cd ~/code/your-project
+nimbus init
+```
+
+`nimbus init` adds the repo to `nimbus.toml` with code indexing enabled, starts
+the gateway, indexes the repo, and prints a real `file:line` from your own code
+to try with `nimbus why`. It appends to your config rather than rewriting it, so
+existing settings and comments survive (and it keeps a `nimbus.toml.bak`).
+
+Indexing, `nimbus why`, and the agent briefs all work with **no LLM
+configured**. An LLM is needed only for `nimbus ask` and for prose synthesis of
+the briefs — see
+[Local & air-gapped LLM setup](/user-guide/first-run-setup/).
+
+To correlate across cloud services, continue to
+[First-run setup](/user-guide/first-run-setup/) and connect your first service.

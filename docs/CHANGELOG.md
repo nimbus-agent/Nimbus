@@ -8,6 +8,30 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-28 — Zero-config onboarding: `nimbus init`, and the LLM demoted to optional.**
+  The zero-config path already existed and was simply unexposed — `synthesize.ts` returns a
+  deterministic render when no LLM is configured, and filesystem indexing needs no
+  credentials — while the README asserted the opposite ("Nimbus needs an LLM"). This is
+  packaging, not new capability. **`nimbus init`** indexes the git repo in the current
+  directory with no PAT, no API key, and no network: it **appends** a `[[filesystem.roots]]`
+  block (with `code_index = true`) to `nimbus.toml` rather than rewriting it, so comments and
+  key order survive — a `.bak` is kept regardless — then starts the gateway, syncs, and prints
+  a real `file:line` from the user's own repo to try with `nimbus why`. A gateway that was
+  already running is asked to restart rather than silently syncing a root it cannot see
+  (roots are read once at startup); every failure after the config write degrades to the
+  generic next step instead of failing the command. The `file:line` comes from the new
+  read-only **`index.demoSymbol`** — deliberately NOT renderer-exposed (`I7`: no renderer
+  consumer) and `FORBIDDEN_OVER_LAN` (`I5`: a peer has no use for this machine's onboarding
+  hint). Picking from the index rather than the filesystem means a lockfile or binary asset
+  can never be suggested. The no-LLM render now carries a footer marking it a supported mode,
+  and the gateway's `no_api_key` message names **both** routes (local Ollama, hosted key) plus
+  the fact that indexing, `nimbus why`, and the briefs need no LLM at all — the guidance lives
+  at the source so the CLI, TUI, and VS Code extension all surface it. `NIMBUS_CONFIG_DIR`
+  now relocates the config dir in **both** `platform/paths.ts` and the CLI's own `paths.ts`
+  (config dir only — never the data dir or socket); a one-sided override would have had the
+  CLI writing config the gateway never reads. Design-spec open question 1 is settled
+  empirically: config loading survives a `nimbus.toml` with no `[llm]` block.
+
 - **2026-07-27 — Rust toolchain CI hardening, and two notification contracts pinned.**
   The `Cargo deny` job died in `Setup Rust` on run 30232465108 — a TLS reset from
   static.rust-lang.org on an unretried `rustup toolchain install`, of which there were four

@@ -23,6 +23,36 @@ These flags are accepted by every command.
 
 ---
 
+## Getting Started
+
+### `nimbus init`
+
+Index the git repository in the current directory. Needs no credentials, no API key, and no LLM.
+
+```bash
+cd ~/code/your-project
+nimbus init
+nimbus init --no-sync           # Write the config only; do not start or sync
+```
+
+What it does:
+
+1. Verifies the current directory is a git repository (exits 1 if not, writing nothing).
+2. **Appends** a `[[filesystem.roots]]` block for it to `nimbus.toml` with `git_aware = true` and `code_index = true`. Appending — never rewriting — is deliberate: it cannot reorder keys, strip comments, or reformat anything you wrote. An existing file is copied to `nimbus.toml.bak` first.
+3. Starts the Gateway if it is not already running, then syncs the `filesystem` connector.
+4. Prints a real `file:line` from your own repository to try with [`nimbus why`](#nimbus-why).
+
+Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
+
+Two behaviours worth knowing:
+
+- **If a Gateway is already running**, it cannot see a root that was just added: filesystem roots are read once at startup. `nimbus init` says so and asks you to `nimbus stop && nimbus start` rather than syncing nothing or restarting your daemon for you.
+- **If anything after the config write fails** — the Gateway will not start, the sync errors, or the index has no symbols yet — `init` still exits 0 and falls back to printing the generic `nimbus why <file>:<line>` next step. The config edit is the durable half of the work.
+
+`NIMBUS_CONFIG_DIR` overrides the config directory this command writes to (the Gateway honours the same variable). It moves the config directory only — never the data directory or the socket.
+
+---
+
 ## Gateway Lifecycle
 
 ### `nimbus start`
