@@ -2,6 +2,7 @@ export function printHelp(): void {
   console.log(`Nimbus CLI — local-first gateway client
 
 Usage:
+  nimbus init [--no-sync]   Index the current git repo — no credentials, no LLM. Start here.
   nimbus start [--no-wizard] Start gateway (background); omit first-run hint with --no-wizard
   nimbus stop               Stop gateway
   nimbus status [--verbose] [--drift]   Ping gateway; --verbose adds health + index metrics; --drift adds IaC/AWS index hints
