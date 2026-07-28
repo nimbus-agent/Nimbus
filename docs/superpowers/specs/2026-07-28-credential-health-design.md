@@ -139,6 +139,28 @@ The third row is the load-bearing behaviour. **A network blip must never mark a
 credential dead.** False positives in this direction train users to ignore the
 feature.
 
+#### Which key does a failure belong to?
+
+A connector may hold many credentials — ProtonMail holds nine — and a bare 401
+does not say which one was rejected. Two rules:
+
+1. **Attribute precisely where the failure identifies the credential.** An OAuth
+   refresh rejection is attributable to that connector's `*.oauth` key; only
+   that row changes.
+2. **Otherwise mark the credential *set*.** Every *secret* key the connector
+   declares (excluding non-secret config — hosts, regions, usernames) takes the
+   status and shares one `detail`.
+
+Rule 2 is deliberately blunt. A 401 proves the set failed to authenticate; it
+does not prove which member is at fault. Marking the set is honest and
+actionable — the fix is the same either way — whereas guessing a single key
+would manufacture a precise-looking claim the evidence does not support. The
+alternative failure is worse: attributing to the wrong key leaves the real
+culprit reading `ok`.
+
+`detail` therefore carries the connector-level error, and the reader groups by
+connector so a nine-key connector renders one line, not nine.
+
 ### Writer 2 — declared expiry
 
 `nimbus creds expires <vault_key> <ISO-date>` sets `expires_at` and
@@ -147,6 +169,19 @@ feature.
 This is the *only* mechanism that makes a known deadline on an opaque token
 visible — the class of credential that today is guarded by nothing but human
 memory.
+
+**Captured at the moment the user knows it.** Relying on someone remembering to
+run a second command later reproduces the failure this design criticises, so
+`nimbus connector auth` prompts once after storing an opaque credential:
+
+```text
+Does this credential expire? [YYYY-MM-DD, Enter to skip]:
+```
+
+Constraints: the prompt is skippable, never blocks the auth flow, and is
+suppressed entirely when stdin is not a TTY or `--json` is passed — the flow is
+scripted in CI and must stay non-interactive there. Skipping leaves
+`expires_at` NULL, which reads as `UNKNOWN`, not as `ok`.
 
 ### Writer 3 — active probe
 
@@ -158,18 +193,39 @@ routed **through** each connector's existing rate limiter rather than around it.
 A connector whose MCP server fails to spawn yields `unknown`, not `dead` — "I
 could not ask" is not "the answer was no".
 
+**Every probe carries a hard timeout, default 10 s, configurable.** Many
+connectors point at self-hosted instances — Jira, GitLab, Jenkins, ArgoCD,
+Grafana — where an unreachable or wedged host does not refuse the connection, it
+simply never answers. Without a deadline, one such host occupies a concurrency
+slot indefinitely and `nimbus creds check` hangs. A timeout classifies as
+`transient` (hence `unknown`), never `dead`: a host that did not answer has told
+us nothing about the credential.
+
 ### The classifier
 
 One shared function beside `FetchOutcome`, so all 97 connectors classify
 identically rather than each inventing its own notion of authentication failure.
 
 ```text
-auth-failure : HTTP 401 | 403, or a provider body matching the known
-               auth-rejection set (invalid_grant, invalid_client,
-               Unknown JWT iss, Error decoding signature)
-transient    : network error | HTTP 408 | 429 | 5xx
-ok           : anything else that returned data
+auth-failure  : HTTP 401 | 403, or a provider body matching the known
+                auth-rejection set (invalid_grant, invalid_client,
+                Unknown JWT iss, Error decoding signature)
+transient     : network error | timeout | HTTP 408 | 429 | 5xx
+indeterminate : any other non-2xx (400, 404, 409, 422, …)
+ok            : HTTP 2xx
 ```
+
+`ok` means **2xx**, never "anything that wasn't one of the above". An earlier
+draft of this spec defined it as "anything else that returned data", which would
+have classified a `400 Bad Request` from a changed request schema as a healthy
+credential — a false green, the precise defect this whole design exists to
+prevent. The catch came from design review.
+
+`indeterminate` writes `unknown` with the redacted `detail`, never `ok` and
+never `dead`. A 404 on a renamed endpoint or a 400 from a schema change says
+nothing about the credential; claiming either answer would be a lie in a
+different direction. `unknown` with a stored reason is the honest result, and it
+still surfaces in `nimbus creds` so the user can see something is wrong.
 
 ### Readers — status derived fresh on every read
 
@@ -182,9 +238,18 @@ ok                                → OK
 never observed                    → UNKNOWN   "not checked yet"
 ```
 
-Warn window defaults to **30 days**, configurable. Thirty rather than seven
-because the credentials that hurt require a console trip, and a week is not
-enough notice to be useful.
+Two thresholds, both configurable under `[credentials]` in `nimbus.toml`:
+
+| Threshold | Default | Why |
+| --- | --- | --- |
+| `warn_before_expiry` | **30 days** | The credentials that hurt require a console trip; a week is not enough notice to act on. |
+| `stale_after` | **7 days** | A credential unobserved for longer than a week has no current evidence behind it. |
+
+`stale_after` is shorter than `warn_before_expiry` on purpose — they measure
+different things. One asks "how long before this dies?", the other "how long
+since anyone checked?". A stale `ok` is not a reassuring `ok`; it is an absence
+of evidence, and rendering it as `UNKNOWN (stale — last checked 12 days ago)`
+says so.
 
 `nimbus creds` prints the roll-up (and `--json`, matching
 `nimbus security scan`). `nimbus doctor` gains one summary line.
@@ -205,8 +270,26 @@ enough notice to be useful.
 4. **Secret leakage via `detail`** — the one place a credential could escape.
    Provider auth errors echo credentials routinely. `redactAuditPayload` at a
    256-byte cap, the same path the egress ledger uses.
-5. **Probe blast radius** — up to 97 live APIs. Explicit invocation, capped
-   concurrency, `limit=1`, existing rate limiters.
+5. **HTML error bodies** — providers behind SSO, a CDN or a misconfigured
+   reverse proxy answer with an HTML page, not JSON. Capping that at 256 bytes
+   stores `<!DOCTYPE html><html><head><title>` and nothing useful. This is not
+   an edge case here: self-hosted connectors (GitLab, Jenkins, ArgoCD, Grafana,
+   Jira) sit behind exactly such proxies. When the body is HTML — by
+   `Content-Type` or a leading `<`— extract the `<title>` text, else the first
+   text node, and fall back to `"HTML error page (HTTP <status>)"` when neither
+   yields anything.
+
+   **Ordering is load-bearing: extract → strip → redact → cap, in that order.**
+   Redaction must be the last transformation before storage. Redacting first and
+   then extracting could lift a secret out of an attribute or comment that the
+   redactor had already neutralised, re-introducing it into the stored string.
+6. **Probe blast radius** — up to 97 live APIs. Explicit invocation, capped
+   concurrency, `limit=1`, per-probe timeout, existing rate limiters.
+7. **Orphaned rows on connector removal** — `nimbus connector remove` deletes a
+   connector's Vault entries and index rows atomically. `credential_health` rows
+   must be removed in that same transaction, or a removed connector keeps
+   reporting health for credentials that no longer exist. (Not raised in review;
+   found while applying it.)
 
 ## Testing
 
@@ -222,19 +305,35 @@ human hypothesis:
 | `{"detail":"Error decoding signature."}` | auth-failure |
 | HTTP 429 + `Retry-After` | transient |
 | HTTP 502 / `ECONNRESET` | transient |
+| probe exceeds the 10 s deadline | transient |
+| HTTP 400, body `{"message":"unknown field 'limit'"}` | **indeterminate** |
+| HTTP 404, empty body | **indeterminate** |
+| HTTP 200 with a valid payload | ok |
 
-The two transient rows are **red-proved** per the repo convention: break the
-guard deliberately, watch it fail, restore it. A guard that has never failed is
-a guard nobody has verified.
+The two transient rows and **both indeterminate rows** are **red-proved** per
+the repo convention: break the guard deliberately, watch it fail, restore it. A
+guard that has never failed is a guard nobody has verified.
+
+The indeterminate rows exist because the first draft of this spec would have
+classified them `ok`. They are the regression test for a false green that design
+review caught before implementation — the highest-value tests in the file.
 
 **Redaction as a Vault-class assertion.** Feed the classifier an error body
 containing a token-shaped string; assert it appears nowhere in the stored row.
 Vault tests already prove no secret escapes through *any* interface; `detail` is
 a new interface and inherits that bar.
 
-**Behavioural tests**, one per failure mode: transient does not mark dead; stale
-`ok` degrades to `UNKNOWN`; newer `last_ok_at` overrides a bogus `expires_at`;
-un-spawnable connector reports `unknown`. Plus the V45 migration test and an
+**HTML extraction, with the ordering asserted.** Feed a proxy error page whose
+`<title>` is `502 Bad Gateway` and whose body embeds a token-shaped string in an
+HTML comment; assert `detail` contains the title text and **not** the token.
+This proves extract → strip → redact → cap runs in that order — redaction last.
+
+**Behavioural tests**, one per failure mode: transient does not mark dead; a
+400/404 marks `unknown` rather than `ok`; stale `ok` degrades to `UNKNOWN`;
+newer `last_ok_at` overrides a bogus `expires_at`; un-spawnable connector
+reports `unknown`; a timed-out probe reports `unknown`; an unattributable 401 on
+a multi-key connector marks every *secret* key and no config key; and
+`connector remove` leaves no orphaned health rows. Plus the V45 migration and an
 E2E run — real gateway subprocess, mock MCP server returning 401, asserting
 `nimbus creds` shows `DEAD`.
 
