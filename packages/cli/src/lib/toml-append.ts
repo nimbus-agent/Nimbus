@@ -1,5 +1,25 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+
+/**
+ * Read a file, treating "not there" as a value rather than an error.
+ *
+ * Mirrors `getTomlValueFromFile` in nimbus-toml-config.ts. Attempting the read
+ * and handling ENOENT is what avoids the check-then-use race an `existsSync`
+ * guard would introduce; any other error still propagates, because a config
+ * file that exists but cannot be read must not be silently treated as absent
+ * and then appended to.
+ */
+function readFileIfExists(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (e: unknown) {
+    if (e !== null && typeof e === "object" && "code" in e && e.code === "ENOENT") {
+      return undefined;
+    }
+    throw e;
+  }
+}
 
 export type AppendRootResult = {
   status: "added" | "already-present";
@@ -113,7 +133,13 @@ export function appendFilesystemRoot(configDir: string, rootPath: string): Appen
   const tomlPath = join(configDir, "nimbus.toml");
   const target = resolve(rootPath);
 
-  if (existsSync(tomlPath) && hasFilesystemRoot(readFileSync(tomlPath, "utf8"), target)) {
+  // ONE read, reused for all three decisions below (already-present? backup
+  // contents? leading newline?). An `existsSync` probe followed by a separate
+  // read/copy is a TOCTOU race — the file can change in between, and the
+  // backup would then capture bytes we never actually inspected.
+  const current = readFileIfExists(tomlPath);
+
+  if (current !== undefined && hasFilesystemRoot(current, target)) {
     return { status: "already-present", tomlPath };
   }
 
@@ -121,10 +147,11 @@ export function appendFilesystemRoot(configDir: string, rootPath: string): Appen
 
   let backupPath: string | undefined;
   let prefix = "";
-  if (existsSync(tomlPath)) {
+  if (current !== undefined) {
     backupPath = `${tomlPath}.bak`;
-    copyFileSync(tomlPath, backupPath);
-    const current = readFileSync(tomlPath, "utf8");
+    // Write back the bytes we read rather than copyFileSync'ing the live file,
+    // so the backup is exactly the content this decision was based on.
+    writeFileSync(backupPath, current, "utf8");
     prefix = current.endsWith("\n") || current === "" ? "" : "\n";
   }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFilesystemRoot, hasFilesystemRoot } from "./toml-append.ts";
@@ -9,8 +9,11 @@ const FS_ROOTS_HEADER = "[[filesystem.roots]]";
 let dir: string;
 
 beforeEach(() => {
-  dir = join(tmpdir(), `nimbus-toml-write-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
-  mkdirSync(dir, { recursive: true });
+  // mkdtempSync, not join(tmpdir(), <guessable name>): it creates the directory
+  // atomically with a random suffix and owner-only permissions, so a predictable
+  // path in a world-writable dir cannot be pre-created or symlinked by another
+  // user. Matches the convention used across the rest of the suite.
+  dir = mkdtempSync(join(tmpdir(), "nimbus-toml-write-"));
 });
 
 afterEach(() => {

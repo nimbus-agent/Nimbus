@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -38,7 +38,9 @@ function fakePaths(): CliPlatformPaths {
 }
 
 beforeEach(() => {
-  dir = join(tmpdir(), `nimbus-init-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+  // mkdtempSync for the root: atomic creation, random suffix, owner-only perms.
+  // The children below are created inside it, so they inherit that protection.
+  dir = mkdtempSync(join(tmpdir(), "nimbus-init-"));
   repo = join(dir, "repo");
   configDir = join(dir, "config");
   mkdirSync(join(repo, ".git"), { recursive: true });

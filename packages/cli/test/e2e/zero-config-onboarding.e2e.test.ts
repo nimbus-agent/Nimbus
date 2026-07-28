@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,7 +53,9 @@ async function runInitInRepo(args: string[] = []): Promise<Run> {
 }
 
 beforeEach(() => {
-  root = join(tmpdir(), `nimbus-funnel-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+  // mkdtempSync for the root: atomic creation, random suffix, owner-only perms.
+  // The children below are created inside it, so they inherit that protection.
+  root = mkdtempSync(join(tmpdir(), "nimbus-funnel-"));
   repo = join(root, "repo");
   configDir = join(root, "config");
   mkdirSync(join(repo, ".git"), { recursive: true });

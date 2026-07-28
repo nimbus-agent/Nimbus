@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -19,8 +19,10 @@ import { loadNimbusLlmFromConfigDir } from "./nimbus-toml.ts";
 let configDir: string;
 
 beforeEach(() => {
-  configDir = join(tmpdir(), `nimbus-zero-config-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
-  mkdirSync(configDir, { recursive: true });
+  // mkdtempSync, not join(tmpdir(), <guessable name>): atomic creation with a
+  // random suffix and owner-only permissions, so a predictable path in a
+  // world-writable dir cannot be pre-created or symlinked by another user.
+  configDir = mkdtempSync(join(tmpdir(), "nimbus-zero-config-"));
 });
 
 afterEach(() => {
