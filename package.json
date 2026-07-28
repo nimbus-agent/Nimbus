@@ -251,7 +251,7 @@
     "@types/istanbul-reports": "3.0.4",
     "@types/js-yaml": "^4.0.9",
     "babel-plugin-istanbul": "8.0.0",
-    "dependency-cruiser": "^17.4.3",
+    "dependency-cruiser": "^18.1.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
