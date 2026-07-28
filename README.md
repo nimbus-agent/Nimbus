@@ -11,7 +11,7 @@ A local-first, HITL-gated AI agent over your dev tools — it builds a private i
 [![Docs](https://img.shields.io/badge/docs-nimbus--agent.dev-1f6feb.svg)](https://nimbus-agent.dev)
 [![Discussions](https://img.shields.io/badge/community-GitHub%20Discussions-238636.svg)](https://github.com/nimbus-agent/Nimbus/discussions)
 
-[**Install**](#quickstart) · [**Docs**](https://nimbus-agent.dev) · [**Watch the 90-second cast**](https://asciinema.org/a/MnH4zEtmLxgfOGoy) · [**Architecture**](https://nimbus-agent.dev/architecture-overview/)
+[**Install**](#quickstart) · [**Docs**](https://nimbus-agent.dev) · [**Watch the 15-second cast**](https://asciinema.org/a/HBEHmA2twRB7pPzI) · [**Architecture**](https://nimbus-agent.dev/architecture-overview/)
 
 </div>
 
