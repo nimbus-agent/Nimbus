@@ -11,6 +11,7 @@ const FAKE_TMPDIR = mkdtempSync(join(tmpdir(), "nimbus-paths-test-"));
 const TRACKED_ENV_KEYS = [
   "APPDATA",
   "LOCALAPPDATA",
+  "NIMBUS_CONFIG_DIR",
   "TMPDIR",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
@@ -152,5 +153,44 @@ describe("createLinuxPaths", () => {
   it("falls back to tmpdir() for the socket runtime dir when XDG_RUNTIME_DIR is unset", () => {
     const paths = createLinuxPaths();
     expect(paths.socketPath).toBe(join(tmpdir(), "nimbus-gateway.sock"));
+  });
+});
+
+describe("NIMBUS_CONFIG_DIR override", () => {
+  const OVERRIDE = join(FAKE_TMPDIR, "override-config");
+
+  it("relocates configDir on every platform creator", () => {
+    // createDarwinPaths() reads homedir() with no env input at all, so without
+    // this seam an isolated test on macOS would read and write the developer's
+    // real config directory.
+    process.env["NIMBUS_CONFIG_DIR"] = OVERRIDE;
+    process.env["APPDATA"] = join(FAKE_TMPDIR, "roaming");
+    process.env["LOCALAPPDATA"] = join(FAKE_TMPDIR, "local");
+
+    expect(createWindowsPaths().configDir).toBe(OVERRIDE);
+    expect(createDarwinPaths().configDir).toBe(OVERRIDE);
+    expect(createLinuxPaths().configDir).toBe(OVERRIDE);
+  });
+
+  it("moves ONLY configDir — dataDir and socketPath are untouched", () => {
+    // Scoped deliberately: a wider override could silently repoint a live
+    // gateway's database or socket.
+    const before = createLinuxPaths();
+    process.env["NIMBUS_CONFIG_DIR"] = OVERRIDE;
+    const after = createLinuxPaths();
+
+    expect(after.configDir).toBe(OVERRIDE);
+    expect(after.dataDir).toBe(before.dataDir);
+    expect(after.socketPath).toBe(before.socketPath);
+  });
+
+  it("an empty value is ignored, not treated as a valid path", () => {
+    process.env["NIMBUS_CONFIG_DIR"] = "";
+    expect(createLinuxPaths().configDir).toBe(join(homedir(), ".config", "nimbus"));
+  });
+
+  it("absent override leaves the platform default intact", () => {
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    expect(createLinuxPaths().configDir).toBe(join(homedir(), ".config", "nimbus"));
   });
 });
