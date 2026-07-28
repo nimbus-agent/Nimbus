@@ -136,6 +136,21 @@ jobs:
           security unlock-keychain -p "" nimbus-ci.keychain
           security set-keychain-settings -lut 7200 nimbus-ci.keychain
 
+      # The 12 S8 cells embed with `Xenova/all-MiniLM-L6-v2`, which
+      # `@xenova/transformers` pulls from huggingface.co on a cold cache. In run
+      # 30300911723 huggingface.co went unreachable from the ubuntu runner and
+      # the leg died on the 45-minute job timeout. Persisting the weights across
+      # runs takes huggingface.co off the critical path entirely, so S8 stays
+      # measurable (and the run ~30 s shorter) whatever the network is doing.
+      # The repo id is pinned in `embedding/load-feature-extraction-pipeline.ts`
+      # — bump the `-v1` suffix when that pin changes, since actions/cache never
+      # overwrites an existing key.
+      - name: Cache MiniLM embedding weights (S8)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/perf-models
+          key: ${{ runner.os }}-perf-minilm-xenova-all-minilm-l6-v2-v1
+
       # Derive runner_id once. bench-ci.ts and the artifact upload BOTH
       # consume this id verbatim — earlier versions had divergent forms
       # (matrix OS for upload, normalised id for lookup) and the artifact
@@ -159,6 +174,11 @@ jobs:
           github.event_name != 'schedule' ||
           github.event.schedule == '0 4 * * 0'
         shell: bash
+        env:
+          # Points every embedder in the bench at the cached weights above.
+          # `createLocalEmbedder` treats this as the transformers cache dir, so a
+          # cold cache downloads INTO it and the post-job cache save persists it.
+          NIMBUS_EMBEDDING_MODEL_DIR: ${{ runner.temp }}/perf-models
         # The whole bench is one long-lived `bun` process. On the shared GHA
         # runners it intermittently dies with a SIGSEGV (exit 139) inside the
         # `bun:sqlite` Worker / `dlopen(sqlite-vec.dylib)` path the S8/S10
@@ -173,7 +193,7 @@ jobs:
         # `ci.yml`'s `pr-quality-cross-platform`.
         run: |
           set +e
-          mkdir -p "${RUNNER_TEMP}/perf-fixtures"
+          mkdir -p "${RUNNER_TEMP}/perf-fixtures" "${RUNNER_TEMP}/perf-models"
           for attempt in 1 2; do
             # Each attempt writes the single aggregate history line only on a
             # clean finish (bench-cli.ts), and a SIGSEGV is uncatchable so it

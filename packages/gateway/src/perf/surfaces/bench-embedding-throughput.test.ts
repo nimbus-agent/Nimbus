@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
-import { runEmbeddingThroughputOnce } from "./bench-embedding-throughput.ts";
+import type { Embedder } from "../../embedding/types.ts";
+import {
+  resetEmbedderCacheForTest,
+  runEmbeddingThroughputOnce,
+} from "./bench-embedding-throughput.ts";
 
 interface CallLog {
   texts: string[];
@@ -114,5 +118,98 @@ describe("runEmbeddingThroughputOnce", () => {
       embedder,
     });
     expect(calls).toHaveLength(3);
+  });
+});
+
+// The 12 S8 cells (l{50|500|5000} × b{1|8|32|64}) each call this surface. Run
+// 30300911723 blew the 45-minute bench job because each cell independently
+// re-resolved the MiniLM weights against an unreachable huggingface.co and paid
+// the full ~6m45s failure ladder — 12 × that is ~81 min of dead wall-clock. The
+// load is now memoised per cache dir so the model is resolved exactly once per
+// process, success or failure.
+describe("runEmbeddingThroughputOnce — shared model load", () => {
+  beforeEach(() => {
+    resetEmbedderCacheForTest();
+  });
+
+  function countingFactory(): {
+    createEmbedder: (cacheDir: string) => Promise<Embedder>;
+    dirs: string[];
+  } {
+    const dirs: string[] = [];
+    return {
+      dirs,
+      createEmbedder: async (cacheDir: string): Promise<Embedder> => {
+        dirs.push(cacheDir);
+        return {
+          model: "fake-mini",
+          dims: 384,
+          embed: async (texts: string[]): Promise<Float32Array[]> =>
+            texts.map(() => new Float32Array(384)),
+        };
+      },
+    };
+  }
+
+  test("resolves the model once across cells sharing a cache dir", async () => {
+    const { createEmbedder, dirs } = countingFactory();
+    for (const batch of [1, 8, 32] as const) {
+      await runEmbeddingThroughputOnce({
+        length: 50,
+        batch,
+        totalItems: 8,
+        cacheDir: "/models",
+        createEmbedder,
+      });
+    }
+    expect(dirs).toEqual(["/models"]);
+  });
+
+  test("resolves separately per distinct cache dir", async () => {
+    const { createEmbedder, dirs } = countingFactory();
+    for (const cacheDir of ["/models-a", "/models-b"]) {
+      await runEmbeddingThroughputOnce({
+        length: 50,
+        batch: 8,
+        totalItems: 8,
+        cacheDir,
+        createEmbedder,
+      });
+    }
+    expect(dirs).toEqual(["/models-a", "/models-b"]);
+  });
+
+  test("a failed model load is not retried by every subsequent cell", async () => {
+    let attempts = 0;
+    const createEmbedder = async (): Promise<Embedder> => {
+      attempts += 1;
+      throw new Error("Unable to connect. Is the computer able to access the url?");
+    };
+    for (let cell = 0; cell < 12; cell += 1) {
+      await expect(
+        runEmbeddingThroughputOnce({
+          length: 50,
+          batch: 8,
+          totalItems: 8,
+          cacheDir: "/models",
+          createEmbedder,
+        }),
+      ).rejects.toThrow("Unable to connect");
+    }
+    expect(attempts).toBe(1);
+  });
+
+  test("an injected embedder bypasses the shared load entirely", async () => {
+    const { createEmbedder, dirs } = countingFactory();
+    const { embedder } = makeFakeEmbedder(0);
+    await runEmbeddingThroughputOnce({
+      length: 50,
+      batch: 8,
+      totalItems: 8,
+      cacheDir: "/models",
+      embedder,
+      createEmbedder,
+    });
+    expect(dirs).toEqual([]);
   });
 });

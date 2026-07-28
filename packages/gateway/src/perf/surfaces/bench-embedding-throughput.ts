@@ -13,6 +13,8 @@ export interface EmbeddingThroughputOptions {
   corpus?: CorpusTier;
   embedder?: Embedder;
   cacheDir?: string;
+  /** DI seam for the memoised model load (tests only; production uses `createLocalEmbedder`). */
+  createEmbedder?: (cacheDir: string) => Promise<Embedder>;
 }
 
 const DEFAULT_BATCH_MULTIPLIER = 1_000;
@@ -27,11 +29,35 @@ function resolveBatchMultiplier(corpus: CorpusTier | undefined): number {
   return corpus === undefined ? DEFAULT_BATCH_MULTIPLIER : CORPUS_BATCH_MULTIPLIER[corpus];
 }
 
-async function getEmbedder(opts: EmbeddingThroughputOptions): Promise<Embedder> {
-  if (opts.embedder !== undefined) return opts.embedder;
-  return createLocalEmbedder({
-    cacheDir: opts.cacheDir ?? join(tmpdir(), "nimbus-bench-models"),
-  });
+/**
+ * Process-lifetime memo of the MiniLM load, keyed by cache dir.
+ *
+ * All 12 S8 cells (l{50|500|5000} × b{1|8|32|64}) resolve the same weights from
+ * the same directory, so the load belongs to the process, not to the cell. The
+ * REJECTED promise is cached deliberately: when the weights are absent AND
+ * huggingface.co is unreachable, `@xenova/transformers` burns ~6m45s before
+ * giving up, and re-paying that per cell is ~81 min — which is what cancelled
+ * the 45-minute `Bench (ubuntu-24.04)` leg of run 30300911723. Caching the
+ * failure turns 12 hangs into one, so the leg still finishes and reports the
+ * remaining surfaces. Warm weights (see the model cache in `_perf.yml`) make
+ * the failure path unreachable in steady state.
+ */
+const embedderByCacheDir = new Map<string, Promise<Embedder>>();
+
+/** Drops the memo so tests don't leak a loaded (or failed) embedder into each other. */
+export function resetEmbedderCacheForTest(): void {
+  embedderByCacheDir.clear();
+}
+
+function getEmbedder(opts: EmbeddingThroughputOptions): Promise<Embedder> {
+  if (opts.embedder !== undefined) return Promise.resolve(opts.embedder);
+  const cacheDir = opts.cacheDir ?? join(tmpdir(), "nimbus-bench-models");
+  const memoised = embedderByCacheDir.get(cacheDir);
+  if (memoised !== undefined) return memoised;
+  const create = opts.createEmbedder ?? ((dir: string) => createLocalEmbedder({ cacheDir: dir }));
+  const pending = create(cacheDir);
+  embedderByCacheDir.set(cacheDir, pending);
+  return pending;
 }
 
 export async function runEmbeddingThroughputOnce(
