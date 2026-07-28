@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  accumulateBinding,
   bindingUpstream,
   concurrencySeries,
   median,
@@ -72,6 +73,48 @@ describe("bindingUpstream", () => {
 
   test("an empty candidate list yields null", () => {
     expect(bindingUpstream([], "2026-07-27T10:00:00Z")).toBeNull();
+  });
+});
+
+describe("accumulateBinding", () => {
+  const upstream = [
+    { name: "ci-rust", completed_at: "2026-07-27T10:05:00Z" },
+    { name: "ci-ts", completed_at: "2026-07-27T10:40:00Z" },
+  ];
+
+  test("tallies each leg against the job that actually gated it", () => {
+    const into = new Map<string, number>();
+    const dropped = accumulateBinding(into, upstream, [
+      { created_at: "2026-07-27T10:06:00Z" },
+      { created_at: "2026-07-27T10:06:00Z" },
+      { created_at: "2026-07-27T10:41:00Z" },
+    ]);
+    expect(dropped).toBe(0);
+    expect([...into]).toEqual([
+      ["ci-rust", 2],
+      ["ci-ts", 1],
+    ]);
+  });
+
+  test("COUNTS a leg with no eligible upstream instead of dropping it silently", () => {
+    // The leg became eligible before any candidate completed. Narrowing E2E to
+    // `needs: [ci-rust]` cuts the gating margin from ~60 min to ~1.2 min, so
+    // this is now plausible rather than impossible -- and an after-measurement
+    // that quietly attributes fewer legs than ran is the one instrument that
+    // must not fail toward its own hypothesis.
+    const into = new Map<string, number>();
+    const dropped = accumulateBinding(into, upstream, [
+      { created_at: "2026-07-27T10:00:00Z" },
+      { created_at: "2026-07-27T10:06:00Z" },
+    ]);
+    expect(dropped).toBe(1);
+    expect([...into]).toEqual([["ci-rust", 1]]);
+  });
+
+  test("with no upstream candidates at all, every leg is reported dropped", () => {
+    const into = new Map<string, number>();
+    expect(accumulateBinding(into, [], [{ created_at: "2026-07-27T10:06:00Z" }])).toBe(1);
+    expect(into.size).toBe(0);
   });
 });
 

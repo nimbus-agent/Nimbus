@@ -12,7 +12,7 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { bindingUpstream, median, minutesBetween, pageJobs } from "./probe-lib.ts";
+import { accumulateBinding, median, minutesBetween, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
 
@@ -91,6 +91,8 @@ if (import.meta.main) {
   const binding = new Map<string, number>();
   const waitsByLeg = new Map<string, number[]>();
   let incomplete = 0;
+  let droppedLegs = 0;
+  let totalLegs = 0;
 
   for (const run of runs) {
     if (!isRecord(run)) continue;
@@ -106,13 +108,15 @@ if (import.meta.main) {
     }
     const upstream = jobs.filter((j) => /^CI — (TS\/Bun|Rust\/Tauri)/.test(j.name));
     const legs = jobs.filter((j) => j.name.startsWith("E2E Desktop —"));
+    // Eligibility is per-leg, not per-run: which upstream job actually gated
+    // THIS leg depends on when THIS leg became runnable (`leg.created_at`), not
+    // on which candidate happened to finish last in wall-clock time across the
+    // whole run. `accumulateBinding` reports legs it could not attribute rather
+    // than dropping them silently — see its docstring for why that matters more
+    // now that the gating margin is ~1.2 min rather than ~60.
+    totalLegs += legs.length;
+    droppedLegs += accumulateBinding(binding, upstream, legs);
     for (const leg of legs) {
-      // Eligibility is per-leg, not per-run: which upstream job actually
-      // gated THIS leg depends on when THIS leg became runnable
-      // (`leg.created_at`), not on which candidate happened to finish last
-      // in wall-clock time across the whole run.
-      const gatedBy = bindingUpstream(upstream, leg.created_at);
-      if (gatedBy) binding.set(gatedBy.name, (binding.get(gatedBy.name) ?? 0) + 1);
       const wait = minutesBetween(leg.created_at, startedAt);
       waitsByLeg.set(leg.name, [...(waitsByLeg.get(leg.name) ?? []), wait]);
     }
@@ -122,6 +126,11 @@ if (import.meta.main) {
   if (incomplete > 0) {
     console.warn(
       `::warning::probe-dag: ${incomplete}/${runs.length} run(s) had an incomplete job read and were EXCLUDED — figures below cover the rest`,
+    );
+  }
+  if (droppedLegs > 0) {
+    console.warn(
+      `::warning::probe-dag: ${droppedLegs}/${totalLegs} E2E leg(s) had NO upstream candidate completing at or before their eligibility moment and are absent from the attribution tally below`,
     );
   }
   console.log("\nWHICH upstream job gated E2E (times it was last to finish):");

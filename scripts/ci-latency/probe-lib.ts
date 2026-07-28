@@ -60,6 +60,37 @@ export function bindingUpstream(jobs: CompletedJob[], eligibleAt: string): Compl
   return best;
 }
 
+/**
+ * Tallies each leg's binding upstream job into `into`, returning how many legs
+ * were DROPPED because no candidate completed at or before their eligibility
+ * moment (`bindingUpstream` returned null).
+ *
+ * The drop count is not bookkeeping. A dropped leg contributes nothing to the
+ * attribution tally and, before this counted them, vanished with no output at
+ * all. That was tolerable while the gating margin was ~60 minutes — a null was
+ * close to impossible. Narrowing `e2e-desktop` to `needs: [ci-rust]` collapses
+ * the margin to ~1.2 minutes, so a leg created a few seconds before its
+ * upstream's `completed_at` timestamp is now plausible. This probe is the ONLY
+ * instrument that can show the narrowing worked, so it must not silently
+ * measure fewer legs than ran.
+ */
+export function accumulateBinding(
+  into: Map<string, number>,
+  upstream: CompletedJob[],
+  legs: readonly { created_at: string }[],
+): number {
+  let dropped = 0;
+  for (const leg of legs) {
+    const gatedBy = bindingUpstream(upstream, leg.created_at);
+    if (gatedBy === null) {
+      dropped++;
+      continue;
+    }
+    into.set(gatedBy.name, (into.get(gatedBy.name) ?? 0) + 1);
+  }
+  return dropped;
+}
+
 /** How many jobs were running at each whole-minute offset from `runStartedAt`. */
 export function concurrencySeries(jobs: RunningJob[], runStartedAt: string): number[] {
   const t0 = Date.parse(runStartedAt);
