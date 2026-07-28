@@ -1,6 +1,6 @@
 # P4b CI Tuning — Plan Review
 
-Review of the implementation plan [2026-07-28-p4b-ci-tuning.md](file:///C:/gitrep/Nimbus/.claude/worktrees/p4b-tuning/docs/superpowers/plans/2026-07-28-p4b-ci-tuning.md).
+Review of the implementation plan [2026-07-28-p4b-ci-tuning.md](./2026-07-28-p4b-ci-tuning.md).
 
 ---
 
