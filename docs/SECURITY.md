@@ -2,14 +2,16 @@
 
 ## Supported Versions
 
-Nimbus is in active development (**Phase 6 — Team** is complete; **Phase 7 — Engineering Excellence** is the next phase). Security fixes land on `main` and are folded into the next `v0.13.x` patch release.
+Nimbus is in active development (**Phase 6 — Team** is complete; the current build slot is **Spine S1 — Local Brain**). Security fixes land on `main` and ship in the next patch release.
+
+Only the latest release is supported. There is no long-term-support branch and no backport programme — if you are not on the newest tag, the fix is to upgrade.
 
 | Branch / Tag | Supported |
 |---|---|
 | `main` (HEAD) | ✅ Yes — tracks the upcoming version |
-| `v0.13.x` (latest patch) | ✅ Yes — security fixes are backported when the delta is small |
-| Older `v0.x` releases (`v0.1`–`v0.12`) | ❌ No — upgrade to the latest patch |
-| Pre-`v0.1.0` commits | ❌ No |
+| Latest `v1.x` release | ✅ Yes |
+| Older `v1.x` releases | ❌ No — upgrade to the latest patch |
+| All `v0.x` releases | ❌ No — upgrade to `v1.x` |
 
 ### Linux runtime support — glibc floor
 
@@ -23,10 +25,9 @@ macOS and Windows binaries are unaffected by this change.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Report privately via one of these channels:
+Report privately through **GitHub private vulnerability reporting** — use "Report a vulnerability" on the [Security tab](https://github.com/nimbus-agent/Nimbus/security/advisories/new). It is private to the maintainer, gives you a private fork to collaborate on a fix, and issues a CVE on publication. Filing requires a free GitHub account.
 
-1. **GitHub private vulnerability reporting** — use "Report a vulnerability" on the [Security tab](https://github.com/nimbus-agent/Nimbus/security/advisories/new) (preferred)
-2. **Email** — contact the maintainers at the address listed in the repository profile
+This is the only reporting channel. Nimbus publishes no security email address and no PGP key: the project is maintained by one developer, and an unmonitored inbox drops reports silently. The full policy, scope and safe-harbor terms live in [nimbus-security](https://github.com/nimbus-agent/nimbus-security/blob/main/SECURITY.md).
 
 Include:
 
@@ -36,7 +37,7 @@ Include:
 - Your severity assessment (CVSS score if available)
 - Whether you believe it is platform-specific
 
-You will receive acknowledgement within **72 hours** and a status update within **7 days**.
+**What to expect.** Nimbus is maintained by one person as a side project, so there is no guaranteed response time and no SLA. Reports are typically read within a week. Fixes are prioritised by severity, and credential-exposure or HITL/egress-bypass reports jump the queue. We support coordinated disclosure and will agree a timeline with you; if you have not heard back in **30 days**, consider yourself free to disclose publicly. There is no bug-bounty programme.
 
 ---
 

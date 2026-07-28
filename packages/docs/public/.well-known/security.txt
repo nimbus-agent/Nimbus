@@ -1,0 +1,17 @@
+# Nimbus security contact — RFC 9116
+#
+# Nimbus has no security email address and no PGP key by design: the project is
+# maintained by one developer, and an unmonitored inbox would silently drop
+# reports. Vulnerability reports go through GitHub private vulnerability
+# reporting (PVR) on the affected repository. See the Policy link below.
+#
+# The served copy of this file lives in the Nimbus repo at
+# packages/docs/public/.well-known/security.txt and is published to
+# https://nimbus-agent.dev/.well-known/security.txt by the docs deploy workflow.
+# Keep the two copies in sync, and refresh Expires before the date below.
+
+Contact: https://github.com/nimbus-agent/Nimbus/security/advisories/new
+Expires: 2027-07-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://nimbus-agent.dev/.well-known/security.txt
+Policy: https://github.com/nimbus-agent/nimbus-security/blob/main/SECURITY.md
