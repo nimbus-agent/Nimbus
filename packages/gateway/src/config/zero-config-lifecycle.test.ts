@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
 import { loadNimbusLlmFromConfigDir } from "./nimbus-toml.ts";
@@ -27,14 +27,24 @@ afterEach(() => {
   rmSync(configDir, { recursive: true, force: true });
 });
 
-/** Byte-for-byte what appendFilesystemRoot writes on a fresh machine. */
+/**
+ * Byte-for-byte what `appendFilesystemRoot` (packages/cli/src/lib/toml-append.ts)
+ * writes on a fresh machine.
+ *
+ * The separator rewrite is the part that matters: the writer emits POSIX-style
+ * separators precisely because NOTHING on this side un-escapes `\\` —
+ * `parseString` below handles `\"` only. Duplicated rather than imported
+ * because the gateway may not import CLI source; the round-trip assertion in
+ * this file is what keeps the two honest.
+ */
 function writeInitStyleConfig(rootPath: string): void {
+  const tomlPath = rootPath.split(sep).join("/");
   writeFileSync(
     join(configDir, "nimbus.toml"),
     [
       "",
       "[[filesystem.roots]]",
-      `path = ${JSON.stringify(rootPath)}`,
+      `path = ${JSON.stringify(tomlPath)}`,
       "git_aware = true",
       "code_index = true",
       "",

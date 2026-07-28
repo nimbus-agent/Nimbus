@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendFilesystemRoot, hasFilesystemRoot } from "./toml-append.ts";
 
+const FS_ROOTS_HEADER = "[[filesystem.roots]]";
+
 let dir: string;
 
 beforeEach(() => {
@@ -37,16 +39,39 @@ test("hasFilesystemRoot ignores a path key under a different table", () => {
 });
 
 test("a Windows-style path survives the write/read round-trip", () => {
-  // The writer emits TOML `\\` escapes; the gateway's parseString un-escapes
-  // only `\"`, NOT `\\`. The round-trip holds because expandPath calls
-  // resolve(), which normalises the doubled separators — verified, but
-  // incidental, so it is pinned here rather than assumed.
-  const sep = String.fromCharCode(92);
-  const win = ["C:", "gitrep", "Nimbus"].join(sep);
+  // Runs on all three matrix platforms, and that is the point: an earlier
+  // version escaped separators as `\\` and leaned on resolve() to collapse
+  // them, which holds on Windows and FAILS on POSIX where a backslash is an
+  // ordinary filename character. This is the regression test for that.
+  const backslash = String.fromCharCode(92);
+  const win = ["C:", "gitrep", "Nimbus"].join(backslash);
   appendFilesystemRoot(dir, win);
   const written = readFileSync(join(dir, "nimbus.toml"), "utf8");
   expect(hasFilesystemRoot(written, win)).toBe(true);
   expect(appendFilesystemRoot(dir, win).status).toBe("already-present");
+});
+
+test("the emitted path carries no backslash escapes to un-escape", () => {
+  // Nothing on the read side un-escapes `\\` — not hasFilesystemRoot, and not
+  // the gateway's own parseString. Not emitting them is what makes the
+  // round-trip correct by construction rather than by platform accident.
+  appendFilesystemRoot(dir, join(dir, "repo-a"));
+  const pathLine = readFileSync(join(dir, "nimbus.toml"), "utf8")
+    .split(/\r?\n/)
+    .find((l) => l.trim().startsWith("path"));
+  expect(pathLine).toBeDefined();
+  expect(pathLine).not.toContain(String.fromCharCode(92));
+});
+
+test("hasFilesystemRoot still reads a hand-written escaped path", () => {
+  // Backwards compatibility: a user (or an older writer) may well have put
+  // `path = "C:\\repo"` in the file by hand, and reporting it as unconfigured
+  // would silently append a duplicate root.
+  const backslash = String.fromCharCode(92);
+  const win = ["C:", "repo"].join(backslash);
+  const escaped = ["C:", "repo"].join(backslash + backslash);
+  const src = [FS_ROOTS_HEADER, `path = "${escaped}"`, ""].join("\n");
+  expect(hasFilesystemRoot(src, win)).toBe(true);
 });
 
 test("preserves comments, formatting, and unrelated sections verbatim", () => {
