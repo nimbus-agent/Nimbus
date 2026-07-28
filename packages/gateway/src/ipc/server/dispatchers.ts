@@ -29,6 +29,7 @@ import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts"
 import { dispatchFilesystemRpc, FilesystemRpcError } from "../filesystem-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
+import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
@@ -549,6 +550,31 @@ export async function tryDispatchIndexReembedRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchIndexDemoSymbolRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "index.demoSymbol") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "index.demoSymbol requires LocalIndex");
+  }
+  try {
+    const out = await dispatchIndexDemoSymbolRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IndexDemoSymbolRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchIndexRegraphRpc(
   ctx: ServerCtx,
   method: string,
@@ -1001,7 +1027,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-regraph → policy → chatops → tribal → share → egress → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1016,6 +1042,8 @@ async function dispatchPhase4PlatformGroup(
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
   const indexRegraphOutcome = await tryDispatchIndexRegraphRpc(ctx, method, params);
   if (indexRegraphOutcome !== phase4RpcSkipped) return indexRegraphOutcome;
+  const indexDemoSymbolOutcome = await tryDispatchIndexDemoSymbolRpc(ctx, method, params);
+  if (indexDemoSymbolOutcome !== phase4RpcSkipped) return indexDemoSymbolOutcome;
   const filesystemOutcome = await tryDispatchFilesystemRpc(ctx, method, params);
   if (filesystemOutcome !== phase4RpcSkipped) return filesystemOutcome;
   const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);

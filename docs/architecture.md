@@ -1214,6 +1214,10 @@ const streamReq: JSONRPCRequest = {
 //   emits index.reembedProgress / index.reembedDone / index.reembedError (ipc/index-reembed-rpc.ts)
 // filesystem.ensureRoot — register a local git repo as a blame/index root; CLI-only,
 //   FORBIDDEN_OVER_LAN (I5); persists to registered-roots.json, effective next start (ipc/filesystem-rpc.ts)
+// index.demoSymbol  — read-only: one indexed symbol under a repo root, so `nimbus init` can print a
+//   real file:line instead of a placeholder. Returns DemoSymbol | null (null = nothing indexed yet).
+//   CLI-only: NOT renderer-exposed (I7 — no renderer consumer) and FORBIDDEN_OVER_LAN (I5 — a peer
+//   has no use for this machine's onboarding hint) (ipc/index-demo-symbol-rpc.ts)
 //
 // Phase 6 surfaces (Team; full signatures in the nimbus-ipc skill registry):
 // federation.* — consent-scoped peer federation; LAN admits read-only answers (query / expertise / policy /

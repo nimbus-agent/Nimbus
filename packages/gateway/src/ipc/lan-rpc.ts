@@ -39,6 +39,10 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.remove",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
+  // Zero-config onboarding — `nimbus init`'s local demo hint (a file:line from
+  // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
+  // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).
+  "index.demoSymbol",
   // Federation: management methods are local/Tauri-only. Only federation.query /
   // federation.expertise are answerable over the wire (I17 + I5).
   "federation.discover",
