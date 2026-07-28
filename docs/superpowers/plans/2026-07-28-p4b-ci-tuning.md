@@ -2,10 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cut a push-to-`main` CI run from ~105 jobs to ~71 by running
+**Goal:** Cut a push-to-`main` CI run from ~105 jobs to ~75 by running
 coverage-threshold gates on Linux only except where the covered code branches on
 platform, narrow `e2e-desktop`'s dependency edge, and add a static audit so the
 platform classification cannot rot silently.
+
+> **Amended 2026-07-28 after the whole-branch review.** As originally written
+> and executed, this plan produced a SINGLE `coverage-gates` job whose
+> job-level `if:` read `matrix.gate.pal`, and classified 7 gates as PAL. Both
+> were wrong. The shipped shape is two jobs and 9 PAL gates — see
+> **"Amendment A"** at the end of Task 2. The original steps are left intact
+> below as the record of what was executed; where they conflict with Amendment
+> A, Amendment A governs.
 
 **Architecture:** Three independent changes to GitHub Actions workflow YAML,
 plus one new static audit in the existing `scripts/structure-audit/` pattern
@@ -32,11 +40,15 @@ and its [review response](../specs/2026-07-27-p4b-ci-tuning-design-review-respon
 - **Any `bun run <id>` added to a workflow MUST be registered** in
   `PREFLIGHT_GATES` or `CI_ONLY_GATES` in `scripts/lib/preflight-gates.ts`, or
   the drift guard in `scripts/preflight.test.ts` fails.
-- The **seven** PAL gate names, verbatim, as they appear in the
-  `_test-suite.yml` matrix: `Vault`, `Sandbox`, `Updater`, `Extensions`, `Perf`,
-  `Telemetry`, `Doctor`. (`Doctor` was added after the plan review found
-  `packages/cli/src/commands/doctor-core.ts:80` branching on `platform()`; see
-  the [review response](./2026-07-28-p4b-ci-tuning-review-response.md).)
+- The **nine** PAL gate names, verbatim, as they appear in the
+  `_test-suite.yml` matrix: `Vault`, `Embedding`, `Extensions`, `Telemetry`,
+  `DB layer`, `Doctor`, `Updater`, `Perf`, `Sandbox`. (`Doctor` was added after
+  the plan review found `packages/cli/src/commands/doctor-core.ts:80` branching
+  on `platform()`; see
+  the [review response](./2026-07-28-p4b-ci-tuning-review-response.md).
+  `Embedding` and `DB layer` were added by the whole-branch review — both reach
+  `index/sqlite-vec-load.ts` through static imports. The steps below still say
+  "seven"; that is the executed text, and Amendment A supersedes it.)
 - Commit on the branch `dev/asafgolombek/p4b-ci-tuning`. Never on `main`.
 - Run `bun run lint:markdown` before committing any Markdown.
 
@@ -49,7 +61,7 @@ and its [review response](../specs/2026-07-27-p4b-ci-tuning-design-review-respon
 | `scripts/structure-audit/platform-branching-allowlist.ts` (create) | The checked-in classification: every platform-branching source file, the coverage gate that covers it, and why. Data only. |
 | `scripts/structure-audit/check-coverage-gate-pal.ts` (create) | Detection + the four assertions. Pure functions + CLI. |
 | `scripts/structure-audit/check-coverage-gate-pal.test.ts` (create) | Unit tests over fixtures, plus one test asserting the real repo passes. |
-| `.github/workflows/_test-suite.yml` (modify) | `pal` field on all 24 matrix entries + the `if:` gate on `coverage-gates`. |
+| `.github/workflows/_test-suite.yml` (modify) | `pal` field on all 24 matrix entries, split across the `coverage-gates-pal` (9) and `coverage-gates-linux` (15) jobs, each with its own `inputs`-only `if:`. |
 | `.github/workflows/ci.yml` (modify) | `e2e-desktop` needs edge. |
 | `.github/workflows/_structure.yml` (modify) | Run the new audit. |
 | `scripts/lib/preflight-gates.ts` (modify) | Register the new gate (FAST tier). |
@@ -640,6 +652,32 @@ matrix and turns it green."
 
 ---
 
+### Amendment (2026-07-28, whole-branch review) — the audit must constrain the mechanism
+
+Rules 1–4 as specified validate the `pal:` fields but never read the `if:` lines
+that consume them. That is *why* the broken job-level `matrix.gate.pal`
+condition (Task 2, Amendment A1) shipped green. Three additions:
+
+1. **`parseCoverageGateMatrix` reads EVERY `gate:` block, not the first.** After
+   the split there are two, so a first-block-only parse would silently validate
+   half the matrix and report OK. It now returns the union — 24 entries.
+2. **Rule 5 — the split's own wiring.** Both `coverage-gates-pal` and
+   `coverage-gates-linux` must exist and carry the exact `if:` conditions the
+   split depends on, and each matrix entry's `pal` value must match the job it
+   sits in.
+3. **Rule 6 — the runner literal.** `'ubuntu-24.04'` is now duplicated across
+   `ci.yml` (the `pr-quality-ts` caller and the `ci-ts` matrix) and
+   `_test-suite.yml`. The audit resolves the Linux label from `ci.yml`'s
+   `_test-suite.yml` callers and requires it to match the literal inside
+   `coverage-gates-linux`'s condition, so bumping the runner in one place cannot
+   silently drop 15 threshold gates.
+
+`auditCoverageGatePal` also takes an optional `{ allowlist }` dependency so each
+rule can be red-proved against a fixture repo rather than only asserted green
+against the real one — the repo convention for a guard.
+
+---
+
 ## Task 2: Classify the coverage matrix and gate it to Linux
 
 **Files:**
@@ -747,6 +785,70 @@ Doctor is on that list because doctor-core.ts:80 branches on platform() via a
 destructured node:os import -- an idiom the design's original sweep did not
 match, which had it classified Linux-only by mistake."
 ```
+
+---
+
+### Amendment A (2026-07-28, whole-branch review) — the split, and the 9/15 split
+
+Steps 2, 3, 4, 6 and 8 above are the record of what was executed. Two things in
+them are wrong, and this amendment is what actually shipped.
+
+**A1 — `matrix` is not available in a job-level `if:`.** Step 2's condition,
+
+```yaml
+if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
+```
+
+sits at job level (4-space indent). GitHub grants `jobs.<job_id>.if` only the
+`github`, `needs`, `vars` and `inputs` contexts, because the job condition is
+evaluated *before* the matrix expands. The result is an invalid-workflow error
+or a falsy evaluation on Windows and macOS, silently skipping **all 24**
+coverage gates there — including the `pal: true` gates the whole change depends
+on preserving. (All 15 other `matrix.`-referencing `if:` conditions in this repo
+are step-level, 8-space, where `matrix` *is* available.)
+
+The matrix is therefore split into two jobs, each gated only on `inputs`:
+
+| job | entries | `if:` |
+| --- | --- | --- |
+| `coverage-gates-pal` | the 9 `pal: true` | `inputs.run-tests` |
+| `coverage-gates-linux` | the 15 `pal: false` | `inputs.run-tests && inputs.runner == 'ubuntu-24.04'` |
+
+Both keep `needs: unit-coverage`, the same `permissions:`, the same
+`runs-on: ${{ inputs.runner }}`, identical `steps:`, and — critically — the
+identical job-name template `Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})`.
+`name:` *does* accept `matrix`, and the expanded check-context names are what
+branch protection references; changing them breaks required contexts.
+
+The `fromJSON(...)` single-job alternative was rejected: a leg that never
+expands never creates its check context, whereas a *skipped* leg does, and this
+repo depends on that (the trap documented at `.github/workflows/ci.yml`
+`pr-quality-ts`).
+
+Every entry keeps its `pal:` field even though no `if:` reads it any more — it
+is now purely the machine-readable classification the audit enforces.
+
+**A2 — `Embedding` and `DB layer` were misclassified.** Step 4 listed both as
+`pal: false`, on the claim that Linux-only gates "load no file that branches on
+platform". That is false for these two:
+`packages/gateway/src/embedding/lazy-scheduler.ts` (and
+`create-routing-runtime.ts`, `embedding-worker.ts`) and
+`packages/gateway/src/index/migrations/runner.ts` each statically import
+`packages/gateway/src/index/sqlite-vec-load.ts`, which branches on platform for
+the native extension filename — so it lands in both gates' coverage
+denominators. Both are promoted to `pal: true`.
+
+`scripts/structure-audit/platform-branching-allowlist.ts` is updated
+accordingly: the `sqlite-vec-load.ts` entry said `gate: "none"`, which asserted
+something false. It now names `Embedding`, and its `why` states plainly that it
+reaches **both** `Embedding` and `DB layer` through static imports.
+
+**A3 — the audit gained three rules and the parser reads both blocks.** See the
+Amendment at the end of Task 1.
+
+**Corrected arithmetic.** PAL 9 × 3 OSes + Linux-only 15 × 1 = **42** coverage
+jobs (was 72). A push run goes **105 → 75** (not 71). The abandoned baseline
+keys are **30** (15 × 2 dropped OSes), not 36.
 
 ---
 
@@ -1537,7 +1639,7 @@ In `docs/infrastructure-roadmap.md`, replace the `P4b` row's status and gate
 text with:
 
 ```markdown
-| P4b | Latency | ✅ measurement + tuning shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 13-17, so the fix was cutting the fan-out (coverage gates 72 → 38 jobs, Linux-only except the 7 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. |
+| P4b | Latency | ✅ measurement + tuning shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 13-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. |
 ```
 
 - [ ] **Step 3: Capture the AFTER measurement**
@@ -1568,10 +1670,12 @@ Under `### P4b progress log` in `docs/infrastructure-roadmap.md`, replace the
   coverage matrix run once per OS.
 - **This retired the design of record's sharding proposal.** Sharding adds jobs
   to the pool that IS the constraint.
-- **Two changes:** coverage-threshold gates run on Linux only except the seven
-  whose covered code branches on platform (72 → 38 jobs; a run 105 → 71), and
-  `e2e-desktop` now waits on `ci-rust` (1.17-1.72min) instead of `ci-ts` (30
-  jobs, 33.4min median DAG wait) — an edge that carried no artifacts.
+- **Two changes:** coverage-threshold gates run on Linux only except the nine
+  whose covered code branches on platform (72 → 42 jobs; a run 105 → 75), split
+  across `coverage-gates-pal` and `coverage-gates-linux` because a job-level
+  `if:` cannot read `matrix`, and `e2e-desktop` now waits on `ci-rust`
+  (1.17-1.72min) instead of `ci-ts` (30 jobs, 33.4min median DAG wait) — an edge
+  that carried no artifacts.
 - **`audit:ci-latency` cannot prove this worked**, since it gates execution
   while the win lands in queue and DAG wait. `scripts/ci-latency/probe-dag.ts`
   and `probe-concurrency.ts` are the instrument; before/after figures recorded
@@ -1644,6 +1748,11 @@ review found two real bugs, both now fixed above:
   idiom here — which had `doctor-core.ts` undetected and the **`Doctor` gate
   wrongly classified `pal: false`** despite branching on platform at line 80.
 
-Consequently the figures throughout are **7 PAL gates, 38 coverage jobs, 105 →
-71 per run** — not the 6/36/69 of the pre-review draft. If a task still reads
-6, 36 or 69 anywhere, that is stale text, and the numbers here govern.
+Consequently the figures throughout were **7 PAL gates, 38 coverage jobs, 105 →
+71 per run** — not the 6/36/69 of the pre-review draft.
+
+**Superseded 2026-07-28 by the whole-branch review.** The shipped figures are
+**9 PAL gates, 42 coverage jobs, 105 → 75 per run**, over TWO jobs rather than
+one — see Amendment A at the end of Task 2 and the Amendment at the end of
+Task 1. Where any task step still reads 7, 38 or 71, those numbers are the
+executed-then-corrected text and the amendments govern.

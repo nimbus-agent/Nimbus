@@ -16,11 +16,20 @@ push-to-`main` CI runs shows why.
 legs, the probe identified which upstream job was last to complete — the job
 that actually set the leg's eligibility:
 
-| binding upstream OS | times it gated E2E |
+| binding upstream OS | times it gated E2E (capture A, 2026-07-27) |
 | --- | --- |
 | ubuntu-24.04 | 30 |
 | windows-2025 | 15 |
 | macos-15 | **3** |
+
+**Superseded split, 2026-07-28.** Re-running the corrected, promoted
+`probe-dag.ts` over the same 15-run window gives ubuntu **24×**, macOS **18×**,
+windows **3×** (45 legs, 0 unattributed). macOS is ~40% of legs, not 7%. Both
+captures are kept in
+[`docs/infrastructure-roadmap.md`](../../infrastructure-roadmap.md); the
+conclusion below is unchanged, because it never rested on the split — it rests
+on the uniform ~10-minute queue across every OS and on the slot arithmetic in
+the next section, which both windows agree on.
 
 Runner queue is ~10 minutes median on *every* OS, not just macOS. That
 uniformity is the tell: the constraint is not runner scarcity for one platform.
@@ -84,10 +93,23 @@ gates:
 | `Perf` | `perf/bench-runner.ts`, `perf/bench-cli.ts` branch |
 | `Telemetry` | `telemetry/collector.ts` branches |
 | `Doctor` | `cli/src/commands/doctor-core.ts:80` — `if (platform() === "linux")` |
+| `Embedding` *(added 2026-07-28)* | `embedding/lazy-scheduler.ts` statically imports `index/sqlite-vec-load.ts`, which branches per-OS on the native extension filename |
+| `DB layer` *(added 2026-07-28)* | `index/migrations/runner.ts` statically imports the same file |
 
-The remaining 17 — Engine, Agents, Sync scheduler, Rate limiter, People,
-Embedding, Workflow, Watcher, Config, TUI, DB layer, Deployment, Health,
-Metrics, Preflight, MCP, LAN — load no file that branches on platform.
+The remaining 15 — Engine, Agents, Sync scheduler, Rate limiter, People,
+Workflow, Watcher, Config, TUI, Deployment, Health, Metrics, Preflight, MCP,
+LAN — load no file that branches on platform.
+
+**Corrected 2026-07-28 (whole-branch review):** this list originally also held
+`Embedding` and `DB layer`, and that was wrong. `index/sqlite-vec-load.ts`
+branches on platform for the native extension filename, and it is reached by
+static import from `embedding/lazy-scheduler.ts` (plus `create-routing-runtime.ts`
+and `embedding-worker.ts`) and from `index/migrations/runner.ts` — so it sits in
+both gates' coverage denominators. Both were promoted to `pal: true`. The PAL
+set is **9**: `Vault`, `Embedding`, `Extensions`, `Telemetry`, `DB layer`,
+`Doctor`, `Updater`, `Perf`, `Sandbox`. This is the second time the static
+sweep under-detected, which is why the caveat below is repeated rather than
+retired.
 
 **This is static evidence, not empirical** — and the plan review proved that
 caveat was not decorative. The sweep above originally matched only
@@ -105,12 +127,43 @@ judgement of record, now with a demonstrated failure to justify the scepticism.
 
 ### Mechanism
 
-Give **every** matrix entry an explicit `pal` field — `true` for the seven
-above, `false` for the other seventeen — and gate the job:
+Give **every** matrix entry an explicit `pal` field — `true` for the nine
+above, `false` for the other fifteen — and split the matrix across two jobs,
+each gated only on `inputs`:
 
 ```yaml
+coverage-gates-pal:      # the 9 pal: true entries
+  if: inputs.run-tests
+
+coverage-gates-linux:    # the 15 pal: false entries
+  if: inputs.run-tests && inputs.runner == 'ubuntu-24.04'
+```
+
+**This design originally specified a single job with one condition, and that
+was wrong:**
+
+```yaml
+# WRONG — shipped through implementation and survived review before the
+# whole-branch review caught it.
 if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
 ```
+
+`matrix` is **not** in the context set available to a job-level `if:`. GitHub's
+context-availability table grants `jobs.<job_id>.if` only `github`, `needs`,
+`vars` and `inputs`, because the job condition is evaluated *before* the matrix
+expands. The condition would therefore either error the workflow or evaluate
+falsy on Windows and macOS, silently skipping **all 24** coverage gates there —
+including the `pal: true` gates whose preservation is this change's entire
+safety argument. (Confirming evidence: all 15 other `matrix.`-referencing `if:`
+conditions in this repo are step-level, where `matrix` *is* available.)
+
+The `pal:` field is retained on every entry even though no `if:` reads it any
+more. It is now purely the machine-readable classification Change C enforces —
+including a rule that an entry's `pal` value must match the job it sits in.
+
+`fromJSON(...)` over a single job was considered and rejected: a leg that never
+expands never creates its check context, whereas a *skipped* leg does. This repo
+depends on the latter (see "Why this is safe" below).
 
 The field is explicit rather than defaulted so that a newly added gate cannot
 inherit Linux-only treatment silently; Change C enforces that.
@@ -120,11 +173,13 @@ upon implicitly through the `needs: unit-coverage` skip chain, matching how
 every sibling job in `_test-suite.yml` gates on it directly (`static`,
 `unit-coverage`, `integration`, `e2e-gateway`, `e2e-cli`, `packaging`). Without
 it, a docs-only PR caller (`pr-quality-ts` with `runner: ubuntu-24.04` and
-`run-tests: false`) makes the first clause of the condition unconditionally
-true, so the condition itself offers no protection for that caller — it would
-depend entirely on `needs: unit-coverage` skipping.
+`run-tests: false`) makes the runner clause of `coverage-gates-linux`'s
+condition unconditionally true — and `coverage-gates-pal` has no runner clause
+at all — so without it the split would offer no protection for that caller; it
+would depend entirely on `needs: unit-coverage` skipping.
 
-Coverage gates go **72 → 38**; a push run goes **105 → 71**.
+Coverage gates go **72 → 42** (9 PAL × 3 OSes + 15 Linux-only × 1); a push run
+goes **105 → 75**.
 
 ### Why this is safe
 
@@ -164,6 +219,13 @@ This keeps the prerequisite that carries meaning — a broken Tauri/Rust build
 makes E2E Desktop unrunnable — and drops a ~33-minute wait on 24 coverage shards
 that tell E2E nothing.
 
+**Side effect on the probe.** Narrowing the edge collapses the gating margin
+from ~60 min to ~1.2 min, which makes it plausible for `bindingUpstream` to find
+no candidate completed at or before a leg's eligibility moment. `probe-dag.ts`
+now counts such legs and emits one `::warning::` naming the count, rather than
+skipping them silently — the after-measurement is the only instrument that can
+show this slice worked, so it must not quietly measure fewer legs than ran.
+
 ## Change C — stop the PAL classification rotting silently
 
 Changes A and B are point-in-time judgements about which code branches on
@@ -172,7 +234,7 @@ Linux-only gate's code, coverage on Windows and macOS quietly stops watching it
 and **nothing fails**. That is the same silent-decay failure mode the
 measurement slice had to guard for the `created_at` assumption.
 
-A directory scan over the 18 Linux-only gates cannot do this job: the coverage
+A directory scan over the 15 Linux-only gates cannot do this job: the coverage
 scripts name *test* paths (`test:coverage:db` runs
 `packages/gateway/test/unit/db`, never naming `src/db`), coverage is measured
 over files loaded at runtime including transitive imports, and cross-platform
@@ -192,6 +254,18 @@ D10–D22 confinement pattern already used for tool ids and dispatch sites:
    covers it**.
 3. Cross-check that the declared gate carries `pal: true` in the matrix.
 4. Require every matrix entry to carry an explicit `pal` field.
+5. *(added 2026-07-28)* Require both coverage-gate jobs to exist and to carry
+   the exact `if:` conditions the split depends on, and require each entry's
+   `pal` value to match the job it sits in.
+6. *(added 2026-07-28)* Require the runner literal inside
+   `coverage-gates-linux`'s condition to match the Linux runner label `ci.yml`
+   actually calls `_test-suite.yml` with.
+
+Rules 5 and 6 exist because the first revision of this audit validated the
+`pal:` fields and never read the `if:` lines that consume them — which is
+exactly how the broken job-level `matrix.gate.pal` condition shipped green. The
+runner label is now duplicated between `ci.yml` and `_test-suite.yml`; without
+rule 6, bumping it in one place would silently drop all 15 Linux-only gates.
 
 A new platform-branching file then fails the audit until its author either
 refactors it behind the PAL or promotes its gate to `pal: true`.
@@ -217,14 +291,15 @@ proof is instead:
 33.4-minute figure was re-measured on 2026-07-28, against the same `main`
 window, at **60.5 min median (max 110.8, n=15)** — CI congestion nearly
 doubled between the two dates, so 60.5 min, not 33.4, is the baseline this
-slice's "after" measurement must be compared against. Jobs-per-run 105 → 71.
+slice's "after" measurement must be compared against. Jobs-per-run 105 → 75.
 Peak created-but-waiting materially reduced. If the measured result
 contradicts these numbers, the recorded outcome is the measurement — not the
 prediction.
 
 **Baseline note — and when to regenerate.**
-`docs/structure-audit/ci-latency-baseline.json` holds entries for the 36
-coverage keys that stop being produced on macOS and Windows. `evaluate` reports
+`docs/structure-audit/ci-latency-baseline.json` holds entries for the 30
+coverage keys (15 Linux-only gates × 2 dropped OSes) that stop being produced on
+macOS and Windows. `evaluate` reports
 an absent key as `stale-baseline-entry` — a warning, never a regression — so the
 gate stays green throughout.
 
@@ -243,7 +318,7 @@ the abandoned keys have aged out of the window.
 
 | risk | assessment |
 | --- | --- |
-| Losing per-OS coverage signal on 18 gates | Bounded by the static sweep above. Recorded as a judgement, not a proof. |
+| Losing per-OS coverage signal on 15 gates | Bounded by the static sweep above. Recorded as a judgement, not a proof. |
 | Non-Negotiable #5, platform equality | Every test still executes on all 3 OSes via `static`, `unit`, `integration`, `e2e-gateway`, `e2e-cli`. Only *threshold enforcement* narrows. Read as compatible; flagged for the owner's ruling. |
 | A TS-failing, Rust-passing `main` commit burns E2E runners | **Deferred, on measured data.** 2 of the last 40 `main` commits arrived without a PR (`a91d73ec`, `7176dd49`) — both `ci(cla)` workflow commits, neither touching TypeScript. The residual case is two green PRs merging into a semantic conflict. Guarding it has real cost: no standalone fast typecheck exists (`Static`, 4.57 min, is inside `_test-suite.yml` and unreachable by `needs:`), so it would mean a new job duplicating typecheck on every push plus ~3 min of DAG depth added back. `CI — Structure audit` (0.83 min) was evaluated as a cheap substitute and rejected — it runs `audit:boundaries`/`invariants`/`release-please`, not typecheck. **Trigger to adopt:** a `main` E2E run observed burning on a TS compile failure. |
 | Cross-job cancellation as an alternative guard | **Not available.** GitHub Actions cannot cancel a job with no `needs` relationship to the failing one; `fail-fast` operates within a matrix, not across jobs. Removing the edge removes the cancellation relationship by definition. |
@@ -251,7 +326,7 @@ the abandoned keys have aged out of the window.
 
 ## Out of scope
 
-Consolidating the remaining 17 Linux gates into fewer grouped jobs (~71 → ~52).
+Consolidating the remaining 15 Linux gates into fewer grouped jobs (~75 → ~60).
 Deferred deliberately: it makes failure reports coarser and is the least
 reversible of the available levers. Revisit only if the measured result of this
 slice falls short.

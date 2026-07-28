@@ -2,7 +2,8 @@ name: Structure audit
 
 # Reusable workflow — fast PR check (≤30 s budget) for the binary subset of
 # audit:* gates: D1/D2/D3 (boundaries), D8 (any-count ratchet), D10/D11
-# (Nimbus invariants), and release-please manifest drift.
+# (Nimbus invariants), the coverage-gate PAL classification
+# (`audit:coverage-gate-pal`), and release-please manifest drift.
 #
 # Ubuntu-only by design: every gate is static analysis with zero OS variance.
 # The platform-equality non-negotiable is a runtime property
