@@ -474,6 +474,12 @@ moves to P6).
   `bun scripts/ci-latency/probe-dag.ts` and
   `bun scripts/ci-latency/probe-concurrency.ts` against `main` and record the
   actual numbers here — never a predicted figure.
+- **Fast-follow — one enforcement gap is known and stated, not closed.** An
+  allowlist entry names a single gate, and rule 3 cross-checks only that gate.
+  `index/sqlite-vec-load.ts` reaches BOTH `Embedding` and `DB layer`, so
+  demoting `Embedding` is caught while demoting `DB layer` is not. The entry's
+  comment says so rather than claiming protection the code does not provide.
+  Closing it needs a co-gate field on `PlatformFileEntry`.
 - **Guarded against silent decay:** `audit:coverage-gate-pal` fails when a
   platform-branching file is unclassified, when a classified file's gate is not
   `pal: true`, when a new matrix entry carries no explicit `pal` field, when an
