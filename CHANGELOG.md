@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.4.3](https://github.com/nimbus-agent/Nimbus/compare/v1.4.2...v1.4.3) (2026-07-28)
+
+
+### Bug Fixes
+
+* **cast-driver:** normalize macOS's /private tmpdir alias — unbreaks main on macOS ([#899](https://github.com/nimbus-agent/Nimbus/issues/899)) ([de0a5f2](https://github.com/nimbus-agent/Nimbus/commit/de0a5f28c3313eef2c5f54c1c5aa616586bb6d50))
+
 ## [1.4.2](https://github.com/nimbus-agent/Nimbus/compare/v1.4.1...v1.4.2) (2026-07-28)
 
 
