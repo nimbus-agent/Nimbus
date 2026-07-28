@@ -100,6 +100,20 @@ describe("isSecretKey", () => {
     expect(secretKeysFor("does-not-exist")).toEqual([]);
   });
 
+  // Guard: the one-dot invariant that makes suffixOf's indexOf split correct.
+  // Verified true for all 174 keys as of 2026-07-28. If this ever fails,
+  // decide deliberately — do NOT reach for lastIndexOf, which would return
+  // only the final segment and mis-classify a dotted name.
+  test("every vault key is exactly <connector_id>.<name>", () => {
+    const multiDot: string[] = [];
+    for (const keys of Object.values(CONNECTOR_VAULT_SECRET_KEYS)) {
+      for (const k of keys as string[]) {
+        if (k.split(".").length !== 2) multiDot.push(k);
+      }
+    }
+    expect(multiDot).toEqual([]);
+  });
+
   // Guard: every key in the manifest must be classified deliberately.
   test("every manifest key matches a known secret or config suffix", () => {
     const unclassified: string[] = [];
@@ -147,6 +161,13 @@ export const CONFIG_SUFFIXES: ReadonlySet<string> = new Set([
   "publisher_id", "workspace", "org", "account", "instance", "tenant",
 ]);
 
+/**
+ * Vault keys are `<connector_id>.<name>`. Split on the FIRST dot, not the last:
+ * if a name ever contained a dot (`a.b.c` = connector `a`, name `b.c`),
+ * `lastIndexOf` would return `c` and silently mis-classify part of a name as
+ * the whole name. A guard test below pins the one-dot invariant, so a
+ * multi-dot key forces a deliberate decision rather than a silent misread.
+ */
 function suffixOf(key: string): string {
   const dot = key.indexOf(".");
   return dot === -1 ? key : key.slice(dot + 1);
@@ -239,8 +260,15 @@ const MAX_ERROR_BODY = 4096;
 export type FetchOutcome =
   | { kind: "ok"; parsed: unknown; bytes: number }
   | { kind: "http_error"; bytes: number; status: number; body: string }
-  | { kind: "parse_error"; bytes: number };
+  | { kind: "parse_error"; bytes: number; body: string };
 ```
+
+`parse_error` carries a body too. It means "HTTP 2xx but not JSON", which is
+*usually* a healthy credential and a schema surprise — but a well-known
+anti-pattern is answering an expired session with **200 plus an HTML login
+page** instead of 401. Without the body there is no way to tell those apart,
+and defaulting to `ok` would manufacture a false green. Task 8 uses the body to
+distinguish them.
 
 and in `connectorFetch`, replace the `if (!res.ok)` return with:
 
@@ -249,6 +277,13 @@ and in `connectorFetch`, replace the `if (!res.ok)` return with:
     ctx.logger.warn({ serviceId, status: res.status, url }, "connector fetch failed");
     return { kind: "http_error", bytes, status: res.status, body: text.slice(0, MAX_ERROR_BODY) };
   }
+```
+
+and change the `parse_error` return in the same function's `catch` to carry the
+body as well:
+
+```ts
+    return { kind: "parse_error", bytes, body: text.slice(0, MAX_ERROR_BODY) };
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -300,9 +335,21 @@ describe("extractErrorDetail", () => {
     expect(extractErrorDetail(html, 502)).toContain("502 Bad Gateway");
   });
 
-  test("falls back when HTML has no title", () => {
+  test("falls back when markup has no title", () => {
     expect(extractErrorDetail("<html><body>   </body></html>", 403))
-      .toBe("HTML error page (HTTP 403)");
+      .toBe("markup error page (HTTP 403)");
+  });
+
+  test("extracts a SOAP faultstring", () => {
+    const soap = `<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body><soap:Fault><faultstring>Invalid credentials supplied</faultstring></soap:Fault></soap:Body></soap:Envelope>`;
+    expect(extractErrorDetail(soap, 500)).toContain("Invalid credentials supplied");
+  });
+
+  test("strips XML tags rather than storing them raw", () => {
+    const xml = '<?xml version="1.0"?><error><code>401</code></error>';
+    const d = extractErrorDetail(xml, 401);
+    expect(d).not.toContain("<code>");
   });
 
   // ORDERING: extract -> strip -> redact -> cap. Redaction must run LAST, so a
@@ -339,14 +386,29 @@ import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 
 const MAX_DETAIL_BYTES = 256;
 
-function looksLikeHtml(body: string): boolean {
-  const head = body.trimStart().slice(0, 15).toLowerCase();
-  return head.startsWith("<!doctype html") || head.startsWith("<html");
+/**
+ * HTML *and* XML/SOAP. On-premise systems (Jenkins plugins, Exchange, older
+ * enterprise APIs) answer with `<?xml …>` or a SOAP envelope, which would
+ * otherwise be stored raw, tags and all.
+ */
+function looksLikeMarkup(body: string): boolean {
+  const head = body.trimStart().slice(0, 20).toLowerCase();
+  return (
+    head.startsWith("<!doctype html") ||
+    head.startsWith("<html") ||
+    head.startsWith("<?xml") ||
+    /^<[a-z]+:[a-z]+/.test(head) || // namespaced root: <soap:Envelope, <ns:Error
+    head.startsWith("<error") ||
+    head.startsWith("<response")
+  );
 }
 
-function fromHtml(body: string, status: number): string {
+function fromMarkup(body: string, status: number): string {
+  // HTML <title>, else a SOAP/XML fault string, else all remaining text.
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(body)?.[1]?.trim();
   if (title !== undefined && title.length > 0) return title;
+  const fault = /<(?:\w+:)?(?:faultstring|message|Message|error)[^>]*>([\s\S]*?)<\//.exec(body)?.[1]?.trim();
+  if (fault !== undefined && fault.length > 0) return fault;
   const text = body
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -354,7 +416,7 @@ function fromHtml(body: string, status: number): string {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > 0 ? text : `HTML error page (HTTP ${status})`;
+  return text.length > 0 ? text : `markup error page (HTTP ${status})`;
 }
 
 /**
@@ -367,7 +429,7 @@ function fromHtml(body: string, status: number): string {
 export function extractErrorDetail(body: string, status: number): string {
   const trimmed = body.trim();
   if (trimmed.length === 0) return `HTTP ${status}`;
-  const extracted = looksLikeHtml(trimmed) ? fromHtml(trimmed, status) : trimmed;
+  const extracted = looksLikeMarkup(trimmed) ? fromMarkup(trimmed, status) : trimmed;
   const redacted = redactAuditPayload(extracted, MAX_DETAIL_BYTES);
   return redacted.slice(0, MAX_DETAIL_BYTES);
 }
@@ -1203,7 +1265,46 @@ function recordCredentialHealth(
 }
 ```
 
-Call it in both the success and failure paths. Map a thrown network error to `{ kind: "network" }` and a `FetchOutcome` of `http_error` to `{ kind: "http", status, body }`.
+Call it in both the success and failure paths. Map the `FetchOutcome` variants
+to a `ClassifiableOutcome` like this — all four cases, none defaulted:
+
+```ts
+function toClassifiable(outcome: FetchOutcome): ClassifiableOutcome {
+  switch (outcome.kind) {
+    case "ok":
+      return { kind: "ok" };
+    case "http_error":
+      return { kind: "http", status: outcome.status, body: outcome.body };
+    case "parse_error":
+      // HTTP was 2xx, so the credential authenticated — UNLESS the server
+      // answered an expired session with 200 + a login page instead of 401.
+      // Reuse the auth-marker check rather than assuming health.
+      return { kind: "http", status: 200, body: outcome.body };
+  }
+}
+```
+
+Passing `status: 200` is deliberate: `classifyAuthOutcome` returns `ok` for 2xx
+*before* consulting the body, so a genuine schema surprise stays `ok`. To catch
+the login-page case, move the marker check ahead of the 2xx short-circuit in
+`classify-auth-outcome.ts`:
+
+```ts
+    case "http": {
+      const { status, body } = outcome;
+      if (bodyIndicatesAuthRejection(body)) return "auth-failure"; // even on 2xx
+      if (status >= 200 && status < 300) return "ok";
+      // …unchanged from here
+```
+
+and add the covering test to Task 4's table:
+
+```ts
+    ["200 with a login page", http(200, "<html><title>Sign in</title>Unauthorized</html>"), "auth-failure"],
+    ["200 with unparseable but benign body", http(200, "not json at all"), "ok"],
+```
+
+A thrown network error maps to `{ kind: "network" }`.
 
 **This must never throw.** Wrap the call in `try { … } catch { /* health is best-effort */ }` — a health-recording bug must not break a sync.
 
@@ -1530,6 +1631,11 @@ export async function checkAllCredentials(db: Database, deps: CheckDeps): Promis
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < queue.length) {
+      // ATOMIC CLAIM: read-and-increment happens synchronously, before the
+      // first await below. JS is single-threaded, so no two workers can claim
+      // the same index. If you refactor this, the increment must STAY ahead of
+      // every await — moving it after one introduces a duplicate-probe bug
+      // that only shows up under concurrency.
       const connectorId = queue[cursor++];
       if (connectorId === undefined) return;
       const cls = await probeConnector(deps, connectorId);
@@ -1554,9 +1660,52 @@ export async function checkAllCredentials(db: Database, deps: CheckDeps): Promis
 }
 ```
 
-Add a test asserting no more than `MAX_CONCURRENT_PROBES` probes are in flight
-at once (increment a counter on entry, decrement on exit, assert the observed
-maximum). Then add the CLI subcommand `nimbus creds check [connector]`.
+Add these tests — the first proves the cap holds, the second proves the atomic
+claim (no connector probed twice, none skipped):
+
+```ts
+// packages/gateway/src/credentials/credential-probe.test.ts — append
+test("never exceeds MAX_CONCURRENT_PROBES in flight", async () => {
+  const db = new Database(":memory:");
+  db.exec(CREDENTIAL_HEALTH_V45_SQL);
+  let active = 0;
+  let maxActive = 0;
+  const callListTool = async () => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 10));
+    active--;
+    return { kind: "ok" as const };
+  };
+  await checkAllCredentials(db, {
+    callListTool,
+    configuredConnectors: () => ["jira", "github", "linear", "notion", "zoom", "slack", "gitlab"],
+    now: () => 1,
+  });
+  expect(maxActive).toBeLessThanOrEqual(5);
+  expect(maxActive).toBeGreaterThan(1); // proves it is actually concurrent
+});
+
+test("probes every connector exactly once", async () => {
+  const db = new Database(":memory:");
+  db.exec(CREDENTIAL_HEALTH_V45_SQL);
+  const seen: string[] = [];
+  const callListTool = async (id: string) => {
+    seen.push(id);
+    await new Promise((r) => setTimeout(r, 1));
+    return { kind: "ok" as const };
+  };
+  const connectors = ["jira", "github", "linear", "notion", "zoom", "slack", "gitlab"];
+  await checkAllCredentials(db, { callListTool, configuredConnectors: () => connectors, now: () => 1 });
+  expect(seen.sort()).toEqual([...connectors].sort()); // none skipped, none doubled
+});
+```
+
+The `toBeGreaterThan(1)` assertion matters: without it the test would still
+pass if the worker pool collapsed to serial execution, which is a performance
+regression the cap alone cannot detect.
+
+Then add the CLI subcommand `nimbus creds check [connector]`.
 
 - [ ] **Step 6: Commit**
 
