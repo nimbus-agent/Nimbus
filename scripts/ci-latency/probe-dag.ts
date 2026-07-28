@@ -12,16 +12,16 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { accumulateBinding, median, minutesBetween, pageJobs } from "./probe-lib.ts";
+import {
+  accumulateBinding,
+  asJobs,
+  type Job,
+  median,
+  minutesBetween,
+  pageJobs,
+} from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
-
-interface Job {
-  name: string;
-  created_at: string;
-  started_at: string;
-  completed_at: string | null;
-}
 
 function api(path: string): unknown {
   const r = runGh(["gh", "api", path]);
@@ -31,28 +31,6 @@ function api(path: string): unknown {
   } catch {
     return null;
   }
-}
-
-function asJobs(value: unknown): Job[] {
-  if (!isRecord(value) || !Array.isArray(value["jobs"])) return [];
-  const out: Job[] = [];
-  for (const j of value["jobs"]) {
-    if (!isRecord(j)) continue;
-    const name = j["name"];
-    const created = j["created_at"];
-    const started = j["started_at"];
-    const completed = j["completed_at"];
-    if (typeof name !== "string" || typeof created !== "string" || typeof started !== "string") {
-      continue;
-    }
-    out.push({
-      name,
-      created_at: created,
-      started_at: started,
-      completed_at: typeof completed === "string" ? completed : null,
-    });
-  }
-  return out;
 }
 
 /**

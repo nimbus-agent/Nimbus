@@ -12,8 +12,57 @@ export interface CompletedJob {
   completed_at: string | null;
 }
 
+export interface Job {
+  name: string;
+  created_at: string;
+  /** Null when the job was skipped rather than executed. */
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+/**
+ * Parses the `jobs` array of a GitHub Actions "list jobs for a workflow run"
+ * API payload. Shared by both probes — they used to each carry a byte-for-byte
+ * copy of this function, which is exactly the kind of drift risk `pageJobs`
+ * below was already extracted to avoid.
+ *
+ * `started_at` is deliberately NOT part of the validity check: a skipped job
+ * (e.g. a Linux-only coverage leg skipped on macOS/Windows) can lack it while
+ * still being a real, completed job that must count toward `pageJobs`'s
+ * completeness reconciliation against the API's `total_count`. Dropping such
+ * a record here would make that total unreachable and the read would be
+ * misjudged incomplete. Metrics that need `started_at` (e.g.
+ * `concurrencySeries`) exclude such jobs themselves, at the point of
+ * calculation — never here, where doing so would corrupt completeness.
+ */
+export function asJobs(value: unknown): Job[] {
+  if (!isRecord(value) || !Array.isArray(value["jobs"])) return [];
+  const out: Job[] = [];
+  for (const j of value["jobs"]) {
+    if (!isRecord(j)) continue;
+    const name = j["name"];
+    const created = j["created_at"];
+    const started = j["started_at"];
+    const completed = j["completed_at"];
+    if (typeof name !== "string" || typeof created !== "string") continue;
+    out.push({
+      name,
+      created_at: created,
+      started_at: typeof started === "string" ? started : null,
+      completed_at: typeof completed === "string" ? completed : null,
+    });
+  }
+  return out;
+}
+
 export interface RunningJob {
-  started_at: string;
+  /**
+   * Null when the job never reported a start (e.g. it was skipped rather than
+   * executed — this branch's Linux-only coverage legs are skipped on macOS
+   * and Windows). Such a job cannot contribute to a per-minute concurrency
+   * count and is excluded from that metric, not treated as started at time 0.
+   */
+  started_at: string | null;
   completed_at: string | null;
 }
 
@@ -43,17 +92,21 @@ export function minutesBetween(a: string, b: string): number {
  * happened to run long. Taking the unrestricted global max would misattribute
  * gating to whichever candidate was slowest, rather than whichever candidate
  * the dependent job actually waited on. Returns null when no candidate
- * completed at or before the cutoff.
+ * completed at or before the cutoff — including when `eligibleAt` itself does
+ * not parse, since an unparseable cutoff must never be treated as "no
+ * cutoff" (that would silently fall back to the unrestricted global max this
+ * function exists to avoid).
  */
 export function bindingUpstream(jobs: CompletedJob[], eligibleAt: string): CompletedJob | null {
   const cutoff = Date.parse(eligibleAt);
+  if (Number.isNaN(cutoff)) return null;
   let best: CompletedJob | null = null;
   let bestAt = Number.NEGATIVE_INFINITY;
   for (const j of jobs) {
     if (j.completed_at === null) continue;
     const at = Date.parse(j.completed_at);
     if (Number.isNaN(at) || at <= bestAt) continue;
-    if (!Number.isNaN(cutoff) && at > cutoff) continue;
+    if (at > cutoff) continue;
     bestAt = at;
     best = j;
   }
@@ -91,19 +144,30 @@ export function accumulateBinding(
   return dropped;
 }
 
-/** How many jobs were running at each whole-minute offset from `runStartedAt`. */
+/**
+ * How many jobs were running at each whole-minute offset from `runStartedAt`.
+ *
+ * A job missing either timestamp cannot contribute to this metric and is
+ * EXCLUDED from it — never counted as running (from `started_at` defaulting
+ * to time 0) or as never-running (from being silently kept in the
+ * denominator elsewhere). The filter lives here, not in the caller, so every
+ * caller gets the same guarantee regardless of what it passes in.
+ */
 export function concurrencySeries(jobs: RunningJob[], runStartedAt: string): number[] {
   const t0 = Date.parse(runStartedAt);
-  const usable = jobs.filter((j) => j.completed_at !== null);
+  const usable = jobs.filter(
+    (j): j is RunningJob & { started_at: string; completed_at: string } =>
+      j.started_at !== null && j.completed_at !== null,
+  );
   if (Number.isNaN(t0) || usable.length === 0) return [];
-  const end = Math.max(...usable.map((j) => Date.parse(j.completed_at ?? "")));
+  const end = Math.max(...usable.map((j) => Date.parse(j.completed_at)));
   if (!Number.isFinite(end)) return [];
   const span = Math.ceil((end - t0) / 60_000);
   const series: number[] = [];
   for (let m = 0; m <= span; m++) {
     const at = t0 + m * 60_000;
     series.push(
-      usable.filter((j) => Date.parse(j.started_at) <= at && Date.parse(j.completed_at ?? "") > at)
+      usable.filter((j) => Date.parse(j.started_at) <= at && Date.parse(j.completed_at) > at)
         .length,
     );
   }

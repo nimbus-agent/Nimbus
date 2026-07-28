@@ -205,6 +205,25 @@ jobs:
     const ci = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
     expect(testSuiteLinuxRunners(ci)).toEqual(["ubuntu-24.04"]);
   });
+
+  test("does not harvest an os: matrix from a job that passes a LITERAL runner:, even if it also carries an unrelated os: matrix", () => {
+    // A caller can pass a literal `runner:` to _test-suite.yml while carrying
+    // its own `os:` matrix for something else entirely (e.g. its own
+    // `runs-on`). That list has no bearing on the Linux-only split and must
+    // not be read as extra runner labels -- doing so would spuriously trip
+    // rule 6's "more than one Linux runner label" check.
+    const ci = `
+jobs:
+  weird-caller:
+    strategy:
+      matrix:
+        os: [ubuntu-26.04, macos-15]
+    uses: ./.github/workflows/_test-suite.yml
+    with:
+      runner: ubuntu-24.04
+`;
+    expect(testSuiteLinuxRunners(ci)).toEqual(["ubuntu-24.04"]);
+  });
 });
 
 describe("detectPlatformBranchingFiles", () => {
@@ -242,7 +261,27 @@ describe("detectPlatformBranchingFiles", () => {
   });
 
   test("excludes test files, which may branch on platform legitimately", () => {
-    expect(detectPlatformBranchingFiles(REPO_ROOT).some((f) => f.includes(".test."))).toBe(false);
+    const hits = detectPlatformBranchingFiles(REPO_ROOT);
+    expect(hits.some((f) => f.includes(".test."))).toBe(false);
+    expect(hits.some((f) => f.includes(".spec."))).toBe(false);
+  });
+
+  test("excludes .spec.ts/.spec.tsx files too, which _test-suite.yml also treats as tests", () => {
+    // A cross-platform spec file that branches on process.platform is correct,
+    // not a finding -- the same reasoning that excludes `.test.ts` above. An
+    // earlier revision excluded only `.test.` and would have flagged this as
+    // unclassified production code.
+    const root = mkdtempSync(join(tmpdir(), "pal-detect-spec-"));
+    try {
+      const src = join(root, "packages", "gateway", "src");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "a.spec.ts"), "if (process.platform === 'win32') {}\n");
+      writeFileSync(join(src, "b.spec.tsx"), "if (process.platform === 'darwin') {}\n");
+
+      expect(detectPlatformBranchingFiles(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("does not flag a file that only MENTIONS process.platform in a comment", () => {
@@ -305,6 +344,8 @@ interface FixtureOptions {
   ciRunner?: string;
   /** Extra `os:` labels on the ci-ts caller matrix. */
   ciMatrixOs?: string;
+  /** Extra raw job block(s) appended to ci.yml's `jobs:`, verbatim. */
+  extraCiJobs?: string;
   /** Extra repo-relative source files, on top of the default vault/factory.ts. */
   sources?: Record<string, string>;
 }
@@ -382,7 +423,8 @@ function writeFixture(o: FixtureOptions = {}): string {
       `        os: [${matrixOs}]\n` +
       "    uses: ./.github/workflows/_test-suite.yml\n" +
       "    with:\n" +
-      `      runner: ${gha("matrix.os")}\n`,
+      `      runner: ${gha("matrix.os")}\n` +
+      (o.extraCiJobs ?? ""),
   );
 
   const sources: Record<string, string> = {
@@ -522,6 +564,25 @@ describe("auditCoverageGatePal", () => {
     const errors = auditFixture({ ciMatrixOs: "ubuntu-26.04, macos-15, windows-2025" });
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("more than one Linux runner label");
+  });
+
+  test("rule 6 — a caller with a literal runner: alongside an unrelated os: matrix does NOT fire", () => {
+    // Red-proof for the fix: without conditioning the os: harvest on the same
+    // job forwarding `runner: ${{ matrix.os }}`, this fixture's extra caller
+    // would contribute "ubuntu-26.04" from its unrelated os: matrix even
+    // though it passes a literal runner: ubuntu-24.04 -- producing a
+    // spurious "more than one Linux runner label" finding.
+    const errors = auditFixture({
+      extraCiJobs:
+        "  weird-caller:\n" +
+        "    strategy:\n" +
+        "      matrix:\n" +
+        "        os: [ubuntu-26.04, macos-15]\n" +
+        "    uses: ./.github/workflows/_test-suite.yml\n" +
+        "    with:\n" +
+        "      runner: ubuntu-24.04\n",
+    });
+    expect(errors).toEqual([]);
   });
 
   test("a missing ci.yml is reported rather than silently passing rule 6", () => {

@@ -18,7 +18,7 @@ that actually set the leg's eligibility:
 
 | binding upstream OS | times it gated E2E (capture A, 2026-07-27) |
 | --- | --- |
-| ubuntu-24.04 | 30 |
+| ubuntu-24.04 | 27 |
 | windows-2025 | 15 |
 | macos-15 | **3** |
 

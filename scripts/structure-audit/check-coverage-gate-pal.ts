@@ -108,8 +108,7 @@ function collectSources(dir: string, out: string[]): string[] {
       collectSources(full, out);
     } else if (
       (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
-      !entry.endsWith(".test.ts") &&
-      !entry.endsWith(".test.tsx")
+      !/\.(?:test|spec)\.tsx?$/.test(entry)
     ) {
       out.push(full);
     }
@@ -272,22 +271,33 @@ export function jobLevelKey(block: readonly string[], key: string): string | nul
   return null;
 }
 
+const RUNNER_IS_MATRIX_OS = /^\s*runner:\s*\$\{\{\s*matrix\.os\s*\}\}\s*$/;
+
 /**
  * Every Linux runner label `ci.yml` calls `_test-suite.yml` with — read from
- * the callers' literal `runner:` inputs and, when that input is
- * `${{ matrix.os }}`, from the caller's own `os:` matrix list.
+ * the callers' literal `runner:` inputs and, when that SAME job's `runner:`
+ * input is `${{ matrix.os }}`, from that job's own `os:` matrix list.
  *
  * Scoped to `_test-suite.yml` callers on purpose: `ci-rust` and `e2e-desktop`
  * also carry an `os:` matrix, but their runner label has no bearing on whether
- * `coverage-gates-linux` fires.
+ * `coverage-gates-linux` fires. A caller can also carry an `os:` matrix for
+ * some unrelated purpose while forwarding a literal `runner:` — that list
+ * must not be read as Linux-runner labels just because both keys appear in
+ * the same job block.
  */
 export function testSuiteLinuxRunners(ciYaml: string): string[] {
   const labels = new Set<string>();
   for (const block of splitJobBlocks(ciYaml).values()) {
     if (!block.some((l) => TEST_SUITE_CALLER.test(l))) continue;
+    // The `os:` list is only relevant when THIS job actually forwards
+    // `runner: ${{ matrix.os }}` — a caller can carry an unrelated `os:`
+    // matrix (e.g. for its own `runs-on`) while passing a literal `runner:`,
+    // and that list must not be read as Linux-runner labels for the split.
+    const forwardsMatrixOs = block.some((l) => RUNNER_IS_MATRIX_OS.test(l));
     for (const line of block) {
       const direct = line.match(/^\s*runner:\s*["']?([A-Za-z0-9._-]+)["']?\s*$/);
       if (direct?.[1]?.startsWith("ubuntu-")) labels.add(direct[1]);
+      if (!forwardsMatrixOs) continue;
       const osList = line.match(/^\s*os:\s*\[(.+)\]\s*$/);
       if (osList?.[1] === undefined) continue;
       for (const raw of osList[1].split(",")) {

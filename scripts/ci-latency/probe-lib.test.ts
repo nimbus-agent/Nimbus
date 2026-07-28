@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   accumulateBinding,
+  asJobs,
   bindingUpstream,
   concurrencySeries,
   median,
@@ -74,6 +75,19 @@ describe("bindingUpstream", () => {
   test("an empty candidate list yields null", () => {
     expect(bindingUpstream([], "2026-07-27T10:00:00Z")).toBeNull();
   });
+
+  test("an unparseable eligibility timestamp attributes nothing, rather than falling back to the global max", () => {
+    // Before this guard, an unparseable eligibleAt parsed to a NaN cutoff, the
+    // `at > cutoff` exclusion was always false, and the function fell back to
+    // whichever candidate happened to complete last -- the exact
+    // misattribution this cutoff exists to prevent, reachable again through
+    // bad input.
+    const jobs = [
+      { name: "a", completed_at: "2026-07-27T10:05:00Z" },
+      { name: "b", completed_at: "2026-07-27T10:20:00Z" },
+    ];
+    expect(bindingUpstream(jobs, "not-a-date")).toBeNull();
+  });
 });
 
 describe("accumulateBinding", () => {
@@ -133,6 +147,124 @@ describe("concurrencySeries", () => {
 
   test("no jobs yields an empty series", () => {
     expect(concurrencySeries([], "2026-07-27T10:00:00Z")).toEqual([]);
+  });
+
+  test("a job with a null started_at is excluded from the count, not treated as started at minute 0", () => {
+    // A skipped job (e.g. a Linux-only coverage leg skipped on macOS/Windows)
+    // reports completed_at but no started_at. If it were kept in without a
+    // started_at it would either need to default to time 0 (falsely inflating
+    // every early-minute count) or be silently coerced to NaN (which would
+    // make it "running" everywhere via a bad comparison). Neither is
+    // acceptable -- it must be excluded from this metric entirely.
+    const series = concurrencySeries(
+      [
+        { started_at: "2026-07-27T10:00:00Z", completed_at: "2026-07-27T10:02:00Z" },
+        { started_at: null, completed_at: "2026-07-27T10:00:05Z" },
+      ],
+      "2026-07-27T10:00:00Z",
+    );
+    expect(series).toEqual([1, 1, 0]);
+  });
+
+  test("a job with a null completed_at is excluded from the count", () => {
+    const series = concurrencySeries(
+      [
+        { started_at: "2026-07-27T10:00:00Z", completed_at: "2026-07-27T10:02:00Z" },
+        { started_at: "2026-07-27T10:00:00Z", completed_at: null },
+      ],
+      "2026-07-27T10:00:00Z",
+    );
+    expect(series).toEqual([1, 1, 0]);
+  });
+
+  test("with ONLY null-started jobs, the series is empty rather than throwing", () => {
+    expect(
+      concurrencySeries(
+        [{ started_at: null, completed_at: "2026-07-27T10:00:05Z" }],
+        "2026-07-27T10:00:00Z",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("asJobs", () => {
+  test("a job missing started_at is still parsed, with started_at null", () => {
+    // This is the read-completeness fix: `pageJobs` judges completeness by
+    // comparing the parsed count against the API's total_count. A skipped
+    // job still counts toward total_count, so dropping it here for lacking
+    // started_at makes that total permanently unreachable.
+    const jobs = asJobs({
+      jobs: [
+        {
+          name: "E2E Desktop — windows",
+          created_at: "2026-07-27T10:00:00Z",
+          started_at: null,
+          completed_at: "2026-07-27T10:00:05Z",
+        },
+      ],
+    });
+    expect(jobs).toEqual([
+      {
+        name: "E2E Desktop — windows",
+        created_at: "2026-07-27T10:00:00Z",
+        started_at: null,
+        completed_at: "2026-07-27T10:00:05Z",
+      },
+    ]);
+  });
+
+  test("a job with a non-string started_at is parsed as null rather than dropped", () => {
+    const jobs = asJobs({
+      jobs: [
+        {
+          name: "a",
+          created_at: "2026-07-27T10:00:00Z",
+          started_at: null,
+          completed_at: null,
+        },
+      ],
+    });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.started_at).toBeNull();
+  });
+
+  test("a job missing name or created_at is still dropped", () => {
+    const jobs = asJobs({
+      jobs: [
+        { created_at: "2026-07-27T10:00:00Z", started_at: null, completed_at: null },
+        { name: "a", started_at: null, completed_at: null },
+      ],
+    });
+    expect(jobs).toEqual([]);
+  });
+
+  test("read-completeness: a page of jobs missing started_at still reconciles against total_count", () => {
+    // The interaction this whole fix targets: `pageJobs` compares the parsed
+    // job count against total_count. Before this fix, `asJobs` dropped any
+    // record lacking started_at, so a run with a skipped job could never
+    // reach total_count and was misjudged incomplete -- excluded wholesale
+    // from every downstream figure.
+    const payload = {
+      total_count: 2,
+      jobs: [
+        {
+          name: "ci-ts",
+          created_at: "2026-07-27T10:00:00Z",
+          started_at: "2026-07-27T10:00:01Z",
+          completed_at: "2026-07-27T10:05:00Z",
+        },
+        {
+          name: "E2E Desktop — windows (Coverage: Engine)",
+          created_at: "2026-07-27T10:00:00Z",
+          started_at: null,
+          completed_at: "2026-07-27T10:00:00Z",
+        },
+      ],
+    };
+    const result = pageJobs((page) => (page === 1 ? payload : null), asJobs);
+    expect(result.complete).toBe(true);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[1]?.started_at).toBeNull();
   });
 });
 

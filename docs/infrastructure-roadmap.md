@@ -398,7 +398,7 @@ moves to P6).
 - **Delivered (tuning, 2026-07-28):** the measurement's own "clearest lead" was
   wrong, and two probes disproved it. **Attribution capture A (2026-07-27,
   throwaway probe):** across 45 `E2E Desktop` legs the binding upstream job was
-  ubuntu 30×, windows 15×, **macOS only 3×**, and runner queue was ~10min
+  ubuntu 27×, windows 15×, **macOS only 3×**, and runner queue was ~10min
   median on every OS. The constraint is not macOS scarcity: a push run demands
   ~105 job slots against a pool granting 13-17, with 32-41 jobs
   created-but-waiting at peak; one sampled run opened with nine consecutive

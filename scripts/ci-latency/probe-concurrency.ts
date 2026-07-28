@@ -11,16 +11,9 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { concurrencySeries, pageJobs } from "./probe-lib.ts";
+import { asJobs, concurrencySeries, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
-
-interface Job {
-  name: string;
-  created_at: string;
-  started_at: string;
-  completed_at: string | null;
-}
 
 function api(path: string): unknown {
   const r = runGh(["gh", "api", path]);
@@ -30,28 +23,6 @@ function api(path: string): unknown {
   } catch {
     return null;
   }
-}
-
-function asJobs(value: unknown): Job[] {
-  if (!isRecord(value) || !Array.isArray(value["jobs"])) return [];
-  const out: Job[] = [];
-  for (const j of value["jobs"]) {
-    if (!isRecord(j)) continue;
-    const name = j["name"];
-    const created = j["created_at"];
-    const started = j["started_at"];
-    const completed = j["completed_at"];
-    if (typeof name !== "string" || typeof created !== "string" || typeof started !== "string") {
-      continue;
-    }
-    out.push({
-      name,
-      created_at: created,
-      started_at: started,
-      completed_at: typeof completed === "string" ? completed : null,
-    });
-  }
-  return out;
 }
 
 function parseRunsArg(argv: string[]): number {
@@ -101,8 +72,19 @@ if (import.meta.main) {
     const peak = series.length === 0 ? 0 : Math.max(...series);
     const peakMinute = series.indexOf(peak);
     const peakAt = Date.parse(startedAt) + peakMinute * 60_000;
+    // A job with no started_at was skipped, not queued for a runner slot —
+    // it never contended for concurrency at all (this branch's Linux-only
+    // coverage legs are skipped outright on macOS/Windows, not run and
+    // waiting). Counting a skip here would inflate "waiting" with jobs that
+    // were never going to consume a slot, exactly the skewed-sample failure
+    // mode this probe exists to avoid — so it is excluded from this metric,
+    // not counted as zero (which would understate it) or as waiting (which
+    // would overstate it).
     const waitingAtPeak = usable.filter(
-      (j) => Date.parse(j.created_at) <= peakAt && Date.parse(j.started_at) > peakAt,
+      (j) =>
+        j.started_at !== null &&
+        Date.parse(j.created_at) <= peakAt &&
+        Date.parse(j.started_at) > peakAt,
     ).length;
     const count = (re: RegExp) => usable.filter((j) => re.test(j.name)).length;
 
