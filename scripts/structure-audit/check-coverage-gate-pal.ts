@@ -21,6 +21,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { stripComments } from "./lib.ts";
 import { PLATFORM_BRANCHING_ALLOWLIST } from "./platform-branching-allowlist.ts";
 
 export interface AuditResult {
@@ -41,7 +42,7 @@ const TEST_SUITE = ".github/workflows/_test-suite.yml";
  *
  * The destructured-import alternative is NOT optional to cover:
  * `import { platform } from "node:os"` is the dominant idiom in this codebase
- * (6 files), and an earlier revision of this audit that matched only
+ * (7 files), and an earlier revision of this audit that matched only
  * `process.platform` missed `doctor-core.ts` — whose gate was consequently
  * classified Linux-only by mistake.
  */
@@ -96,6 +97,13 @@ function findSrcDirs(dir: string, out: string[]): string[] {
  * Every non-test source file under any `src` directory in `packages/` that
  * branches on the host platform. Tests are excluded deliberately: a
  * cross-platform test branching on `process.platform` is correct, not a finding.
+ *
+ * Comments are stripped before matching (reusing `stripComments` from
+ * `./lib.ts`, the same helper `countAnyInSource` uses): a file that only
+ * *mentions* `process.platform` in a comment — e.g. documenting that it
+ * deliberately does not branch — must not be reported as a finding. The
+ * filename-based `OS_NAMED_FILE` check runs on the path, not the source text,
+ * so it is unaffected either way.
  */
 export function detectPlatformBranchingFiles(repoRoot: string): string[] {
   const packagesDir = join(repoRoot, "packages");
@@ -107,8 +115,8 @@ export function detectPlatformBranchingFiles(repoRoot: string): string[] {
   const hits: string[] = [];
   for (const file of files) {
     const rel = file.slice(repoRoot.length + 1).replace(/\\/g, "/");
-    const src = readFileSync(file, "utf8");
-    if (OS_NAMED_FILE.test(`/${rel}`) || BRANCHES_ON_PLATFORM.some((re) => re.test(src))) {
+    const codeOnly = stripComments(readFileSync(file, "utf8"));
+    if (OS_NAMED_FILE.test(`/${rel}`) || BRANCHES_ON_PLATFORM.some((re) => re.test(codeOnly))) {
       hits.push(rel);
     }
   }
@@ -140,7 +148,9 @@ export function parseCoverageGateMatrix(yaml: string): GateEntry[] {
       gates.push({ name: nameMatch[1].replace(/^["']|["']$/g, ""), pal: null });
       continue;
     }
-    const palMatch = line.match(/^\s*pal:\s*(true|false)\s*$/);
+    // Trailing `# comment` is tolerated: `pal: true  # note` is valid YAML and
+    // must not be misread as an unset field (which would wrongly trip rule 4).
+    const palMatch = line.match(/^\s*pal:\s*(true|false)\s*(?:#.*)?$/);
     const last = gates[gates.length - 1];
     if (palMatch?.[1] !== undefined && last) last.pal = palMatch[1] === "true";
   }

@@ -59,6 +59,20 @@ describe("parseCoverageGateMatrix", () => {
       { name: "Vault", pal: true },
     ]);
   });
+
+  test("a trailing YAML comment on the pal line still parses", () => {
+    // `pal: true  # note` is valid YAML. A regex requiring end-of-line
+    // immediately after the flag would misread this as unset and wrongly
+    // trip rule 4 once a later task starts writing these fields.
+    const withComment = MATRIX.replace(
+      "            pal: false\n",
+      "            pal: false  # note\n",
+    );
+    expect(parseCoverageGateMatrix(withComment)).toEqual([
+      { name: "Engine", pal: false },
+      { name: "Vault", pal: true },
+    ]);
+  });
 });
 
 describe("detectPlatformBranchingFiles", () => {
@@ -97,6 +111,44 @@ describe("detectPlatformBranchingFiles", () => {
 
   test("excludes test files, which may branch on platform legitimately", () => {
     expect(detectPlatformBranchingFiles(REPO_ROOT).some((f) => f.includes(".test."))).toBe(false);
+  });
+
+  test("does not flag a file that only MENTIONS process.platform in a comment", () => {
+    // A file documenting that it deliberately does not branch must not be
+    // reported as a finding — that would be a false positive with zero real
+    // branching to classify.
+    const root = mkdtempSync(join(tmpdir(), "pal-detect-comment-"));
+    try {
+      const src = join(root, "packages", "gateway", "src");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(
+        join(src, "a.ts"),
+        "// This function deliberately does NOT branch on process.platform.\nexport function f() {}\n",
+      );
+
+      expect(detectPlatformBranchingFiles(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("still flags a file that genuinely branches even alongside a comment mentioning the idiom", () => {
+    // Comment-stripping must not weaken real detection: code branching on
+    // process.platform stays a finding even when a comment also references
+    // the idiom by name.
+    const root = mkdtempSync(join(tmpdir(), "pal-detect-real-"));
+    try {
+      const src = join(root, "packages", "gateway", "src");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(
+        join(src, "a.ts"),
+        "// process.platform is how you'd normally branch on OS.\nif (process.platform === 'win32') {}\n",
+      );
+
+      expect(detectPlatformBranchingFiles(root)).toEqual(["packages/gateway/src/a.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
