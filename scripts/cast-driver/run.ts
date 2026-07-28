@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { type DriverMode, MAX_DIFF_LINES, runDriver } from "./driver.ts";
+import { type DriverMode, formatDiffForLog, MAX_DIFF_LINES, runDriver } from "./driver.ts";
 import { runHarness } from "./harness.ts";
 
 function parseArgs(argv: ReadonlyArray<string>): {
@@ -58,21 +58,26 @@ async function main(): Promise<void> {
       // transcript changed and nothing about WHAT changed, which makes a
       // platform-specific drift undiagnosable by anyone without that platform.
       if (summary.diff === "") {
-        // Hash differs while the transcript text matches byte-for-byte: the
-        // committed .hash is stale relative to its own .txt, not a content
-        // change. Saying so beats printing DRIFT and nothing else.
+        // The transcript text matches byte-for-byte, so this is not a content
+        // change. An ABSENT `.hash` and a STALE one both land here and need
+        // different actions, so they are reported separately rather than
+        // collapsed into one hedged sentence.
         console.error(
-          `  transcript text is IDENTICAL to the committed .txt — the committed .hash is stale; re-run \`bun run record-casts\``,
+          summary.baselineHashPresent === false
+            ? `  transcript text is IDENTICAL to the committed .txt, and no committed .hash exists — run \`bun run record-casts\` to create it`
+            : `  transcript text is IDENTICAL to the committed .txt — the committed .hash is stale; re-run \`bun run record-casts\``,
         );
       } else if (summary.diff !== undefined) {
-        const lines = summary.diff.split("\n");
-        const shown = lines.slice(0, MAX_DIFF_LINES).join("\n");
-        console.error(shown);
-        if (lines.length > MAX_DIFF_LINES) {
-          console.error(
-            `… ${lines.length - MAX_DIFF_LINES} more diff line(s) — re-run with --artifacts-dir <dir> for the full text`,
-          );
-        }
+        // When artifacts were requested the full diff is already on disk;
+        // telling the reader to re-run with a flag they already passed is the
+        // kind of dead-end instruction this whole change exists to remove.
+        const hint =
+          artifactsDir !== undefined
+            ? `see ${join(artifactsDir, `${summary.name}.diff`)}`
+            : "re-run with --artifacts-dir <dir> for the full text";
+        const { body, more } = formatDiffForLog(summary.diff, MAX_DIFF_LINES, hint);
+        console.error(body);
+        if (more !== null) console.error(more);
       }
     }
   }

@@ -21,12 +21,37 @@ export interface DriverOpts {
 /** Bounds the diff printed to a CI log; the full text is in the artifacts dir. */
 export const MAX_DIFF_LINES = 60;
 
+/**
+ * Renders a diff for a log, truncated to `maxLines`.
+ *
+ * Pure and exported so the boundary is testable: `unifiedDiff` ends with a
+ * newline, so a naive `split("\n")` yields a synthetic trailing "" that both
+ * hides the last real line and claims one extra line exists.
+ */
+export function formatDiffForLog(
+  diff: string,
+  maxLines: number,
+  fullTextHint: string,
+): { body: string; more: string | null } {
+  const trimmed = diff.endsWith("\n") ? diff.slice(0, -1) : diff;
+  const lines = trimmed.split("\n");
+  const body = lines.slice(0, maxLines).join("\n");
+  if (lines.length <= maxLines) return { body, more: null };
+  return { body, more: `… ${lines.length - maxLines} more diff line(s) — ${fullTextHint}` };
+}
+
 export interface ScriptSummary {
   readonly name: string;
   readonly action: "matched" | "written" | "mismatch";
   readonly hash: string;
   /** Unified diff, baseline vs actual. Present only on `mismatch`. */
   readonly diff?: string;
+  /**
+   * Whether a committed `.hash` existed at all. Only meaningful on `mismatch`:
+   * an ABSENT hash and a STALE one both mismatch, but the operator's next step
+   * differs, so the reporter must not conflate them.
+   */
+  readonly baselineHashPresent?: boolean;
 }
 
 export interface DriverResult {
@@ -136,7 +161,13 @@ export async function runDriver(opts: DriverOpts): Promise<DriverResult> {
     // drift sat red on `main` printing `zero-config: DRIFT (hash=…)` and
     // nothing else.
     const diff = unifiedDiff(baselineTxt, transcript, `${name}.txt`, `${name}.actual.txt`);
-    summaries.push({ name, action: "mismatch", hash, diff });
+    summaries.push({
+      name,
+      action: "mismatch",
+      hash,
+      diff,
+      baselineHashPresent: baselineHash !== null,
+    });
     exitCode = 1;
 
     if (opts.artifactsDir !== undefined) {

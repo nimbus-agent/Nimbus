@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runDriver } from "./driver.ts";
+import { formatDiffForLog, runDriver } from "./driver.ts";
 import type { HarnessRun } from "./harness.ts";
 
 let workDir: string;
@@ -48,6 +48,39 @@ function scaffold(
 
 const MIN_YAML = `name: x\ndescription: t\nevents: x/events.json\nsteps:\n  - input: nimbus test\n`;
 const MIN_EVENTS = '{"steps":[]}';
+
+describe("formatDiffForLog", () => {
+  const hint = "see /tmp/x.diff";
+
+  test("a diff at exactly the limit is shown whole, with no 'more' line", () => {
+    // The bug this guards: `unifiedDiff` ends with "\n", so a naive split()
+    // produced a synthetic trailing "" — making 60 real lines look like 61,
+    // truncating the last real line and claiming one extra line existed.
+    const diff = `${Array.from({ length: 60 }, (_, i) => `line${i + 1}`).join("\n")}\n`;
+    const { body, more } = formatDiffForLog(diff, 60, hint);
+    expect(more).toBeNull();
+    expect(body.split("\n")).toHaveLength(60);
+    expect(body.endsWith("line60")).toBe(true);
+  });
+
+  test("a diff one line over the limit reports exactly one more", () => {
+    const diff = `${Array.from({ length: 61 }, (_, i) => `line${i + 1}`).join("\n")}\n`;
+    const { body, more } = formatDiffForLog(diff, 60, hint);
+    expect(body.split("\n")).toHaveLength(60);
+    expect(more).toBe(`… 1 more diff line(s) — ${hint}`);
+  });
+
+  test("the hint is carried through verbatim", () => {
+    const diff = `${Array.from({ length: 5 }, (_, i) => `l${i}`).join("\n")}\n`;
+    expect(formatDiffForLog(diff, 2, "custom hint").more).toContain("custom hint");
+  });
+
+  test("a diff with no trailing newline is not mis-counted either", () => {
+    const { body, more } = formatDiffForLog("a\nb", 60, hint);
+    expect(body).toBe("a\nb");
+    expect(more).toBeNull();
+  });
+});
 
 describe("runDriver", () => {
   test("--update-snapshots writes hash, txt, and cast files", async () => {
@@ -198,6 +231,49 @@ describe("runDriver", () => {
 
     expect(result.summaries[0]?.action).toBe("matched");
     expect(result.summaries[0]?.diff).toBeUndefined();
+  });
+
+  test("a mismatch reports whether a committed .hash existed at all", async () => {
+    // An ABSENT hash and a STALE one both mismatch, but the operator's next
+    // step differs — "create it" vs "re-record it" — so the reporter needs to
+    // tell them apart rather than hedging.
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(
+      workDir,
+      "h",
+      MIN_YAML.replace("x/events", "h/events"),
+      MIN_EVENTS,
+    );
+
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("some output\n"),
+    });
+
+    const present = await runDriver({
+      mode: "check",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("CHANGED output\n"),
+    });
+    expect(present.summaries[0]?.baselineHashPresent).toBe(true);
+
+    rmSync(join(demosRoot, "snapshots", "h.hash"));
+    const absent = await runDriver({
+      mode: "check",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("CHANGED output\n"),
+    });
+    expect(absent.summaries[0]?.action).toBe("mismatch");
+    expect(absent.summaries[0]?.baselineHashPresent).toBe(false);
   });
 });
 
