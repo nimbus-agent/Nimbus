@@ -8,6 +8,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
+  The zero-config path shipped (#887) with its sync step covered only by unit tests using an
+  injected fake. Run against a real gateway for the first time, it failed:
+  `connector.sync { serviceId: "filesystem" }` returned **`Invalid serviceId`**, so `init`
+  degraded to the generic next step and never printed the real `file:line` that was the whole
+  reason for building the index-driven picker. The same error hit
+  **`nimbus connector sync filesystem`** — the command `init` and the README hand a first-time
+  user — which exited 1. Cause: `requireRegisteredSchedulerServiceId` admitted only catalog
+  connector ids and `mcp_*` user-MCP ids, but the four LOCAL syncables (`filesystem`, `blame`,
+  `openapi`, `obsidian`) are registered straight into the scheduler by `assemble.ts` with no
+  catalog entry, so **none of them could be synced on demand**. Indexing still happened —
+  the scheduler registers with `nextRunAt = now` — so the data landed seconds later; the
+  promise was mistimed, not absent. Fixed with an explicit `GATEWAY_SYNCABLE_SERVICE_IDS`
+  SSoT admitted alongside the existing branches; membership only widens which NAMES are
+  addressable, the `persistedConnectorStatuses` registration check still authorises the sync.
+  A drift test reads `assemble.ts` and fails if the two sites disagree in either direction.
+  Also fixes an asymmetry surfaced by the same session: **`NIMBUS_GATEWAY_SOCKET` was read
+  only by the CLI** (`cli/src/paths.ts`), never by the gateway, so setting it left the CLI
+  dialling a socket that would never be bound — `nimbus start` sat in "Waiting for Gateway
+  IPC" for its full 60s timeout and failed with a healthy but unreachable gateway. The
+  gateway now honours it too, as a separate override from `NIMBUS_CONFIG_DIR` so a
+  test-isolation mistake cannot silently reroute live IPC. Verified end-to-end against a real
+  gateway in an isolated config+data dir: `init` now prints
+  `nimbus why src/auth.ts:1   # verifyToken` and that command returns real authorship.
+
 - **2026-07-28 — Zero-config onboarding: `nimbus init`, and the LLM demoted to optional.**
   The zero-config path already existed and was simply unexposed — `synthesize.ts` returns a
   deterministic render when no LLM is configured, and filesystem indexing needs no

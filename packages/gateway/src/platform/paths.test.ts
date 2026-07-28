@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -192,5 +192,48 @@ describe("NIMBUS_CONFIG_DIR override", () => {
   it("absent override leaves the platform default intact", () => {
     delete process.env["NIMBUS_CONFIG_DIR"];
     expect(createLinuxPaths().configDir).toBe(join(homedir(), ".config", "nimbus"));
+  });
+});
+
+describe("NIMBUS_GATEWAY_SOCKET override", () => {
+  const saved = process.env["NIMBUS_GATEWAY_SOCKET"];
+  afterEach(() => {
+    if (saved === undefined) {
+      delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    } else {
+      process.env["NIMBUS_GATEWAY_SOCKET"] = saved;
+    }
+  });
+
+  test("overrides socketPath on every platform creator", () => {
+    // The CLI has honoured this since before the gateway did
+    // (cli/src/paths.ts resolveSocketPath). While only one side read it, a user
+    // who set it got a CLI waiting on a pipe the gateway would never bind —
+    // `nimbus start` hung for 60s and then failed. Both sides must agree.
+    const target = join(tmpdir(), "nimbus-socket-override.sock");
+    process.env["NIMBUS_GATEWAY_SOCKET"] = target;
+    process.env["APPDATA"] ??= join(tmpdir(), "appdata");
+    process.env["LOCALAPPDATA"] ??= join(tmpdir(), "localappdata");
+
+    expect(createWindowsPaths().socketPath).toBe(target);
+    expect(createDarwinPaths().socketPath).toBe(target);
+    expect(createLinuxPaths().socketPath).toBe(target);
+  });
+
+  test("leaves configDir and dataDir alone — only the socket moves", () => {
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    const before = createLinuxPaths();
+    process.env["NIMBUS_GATEWAY_SOCKET"] = join(tmpdir(), "nimbus-socket-override.sock");
+    const after = createLinuxPaths();
+    expect(after.configDir).toBe(before.configDir);
+    expect(after.dataDir).toBe(before.dataDir);
+    expect(after.logDir).toBe(before.logDir);
+  });
+
+  test("an empty value is ignored, not treated as a socket path", () => {
+    delete process.env["NIMBUS_GATEWAY_SOCKET"];
+    const before = createLinuxPaths().socketPath;
+    process.env["NIMBUS_GATEWAY_SOCKET"] = "";
+    expect(createLinuxPaths().socketPath).toBe(before);
   });
 });

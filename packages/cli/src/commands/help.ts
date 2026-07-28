@@ -51,6 +51,8 @@ Usage:
 
 Environment (optional):
   NIMBUS_GATEWAY_EXECUTABLE   Path to nimbus-gateway binary (overrides auto-detection)
+  NIMBUS_GATEWAY_SOCKET       IPC socket/pipe path; honoured by BOTH the CLI and the gateway
+  NIMBUS_CONFIG_DIR           Config directory (nimbus.toml); does NOT move the data directory
   OPENAI_API_KEY              OpenAI embeddings when nimbus.toml [embedding] provider = "openai"
 `);
 }

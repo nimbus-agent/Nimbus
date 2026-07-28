@@ -4,6 +4,7 @@ import {
   normalizeConnectorServiceId,
 } from "../connectors/connector-catalog.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
+import { isGatewaySyncableServiceId } from "../connectors/gateway-syncable-ids.ts";
 import { USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
@@ -47,7 +48,18 @@ export function requireRegisteredSchedulerServiceId(
   const trimmed = raw.trim();
   const builtIn = normalizeConnectorServiceId(trimmed);
   const id = builtIn ?? trimmed.toLowerCase();
-  if (builtIn === null && !USER_MCP_SERVICE_ID_PATTERN.test(id)) {
+  // The gateway-side syncables (filesystem / blame / openapi / obsidian) are
+  // registered with the scheduler by assemble.ts but have no catalog entry, so
+  // before they were admitted here `connector.sync` rejected all four with
+  // "Invalid serviceId" — including the `nimbus connector sync filesystem`
+  // that `nimbus init` and the README tell a first-time user to run.
+  // This only widens which NAMES are addressable; the registration check below
+  // is still what authorises the sync.
+  if (
+    builtIn === null &&
+    !isGatewaySyncableServiceId(id) &&
+    !USER_MCP_SERVICE_ID_PATTERN.test(id)
+  ) {
     throw new ConnectorRpcError(-32602, "Invalid serviceId");
   }
   if (localIndex.persistedConnectorStatuses(id).length === 0) {

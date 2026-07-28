@@ -49,7 +49,9 @@ Two behaviours worth knowing:
 - **If a Gateway is already running**, it cannot see a root that was just added: filesystem roots are read once at startup. `nimbus init` says so and asks you to `nimbus stop && nimbus start` rather than syncing nothing or restarting your daemon for you.
 - **If anything after the config write fails** — the Gateway will not start, the sync errors, or the index has no symbols yet — `init` still exits 0 and falls back to printing the generic `nimbus why <file>:<line>` next step. The config edit is the durable half of the work.
 
-`NIMBUS_CONFIG_DIR` overrides the config directory this command writes to (the Gateway honours the same variable). It moves the config directory only — never the data directory or the socket.
+`NIMBUS_CONFIG_DIR` overrides the config directory this command writes to (the Gateway honours the same variable). It moves the config directory only — never the data directory.
+
+`NIMBUS_GATEWAY_SOCKET` overrides the IPC socket/pipe path and is honoured by **both** the CLI and the Gateway. It is deliberately a separate variable from `NIMBUS_CONFIG_DIR`: one variable moving both would let a test-isolation mistake silently reroute live IPC. Note it does **not** move the data directory either, so a Gateway started with it still reads and writes the real index.
 
 ---
 

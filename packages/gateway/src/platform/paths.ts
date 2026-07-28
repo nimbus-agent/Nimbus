@@ -17,9 +17,10 @@ export interface PlatformPaths {
  *
  * Exists because `createDarwinPaths()` reads `homedir()` with no env input at
  * all, so without this an isolated test on macOS would read and write the
- * developer's real config. Only `configDir` moves — `dataDir` and `socketPath`
- * deliberately do not, so this cannot silently repoint a live gateway's database
- * or make it listen somewhere unexpected.
+ * developer's real config. Only `configDir` moves — `dataDir` deliberately does
+ * not, so this cannot silently repoint a live gateway's database. (The socket
+ * has its own separate override, `socketPathOverride` below; a single variable
+ * moving both would make a test-isolation mistake silently reroute live IPC.)
  *
  * An empty value is ignored rather than treated as a valid path: an unset-but-
  * exported variable is a very common shell accident, and honouring it would send
@@ -27,6 +28,25 @@ export interface PlatformPaths {
  */
 function configDirOverride(): string | undefined {
   const v = processEnvGet("NIMBUS_CONFIG_DIR");
+  return v !== undefined && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Relocate the IPC endpoint the gateway listens on.
+ *
+ * The CLI has honoured `NIMBUS_GATEWAY_SOCKET` for far longer than the gateway
+ * did (`cli/src/paths.ts` `resolveSocketPath`). While only one side read it the
+ * variable was a trap: a user who set it got a CLI dialling a socket the
+ * gateway would never bind, so `nimbus start` sat in "Waiting for Gateway IPC"
+ * for its full 60s timeout and then failed with the gateway process healthy but
+ * unreachable. Both sides now resolve it the same way.
+ *
+ * Empty is ignored for the same reason as `configDirOverride` — an
+ * exported-but-unset variable is a common shell accident, and honouring it here
+ * would bind the socket to the process's working directory.
+ */
+function socketPathOverride(): string | undefined {
+  const v = processEnvGet("NIMBUS_GATEWAY_SOCKET");
   return v !== undefined && v.length > 0 ? v : undefined;
 }
 
@@ -49,7 +69,7 @@ export function createWindowsPaths(): PlatformPaths {
     configDir,
     dataDir,
     logDir: join(dataDir, "logs"),
-    socketPath: String.raw`\\.\pipe\nimbus-gateway`,
+    socketPath: socketPathOverride() ?? String.raw`\\.\pipe\nimbus-gateway`,
     extensionsDir: join(localAppData, "Nimbus", "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };
@@ -63,7 +83,7 @@ export function createDarwinPaths(): PlatformPaths {
     configDir,
     dataDir: root,
     logDir: join(root, "logs"),
-    socketPath: join(tmp, "nimbus-gateway.sock"),
+    socketPath: socketPathOverride() ?? join(tmp, "nimbus-gateway.sock"),
     extensionsDir: join(root, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };
@@ -80,7 +100,7 @@ export function createLinuxPaths(): PlatformPaths {
     configDir,
     dataDir,
     logDir: join(dataDir, "logs"),
-    socketPath: join(runtimeDir, "nimbus-gateway.sock"),
+    socketPath: socketPathOverride() ?? join(runtimeDir, "nimbus-gateway.sock"),
     extensionsDir: join(dataDir, "extensions"),
     tempDir: join(tmpdir(), "nimbus"),
   };

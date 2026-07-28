@@ -97,3 +97,45 @@ describe("handleConnectorSync", () => {
     expect(cleared).toBe(false);
   });
 });
+
+describe("handleConnectorSync — gateway-side syncables", () => {
+  // Regression: these four are registered with the scheduler by assemble.ts but
+  // have no catalog entry, so the validator rejected every one of them with
+  // "Invalid serviceId". That broke `nimbus connector sync filesystem` — the
+  // command `nimbus init` and the README both hand a first-time user — and left
+  // `init` unable to print a real file:line. Caught only by running the funnel
+  // against a real gateway; the unit tests injected a fake sync.
+  for (const id of ["filesystem", "blame", "openapi", "obsidian"]) {
+    test(`${id} is accepted once registered, and reaches forceSync`, async () => {
+      fixture.localIndex.ensureConnectorSchedulerRegistration(id, 600_000, 1_700_000_000_000);
+      const { stub: scheduler, calls } = makeStubScheduler();
+      await handleConnectorSync(buildCtx({ serviceId: id }, scheduler));
+      expect(calls.forced).toEqual([id]);
+    });
+  }
+
+  test("a gateway-syncable id that is NOT registered is still rejected", async () => {
+    // Being on the allowlist widens which NAMES are addressable; it must not
+    // authorise a sync of something this machine never registered.
+    const { stub: scheduler, calls } = makeStubScheduler();
+    try {
+      await handleConnectorSync(buildCtx({ serviceId: "obsidian" }, scheduler));
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
+      expect((e as ConnectorRpcError).message).toContain("Unknown connector");
+    }
+    expect(calls.forced).toEqual([]);
+  });
+
+  test("junk that merely looks local is still Invalid serviceId", async () => {
+    const { stub: scheduler } = makeStubScheduler();
+    try {
+      await handleConnectorSync(buildCtx({ serviceId: "filesystem-v2" }, scheduler));
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
+      expect((e as ConnectorRpcError).message).toContain("Invalid serviceId");
+    }
+  });
+});
