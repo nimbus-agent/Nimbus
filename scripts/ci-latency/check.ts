@@ -17,8 +17,14 @@ import { join } from "node:path";
 import { isStrict, strictSkip } from "../structure-audit/_gh-audit.ts";
 import { computeUpdatedBaseline, parseBaseline, serializeBaseline } from "./baseline.ts";
 import { collectAll } from "./collect.ts";
-import { MAX_READ_FAILURE_RATIO, MIN_REPORTED_QUEUE_MIN, SAMPLE_EVENT } from "./constants.ts";
+import {
+  AUDITED_REPOS,
+  MAX_READ_FAILURE_RATIO,
+  MIN_REPORTED_QUEUE_MIN,
+  SAMPLE_EVENT,
+} from "./constants.ts";
 import { evaluate } from "./evaluate.ts";
+import { fetchMainHealth, formatMainHealth } from "./main-health.ts";
 import { summarize } from "./summarize.ts";
 
 const BASELINE_PATH = join(
@@ -93,6 +99,32 @@ if (import.meta.main) {
     console.warn(
       `::warning::${label}: no observation carried a non-zero dagWait — if any sampled workflow uses \`needs:\`, the created_at eligibility assumption may have changed`,
     );
+  }
+
+  // Is main actually red? Nothing else answers this: collect.ts fetches only
+  // status=success runs, so a permanently-failing workflow produces zero
+  // observations and reads as "no data" rather than "broken". On 2026-07-28
+  // main was red for 4.75h across six pushes and only a human noticed.
+  //
+  // Reported always; fails only under --strict (the scheduled sweep), because
+  // a contributor's PR cannot fix a main that someone else broke.
+  const redRepos: string[] = [];
+  for (const repo of AUDITED_REPOS) {
+    const health = fetchMainHealth(repo);
+    if (health === null) {
+      console.warn(`::warning::${label}: could not read main health for ${repo}`);
+      continue;
+    }
+    if (health.red) {
+      redRepos.push(formatMainHealth(repo, health));
+      console.error(`::error::${label}: ${formatMainHealth(repo, health)}`);
+    } else if (!health.known) {
+      console.warn(`::warning::${label}: ${formatMainHealth(repo, health)}`);
+    }
+  }
+  if (strict && redRepos.length > 0) {
+    console.error(`${label}: ${redRepos.length} repo(s) have a red main`);
+    process.exit(1);
   }
 
   const summaries = summarize(observations);
