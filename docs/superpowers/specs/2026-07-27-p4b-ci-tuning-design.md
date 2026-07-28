@@ -83,21 +83,30 @@ gates:
 | `Extensions` | `extensions/install-from-local.ts` branches |
 | `Perf` | `perf/bench-runner.ts`, `perf/bench-cli.ts` branch |
 | `Telemetry` | `telemetry/collector.ts` branches |
+| `Doctor` | `cli/src/commands/doctor-core.ts:80` — `if (platform() === "linux")` |
 
-The remaining 18 — Engine, Agents, Sync scheduler, Rate limiter, People,
+The remaining 17 — Engine, Agents, Sync scheduler, Rate limiter, People,
 Embedding, Workflow, Watcher, Config, TUI, DB layer, Deployment, Health,
-Metrics, Preflight, Doctor, MCP, LAN — load no file that branches on platform.
+Metrics, Preflight, MCP, LAN — load no file that branches on platform.
 
-**This is static evidence, not empirical.** A stronger check would compare
-measured per-OS coverage from real lcov artifacts. Static was judged sufficient
-because the failure mode is bounded and enumerable: the only thing at risk is
-coverage signal on the specific files listed above. That judgement is recorded
-here so a future reader can overturn it rather than rediscover it.
+**This is static evidence, not empirical** — and the plan review proved that
+caveat was not decorative. The sweep above originally matched only
+`process.platform` and `os.platform()`, missing
+`import { platform } from "node:os"`, which is the **dominant idiom in this
+codebase** (6 files). That omission left `doctor-core.ts` undetected and
+classified `Doctor` as Linux-only despite it branching on platform — the exact
+signal loss this design exists to avoid, inside the classification the design
+was built from.
+
+`Doctor` is corrected to a PAL gate above, and the detection in Change C covers
+destructured `node:os` imports and `os.type()`. A stronger check still would
+compare measured per-OS coverage from real lcov artifacts; static remains the
+judgement of record, now with a demonstrated failure to justify the scepticism.
 
 ### Mechanism
 
-Give **every** matrix entry an explicit `pal` field — `true` for the six above,
-`false` for the other eighteen — and gate the job:
+Give **every** matrix entry an explicit `pal` field — `true` for the seven
+above, `false` for the other seventeen — and gate the job:
 
 ```yaml
 if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
@@ -106,7 +115,7 @@ if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
 The field is explicit rather than defaulted so that a newly added gate cannot
 inherit Linux-only treatment silently; Change C enforces that.
 
-Coverage gates go **72 → 36**; a push run goes **105 → 69**.
+Coverage gates go **72 → 38**; a push run goes **105 → 71**.
 
 ### Why this is safe
 
@@ -164,8 +173,12 @@ incomplete and full of false positives.
 `scripts/structure-audit/check-coverage-gate-pal.ts` inverts it, following the
 D10–D22 confinement pattern already used for tool ids and dispatch sites:
 
-1. Enumerate every source file branching on platform (`process.platform`,
-   `os.platform()`) or importing an OS-named module (`win32`/`darwin`/`linux`).
+1. Enumerate every source file branching on platform — `process.platform`,
+   `os.platform()`, `os.type()`, or a destructured
+   `import { platform } from "node:os"` — or importing an OS-named module
+   (`win32`/`darwin`/`linux`). The scan must reach `src` directories at **any**
+   depth: `packages/mcp-connectors/src` does not exist, and a one-level scan
+   silently skips all 94 connectors.
 2. Require each in a checked-in allowlist entry declaring **which coverage gate
    covers it**.
 3. Cross-check that the declared gate carries `pal: true` in the matrix.
@@ -191,7 +204,7 @@ proof is instead:
 2. The before/after figures are recorded in the P4b progress log in
    [`docs/infrastructure-roadmap.md`](../../infrastructure-roadmap.md).
 
-**Expected effect.** DAG wait 33.4 → ~3 min. Jobs-per-run 105 → 69. Peak
+**Expected effect.** DAG wait 33.4 → ~3 min. Jobs-per-run 105 → 71. Peak
 created-but-waiting materially reduced. If the measured result contradicts these
 numbers, the recorded outcome is the measurement — not the prediction.
 
@@ -224,7 +237,7 @@ the abandoned keys have aged out of the window.
 
 ## Out of scope
 
-Consolidating the remaining 18 Linux gates into fewer grouped jobs (~69 → ~50).
+Consolidating the remaining 17 Linux gates into fewer grouped jobs (~71 → ~52).
 Deferred deliberately: it makes failure reports coarser and is the least
 reversible of the available levers. Revisit only if the measured result of this
 slice falls short.

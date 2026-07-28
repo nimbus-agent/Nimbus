@@ -131,7 +131,9 @@ green and silent, which is the outcome the finding wants.
   explicit-`pal`-field requirement. Wired into `audit:*` alongside the other
   static checks.
 - **Change A** — every matrix entry carries an explicit `pal` field
-  (`true`/`false`), not just the six PAL ones.
+  (`true`/`false`), not just the PAL ones. (This response said "six" when
+  written; the later plan review found a seventh, `Doctor` — see
+  [the plan review response](../plans/2026-07-28-p4b-ci-tuning-review-response.md).)
 - **Verification** — the baseline regeneration step gains its window-based
   trigger.
 - **Unchanged** — Change B ships as designed; the deferral in finding 2 is

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cut a push-to-`main` CI run from ~105 jobs to ~69 by running
+**Goal:** Cut a push-to-`main` CI run from ~105 jobs to ~71 by running
 coverage-threshold gates on Linux only except where the covered code branches on
 platform, narrow `e2e-desktop`'s dependency edge, and add a static audit so the
 platform classification cannot rot silently.
@@ -32,8 +32,11 @@ and its [review response](../specs/2026-07-27-p4b-ci-tuning-design-review-respon
 - **Any `bun run <id>` added to a workflow MUST be registered** in
   `PREFLIGHT_GATES` or `CI_ONLY_GATES` in `scripts/lib/preflight-gates.ts`, or
   the drift guard in `scripts/preflight.test.ts` fails.
-- The six PAL gate names, verbatim, as they appear in the `_test-suite.yml`
-  matrix: `Vault`, `Sandbox`, `Updater`, `Extensions`, `Perf`, `Telemetry`.
+- The **seven** PAL gate names, verbatim, as they appear in the
+  `_test-suite.yml` matrix: `Vault`, `Sandbox`, `Updater`, `Extensions`, `Perf`,
+  `Telemetry`, `Doctor`. (`Doctor` was added after the plan review found
+  `packages/cli/src/commands/doctor-core.ts:80` branching on `platform()`; see
+  the [review response](./2026-07-28-p4b-ci-tuning-review-response.md).)
 - Commit on the branch `dev/asafgolombek/p4b-ci-tuning`. Never on `main`.
 - Run `bun run lint:markdown` before committing any Markdown.
 
@@ -99,7 +102,7 @@ Create `scripts/structure-audit/platform-branching-allowlist.ts`:
  * file was classified, not that it is protected. Coverage is measured over
  * files loaded at runtime including transitive imports, which cannot be derived
  * statically from the gate's test paths — so this audit guarantees that new
- * platform-branching code is CLASSIFIED, and that the six PAL gates stay
+ * platform-branching code is CLASSIFIED, and that the seven PAL gates stay
  * `pal: true`. It does not prove a `gate: "none"` file never becomes covered by
  * a `pal: false` gate.
  */
@@ -163,8 +166,38 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "Telemetry",
     why: "reports host platform",
   },
+  {
+    file: "packages/cli/src/commands/doctor-core.ts",
+    gate: "Doctor",
+    why: "`if (platform() === 'linux')` gates the secret-tool probe",
+  },
+  {
+    file: "packages/gateway/src/vault/factory.ts",
+    gate: "Vault",
+    why: "selects the per-OS vault backend",
+  },
+  {
+    file: "packages/gateway/src/platform/sandbox/sandbox-runner.ts",
+    gate: "Sandbox",
+    why: "selects the per-OS sandbox implementation",
+  },
 
   // ── Not covered by any coverage-threshold gate ────────────────────────────
+  {
+    file: "packages/gateway/src/platform/index.ts",
+    gate: "none",
+    why: "PAL dispatch; no coverage-threshold gate targets src/platform",
+  },
+  {
+    file: "packages/gateway/src/platform/gateway-log-file.ts",
+    gate: "none",
+    why: "per-OS log path",
+  },
+  {
+    file: "packages/gateway/src/ipc/server/server.ts",
+    gate: "none",
+    why: "named pipe vs unix socket; the LAN gate's tests import lan-server.ts only, never this file",
+  },
   {
     file: "packages/gateway/src/platform/win32.ts",
     gate: "none",
@@ -220,8 +253,15 @@ Create `scripts/structure-audit/check-coverage-gate-pal.test.ts`:
 
 ```ts
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { auditCoverageGatePal, parseCoverageGateMatrix } from "./check-coverage-gate-pal.ts";
+import {
+  auditCoverageGatePal,
+  detectPlatformBranchingFiles,
+  parseCoverageGateMatrix,
+} from "./check-coverage-gate-pal.ts";
 import { REPO_ROOT } from "./lib.ts";
 
 const MATRIX = `
@@ -260,6 +300,57 @@ describe("parseCoverageGateMatrix", () => {
   test("stops at the end of the matrix block", () => {
     // `steps:` dedents out of the matrix; nothing after it is a gate.
     expect(parseCoverageGateMatrix(MATRIX).map((g) => g.name)).not.toContain("Checkout");
+  });
+
+  test("a reformat to a different indent width still parses", () => {
+    // Indentation is read relative to the `gate:` key, so a cosmetic reformat
+    // must not red the gate. Here every line is re-indented by 2 extra spaces.
+    const reindented = MATRIX.split("\n")
+      .map((l) => (l.trim() === "" ? l : `  ${l}`))
+      .join("\n");
+    expect(parseCoverageGateMatrix(reindented)).toEqual([
+      { name: "Engine", pal: false },
+      { name: "Vault", pal: true },
+    ]);
+  });
+});
+
+describe("detectPlatformBranchingFiles", () => {
+  test("finds files that branch via a destructured node:os import", () => {
+    // The dominant idiom in this repo. An earlier revision matched only
+    // `process.platform` and missed doctor-core.ts, which caused its gate to be
+    // classified Linux-only by mistake.
+    const hits = detectPlatformBranchingFiles(REPO_ROOT);
+    expect(hits).toContain("packages/cli/src/commands/doctor-core.ts");
+    expect(hits).toContain("packages/gateway/src/vault/factory.ts");
+  });
+
+  test("reaches a NESTED src directory, not just packages/{pkg}/src", () => {
+    // packages/mcp-connectors/src does not exist; each of the 94 connectors has
+    // its own packages/mcp-connectors/{name}/src. A one-level scan skipped all
+    // of them silently. No connector branches on platform today, so this uses a
+    // fixture tree — asserting against the real repo would pass for the wrong
+    // reason (nothing to find) and would not catch the regression.
+    const root = mkdtempSync(join(tmpdir(), "pal-detect-"));
+    try {
+      const shallow = join(root, "packages", "gateway", "src");
+      const nested = join(root, "packages", "mcp-connectors", "airflow", "src");
+      mkdirSync(shallow, { recursive: true });
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(shallow, "a.ts"), "if (process.platform === 'win32') {}\n");
+      writeFileSync(join(nested, "b.ts"), "if (process.platform === 'darwin') {}\n");
+
+      expect(detectPlatformBranchingFiles(root)).toEqual([
+        "packages/gateway/src/a.ts",
+        "packages/mcp-connectors/airflow/src/b.ts",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("excludes test files, which may branch on platform legitimately", () => {
+    expect(detectPlatformBranchingFiles(REPO_ROOT).some((f) => f.includes(".test."))).toBe(false);
   });
 });
 
@@ -321,8 +412,22 @@ export interface GateEntry {
 
 const TEST_SUITE = ".github/workflows/_test-suite.yml";
 
-/** Runtime platform branching, or a filename that names an OS. */
-const BRANCHES_ON_PLATFORM = /process\.platform|os\.platform\(\)/;
+/**
+ * Runtime platform branching, or a filename that names an OS.
+ *
+ * The destructured-import alternative is NOT optional to cover:
+ * `import { platform } from "node:os"` is the dominant idiom in this codebase
+ * (6 files), and an earlier revision of this audit that matched only
+ * `process.platform` missed `doctor-core.ts` — whose gate was consequently
+ * classified Linux-only by mistake.
+ */
+const BRANCHES_ON_PLATFORM = [
+  /process\.platform/,
+  /os\.platform\(\)/,
+  /os\.type\(\)/,
+  // import { platform } / { platform as alias } / { arch, platform } from "node:os"
+  /import\s*\{[^}]*\b(?:platform|type|arch)\b[^}]*\}\s*from\s*["']node:os["']/,
+];
 const OS_NAMED_FILE = /\/(win32|darwin|linux)\.ts$/;
 
 function collectSources(dir: string, out: string[]): string[] {
@@ -344,21 +449,42 @@ function collectSources(dir: string, out: string[]): string[] {
 }
 
 /**
- * Every non-test source file under `packages/{*}/src` that branches on the host
- * platform. Tests are excluded deliberately: a cross-platform test branching on
- * `process.platform` is correct, not a finding.
+ * Every `src` directory anywhere under `packages/`, at any depth.
+ *
+ * NOT `packages/{*}/src`: `packages/mcp-connectors/src` does not exist — the 94
+ * connectors each have their own `packages/mcp-connectors/{name}/src`. A
+ * one-level scan silently skipped all of them, and a detector with a silent
+ * blind spot is worse than none, because its green is read as coverage.
+ */
+function findSrcDirs(dir: string, out: string[]): string[] {
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === "dist") continue;
+    const full = join(dir, entry);
+    if (!statSync(full).isDirectory()) continue;
+    if (entry === "src") out.push(full);
+    else findSrcDirs(full, out);
+  }
+  return out;
+}
+
+/**
+ * Every non-test source file under any `src` directory in `packages/` that
+ * branches on the host platform. Tests are excluded deliberately: a
+ * cross-platform test branching on `process.platform` is correct, not a finding.
  */
 export function detectPlatformBranchingFiles(repoRoot: string): string[] {
   const packagesDir = join(repoRoot, "packages");
   if (!existsSync(packagesDir)) return [];
   const files: string[] = [];
-  for (const pkg of readdirSync(packagesDir)) {
-    collectSources(join(packagesDir, pkg, "src"), files);
+  for (const srcDir of findSrcDirs(packagesDir, [])) {
+    collectSources(srcDir, files);
   }
   const hits: string[] = [];
   for (const file of files) {
     const rel = file.slice(repoRoot.length + 1).replace(/\\/g, "/");
-    if (OS_NAMED_FILE.test(`/${rel}`) || BRANCHES_ON_PLATFORM.test(readFileSync(file, "utf8"))) {
+    const src = readFileSync(file, "utf8");
+    if (OS_NAMED_FILE.test(`/${rel}`) || BRANCHES_ON_PLATFORM.some((re) => re.test(src))) {
       hits.push(rel);
     }
   }
@@ -372,20 +498,25 @@ export function detectPlatformBranchingFiles(repoRoot: string): string[] {
  */
 export function parseCoverageGateMatrix(yaml: string): GateEntry[] {
   const lines = yaml.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^\s{8}gate:\s*$/.test(l));
+  const start = lines.findIndex((l) => /^\s+gate:\s*$/.test(l));
   if (start === -1) return [];
+  // Indentation is measured RELATIVE to the `gate:` key rather than assumed at
+  // fixed columns, so reformatting the workflow cannot red this gate for a
+  // purely cosmetic change. A parse that breaks anyway fails loud, never
+  // silent: zero entries is a hard error, and a name whose `pal:` did not parse
+  // stays `null`, which rule 4 reports.
+  const gateIndent = (lines[start] ?? "").search(/\S/);
   const gates: GateEntry[] = [];
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (line.trim() === "") continue;
-    // Any line indented 8 spaces or less has dedented out of the matrix block.
-    if (/^\s{0,8}\S/.test(line)) break;
-    const nameMatch = line.match(/^\s{10}-\s+name:\s*(.+?)\s*$/);
+    if (line.search(/\S/) <= gateIndent) break;
+    const nameMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
     if (nameMatch?.[1] !== undefined) {
       gates.push({ name: nameMatch[1].replace(/^["']|["']$/g, ""), pal: null });
       continue;
     }
-    const palMatch = line.match(/^\s{12}pal:\s*(true|false)\s*$/);
+    const palMatch = line.match(/^\s*pal:\s*(true|false)\s*$/);
     const last = gates[gates.length - 1];
     if (palMatch?.[1] !== undefined && last) last.pal = palMatch[1] === "true";
   }
@@ -519,8 +650,8 @@ matrix and turns it green."
 **Interfaces:**
 
 - Consumes: `auditCoverageGatePal` from Task 1 as the verification tool.
-- Produces: a matrix where every entry has an explicit `pal` field; the six PAL
-  gates are `pal: true`.
+- Produces: a matrix where every entry has an explicit `pal` field; the seven
+  PAL gates are `pal: true`.
 
 - [ ] **Step 1: Confirm the audit is red before the change**
 
@@ -548,10 +679,16 @@ In `.github/workflows/_test-suite.yml`, in the `coverage-gates:` job, add an
     needs: unit-coverage
 ```
 
-- [ ] **Step 3: Add `pal: true` to the six PAL entries**
+- [ ] **Step 3: Add `pal: true` to the seven PAL entries**
 
-Add a `pal: true` line beneath the `script:` line of exactly these six entries:
-`Vault`, `Sandbox`, `Updater`, `Extensions`, `Perf`, `Telemetry`. For example:
+Add a `pal: true` line beneath the `script:` line of exactly these seven
+entries: `Vault`, `Sandbox`, `Updater`, `Extensions`, `Perf`, `Telemetry`,
+`Doctor`.
+
+`Doctor` is on this list because `packages/cli/src/commands/doctor-core.ts:80`
+reads `if (platform() === "linux")` and `test:coverage:doctor` covers that file.
+The design's original sweep missed it — its regex did not match destructured
+`node:os` imports. Do not "simplify" this back to six. For example:
 
 ```yaml
           - name: Vault
@@ -559,12 +696,12 @@ Add a `pal: true` line beneath the `script:` line of exactly these six entries:
             pal: true
 ```
 
-- [ ] **Step 4: Add `pal: false` to the other eighteen entries**
+- [ ] **Step 4: Add `pal: false` to the other seventeen entries**
 
 Add `pal: false` beneath the `script:` line of every remaining entry: `Engine`,
 `Agents`, `Sync scheduler`, `Rate limiter`, `People`, `Embedding`, `Workflow`,
 `Watcher`, `Config`, `TUI`, `DB layer`, `Deployment`, `Health`, `Metrics`,
-`Preflight`, `Doctor`, `MCP`, `LAN`. For example:
+`Preflight`, `MCP`, `LAN`. For example:
 
 ```yaml
           - name: Engine
@@ -578,19 +715,19 @@ Run: `bun scripts/structure-audit/check-coverage-gate-pal.ts`
 
 Expected: `audit:coverage-gate-pal: OK`, exit 0.
 
-- [ ] **Step 6: Verify the parser sees exactly 24 gates, 6 of them PAL**
+- [ ] **Step 6: Verify the parser sees exactly 24 gates, 7 of them PAL**
 
 ```bash
 bun -e "import{parseCoverageGateMatrix}from'./scripts/structure-audit/check-coverage-gate-pal.ts';const g=parseCoverageGateMatrix(await Bun.file('.github/workflows/_test-suite.yml').text());console.log('total',g.length,'pal',g.filter(x=>x.pal===true).map(x=>x.name),'unclassified',g.filter(x=>x.pal===null).length)"
 ```
 
-Expected: `total 24`, `pal [ "Vault", "Sandbox", "Updater", "Extensions", "Perf", "Telemetry" ]`, `unclassified 0`.
+Expected: `total 24`, `pal [ "Vault", "Sandbox", "Updater", "Extensions", "Perf", "Telemetry", "Doctor" ]`, `unclassified 0`.
 
 - [ ] **Step 7: Run the audit's test suite**
 
 Run: `bun test scripts/structure-audit/check-coverage-gate-pal.test.ts`
 
-Expected: all 4 tests PASS, including `"the real repository passes"`.
+Expected: all 8 tests PASS, including `"the real repository passes"`.
 
 - [ ] **Step 8: Commit**
 
@@ -598,8 +735,13 @@ Expected: all 4 tests PASS, including `"the real repository passes"`.
 git add .github/workflows/_test-suite.yml
 git commit -m "perf(ci): run coverage-threshold gates on Linux except PAL-touching ones
 
-Coverage gates 72 -> 36 jobs; a push run 105 -> 69. The six gates whose covered
-code branches on platform keep all three OSes. Turns the Task 1 audit green."
+Coverage gates 72 -> 38 jobs; a push run 105 -> 71. The seven gates whose
+covered code branches on platform keep all three OSes. Turns the Task 1 audit
+green.
+
+Doctor is on that list because doctor-core.ts:80 branches on platform() via a
+destructured node:os import -- an idiom the design's original sweep did not
+match, which had it classified Linux-only by mistake."
 ```
 
 ---
@@ -991,17 +1133,28 @@ function asJobs(value: unknown): Job[] {
   return out;
 }
 
-function jobsForRun(runId: number): Job[] {
+/**
+ * Pages through a run's jobs, reporting whether the read was COMPLETE.
+ *
+ * Job count is this slice's headline metric, so a silently truncated read would
+ * report fewer jobs than really ran and be read as proof the change worked. An
+ * instrument that fails toward its own hypothesis is worse than none — the same
+ * hazard `MAX_READ_FAILURE_RATIO` exists for in the gate itself.
+ */
+function jobsForRun(runId: number): { jobs: Job[]; complete: boolean } {
   const jobs: Job[] = [];
+  let expected: number | undefined;
   for (let page = 1; page <= 5; page++) {
     const payload = api(`repos/${REPO}/actions/runs/${runId}/jobs?per_page=100&page=${page}`);
+    if (payload === null) return { jobs, complete: false }; // read FAILED, not "no more pages"
+    const total = isRecord(payload) ? payload["total_count"] : undefined;
+    if (typeof total === "number") expected = total;
     const batch = asJobs(payload);
     if (batch.length === 0) break;
     jobs.push(...batch);
-    const total = isRecord(payload) ? payload["total_count"] : undefined;
-    if (typeof total === "number" && jobs.length >= total) break;
+    if (expected !== undefined && jobs.length >= expected) break;
   }
-  return jobs;
+  return { jobs, complete: expected !== undefined && jobs.length >= expected };
 }
 
 function parseRunsArg(argv: string[]): number {
@@ -1024,13 +1177,20 @@ if (import.meta.main) {
 
   const binding = new Map<string, number>();
   const waitsByLeg = new Map<string, number[]>();
+  let incomplete = 0;
 
   for (const run of runs) {
     if (!isRecord(run)) continue;
     const id = run["id"];
     const startedAt = run["run_started_at"];
     if (typeof id !== "number" || typeof startedAt !== "string") continue;
-    const jobs = jobsForRun(id);
+    const { jobs, complete } = jobsForRun(id);
+    // Skip, do not silently include: a partial job list biases the binding-job
+    // tally toward whichever pages happened to load.
+    if (!complete) {
+      incomplete++;
+      continue;
+    }
     const upstream = jobs.filter((j) => /^CI — (TS\/Bun|Rust\/Tauri)/.test(j.name));
     const legs = jobs.filter((j) => j.name.startsWith("E2E Desktop —"));
     const gatedBy = bindingUpstream(upstream);
@@ -1041,7 +1201,12 @@ if (import.meta.main) {
     }
   }
 
-  console.log(`\nruns sampled: ${runs.length}`);
+  console.log(`\nruns sampled: ${runs.length - incomplete}/${runs.length}`);
+  if (incomplete > 0) {
+    console.warn(
+      `::warning::probe-dag: ${incomplete}/${runs.length} run(s) had an incomplete job read and were EXCLUDED — figures below cover the rest`,
+    );
+  }
   console.log("\nWHICH upstream job gated E2E (times it was last to finish):");
   for (const [name, n] of [...binding].sort((a, b) => b[1] - a[1])) {
     console.log(`  ${String(n).padStart(3)}x  ${name}`);
@@ -1140,14 +1305,30 @@ if (import.meta.main) {
     const startedAt = run["run_started_at"];
     if (typeof id !== "number" || typeof startedAt !== "string") continue;
 
+    // A truncated read here corrupts the ONE number this probe exists to
+    // report. Refuse to print rather than print a low job count that reads as
+    // success.
     const jobs: Job[] = [];
+    let expected: number | undefined;
+    let complete = false;
     for (let page = 1; page <= 5; page++) {
       const payload = api(`repos/${REPO}/actions/runs/${id}/jobs?per_page=100&page=${page}`);
+      if (payload === null) break;
+      const total = isRecord(payload) ? payload["total_count"] : undefined;
+      if (typeof total === "number") expected = total;
       const batch = asJobs(payload);
       if (batch.length === 0) break;
       jobs.push(...batch);
-      const total = isRecord(payload) ? payload["total_count"] : undefined;
-      if (typeof total === "number" && jobs.length >= total) break;
+      if (expected !== undefined && jobs.length >= expected) {
+        complete = true;
+        break;
+      }
+    }
+    if (!complete) {
+      console.warn(
+        `::warning::probe-concurrency: run ${id} job read incomplete (${jobs.length}/${expected ?? "?"}) — SKIPPED rather than reporting a truncated job count`,
+      );
+      continue;
     }
     const usable = jobs.filter((j) => j.completed_at !== null);
     if (usable.length === 0) continue;
@@ -1232,7 +1413,7 @@ In `docs/infrastructure-roadmap.md`, replace the `P4b` row's status and gate
 text with:
 
 ```markdown
-| P4b | Latency | ✅ measurement + tuning shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 13-17, so the fix was cutting the fan-out (coverage gates 72 → 36 jobs, Linux-only except the 6 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. |
+| P4b | Latency | ✅ measurement + tuning shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 13-17, so the fix was cutting the fan-out (coverage gates 72 → 38 jobs, Linux-only except the 7 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. |
 ```
 
 - [ ] **Step 3: Capture the AFTER measurement**
@@ -1263,8 +1444,8 @@ Under `### P4b progress log` in `docs/infrastructure-roadmap.md`, replace the
   coverage matrix run once per OS.
 - **This retired the design of record's sharding proposal.** Sharding adds jobs
   to the pool that IS the constraint.
-- **Two changes:** coverage-threshold gates run on Linux only except the six
-  whose covered code branches on platform (72 → 36 jobs; a run 105 → 69), and
+- **Two changes:** coverage-threshold gates run on Linux only except the seven
+  whose covered code branches on platform (72 → 38 jobs; a run 105 → 71), and
   `e2e-desktop` now waits on `ci-rust` (1.17-1.72min) instead of `ci-ts` (30
   jobs, 33.4min median DAG wait) — an edge that carried no artifacts.
 - **`audit:ci-latency` cannot prove this worked**, since it gates execution
@@ -1325,3 +1506,17 @@ read from `_gh-audit.ts`.
 real repo; Task 2 turns it green. A reviewer seeing Task 1 in isolation should
 expect that red — it is the gate's red-proof, stated in the Task 1 preamble and
 its commit message.
+
+**Post-review corrections** (see
+[the review response](./2026-07-28-p4b-ci-tuning-review-response.md)). The plan
+review found two real bugs, both now fixed above:
+
+- the detector scanned `packages/{pkg}/src` only, skipping all **94** nested
+  `packages/mcp-connectors/{name}/src` directories;
+- the detection regex missed `import { platform } from "node:os"`, the dominant
+  idiom here — which had `doctor-core.ts` undetected and the **`Doctor` gate
+  wrongly classified `pal: false`** despite branching on platform at line 80.
+
+Consequently the figures throughout are **7 PAL gates, 38 coverage jobs, 105 →
+71 per run** — not the 6/36/69 of the pre-review draft. If a task still reads
+6, 36 or 69 anywhere, that is stale text, and the numbers here govern.
