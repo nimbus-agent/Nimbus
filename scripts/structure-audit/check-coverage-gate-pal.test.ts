@@ -510,6 +510,62 @@ describe("auditCoverageGatePal", () => {
     expect(errors[0]).toContain('coverage gate "Ghost"');
   });
 
+  test("rule 3 — a co-gate that is not pal: true is a finding, not just the named gate", () => {
+    // The gap this closes: `sqlite-vec-load.ts` is reachable from BOTH Embedding
+    // and DB layer, but an entry named only one. Demoting the OTHER passed rule 3
+    // while its coverage denominator still held platform-branching code — the
+    // audit stayed green on exactly the loss it exists to prevent.
+    const errors = auditFixture({}, [
+      {
+        file: "packages/gateway/src/vault/factory.ts",
+        gate: "Vault", // pal: true in the fixture — the NAMED gate is fine
+        coGates: ["Engine"], // pal: false — only the CO-gate is wrong
+        why: "reachable from a second gate",
+      },
+    ]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('gate "Engine"');
+    expect(errors[0]).toContain("not `pal: true`");
+  });
+
+  test("rule 3 — every co-gate is checked, not merely the first", () => {
+    const errors = auditFixture({}, [
+      {
+        file: "packages/gateway/src/vault/factory.ts",
+        gate: "Vault",
+        coGates: ["Engine", "Ghost"],
+        why: "two bad co-gates",
+      },
+    ]);
+    // One finding for the pal:false gate, one for the gate that does not exist.
+    expect(errors).toHaveLength(2);
+    expect(errors.some((e) => e.includes('gate "Engine"'))).toBe(true);
+    expect(errors.some((e) => e.includes('coverage gate "Ghost"'))).toBe(true);
+  });
+
+  test("rule 3 — an entry whose co-gates are all pal: true is clean", () => {
+    // The fixture ships one PAL gate by default, so a second is supplied here;
+    // otherwise this would pass for the wrong reason (an absent gate is its own
+    // finding, which is what an earlier draft of this test actually asserted).
+    expect(
+      auditFixture(
+        {
+          palGates:
+            '          - name: Vault\n            script: "test:coverage:vault"\n            pal: true\n' +
+            '          - name: Sandbox\n            script: "test:coverage:sandbox"\n            pal: true\n',
+        },
+        [
+          {
+            file: "packages/gateway/src/vault/factory.ts",
+            gate: "Vault",
+            coGates: ["Sandbox"],
+            why: "both pal: true",
+          },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
   test("rule 4 — a matrix entry with no explicit pal field is a finding", () => {
     const errors = auditFixture({
       linuxGates: '          - name: Engine\n            script: "test:coverage:engine"\n',

@@ -22,6 +22,10 @@
  * the Embedding and DB layer gates via static imports. Both were promoted to
  * `pal: true`. When adding an entry, follow the static imports before writing
  * "none".
+ *
+ * A file reachable from more than one gate lists the others in `coGates`. Rule 3
+ * checks every declared gate identically, so demoting ANY of them is caught —
+ * naming only one used to leave the rest resting on a comment.
  */
 
 export interface PlatformFileEntry {
@@ -29,6 +33,15 @@ export interface PlatformFileEntry {
   readonly file: string;
   /** Coverage-gate `name` from the _test-suite.yml matrix, or "none". */
   readonly gate: string;
+  /**
+   * Additional gates whose coverage ALSO loads this file.
+   *
+   * A file reachable from two gates used to name only one, so demoting the
+   * unnamed gate to `pal: false` slipped past rule 3 — the audit stayed green
+   * while a gate whose denominator still contained platform-branching code went
+   * Linux-only. Every gate listed here is checked exactly like `gate`.
+   */
+  readonly coGates?: readonly string[];
   readonly why: string;
 }
 
@@ -101,7 +114,8 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   {
     file: "packages/gateway/src/index/sqlite-vec-load.ts",
     gate: "Embedding",
-    why: "per-OS native extension filename; reaches BOTH the Embedding and the DB layer gates through static imports — embedding/lazy-scheduler.ts (plus create-routing-runtime.ts and embedding-worker.ts) and index/migrations/runner.ts each import it, so it lands in both gates' coverage denominators. Both were promoted to `pal: true` together. ENFORCEMENT GAP, stated rather than overclaimed: an entry names ONE gate, and rule 3 cross-checks only that gate — so demoting `Embedding` is caught, but demoting `DB layer` is NOT. Closing it needs a co-gate field on this type; until then `DB layer` rests on this comment alone",
+    coGates: ["DB layer"],
+    why: "per-OS native extension filename; reaches BOTH the Embedding and the DB layer gates through static imports — embedding/lazy-scheduler.ts (plus create-routing-runtime.ts and embedding-worker.ts) and index/migrations/runner.ts each import it, so it lands in both gates' coverage denominators. Both are now ENFORCED: rule 3 checks `gate` and every `coGates` entry identically, so demoting EITHER is caught (this previously rested on a comment alone)",
   },
 
   // ── Not covered by any coverage-threshold gate ────────────────────────────

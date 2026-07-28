@@ -114,7 +114,7 @@ Design of record:
 | P2 | Release Train | ✅ done — both phases (run 30231918767) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, when a release phantoms, when an npm package is tagged but unpublished, or when a consumer's **lockfile-resolved** dependency lags npm `@latest`. Red-proved on a real phantom and on three real dependency edges; green after both, `OK (12 edges current)`. |
 | P3 | Review Layer | 🔨 first step done (#846) | The monorepo now carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban — closing the satellites→monorepo direction of the pattern above. **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
-| P4b | Latency | ✅ measurement + tuning shipped | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 13-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. |
+| P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after (run `30353595114`): 105 → 77 jobs, DAG wait 60.5 → 2.5 min, wall clock 36-74 → 20 min.** `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
 | P6 | Access & Contribution Model | 🔨 P6a + CLA done | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos. Remaining: bypass-actor audit |
 
@@ -467,19 +467,38 @@ moves to P6).
   measured against — not 33.4.**
 - **`audit:ci-latency` cannot prove this worked**, since it gates execution
   while the win lands in queue and DAG wait. `scripts/ci-latency/probe-dag.ts`
-  and `probe-concurrency.ts` are the instrument; the before figures above are
-  recorded, but the **after figures are not yet measured** — that requires
-  this branch to be merged and at least one push run to `main` to have
-  completed under the new workflow. Once that run exists, re-run
-  `bun scripts/ci-latency/probe-dag.ts` and
-  `bun scripts/ci-latency/probe-concurrency.ts` against `main` and record the
-  actual numbers here — never a predicted figure.
-- **Fast-follow — one enforcement gap is known and stated, not closed.** An
-  allowlist entry names a single gate, and rule 3 cross-checks only that gate.
-  `index/sqlite-vec-load.ts` reaches BOTH `Embedding` and `DB layer`, so
-  demoting `Embedding` is caught while demoting `DB layer` is not. The entry's
-  comment says so rather than claiming protection the code does not provide.
-  Closing it needs a co-gate field on `PlatformFileEntry`.
+  and `probe-concurrency.ts` are the instrument.
+- **AFTER MEASUREMENT (2026-07-28, run `30353595114` — the first green push run
+  under the new workflow).** Measured, not predicted:
+
+  | metric | before (2026-07-28, n=15) | after (n=1) |
+  | --- | --- | --- |
+  | DAG wait per `E2E Desktop` leg | 60.5 min median (max 110.8) | **2.5 min** |
+  | job that gated E2E | coverage shards (ubuntu 24× / macOS 18× / win 3×) | **`CI — Rust/Tauri (ubuntu-24.04)` 3×** |
+  | jobs per run | 105 | **77** |
+  | created-but-waiting at peak | 32–41 | **19** |
+  | wall clock | 36–74 min | **20 min** |
+
+  Coverage legs land exactly as designed: **ubuntu 24 / macOS 9 / windows 9 = 42**.
+
+  Two honesties about these numbers. The count is **77, not the 75 this document
+  predicted** — the estimate omitted the two skipped `Packaging` placeholder jobs
+  on windows/macOS; the measurement governs. And **n=1**: the DAG-wait collapse
+  (60.5 → 2.5 min) is far too large to be noise, and the binding-job row is
+  categorical rather than statistical — E2E is now gated by `ci-rust`, which is
+  the change itself — but re-run both probes once ~15 green push runs have
+  accumulated for a like-for-like median. Use `--runs 1` to isolate post-change
+  runs; the default window of 15 is still dominated by pre-tuning runs.
+- **The co-gate enforcement gap is CLOSED.** `PlatformFileEntry` gained
+  `coGates`, and rule 3 now checks the primary gate and every co-gate
+  identically, so demoting **either** `Embedding` or `DB layer` is caught.
+  Previously an entry named one gate and the other rested on a comment.
+- **Sweep proof (2026-07-28, run `30356357605`):** the `ci-latency` job is
+  **green**, which is P4b's bar — a gate is done when it runs green in the sweep
+  and would go red on regression. Stated precisely because the sweep run as a
+  whole is red: `release-staleness` failed on the **known, unrelated** P2 edge
+  (`client:Nimbus`, 0.5.0 vs npm 0.12.1 — seven `0.x` minors, deliberately left
+  for its own reviewed PR). 15 of 16 jobs green. Do not read that red as P4b.
 - **Guarded against silent decay:** `audit:coverage-gate-pal` fails when a
   platform-branching file is unclassified, when a classified file's gate is not
   `pal: true`, when a new matrix entry carries no explicit `pal` field, when an

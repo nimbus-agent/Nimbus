@@ -429,19 +429,27 @@ export function auditCoverageGatePal(repoRoot: string, deps: AuditDeps = {}): Au
     }
   }
 
-  // 3. declared gate must be pal: true
+  // 3. EVERY declared gate must be pal: true — the primary and every co-gate.
+  //
+  // Checking only `gate` left a hole: a file reachable from two gates named one
+  // of them, so demoting the OTHER passed rule 3 while its coverage denominator
+  // still contained platform-branching code. `coGates` closes it, and the loop
+  // below deliberately treats primary and co-gates identically so the two can
+  // never drift apart again.
   for (const entry of allowlist) {
-    if (entry.gate === "none") continue;
-    if (!palByName.has(entry.gate)) {
-      errors.push(
-        `${entry.file}: declares coverage gate "${entry.gate}", which is not in the ${TEST_SUITE} matrix`,
-      );
-      continue;
-    }
-    if (palByName.get(entry.gate) !== true) {
-      errors.push(
-        `${entry.file}: branches on platform and is covered by gate "${entry.gate}", but that gate is not \`pal: true\` — its coverage would run on Linux only`,
-      );
+    const declared = [entry.gate, ...(entry.coGates ?? [])].filter((g) => g !== "none");
+    for (const gate of declared) {
+      if (!palByName.has(gate)) {
+        errors.push(
+          `${entry.file}: declares coverage gate "${gate}", which is not in the ${TEST_SUITE} matrix`,
+        );
+        continue;
+      }
+      if (palByName.get(gate) !== true) {
+        errors.push(
+          `${entry.file}: branches on platform and is covered by gate "${gate}", but that gate is not \`pal: true\` — its coverage would run on Linux only`,
+        );
+      }
     }
   }
 
