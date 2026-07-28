@@ -1,8 +1,27 @@
 {
-  "$comment": "Desired org-access config. `settings` is audited by check-org-settings-drift.ts; `team_reachability.exempt` by check-team-reachability.ts. See docs/infrastructure-roadmap.md.",
+  "$comment": "Desired org-access config. `settings` and every block under `actions` are audited by check-org-settings-drift.ts (one block per read endpoint — see ORG_SETTING_SOURCES); `team_reachability.exempt` by check-team-reachability.ts. Every key here is a setting whose reversion in the UI would otherwise be undetectable: the org is on the Free plan, so `GET /orgs/{org}/audit-log` is unavailable and a revert cannot be reconstructed after the fact. See docs/infrastructure-roadmap.md.",
   "settings": {
     "members_can_create_repositories": false,
-    "default_repository_permission": "none"
+    "members_can_create_public_repositories": false,
+    "members_can_create_private_repositories": false,
+    "default_repository_permission": "none",
+    "two_factor_requirement_enabled": true,
+    "members_can_fork_private_repositories": false,
+    "members_can_delete_repositories": false,
+    "members_can_change_repo_visibility": false
+  },
+  "actions": {
+    "$comment": "The three org Actions policy endpoints, none of which is part of GET /orgs/{org}. `sha_pinning_required` is the highest-value entry: it is the only real-time unpinned-`uses:` control covering the repos outside the weekly sha-pins matrix, and it is a single UI toggle. `approval_policy` records the CURRENT value so a loosening is caught — tightening it to `all_external_contributors` is a deliberate change to this file AND the org setting, in one reviewed diff.",
+    "permissions": {
+      "sha_pinning_required": true
+    },
+    "workflow": {
+      "default_workflow_permissions": "read",
+      "can_approve_pull_request_reviews": false
+    },
+    "fork_pr_contributor_approval": {
+      "approval_policy": "first_time_contributors"
+    }
   },
   "team_reachability": { "exempt": [] }
 }

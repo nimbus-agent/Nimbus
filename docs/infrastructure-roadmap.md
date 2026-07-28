@@ -203,6 +203,31 @@ moves to P6).
   members read). Both were **red** before the apply (they detect the un-applied
   state) and green after: the gate would go red on regression, which is this
   file's definition of *done*.
+- **Widened (2026-07-28) — 2 settings → 12, across 4 endpoints:** a settings
+  audit found the gate watching `members_can_create_repositories` and
+  `default_repository_permission` while `GET /orgs/nimbus-agent` returns about
+  twenty security-relevant fields and the Actions policy endpoints were not
+  consulted at all — the gate was scoped to the two settings whose reversion had
+  bitten at the time it was written. `.github/org-access.json` now also declares
+  `two_factor_requirement_enabled`, `members_can_fork_private_repositories`,
+  `members_can_delete_repositories`, `members_can_change_repo_visibility`, the
+  public/private repo-creation flags, and an `actions` block covering
+  `sha_pinning_required` (`actions/permissions`),
+  `default_workflow_permissions` + `can_approve_pull_request_reviews`
+  (`actions/permissions/workflow`) and `approval_policy`
+  (`actions/permissions/fork-pr-contributor-approval`). `sha_pinning_required`
+  is the highest-value addition: it is a single UI toggle and the only
+  real-time unpinned-`uses:` control covering the public repos outside the
+  8-repo `sha-pins` matrix. `ORG_SETTING_SOURCES` holds the endpoint→block
+  mapping, so a further setting on an already-listed endpoint is a
+  one-line JSON change with no code edit. Read failures are classified rather
+  than collapsed: a 404 on a declared endpoint is drift, a 403/5xx is
+  indeterminate and warns without ever being recorded as compliance, and drift
+  found on a readable endpoint is never discarded because another endpoint
+  failed. `approval_policy` records the **current** value
+  (`first_time_contributors`) so a loosening is caught; tightening it to
+  `all_external_contributors` remains a separate, deliberate change to this file
+  and the org setting together.
 - **Deferred:** the CLA (own spec) and a higher-privilege **bypass-actor audit**
   (the CI App token cannot read `bypass_actors`; a future owner-`gh`-run check,
   no PAT). Private-repo ruleset protection stays **blocked-on-Team** (Free plan).
