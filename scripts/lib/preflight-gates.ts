@@ -24,6 +24,11 @@ const FAST: readonly Gate[] = [
   { name: "audit:cross-platform", cmd: ["bun", "run", "audit:cross-platform"], tier: "fast" },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
+  {
+    name: "audit:coverage-gate-pal",
+    cmd: ["bun", "run", "audit:coverage-gate-pal"],
+    tier: "fast",
+  },
   { name: "audit:consumed-by", cmd: ["bun", "run", "audit:consumed-by"], tier: "fast" },
   { name: "audit:secret-inventory", cmd: ["bun", "run", "audit:secret-inventory"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
