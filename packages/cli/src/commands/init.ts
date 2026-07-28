@@ -5,7 +5,7 @@ import { hasFlag } from "../lib/flag-parsing.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { appendFilesystemRoot, hasFilesystemRoot } from "../lib/toml-append.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import { runStart } from "./start.ts";
 
 export type InitOptions = { cwd: string; configDir: string };
@@ -150,7 +150,15 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
   }
 }
 
-function asDemoSymbol(value: unknown): DemoSymbolLike | null {
+/**
+ * Validate an `index.demoSymbol` reply.
+ *
+ * The reply crosses a JSON-RPC boundary, so it is `unknown` here however
+ * well-behaved the gateway is. Anything malformed becomes `null` and `init`
+ * prints the generic next step — a bad demo hint must never be worse than no
+ * demo hint.
+ */
+export function asDemoSymbol(value: unknown): DemoSymbolLike | null {
   if (value === null || typeof value !== "object") {
     return null;
   }
@@ -164,8 +172,16 @@ function asDemoSymbol(value: unknown): DemoSymbolLike | null {
   return { file, line, name: typeof name === "string" ? name : "symbol" };
 }
 
-function defaultInitDeps(): InitDeps {
-  const paths = getCliPlatformPaths();
+/**
+ * The real effects.
+ *
+ * `paths` is a parameter rather than a closed-over call so tests can point the
+ * gateway-state lookup at a temp directory. It has to be injectable: the state
+ * file lives under `dataDir`, which `NIMBUS_CONFIG_DIR` deliberately does NOT
+ * relocate, so without this seam these functions would read whatever gateway
+ * happens to be running on the developer's machine.
+ */
+export function defaultInitDeps(paths: CliPlatformPaths = getCliPlatformPaths()): InitDeps {
   return {
     cwd: process.cwd(),
     configDir: paths.configDir,

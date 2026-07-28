@@ -3,11 +3,39 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyInitPlan, type InitDeps, initPlan, nextStepLines, runInit } from "./init.ts";
+import type { CliPlatformPaths } from "../paths.ts";
+import {
+  applyInitPlan,
+  asDemoSymbol,
+  defaultInitDeps,
+  type InitDeps,
+  initPlan,
+  nextStepLines,
+  runInit,
+} from "./init.ts";
 
 let dir: string;
 let repo: string;
 let configDir: string;
+
+/**
+ * Paths pinned entirely inside the test's temp dir.
+ *
+ * `dataDir` matters most: the gateway state file lives there and
+ * NIMBUS_CONFIG_DIR does not relocate it, so without this the
+ * `defaultInitDeps` tests would see whatever gateway is running on the
+ * developer's machine and pass or fail by accident.
+ */
+function fakePaths(): CliPlatformPaths {
+  return {
+    configDir,
+    dataDir: join(dir, "data"),
+    logDir: join(dir, "data", "logs"),
+    socketPath: join(dir, "nimbus.sock"),
+    extensionsDir: join(dir, "data", "extensions"),
+    tempDir: join(dir, "tmp"),
+  };
+}
 
 beforeEach(() => {
   dir = join(tmpdir(), `nimbus-init-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
@@ -162,4 +190,67 @@ test("degrades to the generic next step when the index has no symbol yet", async
 afterEach(() => {
   // Bun leaks process.exitCode across test files unless it is reset explicitly.
   process.exitCode = 0;
+});
+
+// ------------------------------------------------- asDemoSymbol (wire input)
+
+test("asDemoSymbol accepts a well-formed reply", () => {
+  expect(asDemoSymbol({ file: "a.ts", line: 3, name: "f" })).toEqual({
+    file: "a.ts",
+    line: 3,
+    name: "f",
+  });
+});
+
+test("asDemoSymbol defaults a missing name rather than rejecting the reply", () => {
+  expect(asDemoSymbol({ file: "a.ts", line: 3 })?.name).toBe("symbol");
+  expect(asDemoSymbol({ file: "a.ts", line: 3, name: 7 })?.name).toBe("symbol");
+});
+
+for (const bad of [
+  null,
+  undefined,
+  "nope",
+  7,
+  {},
+  { file: "a.ts" },
+  { line: 3 },
+  { file: 1, line: 3 },
+  { file: "a.ts", line: "3" },
+  { file: "a.ts", line: Number.NaN },
+  { file: "a.ts", line: Number.POSITIVE_INFINITY },
+]) {
+  test(`asDemoSymbol rejects ${JSON.stringify(bad) ?? "undefined"}`, () => {
+    // A malformed hint must degrade to the generic next step, never crash init
+    // or print a location that does not exist.
+    expect(asDemoSymbol(bad)).toBeNull();
+  });
+}
+
+// ----------------------------------------------------------- defaultInitDeps
+
+test("defaultInitDeps reads configDir from the supplied paths", () => {
+  const deps = defaultInitDeps(fakePaths());
+  expect(deps.configDir).toBe(join(dir, "config"));
+  expect(deps.cwd).toBe(process.cwd());
+});
+
+test("defaultInitDeps reports no gateway when no state file exists", async () => {
+  // The state file lives under dataDir, which NIMBUS_CONFIG_DIR does not move —
+  // hence the injected paths, so this cannot read a real running gateway.
+  await expect(defaultInitDeps(fakePaths()).gatewayRunning()).resolves.toBe(false);
+});
+
+test("defaultInitDeps effects fail loudly when the gateway is absent", async () => {
+  const deps = defaultInitDeps(fakePaths());
+  await expect(deps.syncFilesystem()).rejects.toThrow(/Gateway is not running/);
+  await expect(deps.demoSymbol("/repo")).rejects.toThrow(/Gateway is not running/);
+});
+
+test("defaultInitDeps log/error write to the console without throwing", () => {
+  const deps = defaultInitDeps(fakePaths());
+  expect(() => {
+    deps.log("");
+    deps.error("");
+  }).not.toThrow();
 });

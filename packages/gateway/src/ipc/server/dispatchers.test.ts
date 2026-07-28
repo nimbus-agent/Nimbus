@@ -47,6 +47,7 @@ import {
   tryDispatchEgressRpc,
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
+  tryDispatchIndexDemoSymbolRpc,
   tryDispatchIndexReembedRpc,
   tryDispatchIndexRegraphRpc,
   tryDispatchLanRpc,
@@ -434,6 +435,36 @@ pagerduty_services = ["PSVC1"]
     const { ctx } = makeCtx({ localIndex, configDir });
     const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
     expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
+  });
+});
+
+describe("tryDispatchIndexDemoSymbolRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchIndexDemoSymbolRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(
+      tryDispatchIndexDemoSymbolRpc(ctx, "index.demoSymbol", { repoRoot: "/repo" }),
+    ).rejects.toThrow(/requires LocalIndex/);
+  });
+  test("delegates index.demoSymbol and returns null on an empty index", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const out = await tryDispatchIndexDemoSymbolRpc(ctx, "index.demoSymbol", {
+      repoRoot: "/repo",
+    });
+    expect(out).toBeNull();
+  });
+  test("remaps a param error to the JSON-RPC invalid-params code", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    await expect(tryDispatchIndexDemoSymbolRpc(ctx, "index.demoSymbol", {})).rejects.toThrow(
+      /non-empty repoRoot/,
+    );
   });
 });
 
