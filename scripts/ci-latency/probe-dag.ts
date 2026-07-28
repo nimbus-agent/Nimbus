@@ -12,7 +12,7 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { bindingUpstream, median, minutesBetween } from "./probe-lib.ts";
+import { bindingUpstream, median, minutesBetween, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
 
@@ -58,25 +58,15 @@ function asJobs(value: unknown): Job[] {
 /**
  * Pages through a run's jobs, reporting whether the read was COMPLETE.
  *
- * Job count is this slice's headline metric, so a silently truncated read would
- * report fewer jobs than really ran and be read as proof the change worked. An
- * instrument that fails toward its own hypothesis is worse than none — the same
- * hazard `MAX_READ_FAILURE_RATIO` exists for in the gate itself.
+ * Delegates to the shared `pageJobs` helper in `probe-lib.ts` — see its
+ * docstring for why read-completeness tracking lives in exactly one place.
  */
 function jobsForRun(runId: number): { jobs: Job[]; complete: boolean } {
-  const jobs: Job[] = [];
-  let expected: number | undefined;
-  for (let page = 1; page <= 5; page++) {
-    const payload = api(`repos/${REPO}/actions/runs/${runId}/jobs?per_page=100&page=${page}`);
-    if (payload === null) return { jobs, complete: false }; // read FAILED, not "no more pages"
-    const total = isRecord(payload) ? payload["total_count"] : undefined;
-    if (typeof total === "number") expected = total;
-    const batch = asJobs(payload);
-    if (batch.length === 0) break;
-    jobs.push(...batch);
-    if (expected !== undefined && jobs.length >= expected) break;
-  }
-  return { jobs, complete: expected !== undefined && jobs.length >= expected };
+  const { jobs, complete } = pageJobs(
+    (page) => api(`repos/${REPO}/actions/runs/${runId}/jobs?per_page=100&page=${page}`),
+    asJobs,
+  );
+  return { jobs, complete };
 }
 
 function parseRunsArg(argv: string[]): number {
@@ -116,8 +106,12 @@ if (import.meta.main) {
     }
     const upstream = jobs.filter((j) => /^CI — (TS\/Bun|Rust\/Tauri)/.test(j.name));
     const legs = jobs.filter((j) => j.name.startsWith("E2E Desktop —"));
-    const gatedBy = bindingUpstream(upstream);
     for (const leg of legs) {
+      // Eligibility is per-leg, not per-run: which upstream job actually
+      // gated THIS leg depends on when THIS leg became runnable
+      // (`leg.created_at`), not on which candidate happened to finish last
+      // in wall-clock time across the whole run.
+      const gatedBy = bindingUpstream(upstream, leg.created_at);
       if (gatedBy) binding.set(gatedBy.name, (binding.get(gatedBy.name) ?? 0) + 1);
       const wait = minutesBetween(leg.created_at, startedAt);
       waitsByLeg.set(leg.name, [...(waitsByLeg.get(leg.name) ?? []), wait]);

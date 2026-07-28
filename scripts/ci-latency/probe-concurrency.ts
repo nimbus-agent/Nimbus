@@ -11,7 +11,7 @@
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { concurrencySeries } from "./probe-lib.ts";
+import { concurrencySeries, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
 
@@ -81,23 +81,13 @@ if (import.meta.main) {
 
     // A truncated read here corrupts the ONE number this probe exists to
     // report. Refuse to print rather than print a low job count that reads as
-    // success.
-    const jobs: Job[] = [];
-    let expected: number | undefined;
-    let complete = false;
-    for (let page = 1; page <= 5; page++) {
-      const payload = api(`repos/${REPO}/actions/runs/${id}/jobs?per_page=100&page=${page}`);
-      if (payload === null) break;
-      const total = isRecord(payload) ? payload["total_count"] : undefined;
-      if (typeof total === "number") expected = total;
-      const batch = asJobs(payload);
-      if (batch.length === 0) break;
-      jobs.push(...batch);
-      if (expected !== undefined && jobs.length >= expected) {
-        complete = true;
-        break;
-      }
-    }
+    // success. Delegates to the shared `pageJobs` helper in probe-lib.ts — see
+    // its docstring for why read-completeness tracking lives in exactly one
+    // place, shared with probe-dag.ts.
+    const { jobs, complete, expected } = pageJobs(
+      (page) => api(`repos/${REPO}/actions/runs/${id}/jobs?per_page=100&page=${page}`),
+      asJobs,
+    );
     if (!complete) {
       console.warn(
         `::warning::probe-concurrency: run ${id} job read incomplete (${jobs.length}/${expected ?? "?"}) — SKIPPED rather than reporting a truncated job count`,
