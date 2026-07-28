@@ -93,7 +93,7 @@ Metrics, Preflight, MCP, LAN — load no file that branches on platform.
 caveat was not decorative. The sweep above originally matched only
 `process.platform` and `os.platform()`, missing
 `import { platform } from "node:os"`, which is the **dominant idiom in this
-codebase** (6 files). That omission left `doctor-core.ts` undetected and
+codebase** (7 files). That omission left `doctor-core.ts` undetected and
 classified `Doctor` as Linux-only despite it branching on platform — the exact
 signal loss this design exists to avoid, inside the classification the design
 was built from.

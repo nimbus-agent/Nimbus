@@ -417,7 +417,7 @@ const TEST_SUITE = ".github/workflows/_test-suite.yml";
  *
  * The destructured-import alternative is NOT optional to cover:
  * `import { platform } from "node:os"` is the dominant idiom in this codebase
- * (6 files), and an earlier revision of this audit that matched only
+ * (7 files), and an earlier revision of this audit that matched only
  * `process.platform` missed `doctor-core.ts` — whose gate was consequently
  * classified Linux-only by mistake.
  */

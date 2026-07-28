@@ -53,6 +53,10 @@ packages/gateway/src/platform/sandbox/sandbox-runner.ts
 packages/gateway/src/vault/factory.ts
 ```
 
+Those are the six the sweep had not already classified; the full count of files
+using the idiom is **seven**, the seventh being `packages/gateway/src/perf/bench-cli.ts`,
+which was already covered by the `Perf` gate and so surfaced nothing new.
+
 All six branch on the result — `if (platform() === "linux")`,
 `if (platform() === "win32")`, `const p = platform()`. The original regex
 `/process\.platform|os\.platform\(\)/` matches none of them.
