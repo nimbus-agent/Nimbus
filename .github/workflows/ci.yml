@@ -583,7 +583,13 @@ jobs:
   # E2E Desktop (Playwright + Tauri WebDriver) — push to main only, full OS matrix
   e2e-desktop:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [ci-ts, ci-rust]
+    # `ci-ts` is the whole _test-suite.yml (30 jobs incl. 24 coverage shards),
+    # and `needs:` on a reusable-workflow caller waits for ALL of it — measured
+    # at 33.4min median DAG wait. E2E consumes no artifact from it: it does its
+    # own checkout, install and Tauri setup. `ci-rust` (1.17-1.72min) is the
+    # prerequisite that carries meaning: a broken Tauri build makes E2E
+    # unrunnable.
+    needs: [ci-rust]
     strategy:
       fail-fast: false
       matrix:
