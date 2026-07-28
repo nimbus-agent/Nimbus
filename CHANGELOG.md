@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.4.0](https://github.com/nimbus-agent/Nimbus/compare/v1.3.0...v1.4.0) (2026-07-28)
+
+
+### Features
+
+* **demos:** recut the hero cast to the zero-config path ([#888](https://github.com/nimbus-agent/Nimbus/issues/888)) ([ad437ba](https://github.com/nimbus-agent/Nimbus/commit/ad437ba28522369411d96289998e8f2b9d95d016))
+
 ## [1.3.0](https://github.com/nimbus-agent/Nimbus/compare/v1.2.0...v1.3.0) (2026-07-28)
 
 
