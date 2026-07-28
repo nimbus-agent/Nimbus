@@ -8,7 +8,7 @@
  * reported and never gated: none is caused by the change under test, and a gate
  * that reports a condition nobody can fix is one everybody learns to ignore.
  *
- * See docs/superpowers/specs/2026-07-27-p4b-ci-latency-design.md.
+ * See docs/infrastructure-roadmap.md § P4b.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";

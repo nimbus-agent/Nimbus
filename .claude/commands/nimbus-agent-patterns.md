@@ -1,7 +1,8 @@
 ---
 name: nimbus-agent-patterns
 description: >
-  Authoring built-in Nimbus agents (catchup, expert, impact): file location, the
+  Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
+  janitor, preflight, why): file location, the
   read-only/HITL-free shape invariant, parallel sub-agent decomposition via
   AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
@@ -15,7 +16,7 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
 
 ### Cross-Colleague Agents (Phase 6 Slice 6a)
 
@@ -30,6 +31,18 @@ Three read-only agents that surface cross-colleague context by fanning the shipp
 **Shared fan-out helper:** `federation/peer-fanout.ts` — iterates `PeerRegistry`, calls `federation.query` / `federation.expertise` per peer with per-peer timeout + error isolation, and returns merged results. Consumed only by these three agents.
 
 **V38 known-namespaces cache:** `federation_known_namespaces` table (added by V38 migration) caches which remote namespaces a successful federated query touched on the asker side, letting the agents default to an ambient sweep when `--namespace` is omitted. Rows are pruned on `no_grant` / unpair events.
+
+### Federated Action-Request Agents (Phase 6 Slice 6b)
+
+**`janitor`** (`packages/gateway/src/agents/janitor.ts`) — IPC `agents.janitor`, CLI `nimbus janitor <resource-ref> [--idle-days N] [--cleanup <action.type>] [--allow-gaps] [--json]`. Flags idle cloud resources from the already-indexed graph and proposes a cleanup action; the action itself is HITL-gated at the executor (`I24` / `D18`), so the brief itself stays read-only.
+
+**`preflight`** (`packages/gateway/src/agents/preflight.ts`) — IPC `agents.preflight`, CLI `nimbus preflight <ref> --namespace <ns> [--strict] [--json]` (plus `nimbus preflight approve <request-id>` to respond to a federated request). Blast-radius preflight over a peer namespace before a change lands; read-only.
+
+### Provenance Agents (Spine S1)
+
+**`why`** (`packages/gateway/src/agents/why.ts`) — IPC `agents.why`, CLI `nimbus why <ref> [--line <n>] [--json]`, notification `why.briefReady`. Six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, each degrading to a named gap note rather than going silent. Its one local read outside the index is a root-fenced, cached single-line `git blame` — not a connector call.
+
+**`why-peek`** (`packages/gateway/src/agents/why-peek.ts`) — IPC `agents.whyPeek`, CLI `nimbus why <ref> --peek`. A synchronous sub-300ms companion returning a one-line answer with no notification round-trip; the exception to the `briefReady` contract below, and only because it does no fan-out.
 
 ## Agent Shape Invariant
 

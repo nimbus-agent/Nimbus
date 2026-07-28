@@ -1,7 +1,7 @@
 /**
  * Tuning constants for `audit:ci-latency`, kept in one module so the tests and
  * the gate can never drift apart. Every value here was chosen against measured
- * data — see docs/superpowers/specs/2026-07-27-p4b-ci-latency-design.md.
+ * data — see docs/infrastructure-roadmap.md § P4b (progress log).
  */
 
 /** Below this many samples a key is `insufficient-data`: skipped, never failed. */

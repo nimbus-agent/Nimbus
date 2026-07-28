@@ -33,7 +33,7 @@ This skill is the rule a contributor consults **before** adding any HTTP `POST` 
 
 ## The Allowlist
 
-Eight entries (the CI deploy-annotation route + the SCIM provisioning surface added in Phase 6 Slice 3 + the admin-console anchor-policy write surface added in Phase 6 Slice 4 + the ChatOps Teams inbound surface added in Phase 6 Slice 5 + the two web-clipper routes added in Phase 6 Slice 9):
+Twelve entries (the CI deploy-annotation route + the SCIM provisioning surface added in Phase 6 Slice 3 + the admin-console anchor-policy write surface added in Phase 6 Slice 4 + the ChatOps Teams inbound surface added in Phase 6 Slice 5 + the two web-clipper routes added in Phase 6 Slice 9 + the four research-brief routes added in Spine S1):
 
 ```typescript
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
@@ -45,12 +45,16 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   "POST /v1/messaging/teams/events",
   "POST /v1/clips",
   "POST /v1/clips/pair/confirm",
+  "POST /v1/briefs",
+  "POST /v1/briefs/{id}/sources",
+  "POST /v1/briefs/{id}/run",
+  "POST /v1/briefs/{id}/save",
 ]);
 ```
 
 Entries are `"<METHOD> <PATH>"` strings. The deployment route is exact-match; the SCIM item routes use a `{id}` placeholder matched by a regex in `resolveRoute` (the only sanctioned path-templating). `dispatchWriteRoute` selects the per-route bearer token (deployment → `http_api.deployment_token`; SCIM → `identity.scim.bearer`) and audit action type (`deployment.annotation_rejected` vs `scim.provision_rejected`). It rejects anything not resolvable to an entry; unknown paths return 404, known paths on the wrong method return 405 with `Allow` header. SCIM **GET** roster reads are not writes — they go through the bearer-checked `dispatchScimRead` read path, off this surface.
 
-The eight routes do **not** all share one auth model — see the block comment at `http-write-routes.ts` lines 21–28 for the live source of truth:
+The twelve routes do **not** all share one auth model — see the block comment above `WRITE_ROUTE_ALLOWLIST` in `http-write-routes.ts` for the live source of truth:
 
 | Route | Auth model |
 |---|---|
@@ -59,8 +63,9 @@ The eight routes do **not** all share one auth model — see the block comment a
 | `PUT /v1/admin/policy` (Slice 4) | Bearer token (the admin token); signs the org policy with the Vault-only anchor key |
 | `POST /v1/messaging/teams/events` (Slice 5) | Bot Framework JWT validated in-route — **not** a static bearer |
 | `POST /v1/clips` · `POST /v1/clips/pair/confirm` (Slice 9) | Web-clipper bearer minted only behind a live owner-opened pairing window (`I30`); the token is Vault-stored + revocable |
+| `POST /v1/briefs` · `…/{id}/sources` · `…/{id}/run` · `…/{id}/save` (S1) | The same labeled clipper token, verified in-route |
 
-The deployment/SCIM/policy rows are the static-bearer routes; the teams-events route is the lone validated-JWT route; the clip routes use the pairing-window one-time-token mint (`I30`).
+The deployment/SCIM/policy rows are the static-bearer routes; the teams-events route is the lone validated-JWT route; the clip and brief routes use the pairing-window one-time-token mint (`I30`).
 
 ## Enforcement (the I13 test triple)
 
@@ -68,7 +73,7 @@ The deployment/SCIM/policy rows are the static-bearer routes; the teams-events r
 
 1. **`http-server.ts` imports `dispatchWriteRoute`** from `./http-write-routes.ts`. A second dispatcher cannot exist; the import is the proof.
 2. **`http-server.ts` opens at most one writable `Database` handle** — counted by source-grep. Any second writable handle is a structural regression because it bypasses the dispatcher.
-3. **`WRITE_ROUTE_ALLOWLIST.length === 6`** and contains exactly the deployment route + the three `/scim/v2/Users` routes + the admin-policy route + the teams-events route (per lines 297–305 of `security-invariants.test.ts`). Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
+3. **`WRITE_ROUTE_ALLOWLIST.length === 12`** and contains exactly the deployment route + the three `/scim/v2/Users` routes + the admin-policy route + the teams-events route + the two `/v1/clips` routes + the four `/v1/briefs` routes (grep `toHaveLength(12)` in `security-invariants.test.ts` — the assertion moves as the file grows). Adding an entry **requires updating this assertion in the same commit** — the count is the integrity check, not just decoration.
 
 ## Request Flow
 

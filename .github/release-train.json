@@ -1,5 +1,5 @@
 {
-  "$comment": "P2 Release Train edges. audit:release-staleness reads each downstream's LIVE version and fails when it lags the published source past graceHours. See docs/infrastructure-roadmap.md P2 + docs/superpowers/specs/2026-07-24-p2-release-train-design.md.",
+  "$comment": "P2 Release Train edges. audit:release-staleness reads each downstream's LIVE version and fails when it lags the published source past graceHours. See docs/infrastructure-roadmap.md P2.",
   "graceHours": 6,
   "trains": [
     {

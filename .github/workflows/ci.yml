@@ -593,8 +593,7 @@ jobs:
     # Dropping `ci-ts` means E2E now runs even when the TS suite fails on a
     # `main` push — an accepted cost, not an oversight: it's cheaper than a
     # duplicate typecheck job on every push, and measured data shows it's rare.
-    # See the Risks table in
-    # docs/superpowers/specs/2026-07-27-p4b-ci-tuning-design.md ("A
+    # See the P4b progress log in docs/infrastructure-roadmap.md ("A
     # TS-failing, Rust-passing `main` commit burns E2E runners") for the
     # numbers and the revisit trigger.
     needs: [ci-rust]

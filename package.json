@@ -8,7 +8,7 @@
   },
   "overrides": {
     "sharp": "0.35.3",
-    "protobufjs": "7.6.4",
+    "protobufjs": "7.6.5",
     "svgo": "4.0.2",
     "fast-uri": "3.1.4",
     "esbuild": "0.28.1",
@@ -16,16 +16,19 @@
     "ws": "8.21.0",
     "form-data": "4.0.6",
     "linkify-it": "5.0.2",
-    "hono": "4.12.25",
+    "hono": "4.12.32",
     "@mastra/core": "1.43.0",
     "@mastra/mcp": "1.10.0",
     "nodemailer": "9.0.1",
     "undici": "7.28.0",
     "shell-quote": "1.10.0",
     "brace-expansion": "5.0.8",
-    "tar": "7.5.20",
+    "tar": "7.5.22",
     "js-yaml": "4.3.0",
-    "postcss": "8.5.23"
+    "postcss": "8.5.23",
+    "qs": "6.15.3",
+    "yaml": "2.9.0",
+    "body-parser": "2.3.0"
   },
   "workspaces": [
     "packages/admin-console",

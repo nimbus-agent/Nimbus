@@ -6,8 +6,7 @@
  * manifest, published = latest GitHub Release with its SHA256SUMS asset,
  * distributed = each channel's live version) and fails when a channel lags the
  * published release past graceHours, or when a release phantoms. All reads are
- * public gh calls; fail-soft locally, strict in CI. See
- * docs/superpowers/specs/2026-07-24-p2-release-train-design.md.
+ * public gh calls; fail-soft locally, strict in CI. See docs/infrastructure-roadmap.md § P2.
  */
 
 import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";

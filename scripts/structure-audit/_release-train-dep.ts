@@ -2,7 +2,7 @@
  * P2 Phase 2 — dependency-DAG readers. Pure functions only: every one takes
  * already-fetched text and returns a value, so the whole edge model is testable
  * without network. The impure fetch/gh callers live in check-release-staleness.ts.
- * See docs/superpowers/specs/2026-07-26-p2-phase2-dep-dag-design.md.
+ * See docs/infrastructure-roadmap.md § P2 (Phase 2 progress log).
  */
 
 import { isRecord } from "./_gh-audit.ts";

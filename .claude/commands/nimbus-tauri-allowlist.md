@@ -24,18 +24,18 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 | File | Role |
 |---|---|
 | [`packages/ui/src-tauri/src/gateway_bridge.rs:57`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:149`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:162`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs:167`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs:180`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
 | [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) `mod tests` | Allowlist enforcement tests: `allowlist_exact_size`, `allowlist_is_alphabetized`, `allowlist_has_no_duplicates`, `allowlist_rejects_vault_and_raw_db_writes`, plus per-surface read-only guards (e.g. `allowlist_egress_read_only` — egress reads exposed, `egress.prune` blocked) |
 
 ## The Three Lists
 
 ### `ALLOWED_METHODS`
 
-Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 99 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
+Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 101 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
 
 - **Alphabetized** — enforced by `allowlist_is_alphabetized`. Insert in order; do not append at the end.
-- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 99`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
+- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 101`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
 - **Deduplicated** — `allowlist_has_no_duplicates` covers copy-paste mistakes.
 - **Free of forbidden namespaces** — `allowlist_rejects_vault_and_raw_db_writes` asserts that `vault.*`, `db.put` / `db.delete`, `config.set`, `index.rebuild`, and `index.querySql` are absent. Add to this test if you introduce a new forbidden namespace.
 
@@ -81,7 +81,7 @@ When the desktop UI needs a new IPC method:
 - [ ] Run `cargo test` from `packages/ui/src-tauri/`. All four allowlist tests must be green.
 - [ ] Add the method to the [`docs/cli-reference.md`](../../docs/cli-reference.md) IPC section if it is also CLI-callable.
 - [ ] Update [`docs/SECURITY-INVARIANTS.md`](../../docs/SECURITY-INVARIANTS.md) §I7 if the wiring shape changed (it usually does not for a routine add).
-- [ ] Update the count in [`CLAUDE.md`](../../CLAUDE.md) (`ALLOWED_METHODS (N)` line) so that AI assistants do not propose stale numbers.
+- [ ] Update the "Currently N entries" line in this skill so that AI assistants do not propose stale numbers.
 
 ## Removing or Renaming a Method
 
@@ -117,7 +117,7 @@ When the desktop UI needs a new IPC method:
 3. Insert alphabetically into `ALLOWED_METHODS` and bump the size assertion.
 4. (If long-running) also update `NO_TIMEOUT_METHODS` and its size assertion.
 5. `cargo test` from `packages/ui/src-tauri/` — four allowlist tests pass.
-6. Update CLAUDE.md's `ALLOWED_METHODS (N)` count.
+6. Update this skill's "Currently N entries" count.
 7. All in the same commit.
 
 ## See Also

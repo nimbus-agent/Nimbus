@@ -213,18 +213,6 @@ Scripts with only read-only steps run without a TTY (safe for CI). Scripts with 
 
 ---
 
-### `nimbus sync`
-
-Manually trigger a sync cycle for one or all connectors.
-
-```bash
-nimbus sync all
-nimbus sync github
-nimbus sync google_drive
-```
-
----
-
 ## Team Intelligence
 
 Built-in agents that answer team-level questions from the local relationship graph and indexed metadata. Each agent is read-only, never triggers HITL, and streams a Markdown brief to stdout.
@@ -391,6 +379,59 @@ nimbus huddle --namespace project:zurich --json
 **Output (Markdown):** one section per teammate, each listing recent merged PRs, closed tickets, and resolved incidents with one-line context; gap notes if a peer is unreachable.
 
 **Read-only:** never triggers HITL, never makes a live API call.
+
+---
+
+### `nimbus janitor`
+
+Answer "is this cloud resource still in use, and what breaks if I delete it?" — cross-references a resource against indexed deployments, dashboards, alerts, and on-call rotations, and reports how long it has been idle.
+
+```bash
+nimbus janitor arn:aws:s3:::legacy-reports
+nimbus janitor legacy-reports --idle-days 30
+nimbus janitor legacy-reports --cleanup aws.s3.bucket_delete
+nimbus janitor legacy-reports --allow-gaps --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--idle-days <n>` | Idle threshold in days (default: 14); must be a positive integer |
+| `--cleanup <action.type>` | Propose a cleanup action of this type. The action still passes the local owner's HITL gate before it executes — the brief itself never deletes anything |
+| `--allow-gaps` | Report a verdict even when some evidence lanes are missing (default: an incomplete sweep is called out rather than concluded from) |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** the idle verdict with its evidence, the referencing surfaces found, and — when `--cleanup` is given — the proposed action awaiting consent.
+
+**Read-only until approved:** the brief itself makes no writes; any `--cleanup` action is gated by HITL (invariant `I24`).
+
+---
+
+### `nimbus preflight`
+
+Blast-radius preflight before a change lands: asks each paired downstream owner in a namespace to run their own verification against your candidate ref, then merges the answers. Each downstream owner approves the request behind their own HITL gate (invariant `I24` / static `D18`), so the call blocks on human responses for up to 10 minutes.
+
+```bash
+nimbus preflight src/billing/retry.ts --namespace project:zurich
+nimbus preflight src/billing/retry.ts --namespace project:zurich --strict
+nimbus preflight src/billing/retry.ts --namespace project:zurich --json
+nimbus preflight approve req_8f3c21
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--namespace <ns>` | **Required.** The published namespace whose downstream owners are asked |
+| `--strict` | Also exit non-zero when coverage is incomplete (a downstream declined, is not configured, or is unreachable) |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Sub-command:** `nimbus preflight approve <request-id>` — respond to an inbound federated preflight request as the local owner.
+
+**Exit code:** non-zero if any downstream's verification failed; with `--strict`, also non-zero on incomplete coverage. Useful as a CI gate.
+
+**`nimbus deploy preflight` is a different command** — that one runs the local pre-deploy checks for a service; see [`nimbus deploy preflight`](#nimbus-deploy-preflight).
 
 ---
 
