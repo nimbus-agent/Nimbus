@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.3.0](https://github.com/nimbus-agent/Nimbus/compare/v1.2.0...v1.3.0) (2026-07-28)
+
+
+### Features
+
+* zero-config onboarding — nimbus init, and the LLM demoted to optional ([#887](https://github.com/nimbus-agent/Nimbus/issues/887)) ([3e51aaf](https://github.com/nimbus-agent/Nimbus/commit/3e51aaf9f8171415c81d97a9b77f0f0141d40c76))
+
+
+### Bug Fixes
+
+* **perf:** stop a huggingface.co stall from blowing the 45m bench timeout ([#885](https://github.com/nimbus-agent/Nimbus/issues/885)) ([22938ac](https://github.com/nimbus-agent/Nimbus/commit/22938ac57788eed724d1ab6a28553bb7138b7631))
+
 ## [1.2.0](https://github.com/nimbus-agent/Nimbus/compare/v1.1.0...v1.2.0) (2026-07-27)
 
 
