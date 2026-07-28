@@ -133,6 +133,72 @@ describe("runDriver", () => {
     expect(existsSync(join(artifactsDir, "z.diff"))).toBe(true);
     expect(existsSync(join(artifactsDir, "z.cast"))).toBe(true);
   });
+
+  test("a mismatch carries the diff even when NO artifacts dir is given", async () => {
+    // The failing path in CI runs without --artifacts-dir, so attaching the
+    // diff only when artifacts were requested left the drift undiagnosable:
+    // a macOS-only drift sat red on `main` reporting nothing but a hash.
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(
+      workDir,
+      "d",
+      MIN_YAML.replace("x/events", "d/events"),
+      MIN_EVENTS,
+    );
+
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("original output\n"),
+    });
+
+    const result = await runDriver({
+      mode: "check",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("MUTATED output\n"),
+    });
+
+    expect(result.summaries[0]?.action).toBe("mismatch");
+    const diff = result.summaries[0]?.diff ?? "";
+    // Both sides must be identifiable — a diff naming only one is useless.
+    expect(diff).toContain("original output");
+    expect(diff).toContain("MUTATED output");
+  });
+
+  test("a match carries no diff", async () => {
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(
+      workDir,
+      "m",
+      MIN_YAML.replace("x/events", "m/events"),
+      MIN_EVENTS,
+    );
+
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("stable output\n"),
+    });
+
+    const result = await runDriver({
+      mode: "check",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: fakeHarness("stable output\n"),
+    });
+
+    expect(result.summaries[0]?.action).toBe("matched");
+    expect(result.summaries[0]?.diff).toBeUndefined();
+  });
 });
 
 describe("runDriver — the .cast is a publishable artifact", () => {

@@ -18,10 +18,15 @@ export interface DriverOpts {
   readonly harness: (opts: HarnessOpts) => Promise<HarnessRun>;
 }
 
+/** Bounds the diff printed to a CI log; the full text is in the artifacts dir. */
+export const MAX_DIFF_LINES = 60;
+
 export interface ScriptSummary {
   readonly name: string;
   readonly action: "matched" | "written" | "mismatch";
   readonly hash: string;
+  /** Unified diff, baseline vs actual. Present only on `mismatch`. */
+  readonly diff?: string;
 }
 
 export interface DriverResult {
@@ -125,12 +130,17 @@ export async function runDriver(opts: DriverOpts): Promise<DriverResult> {
       continue;
     }
 
-    summaries.push({ name, action: "mismatch", hash });
+    // Computed unconditionally, NOT only when artifacts were requested. The
+    // failing path in CI runs without --artifacts-dir, so a drift reported as a
+    // bare hash is undiagnosable by anyone lacking that platform: a macOS-only
+    // drift sat red on `main` printing `zero-config: DRIFT (hash=…)` and
+    // nothing else.
+    const diff = unifiedDiff(baselineTxt, transcript, `${name}.txt`, `${name}.actual.txt`);
+    summaries.push({ name, action: "mismatch", hash, diff });
     exitCode = 1;
 
     if (opts.artifactsDir !== undefined) {
       await atomicWriteFile(join(opts.artifactsDir, `${name}.actual.txt`), transcript);
-      const diff = unifiedDiff(baselineTxt, transcript, `${name}.txt`, `${name}.actual.txt`);
       await atomicWriteFile(join(opts.artifactsDir, `${name}.diff`), diff);
       const cast = writeCastBytes(allChunks);
       await atomicWriteFile(
