@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.4.2](https://github.com/nimbus-agent/Nimbus/compare/v1.4.1...v1.4.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **cast-driver:** print the diff on DRIFT so a macOS-only failure is diagnosable ([#897](https://github.com/nimbus-agent/Nimbus/issues/897)) ([b9d074c](https://github.com/nimbus-agent/Nimbus/commit/b9d074cd25629eef66f373ad26b2469b1ba02911))
+
 ## [1.4.1](https://github.com/nimbus-agent/Nimbus/compare/v1.4.0...v1.4.1) (2026-07-28)
 
 
