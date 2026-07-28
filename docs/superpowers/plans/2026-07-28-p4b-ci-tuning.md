@@ -903,8 +903,8 @@ actually matters: a broken Tauri build makes E2E unrunnable."
   `scripts/structure-audit/_gh-audit.ts`, where `GhResult` is
   `{ ok: boolean; stdout: string; stderr: string; httpStatus?: number }`.
   Also `isRecord(v: unknown): v is Record<string, unknown>` from the same module.
-- Produces: `median`, `minutesBetween`, `bindingUpstream`, `concurrencySeries`
-  from `probe-lib.ts`.
+- Produces: `median`, `minutesBetween`, `bindingUpstream`, `concurrencySeries`,
+  `pageJobs` from `probe-lib.ts`.
 
 These are the only tools that can verify this slice, since `audit:ci-latency`
 gates execution and the win lands in queue and DAG wait. They are diagnostic
@@ -918,7 +918,13 @@ Create `scripts/ci-latency/probe-lib.test.ts`:
 ```ts
 import { describe, expect, test } from "bun:test";
 
-import { bindingUpstream, concurrencySeries, median, minutesBetween } from "./probe-lib.ts";
+import {
+  bindingUpstream,
+  concurrencySeries,
+  median,
+  minutesBetween,
+  pageJobs,
+} from "./probe-lib.ts";
 
 describe("median", () => {
   test("odd-length picks the middle", () => {
@@ -946,13 +952,13 @@ describe("minutesBetween", () => {
 });
 
 describe("bindingUpstream", () => {
-  test("picks the upstream job that completed last", () => {
+  test("picks the upstream job that completed last, at or before eligibility", () => {
     const jobs = [
       { name: "a", completed_at: "2026-07-27T10:05:00Z" },
       { name: "b", completed_at: "2026-07-27T10:20:00Z" },
       { name: "c", completed_at: "2026-07-27T10:10:00Z" },
     ];
-    expect(bindingUpstream(jobs)?.name).toBe("b");
+    expect(bindingUpstream(jobs, "2026-07-27T10:25:00Z")?.name).toBe("b");
   });
 
   test("ignores jobs that never completed", () => {
@@ -960,11 +966,30 @@ describe("bindingUpstream", () => {
       { name: "a", completed_at: "2026-07-27T10:05:00Z" },
       { name: "running", completed_at: null },
     ];
-    expect(bindingUpstream(jobs)?.name).toBe("a");
+    expect(bindingUpstream(jobs, "2026-07-27T10:30:00Z")?.name).toBe("a");
   });
 
-  test("an empty list yields null", () => {
-    expect(bindingUpstream([])).toBeNull();
+  test("excludes a candidate that completed AFTER the eligibility moment", () => {
+    const jobs = [
+      { name: "a", completed_at: "2026-07-27T10:05:00Z" },
+      { name: "b", completed_at: "2026-07-27T10:20:00Z" },
+    ];
+    // b finished after the leg became eligible -- it cannot have gated it,
+    // even though it is the global-latest completion.
+    expect(bindingUpstream(jobs, "2026-07-27T10:10:00Z")?.name).toBe("a");
+  });
+
+  test("picks the latest candidate at or before the eligibility moment, not the global latest", () => {
+    const jobs = [
+      { name: "a", completed_at: "2026-07-27T10:05:00Z" },
+      { name: "b", completed_at: "2026-07-27T10:10:00Z" },
+      { name: "c", completed_at: "2026-07-27T10:20:00Z" },
+    ];
+    expect(bindingUpstream(jobs, "2026-07-27T10:10:00Z")?.name).toBe("b");
+  });
+
+  test("an empty candidate list yields null", () => {
+    expect(bindingUpstream([], "2026-07-27T10:00:00Z")).toBeNull();
   });
 });
 
@@ -983,6 +1008,57 @@ describe("concurrencySeries", () => {
 
   test("no jobs yields an empty series", () => {
     expect(concurrencySeries([], "2026-07-27T10:00:00Z")).toEqual([]);
+  });
+});
+
+interface FakeJob {
+  id: number;
+}
+
+function parseFakeBatch(payload: unknown): FakeJob[] {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !Array.isArray((payload as { jobs?: unknown }).jobs)
+  ) {
+    return [];
+  }
+  return (payload as { jobs: FakeJob[] }).jobs;
+}
+
+describe("pageJobs", () => {
+  test("a failed page read yields complete: false, not a false end-of-pagination", () => {
+    // Page 1 declares 3 jobs total but only delivers 1; page 2 fails outright
+    // (returns null). A read that mistook the null for "no more pages" would
+    // report complete: true with a truncated job list -- exactly the failure
+    // mode that would make an AFTER run look like a win.
+    const result = pageJobs(
+      (page) => (page === 1 ? { total_count: 3, jobs: [{ id: 1 }] } : null),
+      parseFakeBatch,
+    );
+    expect(result.complete).toBe(false);
+    expect(result.jobs).toEqual([{ id: 1 }]);
+    expect(result.expected).toBe(3);
+  });
+
+  test("reconciles against total_count across multiple successful pages", () => {
+    const pages: Record<number, unknown> = {
+      1: { total_count: 2, jobs: [{ id: 1 }] },
+      2: { total_count: 2, jobs: [{ id: 2 }] },
+    };
+    const result = pageJobs((page) => pages[page] ?? null, parseFakeBatch);
+    expect(result.complete).toBe(true);
+    expect(result.jobs).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(result.expected).toBe(2);
+  });
+
+  test("an empty page ends pagination -- distinct from a failed read", () => {
+    // No total_count ever arrives, so `expected` stays undefined and the read
+    // is correctly reported incomplete rather than crashing on a missing count.
+    const result = pageJobs((page) => (page === 1 ? { jobs: [] } : null), parseFakeBatch);
+    expect(result.complete).toBe(false);
+    expect(result.jobs).toEqual([]);
+    expect(result.expected).toBeUndefined();
   });
 });
 ```
@@ -1004,6 +1080,8 @@ Create `scripts/ci-latency/probe-lib.ts`:
  * They live apart from the probes so the arithmetic is unit-testable without a
  * network call. The probes themselves are thin: fetch, map, print.
  */
+
+import { isRecord } from "../structure-audit/_gh-audit.ts";
 
 export interface CompletedJob {
   name: string;
@@ -1033,15 +1111,25 @@ export function minutesBetween(a: string, b: string): number {
 
 /**
  * The upstream job whose completion gated a dependent job — i.e. the last one
- * to finish. Returns null when nothing has completed.
+ * to finish at or before `eligibleAt` (the moment the dependent job became
+ * eligible to run, e.g. its `created_at`).
+ *
+ * The cutoff matters structurally, not just cosmetically: a candidate that
+ * finished LATER than `eligibleAt` cannot have gated anything — it simply
+ * happened to run long. Taking the unrestricted global max would misattribute
+ * gating to whichever candidate was slowest, rather than whichever candidate
+ * the dependent job actually waited on. Returns null when no candidate
+ * completed at or before the cutoff.
  */
-export function bindingUpstream(jobs: CompletedJob[]): CompletedJob | null {
+export function bindingUpstream(jobs: CompletedJob[], eligibleAt: string): CompletedJob | null {
+  const cutoff = Date.parse(eligibleAt);
   let best: CompletedJob | null = null;
   let bestAt = Number.NEGATIVE_INFINITY;
   for (const j of jobs) {
     if (j.completed_at === null) continue;
     const at = Date.parse(j.completed_at);
     if (Number.isNaN(at) || at <= bestAt) continue;
+    if (!Number.isNaN(cutoff) && at > cutoff) continue;
     bestAt = at;
     best = j;
   }
@@ -1067,13 +1155,59 @@ export function concurrencySeries(jobs: RunningJob[], runStartedAt: string): num
   }
   return series;
 }
+
+export interface PagedJobs<J> {
+  jobs: J[];
+  /** Whether the read reconciled against the API's `total_count`. */
+  complete: boolean;
+  /** `total_count` as last reported by the API, if any page reported one. */
+  expected: number | undefined;
+}
+
+/**
+ * Pages through a run's jobs via `fetchPage`, tracking whether the read is
+ * COMPLETE — i.e. whether the accumulated job count reconciles against the
+ * API's `total_count`.
+ *
+ * Job count is this slice's headline metric, so a silently truncated read
+ * would report fewer jobs than really ran and be read as proof the change
+ * worked. An instrument that fails toward its own hypothesis is worse than
+ * none — the same hazard `MAX_READ_FAILURE_RATIO` guards against in the gate
+ * itself. This logic used to be duplicated between the two probes; it now
+ * lives in exactly one place.
+ *
+ * `fetchPage` returns the parsed JSON payload for the given 1-indexed page,
+ * or `null` on a FAILED read — never on "no more pages" (an exhausted feed is
+ * signaled by `parseBatch` returning an empty array). Taking a callback
+ * rather than doing network I/O itself keeps this testable without a network
+ * call.
+ */
+export function pageJobs<J>(
+  fetchPage: (page: number) => unknown,
+  parseBatch: (payload: unknown) => J[],
+  maxPages = 5,
+): PagedJobs<J> {
+  const jobs: J[] = [];
+  let expected: number | undefined;
+  for (let page = 1; page <= maxPages; page++) {
+    const payload = fetchPage(page);
+    if (payload === null) return { jobs, complete: false, expected }; // read FAILED, not "no more pages"
+    const total = isRecord(payload) ? payload["total_count"] : undefined;
+    if (typeof total === "number") expected = total;
+    const batch = parseBatch(payload);
+    if (batch.length === 0) break;
+    jobs.push(...batch);
+    if (expected !== undefined && jobs.length >= expected) break;
+  }
+  return { jobs, complete: expected !== undefined && jobs.length >= expected, expected };
+}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test scripts/ci-latency/probe-lib.test.ts`
 
-Expected: 10 tests PASS.
+Expected: 15 tests PASS.
 
 - [ ] **Step 5: Implement the DAG probe**
 
@@ -1094,7 +1228,7 @@ Create `scripts/ci-latency/probe-dag.ts`:
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { bindingUpstream, median, minutesBetween } from "./probe-lib.ts";
+import { bindingUpstream, median, minutesBetween, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
 
@@ -1140,25 +1274,15 @@ function asJobs(value: unknown): Job[] {
 /**
  * Pages through a run's jobs, reporting whether the read was COMPLETE.
  *
- * Job count is this slice's headline metric, so a silently truncated read would
- * report fewer jobs than really ran and be read as proof the change worked. An
- * instrument that fails toward its own hypothesis is worse than none — the same
- * hazard `MAX_READ_FAILURE_RATIO` exists for in the gate itself.
+ * Delegates to the shared `pageJobs` helper in `probe-lib.ts` — see its
+ * docstring for why read-completeness tracking lives in exactly one place.
  */
 function jobsForRun(runId: number): { jobs: Job[]; complete: boolean } {
-  const jobs: Job[] = [];
-  let expected: number | undefined;
-  for (let page = 1; page <= 5; page++) {
-    const payload = api(`repos/${REPO}/actions/runs/${runId}/jobs?per_page=100&page=${page}`);
-    if (payload === null) return { jobs, complete: false }; // read FAILED, not "no more pages"
-    const total = isRecord(payload) ? payload["total_count"] : undefined;
-    if (typeof total === "number") expected = total;
-    const batch = asJobs(payload);
-    if (batch.length === 0) break;
-    jobs.push(...batch);
-    if (expected !== undefined && jobs.length >= expected) break;
-  }
-  return { jobs, complete: expected !== undefined && jobs.length >= expected };
+  const { jobs, complete } = pageJobs(
+    (page) => api(`repos/${REPO}/actions/runs/${runId}/jobs?per_page=100&page=${page}`),
+    asJobs,
+  );
+  return { jobs, complete };
 }
 
 function parseRunsArg(argv: string[]): number {
@@ -1173,7 +1297,8 @@ if (import.meta.main) {
   const listed = api(
     `repos/${REPO}/actions/workflows/ci.yml/runs?event=push&branch=main&status=success&per_page=${wanted}`,
   );
-  const runs = isRecord(listed) && Array.isArray(listed["workflow_runs"]) ? listed["workflow_runs"] : [];
+  const runs =
+    isRecord(listed) && Array.isArray(listed["workflow_runs"]) ? listed["workflow_runs"] : [];
   if (runs.length === 0) {
     console.error("probe-dag: no successful push runs readable — is `gh` authenticated?");
     process.exit(1);
@@ -1197,8 +1322,12 @@ if (import.meta.main) {
     }
     const upstream = jobs.filter((j) => /^CI — (TS\/Bun|Rust\/Tauri)/.test(j.name));
     const legs = jobs.filter((j) => j.name.startsWith("E2E Desktop —"));
-    const gatedBy = bindingUpstream(upstream);
     for (const leg of legs) {
+      // Eligibility is per-leg, not per-run: which upstream job actually
+      // gated THIS leg depends on when THIS leg became runnable
+      // (`leg.created_at`), not on which candidate happened to finish last
+      // in wall-clock time across the whole run.
+      const gatedBy = bindingUpstream(upstream, leg.created_at);
       if (gatedBy) binding.set(gatedBy.name, (binding.get(gatedBy.name) ?? 0) + 1);
       const wait = minutesBetween(leg.created_at, startedAt);
       waitsByLeg.set(leg.name, [...(waitsByLeg.get(leg.name) ?? []), wait]);
@@ -1242,7 +1371,7 @@ Create `scripts/ci-latency/probe-concurrency.ts`:
  */
 
 import { isRecord, runGh } from "../structure-audit/_gh-audit.ts";
-import { concurrencySeries } from "./probe-lib.ts";
+import { concurrencySeries, pageJobs } from "./probe-lib.ts";
 
 const REPO = "nimbus-agent/Nimbus";
 
@@ -1297,7 +1426,8 @@ if (import.meta.main) {
   const listed = api(
     `repos/${REPO}/actions/workflows/ci.yml/runs?event=push&branch=main&status=success&per_page=${wanted}`,
   );
-  const runs = isRecord(listed) && Array.isArray(listed["workflow_runs"]) ? listed["workflow_runs"] : [];
+  const runs =
+    isRecord(listed) && Array.isArray(listed["workflow_runs"]) ? listed["workflow_runs"] : [];
   if (runs.length === 0) {
     console.error("probe-concurrency: no successful push runs readable — is `gh` authenticated?");
     process.exit(1);
@@ -1311,23 +1441,13 @@ if (import.meta.main) {
 
     // A truncated read here corrupts the ONE number this probe exists to
     // report. Refuse to print rather than print a low job count that reads as
-    // success.
-    const jobs: Job[] = [];
-    let expected: number | undefined;
-    let complete = false;
-    for (let page = 1; page <= 5; page++) {
-      const payload = api(`repos/${REPO}/actions/runs/${id}/jobs?per_page=100&page=${page}`);
-      if (payload === null) break;
-      const total = isRecord(payload) ? payload["total_count"] : undefined;
-      if (typeof total === "number") expected = total;
-      const batch = asJobs(payload);
-      if (batch.length === 0) break;
-      jobs.push(...batch);
-      if (expected !== undefined && jobs.length >= expected) {
-        complete = true;
-        break;
-      }
-    }
+    // success. Delegates to the shared `pageJobs` helper in probe-lib.ts — see
+    // its docstring for why read-completeness tracking lives in exactly one
+    // place, shared with probe-dag.ts.
+    const { jobs, complete, expected } = pageJobs(
+      (page) => api(`repos/${REPO}/actions/runs/${id}/jobs?per_page=100&page=${page}`),
+      asJobs,
+    );
     if (!complete) {
       console.warn(
         `::warning::probe-concurrency: run ${id} job read incomplete (${jobs.length}/${expected ?? "?"}) — SKIPPED rather than reporting a truncated job count`,
@@ -1502,9 +1622,12 @@ not a placeholder.
 `check-action-sha-pins.ts`. `GateEntry.pal` is `boolean | null` in the
 implementation, the tests, and the parser. `PlatformFileEntry` fields
 (`file`/`gate`/`why`) are identical in the data module and every consumer.
-`bindingUpstream` takes `CompletedJob[]` and returns `CompletedJob | null` in
-both the test and the implementation. `runGh` is used with the exact signature
-read from `_gh-audit.ts`.
+`bindingUpstream` takes `(CompletedJob[], eligibleAt: string)` and returns
+`CompletedJob | null` in both the test and the implementation; the shared
+`pageJobs<J>(fetchPage, parseBatch, maxPages?)` helper in `probe-lib.ts` has the
+same call signature and `PagedJobs<J>` return shape at both its call sites
+(`probe-dag.ts`, `probe-concurrency.ts`). `runGh` is used with the exact
+signature read from `_gh-audit.ts`.
 
 **Known ordering constraint.** Task 1 ships an audit that is RED against the
 real repo; Task 2 turns it green. A reviewer seeing Task 1 in isolation should

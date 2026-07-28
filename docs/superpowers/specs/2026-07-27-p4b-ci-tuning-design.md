@@ -213,9 +213,14 @@ proof is instead:
 2. The before/after figures are recorded in the P4b progress log in
    [`docs/infrastructure-roadmap.md`](../../infrastructure-roadmap.md).
 
-**Expected effect.** DAG wait 33.4 → ~3 min. Jobs-per-run 105 → 71. Peak
-created-but-waiting materially reduced. If the measured result contradicts these
-numbers, the recorded outcome is the measurement — not the prediction.
+**Expected effect.** DAG wait 33.4 min (measured 2026-07-27) → ~3 min. That
+33.4-minute figure was re-measured on 2026-07-28, against the same `main`
+window, at **60.5 min median (max 110.8, n=15)** — CI congestion nearly
+doubled between the two dates, so 60.5 min, not 33.4, is the baseline this
+slice's "after" measurement must be compared against. Jobs-per-run 105 → 71.
+Peak created-but-waiting materially reduced. If the measured result
+contradicts these numbers, the recorded outcome is the measurement — not the
+prediction.
 
 **Baseline note — and when to regenerate.**
 `docs/structure-audit/ci-latency-baseline.json` holds entries for the 36
