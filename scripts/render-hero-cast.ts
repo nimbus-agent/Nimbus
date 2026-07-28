@@ -3,16 +3,37 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const CAST_INPUT = "docs/demos/incident-response.cast";
 const LIGHT_OUT = "docs/assets/hero-cast-light.svg";
 const DARK_OUT = "docs/assets/hero-cast-dark.svg";
 
-const SCHEDULE_SECONDS: ReadonlyArray<number> = [
-  0.5, //  0: "## Investigation\n\n…rose from 120ms to 380ms…" (the big block)
-  7, //  1: "Drafting incident summary for #ops..."
-  12, // 2: "[consent.request] Post to Slack #ops requires consent"
-  17, // 3: "Posted to #ops."
-];
+interface Demo {
+  readonly cast: string;
+  /**
+   * Playback times, one per cast event. Only needed for a cast recorded
+   * WITHOUT `pacingSeconds` — the cast driver now paces at record time, so a
+   * paced cast carries its own schedule and this is omitted.
+   */
+  readonly schedule?: ReadonlyArray<number>;
+}
+
+const DEMOS: Readonly<Record<string, Demo>> = {
+  // The hero. Already paced by the driver (pacingSeconds: 3), so its recorded
+  // timings are used verbatim.
+  "zero-config": { cast: "docs/demos/zero-config.cast" },
+  // Legacy: recorded before `pacingSeconds` existed, so every event lands
+  // inside a second and needs an explicit schedule to be watchable.
+  "incident-response": {
+    cast: "docs/demos/incident-response.cast",
+    schedule: [
+      0.5, //  0: "## Investigation\n\n…rose from 120ms to 380ms…" (the big block)
+      7, //  1: "Drafting incident summary for #ops..."
+      12, // 2: "[consent.request] Post to Slack #ops requires consent"
+      17, // 3: "Posted to #ops."
+    ],
+  },
+};
+
+const DEFAULT_DEMO = "zero-config";
 const TRAILING_PAD_SECONDS = 4;
 interface AsciinemaHeader {
   readonly version: 2;
@@ -40,18 +61,21 @@ function parseCast(path: string): { header: AsciinemaHeader; events: AsciinemaEv
   return { header, events };
 }
 
-function stretchCast(input: { header: AsciinemaHeader; events: AsciinemaEvent[] }): string {
-  if (input.events.length !== SCHEDULE_SECONDS.length) {
+function stretchCast(
+  input: { header: AsciinemaHeader; events: AsciinemaEvent[] },
+  schedule: ReadonlyArray<number> | undefined,
+): string {
+  if (schedule !== undefined && input.events.length !== schedule.length) {
     throw new Error(
-      `Cast has ${input.events.length} events but SCHEDULE_SECONDS has ${SCHEDULE_SECONDS.length} entries — update the schedule when adding/removing cast events.`,
+      `Cast has ${input.events.length} events but the schedule has ${schedule.length} entries — update the schedule when adding/removing cast events.`,
     );
   }
   const headerLine = JSON.stringify(input.header);
-  const eventLines = input.events.map((event, idx) => {
-    const tSeconds = SCHEDULE_SECONDS[idx] ?? 0;
-    return JSON.stringify([tSeconds, event[1], event[2]]);
-  });
-  const lastT = SCHEDULE_SECONDS.at(-1) ?? 0;
+  const eventLines = input.events.map((event, idx) =>
+    // No schedule -> the cast was paced at record time; keep its own timings.
+    JSON.stringify([schedule === undefined ? event[0] : (schedule[idx] ?? 0), event[1], event[2]]),
+  );
+  const lastT = schedule === undefined ? (input.events.at(-1)?.[0] ?? 0) : (schedule.at(-1) ?? 0);
   eventLines.push(JSON.stringify([lastT + TRAILING_PAD_SECONDS, "o", ""]));
   return `${[headerLine, ...eventLines].join("\n")}\n`;
 }
@@ -74,11 +98,18 @@ function render(stretchedCastPath: string, outputPath: string, bg: string, fg: s
 }
 
 function main(): void {
-  const cast = parseCast(CAST_INPUT);
-  const stretched = stretchCast(cast);
+  const requested = process.argv[2] ?? DEFAULT_DEMO;
+  const demo = DEMOS[requested];
+  if (demo === undefined) {
+    const known = Object.keys(DEMOS).join(", ");
+    throw new Error(`Unknown demo "${requested}". Known demos: ${known}`);
+  }
+
+  const cast = parseCast(demo.cast);
+  const stretched = stretchCast(cast, demo.schedule);
 
   const workDir = mkdtempSync(join(tmpdir(), "nimbus-hero-cast-"));
-  const stretchedPath = join(workDir, "incident-response.stretched.cast");
+  const stretchedPath = join(workDir, `${requested}.stretched.cast`);
   writeFileSync(stretchedPath, stretched, "utf8");
   try {
     render(stretchedPath, LIGHT_OUT, "#fdf6e3", "#586e75");
@@ -86,7 +117,7 @@ function main(): void {
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
-  console.log(`Rendered ${LIGHT_OUT} and ${DARK_OUT} from ${CAST_INPUT} with stretched schedule.`);
+  console.log(`Rendered ${LIGHT_OUT} and ${DARK_OUT} from ${demo.cast}.`);
 }
 
 main();

@@ -4,7 +4,7 @@ Every artifact here is a committed render — CI verifies the OG card stays in s
 
 ## Hero cast (`hero-cast-{light,dark}.svg`)
 
-Rendered from [`../demos/incident-response.cast`](../demos/incident-response.cast) (an [asciinema](https://asciinema.org/) recording) into two animated standalone SVGs. The README embeds them via `<picture>` with `prefers-color-scheme` to switch between solarized-light and solarized-dark palettes.
+Rendered from [`../demos/zero-config.cast`](../demos/zero-config.cast) (an [asciinema](https://asciinema.org/) recording) into two animated standalone SVGs. The README embeds them via `<picture>` with `prefers-color-scheme` to switch between solarized-light and solarized-dark palettes.
 
 ### Rerendering
 
@@ -14,7 +14,7 @@ Run [`scripts/render-hero-cast.ts`](../../scripts/render-hero-cast.ts):
 bun run render:hero-cast
 ```
 
-This reads the canonical `.cast` (does NOT modify it), re-maps the four event timestamps to a watchable schedule with multi-second reading dwells between text blocks (the captured cast has only ~232 ms between events because it's recorded from a fake-gateway test run — no reading pauses), pipes the stretched cast through `termsvg`, and writes both the light + dark SVGs.
+This reads the canonical `.cast` (does NOT modify it), pipes it through `termsvg`, and writes both the light + dark SVGs. Pass a demo name to render a different one — `bun run render:hero-cast incident-response`; the default is `zero-config`.
 
 #### Prerequisite — install `termsvg`
 
@@ -34,7 +34,9 @@ go install github.com/mrmarble/termsvg/cmd/termsvg@latest
 
 #### Tuning the dwell schedule
 
-The per-event schedule (in seconds) lives in `SCHEDULE_SECONDS` at the top of [`scripts/render-hero-cast.ts`](../../scripts/render-hero-cast.ts). If you add or remove a cast event in `../demos/incident-response.cast`, update the schedule array length to match — the script fails fast if they disagree. Total animation length = last schedule entry + `TRAILING_PAD_SECONDS`.
+Reading pauses normally come from the cast itself: the cast driver paces events at record time via `pacingSeconds` in the demo's YAML, because a captured cast has only a few hundred ms between events (it comes from a fake-gateway test run). A cast recorded that way needs no schedule and is rendered with its own timings.
+
+`incident-response` predates `pacingSeconds` and is the one demo still re-timed at render time, by the `schedule` array in its `DEMOS` entry in [`scripts/render-hero-cast.ts`](../../scripts/render-hero-cast.ts). If you add or remove one of its cast events, update that array's length to match — the script fails fast if they disagree. Total animation length = last event time + `TRAILING_PAD_SECONDS`.
 
 Sanity check the result by opening each SVG in a browser — it should play automatically, loop infinitely, and each text block should be readable. Each file should land in the 10–30 KiB range; significantly smaller means the cast didn't render properly.
 

@@ -18,7 +18,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-cast-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="./assets/hero-cast-light.svg">
-  <img alt="Nimbus incident-response demo: 18-second walkthrough of nimbus ask correlating a PagerDuty alert with the recent deploy and PR, with consent-gated Slack post and rollback decisions." src="./assets/hero-cast-light.svg" width="720">
+  <img alt="Nimbus zero-config demo: nimbus init registers the current git repository for code indexing, the filesystem connector syncs it, and nimbus why traces a line back to its commit, pull request, ticket and incident — with no credentials, no API key and no LLM configured." src="./assets/hero-cast-light.svg" width="720">
 </picture>
 
 </div>
