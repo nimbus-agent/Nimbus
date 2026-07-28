@@ -109,11 +109,20 @@ Give **every** matrix entry an explicit `pal` field — `true` for the seven
 above, `false` for the other seventeen — and gate the job:
 
 ```yaml
-if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
+if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
 ```
 
 The field is explicit rather than defaulted so that a newly added gate cannot
 inherit Linux-only treatment silently; Change C enforces that.
+
+`inputs.run-tests` is gated explicitly in the condition rather than relied
+upon implicitly through the `needs: unit-coverage` skip chain, matching how
+every sibling job in `_test-suite.yml` gates on it directly (`static`,
+`unit-coverage`, `integration`, `e2e-gateway`, `e2e-cli`, `packaging`). Without
+it, a docs-only PR caller (`pr-quality-ts` with `runner: ubuntu-24.04` and
+`run-tests: false`) makes the first clause of the condition unconditionally
+true, so the condition itself offers no protection for that caller — it would
+depend entirely on `needs: unit-coverage` skipping.
 
 Coverage gates go **72 → 38**; a push run goes **105 → 71**.
 

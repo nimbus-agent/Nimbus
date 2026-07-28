@@ -749,8 +749,12 @@ jobs:
     # per OS. Skipped matrix legs still create their check context, so no
     # required check is left "Expected — Waiting for status to be reported".
     # `scripts/structure-audit/check-coverage-gate-pal.ts` fails if a Linux-only
-    # gate's code ever gains platform branching.
-    if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
+    # gate's code ever gains platform branching. `inputs.run-tests` is gated
+    # explicitly here (rather than relied upon through the `needs: unit-coverage`
+    # skip chain) to match how every sibling job in this file gates on it
+    # directly (`static`, `unit-coverage`, `integration`, `e2e-gateway`,
+    # `e2e-cli`, `packaging`).
+    if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
     needs: unit-coverage
     runs-on: ${{ inputs.runner }}
     permissions:
