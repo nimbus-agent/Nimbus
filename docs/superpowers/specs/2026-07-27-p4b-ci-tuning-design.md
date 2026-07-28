@@ -96,11 +96,15 @@ here so a future reader can overturn it rather than rediscover it.
 
 ### Mechanism
 
-Add `pal: true` to the six matrix entries and gate the job:
+Give **every** matrix entry an explicit `pal` field — `true` for the six above,
+`false` for the other eighteen — and gate the job:
 
 ```yaml
 if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
 ```
+
+The field is explicit rather than defaulted so that a newly added gate cannot
+inherit Linux-only treatment silently; Change C enforces that.
 
 Coverage gates go **72 → 36**; a push run goes **105 → 69**.
 
@@ -142,6 +146,34 @@ This keeps the prerequisite that carries meaning — a broken Tauri/Rust build
 makes E2E Desktop unrunnable — and drops a ~33-minute wait on 24 coverage shards
 that tell E2E nothing.
 
+## Change C — stop the PAL classification rotting silently
+
+Changes A and B are point-in-time judgements about which code branches on
+platform. Without a guard, the day someone adds `process.platform` to a
+Linux-only gate's code, coverage on Windows and macOS quietly stops watching it
+and **nothing fails**. That is the same silent-decay failure mode the
+measurement slice had to guard for the `created_at` assumption.
+
+A directory scan over the 18 Linux-only gates cannot do this job: the coverage
+scripts name *test* paths (`test:coverage:db` runs
+`packages/gateway/test/unit/db`, never naming `src/db`), coverage is measured
+over files loaded at runtime including transitive imports, and cross-platform
+tests branch on `process.platform` legitimately — so such a scan would be both
+incomplete and full of false positives.
+
+`scripts/structure-audit/check-coverage-gate-pal.ts` inverts it, following the
+D10–D22 confinement pattern already used for tool ids and dispatch sites:
+
+1. Enumerate every source file branching on platform (`process.platform`,
+   `os.platform()`) or importing an OS-named module (`win32`/`darwin`/`linux`).
+2. Require each in a checked-in allowlist entry declaring **which coverage gate
+   covers it**.
+3. Cross-check that the declared gate carries `pal: true` in the matrix.
+4. Require every matrix entry to carry an explicit `pal` field.
+
+A new platform-branching file then fails the audit until its author either
+refactors it behind the PAL or promotes its gate to `pal: true`.
+
 ## Verification — and why our own gate cannot do it
 
 `audit:ci-latency` gates on **execution** time. This change barely moves
@@ -163,12 +195,22 @@ proof is instead:
 created-but-waiting materially reduced. If the measured result contradicts these
 numbers, the recorded outcome is the measurement — not the prediction.
 
-**Baseline note.** `docs/structure-audit/ci-latency-baseline.json` holds entries
-for the 36 coverage keys that will stop being produced on macOS and Windows.
-`evaluate` reports an absent key as `stale-baseline-entry` — a warning, never a
-regression — and `computeUpdatedBaseline` drops keys absent from the window. So
-the gate stays green throughout, and the baseline is regenerated once after the
-change lands.
+**Baseline note — and when to regenerate.**
+`docs/structure-audit/ci-latency-baseline.json` holds entries for the 36
+coverage keys that stop being produced on macOS and Windows. `evaluate` reports
+an absent key as `stale-baseline-entry` — a warning, never a regression — so the
+gate stays green throughout.
+
+Regeneration timing follows the sampling window, not the merge.
+`MAX_RUNS_PER_WORKFLOW` is 12, so immediately after this lands the window still
+contains pre-change runs carrying those keys; they keep receiving observations
+and produce no warnings yet. Running `--update-baseline` inside the PR would be
+a **no-op** — `computeUpdatedBaseline` drops only keys absent from the window,
+and they are present. Deleting them by hand is no better: `evaluate` would then
+report `new-key` for each while the pre-change runs remain in the window.
+
+So: **regenerate once roughly 12 post-change push runs have accumulated**, when
+the abandoned keys have aged out of the window.
 
 ## Risks
 
@@ -176,7 +218,8 @@ change lands.
 | --- | --- |
 | Losing per-OS coverage signal on 18 gates | Bounded by the static sweep above. Recorded as a judgement, not a proof. |
 | Non-Negotiable #5, platform equality | Every test still executes on all 3 OSes via `static`, `unit`, `integration`, `e2e-gateway`, `e2e-cli`. Only *threshold enforcement* narrows. Read as compatible; flagged for the owner's ruling. |
-| A TS-failing, Rust-passing `main` commit burns E2E runners | Post-merge only, and the commit already cleared the PR gates. Accepted. |
+| A TS-failing, Rust-passing `main` commit burns E2E runners | **Deferred, on measured data.** 2 of the last 40 `main` commits arrived without a PR (`a91d73ec`, `7176dd49`) — both `ci(cla)` workflow commits, neither touching TypeScript. The residual case is two green PRs merging into a semantic conflict. Guarding it has real cost: no standalone fast typecheck exists (`Static`, 4.57 min, is inside `_test-suite.yml` and unreachable by `needs:`), so it would mean a new job duplicating typecheck on every push plus ~3 min of DAG depth added back. `CI — Structure audit` (0.83 min) was evaluated as a cheap substitute and rejected — it runs `audit:boundaries`/`invariants`/`release-please`, not typecheck. **Trigger to adopt:** a `main` E2E run observed burning on a TS compile failure. |
+| Cross-job cancellation as an alternative guard | **Not available.** GitHub Actions cannot cancel a job with no `needs` relationship to the failing one; `fail-fast` operates within a matrix, not across jobs. Removing the edge removes the cancellation relationship by definition. |
 | Fewer jobs could mask a future regression in the removed legs | The removed legs are threshold *enforcement*, not test execution. A behavioural break still fails the 3-OS suites. |
 
 ## Out of scope
