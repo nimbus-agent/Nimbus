@@ -21,6 +21,11 @@ setup:
 
 events: zero-config/events.json
 
+# Harness timings are wall-clock from the test run — every event lands inside a
+# second, so an unpaced upload flashes past before it can be read. 3s a beat
+# gives a viewer time to take in each command's output.
+pacingSeconds: 3
+
 steps:
   # `--no-sync` keeps recording deterministic: plain `nimbus init` would start a
   # real gateway, which a cast harness cannot do reproducibly. The next step

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDriver } from "./driver.ts";
@@ -132,5 +132,97 @@ describe("runDriver", () => {
     expect(existsSync(join(artifactsDir, "z.actual.txt"))).toBe(true);
     expect(existsSync(join(artifactsDir, "z.diff"))).toBe(true);
     expect(existsSync(join(artifactsDir, "z.cast"))).toBe(true);
+  });
+});
+
+describe("runDriver — the .cast is a publishable artifact", () => {
+  function multiChunkHarness(datas: readonly string[]): () => Promise<HarnessRun> {
+    return async () => ({
+      captures: datas.map((d, i) => ({
+        input: `nimbus step-${String(i)}`,
+        capture: {
+          chunks: [{ tMs: 100 + i, data: d }],
+          stderr: "",
+          exitCode: 0,
+          timedOut: false,
+        },
+      })),
+      tmpDirPrefix: workDir,
+    });
+  }
+
+  test("the recording machine's temp path never reaches the cast", async () => {
+    // The cast gets uploaded to asciinema and rendered into the docs hero, so
+    // it needs the same scrubbing as the snapshot. Built from raw chunks it
+    // leaked the recorder's tmpdir — and therefore their username.
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(workDir, "x", MIN_YAML, MIN_EVENTS);
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: multiChunkHarness([`Added ${join(workDir, "sample-repo")} to nimbus.toml\n`]),
+    });
+    const cast = readFileSync(join(demosRoot, "x.cast"), "utf8");
+    expect(cast).not.toContain(workDir);
+    expect(cast).toContain("<TMP>/sample-repo");
+  });
+
+  test("without pacingSeconds the raw harness timings are preserved", async () => {
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(workDir, "x", MIN_YAML, MIN_EVENTS);
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: multiChunkHarness(["a\n", "b\n"]),
+    });
+    const lines = readFileSync(join(demosRoot, "x.cast"), "utf8").trim().split("\n").slice(1);
+    expect(JSON.parse(lines[0] ?? "[]")[0]).toBe(0.1);
+    expect(JSON.parse(lines[1] ?? "[]")[0]).toBe(0.101);
+  });
+
+  test("pacingSeconds re-times events evenly for playback", async () => {
+    const paced = `name: x\ndescription: t\nevents: x/events.json\npacingSeconds: 3\nsteps:\n  - input: nimbus test\n`;
+    const { yamlPath, fixturesRoot, demosRoot } = scaffold(workDir, "x", paced, MIN_EVENTS);
+    await runDriver({
+      mode: "update",
+      scriptPaths: [yamlPath],
+      demosRoot,
+      fixturesRoot,
+      artifactsDir: undefined,
+      harness: multiChunkHarness(["a\n", "b\n", "c\n"]),
+    });
+    const lines = readFileSync(join(demosRoot, "x.cast"), "utf8").trim().split("\n").slice(1);
+    expect(lines.map((l) => JSON.parse(l)[0])).toEqual([3, 6, 9]);
+  });
+
+  test("pacing changes the cast but NOT the snapshot hash", async () => {
+    // The hash is the drift tripwire; it must track what the demo SAYS, not how
+    // fast it plays, or re-pacing would read as a behavioural regression.
+    const base = scaffold(workDir, "x", MIN_YAML, MIN_EVENTS);
+    const unpaced = await runDriver({
+      mode: "update",
+      scriptPaths: [base.yamlPath],
+      demosRoot: base.demosRoot,
+      fixturesRoot: base.fixturesRoot,
+      artifactsDir: undefined,
+      harness: multiChunkHarness(["a\n", "b\n"]),
+    });
+    writeFileSync(
+      base.yamlPath,
+      `name: x\ndescription: t\nevents: x/events.json\npacingSeconds: 2\nsteps:\n  - input: nimbus test\n`,
+    );
+    const pacedRun = await runDriver({
+      mode: "update",
+      scriptPaths: [base.yamlPath],
+      demosRoot: base.demosRoot,
+      fixturesRoot: base.fixturesRoot,
+      artifactsDir: undefined,
+      harness: multiChunkHarness(["a\n", "b\n"]),
+    });
+    expect(pacedRun.summaries[0]?.hash).toBe(unpaced.summaries[0]?.hash);
   });
 });

@@ -41,6 +41,22 @@ function loadEvents(fixturesRoot: string, eventsRel: string): EventsScript {
   return raw as EventsScript;
 }
 
+/**
+ * Re-time a recording for human playback.
+ *
+ * Harness timings are wall-clock from the test run — every event lands inside
+ * a second, so a viewer sees the whole demo flash past. Spacing events evenly
+ * makes the cast watchable without touching what it says. Opt-in per script:
+ * omitted, the raw timings are preserved so existing casts are unchanged.
+ */
+function paceChunks(
+  chunks: ReadonlyArray<CastChunk>,
+  pacingSeconds: number | undefined,
+): CastChunk[] {
+  if (pacingSeconds === undefined || chunks.length === 0) return [...chunks];
+  return chunks.map((c, i) => ({ tMs: Math.round((i + 1) * pacingSeconds * 1000), data: c.data }));
+}
+
 export async function runDriver(opts: DriverOpts): Promise<DriverResult> {
   const summaries: ScriptSummary[] = [];
   let exitCode = 0;
@@ -53,14 +69,28 @@ export async function runDriver(opts: DriverOpts): Promise<DriverResult> {
 
     const run = await opts.harness({ compiled, events, cliEntry });
 
-    const allChunks: CastChunk[] = run.captures.flatMap((c) => c.capture.chunks);
+    const normCtx = {
+      tmpDirPrefix: run.tmpDirPrefix,
+      homePrefix: process.env["HOME"] ?? process.env["USERPROFILE"] ?? "",
+    };
+    // The .cast is a PUBLISHABLE artifact (it gets uploaded to asciinema and
+    // rendered into the docs hero), so it needs exactly the scrubbing the
+    // snapshot gets. Building it from raw chunks leaked the recording machine's
+    // temp path — and therefore its username — into a committed file. Nothing
+    // caught it earlier only because no existing demo printed a path.
+    const allChunks: CastChunk[] = paceChunks(
+      run.captures.flatMap((c) =>
+        c.capture.chunks.map((k) => ({
+          tMs: k.tMs,
+          data: applyNormalization(new TextEncoder().encode(k.data), normCtx),
+        })),
+      ),
+      compiled.script.pacingSeconds,
+    );
     const allBytes = new TextEncoder().encode(
       run.captures.map((c) => c.capture.chunks.map((k) => k.data).join("")).join(""),
     );
-    const transcript = applyNormalization(allBytes, {
-      tmpDirPrefix: run.tmpDirPrefix,
-      homePrefix: process.env["HOME"] ?? process.env["USERPROFILE"] ?? "",
-    });
+    const transcript = applyNormalization(allBytes, normCtx);
     const hash = await sha256Hex(transcript);
 
     const name = basename(scriptPath, ".yaml");

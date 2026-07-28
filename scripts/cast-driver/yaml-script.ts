@@ -41,6 +41,11 @@ export interface CastScript {
   readonly description: string;
   readonly events: string;
   readonly setup?: SetupSpec;
+  /**
+   * Seconds between events in the emitted `.cast`, for playback pacing.
+   * Omitted -> keep the raw harness timings (existing casts are unaffected).
+   */
+  readonly pacingSeconds?: number;
   readonly steps: ReadonlyArray<Step>;
 }
 
@@ -142,11 +147,16 @@ export function parseCastScript(yaml: string): CompiledScript {
   if (!Array.isArray(stepsRaw)) fail('"steps" must be a list');
   const steps = stepsRaw.map((s, idx) => parseStep(s, idx));
   const setup = parseSetup(r["setup"]);
+  const pacingRaw = r["pacingSeconds"];
+  if (pacingRaw !== undefined && (typeof pacingRaw !== "number" || !(pacingRaw > 0))) {
+    fail('"pacingSeconds" must be a positive number');
+  }
   const script: CastScript = {
     name: asString(r["name"], "name"),
     description: asString(r["description"], "description"),
     events: asString(r["events"], "events"),
     ...(setup === undefined ? {} : { setup }),
+    ...(typeof pacingRaw === "number" ? { pacingSeconds: pacingRaw } : {}),
     steps,
   };
   const groups: InputGroup[] = [];
