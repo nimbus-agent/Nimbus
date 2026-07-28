@@ -6,7 +6,7 @@ name: Test Suite
 # Structure: split into parallel jobs so the PR critical path is the max
 # of the longest job, not the sum. The old monolithic `test` job ran for
 # ~9.5 min on ubuntu PRs; with this split the critical path is the
-# `unit-coverage` job (~5 min on ubuntu) plus the `coverage-gates` matrix
+# `unit-coverage` job (~5 min on ubuntu) plus the `coverage-gates-*` matrices
 # (~1 min), and the other jobs run alongside.
 on:
   workflow_call:
@@ -101,7 +101,7 @@ jobs:
 
   # ── Unit tests + UI + coverage + Sonar ─────────────────────────────────────
   # The longest single job. Produces the merged coverage/lcov.info that the
-  # coverage-gates matrix and the per-file coverage floor consume.
+  # coverage-gates-* matrices and the per-file coverage floor consume.
   unit-coverage:
     name: Unit + Coverage — ${{ inputs.runner }}
     if: inputs.run-tests
@@ -741,20 +741,169 @@ jobs:
 
   # Run coverage gates in parallel to reduce critical path.
   # These re-run specific tests to enforce thresholds.
-  coverage-gates:
+  #
+  # SPLIT INTO TWO JOBS DELIBERATELY — do not merge them back together.
+  #
+  # Threshold gates run on Linux only, EXCEPT the gates whose covered code
+  # branches on host platform (`pal: true`), which run on all three OSes. A push
+  # run was ~105 jobs against a pool granting ~15 concurrent, and 72 of those
+  # were one 24-entry coverage matrix expanded once per OS; the split cuts that
+  # to 42 (9 PAL × 3 OS + 15 Linux-only × 1).
+  #
+  # The obvious single-job spelling was tried first and is WRONG:
+  #
+  #     if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
+  #
+  # `matrix` is NOT in the context set available to a job-level `if:` — GitHub
+  # grants `jobs.<job_id>.if` only `github`, `needs`, `vars` and `inputs`,
+  # because the job condition is evaluated BEFORE the matrix expands. That
+  # spelling therefore evaluates falsy (or errors) on Windows and macOS and
+  # silently skips ALL coverage gates there, including the very `pal: true`
+  # gates whose preservation is the entire safety argument for running the rest
+  # on Linux only. Every other `matrix.`-referencing `if:` in this repo is
+  # step-level (8-space), where `matrix` IS available. Hence: one job per class,
+  # each gated only on `inputs`, which a job-level `if:` does support.
+  #
+  # The `fromJSON(...)` single-job alternative is NOT acceptable either: it
+  # drops the leg from the matrix entirely, and a leg that never expands never
+  # creates its check context. A SKIPPED leg does create one. This repo depends
+  # on that — see the trap documented on `pr-quality-ts` in
+  # `.github/workflows/ci.yml`, where an un-created child context sat
+  # "Expected — Waiting for status to be reported" forever and blocked merges.
+  #
+  # Both jobs MUST keep the identical `name:` template below. `name:` DOES
+  # accept `matrix`, and the expanded check-context names
+  # (`Coverage — Vault (ubuntu-24.04)` …) are what branch protection references;
+  # changing them breaks the required contexts.
+  #
+  # Every entry keeps its `pal:` field even though no `if:` reads it any more.
+  # It is the machine-readable classification `audit:coverage-gate-pal`
+  # (`scripts/structure-audit/check-coverage-gate-pal.ts`) enforces: that gate
+  # fails when a Linux-only gate's code gains platform branching, when an entry
+  # sits in the wrong job, when a new entry carries no explicit `pal`, and when
+  # either `if:` below drifts from the condition it is supposed to carry.
+  #
+  # `inputs.run-tests` is gated explicitly on both jobs (rather than relied upon
+  # through the `needs: unit-coverage` skip chain) to match how every sibling job
+  # in this file gates on it directly (`static`, `unit-coverage`, `integration`,
+  # `e2e-gateway`, `e2e-cli`, `packaging`).
+
+  # PAL gates (9) — covered code branches on host platform, so these run on
+  # every OS the workflow is called with.
+  coverage-gates-pal:
     name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
-    # Threshold gates run on Linux only, EXCEPT gates whose covered code
-    # branches on platform (`pal: true`). A push run was ~105 jobs against a
-    # pool granting ~15 concurrent, and 72 of those were this matrix run once
-    # per OS. Skipped matrix legs still create their check context, so no
-    # required check is left "Expected — Waiting for status to be reported".
-    # `scripts/structure-audit/check-coverage-gate-pal.ts` fails if a Linux-only
-    # gate's code ever gains platform branching. `inputs.run-tests` is gated
-    # explicitly here (rather than relied upon through the `needs: unit-coverage`
-    # skip chain) to match how every sibling job in this file gates on it
-    # directly (`static`, `unit-coverage`, `integration`, `e2e-gateway`,
-    # `e2e-cli`, `packaging`).
-    if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
+    if: inputs.run-tests
+    needs: unit-coverage
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - name: Vault
+            script: "test:coverage:vault"
+            pal: true
+          - name: Embedding
+            script: "test:coverage:embedding"
+            pal: true
+          - name: Extensions
+            script: "test:coverage:extensions"
+            pal: true
+          - name: Telemetry
+            script: "test:coverage:telemetry"
+            pal: true
+          - name: DB layer
+            script: "test:coverage:db"
+            pal: true
+          - name: Doctor
+            script: "test:coverage:doctor"
+            pal: true
+          - name: Updater
+            script: "test:coverage:updater"
+            pal: true
+          - name: Perf
+            script: "test:coverage:perf"
+            pal: true
+          - name: Sandbox
+            script: "test:coverage:sandbox"
+            pal: true
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun and install dependencies
+        uses: ./.github/actions/setup-nimbus-ci
+
+      - name: Linux — libsecret + D-Bus (vault tests)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Vault'
+        shell: bash
+        run: sudo bash scripts/linux/install-vault-deps.sh
+
+      - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: |
+          # Drop the GHA runner's preinstalled Microsoft apt repos (azure-cli + prod);
+          # they periodically 403 and fail `apt-get update` wholesale. Not needed here.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
+
+      - name: Build sandbox helper (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: bun run build:sandbox-helper
+
+      - name: Static-analyse sandbox helper with cppcheck (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
+
+      - name: Setcap on sandbox helper (Linux only, sandbox gate)
+        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+        shell: bash
+        run: sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
+
+      - name: Run coverage gate
+        shell: bash
+        run: |
+          if [[ "${{ matrix.gate.name }}" == "Vault" && "${{ runner.os }}" == "Linux" ]]; then
+            bash scripts/ci/run-with-optional-dbus.sh bun run ${{ matrix.gate.script }}
+          else
+            bun run ${{ matrix.gate.script }}
+          fi
+        env:
+          CI: "true"
+
+      - name: Upload coverage to Codecov
+        # See note on the unit-test Codecov step: this upload is supplementary,
+        # not the gate. `continue-on-error` tolerates intermittent OIDC pre-step
+        # failures on Windows-2025 without masking real coverage-threshold
+        # regressions, which are enforced earlier by the `Run coverage gate`
+        # step's `bun run` exit code.
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          # No `token:` — same reason as the upload step above (Nimbus#782).
+          use_oidc: true
+          flags: ${{ matrix.gate.name }}
+
+  # Linux-only gates (15) — no file in their coverage denominator branches on
+  # host platform, which `audit:coverage-gate-pal` re-checks on every run. The
+  # `ubuntu-24.04` literal below must match the runner label `ci.yml` actually
+  # calls this workflow with; the same audit asserts that too, so bumping the
+  # runner in one place cannot silently drop these 15 gates.
+  coverage-gates-linux:
+    name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
+    if: inputs.run-tests && inputs.runner == 'ubuntu-24.04'
     needs: unit-coverage
     runs-on: ${{ inputs.runner }}
     permissions:
@@ -770,9 +919,6 @@ jobs:
           - name: Agents
             script: "test:coverage:agents"
             pal: false
-          - name: Vault
-            script: "test:coverage:vault"
-            pal: true
           - name: Sync scheduler
             script: "test:coverage:sync"
             pal: false
@@ -782,29 +928,17 @@ jobs:
           - name: People
             script: "test:coverage:people"
             pal: false
-          - name: Embedding
-            script: "test:coverage:embedding"
-            pal: false
           - name: Workflow
             script: "test:coverage:workflow"
             pal: false
           - name: Watcher
             script: "test:coverage:watcher"
             pal: false
-          - name: Extensions
-            script: "test:coverage:extensions"
-            pal: true
           - name: Config
             script: "test:coverage:config"
             pal: false
-          - name: Telemetry
-            script: "test:coverage:telemetry"
-            pal: true
           - name: TUI
             script: "test:coverage:tui"
-            pal: false
-          - name: DB layer
-            script: "test:coverage:db"
             pal: false
           - name: Deployment
             script: "test:coverage:deployment"
@@ -818,24 +952,12 @@ jobs:
           - name: Preflight
             script: "test:coverage:preflight"
             pal: false
-          - name: Doctor
-            script: "test:coverage:doctor"
-            pal: true
           - name: MCP
             script: "test:coverage:mcp"
             pal: false
-          - name: Updater
-            script: "test:coverage:updater"
-            pal: true
           - name: LAN
             script: "test:coverage:lan"
             pal: false
-          - name: Perf
-            script: "test:coverage:perf"
-            pal: true
-          - name: Sandbox
-            script: "test:coverage:sandbox"
-            pal: true
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0

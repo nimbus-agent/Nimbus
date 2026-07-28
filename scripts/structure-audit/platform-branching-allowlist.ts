@@ -13,9 +13,15 @@
  * file was classified, not that it is protected. Coverage is measured over
  * files loaded at runtime including transitive imports, which cannot be derived
  * statically from the gate's test paths — so this audit guarantees that new
- * platform-branching code is CLASSIFIED, and that the seven PAL gates stay
+ * platform-branching code is CLASSIFIED, and that the nine PAL gates stay
  * `pal: true`. It does not prove a `gate: "none"` file never becomes covered by
  * a `pal: false` gate.
+ *
+ * That limitation is not theoretical: `index/sqlite-vec-load.ts` was originally
+ * filed `gate: "none"` and the whole-branch review found it reachable from BOTH
+ * the Embedding and DB layer gates via static imports. Both were promoted to
+ * `pal: true`. When adding an entry, follow the static imports before writing
+ * "none".
  */
 
 export interface PlatformFileEntry {
@@ -92,6 +98,11 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     gate: "Sandbox",
     why: "selects the per-OS sandbox implementation",
   },
+  {
+    file: "packages/gateway/src/index/sqlite-vec-load.ts",
+    gate: "Embedding",
+    why: "per-OS native extension filename; reaches BOTH the Embedding and the DB layer gates through static imports — embedding/lazy-scheduler.ts (plus create-routing-runtime.ts and embedding-worker.ts) and index/migrations/runner.ts each import it, so it lands in both gates' coverage denominators. Only one gate can be named here; both were promoted to `pal: true` together, and neither may be demoted while this entry stands",
+  },
 
   // ── Not covered by any coverage-threshold gate ────────────────────────────
   {
@@ -125,11 +136,6 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
     file: "packages/gateway/src/index/registered-roots-store.ts",
     gate: "none",
     why: "per-OS path normalisation",
-  },
-  {
-    file: "packages/gateway/src/index/sqlite-vec-load.ts",
-    gate: "none",
-    why: "per-OS native extension filename",
   },
   {
     file: "packages/gateway/src/ipc/server/dispatchers.ts",
