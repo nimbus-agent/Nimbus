@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.4.1](https://github.com/nimbus-agent/Nimbus/compare/v1.4.0...v1.4.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **gateway:** nimbus init could never index — connector.sync rejected every local syncable ([#895](https://github.com/nimbus-agent/Nimbus/issues/895)) ([f16b012](https://github.com/nimbus-agent/Nimbus/commit/f16b012cd2d4af2f2bc3ccf90cf74cc34ab12a99))
+
+
+### Performance Improvements
+
+* **ci:** cut a push run 105 -&gt; 75 jobs — CI was queueing behind its own fan-out ([#894](https://github.com/nimbus-agent/Nimbus/issues/894)) ([1462894](https://github.com/nimbus-agent/Nimbus/commit/146289412bcc865d8583093a25a747c5fb979563))
+
 ## [1.4.0](https://github.com/nimbus-agent/Nimbus/compare/v1.3.0...v1.4.0) (2026-07-28)
 
 
