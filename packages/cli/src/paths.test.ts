@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,5 +201,43 @@ describe("getCliPlatformPaths — linux branch", () => {
     const paths = getCliPlatformPaths();
     expect(paths.configDir).toBe(join(homedir(), ".config", "nimbus"));
     expect(paths.dataDir).toBe(join(homedir(), ".local", "share", "nimbus"));
+  });
+});
+
+describe("NIMBUS_CONFIG_DIR override", () => {
+  const saved = process.env["NIMBUS_CONFIG_DIR"];
+  afterEach(() => {
+    if (saved === undefined) {
+      delete process.env["NIMBUS_CONFIG_DIR"];
+    } else {
+      process.env["NIMBUS_CONFIG_DIR"] = saved;
+    }
+  });
+
+  test("overrides configDir on the current platform", () => {
+    // The gateway honours this in platform/paths.ts; the CLI MUST agree or
+    // `nimbus init` writes nimbus.toml somewhere the gateway never reads.
+    const target = join(tmpdir(), "nimbus-cli-config-override");
+    process.env["NIMBUS_CONFIG_DIR"] = target;
+    expect(getCliPlatformPaths().configDir).toBe(target);
+  });
+
+  test("leaves dataDir alone — only configDir moves", () => {
+    // Deliberate: this must never be able to silently repoint a live gateway's
+    // database or socket.
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    const before = getCliPlatformPaths();
+    process.env["NIMBUS_CONFIG_DIR"] = join(tmpdir(), "nimbus-cli-config-override");
+    const after = getCliPlatformPaths();
+    expect(after.dataDir).toBe(before.dataDir);
+    expect(after.socketPath).toBe(before.socketPath);
+    expect(after.extensionsDir).toBe(before.extensionsDir);
+  });
+
+  test("an empty value is ignored, not treated as a relocation", () => {
+    delete process.env["NIMBUS_CONFIG_DIR"];
+    const before = getCliPlatformPaths().configDir;
+    process.env["NIMBUS_CONFIG_DIR"] = "";
+    expect(getCliPlatformPaths().configDir).toBe(before);
   });
 });

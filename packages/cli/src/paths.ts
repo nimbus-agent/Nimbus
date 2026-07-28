@@ -35,6 +35,23 @@ function defaultSocketPath(): string {
   }
 }
 
+/**
+ * Test/CI seam for relocating the config directory.
+ *
+ * Mirrors `configDirOverride()` in gateway/src/platform/paths.ts and MUST stay
+ * in step with it: `nimbus init` writes nimbus.toml through this module while
+ * the gateway reads it through that one, so a one-sided override would have the
+ * CLI writing config the gateway never reads.
+ *
+ * Only `configDir` moves — `dataDir`, `socketPath`, and `extensionsDir`
+ * deliberately do not, so this cannot silently repoint a live gateway's
+ * database or socket.
+ */
+function configDirOverride(): string | undefined {
+  const v = envGet("NIMBUS_CONFIG_DIR");
+  return v !== undefined && v.length > 0 ? v : undefined;
+}
+
 export function getCliPlatformPaths(): CliPlatformPaths {
   switch (process.platform) {
     case "win32": {
@@ -48,7 +65,7 @@ export function getCliPlatformPaths(): CliPlatformPaths {
           "LOCALAPPDATA is not set. Nimbus requires a standard Windows user profile.",
         );
       }
-      const configDir = join(appData, "Nimbus");
+      const configDir = configDirOverride() ?? join(appData, "Nimbus");
       const dataDir = join(localAppData, "Nimbus", "data");
       return {
         configDir,
@@ -62,7 +79,10 @@ export function getCliPlatformPaths(): CliPlatformPaths {
     case "darwin": {
       const root = join(homedir(), "Library", "Application Support", "Nimbus");
       return {
-        configDir: root,
+        // NOT shorthand: darwin returns `root` for BOTH configDir and dataDir,
+        // so the override must be applied to this property explicitly —
+        // computing it and leaving `configDir: root` would be inert.
+        configDir: configDirOverride() ?? root,
         dataDir: root,
         logDir: join(root, "logs"),
         socketPath: resolveSocketPath(),
@@ -74,7 +94,7 @@ export function getCliPlatformPaths(): CliPlatformPaths {
       const home = homedir();
       const configRoot = envGet("XDG_CONFIG_HOME") ?? join(home, ".config");
       const dataRoot = envGet("XDG_DATA_HOME") ?? join(home, ".local", "share");
-      const configDir = join(configRoot, "nimbus");
+      const configDir = configDirOverride() ?? join(configRoot, "nimbus");
       const dataDir = join(dataRoot, "nimbus");
       return {
         configDir,
