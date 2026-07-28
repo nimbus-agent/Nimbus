@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.5.0](https://github.com/nimbus-agent/Nimbus/compare/v1.4.3...v1.5.0) (2026-07-28)
+
+
+### Features
+
+* **ci:** close out P4b — after-measurement, co-gate enforcement, sweep proof ([#901](https://github.com/nimbus-agent/Nimbus/issues/901)) ([eaa1999](https://github.com/nimbus-agent/Nimbus/commit/eaa199953e2253cf03d24b7efb82d64a12bbb872))
+
 ## [1.4.3](https://github.com/nimbus-agent/Nimbus/compare/v1.4.2...v1.4.3) (2026-07-28)
 
 
