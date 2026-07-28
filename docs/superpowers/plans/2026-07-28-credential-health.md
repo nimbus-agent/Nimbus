@@ -20,6 +20,12 @@
 - Cross-platform: build paths with `path.join()`, never hardcoded separators.
 - Every new source file gets a sibling `*.test.ts`, matching `packages/gateway/src/egress/`.
 - Run `bun run lint` and `bun run typecheck` before every commit.
+- **Work on a `dev/<you>/<topic>` branch — never `main` or `develop`.** Verify with
+  `git rev-parse --abbrev-ref HEAD` before the first commit.
+- **Run `bun run preflight:fast` before pushing**, and the full `bun run preflight`
+  when logic or tests changed. `test:ci` is NOT the full gate set. The per-task
+  commit steps below show `lint`/`typecheck` only because those are the fast
+  inner loop; they do not replace preflight before a PR.
 
 ## File Structure
 
@@ -622,6 +628,7 @@ Read `packages/gateway/src/index/migrations/runner-v44.test.ts` first and mirror
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
+import { dbRun } from "../../db/write.ts";
 
 // Use whatever helper runner-v44.test.ts uses to build a migrated DB.
 import { migrateToCurrent } from "./runner.ts"; // adjust to the real export name
@@ -640,16 +647,21 @@ describe("v45 — credential_health", () => {
     const names = cols.map((c) => c.name).sort();
     expect(names).toEqual([
       "connector_id", "detail", "expires_at", "expiry_source",
-      "last_checked_at", "last_ok_at", "observed_status", "observed_via", "vault_key",
+      "last_attempt_at", "last_checked_at", "last_ok_at",
+      "observed_status", "observed_via", "vault_key",
     ]);
   });
 
   test("vault_key is the primary key", () => {
     const db = new Database(":memory:");
     migrateToCurrent(db);
-    db.run("INSERT INTO credential_health (vault_key, connector_id, observed_status, observed_via) VALUES ('a.token','a','ok','sync')");
+    // dbRun, not raw db.run() — the D12 static check forbids raw writes, and
+    // this plan's own Global Constraints say so. Tests are not exempt.
+    dbRun(db, "INSERT INTO credential_health (vault_key, connector_id, observed_status, observed_via) VALUES (?,?,?,?)",
+      ["a.token", "a", "ok", "sync"]);
     expect(() =>
-      db.run("INSERT INTO credential_health (vault_key, connector_id, observed_status, observed_via) VALUES ('a.token','a','dead','sync')"),
+      dbRun(db, "INSERT INTO credential_health (vault_key, connector_id, observed_status, observed_via) VALUES (?,?,?,?)",
+        ["a.token", "a", "dead", "sync"]),
     ).toThrow();
   });
 
@@ -684,6 +696,7 @@ CREATE TABLE IF NOT EXISTS credential_health (
   observed_status TEXT NOT NULL CHECK (observed_status IN ('ok','dead','unknown')),
   observed_via    TEXT NOT NULL CHECK (observed_via IN ('sync','probe')),
   last_checked_at INTEGER,
+  last_attempt_at INTEGER,
   last_ok_at      INTEGER,
   detail          TEXT,
   expires_at      INTEGER,
@@ -894,14 +907,16 @@ export function recordObservation(db: Database, o: Observation): void {
       db,
       `INSERT INTO credential_health
          (vault_key, connector_id, observed_status, observed_via,
-          last_checked_at, last_ok_at, detail, expires_at, expiry_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_checked_at, last_attempt_at, last_ok_at, detail, expires_at, expiry_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(vault_key) DO UPDATE SET
          connector_id    = excluded.connector_id,
          observed_status = excluded.observed_status,
          observed_via    = excluded.observed_via,
          last_checked_at = excluded.last_checked_at,
-         last_ok_at      = COALESCE(excluded.last_ok_at, credential_health.last_ok_at),
+         last_attempt_at = excluded.last_attempt_at,
+         last_ok_at      = MAX(COALESCE(excluded.last_ok_at, 0),
+                               COALESCE(credential_health.last_ok_at, 0)),
          detail          = excluded.detail,
          expires_at      = CASE WHEN credential_health.expiry_source = 'declared'
                                 THEN credential_health.expires_at
@@ -915,6 +930,7 @@ export function recordObservation(db: Database, o: Observation): void {
         o.status,
         o.via,
         o.now,
+        o.now,
         o.status === "ok" ? o.now : null,
         o.detail ?? null,
         o.expiresAt ?? null,
@@ -924,21 +940,29 @@ export function recordObservation(db: Database, o: Observation): void {
   }
 }
 
-/** A transient failure proves nothing about the credential: touch only the clock. */
+/**
+ * A transient failure proves nothing about the credential.
+ *
+ * It therefore advances `last_attempt_at` and NOT `last_checked_at`. Advancing
+ * the latter would make a credential that has been unreachable for weeks keep
+ * reporting a fresh OK, because the reader's staleness degradation keys off
+ * `last_checked_at`. Separate columns are what keep that guard armed.
+ */
 export function recordTransient(
   db: Database,
   connectorId: string,
   vaultKeys: string[],
   now: number,
+  via: ObservedVia,
 ): void {
   for (const key of vaultKeys) {
     dbRun(
       db,
       `INSERT INTO credential_health
-         (vault_key, connector_id, observed_status, observed_via, last_checked_at)
-       VALUES (?, ?, 'unknown', 'sync', ?)
-       ON CONFLICT(vault_key) DO UPDATE SET last_checked_at = excluded.last_checked_at`,
-      [key, connectorId, now],
+         (vault_key, connector_id, observed_status, observed_via, last_attempt_at)
+       VALUES (?, ?, 'unknown', ?, ?)
+       ON CONFLICT(vault_key) DO UPDATE SET last_attempt_at = excluded.last_attempt_at`,
+      [key, connectorId, via, now],
     );
   }
 }
@@ -1245,7 +1269,7 @@ function recordCredentialHealth(
 
   const cls = classifyAuthOutcome(outcome);
   if (cls === "transient") {
-    recordTransient(db, connectorId, keys, now);
+    recordTransient(db, connectorId, keys, now, "sync");
     return;
   }
   if (cls === "ok") {
@@ -1504,7 +1528,28 @@ test("an unparseable date is rejected, not silently stored", async () => {
 
 Run: `bun test packages/gateway/src/ipc/credentials-rpc.test.ts`
 
-- [ ] **Step 3: Implement** — parse `YYYY-MM-DD` with `Date.parse`, reject `NaN`, then call `setDeclaredExpiry`. Wire the CLI subcommand `nimbus creds expires <vault_key> <YYYY-MM-DD>`.
+- [ ] **Step 3: Implement**
+
+Validate BOTH the date and the key before writing:
+
+```ts
+// in the credentials.setExpiry handler
+const allowed = secretKeysFor(connectorId);
+if (!allowed.includes(vaultKey)) {
+  // Without this a caller can create health rows for configuration keys
+  // (jira.base_url) or invent connector/key pairs that never existed.
+  throw new Error(`${vaultKey} is not a credential of ${connectorId}`);
+}
+const ms = Date.parse(expiresAt);
+if (Number.isNaN(ms)) throw new Error(`unparseable date: ${expiresAt}`);
+setDeclaredExpiry(db, vaultKey, connectorId, ms);
+```
+
+Note `Date.parse` accepts some surprising inputs (`"2026-02-30"` rolls over to
+March 2). Add a test asserting a strict `^\d{4}-\d{2}-\d{2}$` shape check runs
+BEFORE `Date.parse`, and reject anything else.
+
+Wire the CLI subcommand `nimbus creds expires <vault_key> <YYYY-MM-DD>`.
 
 - [ ] **Step 4: Run tests, verify pass**
 
@@ -1614,6 +1659,12 @@ Run: `bun test packages/gateway/src/credentials/credential-probe.test.ts`
 
 ```ts
 // packages/gateway/src/credentials/credential-probe.ts — append
+// These imports are required by checkAllCredentials and are NOT in the
+// classifier-only import block at the top of this file — add them.
+import type { Database } from "bun:sqlite";
+import { recordObservation, recordTransient } from "./credential-health-store.ts";
+import { secretKeysFor } from "./credential-keys.ts";
+
 const MAX_CONCURRENT_PROBES = 5;
 
 export interface CheckDeps extends ProbeDeps {
@@ -1642,7 +1693,7 @@ export async function checkAllCredentials(db: Database, deps: CheckDeps): Promis
       const keys = secretKeysFor(connectorId);
       const now = deps.now();
       if (cls === "transient") {
-        recordTransient(db, connectorId, keys, now);
+        recordTransient(db, connectorId, keys, now, "probe");
       } else {
         recordObservation(db, {
           connectorId,
@@ -1728,10 +1779,20 @@ git commit -m "feat(credentials): generic active probe over the mandatory list t
 
 ```ts
 test("removing a connector leaves no orphaned credential_health rows", async () => {
-  // arrange: a connector with health rows, then remove it
-  expect(listHealth(db).filter((r) => r.connectorId === "zoom")).toHaveLength(0);
+  const db = makeTestDb();
+  db.exec(CREDENTIAL_HEALTH_V45_SQL);
+  recordObservation(db, { connectorId: "zoom", vaultKeys: ["zoom.oauth"], status: "ok", via: "sync", now: 1 });
+  recordObservation(db, { connectorId: "jira", vaultKeys: ["jira.api_token"], status: "ok", via: "sync", now: 1 });
+  expect(listHealth(db)).toHaveLength(2);          // PRE-CONDITION: rows exist
+
+  await removeConnector(db, "zoom");                // the path under test
+
+  expect(listHealth(db).map((r) => r.connectorId)).toEqual(["jira"]);
 });
 ```
+
+The pre-condition assertion is the point: without it the test passes on an empty
+database even when cleanup is entirely absent, so it would never have gone red.
 
 - [ ] **Step 2: Run it — expect FAIL (rows survive)**
 
@@ -1906,8 +1967,12 @@ git commit -m "feat(credentials): capture expiry at auth time; expose reads to t
 - [ ] `bun run preflight:fast` — all 21 gates green
 - [ ] `bun test packages/gateway/src/credentials/` — every unit passes
 - [ ] `bun run audit:invariants` — D10–D22 static checks pass
-- [ ] Confirm no `vault.set` / `vault.delete` appears anywhere under `packages/gateway/src/credentials/`:
-      `rg -n "vault\.(set|delete)" packages/gateway/src/credentials/` → **must return nothing**
+- [ ] Confirm no `vault.set` / `vault.delete` was added by this feature. Scoping
+      the search to `credentials/` alone would miss a call added in the sync
+      driver, the RPC module or the CLI — check every file the feature touched:
+      `git diff --name-only origin/main...HEAD | xargs rg -n "vault\.(set|delete)"`
+      → **must return nothing** (the existing `connector auth` path is untouched
+      by this feature and should not appear in the diff at all)
 - [ ] Confirm no secret can reach the table: `bun test packages/gateway/src/credentials/extract-error-detail.test.ts`
 - [ ] Update `docs/CHANGELOG.md` with a dated entry
 - [ ] Update `CLAUDE.md` **and** `GEMINI.md`: schema `V44` → `V45` (they are mirrors — edit both)

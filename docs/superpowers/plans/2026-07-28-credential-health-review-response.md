@@ -76,7 +76,14 @@ unnecessary. Keys are `<connector_id>.<name>`. If a name ever contained a dot â€
 So the suggested change would introduce the bug it was guarding against, for
 precisely the case that motivated it.
 
-The real risk is not the split, it is that the one-dot invariant is undocumented
+To be explicit about the apparent contradiction between these two statements:
+**today the invariant is exactly one dot, and the guard test enforces it.** The
+`indexOf` reasoning describes what would be correct *if that invariant were ever
+deliberately relaxed* â€” it is the reason the guard fails loudly rather than the
+code silently guessing. The guard is the contract; `indexOf` is what makes
+relaxing it safe later.
+
+The real risk is not the split, it is that the one-dot invariant was undocumented
 and unenforced. Applied instead: `suffixOf` gained a comment explaining why the
 first dot is correct and warning against `lastIndexOf`, plus a **guard test**
 asserting every manifest key is exactly `<connector>.<name>`. A future multi-dot

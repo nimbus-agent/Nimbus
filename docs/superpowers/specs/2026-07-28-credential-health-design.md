@@ -104,13 +104,14 @@ nimbus creds fix <connector>
 CREATE TABLE credential_health (
   vault_key       TEXT PRIMARY KEY,   -- "zoom.oauth" — a NAME, never a value
   connector_id    TEXT NOT NULL,
-  observed_status TEXT NOT NULL,      -- 'ok' | 'dead' | 'unknown'
-  observed_via    TEXT NOT NULL,      -- 'sync' | 'probe'
-  last_checked_at INTEGER,
+  observed_status TEXT NOT NULL CHECK (observed_status IN ('ok','dead','unknown')),
+  observed_via    TEXT NOT NULL CHECK (observed_via IN ('sync','probe')),
+  last_checked_at INTEGER,   -- last CONCLUSIVE observation (ok / dead / indeterminate)
+  last_attempt_at INTEGER,   -- last attempt of any kind, including transient
   last_ok_at      INTEGER,
   detail          TEXT,               -- redacted, capped at 256 bytes
   expires_at      INTEGER,
-  expiry_source   TEXT                -- 'provider' | 'declared' | NULL
+  expiry_source   TEXT CHECK (expiry_source IN ('provider','declared'))
 );
 ```
 
@@ -133,11 +134,24 @@ Every sync already authenticates, so health is a free by-product.
 | --- | --- |
 | Success | `ok`, `last_ok_at = now`; if OAuth also `expires_at` from `StoredOAuthTokens.expiresAt`, `expiry_source='provider'` |
 | Auth failure (401/403, `invalid_grant`) | `dead` + redacted `detail` |
-| Transient (network, 429, 5xx) | **status untouched**; only `last_checked_at` moves |
+| Transient (network, 429, 5xx) | **status untouched**; only `last_attempt_at` moves — **`last_checked_at` must NOT advance** |
 
-The third row is the load-bearing behaviour. **A network blip must never mark a
-credential dead.** False positives in this direction train users to ignore the
-feature.
+The third row is the load-bearing behaviour, and it has **two** halves that are
+easy to get half-right:
+
+1. **A network blip must never mark a credential dead.** False positives in this
+   direction train users to ignore the feature.
+2. **A network blip must never make a stale credential look freshly verified.**
+   This is why `last_checked_at` and `last_attempt_at` are separate columns.
+   `last_checked_at` means *"when did we last actually learn something"*; a
+   transient teaches nothing, so it may not advance it.
+
+Collapsing those into one timestamp produces a false green: a credential that is
+unreachable for weeks — every attempt transient — would keep reporting a fresh
+`OK`, because the clock advanced while the status never changed. The staleness
+degradation in the reader is the safeguard, and a shared timestamp silently
+disarms it. Caught in review; it is the third instance of this failure class in
+this document's history, which is itself the argument for the design.
 
 #### Which key does a failure belong to?
 
@@ -229,23 +243,36 @@ still surfaces in `nimbus creds` so the user can see something is wrong.
 
 ### Readers — status derived fresh on every read
 
+Evaluated strictly in this order; the first match wins. The ordering **is** the
+precedence rule — an earlier draft stated the expiry rows and the
+observation-beats-metadata rule separately, which let the same row yield two
+contradictory answers:
+
 ```text
-dead                              → DEAD      "since <last_ok_at>"
-expires_at < now                  → EXPIRED
-expires_at within warn window     → EXPIRING  "in N days"
-last_checked_at older than stale  → UNKNOWN   "(stale — last checked <when>)"
-ok                                → OK
-never observed                    → UNKNOWN   "not checked yet"
+1. observed_status = dead                     → DEAD      "since <last_ok_at>"
+2. expires_at set AND last_ok_at > expires_at → (fall through — see below)
+3. expires_at <= now                          → EXPIRED
+4. expires_at - now <= warn window            → EXPIRING  "in N days"
+5. last_checked_at is null                    → UNKNOWN   "not checked yet"
+6. now - last_checked_at > stale window       → UNKNOWN   "stale — last checked <when>"
+7. observed_status = ok                       → OK
+8. otherwise                                  → UNKNOWN   <detail>
 ```
+
+**Rule 2 is the precedence statement**: a successful observation *more recent
+than* the recorded expiry proves the expiry metadata wrong, so rows 3 and 4 are
+skipped entirely. Salesforce omits `expires_in`, so Nimbus synthesises a
+30-minute expiry — without rule 2 every working Salesforce credential would
+render `EXPIRED`. Observation is evidence; metadata is a claim.
 
 Two thresholds, both configurable under `[credentials]` in `nimbus.toml`:
 
 | Threshold | Default | Why |
 | --- | --- | --- |
-| `warn_before_expiry` | **30 days** | The credentials that hurt require a console trip; a week is not enough notice to act on. |
-| `stale_after` | **7 days** | A credential unobserved for longer than a week has no current evidence behind it. |
+| `warn_before_expiry_days` | **30 days** | The credentials that hurt require a console trip; a week is not enough notice to act on. |
+| `stale_after_days` | **7 days** | A credential unobserved for longer than a week has no current evidence behind it. |
 
-`stale_after` is shorter than `warn_before_expiry` on purpose — they measure
+`stale_after_days` is shorter than `warn_before_expiry_days` on purpose — they measure
 different things. One asks "how long before this dies?", the other "how long
 since anyone checked?". A stale `ok` is not a reassuring `ok`; it is an absence
 of evidence, and rendering it as `UNKNOWN (stale — last checked 12 days ago)`
