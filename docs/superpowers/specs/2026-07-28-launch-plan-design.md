@@ -233,32 +233,46 @@ and the positioning in `docs/launch-messaging.md`.
   dispatched actions at the `I29` executor chokepoint, and is not a firewall or
   host DLP. A technical audience will find any overclaim, and being caught once
   costs more than the launch earns.
-- **The "80+ services" claim invites audit.** Some connectors are stubs. A
-  stranger who connects one and gets nothing suffers a trust hit at the worst
-  possible moment.
+- **The "80+ services" claim invites audit.** A stranger who connects a service
+  and gets nothing suffers a trust hit at the worst possible moment.
+
+**Correction (2026-07-28):** an earlier draft of this spec asserted that "some
+connectors are stubs". That was checked during planning and is **false** for
+current `main`. There are no `not implemented` markers anywhere in
+`packages/mcp-connectors/`, and the eleven connectors with a 6-line `server.ts`
+are using the `runReadOnlyMcpConnector` helper, with real logic in a sibling
+`tools.ts`. The claim came from a stale note about Phase 6 Slice 7, which has
+since been completed.
+
+The real risk is narrower and still worth acting on: there are 95 connector
+packages and 99 manifest entries, and almost none have been exercised against a
+**live** API by anyone. "Implemented and contract-tested" is not the same as
+"known to work against the vendor's production endpoint", and launch copy should
+not imply otherwise.
 
 **Connector audit — a blocking pre-launch task, not a caveat.** Before Gate 3
-opens, produce an inventory mapping every connector in
-`CONNECTOR_VAULT_SECRET_KEYS` to whether it is verified working, read-only, or a
-stub. A script (`scripts/audit-connectors.ts`) that walks the connector manifest
-and checks for implemented tool endpoints is the cheap way to generate it, and
-it keeps the answer reproducible rather than a one-time spreadsheet.
+opens, produce an inventory classifying every connector by the evidence that
+exists for it: registers MCP tools, issues outbound calls, has tests. A script
+(`scripts/audit/connector-verification.ts`) generates it, keeping the answer
+reproducible rather than a one-time spreadsheet. The audit is explicitly static
+— it cannot prove a live API accepted a request, and both the script and the
+launch copy must say so.
 
 The inventory drives two decisions:
 
-- **Promote a "Tier 1" list.** Launch copy names the connectors known to work
-  end-to-end instead of a headline count. A specific, honest list of well-tested
-  integrations converts better with this audience than a large number that
-  invites someone to find the weak one.
-- **Restate the count honestly.** If the verified number is materially below
-  80, change the README and launch copy to the real figure. This is the same
+- **Promote a "Tier 1" list.** Launch copy names the connectors with the
+  strongest evidence — tools registered, outbound calls, and tests — instead of
+  a headline count. A specific, honest list converts better with this audience
+  than a large number that invites someone to find the weak one.
+- **Restate the count honestly.** If the Tier 1 number is materially below 80,
+  change the README and launch copy to the real figure. This is the same
   discipline as the existing honesty guardrails, applied to a claim they do not
   currently cover.
 
-Graceful in-product handling of stub connectors — a warning at configure time
-rather than silence — is deferred. Whether it is needed is a decision the audit
-makes for us, and building it before knowing the number is speculative work
-against the no-new-features rule.
+Graceful in-product handling of low-evidence connectors — a warning at configure
+time rather than silence — is deferred. Whether it is needed is a decision the
+audit makes for us, and building it beforehand is speculative work against the
+no-new-features rule.
 
 ## Measurement
 
