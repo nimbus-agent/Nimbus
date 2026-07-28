@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type CaptureResult, spawnCapture } from "./capture.ts";
 import { type EventsScript, FakeGateway } from "./fake-gateway.ts";
-import type { CompiledScript, ConsentStep } from "./yaml-script.ts";
+import type { CompiledScript, ConsentStep, SetupSpec } from "./yaml-script.ts";
 
 export interface HarnessOpts {
   readonly compiled: CompiledScript;
@@ -54,10 +54,36 @@ function writeFakeGatewayState(dataDir: string, socketPath: string): void {
   writeFileSync(join(dataDir, "gateway.json"), JSON.stringify(state), "utf8");
 }
 
+/**
+ * Materialise the optional fixture repository declared by `setup.repo`.
+ *
+ * Created INSIDE the harness tmpdir on purpose: the `<TMP>` normalization rule
+ * then scrubs every mention of it, so a command that prints its own repo root
+ * (`nimbus init` does) produces a transcript that is identical on a laptop and
+ * on CI. A bare `.git` directory is enough — `init` only probes for existence,
+ * and shelling out to `git init` would add a tool dependency to recording.
+ *
+ * Returns the directory to run steps in, or undefined to keep the previous
+ * behaviour of inheriting the recorder's cwd.
+ */
+function materialiseRepo(tmpDir: string, setup: SetupSpec | undefined): string | undefined {
+  const repo = setup?.repo;
+  if (repo === undefined) return undefined;
+  const root = join(tmpDir, repo.dir);
+  mkdirSync(join(root, ".git"), { recursive: true });
+  for (const [rel, contents] of Object.entries(repo.files)) {
+    const dest = join(root, rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, contents, "utf8");
+  }
+  return root;
+}
+
 export async function runHarness(opts: HarnessOpts): Promise<HarnessRun> {
   const tmpDir = mkdtempSync(join(tmpdir(), "cast-driver-"));
   const socketPath = socketPathFor(tmpDir);
   const dataDir = dataDirFor(tmpDir);
+  const repoDir = materialiseRepo(tmpDir, opts.compiled.script.setup);
 
   writeFakeGatewayState(dataDir, socketPath);
 
@@ -93,6 +119,7 @@ export async function runHarness(opts: HarnessOpts): Promise<HarnessRun> {
           XDG_RUNTIME_DIR: tmpDir,
           HOME: tmpDir,
         },
+        ...(repoDir === undefined ? {} : { cwd: repoDir }),
         timeoutMs: group.input.timeoutMs ?? 60_000,
       });
 

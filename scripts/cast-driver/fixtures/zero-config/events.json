@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "input": "nimbus init --no-sync",
+      "notifications": [],
+      "methodResponses": {}
+    },
+    {
+      "input": "nimbus connector sync filesystem",
+      "trigger": "connector.sync",
+      "notifications": [],
+      "methodResponses": {
+        "connector.sync": { "serviceId": "filesystem", "upserted": 12, "durationMs": 840 }
+      }
+    },
+    {
+      "input": "nimbus why src/auth.ts:2",
+      "trigger": "agents.why",
+      "notifications": [
+        {
+          "method": "why.briefReady",
+          "params": {
+            "sessionId": "s1",
+            "brief": "## Why: src/auth.ts:2\n\n**verifyToken** — introduced in `a1b2c3d` \"harden token check\"\n\n| Lane | Evidence |\n| --- | --- |\n| Commit | `a1b2c3d` — harden token check |\n| Pull request | #214 — Reject empty bearer tokens |\n| Ticket | AUTH-88 — Empty token accepted on /session |\n| Incident | INC-31 — auth bypass reported by on-call |\n| Downstream | 4 call sites across 2 packages |\n\n_Rendered deterministically — configure an LLM for prose synthesis._\n",
+            "findings": {
+              "kind": "why",
+              "agentVersion": 1,
+              "generatedAt": 1000000000000,
+              "latencyMs": 310,
+              "gaps": [],
+              "findings": []
+            }
+          }
+        }
+      ],
+      "methodResponses": {
+        "agents.why": { "sessionId": "s1" }
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+Added <TMP>/sample-repo to nimbus.toml (code indexing on).
+
+Next:
+  nimbus connector sync filesystem
+  nimbus why <file>:<line>
+Sync requested: filesystem
+## Why: src/auth.ts:2
+
+**verifyToken** — introduced in `a1b2c3d` "harden token check"
+
+| Lane | Evidence |
+| --- | --- |
+| Commit | `a1b2c3d` — harden token check |
+| Pull request | #214 — Reject empty bearer tokens |
+| Ticket | AUTH-88 — Empty token accepted on /session |
+| Incident | INC-31 — auth bypass reported by on-call |
+| Downstream | 4 call sites across 2 packages |
+
+_Rendered deterministically — configure an LLM for prose synthesis._
+

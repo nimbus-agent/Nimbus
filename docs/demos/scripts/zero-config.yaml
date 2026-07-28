@@ -1,0 +1,36 @@
+name: zero-config
+description: |
+  The credential-free first run: `nimbus init` registers the repo you are
+  standing in, `nimbus connector sync filesystem` indexes it, and `nimbus why`
+  traces a line's provenance — no PAT, no API key, no LLM. Exercises the
+  deterministic (no-LLM) brief render, which is the mode a first-time user
+  actually lands in.
+
+# Runs inside a fixture repo under the harness tmpdir rather than the recorder's
+# checkout: `nimbus init` refuses to run outside a git repository and PRINTS the
+# repo root, so recording it anywhere else would bake that machine's absolute
+# path into the snapshot. Under tmpdir the existing <TMP> rule scrubs it.
+setup:
+  repo:
+    dir: sample-repo
+    files:
+      "src/auth.ts": |
+        export function verifyToken(token: string): boolean {
+          return token.length > 0;
+        }
+
+events: zero-config/events.json
+
+steps:
+  # `--no-sync` keeps recording deterministic: plain `nimbus init` would start a
+  # real gateway, which a cast harness cannot do reproducibly. The next step
+  # runs the sync explicitly, so the demo shows the same sequence the README
+  # documents, just with the two halves visible separately.
+  - input: nimbus init --no-sync
+    expect: "code indexing on"
+
+  - input: nimbus connector sync filesystem
+    expect: "filesystem"
+
+  - input: nimbus why src/auth.ts:2
+    expect: "Rendered deterministically"

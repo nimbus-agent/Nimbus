@@ -109,3 +109,54 @@ describe("applyNormalization", () => {
     expect(NORMALIZATION_RULES.length).toBeGreaterThanOrEqual(12);
   });
 });
+
+describe("placeholder path separators — cross-platform snapshot stability", () => {
+  // The cast tripwire runs on ubuntu, but casts get recorded on whatever
+  // machine a maintainer is using. A command that prints a path under the
+  // harness tmpdir (`nimbus init` prints its repo root) is the one place where
+  // the host's separator leaks into the transcript. These assert the two
+  // recordings converge, which is what keeps the committed snapshot valid.
+  const BS = String.fromCharCode(92);
+
+  function nWin(input: string): string {
+    return applyNormalization(new TextEncoder().encode(input), {
+      tmpDirPrefix: ["C:", "Users", "dev", "AppData", "Local", "Temp", "cast-driver-xyz"].join(BS),
+      homePrefix: ["C:", "Users", "dev"].join(BS),
+    });
+  }
+
+  test("a Windows recording and a POSIX recording normalise identically", () => {
+    const posix = n("Added /tmp/cast-driver-xyz/sample-repo to nimbus.toml (code indexing on).\n");
+    const win = nWin(
+      `Added C:${BS}Users${BS}dev${BS}AppData${BS}Local${BS}Temp${BS}cast-driver-xyz${BS}sample-repo to nimbus.toml (code indexing on).\n`,
+    );
+    expect(win).toBe(posix);
+    expect(win).toBe("Added <TMP>/sample-repo to nimbus.toml (code indexing on).\n");
+  });
+
+  test("nested paths under the placeholder are fully normalised", () => {
+    expect(
+      nWin(
+        `C:${BS}Users${BS}dev${BS}AppData${BS}Local${BS}Temp${BS}cast-driver-xyz${BS}a${BS}b${BS}c.ts\n`,
+      ),
+    ).toBe("<TMP>/a/b/c.ts\n");
+  });
+
+  test("the home placeholder gets the same treatment", () => {
+    expect(nWin(`C:${BS}Users${BS}dev${BS}code${BS}proj\n`)).toBe("<HOME>/code/proj\n");
+  });
+
+  test("backslashes NOT attached to a placeholder are left alone", () => {
+    // Markdown escapes and Windows paths the demo deliberately shows verbatim
+    // must survive; the rule is scoped to the placeholder run only.
+    expect(n(`a${BS}b not a path\n`)).toBe(`a${BS}b not a path\n`);
+  });
+
+  test("still idempotent with the new rule", () => {
+    const once = nWin(
+      `C:${BS}Users${BS}dev${BS}AppData${BS}Local${BS}Temp${BS}cast-driver-xyz${BS}x${BS}y\n`,
+    );
+    const twice = applyNormalization(new TextEncoder().encode(once), ctx);
+    expect(twice).toBe(once);
+  });
+});

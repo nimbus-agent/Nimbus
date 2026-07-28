@@ -71,6 +71,21 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
     },
   },
   {
+    // MUST run after tmp-prefix/home-prefix: it rewrites only what those rules
+    // already anchored. A command that prints a path under the harness tmpdir
+    // (`nimbus init` prints its repo root) emits `<TMP>\repo` when recorded on
+    // Windows and `<TMP>/repo` on Linux — a pure separator difference that
+    // would otherwise drift the snapshot between a laptop recording and the
+    // ubuntu tripwire. Scoped to the placeholder run so ordinary backslashes
+    // elsewhere in a transcript are untouched.
+    name: "placeholder-path-separators",
+    apply: (t) =>
+      t.replace(
+        /(<TMP>|<HOME>)(\S*)/g,
+        (_m, tag: string, rest: string) => `${tag}${rest.replaceAll("\\", "/")}`,
+      ),
+  },
+  {
     name: "iso-8601",
     apply: (t) => t.replace(ISO_8601, "<TS>"),
   },

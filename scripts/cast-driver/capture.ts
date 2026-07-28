@@ -4,6 +4,8 @@ export interface SpawnCaptureOpts {
   readonly cmd: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
+  /** Working directory for the child. Omitted -> inherit the recorder's cwd. */
+  readonly cwd?: string;
 }
 
 export interface CaptureResult {
@@ -22,6 +24,7 @@ export async function spawnCapture(opts: SpawnCaptureOpts): Promise<CaptureResul
   const proc = Bun.spawn({
     cmd: [...opts.cmd],
     env: opts.env as Record<string, string>,
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
