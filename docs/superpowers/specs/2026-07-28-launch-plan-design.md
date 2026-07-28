@@ -50,11 +50,19 @@ beats two thousand stars from people who never ran `nimbus init`.
 - Paid promotion and Product Hunt. Wrong audience for an AGPL, local-first CLI
   aimed at on-call engineers.
 
-## The binding constraint: no telemetry
+## The binding constraint: effectively no telemetry
 
-Nimbus's core claim is that nothing leaves the machine — no account, no relay,
-no analytics. Instrumenting the launch would contradict the pitch in front of
-the audience most likely to check, and would be a self-inflicted trust wound.
+Nimbus's core claim is that nothing leaves the machine — no account and no
+relay. The precise position is narrower than "no analytics at all": an
+**opt-in, aggregate-only** telemetry collector exists
+(`packages/gateway/src/telemetry/`), it defaults to `[telemetry] enabled =
+false`, its endpoint is configurable, and `nimbus telemetry disable` writes a
+local marker that short-circuits the flush scheduler.
+
+That surface cannot be used to measure the launch, for two reasons. Turning it
+on by default would contradict the pitch in front of the audience most likely
+to check. Leaving it off but asking testers to enable it produces a
+self-selected sample that is worse than no data while still spending trust.
 
 Consequences, which shape the rest of this design:
 
@@ -64,6 +72,12 @@ Consequences, which shape the rest of this design:
 - Because post-launch feedback is near-silent by construction, the private alpha
   is **not optional**. It is the only stage that yields a *reason* for a bounce
   rather than a number that failed to move.
+
+**Launch-messaging note:** `docs/cli-reference.md` documents a default endpoint
+of `https://telemetry.nimbus-agent.dev/v1/collect`. A reader who finds that
+string and does not notice `enabled = false` will assume Nimbus phones home.
+State the default-off position plainly in the launch copy rather than waiting to
+be asked.
 
 ## Structure: three blocking gates
 
@@ -119,8 +133,34 @@ third-party virtualisation or a cloud VM.
   covered only by a unit test with an injected fake is not covered. That is
   exactly how #895 shipped.
 
-**Exit:** Linux and Windows both complete unaided. macOS either passes in CI or
-moves into Gate 2 explicitly labelled as unverified.
+**Locking the gain — extend the workflow that already exists.** A one-off manual
+pass regresses the moment someone touches the gateway.
+`.github/workflows/install-smoke.yml` already runs a 3-OS matrix
+(`ubuntu-24.04`, `macos-14`, `windows-2022`) that stages real built binaries,
+executes `install.sh` / `install.ps1` against a sandboxed `HOME` /
+`LOCALAPPDATA`, and verifies that uninstall removes the binaries and strips the
+PATH marker block. It does **not** need replacing. It has two gaps that are
+precisely the #895 hole:
+
+- **It only runs `nimbus --help`.** That proves the installer placed files, not
+  that the product works. Add `nimbus init` against a small repo checked out
+  during the workflow, then `nimbus why <file>:<line>`, asserting exit codes and
+  a non-empty index.
+- **Its `paths:` filter is too narrow.** It triggers only on
+  `scripts/install/**`, `scripts/package-linux-installers.ts`, and the two
+  workflow files. A gateway change that breaks `nimbus init` never fires it.
+  Widen the trigger so gateway and CLI changes are covered.
+
+Note also that the workflow carries a stale comment asserting `nimbus --version`
+does not exist. It does — v1.4.1 prints `1.4.1`. Worth correcting while editing
+the file, since the comment will otherwise mislead the next author.
+
+Because macOS runs in this matrix, extending the workflow is also the cheapest
+way to close the macOS gap in the table above.
+
+**Exit:** Linux and Windows both complete unaided. macOS either passes in the
+extended `install-smoke` workflow or moves into Gate 2 explicitly labelled as
+unverified.
 
 ## Gate 2 — private alpha
 
@@ -143,6 +183,22 @@ ammunition before the funnel is known-good.
 questions: where did you stop, what did you expect to happen, and would you run
 it again next week. The screenshare is worth substantially more — testers stall
 in places nobody predicts, and a survey will not surface it.
+
+**Bug reports without telemetry — use the command that already exists.**
+Troubleshooting an alpha tester over chat is slow and lossy. `nimbus doctor`
+already reports Bun version, Vault availability, config validity, index item
+count, per-connector health, gateway IPC state, and the data-dir and
+gateway-state paths — and it degrades usefully when the gateway is down, which
+is the failure mode that matters most here. (`nimbus diag` is the wrong tool for
+this: it calls `diag.snapshot` over IPC, so it is unavailable exactly when the
+gateway will not start.)
+
+Two small tasks rather than a new command:
+
+- Confirm `nimbus doctor` output is safe to paste in public. It prints
+  filesystem paths today; if those are sensitive, redact before recommending it.
+- Put "run `nimbus doctor` and paste the output" in the tester instructions as
+  the first troubleshooting step.
 
 **Exit:** at least 5 testers reach `nimbus why` on their own repo unaided, and
 at least 3 are still using it 14 days after their own first run. Each tester's
@@ -179,8 +235,30 @@ and the positioning in `docs/launch-messaging.md`.
   costs more than the launch earns.
 - **The "80+ services" claim invites audit.** Some connectors are stubs. A
   stranger who connects one and gets nothing suffers a trust hit at the worst
-  possible moment. Before launch, inventory which connectors work end-to-end and
-  soften the claim to the honest number.
+  possible moment.
+
+**Connector audit — a blocking pre-launch task, not a caveat.** Before Gate 3
+opens, produce an inventory mapping every connector in
+`CONNECTOR_VAULT_SECRET_KEYS` to whether it is verified working, read-only, or a
+stub. A script (`scripts/audit-connectors.ts`) that walks the connector manifest
+and checks for implemented tool endpoints is the cheap way to generate it, and
+it keeps the answer reproducible rather than a one-time spreadsheet.
+
+The inventory drives two decisions:
+
+- **Promote a "Tier 1" list.** Launch copy names the connectors known to work
+  end-to-end instead of a headline count. A specific, honest list of well-tested
+  integrations converts better with this audience than a large number that
+  invites someone to find the weak one.
+- **Restate the count honestly.** If the verified number is materially below
+  80, change the README and launch copy to the real figure. This is the same
+  discipline as the existing honesty guardrails, applied to a claim they do not
+  currently cover.
+
+Graceful in-product handling of stub connectors — a warning at configure time
+rather than silence — is deferred. Whether it is needed is a decision the audit
+makes for us, and building it before knowing the number is speculative work
+against the no-new-features rule.
 
 ## Measurement
 
