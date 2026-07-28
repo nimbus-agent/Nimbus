@@ -286,3 +286,38 @@ describe("synthesize(HuddleBrief)", () => {
     );
   });
 });
+
+describe("no-LLM labelling", () => {
+  test("no-LLM output is labelled as a deliberate mode, not silent degradation", async () => {
+    const out = await synthesize(EXPERT_FIXTURE);
+    expect(out).toContain("Rendered deterministically");
+  });
+
+  test("an LLM-backed render carries no such footer", async () => {
+    const out = await synthesize(EXPERT_FIXTURE, {
+      llm: { generateMarkdown: mock(async () => "# polished") },
+    });
+    expect(out).not.toContain("Rendered deterministically");
+  });
+
+  test("a configured-but-failing LLM is NOT labelled as unconfigured", async () => {
+    // The user HAS configured an LLM here; claiming otherwise would misdirect
+    // them into 'fixing' a setting that is already correct.
+    const out = await synthesize(EXPERT_FIXTURE, {
+      llm: {
+        generateMarkdown: mock(async () => {
+          throw new Error("provider down");
+        }),
+      },
+    });
+    expect(out).toContain("# Expert: src/x.ts");
+    expect(out).not.toContain("Rendered deterministically");
+  });
+
+  test("an empty LLM response is NOT labelled as unconfigured either", async () => {
+    const out = await synthesize(EXPERT_FIXTURE, {
+      llm: { generateMarkdown: mock(async () => "  ") },
+    });
+    expect(out).not.toContain("Rendered deterministically");
+  });
+});

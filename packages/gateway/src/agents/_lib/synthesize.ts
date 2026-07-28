@@ -76,9 +76,22 @@ function toolNameFor(brief: SynthInput): string {
   return "agents.huddle";
 }
 
+const DETERMINISTIC_FOOTER = "_Rendered deterministically — configure an LLM for prose synthesis._";
+
+/**
+ * Label the no-LLM path so it reads as a supported mode rather than breakage.
+ *
+ * The fallback branches below (empty / throwing LLM) deliberately do NOT get
+ * this footer: there the user HAS configured an LLM, and telling them to
+ * configure one would send them to fix a setting that is already correct.
+ */
+function withDeterministicFooter(markdown: string): string {
+  return `${markdown.trimEnd()}\n\n${DETERMINISTIC_FOOTER}\n`;
+}
+
 export async function synthesize(brief: SynthInput, opts: SynthesizeOpts = {}): Promise<string> {
   const deterministic = deterministicRender(brief);
-  if (opts.llm === undefined) return deterministic;
+  if (opts.llm === undefined) return withDeterministicFooter(deterministic);
 
   const wrapped = wrapToolOutput({ service: "nimbus", tool: toolNameFor(brief) }, brief);
   const prompt = [

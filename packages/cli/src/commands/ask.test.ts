@@ -6,8 +6,9 @@ import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 const mod = await import("./ask.ts");
 const { runAsk } = mod;
 
-// stderr is captured but never asserted on (only stdout); the capture keeps it silent.
+// stdout carries command output; stderr carries the no-LLM setup guidance.
 const {
+  stderrChunks,
   stdoutChunks,
   install: installStreamCapture,
   restore: restoreStreams,
@@ -204,5 +205,58 @@ describe("runAsk — happy paths", () => {
       .find((c) => (c.params as { role: string }).role === "assistant");
     const chunkText = (assistantAppend?.params as { chunkText: string } | undefined)?.chunkText;
     expect(chunkText).toHaveLength(8000);
+  });
+});
+
+describe("runAsk — no LLM configured", () => {
+  // Mirrors NO_LLM_SENTINEL in gateway/src/engine/gateway-agent-error.ts, which
+  // has its own test pinning the constant. The CLI cannot import gateway source
+  // and the JSON-RPC transport drops the numeric error code, so a substring
+  // match on the message is the only seam available.
+  const SENTINEL = "Nimbus needs an LLM for this command.";
+
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    stderrChunks.length = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+    process.exitCode = 0;
+  });
+
+  function fixtureThatRejectsInvoke(message: string): void {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          if (method === "connector.listStatus") return [{ serviceId: "filesystem" }];
+          if (method === "agent.invoke") throw new Error(message);
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+  }
+
+  it("prints the setup guidance and exits non-zero instead of a raw error", async () => {
+    fixtureThatRejectsInvoke(
+      [SENTINEL, "", "  Local  — install Ollama, then in nimbus.toml:"].join("\n"),
+    );
+    await runAsk(["summarize", "my", "week"]);
+    const err = stderrChunks.join("");
+    expect(err).toContain(SENTINEL);
+    expect(err).toContain("install Ollama");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("does not swallow unrelated agent failures", async () => {
+    // Only the no-LLM case is guidance; everything else must keep propagating
+    // so the top-level handler still reports it.
+    fixtureThatRejectsInvoke("Anthropic rate limit hit.");
+    await expect(runAsk(["hello"])).rejects.toThrow(/rate limit/);
   });
 });

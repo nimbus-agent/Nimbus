@@ -4,6 +4,7 @@ import {
   agentErrorFromCaughtError,
   agentErrorFromHttpResponse,
   GatewayAgentUnavailableError,
+  NO_LLM_SENTINEL,
 } from "./gateway-agent-error.ts";
 
 describe("GatewayAgentUnavailableError messages", () => {
@@ -12,6 +13,26 @@ describe("GatewayAgentUnavailableError messages", () => {
     expect(e.message).toContain("ANTHROPIC_API_KEY");
     expect(e.message).toContain("OPENAI_API_KEY");
     expect(e.message).toContain("nimbus stop");
+  });
+
+  test("no_api_key offers the LOCAL route too, not only a paid key", () => {
+    // "set an API key" alone reads as "this tool costs money" — the single most
+    // damaging thing the onboarding funnel can say, and untrue: only `ask` and
+    // prose synthesis need an LLM at all.
+    const e = new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    expect(e.message).toContain("Ollama");
+    expect(e.message).toContain("prefer_local = true");
+    expect(e.message).toContain("work with no LLM configured");
+  });
+
+  test("no_api_key message starts with the sentinel clients key on", () => {
+    // The CLI cannot import this module and the JSON-RPC transport in
+    // @nimbus-dev/client drops the numeric error code, so `nimbus ask` matches
+    // this substring to render guidance instead of a raw error. Changing the
+    // sentinel MUST move packages/cli/src/commands/ask.ts in the same commit.
+    expect(NO_LLM_SENTINEL).toBe("Nimbus needs an LLM for this command.");
+    const e = new GatewayAgentUnavailableError({ reason: "no_api_key" });
+    expect(e.message.startsWith(NO_LLM_SENTINEL)).toBe(true);
   });
 
   test("insufficient_quota names the provider and explains topping up", () => {

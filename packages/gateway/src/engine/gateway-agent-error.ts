@@ -18,6 +18,39 @@ export type AgentUnavailableInit = {
 
 const DEFAULT_AGENT_UNAVAILABLE_INIT: AgentUnavailableInit = { reason: "unknown" };
 
+/**
+ * Stable first line of the no-LLM message.
+ *
+ * Clients match on this to render the guidance cleanly instead of as a raw
+ * error. It has to be a substring match rather than an error code because the
+ * JSON-RPC transport in `@nimbus-dev/client` rejects with a plain Error
+ * carrying only the message — the numeric code never reaches the client. Pinned
+ * by a test; if this string changes, the CLI branch that keys on it must move
+ * in the same commit.
+ */
+export const NO_LLM_SENTINEL = "Nimbus needs an LLM for this command.";
+
+/**
+ * The guidance itself lives here, not in any one client, so the CLI, the TUI,
+ * and the VS Code extension all surface the same two routes. Naming BOTH the
+ * local and the hosted route matters: "set an API key" alone reads as "this
+ * tool costs money", which is the single most damaging thing the funnel can
+ * say — indexing, `nimbus why`, and the agent briefs need no LLM at all.
+ */
+const NO_LLM_CONFIGURED_MESSAGE = [
+  NO_LLM_SENTINEL,
+  "",
+  "  Local  — install Ollama, then in nimbus.toml:",
+  "             [llm]",
+  "             prefer_local = true",
+  '             local_model  = "llama3.1"',
+  "",
+  "  Hosted — set ANTHROPIC_API_KEY or OPENAI_API_KEY in the gateway's environment,",
+  "           then restart with: nimbus stop && nimbus start",
+  "",
+  "Indexing, `nimbus why`, and the agent briefs all work with no LLM configured.",
+].join("\n");
+
 export class GatewayAgentUnavailableError extends Error {
   override readonly name = "GatewayAgentUnavailableError";
   readonly reason: AgentUnavailableReason;
@@ -40,7 +73,7 @@ function buildAgentErrorMessage(init: AgentUnavailableInit): string {
   const provider = providerLabel(init.provider);
   switch (init.reason) {
     case "no_api_key":
-      return "No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in the gateway's environment, then restart with `nimbus stop && nimbus start`.";
+      return NO_LLM_CONFIGURED_MESSAGE;
     case "invalid_api_key":
       return `${provider} rejected the API key (HTTP 401). Verify the key is correct and not revoked, then restart the gateway.`;
     case "insufficient_quota":

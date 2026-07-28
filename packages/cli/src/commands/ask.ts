@@ -33,6 +33,22 @@ function parseAskArgs(args: string[]): { rest: string[]; sessionId?: string; age
   return out;
 }
 
+/**
+ * First line of the gateway's no-LLM message
+ * (`NO_LLM_SENTINEL` in gateway/src/engine/gateway-agent-error.ts).
+ *
+ * Duplicated as a literal because the CLI may not import gateway source, and
+ * because the JSON-RPC transport in `@nimbus-dev/client` rejects with a plain
+ * Error carrying only the message — the numeric error code never reaches us, so
+ * there is nothing else to key on. A gateway-side test pins the constant, so a
+ * change there fails before it can silently desync this branch.
+ */
+const NO_LLM_SENTINEL = "Nimbus needs an LLM for this command.";
+
+function isNoLlmError(e: unknown): boolean {
+  return e instanceof Error && e.message.includes(NO_LLM_SENTINEL);
+}
+
 export async function runAsk(args: string[]): Promise<void> {
   const { rest, sessionId, agent } = parseAskArgs(args);
   const query = rest.join(" ").trim();
@@ -80,7 +96,21 @@ export async function runAsk(args: string[]): Promise<void> {
     if (agent !== undefined) {
       invokeParams["agent"] = agent;
     }
-    const result = await client.call<{ reply: string }>("agent.invoke", invokeParams);
+    let result: { reply: string };
+    try {
+      result = await client.call<{ reply: string }>("agent.invoke", invokeParams);
+    } catch (e) {
+      if (!isNoLlmError(e)) {
+        throw e;
+      }
+      // Guidance, not a failure report: print it as-is rather than letting the
+      // top-level handler render it as `cli.error` with a stack. `ask` is the
+      // one command that genuinely cannot degrade — everything else in Nimbus
+      // works with no LLM — so the exit code stays non-zero.
+      process.stderr.write(`${(e as Error).message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (
       invokeParams["stream"] !== true &&
       typeof result.reply === "string" &&
