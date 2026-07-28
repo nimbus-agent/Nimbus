@@ -958,6 +958,27 @@ Productization/distribution; lands after the spine, much of it parallelizable, n
 - **Compliance Receipts [P12.5]** — commercial-tier, but its prerequisites are Phase 8 (egress ledger) + Phase 9 + the EAF Standards track, **not** Phase 6 federation.
 - **Opportunistic expansion surfaces:** Sovereign Mesh / multi-device + physical [P11], Vertical Personas [P18], Ambient Surfaces [P19] (already flagged highest-risk), Personal & Household Federation [P20].
 
+##### Client surfaces
+
+Where capability reaches a human. Each surface lives in its own repository and
+carries its own detail; **this table owns the order they are built in.** That
+sequencing used to live in `docs/ecosystem-roadmap.md`, which closed 2026-07-24
+and is now retired — how the pieces fit together is described at org level in
+[`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).
+
+| Surface | State | Next |
+| --- | --- | --- |
+| [`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) | ✅ shipping (v0.10.0) | Its own roadmap; the `why`-lens hover UI is the open item |
+| [`nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper) | ✅ shipping (v0.2.0) | Its own roadmap |
+| [`nimbus-statuspage`](https://github.com/nimbus-agent/nimbus-statuspage) | 🧱 scaffold | **First to build.** On-thesis — "on-call intelligence for DevOps/platform teams" is this surface rendered — and its whole data dependency (the DORA calculators, `incident`/`alert` items) already ships. Read-only, so it cannot violate an invariant. |
+| [`nimbus-postmortem`](https://github.com/nimbus-agent/nimbus-postmortem) | 🧱 scaffold | Second. Same on-call thesis and the same read-only shape, but needs incident-narrative assembly over the relationship graph that does not exist yet. |
+| [`nimbus-raycast`](https://github.com/nimbus-agent/nimbus-raycast) | 🧱 scaffold | Third. Pleasant but generic — a quick-ask surface differentiates least, and it is macOS-only. |
+
+🧱 = holds a vision README and a build prompt, no implementation. All three are
+public and MIT. None carries its own `ROADMAP.md` on purpose: an unbuilt repo
+with a vision, a build prompt *and* a roadmap is three documents answering one
+question, which is how several files came to claim the same authority before.
+
 #### Track 3 — Research Horizon
 
 The North-Star "M-number" manifesto. The full vision stays; each entry's cheap *primitive* is harvested into the spine when ready. **Principle: a research frontier whose primitives we mine early — not phases reached in a decade.**
