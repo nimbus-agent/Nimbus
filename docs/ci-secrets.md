@@ -4,12 +4,41 @@ This page is the canonical inventory of every GitHub Actions secret the Nimbus
 workflows consume: what each one is for, which workflow reads it, whether it is
 required, and exactly how to mint and store it.
 
-All secrets live under **repo Settings → Secrets and variables → Actions**.
-Release/publish secrets are scoped to the **`release`** GitHub
+**Every secret on this page currently lives at repository scope**, under **repo
+Settings → Secrets and variables → Actions**. The `release`
 [deployment environment](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment)
-(jobs that read them declare `environment: release`); add those under
-**Settings → Environments → release → Environment secrets**. Everything else is
-a plain repository secret.
+holds **no** environment secrets today.
+
+> **Do not move a secret onto the `release` environment without first checking
+> the table below.** An environment secret is invisible to any job that does not
+> declare `environment: release`, and it fails *silently* — the expression
+> resolves to the empty string rather than erroring. Moving `GPG_SIGNING_SUBKEY`
+> today would not break the environment-scoped `publish-release` job; it would
+> break `release.yml`'s `build-gateway` job, which signs the artifacts and does
+> not declare the environment.
+
+Three jobs declare `environment: release`: `release.yml`'s `publish-release` and
+`update-manifest`, and `secret-health.yml`'s `check`. The environment carries a
+**deployment branch policy** admitting only `main` (for the `secret-health` cron)
+and `v*` tags (for `release.yml`), so a workflow added on a feature branch cannot
+deploy to it.
+
+Which secrets could move to environment scope as the workflows stand:
+
+| Secret | Blocked by (job with no `environment: release`) |
+| --- | --- |
+| `SECRET_AUDITOR_CLIENT_ID` | — read only by `secret-health:check`; **safe to move** |
+| `SECRET_AUDITOR_PRIVATE_KEY` | — read only by `secret-health:check`; **safe to move** |
+| `GPG_SIGNING_SUBKEY`, `GPG_PASSPHRASE` | `release:build-gateway`, `publish-linux-repo` |
+| `UPDATER_SIGNING_KEY` | `release:build-gateway` |
+| `WINGET_PAT` | `publish-package-managers:winget` |
+| `WINDOWS_CERT_PFX_BASE64`, `WINDOWS_CERT_PASSWORD` | `release:build-msi` |
+| `APPLE_*` (7) | `release:build-pkg` |
+| `RELEASE_BOT_CLIENT_ID`, `RELEASE_BOT_PRIVATE_KEY` | `release-please`, `publish-package-managers`, `publish-linux-repo`, `org-drift-sweep` (see the note below) |
+
+Everything not listed (`SONAR_TOKEN`, `BENCHER_API_KEY`, `NIMBUS_CHECKS_TOKEN`,
+`CLA_BOT_*`, `SCORECARD_TOKEN`) is a CI secret with no release role and belongs
+at repository scope.
 
 > **Token hygiene.** The release/publish path now authenticates as the
 > **Nimbus Release Bot** GitHub App for everything it can (see below) — App
