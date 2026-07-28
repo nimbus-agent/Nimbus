@@ -101,7 +101,7 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   {
     file: "packages/gateway/src/index/sqlite-vec-load.ts",
     gate: "Embedding",
-    why: "per-OS native extension filename; reaches BOTH the Embedding and the DB layer gates through static imports — embedding/lazy-scheduler.ts (plus create-routing-runtime.ts and embedding-worker.ts) and index/migrations/runner.ts each import it, so it lands in both gates' coverage denominators. Only one gate can be named here; both were promoted to `pal: true` together, and neither may be demoted while this entry stands",
+    why: "per-OS native extension filename; reaches BOTH the Embedding and the DB layer gates through static imports — embedding/lazy-scheduler.ts (plus create-routing-runtime.ts and embedding-worker.ts) and index/migrations/runner.ts each import it, so it lands in both gates' coverage denominators. Both were promoted to `pal: true` together. ENFORCEMENT GAP, stated rather than overclaimed: an entry names ONE gate, and rule 3 cross-checks only that gate — so demoting `Embedding` is caught, but demoting `DB layer` is NOT. Closing it needs a co-gate field on this type; until then `DB layer` rests on this comment alone",
   },
 
   // ── Not covered by any coverage-threshold gate ────────────────────────────
