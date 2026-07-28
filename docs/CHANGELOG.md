@@ -162,7 +162,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-07-23 — Ecosystem Stage 1 complete: the client surface goes 15 → 52 methods.** The gateway
   dispatches ~212 JSON-RPC methods; `@nimbus-dev/client` exposed 15 of them, so entire namespaces
   were built, dispatch-wired and Tauri-allowlisted yet unreachable from any npm client. All eight
-  waves of [`docs/ecosystem-roadmap.md`](./ecosystem-roadmap.md) Stage 1 shipped across client
+  waves of `docs/ecosystem-roadmap.md` (since retired) Stage 1 shipped across client
   `0.7.0` → `0.11.0`: `agents.*` (8), `consent.respond`, the five diagnostics methods, `audit.*`
   (3), `session.*` (4), `metrics.dora` + `deploy.preflight`, `connector.*` (12), `workflow.*` (5).
   **No gateway behaviour changed** — every method was already dispatched; the work was runtime

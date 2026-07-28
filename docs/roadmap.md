@@ -2,7 +2,7 @@
 
 This document is the authoritative roadmap for Nimbus. [`README.md`](./README.md) carries a summary; this file contains acceptance criteria, inter-phase dependencies, and the reasoning behind sequencing decisions.
 
-> **Scope.** This file covers the **gateway** — what Nimbus can do. How that capability reaches a human, through `@nimbus-dev/sdk`, `@nimbus-dev/client` and the clients built on them, is sequenced separately in [`ecosystem-roadmap.md`](./ecosystem-roadmap.md). The two are complementary: this roadmap is 27 phases deep, while the client surface is currently 15 methods wide. Where they touch, this file wins on *what* and the ecosystem roadmap wins on *when it becomes reachable*.
+> **Scope.** This file covers the **gateway** — what Nimbus can do — **and the order in which that capability reaches a human.** Both live here on purpose: which surface should exist next is a product question, and splitting it into a second sequencing document only produced two files claiming the same authority. Each surface's own detail lives in its repo's `ROADMAP.md`; the width of the client surface — which RPCs are exposed — is owned by [`nimbus-client/ROADMAP.md`](https://github.com/nimbus-agent/nimbus-client/blob/main/ROADMAP.md). How the ecosystem fits together is described at org level in [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).
 
 Phases are thematic, not calendar-bound. A phase begins when its dependencies are met and ends when its acceptance criteria pass — not at a quarter boundary. Phases may overlap when deliverables are independent.
 

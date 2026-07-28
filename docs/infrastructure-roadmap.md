@@ -3,15 +3,18 @@
 The delivery machinery for everything the org builds: CI, release automation,
 PR review, and cross-repo coordination.
 
-> **Three roadmaps, three axes.** [`roadmap.md`](./roadmap.md) is authoritative
-> for **what the gateway does** — phases, acceptance criteria.
-> [`ecosystem-roadmap.md`](./ecosystem-roadmap.md) is authoritative for **when
-> capability becomes reachable** — client surface width. This file is
+> **Two roadmaps, two axes.** [`roadmap.md`](./roadmap.md) is authoritative for
+> **what the gateway does and when that capability becomes reachable** — phases,
+> acceptance criteria, and the order in which surfaces land. This file is
 > authoritative for **how it gets built, reviewed and shipped**.
 >
-> On disagreement about gateway capability, `roadmap.md` wins. On disagreement
-> about client reachability, `ecosystem-roadmap.md` wins. This file yields to
-> both and owns only the machinery.
+> On any disagreement about product capability or sequencing, `roadmap.md` wins.
+> This file yields to it and owns only the machinery.
+>
+> (There were three. `ecosystem-roadmap.md` closed 2026-07-24 and was retired;
+> its sequencing role folded into `roadmap.md`, and its description of how the
+> ecosystem fits together moved to org level as
+> [`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md).)
 
 ---
 

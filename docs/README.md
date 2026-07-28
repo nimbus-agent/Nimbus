@@ -722,7 +722,6 @@ nimbus/
 │   ├── architecture.md       # subsystem design
 │   ├── SECURITY.md           # security model + vulnerability reporting
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap (gateway)
-│   ├── ecosystem-roadmap.md  # sdk/client/clients delivery spine
 │   ├── CONTRIBUTING.md       # contributor workflow and constraints
 │   ├── CODE_OF_CONDUCT.md    # community standards
 │   ├── release/              # release runbooks + manual smoke checklist
