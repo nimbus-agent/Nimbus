@@ -743,6 +743,14 @@ jobs:
   # These re-run specific tests to enforce thresholds.
   coverage-gates:
     name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
+    # Threshold gates run on Linux only, EXCEPT gates whose covered code
+    # branches on platform (`pal: true`). A push run was ~105 jobs against a
+    # pool granting ~15 concurrent, and 72 of those were this matrix run once
+    # per OS. Skipped matrix legs still create their check context, so no
+    # required check is left "Expected — Waiting for status to be reported".
+    # `scripts/structure-audit/check-coverage-gate-pal.ts` fails if a Linux-only
+    # gate's code ever gains platform branching.
+    if: inputs.runner == 'ubuntu-24.04' || matrix.gate.pal
     needs: unit-coverage
     runs-on: ${{ inputs.runner }}
     permissions:
@@ -754,52 +762,76 @@ jobs:
         gate:
           - name: Engine
             script: "test:coverage:engine"
+            pal: false
           - name: Agents
             script: "test:coverage:agents"
+            pal: false
           - name: Vault
             script: "test:coverage:vault"
+            pal: true
           - name: Sync scheduler
             script: "test:coverage:sync"
+            pal: false
           - name: Rate limiter
             script: "test:coverage:rate-limiter"
+            pal: false
           - name: People
             script: "test:coverage:people"
+            pal: false
           - name: Embedding
             script: "test:coverage:embedding"
+            pal: false
           - name: Workflow
             script: "test:coverage:workflow"
+            pal: false
           - name: Watcher
             script: "test:coverage:watcher"
+            pal: false
           - name: Extensions
             script: "test:coverage:extensions"
+            pal: true
           - name: Config
             script: "test:coverage:config"
+            pal: false
           - name: Telemetry
             script: "test:coverage:telemetry"
+            pal: true
           - name: TUI
             script: "test:coverage:tui"
+            pal: false
           - name: DB layer
             script: "test:coverage:db"
+            pal: false
           - name: Deployment
             script: "test:coverage:deployment"
+            pal: false
           - name: Health
             script: "test:coverage:health"
+            pal: false
           - name: Metrics
             script: "test:coverage:metrics"
+            pal: false
           - name: Preflight
             script: "test:coverage:preflight"
+            pal: false
           - name: Doctor
             script: "test:coverage:doctor"
+            pal: true
           - name: MCP
             script: "test:coverage:mcp"
+            pal: false
           - name: Updater
             script: "test:coverage:updater"
+            pal: true
           - name: LAN
             script: "test:coverage:lan"
+            pal: false
           - name: Perf
             script: "test:coverage:perf"
+            pal: true
           - name: Sandbox
             script: "test:coverage:sandbox"
+            pal: true
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
