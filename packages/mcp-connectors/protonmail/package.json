@@ -11,10 +11,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "@nimbus-dev/sdk": "^1.3.0",
-    "imapflow": "^1.3.5",
-    "nodemailer": "^9.0.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@nimbus-dev/sdk": "^1.8.1",
+    "imapflow": "^1.6.1",
+    "nodemailer": "^9.0.3",
     "zod": "^4.4.2"
   },
   "devDependencies": {
