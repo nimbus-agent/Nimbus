@@ -160,3 +160,48 @@ describe("placeholder path separators — cross-platform snapshot stability", ()
     expect(twice).toBe(once);
   });
 });
+
+describe("tmp-prefix — the macOS /private alias", () => {
+  // `/var` is a symlink to `/private/var` on macOS, so os.tmpdir() reports
+  // `/var/folders/…` while a resolved path prints `/private/var/folders/…`.
+  // Replacing only the unresolved prefix produced `/private<TMP>` and kept
+  // `main` red on macOS alone, deterministically, for days.
+  const macCtx = { tmpDirPrefix: "/var/folders/pd/abc123/T/harness", homePrefix: "/Users/runner" };
+  const nMac = (s: string): string => applyNormalization(new TextEncoder().encode(s), macCtx);
+
+  test("a RESOLVED macOS temp path normalises to <TMP>, not /private<TMP>", () => {
+    expect(
+      nMac("Added /private/var/folders/pd/abc123/T/harness/sample-repo to nimbus.toml\n"),
+    ).toBe("Added <TMP>/sample-repo to nimbus.toml\n");
+  });
+
+  test("the UNRESOLVED form still normalises, so both spellings agree", () => {
+    // Both must land on the same text or the snapshot depends on which form a
+    // given command happened to print.
+    expect(nMac("Added /var/folders/pd/abc123/T/harness/sample-repo to nimbus.toml\n")).toBe(
+      "Added <TMP>/sample-repo to nimbus.toml\n",
+    );
+  });
+
+  test("a macOS transcript matches the Linux one byte-for-byte", () => {
+    // The actual regression: the committed snapshot is recorded on Linux, and
+    // macOS must reproduce it exactly.
+    const linux = applyNormalization(
+      new TextEncoder().encode("Added /tmp/cast-driver-xyz/sample-repo to nimbus.toml\n"),
+      ctx,
+    );
+    expect(
+      nMac("Added /private/var/folders/pd/abc123/T/harness/sample-repo to nimbus.toml\n"),
+    ).toBe(linux);
+  });
+
+  test("an unrelated /private path is untouched", () => {
+    // The rule must key on the harness tmpdir, not on the literal "/private".
+    expect(nMac("see /private/etc/hosts\n")).toBe("see /private/etc/hosts\n");
+  });
+
+  test("idempotent", () => {
+    const once = nMac("Added /private/var/folders/pd/abc123/T/harness/x to nimbus.toml\n");
+    expect(applyNormalization(new TextEncoder().encode(once), macCtx)).toBe(once);
+  });
+});

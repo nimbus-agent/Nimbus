@@ -60,7 +60,21 @@ export const NORMALIZATION_RULES: ReadonlyArray<Rule> = [
     name: "tmp-prefix",
     apply: (t, ctx) => {
       if (ctx.tmpDirPrefix.length === 0) return t;
-      return t.replace(new RegExp(escapeForRegex(ctx.tmpDirPrefix), "g"), "<TMP>");
+      // macOS reports `os.tmpdir()` as `/var/folders/…` while the RESOLVED path
+      // is `/private/var/folders/…` — `/var` is a symlink to `/private/var`. A
+      // command that prints a resolved path (`nimbus init` prints its repo
+      // root) therefore emits the `/private` form, and replacing only the
+      // unresolved prefix rewrote it to the nonsense `/private<TMP>`.
+      //
+      // That drifted the snapshot on macOS ONLY, deterministically, and kept
+      // `main` red: ubuntu and windows have no such alias, so the committed
+      // snapshot recorded there never contained it.
+      //
+      // The `/private` form is replaced FIRST because it is the longer match;
+      // doing it second would leave the `/private` fragment stranded.
+      return t
+        .replace(new RegExp(escapeForRegex(`/private${ctx.tmpDirPrefix}`), "g"), "<TMP>")
+        .replace(new RegExp(escapeForRegex(ctx.tmpDirPrefix), "g"), "<TMP>");
     },
   },
   {
