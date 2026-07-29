@@ -106,14 +106,17 @@ jobs:
           # an unlocked, empty-password default keyring first and alias it as
           # the default collection.
           mkdir -p "$HOME/.local/share/keyrings"
-          cat > "$HOME/.local/share/keyrings/login.keyring" <<'KEYRING'
-[keyring]
-display-name=login
-ctime=0
-mtime=0
-lock-on-idle=false
-lock-after=false
-KEYRING
+          # Written with printf rather than a heredoc on purpose: a heredoc
+          # body has to start at column 0, which would terminate this `run: |`
+          # block scalar and make the whole workflow file invalid.
+          printf '%s\n' \
+            '[keyring]' \
+            'display-name=login' \
+            'ctime=0' \
+            'mtime=0' \
+            'lock-on-idle=false' \
+            'lock-after=false' \
+            > "$HOME/.local/share/keyrings/login.keyring"
           printf 'login' > "$HOME/.local/share/keyrings/default"
 
           # `--unlock` reads the password from stdin; empty matches the
