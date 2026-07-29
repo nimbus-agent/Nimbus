@@ -225,8 +225,23 @@ jobs:
               [ -n "$d" ] && [ -d "$d" ] || continue
               ls -la "$d" 2>/dev/null | grep -i nimbus || true
             done
+            echo "-- contents of any nimbus socket dir --"
+            for d in "${TMPDIR:-/tmp}/nimbus" "/tmp/nimbus"; do
+              [ -d "$d" ] && ls -la "$d" || true
+            done
             echo "-- live gateway processes --"
             ps aux 2>/dev/null | grep "[n]imbus-gateway" || echo "(none)"
+            # The gateway stays alive but never binds, and nothing after the
+            # embedding stage writes to stdout — so the log cannot say where it
+            # stopped. Sample the live process for an actual stack; this needs
+            # no product change and no elevated privileges for our own process.
+            if [ "$(uname)" = "Darwin" ]; then
+              gwpid="$(pgrep -f nimbus-gateway | head -1 || true)"
+              if [ -n "$gwpid" ]; then
+                echo "-- sample of pid $gwpid --"
+                sample "$gwpid" 3 -mayDie 2>&1 | head -120 || true
+              fi
+            fi
             echo "----- end gateway log -----"
           }
           trap 'rc=$?; if [ "$rc" -ne 0 ]; then dump_gateway_log; fi; exit "$rc"' EXIT
