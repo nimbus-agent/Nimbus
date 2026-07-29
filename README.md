@@ -42,6 +42,9 @@ Three things, in one query:
 <summary><b>macOS / Linux</b></summary>
 
 ```bash
+# Linux only — credentials live in the OS keystore, and the Gateway will not
+# start without it:  sudo apt install libsecret-tools   (Debian/Ubuntu)
+#                    sudo dnf install libsecret         (Fedora/RHEL)
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh -o /tmp/nimbus-install.sh
 # inspect it first if you like:  less /tmp/nimbus-install.sh
 bash /tmp/nimbus-install.sh

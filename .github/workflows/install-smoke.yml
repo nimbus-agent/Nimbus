@@ -81,6 +81,19 @@ jobs:
         with:
           verify-lock: "false"
 
+      # The Vault is OS-native, and on Linux that means libsecret: the Gateway
+      # aborts with PlatformInitError if `secret-tool` is absent, so `nimbus
+      # init` cannot complete without it. GitHub's ubuntu image does not ship
+      # it. Installing it here is not a CI workaround — it is exactly the
+      # prerequisite a real Debian/Ubuntu user must satisfy, and the README
+      # quickstart now says so.
+      - name: Install libsecret (Linux vault prerequisite)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsecret-tools
+
       - name: Build Gateway + CLI
         run: bun run --filter '@nimbus/gateway' --filter '@nimbus/cli' build
 
@@ -129,6 +142,14 @@ jobs:
       - name: Quickstart smoke — init + why (Unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          # A genuine first run loads the MiniLM embedding runtime cold, which
+          # on a macOS runner exceeds `nimbus start`'s 60 s readiness wait —
+          # the gateway was still at "starting embedding runtime" when the CLI
+          # gave up. Raise the wait rather than setting
+          # NIMBUS_SKIP_EMBEDDING_RUNTIME=1: skipping it would make the job
+          # fast but would stop exercising the cold start every real user hits.
+          NIMBUS_START_READY_TIMEOUT_MS: "300000"
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/fake-home"
