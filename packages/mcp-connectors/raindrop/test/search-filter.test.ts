@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { filterRaindropBookmarks } from "../src/search-filter.ts";
+import { filterRaindropBookmarks, filterRaindropCollections } from "../src/search-filter.ts";
 
 function bookmark(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -70,5 +70,60 @@ describe("filterRaindropBookmarks", () => {
     expect(filterRaindropBookmarks(many, { query: "exponential backoff", limit: 3 })).toHaveLength(
       3,
     );
+  });
+});
+
+function collection(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    _id: 9001,
+    title: "Distributed systems reading",
+    count: 137,
+    public: false,
+    view: "masonry",
+    color: "#0N0N0N",
+    sort: -1,
+    cover: ["https://cover.example.com/shelf.png"],
+    access: { level: 4, draggable: true },
+    created: "2024-03-01T12:00:00.000Z",
+    lastUpdate: "2024-03-02T08:00:00.000Z",
+    ...over,
+  };
+}
+
+describe("filterRaindropCollections", () => {
+  test("matches against the collection title (case-insensitive)", () => {
+    expect(filterRaindropCollections([collection()], { query: "DISTRIBUTED" })).toHaveLength(1);
+  });
+
+  test("matches against view and color", () => {
+    expect(filterRaindropCollections([collection()], { query: "masonry" })).toHaveLength(1);
+    expect(filterRaindropCollections([collection()], { query: "#0n0n0n" })).toHaveLength(1);
+  });
+
+  test("non-match returns empty", () => {
+    expect(filterRaindropCollections([collection()], { query: "nonsense" })).toHaveLength(0);
+  });
+
+  test("does not match against the cover url (not in the haystack)", () => {
+    expect(filterRaindropCollections([collection()], { query: "shelf.png" })).toHaveLength(0);
+  });
+
+  test("skips non-object entries", () => {
+    expect(
+      filterRaindropCollections([null, 42, "x", collection()], { query: "distributed" }),
+    ).toHaveLength(1);
+  });
+
+  test("tolerates missing string fields", () => {
+    const sparse = collection();
+    delete sparse["view"];
+    delete sparse["color"];
+    expect(filterRaindropCollections([sparse], { query: "distributed" })).toHaveLength(1);
+    expect(filterRaindropCollections([sparse], { query: "masonry" })).toHaveLength(0);
+  });
+
+  test("honors the limit cap", () => {
+    const many = Array.from({ length: 10 }, (_, i) => collection({ _id: i }));
+    expect(filterRaindropCollections(many, { query: "distributed", limit: 3 })).toHaveLength(3);
   });
 });

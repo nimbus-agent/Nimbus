@@ -104,6 +104,35 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   because routing to OpenAI would bill the user per bank transaction. Catalog / secrets-manifest
   / rate-limiter / sandbox-host wiring was already in place from the accounts release; no new
   vault key, no new host, no new tool surface, no schema change.
+- **2026-07-29 — Raindrop connector: collections indexed as `raindrop:collection` (issue #892).**
+  A `raindrop:bookmark` carried a `collection_id` with nothing to resolve it against. The sync
+  handler now runs a second, independent walk over Raindrop's **two unpaginated** collection
+  endpoints — `GET /rest/v1/collections` (root) and `GET /rest/v1/collections/childrens` (every
+  nested one), one request each, both returning the same `{ result, items }` envelope. The
+  bookmark walk deliberately reads collection id `0` (the "all raindrops" pseudo-collection),
+  which is a query id neither collections endpoint returns, so it is never indexed as an item.
+  `ensureRunning` / `loadCreds` are resolved once, so the unconfigured case still returns the
+  exact `syncNoopResult` (no MCP spawn, no HTTP) it did before; a failure in one walk degrades
+  that walk only. The new pure mapper `mapRaindropCollectionToItem` stores
+  collection_id/title/count/public/view/color/sort/parent_id/created_at/updated_at/
+  canonical_url; `cover` (matching the bookmark mapper's existing restraint) plus
+  `access`/`collaborators`/`user`/`expanded` are deliberately not indexed.
+  **`external_id` is `collection/<id>`, not the bare numeric id** — Raindrop numbers
+  collections and raindrops in separate id spaces, the item primary key is
+  `<service>:<external_id>`, and `upsertIndexedItem` writes `ON CONFLICT(id) DO UPDATE`, so an
+  unprefixed collection id would have let collection 9001 and bookmark 9001 silently overwrite
+  each other on every sync; an integration test drives a real sync with both and asserts both
+  rows survive. Bookmarks keep their existing bare-id `external_id` — re-prefixing them would
+  orphan every already-indexed row. `metadata.collection_id` is the raw **number** so it joins
+  a bookmark's `metadata.collection_id` (also covered by an integration test that runs the join
+  in SQL), and `parent_id` comes from `parent.$id` (null for a root collection). `url` /
+  `canonical_url` are **null**: the API returns no URL for a collection, and constructing an
+  app deep link would invent data the vendor did not send. `raindrop:collection` stays OFF
+  `PROSE_HEAVY_TYPES` (local MiniLM 384-dim), matching `raindrop:bookmark`: the Collection
+  object has no description field at all, so there is no prose to embed. Three new read tools
+  (`raindrop_collections_list` / `raindrop_collection_get` / `raindrop_collections_search`);
+  `hitlRequired` stays empty. Catalog / secrets-manifest / rate-limiter / sync-registration
+  wiring already existed and was verified unchanged.
 
 - **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
   The zero-config path shipped (#887) with its sync step covered only by unit tests using an
