@@ -321,26 +321,59 @@ jobs:
           # config and the Vault keys exist, so gateway startup is guaranteed to
           # touch the keychain and cannot fail early for an unrelated reason.
           export HOME="$RUNNER_TEMP/fake-home"
+          LOG="$RUNNER_TEMP/locked.log"
+          RCFILE="$RUNNER_TEMP/locked.rc"
+          GW="$HOME/.local/bin/nimbus-gateway"
+          rm -f "$RCFILE"
+
+          # Harness faults must not masquerade as product faults: a missing
+          # binary would otherwise be reported as "no remedy in the output".
+          if [ ! -x "$GW" ]; then
+            echo "::error::harness broken: $GW is missing or not executable"; exit 1
+          fi
 
           security lock-keychain nimbus-smoke.keychain
           echo "Locked nimbus-smoke.keychain; starting gateway."
 
-          # `timeout` is the whole point: exit 124 means it hung, which is the
-          # regression. Any other non-zero exit is the fix working as intended.
-          set +e
-          timeout 90 "$HOME/.local/bin/nimbus-gateway" > "$RUNNER_TEMP/locked.log" 2>&1
-          rc=$?
-          set -e
-          echo "gateway exited rc=$rc"
+          # NOTE: macOS has no GNU `timeout` (and no `gtimeout` without brew
+          # coreutils), so the watchdog is written by hand. The sentinel file is
+          # the exit signal rather than `kill -0`, because a finished background
+          # child stays a waitable zombie and `kill -0` keeps succeeding on it —
+          # which would report every run as a hang.
+          # `set +e` inside the subshell is load-bearing: subshells inherit
+          # errexit, so without it a non-zero gateway exit aborts the subshell
+          # BEFORE the sentinel is written — and every real failure then looks
+          # like a hang. (Caught by rehearsing this step locally; a passing
+          # exit-0 case hid it, because only non-zero exits trip errexit.)
+          ( set +e; "$GW" > "$LOG" 2>&1; echo "$?" > "$RCFILE" ) &
+          runner_pid=$!
+          for _ in $(seq 1 90); do
+            [ -f "$RCFILE" ] && break
+            sleep 1
+          done
+
+          if [ -f "$RCFILE" ]; then
+            rc="$(cat "$RCFILE")"
+            hung=0
+          else
+            rc="-"
+            hung=1
+            kill -9 "$runner_pid" 2>/dev/null || true
+            pkill -f 'nimbus-gateway' 2>/dev/null || true
+          fi
+          echo "gateway exited rc=$rc hung=$hung"
           echo "----- gateway output -----"
-          cat "$RUNNER_TEMP/locked.log" || true
+          cat "$LOG" || true
           echo "----- end gateway output -----"
 
           # Unlock again so nothing downstream inherits a locked keychain.
           security unlock-keychain -p "" nimbus-smoke.keychain || true
 
-          if [ "$rc" -eq 124 ]; then
-            echo "::error::gateway HUNG on a locked keychain (timed out) — #932 has regressed"
+          if grep -qi "command not found" "$LOG"; then
+            echo "::error::harness broken: a command used by this step is unavailable"; exit 1
+          fi
+          if [ "$hung" -eq 1 ]; then
+            echo "::error::gateway HUNG on a locked keychain (90s watchdog) — #932 has regressed"
             exit 1
           fi
           if [ "$rc" -eq 0 ]; then
