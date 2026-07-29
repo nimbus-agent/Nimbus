@@ -86,6 +86,13 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("", "")).toBe(false);
   });
 
+  test("mercury item types are not prose-heavy (structured finance rows stay on MiniLM)", () => {
+    // A transaction is a counterparty + an amount + a short memo, not paragraph
+    // prose. Routing it to OpenAI would bill the user per bank transaction.
+    expect(isProseHeavy("mercury", "transaction")).toBe(false);
+    expect(isProseHeavy("mercury", "account")).toBe(false);
+  });
+
   test("workday item types are not prose-heavy (384-dim default)", () => {
     for (const t of ["worker", "time_off", "job_posting", "report"]) {
       expect(isProseHeavy("workday", t)).toBe(false);
