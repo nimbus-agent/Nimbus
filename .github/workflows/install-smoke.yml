@@ -81,18 +81,35 @@ jobs:
         with:
           verify-lock: "false"
 
-      # The Vault is OS-native, and on Linux that means libsecret: the Gateway
-      # aborts with PlatformInitError if `secret-tool` is absent, so `nimbus
-      # init` cannot complete without it. GitHub's ubuntu image does not ship
-      # it. Installing it here is not a CI workaround — it is exactly the
-      # prerequisite a real Debian/Ubuntu user must satisfy, and the README
-      # quickstart now says so.
-      - name: Install libsecret (Linux vault prerequisite)
+      # The Vault is OS-native, and on Linux that means libsecret. Installing
+      # `secret-tool` alone is NOT enough: libsecret talks to a Secret Service
+      # provider over D-Bus, so without a session bus and an unlocked keyring
+      # the Gateway still aborts with "Vault operation failed". This block
+      # reproduces what a desktop Linux user already has.
+      #
+      # A headless Linux box has none of it, which is why `nimbus init` fails
+      # there — tracked separately as a launch blocker; see the Gate 1 runbook.
+      - name: Provide a Linux keyring session (vault prerequisite)
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsecret-tools
+          sudo apt-get install -y -qq libsecret-tools gnome-keyring dbus-x11
+          # Export the bus + daemon addresses to every later step.
+          eval "$(dbus-launch --sh-syntax)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          # `--unlock` reads the password from stdin; an empty one is fine for
+          # a throwaway runner keyring.
+          eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
+          echo "GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-}" >> "$GITHUB_ENV"
+          # Prove the Secret Service is actually answering before the smoke
+          # test depends on it, so a keyring failure is diagnosed here rather
+          # than surfacing later as an opaque gateway abort.
+          echo -n "smoke-value" | secret-tool store --label=nimbus-smoke service nimbus-smoke key probe
+          test "$(secret-tool lookup service nimbus-smoke key probe)" = "smoke-value"
+          secret-tool clear service nimbus-smoke key probe
+          echo "Secret Service responding."
 
       - name: Build Gateway + CLI
         run: bun run --filter '@nimbus/gateway' --filter '@nimbus/cli' build
@@ -143,13 +160,18 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         env:
-          # A genuine first run loads the MiniLM embedding runtime cold, which
-          # on a macOS runner exceeds `nimbus start`'s 60 s readiness wait —
-          # the gateway was still at "starting embedding runtime" when the CLI
-          # gave up. Raise the wait rather than setting
-          # NIMBUS_SKIP_EMBEDDING_RUNTIME=1: skipping it would make the job
-          # fast but would stop exercising the cold start every real user hits.
-          NIMBUS_START_READY_TIMEOUT_MS: "300000"
+          # The Gateway does not bind its socket until the embedding runtime
+          # finishes initializing, and on a cold machine that means fetching
+          # MiniLM from HuggingFace (init timeout defaults to 600 s). The
+          # macOS runner sat at "starting embedding runtime" for a full 300 s
+          # without binding, so this is a real first-run cost, not slowness —
+          # tracked as a launch blocker; see the Gate 1 runbook.
+          #
+          # Skip it here: what this job exists to prove is the init → sync →
+          # why path, and neither `index.demoSymbol` (reads indexed symbols)
+          # nor `nimbus why` (blame + graph lanes) touches a vector table.
+          # Leaving it on would couple every run to a third-party CDN.
+          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1"
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/fake-home"
