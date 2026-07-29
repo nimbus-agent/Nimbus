@@ -131,31 +131,6 @@ jobs:
           secret-tool clear service nimbus-smoke key probe
           echo "Secret Service responding."
 
-      # The macOS analogue of the Linux keyring step above. The Vault stores
-      # secrets via SecKeychainAddGenericPassword, which on a locked or
-      # session-less keychain escalates to a GUI authorization prompt
-      # (makeLoginAuthUI → AuthorizationCopyRights) and then blocks forever on
-      # a synchronous XPC call — there is no timeout and nothing is logged, so
-      # it is indistinguishable from a hang. Creating an unlocked keychain and
-      # making it the default keeps the write non-interactive.
-      - name: Provide an unlocked keychain (macOS vault prerequisite)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          security create-keychain -p "" nimbus-smoke.keychain
-          security set-keychain-settings -u nimbus-smoke.keychain
-          security unlock-keychain -p "" nimbus-smoke.keychain
-          security default-keychain -s nimbus-smoke.keychain
-          security list-keychains -d user -s nimbus-smoke.keychain
-          # Prove a non-interactive add/read/delete works before the smoke test
-          # depends on it, so a keychain problem is diagnosed at its source
-          # rather than surfacing later as an unexplained gateway hang.
-          security add-generic-password -a nimbus-smoke -s nimbus-smoke -w probe
-          test "$(security find-generic-password -a nimbus-smoke -s nimbus-smoke -w)" = "probe"
-          security delete-generic-password -a nimbus-smoke -s nimbus-smoke >/dev/null
-          echo "Keychain accepts non-interactive writes."
-
       - name: Build Gateway + CLI
         run: bun run --filter '@nimbus/gateway' --filter '@nimbus/cli' build
 
@@ -270,6 +245,27 @@ jobs:
             echo "----- end gateway log -----"
           }
           trap 'rc=$?; if [ "$rc" -ne 0 ]; then dump_gateway_log; fi; exit "$rc"' EXIT
+
+          # macOS keychain setup MUST live here, after HOME is exported, not in
+          # an earlier step: `security default-keychain -s` records the choice
+          # in $HOME/Library/Preferences, and the gateway inherits this sandboxed
+          # HOME. Setting it under the runner's real HOME leaves the gateway
+          # still resolving the locked login keychain — which blocks forever in
+          # a GUI authorization prompt (see the socket probe below).
+          if [ "$(uname)" = "Darwin" ]; then
+            mkdir -p "$HOME/Library/Preferences" "$HOME/Library/Keychains"
+            security create-keychain -p "" nimbus-smoke.keychain
+            security set-keychain-settings -u nimbus-smoke.keychain
+            security unlock-keychain -p "" nimbus-smoke.keychain
+            security default-keychain -s nimbus-smoke.keychain
+            security list-keychains -d user -s nimbus-smoke.keychain
+            # Prove a non-interactive add/read/delete works under THIS HOME
+            # before the smoke test depends on it.
+            security add-generic-password -a nimbus-smoke -s nimbus-smoke -w probe
+            test "$(security find-generic-password -a nimbus-smoke -s nimbus-smoke -w)" = "probe"
+            security delete-generic-password -a nimbus-smoke -s nimbus-smoke >/dev/null
+            echo "Keychain accepts non-interactive writes under $HOME."
+          fi
 
           for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
             if [ -f "$rc" ]; then . "$rc"; break; fi
