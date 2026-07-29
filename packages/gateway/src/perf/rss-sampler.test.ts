@@ -90,6 +90,99 @@ describe("sampleRss", () => {
     expect(result.intervalsMissed).toBe(0);
   });
 
+  test("rejects one-sided timing-hook injection instead of hanging", async () => {
+    // The failure this prevents is a HANG, not a wrong answer: a frozen custom
+    // `now` with the default real `setTimeout` means the loop reads a clock that
+    // never moves while real time passes, so the deadline never arrives. Prose
+    // in the type docs cannot stop that; this throw can.
+    await expect(
+      sampleRss({
+        pid: 1,
+        durationMs: 100,
+        intervalMs: 20,
+        pidusage: fakePidusage([100]),
+        now: () => 0,
+      }),
+    ).rejects.toThrow(/must be provided together/);
+
+    await expect(
+      sampleRss({
+        pid: 1,
+        durationMs: 100,
+        intervalMs: 20,
+        pidusage: fakePidusage([100]),
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(/must be provided together/);
+  });
+
+  test("neither hook, or both, is accepted", async () => {
+    const clock = virtualClock();
+    await expect(
+      sampleRss({ pid: 1, durationMs: 20, intervalMs: 10, pidusage: fakePidusage([1]) }),
+    ).resolves.toBeDefined();
+    await expect(
+      sampleRss({
+        pid: 1,
+        durationMs: 20,
+        intervalMs: 10,
+        pidusage: fakePidusage([1]),
+        now: clock.now,
+        sleep: clock.sleep,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  test("the real sleep does not accumulate abort listeners", async () => {
+    // `{ once: true }` only detaches after the event FIRES, so every sleep that
+    // ends normally used to leave its listener attached. A default 1000ms
+    // interval over a 60s bench would stack 60 of them on one signal.
+    const ac = new AbortController();
+    let peak = 0;
+    const realAdd = ac.signal.addEventListener.bind(ac.signal);
+    let live = 0;
+    ac.signal.addEventListener = ((type: string, fn: EventListener, opts?: unknown) => {
+      if (type === "abort") {
+        live += 1;
+        peak = Math.max(peak, live);
+      }
+      realAdd(type, fn, opts as AddEventListenerOptions);
+    }) as typeof ac.signal.addEventListener;
+    const realRemove = ac.signal.removeEventListener.bind(ac.signal);
+    ac.signal.removeEventListener = ((type: string, fn: EventListener, opts?: unknown) => {
+      if (type === "abort") live -= 1;
+      realRemove(type, fn, opts as EventListenerOptions);
+    }) as typeof ac.signal.removeEventListener;
+
+    // Many short real sleeps; none aborts, so every listener must be detached
+    // by the normal path.
+    await sampleRss({
+      pid: 1,
+      durationMs: 60,
+      intervalMs: 5,
+      pidusage: fakePidusage([1, 2, 3]),
+      signal: ac.signal,
+    });
+
+    expect(peak).toBeGreaterThan(0); // the listener path really was exercised
+    expect(live, "abort listeners were left attached after normal completion").toBe(0);
+  });
+
+  test("an already-aborted signal returns without waiting out the timeout", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const t0 = performance.now();
+    const result = await sampleRss({
+      pid: 1,
+      durationMs: 5_000,
+      intervalMs: 1_000,
+      pidusage: fakePidusage([1]),
+      signal: ac.signal,
+    });
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(result.samples.length).toBeLessThanOrEqual(1);
+  });
+
   test("intervalsMissed increments when pidusage throws", async () => {
     const result = await sampleRss({
       pid: 1,
