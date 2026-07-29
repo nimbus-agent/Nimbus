@@ -658,9 +658,13 @@ fixed at the source anyway.** The flagged `\$` sits in a *template literal* in
 stops `${GITHUB_REF_NAME}` being read as an interpolation. The string is a YAML
 fixture passed to `stagedAssetNames()` and is never compiled as a regex, so the
 query's "may still represent a meta-character in a regular expression" premise
-does not apply. Rather than suppress, the fixture became a single-quoted string
-— `${` is not special there, so no escape is needed and the alert has no source
-to fire on. The literal value is byte-identical.
+does not apply. Rather than suppress it, the fixture was rewritten to need no
+escape at all — note the obvious rewrite only trades linters, since a
+plain-quoted `'${…}'` trips Biome's `suspicious/noTemplateCurlyInString`, so the
+fixture now interpolates the dollar itself. The literal value is byte-identical,
+proved by direct comparison, and a new assertion guards the fixture: the
+existing `toEqual(new Set())` would also have passed on a fixture that silently
+lost its interpolation and stopped testing anything.
 
 None of the four alerts were dismissed here; dismissal is the repository
 owner's call.
