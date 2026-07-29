@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.8.0](https://github.com/nimbus-agent/Nimbus/compare/v1.7.0...v1.8.0) (2026-07-29)
+
+
+### Features
+
+* **connectors:** index Google Meet participant detail on conference records ([#927](https://github.com/nimbus-agent/Nimbus/issues/927)) ([69282ef](https://github.com/nimbus-agent/Nimbus/commit/69282ef9712ec966afd9b5e6f4bc11527aa77d35))
+
+
+### Bug Fixes
+
+* **ci:** repair the coverage-gate count assertion broken by [#936](https://github.com/nimbus-agent/Nimbus/issues/936) ([#941](https://github.com/nimbus-agent/Nimbus/issues/941)) ([af9d246](https://github.com/nimbus-agent/Nimbus/commit/af9d246b5f06dceaeee4f43e8665c8b70932e956))
+* **cli:** handle the embedding warm-up error in `nimbus search` ([#937](https://github.com/nimbus-agent/Nimbus/issues/937)) ([8640972](https://github.com/nimbus-agent/Nimbus/commit/8640972adbc81a88c7999597a6feaf381491fc39))
+
 ## [1.7.0](https://github.com/nimbus-agent/Nimbus/compare/v1.6.0...v1.7.0) (2026-07-29)
 
 
