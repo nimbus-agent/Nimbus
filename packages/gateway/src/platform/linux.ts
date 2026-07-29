@@ -22,7 +22,7 @@ export type LinuxVaultState =
   | "ok"
   /** The `secret-tool` binary is absent. */
   | "not-installed"
-  /** No D-Bus session bus, so libsecret cannot reach any provider. */
+  /** No D-Bus session bus, so libsecret cannot reach a provider at all. */
   | "no-session-bus"
   /** A session bus exists but nothing owns `org.freedesktop.secrets`. */
   | "no-secret-service"
@@ -83,8 +83,8 @@ const PROBE_TIMEOUT_MS = 5_000;
 
 /** `secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY` and friends. */
 const NO_SESSION_BUS_RE = /autolaunch|DBUS_SESSION_BUS_ADDRESS/i;
-/** `The name org.freedesktop.secrets was not provided by any .service files`. */
-const NO_PROVIDER_RE = /was not provided by any|ServiceUnknown/i;
+/** Matches `The name org.freedesktop.secrets was not provided by ... .service files`. */
+const NO_PROVIDER_RE = /not provided by|ServiceUnknown/i;
 const OBJECT_PATH_RE = /(?:^|\s)(?:object path|o)\s+"([^"]*)"/m;
 const BOOLEAN_RE = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 

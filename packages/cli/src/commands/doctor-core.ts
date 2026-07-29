@@ -73,7 +73,7 @@ const COLLECTION_IFACE = "org.freedesktop.Secret.Collection";
 const VAULT_PROBE_TIMEOUT_MS = 5_000;
 
 const NO_BUS_PATTERN = /autolaunch|DBUS_SESSION_BUS_ADDRESS/i;
-const NO_PROVIDER_PATTERN = /was not provided by any|ServiceUnknown/i;
+const NO_PROVIDER_PATTERN = /not provided by|ServiceUnknown/i;
 const OBJECT_PATH_PATTERN = /(?:^|\s)(?:object path|o)\s+"([^"]*)"/m;
 const BOOL_PATTERN = /(?:^|\s)(?:boolean|b)\s+(true|false)\b/m;
 
@@ -245,37 +245,35 @@ export function doctorVaultLine(
   return formatDoctorVaultLine(doctorVaultStatus(os, exec));
 }
 
+/**
+ * `keepStdout: false` leaves stdout unpiped entirely — used for the secret-tool
+ * lookup so a matched secret has nowhere to go.
+ */
+function spawnCapture(cmd: readonly string[], keepStdout: boolean): DoctorVaultRun {
+  try {
+    const p = Bun.spawnSync({
+      cmd: [...cmd],
+      stdout: keepStdout ? "pipe" : "ignore",
+      stderr: "pipe",
+      timeout: VAULT_PROBE_TIMEOUT_MS,
+    });
+    // stdout is undefined whenever it was not piped, so this is "" by construction.
+    return {
+      code: p.exitCode,
+      stdout: p.stdout?.toString() ?? "",
+      stderr: p.stderr.toString(),
+    };
+  } catch (err) {
+    return { code: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function createDoctorVaultExec(): DoctorVaultExec {
   return {
     findSecretTool: () => Bun.which("secret-tool"),
-    lookupStderr: (exe, args) => {
-      try {
-        const p = Bun.spawnSync({
-          cmd: [exe, ...args],
-          // "ignore", not "pipe": a looked-up secret must have nowhere to go.
-          stdout: "ignore",
-          stderr: "pipe",
-          timeout: VAULT_PROBE_TIMEOUT_MS,
-        });
-        return p.stderr.toString();
-      } catch (err) {
-        return err instanceof Error ? err.message : String(err);
-      }
-    },
+    lookupStderr: (exe, args) => spawnCapture([exe, ...args], false).stderr,
     hasBinary: (name) => Bun.which(name) !== null,
-    runQuery: (cmd) => {
-      try {
-        const p = Bun.spawnSync({
-          cmd: [...cmd],
-          stdout: "pipe",
-          stderr: "pipe",
-          timeout: VAULT_PROBE_TIMEOUT_MS,
-        });
-        return { code: p.exitCode, stdout: p.stdout.toString(), stderr: p.stderr.toString() };
-      } catch (err) {
-        return { code: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
-      }
-    },
+    runQuery: (cmd) => spawnCapture(cmd, true),
   };
 }
 
