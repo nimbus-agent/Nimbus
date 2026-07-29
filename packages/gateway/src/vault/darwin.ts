@@ -15,7 +15,18 @@ import type { NimbusVault } from "./nimbus-vault.ts";
 
 const SERVICE = "dev.nimbus";
 
-const security = dlopen("/System/Library/Frameworks/Security.framework/Security", {
+/**
+ * Absolute location of Security.framework.
+ *
+ * Deliberately a literal and NOT built with `path.join()`: this is a fixed macOS
+ * system identifier passed to `dlopen`, not a filesystem path assembled from
+ * parts. `join()` would rewrite the separators on a non-macOS host and corrupt
+ * it. Exported so the darwin-only test can reuse it instead of duplicating the
+ * string.
+ */
+export const SECURITY_FRAMEWORK_PATH = "/System/Library/Frameworks/Security.framework/Security";
+
+const security = dlopen(SECURITY_FRAMEWORK_PATH, {
   /**
    * Turns the keychain's GUI authorization dialog OFF for this process.
    *

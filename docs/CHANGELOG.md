@@ -33,8 +33,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   item first and a refused lookup during `nimbus init` used to be reported as a failed *delete*.
   Verification is layered, since the FFI itself is unreachable off macOS: the message logic is a
   pure module unit-tested on every platform (100% covered — `vault/darwin.ts` is coverage-exempt as
-  platform code); three source guards, each independently red-proved, pin that the symbol is
-  declared, actually *called*, called at module scope, and never passed `1`; and a new macOS
+  platform code); four source guards pin that the symbol is declared, actually *called*, called at
+  module scope, and never passed `1` — all four red-proved via three independent breakages (drop the
+  module-level call, flip `0`→`1`, delete the declaration); and a new macOS
   `install-smoke` step locks the keychain and asserts the gateway fails **fast** with the remedy —
   `timeout` exit 124 is treated as the regression, so a hang can never pass as green. That step's
   five-way decision logic (works / hangs / exits 0 / no remedy / no never-prompts line) was

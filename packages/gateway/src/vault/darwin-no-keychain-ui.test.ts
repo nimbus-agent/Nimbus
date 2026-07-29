@@ -50,7 +50,9 @@ describe("darwin vault refuses the keychain UI (issue #932)", () => {
       // Proves the FFI declaration is ABI-correct: a wrong signature would throw
       // or return a non-zero OSStatus here. errSecSuccess is 0.
       const { dlopen, FFIType } = await import("bun:ffi");
-      const security = dlopen("/System/Library/Frameworks/Security.framework/Security", {
+      // Reuse the production constant rather than repeating the path here.
+      const { SECURITY_FRAMEWORK_PATH } = await import("./darwin.ts");
+      const security = dlopen(SECURITY_FRAMEWORK_PATH, {
         SecKeychainSetUserInteractionAllowed: { args: [FFIType.u8], returns: FFIType.int32_t },
       });
       expect(security.symbols.SecKeychainSetUserInteractionAllowed(0)).toBe(0);
