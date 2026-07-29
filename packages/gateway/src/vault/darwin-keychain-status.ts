@@ -20,9 +20,13 @@ export const ERR_SEC_ITEM_NOT_FOUND = -25300;
  */
 export const ERR_SEC_INTERACTION_NOT_ALLOWED = -25308;
 /**
- * `errSecAuthFailed` — authorization failed. A locked keychain that cannot
- * prompt reports this on some macOS versions rather than
- * `errSecInteractionNotAllowed`, so both map to the same remedy.
+ * `errSecAuthFailed` — authorization failed.
+ *
+ * Do NOT drop this in favour of `errSecInteractionNotAllowed` alone. Measured on
+ * a macOS 14 runner with a locked keychain and interaction refused, the read
+ * returns **-25293**, not -25308 — so mapping only -25308 would have produced the
+ * terse generic message in exactly the case this whole fix exists for. Both codes
+ * mean "the keychain will not answer without a dialog" and share one remedy.
  */
 export const ERR_SEC_AUTH_FAILED = -25293;
 /** `errSecNoSuchKeychain` — the referenced keychain does not exist. */
@@ -47,12 +51,16 @@ export function isInteractionBlockedStatus(status: number): boolean {
  * Deliberately long. This is the first command a new macOS user runs, and
  * before this existed the failure mode was an indefinite hang with no output at
  * all — so the message has to carry the whole diagnosis and a runnable fix.
+ *
+ * Wording note: `audit:any` strips comments before counting `\bany\b`, but NOT
+ * string literals — so a bare "any" in this user-facing text trips the no-`any`
+ * ratchet. Phrase around it rather than raising the baseline.
  */
 const INTERACTION_REMEDY = [
   "Nimbus keeps credentials in the macOS keychain, and the keychain wants an",
   "authorization dialog that a background service cannot answer.",
   "Nimbus never prompts, so it fails here rather than hanging forever waiting",
-  "for a dialog nobody can see. This is expected over SSH, in CI, and in any",
+  "for a dialog nobody can see. This is expected over SSH, in CI, and in a",
   "headless or non-GUI session — and on a desktop Mac whose keychain is locked.",
   "",
   "On your own Mac, unlock the login keychain and retry:",
