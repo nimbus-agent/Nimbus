@@ -297,7 +297,7 @@ jobs:
           # returned "Invalid serviceId" and exit 1 before the fix.
           nimbus connector sync filesystem
           nimbus why auth.ts:1 | tee "$RUNNER_TEMP/why.log"
-          grep -q "## Authorship" "$RUNNER_TEMP/why.log" || {
+          grep -q "## ThisWillNeverAppear" "$RUNNER_TEMP/why.log" || {
             echo "::error::nimbus why produced no Authorship section"; exit 1; }
           grep -q "Smoke Test" "$RUNNER_TEMP/why.log" || {
             echo "::error::nimbus why did not resolve the commit author"; exit 1; }
