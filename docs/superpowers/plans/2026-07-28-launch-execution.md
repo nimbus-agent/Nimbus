@@ -727,13 +727,45 @@ The three gates in the spec are human process. They are checklists, not tasks �
 
 - [ ] Recruit 5–10 ICP engineers privately (network, ex-colleagues, zaalgol, communities you already belong to). Do **not** post publicly — that spends Gate 3's ammunition.
 - [ ] Ask each for a 15-minute screenshare of their *first* run, or an async note: where did you stop, what did you expect, would you run it again next week.
-- [ ] Point them at `nimbus doctor` as step one of troubleshooting, with the caveat from Task 4.
+- [ ] Point them at `nimbus doctor` as step one of troubleshooting, with the caveat from Task 4:
+
+  > `nimbus doctor` output contains local filesystem paths; redact your username
+  > before pasting publicly, or send it directly.
+
+  **Verdict (Task 4, audited 2026-07-29 — safe to paste with that one caveat).**
+  No Vault-sourced value can reach the output: `doctor` makes no `vault.*` call
+  at all, and its only vault interaction is a `Bun.which("secret-tool")`
+  presence check on Linux. The three gateway RPCs it does make are bounded —
+  `gateway.ping` returns an uptime number, `config.validate` returns two fixed
+  literal strings with no interpolated config content, and `diag.snapshot`
+  yields an item count plus `connectorId`/`state` pairs.
+
+  Two judgement-call disclosures remain, neither a blocker:
+
+  - **Absolute paths containing the username** — `Data dir` and `Gateway state
+    file` always print them (confirmed live: `C:\Users\<name>\...`), and a
+    `[voice]` misconfiguration additionally echoes `piper_path` / `whisper_path`.
+  - **Connector IDs** — when a gateway is running, the connector-health block
+    lists every registered `connectorId`, which can reveal an employer's
+    tooling. Testers on a work machine should skim that block before pasting.
 - [ ] **Exit:** ≥5 reach `nimbus why` on their own repo unaided; ≥3 still using it 14 days after their own first run.
 - [ ] If the exit criterion fails, fix the product. Do not proceed to Gate 3.
 
 ### Gate 3 runbook — public launch
 
 - [ ] Confirm launch copy cites the Task 2 audit numbers, not "80+", unless the audit supports it.
+
+  **Audit result (run 2026-07-29):** `tier1=4 implemented=85 unknown=5 total=94`.
+  So **89 of 94 connectors register MCP tools and make outbound calls** — the
+  "80+ services" claim is supported on the static evidence, provided it is
+  never phrased as live-API verification (only 4 have any test at all).
+
+  **Known tier-definition gap — decide before writing copy.** All 5 `unknown`
+  connectors (`dataprofile`, `great-expectations`, `localdb`, `obsidian`,
+  `storybook`) register tools but are pure local-filesystem readers, so
+  `makesOutboundCalls` is legitimately `false` for them. They are implemented;
+  the tier scheme just has no "local-only" bucket. Treat 89 as a floor, not a
+  ceiling — the honest full count of implemented connectors is 94 of 94.
 - [ ] Confirm the telemetry position from Task 3 is in the copy.
 - [ ] Re-read `docs/launch-messaging.md` honesty guardrails immediately before posting.
 - [ ] Fire channels in order, spaced out — MCP directories and `awesome-*` lists, then Lobsters and r/selfhosted, then r/devops and r/sre, then Show HN last.
