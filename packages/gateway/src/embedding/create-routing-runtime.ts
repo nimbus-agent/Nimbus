@@ -8,6 +8,7 @@ import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { EmbeddingReadiness } from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { type CreateLocalEmbedderOptions, createLocalEmbedder } from "./model.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
@@ -138,6 +139,19 @@ export async function tryCreateRoutingEmbeddingRuntime(
 
     getBackfillProgress(): { done: number; total: number } | null {
       return null;
+    },
+
+    // This runtime is only ever CONSTRUCTED after both embedders resolved, so it is ready
+    // by construction — the slow part happened above, off the gateway's bind path (#928).
+    getReadiness(): EmbeddingReadiness {
+      return {
+        state: "ready",
+        elapsedMs: 0,
+        model: localEmbedder.model,
+        dims: EMBEDDING_DIM_LOCAL,
+        download: null,
+        reason: null,
+      };
     },
 
     startBackgroundJobs(): void {

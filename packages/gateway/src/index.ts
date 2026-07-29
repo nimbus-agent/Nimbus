@@ -4,6 +4,7 @@ import pino from "pino";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
+import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { runAsk } from "./engine/run-ask.ts";
 import { emergencyGatewayLog } from "./platform/gateway-log-file.ts";
@@ -162,6 +163,21 @@ async function main(): Promise<void> {
     socketPath: platform.paths.socketPath,
   });
   process.stdout.write(`[gateway] ready (${GATEWAY_VERSION}) IPC ${platform.paths.socketPath}\n`);
+  // #928: the socket is bound and serving BEFORE the embedding model is loaded. Log the state
+  // it was in at bind time — the previous boot log ended at "starting embedding runtime" with
+  // no further output, which made a cold-model fetch indistinguishable from a hang.
+  logEmbeddingStateAtBind(platform.embeddingReadiness());
+}
+
+/** One line, at bind time, naming the embedding state the gateway started serving in. */
+function logEmbeddingStateAtBind(readiness: EmbeddingReadiness): void {
+  const detail =
+    readiness.state === "warming"
+      ? " — semantic search activates when it finishes; everything else is available now"
+      : readiness.reason === null
+        ? ""
+        : ` (${readiness.reason})`;
+  process.stdout.write(`[gateway] embeddings: ${readiness.state}${detail}\n`);
 }
 
 try {

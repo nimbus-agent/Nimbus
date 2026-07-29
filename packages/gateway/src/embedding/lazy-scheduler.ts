@@ -5,6 +5,11 @@ import type { Logger } from "pino";
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
+import type {
+  EmbeddingModelDownload,
+  EmbeddingReadiness,
+  EmbeddingReadinessState,
+} from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import {
   type CreateLocalEmbedderOptions,
@@ -25,14 +30,30 @@ export function createLazyEmbeddingRuntime(
   let pipeline: SqliteEmbeddingPipeline | null = null;
   let loading: Promise<SqliteEmbeddingPipeline | null> | null = null;
   let backfillStarted = false;
+  const startedMs = Date.now();
+  let settledMs: number | null = null;
+  let state: EmbeddingReadinessState = "warming";
+  let reason: string | null = null;
+  let download: EmbeddingModelDownload | null = null;
+
+  function settle(next: Exclude<EmbeddingReadinessState, "warming">, why: string | null): void {
+    state = next;
+    reason = why;
+    settledMs ??= Date.now();
+    if (next !== "ready") {
+      download = null;
+    }
+  }
 
   async function ensurePipeline(): Promise<SqliteEmbeddingPipeline | null> {
     const uv = readIndexedUserVersion(db);
     if (uv < 6) {
+      settle("disabled", "index schema predates semantic memory (v6)");
       return null;
     }
     if (!ensureSqliteVecForConnection(db, uv)) {
       logger.warn("sqlite-vec unavailable; semantic embeddings disabled for this process");
+      settle("unavailable", "sqlite-vec extension is unavailable");
       return null;
     }
     if (pipeline !== null) {
@@ -41,7 +62,13 @@ export function createLazyEmbeddingRuntime(
     loading ??= (async (): Promise<SqliteEmbeddingPipeline | null> => {
       try {
         const embedder =
-          preloadedEmbedder ?? (await createEmbedder({ cacheDir: join(dataDir, "models") }));
+          preloadedEmbedder ??
+          (await createEmbedder({
+            cacheDir: join(dataDir, "models"),
+            onProgress: (p) => {
+              download = p;
+            },
+          }));
         return new SqliteEmbeddingPipeline({
           db,
           embedder,
@@ -61,9 +88,22 @@ export function createLazyEmbeddingRuntime(
     loading = null;
     if (resolved !== null) {
       pipeline = resolved;
+      settle("ready", null);
+    } else {
+      settle("unavailable", "local embedding pipeline failed to initialize");
     }
     return resolved;
   }
+
+  // Eager warm-up kickoff (#928). Without it a caller guarded by `getReadiness()` would see
+  // `warming` forever — nothing would ever trigger the load — and semantic search would never
+  // come up. The work is detached: construction still returns on the same tick.
+  void ensurePipeline().catch((err: unknown) => {
+    logger.warn({ err }, "embedding warm-up could not start");
+    // Never leave the runtime claiming `warming` after a warm-up that can no longer progress —
+    // callers would be told "not yet" forever instead of "not going to happen" (#928).
+    settle("unavailable", err instanceof Error ? err.message : String(err));
+  });
 
   return {
     scheduleItemEmbedding(itemId: string): void {
@@ -125,6 +165,18 @@ export function createLazyEmbeddingRuntime(
 
     getBackfillProgress(): { done: number; total: number } | null {
       return null;
+    },
+
+    getReadiness(): EmbeddingReadiness {
+      const end = state === "warming" ? Date.now() : (settledMs ?? Date.now());
+      return {
+        state,
+        elapsedMs: Math.max(0, end - startedMs),
+        model: pipeline?.embeddingModel ?? preloadedEmbedder?.model ?? LOCAL_EMBEDDING_MODEL_ID,
+        dims: pipeline?.embeddingDims ?? preloadedEmbedder?.dims ?? 384,
+        download: state === "warming" ? download : null,
+        reason,
+      };
     },
 
     startBackgroundJobs(): void {

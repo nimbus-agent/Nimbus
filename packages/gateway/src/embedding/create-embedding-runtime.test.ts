@@ -12,6 +12,7 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
   createEmbeddingRuntime,
+  createEmbeddingRuntimeNonBlocking,
   type EmbeddingRuntimeOverrides,
 } from "./create-embedding-runtime.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
@@ -378,6 +379,16 @@ function makeFakeRuntime(): EmbeddingRuntime {
     getEmbeddingDims(): number {
       return 384;
     },
+    getReadiness() {
+      return {
+        state: "ready" as const,
+        elapsedMs: 0,
+        model: "fake:model",
+        dims: 384,
+        download: null,
+        reason: null,
+      };
+    },
     getBackfillProgress(): { done: number; total: number } | null {
       return null;
     },
@@ -651,6 +662,155 @@ describe("createEmbeddingRuntime — openai embedder factory throws (DI seam)", 
       await createEmbeddingRuntime(h.db, h.paths, silentLogger, toml, true, h.vault, overrides);
       expect(capturedModel).toBe("text-embedding-3-small");
     } finally {
+      h.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #928 — bind-first: the factory the gateway boot path uses must not await a model fetch.
+// ---------------------------------------------------------------------------
+
+describe("createEmbeddingRuntimeNonBlocking", () => {
+  test("returns a runtime SYNCHRONOUSLY even when the underlying init never settles", () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      let workerFactoryCalls = 0;
+      const rt = createEmbeddingRuntimeNonBlocking(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        {
+          // Hybrid awaits the local model load; a never-settling routing factory reproduces
+          // a cold MiniLM fetch exactly, without touching the network.
+          routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}),
+          workerBridgeFactory: () => {
+            workerFactoryCalls += 1;
+            return null;
+          },
+        },
+      );
+      expect(rt).not.toBeNull();
+      expect(rt?.getReadiness().state).toBe("warming");
+      // Nothing downstream of the stalled hybrid init has run yet — proof the caller was
+      // handed a runtime before construction finished.
+      expect(workerFactoryCalls).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a warming runtime refuses to hand back a null vector", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = createEmbeddingRuntimeNonBlocking(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        { routingRuntimeFactory: () => new Promise<EmbeddingRuntime | null>(() => {}) },
+      );
+      expect(rt).not.toBeNull();
+      await expect(rt?.embedQuery("anything")).rejects.toThrow(/warming up/);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("a rejected model fetch degrades to `unavailable` — it never escapes to the caller", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const rt = createEmbeddingRuntimeNonBlocking(
+        h.db,
+        h.paths,
+        silentLogger,
+        defaultToml("hybrid"),
+        true,
+        h.vault,
+        {
+          routingRuntimeFactory: () => Promise.reject(new Error("ENOTFOUND huggingface.co")),
+          workerBridgeFactory: () => {
+            throw new Error("ENOTFOUND huggingface.co");
+          },
+        },
+      );
+      expect(rt).not.toBeNull();
+      await new Promise((r) => setTimeout(r, 10));
+      const readiness = rt?.getReadiness();
+      expect(readiness?.state).toBe("unavailable");
+      expect(readiness?.reason).toContain("ENOTFOUND");
+      expect(await rt?.embedQuery("q")).toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("returns null for the cheap synchronous disable reasons (no runtime at all)", () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const off = { ...defaultToml("local"), enabled: false };
+      expect(
+        createEmbeddingRuntimeNonBlocking(h.db, h.paths, silentLogger, off, true, h.vault),
+      ).toBeNull();
+      expect(
+        createEmbeddingRuntimeNonBlocking(
+          h.db,
+          h.paths,
+          silentLogger,
+          defaultToml("local"),
+          false,
+          h.vault,
+        ),
+      ).toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("returns null when the index schema predates semantic memory (uv < 6)", () => {
+    const h = makeHarness({ migrateTo: 5 });
+    try {
+      expect(
+        createEmbeddingRuntimeNonBlocking(
+          h.db,
+          h.paths,
+          silentLogger,
+          defaultToml("local"),
+          true,
+          h.vault,
+        ),
+      ).toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("NIMBUS_SKIP_EMBEDDING_RUNTIME=1 still means no runtime at all", () => {
+    const h = makeHarness({ migrateTo: 30 });
+    const prev = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
+    try {
+      processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", "1");
+      expect(
+        createEmbeddingRuntimeNonBlocking(
+          h.db,
+          h.paths,
+          silentLogger,
+          defaultToml("local"),
+          true,
+          h.vault,
+        ),
+      ).toBeNull();
+    } finally {
+      if (prev === undefined) {
+        processEnvDelete("NIMBUS_SKIP_EMBEDDING_RUNTIME");
+      } else {
+        processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", prev);
+      }
       h.cleanup();
     }
   });

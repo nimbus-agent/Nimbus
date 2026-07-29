@@ -5,6 +5,7 @@
 import type { PairingWindowController } from "../../clips/pairing-window.ts";
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { EmbeddingReadiness } from "../../embedding/embedding-readiness.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
@@ -46,6 +47,10 @@ export type CreateIpcServerOptions = {
   syncScheduler?: SyncScheduler;
   connectorMesh?: LazyConnectorMesh;
   getEmbeddingStatus?: () => Record<string, unknown>;
+  // #928 — live warm-up state for the local embedding model. Read by `gateway.ping` (so a
+  // client can show real download progress) and by `index.searchRanked` (so a semantic query
+  // returns the typed warming condition instead of a lexical-only result that looks complete).
+  embeddingReadiness?: () => EmbeddingReadiness;
   // Observability snapshot (Task 15). The per-field readers behind `admin.status`. Present only when
   // assembled at boot; the admin dispatcher skips cleanly (method-not-found) when unset.
   statusReaders?: StatusReaders;

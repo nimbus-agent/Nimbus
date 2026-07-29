@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
+import { type EmbeddingWarmingError, isEmbeddingWarmingError } from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { tryCreateEmbeddingWorkerBridge } from "./worker-bridge.ts";
 
@@ -174,19 +175,90 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     }
   });
 
-  test("embedQuery returns null without posting when the worker is not ready", async () => {
+  // #928 false-green guard. This test previously asserted `null` — which is exactly the bug:
+  // hybrid search with a null query vector silently degrades to BM25, and a query with no
+  // lexical overlap then returns `[]`, indistinguishable from a legitimate "nothing matched".
+  test("embedQuery THROWS the warming condition (never a null vector) before ready", async () => {
     installFakeWorker();
     const bridge = makeBridge();
     try {
       const handle = currentHandle();
       const before = handle.posted().length;
-      const result = await bridge.embedQuery("warmup");
-      expect(result).toBeNull();
+      let resolved: unknown = "not-called";
+      let thrown: unknown;
+      try {
+        resolved = await bridge.embedQuery("warmup");
+      } catch (err) {
+        thrown = err;
+      }
+      expect(resolved).toBe("not-called");
+      expect(isEmbeddingWarmingError(thrown)).toBe(true);
+      expect((thrown as EmbeddingWarmingError).readiness.state).toBe("warming");
       const after = handle
         .posted()
         .slice(before)
         .filter((m) => m["type"] === "embed_texts");
       expect(after).toHaveLength(0);
+    } finally {
+      bridge.terminate();
+    }
+  });
+
+  test("getReadiness walks warming -> ready, and warming -> unavailable on init_error", async () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      const handle = currentHandle();
+      expect(bridge.getReadiness().state).toBe("warming");
+      handle.fire({ type: "model_progress", file: "model.onnx", loadedBytes: 5, totalBytes: 20 });
+      const warming = bridge.getReadiness();
+      expect(warming.state).toBe("warming");
+      expect(warming.download).toEqual({
+        file: "model.onnx",
+        loadedBytes: 5,
+        totalBytes: 20,
+        percent: 25,
+      });
+      handle.fire({ type: "ready" });
+      const ready = bridge.getReadiness();
+      expect(ready.state).toBe("ready");
+      expect(ready.download).toBeNull();
+      expect(ready.model).toBe("all-MiniLM-L6-v2");
+      expect(ready.dims).toBe(384);
+    } finally {
+      bridge.terminate();
+    }
+
+    installFakeWorker();
+    const failing = makeBridge();
+    try {
+      currentHandle().fire({ type: "init_error", message: "ENOTFOUND huggingface.co" });
+      const r = failing.getReadiness();
+      expect(r.state).toBe("unavailable");
+      expect(r.reason).toContain("ENOTFOUND");
+      // `unavailable` is permanent for this process, so `null` is the honest answer here.
+      expect(await failing.embedQuery("q")).toBeNull();
+    } finally {
+      failing.terminate();
+    }
+  });
+
+  test("malformed model_progress messages are ignored", () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      const handle = currentHandle();
+      handle.fire({ type: "model_progress" });
+      handle.fire({ type: "model_progress", file: 1, loadedBytes: 1, totalBytes: 2 });
+      expect(bridge.getReadiness().download).toBeNull();
+      handle.fire({
+        type: "model_progress",
+        file: "f",
+        loadedBytes: 1,
+        totalBytes: 0,
+        percent: 42,
+      });
+      expect(bridge.getReadiness().download?.percent).toBe(42);
     } finally {
       bridge.terminate();
     }
@@ -258,8 +330,9 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     try {
       const handle = currentHandle();
       handle.fire({ type: "ready" }, "https://evil.example");
-      const result = await bridge.embedQuery("ignored");
-      expect(result).toBeNull();
+      // The cross-origin "ready" was dropped, so the bridge is STILL warming — and a warming
+      // bridge signals that, it does not fake a null vector.
+      await expect(bridge.embedQuery("ignored")).rejects.toThrow(/warming up/);
       handle.fire({ type: "ready" }, "https://nimbus.test");
       const pending = bridge.embedQuery("hi");
       const sent = handle.posted().find((m) => m["type"] === "embed_texts");
@@ -331,10 +404,21 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     }
   });
 
-  test("embedQueryDual returns nulls when worker is not ready", async () => {
+  test("embedQueryDual THROWS the warming condition (never the all-null shape) before ready", async () => {
     installFakeWorker();
     const bridge = makeBridge();
     try {
+      await expect(bridge.embedQueryDual("hi")).rejects.toThrow(/warming up/);
+    } finally {
+      bridge.terminate();
+    }
+  });
+
+  test("embedQueryDual returns the all-null shape once the worker is UNAVAILABLE", async () => {
+    installFakeWorker();
+    const bridge = makeBridge();
+    try {
+      currentHandle().fire({ type: "init_error", message: "no model" });
       const result = await bridge.embedQueryDual("hi");
       expect(result.vec384).toBeNull();
       expect(result.vec1536).toBeNull();
@@ -396,8 +480,11 @@ describe("tryCreateEmbeddingWorkerBridge", () => {
     expect(bridge).not.toBeNull();
     if (bridge !== null) {
       expect(bridge.scheduleItemEmbedding("any-id")).toBeUndefined();
-      const queryResult = bridge.embedQuery("hello");
+      // Warming, so this rejects rather than resolving null; swallow it here — the point of
+      // THIS test is that construction did not block on the model.
+      const queryResult = bridge.embedQuery("hello").catch(() => null);
       expect(queryResult).toBeInstanceOf(Promise);
+      expect(bridge.getReadiness().state).toBe("warming");
       bridge.terminate();
     }
   });

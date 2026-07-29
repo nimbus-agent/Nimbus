@@ -89,7 +89,13 @@ import {
 } from "../db/tool-call-log-retention.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
-import { createEmbeddingRuntime } from "../embedding/create-embedding-runtime.ts";
+import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
+import {
+  type EmbeddingReadiness,
+  embedQueryBestEffort,
+  embedQueryDualBestEffort,
+} from "../embedding/embedding-readiness.ts";
+import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
 import { DelegationStore } from "../engine/delegation-store.ts";
@@ -225,7 +231,7 @@ function loadOpenapiConfig(configDir: string): OpenapiConfig {
   }
 }
 
-type EmbeddingRuntime = Awaited<ReturnType<typeof createEmbeddingRuntime>>;
+type EmbeddingRuntime = ConcreteEmbeddingRuntime | null;
 
 function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Database {
   const dbPath = join(dataDir, "nimbus.db");
@@ -239,20 +245,27 @@ function openGatewaySqlite(dataDir: string, sidecarStops: Array<() => void>): Da
   return db;
 }
 
-async function createLocalIndexWithEmbeddingRuntime(
+/**
+ * #928 — bind-first. This used to `await` the embedding runtime, which on a cold machine
+ * awaited a MiniLM fetch from a third-party CDN: the IPC socket stayed unbound for as long
+ * as the download took (up to the 600 s worker init window), and `nimbus init` looked hung.
+ * `createEmbeddingRuntimeNonBlocking` returns on the same tick and warms up in the background,
+ * so assembly reaches `ipc.start()` immediately.
+ */
+function createLocalIndexWithEmbeddingRuntime(
   db: Database,
   paths: PlatformPaths,
   vault: NimbusVault,
   syncLogger: Logger,
   activeTomlPath: string,
-): Promise<{
+): {
   localIndex: LocalIndex;
   scheduleItemEmbedding: ((itemId: string) => void) | undefined;
   rt: EmbeddingRuntime;
-}> {
+} {
   const tomlEmbedding = loadNimbusEmbeddingFromPath(activeTomlPath);
-  process.stdout.write("[gateway] starting embedding runtime\n");
-  const embeddingRuntime = await createEmbeddingRuntime(
+  process.stdout.write("[gateway] starting embedding runtime (background)\n");
+  const rt = createEmbeddingRuntimeNonBlocking(
     db,
     paths,
     syncLogger,
@@ -260,15 +273,19 @@ async function createLocalIndexWithEmbeddingRuntime(
     Config.embeddingsEnabled,
     vault,
   );
-  const rt = embeddingRuntime;
   let scheduleItemEmbedding: ((itemId: string) => void) | undefined;
   let semanticSearch: SemanticSearchDeps | undefined;
   if (rt) {
     scheduleItemEmbedding = rt.scheduleItemEmbedding.bind(rt);
+    // DELIBERATE degradation seam. `searchRankedAsync` runs on every ask/agent/brief path, and
+    // a warming throw there would take `nimbus ask` down for the length of the model download.
+    // It therefore degrades to BM25 while warming — and the warm-up is NOT hidden: the
+    // `index.searchRanked` RPC checks `embeddingReadiness()` first and returns the typed
+    // warming condition rather than a lexical-only result the caller would read as complete.
     semanticSearch = {
       model: rt.getEmbeddingModel(),
-      embedQuery: (text: string) => rt.embedQuery(text),
-      embedQueryDual: (text: string) => rt.embedQueryDual(text),
+      embedQuery: (text: string) => embedQueryBestEffort(rt, text),
+      embedQueryDual: (text: string) => embedQueryDualBestEffort(rt, text),
     };
   }
   const localIndexOpts: LocalIndexOptions = {};
@@ -324,7 +341,10 @@ function maybeAttachSessionMemoryStore(
       : new SessionMemoryStore({
           db,
           dims: rt.getEmbeddingDims(),
-          embedText: (t) => rt.embedQuery(t),
+          // Best-effort by design: session-memory recall ADDS optional context and never
+          // reports "no results" to a human, so a warming model degrades it rather than
+          // failing the turn. Explicit, not accidental (#928).
+          embedText: (t) => embedQueryBestEffort(rt, t),
         });
   const ttlMs = Math.max(1, sessionToml.memoryTtlHours) * 3_600_000;
   const timer = setInterval(() => {
@@ -1269,7 +1289,8 @@ async function bootTribalKnowledge(deps: {
     db,
     cfg: tribalCfg,
     embedQuery: (text) =>
-      embeddingRt == null ? Promise.resolve(null) : embeddingRt.embedQuery(text),
+      // Best-effort: tribal clustering degrades to no-match while the model warms (#928).
+      embeddingRt == null ? Promise.resolve(null) : embedQueryBestEffort(embeddingRt, text),
     // Bot self-filter (review §1.1): primary guard is the Slack normalizer's bot_id/subtype skip
     // (Task 8); this is defense-in-depth using the configured Teams bot app id. (The Slack bot
     // user id is not resolvable without an extra API call at boot.)
@@ -1596,7 +1617,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
   const llmRegistry = buildLlmRegistryFromToml(db, activeTomlPath);
 
-  const { localIndex, scheduleItemEmbedding, rt } = await createLocalIndexWithEmbeddingRuntime(
+  const { localIndex, scheduleItemEmbedding, rt } = createLocalIndexWithEmbeddingRuntime(
     db,
     paths,
     vault,
@@ -1747,11 +1768,23 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   if (sessionMemoryStore !== undefined) {
     ipcOpts.sessionMemoryStore = sessionMemoryStore;
   }
-  if (rt) {
-    ipcOpts.getEmbeddingStatus = () => ({
-      embeddingBackfill: rt.getBackfillProgress(),
-    });
-  }
+  // Readiness is ALWAYS wired, even when there is no runtime at all: a client must be able to
+  // tell "warming up, N% downloaded" from "switched off" from "fetch failed" — the difference
+  // between a real progress report and a generic spinner (#928).
+  const embeddingReadiness = (): EmbeddingReadiness =>
+    rt?.getReadiness() ?? {
+      state: "disabled",
+      elapsedMs: 0,
+      model: null,
+      dims: null,
+      download: null,
+      reason: "embeddings are disabled for this gateway",
+    };
+  ipcOpts.embeddingReadiness = embeddingReadiness;
+  ipcOpts.getEmbeddingStatus = () => ({
+    embeddingBackfill: rt?.getBackfillProgress() ?? null,
+    embedding: embeddingReadiness(),
+  });
 
   const federationCfg = loadNimbusFederationFromConfigDir(paths.configDir);
   const federationBooted = await bootFederationIntoIpcOpts({
@@ -2102,6 +2135,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     sandboxRunner,
     llmRegistry,
     connectorWriteDeps,
+    embeddingReadiness,
     ...(sessionMemoryStore === undefined ? {} : { sessionMemoryStore }),
     ...(federationBooted === undefined ? {} : { executorDelegation: federationBooted }),
     ...(chatopsBoot === undefined ? {} : { chatops: chatopsBoot }),

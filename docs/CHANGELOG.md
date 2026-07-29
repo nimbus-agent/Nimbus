@@ -8,6 +8,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-29 — Gateway binds IPC BEFORE the embedding model loads (bind-first), issue #928.**
+  The gateway used to `await` the embedding runtime inside `assemblePlatformServices` before
+  `ipc.start()`. With `[embedding] provider = "hybrid"` (or `openai`) that awaited
+  `createLocalEmbedder(...)` — a MiniLM fetch from a third-party CDN with no timeout of its own —
+  so on a cold machine the IPC socket never appeared, the boot log stopped at
+  `starting embedding runtime`, and `nimbus init` (the first command a new user runs) was
+  indistinguishable from a hang. `createEmbeddingRuntimeNonBlocking` now returns on the same tick
+  behind `createDeferredEmbeddingRuntime`, which runs the real construction in the background;
+  a rejected fetch settles to `unavailable` and the gateway keeps serving. A restored-blocking
+  e2e (`gateway-bind-first.e2e.test.ts`, a local stalling proxy standing in for a slow CDN — no
+  network) red-proves it: pre-fix the gateway never binds inside 60 s, post-fix it binds in ~2 s.
+  The second half is the **false green**: a warming runtime used to hand back a `null` query
+  vector, hybrid search silently degraded to BM25, and a query with no lexical overlap returned
+  `[]` — reading exactly like a legitimate "nothing matched". Warming is now a typed condition,
+  never a null: `EmbeddingRuntime` gained `getReadiness()`
+  (`warming` | `ready` | `unavailable` | `disabled`, with elapsed time, model/dims, failure reason
+  and live model-download progress), and both the deferred wrapper and the worker bridge THROW
+  `EmbeddingWarmingError` instead of resolving `null` while warming. `index.searchRanked` returns
+  JSON-RPC `-32021` with `data.code = "embedding_warming"` + the readiness rather than a
+  lexical-only result; `semantic: false` is served as before, and `disabled`/`unavailable` (which
+  are permanent for the process) still return keyword results. `gateway.ping` now carries the same
+  readiness block so a client can show real download progress instead of a generic spinner, and
+  the boot log gains a `[gateway] embeddings: <state>` line at bind time. Paths that ADD optional
+  context and never report a zero to a human — session-memory recall, tribal clustering, and the
+  `searchRankedAsync` seam shared by `engine.ask` / agents / briefs — degrade through the
+  explicitly named `embedQueryBestEffort` / `embedQueryDualBestEffort` helpers, so every
+  silent-degrade site is greppable. Also: the lazy runtime now warms eagerly (nothing has to call
+  `embedQuery` to start the load), a terminated worker bridge stops claiming `warming`, and the
+  600 s worker init window is unchanged but no longer sits on the bind path.
+
 - **2026-07-29 — Mercury connector indexes transactions (`mercury:transaction`), issue #890.**
   The Mercury connector shipped accounts-only; transactions were a documented deferral. The
   gateway syncable now walks each indexed account's

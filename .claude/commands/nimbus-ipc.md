@@ -426,6 +426,7 @@ Handlers: `packages/gateway/src/ipc/clip-rpc.ts`. CLI: `nimbus clip pair|status|
 | -32003 | `ERR_VAULT_LOCKED` | Vault unavailable (e.g. screen locked on macOS) |
 | -32004 | `ERR_CONNECTOR_UNAVAILABLE` | Connector not running or unauthenticated |
 | -32005 | `ERR_AIR_GAP` | Outbound HTTP blocked by `enforce_air_gap = true` |
+| -32021 | `EMBEDDING_WARMING_RPC_CODE` | The local embedding model is still loading, so a semantic request cannot be answered YET. Carries `data.code = "embedding_warming"` + `data.readiness` (state / elapsedMs / model / dims / download progress / reason). Raised by `index.searchRanked` when `semantic` is not `false`; retry, or pass `semantic: false` for keyword-only results. Transient by definition — `disabled`/`unavailable` are served normally. |
 
 ---
 

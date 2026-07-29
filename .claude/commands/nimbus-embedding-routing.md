@@ -28,10 +28,31 @@ This skill is the rule a contributor consults **before** touching `PROSE_HEAVY_T
 | [`packages/gateway/src/embedding/routing.ts`](../../packages/gateway/src/embedding/routing.ts) | `EMBEDDING_DIM_LOCAL` (384) + `EMBEDDING_DIM_OPENAI` (1536) + `SUPPORTED_EMBEDDING_DIMS` + `PROSE_HEAVY_TYPES` + `routingKey` + `isProseHeavy` |
 | [`packages/gateway/src/embedding/routing-pipeline.ts`](../../packages/gateway/src/embedding/routing-pipeline.ts) | `RoutingEmbeddingPipeline` — wraps two `SqliteEmbeddingPipeline` instances and dispatches by `isProseHeavy(service, type)` |
 | [`packages/gateway/src/embedding/create-routing-runtime.ts`](../../packages/gateway/src/embedding/create-routing-runtime.ts) | `tryCreateRoutingEmbeddingRuntime` — hybrid-mode factory; **falls back to MiniLM-only when `openai.api_key` is missing** so the gateway never refuses to start because of a missing optional secret |
+| [`packages/gateway/src/embedding/embedding-readiness.ts`](../../packages/gateway/src/embedding/embedding-readiness.ts) | `EmbeddingReadiness` (`warming`/`ready`/`unavailable`/`disabled` + elapsed, model, dims, download progress, reason), `EmbeddingWarmingError`, `EMBEDDING_WARMING_RPC_CODE` (-32021), and the explicitly-named `embedQueryBestEffort` / `embedQueryDualBestEffort` degrade helpers (#928) |
+| [`packages/gateway/src/embedding/deferred-runtime.ts`](../../packages/gateway/src/embedding/deferred-runtime.ts) | `createDeferredEmbeddingRuntime` — the bind-first wrapper. Returns SYNCHRONOUSLY so gateway assembly reaches `ipc.start()` without awaiting a model fetch; while warming it THROWS `EmbeddingWarmingError` instead of resolving a null vector (#928) |
 | [`packages/gateway/src/search/dual-search.ts`](../../packages/gateway/src/search/dual-search.ts) | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables, merged by distance. This is the only correct way to do vector search after T6 PR 3 |
 | [`packages/gateway/src/index/vec-items-1536-v30-sql.ts`](../../packages/gateway/src/index/vec-items-1536-v30-sql.ts) | V30 migration SQL — `vec_items_1536` virtual table + dim-aware delete triggers |
 | [`packages/gateway/src/ipc/index-reembed-rpc.ts`](../../packages/gateway/src/ipc/index-reembed-rpc.ts) | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel` long-running handler. **CLI-only**: NOT LAN-callable (`I5`), NOT in Tauri allowlist (`I7`) |
 | [`packages/cli/src/commands/index-cmd.ts`](../../packages/cli/src/commands/index-cmd.ts) | `nimbus index reembed` CLI; subscribes to `index.reembedProgress` / `index.reembedDone` / `index.reembedError` notifications |
+
+## Warm-up (#928) — `null` vs "not yet"
+
+The gateway binds its IPC socket BEFORE the model is loaded, so every embedding surface has to
+distinguish two different absences:
+
+- **`null` vector** — vectors are permanently unavailable for this process (`disabled` /
+  `unavailable`). Degrading to BM25 is correct.
+- **`EmbeddingWarmingError`** — vectors are not available YET (`warming`). Degrading here is the
+  FALSE GREEN: hybrid search silently drops to BM25 and a query with no lexical overlap returns
+  `[]`, which reads exactly like "searched everything, found nothing".
+
+`EmbeddingRuntime.getReadiness()` is the contract. Rules for any new code:
+
+1. A runtime that is warming MUST throw, never resolve `null`.
+2. A caller that genuinely wants to degrade must say so via `embedQueryBestEffort` /
+   `embedQueryDualBestEffort` — those names are the audit trail for every silent-degrade site.
+3. A user-facing surface that could report a zero must surface the warming state instead
+   (`index.searchRanked` → JSON-RPC `-32021`, `gateway.ping` → the `embedding` readiness block).
 
 ## The Routing Decision
 

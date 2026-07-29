@@ -32,7 +32,20 @@ const core = new EmbeddingWorkerCore({
   setup: async (msg: InitMsg) => {
     const db = setupDb(msg.dbPath);
     try {
-      const embedder = await createLocalEmbedder({ cacheDir: msg.cacheDir });
+      const embedder = await createLocalEmbedder({
+        cacheDir: msg.cacheDir,
+        // Forwarded to the bridge so `gateway.ping` can report REAL download progress
+        // instead of a generic spinner while the gateway serves everything else (#928).
+        onProgress: (p) => {
+          sendToMain({
+            type: "model_progress",
+            file: p.file,
+            loadedBytes: p.loadedBytes,
+            totalBytes: p.totalBytes,
+            percent: p.percent,
+          });
+        },
+      });
       const pipeline = new SqliteEmbeddingPipeline({
         db,
         embedder,

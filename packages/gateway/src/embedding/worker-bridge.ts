@@ -4,8 +4,17 @@ import type { Logger } from "pino";
 
 import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { processEnvGet } from "../platform/env-access.ts";
+import {
+  downloadPercent,
+  type EmbeddingModelDownload,
+  type EmbeddingReadiness,
+  type EmbeddingReadinessState,
+  EmbeddingWarmingError,
+  NO_DUAL_VECTORS,
+} from "./embedding-readiness.ts";
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { LOCAL_EMBEDDING_MODEL_ID } from "./model.ts";
+import type { EmbeddingDualVectors } from "./types.ts";
 
 type Pending = {
   resolve: (v: Float32Array | null) => void;
@@ -49,6 +58,9 @@ export function tryCreateEmbeddingWorkerBridge(
       );
     })
     .catch((err: unknown) => {
+      // The timeout arm of waitUntilReady is the ONLY thing that ends an indefinite warm-up:
+      // record it as `unavailable` so callers stop being told "still warming" forever.
+      bridge.markUnavailable(err instanceof Error ? err.message : String(err));
       logger.warn(
         { err },
         "embedding worker failed to initialize; semantic search disabled until the next gateway restart",
@@ -75,6 +87,10 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
   private progress: { done: number; total: number } | null = null;
   private gateSettled = false;
   private workerReady = false;
+  private readonly startedMs = Date.now();
+  private settledMs: number | null = null;
+  private failureReason: string | null = null;
+  private download: EmbeddingModelDownload | null = null;
   private readonly resolveGate: () => void;
   private readonly rejectGate: (e: Error) => void;
   private readonly gate: Promise<void>;
@@ -140,14 +156,46 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
 
   private handleReadyMessage(): void {
     this.workerReady = true;
+    this.settledMs ??= Date.now();
+    this.download = null;
     this.settleGate(true);
   }
 
   private handleInitErrorMessage(rec: Record<string, unknown>): void {
     const msg = rec["message"];
     if (typeof msg === "string") {
+      this.markUnavailable(msg);
       this.settleGate(false, new Error(msg));
     }
+  }
+
+  private handleModelProgressMessage(rec: Record<string, unknown>): void {
+    const file = rec["file"];
+    const loaded = rec["loadedBytes"];
+    const total = rec["totalBytes"];
+    if (typeof file !== "string" || typeof loaded !== "number" || typeof total !== "number") {
+      return;
+    }
+    const pct = rec["percent"];
+    this.download = {
+      file,
+      loadedBytes: loaded,
+      totalBytes: total,
+      percent:
+        typeof pct === "number" && Number.isFinite(pct)
+          ? Math.min(100, Math.max(0, pct))
+          : downloadPercent(loaded, total),
+    };
+  }
+
+  /** Records a terminal init failure (worker `init_error`, or the init-timeout arm). */
+  markUnavailable(reason: string): void {
+    if (this.workerReady) {
+      return;
+    }
+    this.failureReason ??= reason;
+    this.settledMs ??= Date.now();
+    this.download = null;
   }
 
   private handleBackfillProgressMessage(rec: Record<string, unknown>): void {
@@ -197,6 +245,10 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
       this.handleBackfillProgressMessage(rec);
       return;
     }
+    if (t === "model_progress") {
+      this.handleModelProgressMessage(rec);
+      return;
+    }
     if (t === "backfill_done") {
       if (rec["success"] === false) {
         this.logger.warn(
@@ -218,8 +270,37 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     this.worker.postMessage({ type: "embed_item", itemId });
   }
 
+  getReadiness(): EmbeddingReadiness {
+    const state: EmbeddingReadinessState = this.readinessState();
+    const end = state === "warming" ? Date.now() : (this.settledMs ?? Date.now());
+    return {
+      state,
+      elapsedMs: Math.max(0, end - this.startedMs),
+      model: LOCAL_EMBEDDING_MODEL_ID,
+      dims: 384,
+      download: state === "warming" ? this.download : null,
+      reason: this.failureReason,
+    };
+  }
+
+  private readinessState(): EmbeddingReadinessState {
+    if (this.workerReady) {
+      return "ready";
+    }
+    return this.failureReason === null ? "warming" : "unavailable";
+  }
+
+  /**
+   * The false-green guard (#928). A not-yet-ready worker must NOT hand back a null vector:
+   * hybrid search would silently degrade to BM25 and report `[]` as a legitimate zero.
+   * `unavailable` still returns null — that absence is permanent for this process.
+   */
   async embedQuery(text: string): Promise<Float32Array | null> {
     if (!this.workerReady) {
+      const readiness = this.getReadiness();
+      if (readiness.state === "warming") {
+        throw new EmbeddingWarmingError(readiness);
+      }
       return null;
     }
     const id = randomUUID();
@@ -236,15 +317,10 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
     });
   }
 
-  async embedQueryDual(text: string): Promise<{
-    vec384: Float32Array | null;
-    vec1536: Float32Array | null;
-    model384: string | null;
-    model1536: string | null;
-  }> {
+  async embedQueryDual(text: string): Promise<EmbeddingDualVectors> {
     const vec = await this.embedQuery(text);
     if (vec === null) {
-      return { vec384: null, vec1536: null, model384: null, model1536: null };
+      return { ...NO_DUAL_VECTORS };
     }
     return {
       vec384: vec,
@@ -271,6 +347,8 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
   }
 
   terminate(): void {
+    // A torn-down bridge must stop claiming "warming" — nothing will ever make it ready.
+    this.markUnavailable("embedding worker terminated");
     this.worker.onmessage = null;
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);

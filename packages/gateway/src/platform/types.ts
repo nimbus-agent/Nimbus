@@ -1,6 +1,7 @@
 import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { ExecutorDelegationDep } from "../engine/executor.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
@@ -42,5 +43,11 @@ export interface PlatformServices {
   // ChatOps (Slice 5). Present when [chatops].enabled: src/index.ts late-binds the engine read
   // path (bindAskEngine) once the engine agent exists.
   chatops?: ChatopsBoot;
+  /**
+   * Live warm-up state of the local embedding model (#928). Always present: the gateway binds
+   * its IPC socket BEFORE the model is loaded, so the boot log and every client need a way to
+   * tell "warming" from "disabled" from "fetch failed".
+   */
+  embeddingReadiness: () => EmbeddingReadiness;
   disposeSidecars?: () => void;
 }

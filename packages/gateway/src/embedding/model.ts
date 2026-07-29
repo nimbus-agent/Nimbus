@@ -1,4 +1,5 @@
 import { processEnvGet } from "../platform/env-access.ts";
+import type { EmbeddingModelDownload } from "./embedding-readiness.ts";
 import {
   type FeatureExtractionPipe,
   loadFeatureExtractionPipeline,
@@ -11,6 +12,8 @@ export const LOCAL_EMBEDDING_MODEL_ID = "all-MiniLM-L6-v2" as const;
 
 export type CreateLocalEmbedderOptions = {
   cacheDir: string;
+  /** Model-download progress, so a warming gateway can report real progress (#928). */
+  onProgress?: (progress: EmbeddingModelDownload) => void;
 };
 
 function tensorToRowVectors(tensor: {
@@ -35,11 +38,12 @@ export async function createLocalEmbedder(
   options: CreateLocalEmbedderOptions,
   loadPipeline: (
     cacheDir: string,
+    onProgress?: (progress: EmbeddingModelDownload) => void,
   ) => Promise<FeatureExtractionPipe> = loadFeatureExtractionPipeline,
 ): Promise<Embedder> {
   const override = processEnvGet("NIMBUS_EMBEDDING_MODEL_DIR");
   const cacheDir = override !== undefined && override !== "" ? override : options.cacheDir;
-  const pipe = await loadPipeline(cacheDir);
+  const pipe = await loadPipeline(cacheDir, options.onProgress);
 
   return {
     model: LOCAL_EMBEDDING_MODEL_ID,

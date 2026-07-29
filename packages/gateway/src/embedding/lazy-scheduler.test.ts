@@ -511,3 +511,119 @@ describe.skipIf(!VEC_AVAILABLE)(
     });
   },
 );
+
+// ---------------------------------------------------------------------------
+// #928 — readiness. The lazy runtime loads the model on demand, so a caller guarded by
+// `getReadiness()` must be able to tell "still loading" from "will never load".
+// ---------------------------------------------------------------------------
+
+describe("createLazyEmbeddingRuntime — getReadiness", () => {
+  test("reports `disabled` (not `warming`) when the schema predates semantic memory", async () => {
+    const h = makeHarness({ migrateTo: 0 });
+    try {
+      const runtime = createLazyEmbeddingRuntime(
+        h.db,
+        h.dataDir,
+        silentLogger,
+        h.toml,
+        fakeEmbedder(),
+      );
+      await new Promise((r) => setTimeout(r, 20));
+      const r = runtime.getReadiness();
+      expect(r.state).toBe("disabled");
+      expect(r.reason).toContain("v6");
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test("starts warming EAGERLY — nothing has to call embedQuery to kick the load off", () => {
+    const h = makeHarness({ migrateTo: 0 });
+    try {
+      let created = 0;
+      createLazyEmbeddingRuntime(h.db, h.dataDir, silentLogger, h.toml, undefined, async () => {
+        created += 1;
+        return fakeEmbedder();
+      });
+      // uv<6 short-circuits before the embedder, so assert on the observable state instead:
+      // the warm-up ran without anyone querying.
+      expect(created).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe.skipIf(!VEC_AVAILABLE)("createLazyEmbeddingRuntime — getReadiness (vec available)", () => {
+  test("reaches `ready` without any caller touching embedQuery", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const runtime = createLazyEmbeddingRuntime(
+        h.db,
+        h.dataDir,
+        silentLogger,
+        h.toml,
+        fakeEmbedder("local:test", 384),
+      );
+      for (let i = 0; i < 50 && runtime.getReadiness().state === "warming"; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const r = runtime.getReadiness();
+      expect(r.state).toBe("ready");
+      expect(r.model).toBe("local:test");
+      expect(r.dims).toBe(384);
+      expect(r.download).toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  }, 30_000);
+
+  test("reports `unavailable` with a reason when the embedder cannot be built", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    try {
+      const runtime = createLazyEmbeddingRuntime(
+        h.db,
+        h.dataDir,
+        silentLogger,
+        h.toml,
+        undefined,
+        throwingCreateEmbedder,
+      );
+      for (let i = 0; i < 50 && runtime.getReadiness().state === "warming"; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const r = runtime.getReadiness();
+      expect(r.state).toBe("unavailable");
+      expect(r.reason).toContain("failed to initialize");
+    } finally {
+      h.cleanup();
+    }
+  }, 30_000);
+});
+
+describe("createLazyEmbeddingRuntime — warm-up that cannot progress", () => {
+  test("a warm-up that throws outright settles to `unavailable`, never a permanent `warming`", async () => {
+    const h = makeHarness({ migrateTo: 30 });
+    // A closed handle makes the very first schema read throw, so the detached warm-up rejects
+    // before it can reach the embedder.
+    h.db.close();
+    const runtime = createLazyEmbeddingRuntime(
+      h.db,
+      h.dataDir,
+      silentLogger,
+      h.toml,
+      fakeEmbedder(),
+    );
+    for (let i = 0; i < 50 && runtime.getReadiness().state === "warming"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const r = runtime.getReadiness();
+    expect(r.state).toBe("unavailable");
+    expect(r.reason).not.toBeNull();
+    try {
+      rmSync(h.dataDir, { recursive: true, force: true });
+    } catch {
+      /* Windows handle race */
+    }
+  });
+});

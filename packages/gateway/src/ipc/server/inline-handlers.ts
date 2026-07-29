@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { Config } from "../../config.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import {
+  describeEmbeddingWarming,
+  EMBEDDING_WARMING_CODE,
+  EMBEDDING_WARMING_RPC_CODE,
+} from "../../embedding/embedding-readiness.ts";
+import {
   type AgentRequestContext,
   agentRequestContext,
 } from "../../engine/agent-request-context.ts";
@@ -216,6 +221,21 @@ export async function rpcIndexSearchRanked(ctx: ServerCtx, params: unknown): Pro
     typeof rec["contextChunks"] === "number" && Number.isFinite(rec["contextChunks"])
       ? Math.min(8, Math.max(0, Math.floor(rec["contextChunks"])))
       : 2;
+  // #928 false-green guard. The gateway now binds BEFORE the embedding model is loaded, so a
+  // semantic query can arrive with no vectors yet. Serving it anyway silently degrades to BM25
+  // — and a query with no lexical overlap then returns `[]`, which reads exactly like "searched
+  // everything, found nothing". Say "not yet" instead, and hand back the readiness so the client
+  // can show progress or retry. Only WARMING is transient: `disabled`/`unavailable` are
+  // permanent for this process, so those serve keyword results as before.
+  const readiness = ctx.options.embeddingReadiness?.();
+  if (semantic && readiness?.state === "warming") {
+    throw new RpcMethodError(
+      EMBEDDING_WARMING_RPC_CODE,
+      `index.searchRanked: ${describeEmbeddingWarming(readiness)}`,
+      { code: EMBEDDING_WARMING_CODE, readiness },
+    );
+  }
+
   const query: IndexSearchQuery = { limit };
   if (name !== "") {
     query.name = name;
