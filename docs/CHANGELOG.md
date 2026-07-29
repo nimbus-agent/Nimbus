@@ -37,6 +37,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   silent-degrade site is greppable. Also: the lazy runtime now warms eagerly (nothing has to call
   `embedQuery` to start the load), a terminated worker bridge stops claiming `warming`, and the
   600 s worker init window is unchanged but no longer sits on the bind path.
+- **2026-07-29 — CI fan-out cut from ~34 jobs per PR to ~11; the queue was arithmetic, not misconfiguration.**
+  PRs were taking hours, all of them queued. Measured rather than guessed: 18-19
+  jobs running against GitHub Free's 20-concurrent-job account cap, macOS pinned
+  at exactly 5/5 (its own sub-cap) on two consecutive samples, and 85-133 jobs
+  waiting — of which 85 were cheap ubuntu ones. One PR push fanned out to ~34
+  jobs across 9 workflows, against ~10 branches in flight. The org moved to Team
+  (20 -> 60 concurrent, verified live: a later sample showed 36 running), and
+  this change removes the fan-out that made the cap bind in the first place.
+  **`coverage-gates-linux`: 15 one-gate jobs -> 3 batched jobs (-12).** Each leg
+  ran 0.6-1.3 min but queued 11-20 min, and ~0.5 min of every leg was runner
+  start + checkout + `bun install` — the matrix spent more wall time on setup and
+  queueing than on the thresholds it enforced. The batch step runs every script
+  even after one fails, preserving the failure locality `fail-fast: false` gave.
+  Five `Vault`/`Sandbox` prep steps were deleted from that job as provably dead:
+  its matrix has never held either gate, so every `matrix.gate.name == '…'`
+  condition was permanently false. **docs-quality: 8 jobs -> 2 (-6)** — seven
+  runners each paying ~30s of identical setup for one near-instant `bun run`;
+  `link-check` stays separate because it is the slow, network-touching one.
+  **`js-licenses` folded into `Dependency audit` (-1)**, which moves a license
+  violation onto a required check — a behaviour change, recorded as such.
+  **`cargo-audit`/`cargo-deny` skipped on PRs touching no Rust (-2)** and
+  **the cross-platform matrix narrowed to the packages a PR can affect (-2)**.
+  Both touch required-check semantics and both were verified against the LIVE
+  ruleset rather than the comments describing it: the `ci.yml` comment asserting
+  that rulesets require the expanded `Cross-platform (pkg, os)` names is stale —
+  the General ruleset requires only `PR quality — required gates`, the six
+  Security contexts, two CodeQL contexts and `cla`. The cargo gate is written
+  `!= 'false'` and `!cancelled()`, so a failed detector, an unresolvable base
+  SHA, or a red gitleaks all run the scans rather than posting a passing
+  `skipped`. The `audit:coverage-gate-pal` guard was red-proved against the new
+  batch entries before trusting it. Eight dead `ci-latency-baseline.json` rows
+  pruned (seven deleted jobs plus a `Bencher Report` entry that named no job).
 
 - **2026-07-29 — The last two `bun audit` advisories closed: one fixed, one written down.**
   `bun audit` reported 2 (1 moderate, 1 low). Neither blocked CI — the gate is

@@ -59,6 +59,25 @@ jobs:
       - name: Accepted-advisory registry
         run: bun run audit:advisories
 
+      # Folded in from the former standalone `js-licenses` job, which paid a
+      # whole runner (harden + checkout + `bun install`, ~30s) to run this one
+      # command against the same tree this job already has checked out.
+      #
+      # Consequence worth knowing: a license-allowlist violation now fails the
+      # REQUIRED "Dependency audit" check rather than the advisory "JS license
+      # compliance" one, so it blocks merge where it previously did not. That is
+      # the correct direction — docs/license-policy.md describes it as policy,
+      # not advice — but it is a behaviour change, not a pure refactor.
+      #
+      # JS-side mirror of cargo-deny's license check on the Tauri Rust tree. The
+      # allowlist is the intersection of licenses safe to redistribute under both
+      # halves of our dual-license model: AGPL-3.0 (gateway/cli/connectors,
+      # shipped as compiled binaries) and MIT (sdk/client, published as-is to
+      # npm). See docs/license-policy.md for the full policy and the procedure
+      # for adding to the allowlist or PACKAGE_OVERRIDES.
+      - name: License compliance (workspace-wide)
+        run: bun run audit:js-licenses
+
   trivy-scan:
     name: Trivy vulnerability scan
     runs-on: ubuntu-24.04
@@ -169,6 +188,16 @@ jobs:
           CI: "true"
 
   cargo-audit:
+    # Skipped on PRs that touch no Rust. This name is a literal with no `${{ }}`
+    # in it, so a skipped job still posts this exact required context with
+    # conclusion `skipped`, which GitHub counts as passing — the trap that once
+    # blocked docs-only PRs fires only on names carrying an unexpanded expression.
+    #
+    # `!cancelled()` rather than `success()` on the needs: a red gitleaks (it
+    # scans FULL history, so it can go red on a commit outside this diff) must not
+    # silently turn this required scan into a passing `skipped`.
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.outputs.rust != 'false' }}
     name: Cargo audit (Tauri)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -209,6 +238,16 @@ jobs:
         run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 
   cargo-deny:
+    # Skipped on PRs that touch no Rust. This name is a literal with no `${{ }}`
+    # in it, so a skipped job still posts this exact required context with
+    # conclusion `skipped`, which GitHub counts as passing — the trap that once
+    # blocked docs-only PRs fires only on names carrying an unexpanded expression.
+    #
+    # `!cancelled()` rather than `success()` on the needs: a red gitleaks (it
+    # scans FULL history, so it can go red on a commit outside this diff) must not
+    # silently turn this required scan into a passing `skipped`.
+    needs: gitleaks
+    if: ${{ !cancelled() && needs.gitleaks.outputs.rust != 'false' }}
     name: Cargo deny (licenses + advisories + bans)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -244,39 +283,6 @@ jobs:
           command: check all
           command-arguments: --hide-inclusion-graph
 
-  js-licenses:
-    name: JS license compliance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun and install dependencies
-        uses: ./.github/actions/setup-nimbus-ci
-        with:
-          verify-lock: "false"
-
-      - name: License compliance (workspace-wide)
-        # JS-side mirror of cargo-deny's license check on the Tauri Rust
-        # tree. The allowlist is the intersection of licenses safe to
-        # redistribute under both halves of our dual-license model:
-        # AGPL-3.0 (gateway/cli/connectors, shipped as compiled binaries)
-        # and MIT (sdk/client, published as-is to npm). See
-        # docs/license-policy.md for the full policy and the procedure
-        # for adding to the allowlist or PACKAGE_OVERRIDES.
-        run: bun run audit:js-licenses
-
   gitleaks:
     name: Gitleaks secret scan
     runs-on: ubuntu-24.04
@@ -285,6 +291,12 @@ jobs:
       contents: read
       # PR comments + status check from gitleaks.
       pull-requests: write
+    # Hosts the Rust change detection for cargo-audit / cargo-deny. It lives
+    # here rather than in a new job because a dedicated `changes` job would
+    # itself cost a runner slot, cancelling half the saving — and this job
+    # already checks out full history, which is what the diff needs.
+    outputs:
+      rust: ${{ steps.rust-changed.outputs.rust }}
 
     steps:
       - name: Harden Runner
@@ -298,6 +310,34 @@ jobs:
           # Full history so gitleaks can diff against base.
           fetch-depth: 0
           persist-credentials: false
+
+      # Does this PR touch the Rust surface at all? cargo-audit and cargo-deny
+      # scan `packages/ui/src-tauri` (where Cargo.lock and deny.toml live); on
+      # the overwhelming majority of PRs, which touch no Rust, they spend two
+      # runner slots re-proving an unchanged lockfile.
+      #
+      # Deliberately `!= 'false'` downstream, never `== 'true'`: if this step
+      # fails, the base SHA cannot be resolved, or the event is not a PR, the
+      # output is empty and BOTH scans run. The gate fails OPEN for the security
+      # check — the only thing it fails closed on is skipping work.
+      - name: Detect Rust changes
+        id: rust-changed
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -uo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "${base}" ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "base sha unavailable — running the Rust scans"
+            echo "rust=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if git diff --name-only "${base}" HEAD \
+            | grep -qE '^(packages/ui/src-tauri/|rust-toolchain\.toml$|\.github/workflows/security\.yml$)'; then
+            echo "rust=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "rust=false" >> "${GITHUB_OUTPUT}"
+          fi
 
       # Direct binary invocation rather than `gitleaks/gitleaks-action`
       # because that JS action still ships `runs.using: node20`, which

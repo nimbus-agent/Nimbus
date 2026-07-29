@@ -87,10 +87,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: lychee --config lychee.toml --no-progress 'docs/**/*.md' '*.md'
 
-  markdownlint:
-    name: markdownlint-cli2
+  # SEVEN jobs collapsed into one. Each of markdownlint / OG card / SVG audit /
+  # README CLI tripwire / package READMEs / cast tripwire / Starlight build was
+  # a separate runner paying its own Harden Runner + checkout + `bun install`
+  # — roughly 30s of identical setup each — to run one `bun run` that finishes
+  # in seconds. Seven runners for well under a minute of actual work.
+  #
+  # None of these seven names is a required status check (the General ruleset
+  # requires only "PR quality — required gates", the six security contexts, the
+  # two CodeQL contexts and "cla"), so collapsing them changes no merge gate.
+  # `link-check` stays its own job: it is the slow one and it fetches the
+  # network, so it should not serialise behind the fast static checks.
+  #
+  # The cost, stated plainly: fail-fast becomes fail-first. A markdownlint
+  # failure now stops the steps after it, so a contributor sees one failure per
+  # push instead of all of them at once. Acceptable here because these checks
+  # are near-instant to re-run locally and rarely fail together.
+  docs-checks:
+    name: Docs checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
 
@@ -111,26 +127,14 @@ jobs:
       - name: Run markdownlint-cli2
         run: bun run lint:markdown
 
-  og-card-render:
-    name: OG card render
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
+      - name: Run SVG asset audit
+        run: bun run audit:svg-assets
 
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
+      - name: Run README CLI-command tripwire
+        run: bun run audit:readme-cli
 
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
+      - name: Run package READMEs audit
+        run: bun run audit:package-readmes
 
       - name: Render OG card
         run: bun run render:og-card
@@ -142,130 +146,17 @@ jobs:
             exit 1
           fi
 
-  svg-audit:
-    name: SVG asset audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Run SVG asset audit
-        run: bun run audit:svg-assets
-
-  readme-cli-tripwire:
-    name: README CLI-command tripwire
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Run README CLI-command tripwire
-        run: bun run audit:readme-cli
-
-  package-readmes:
-    name: Package READMEs audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Run package READMEs audit
-        run: bun run audit:package-readmes
-
-  cast-tripwire:
-    name: Cast transcript tripwire
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
+      - name: Run build
+        run: bun --cwd packages/docs run build
 
       - name: Run cast tripwire
+        id: cast
         run: bun run record-casts --check --artifacts-dir=cast-artifacts
 
       - name: Upload drift artifacts
-        if: failure()
+        if: failure() && steps.cast.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cast-drift
           path: cast-artifacts/
           retention-days: 7
-
-  docs-build:
-    name: Starlight build test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Nimbus CI
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Run build
-        run: bun --cwd packages/docs run build
