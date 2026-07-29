@@ -281,21 +281,21 @@ export function summarize(rows: readonly HealthRow[]): {
   table: string;
   state: string;
 } {
-  const bySeverity = new Map<Severity, HealthRow[]>([
-    ["hard", []],
-    ["warn", []],
-    ["healthy", []],
-  ]);
-  for (const r of rows) bySeverity.get(severityOf(r.status))?.push(r);
-  const hard = bySeverity.get("hard") ?? [];
-  const warn = bySeverity.get("warn") ?? [];
-  const healthy = bySeverity.get("healthy") ?? [];
+  // A `Record` keyed by the `Severity` union rather than a Map: indexing is
+  // total, so there is no `?.` on the push and therefore no path — present or
+  // future — where a row is silently dropped instead of being reported. Every
+  // input row lands in exactly one bucket.
+  const hard: HealthRow[] = [];
+  const warn: HealthRow[] = [];
+  const healthy: HealthRow[] = [];
+  const bySeverity: Record<Severity, HealthRow[]> = { hard, warn, healthy };
+  for (const r of rows) bySeverity[severityOf(r.status)].push(r);
 
   const parts: string[] = [
     `**BROKEN: ${hard.length} · scheduled: ${warn.length} · healthy: ${healthy.length}**`,
   ];
   for (const section of SECTIONS) {
-    const sectionRows = bySeverity.get(section.severity) ?? [];
+    const sectionRows = bySeverity[section.severity];
     // The BROKEN and SCHEDULED headings are rendered even when empty, so the
     // 0 → 1 transition is a visible change in the body rather than a new row
     // buried mid-table. The healthy section is dropped when empty because "0

@@ -758,6 +758,22 @@ describe("summarize sections", () => {
     expect(table).toContain("live probe");
     expect(table).toContain("credential-registry.ts");
   });
+
+  test("every row reaches the body exactly once — sectioning can never drop a finding", () => {
+    // Bucketing rows into sections introduces a way for a row to vanish that a
+    // flat table did not have. A dropped row would be a silent false-negative,
+    // so assert the count survives across every status the monitor can emit.
+    const all: HealthRow[] = ALL_HEALTH_STATUSES.map((status, i) => ({
+      name: `CRED_${i}`,
+      kind: "inventory",
+      status,
+      detail: "d",
+    }));
+    const { table } = summarize(all);
+    for (const row of all) {
+      expect(table.split(`| ${row.name} |`)).toHaveLength(2);
+    }
+  });
 });
 
 describe("annotationsFor", () => {
