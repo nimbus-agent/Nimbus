@@ -169,15 +169,22 @@ async function main(): Promise<void> {
   logEmbeddingStateAtBind(platform.embeddingReadiness());
 }
 
+/**
+ * The clause that follows the state name: a reassurance while the model is still warming,
+ * otherwise the reason the state is what it is (when there is one).
+ */
+function embeddingBindDetail(readiness: EmbeddingReadiness): string {
+  if (readiness.state === "warming") {
+    return " — semantic search activates when it finishes; everything else is available now";
+  }
+  return readiness.reason === null ? "" : ` (${readiness.reason})`;
+}
+
 /** One line, at bind time, naming the embedding state the gateway started serving in. */
 function logEmbeddingStateAtBind(readiness: EmbeddingReadiness): void {
-  const detail =
-    readiness.state === "warming"
-      ? " — semantic search activates when it finishes; everything else is available now"
-      : readiness.reason === null
-        ? ""
-        : ` (${readiness.reason})`;
-  process.stdout.write(`[gateway] embeddings: ${readiness.state}${detail}\n`);
+  process.stdout.write(
+    `[gateway] embeddings: ${readiness.state}${embeddingBindDetail(readiness)}\n`,
+  );
 }
 
 try {

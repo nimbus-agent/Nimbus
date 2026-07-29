@@ -177,36 +177,19 @@ describe("handleConnectorHealthHistory", () => {
     expect(typeof list[0]?.occurredAtMs).toBe("number");
   });
 
-  test("custom limit is honored", () => {
+  // `seeded` is how many history rows exist; `returned` is how many the clamped limit yields —
+  // so the 99_999 row proves the 500 ceiling by returning everything seeded, not the raw limit.
+  test.each([
+    ["custom limit is honored", 5, 2, 2],
+    ["limit < 1 is clamped to 1", 3, 0, 1],
+    ["limit > 500 is clamped to 500", 2, 99_999, 2],
+    ["limit float is floored", 4, 2.9, 2],
+  ])("%s", (_label, seeded, limit, returned) => {
     registerConnector("github");
-    seedHistory("github", 5);
-    const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 2 }));
+    seedHistory("github", seeded);
+    const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit }));
     expect(r.kind).toBe("hit");
-    expect(r.value as unknown[]).toHaveLength(2);
-  });
-
-  test("limit < 1 is clamped to 1", () => {
-    registerConnector("github");
-    seedHistory("github", 3);
-    const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 0 }));
-    expect(r.kind).toBe("hit");
-    expect(r.value as unknown[]).toHaveLength(1);
-  });
-
-  test("limit > 500 is clamped to 500", () => {
-    registerConnector("github");
-    seedHistory("github", 2);
-    const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 99_999 }));
-    expect(r.kind).toBe("hit");
-    expect(r.value as unknown[]).toHaveLength(2);
-  });
-
-  test("limit float is floored", () => {
-    registerConnector("github");
-    seedHistory("github", 4);
-    const r = handleConnectorHealthHistory(buildCtx({ service: "github", limit: 2.9 }));
-    expect(r.kind).toBe("hit");
-    expect(r.value as unknown[]).toHaveLength(2);
+    expect(r.value as unknown[]).toHaveLength(returned);
   });
 
   test("non-finite limit is ignored (default 100)", () => {

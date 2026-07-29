@@ -54,32 +54,21 @@ describe("redactSecret", () => {
 });
 
 describe("buildContextSnippet", () => {
-  test("includes ±40 chars around the match, secret middle = [REDACTED]", () => {
-    const body =
-      "// before block of harmless content here\nconst KEY = 'AKIAIOSFODNN7EXAMPLE';\n// trailing content also fine";
-    const offset = body.indexOf("AKIA");
-    const length = "AKIAIOSFODNN7EXAMPLE".length;
-    const snippet = buildContextSnippet(body, offset, length);
+  // Whatever the ±40-char window has to clamp against — plenty of room, a body shorter than the
+  // 80-char window, or a secret flush against the end — the secret never survives into the
+  // snippet.
+  test.each([
+    [
+      "±40 chars of room on both sides",
+      "// before block of harmless content here\nconst KEY = 'AKIAIOSFODNN7EXAMPLE';\n// trailing content also fine",
+    ],
+    ["a body shorter than 80 chars", "k='AKIAIOSFODNN7EXAMPLE';"],
+    ["the secret at end-of-body (no overrun)", "trailing AKIAIOSFODNN7EXAMPLE"],
+  ])("redacts the secret with %s", (_label, body) => {
+    const secret = "AKIAIOSFODNN7EXAMPLE";
+    const snippet = buildContextSnippet(body, body.indexOf(secret), secret.length);
     expect(snippet).toContain("[REDACTED]");
-    expect(snippet).not.toContain("AKIAIOSFODNN7EXAMPLE");
-  });
-
-  test("snippet for body shorter than 80 chars contains [REDACTED] and no secret", () => {
-    const body = "k='AKIAIOSFODNN7EXAMPLE';";
-    const offset = body.indexOf("AKIA");
-    const length = "AKIAIOSFODNN7EXAMPLE".length;
-    const snippet = buildContextSnippet(body, offset, length);
-    expect(snippet).toContain("[REDACTED]");
-    expect(snippet).not.toContain("AKIAIOSFODNN7EXAMPLE");
-  });
-
-  test("snippet at end-of-body works without overrun", () => {
-    const body = "trailing AKIAIOSFODNN7EXAMPLE";
-    const offset = body.indexOf("AKIA");
-    const length = "AKIAIOSFODNN7EXAMPLE".length;
-    const snippet = buildContextSnippet(body, offset, length);
-    expect(snippet).toContain("[REDACTED]");
-    expect(snippet).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(snippet).not.toContain(secret);
   });
 });
 

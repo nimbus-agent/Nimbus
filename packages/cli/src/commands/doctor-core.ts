@@ -192,7 +192,7 @@ function collectionState(exec: DoctorVaultExec): { state: DoctorVaultState; deta
     return { state: "no-collection", detail: `${SECRETS_NAME} has no default collection` };
   }
   const locked = askSecretService(exec, "locked", path);
-  if (locked === null || locked.code !== 0) {
+  if (locked?.code !== 0) {
     return { state: "unverified", detail: locked?.stderr.trim() ?? "" };
   }
   const flag = BOOL_PATTERN.exec(locked.stdout)?.[1];
@@ -227,15 +227,23 @@ export function doctorVaultStatus(
   return toStatus(state, detail);
 }
 
+/**
+ * `(detail)` when the probe never ran (not-applicable carries the OS name), `[detail]` when a
+ * non-ok state has something to say, and nothing at all when the vault is simply healthy.
+ */
+function vaultLineSuffix(status: DoctorVaultStatus): string {
+  if (status.state === "not-applicable") {
+    return ` (${status.detail})`;
+  }
+  if (status.detail.length > 0 && status.state !== "ok") {
+    return ` [${status.detail}]`;
+  }
+  return "";
+}
+
 export function formatDoctorVaultLine(status: DoctorVaultStatus): string {
   const report = VAULT_REPORT[status.state];
-  const suffix =
-    status.state === "not-applicable"
-      ? ` (${status.detail})`
-      : status.detail.length > 0 && status.state !== "ok"
-        ? ` [${status.detail}]`
-        : "";
-  return `${report.mark} Vault: ${report.text}${suffix}`;
+  return `${report.mark} Vault: ${report.text}${vaultLineSuffix(status)}`;
 }
 
 export function doctorVaultLine(

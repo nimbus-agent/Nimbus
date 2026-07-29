@@ -362,22 +362,13 @@ describe("circleci-sync — with shared fixture", () => {
   });
 
   describe("project slug derivation", () => {
-    test("owner-only (no `/`) → skipped via githubRepoToCircleProjectSlug returning null", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "no-slash-here");
-      const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      expect(fixture.fetchMock.calls).toHaveLength(0);
-      expect(res.itemsUpserted).toBe(0);
-    });
-
-    test("trailing slash (`acme/`) → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "acme/");
-      const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
-      expect(fixture.fetchMock.calls).toHaveLength(0);
-      expect(res.itemsUpserted).toBe(0);
-    });
-
-    test("leading slash (`/repo-a`) → skipped", async () => {
-      seedGithubRepo(fixture.createSyncContext(), "/repo-a");
+    // Anything githubRepoToCircleProjectSlug maps to null is skipped before any HTTP call.
+    test.each([
+      ["owner-only (no `/`)", "no-slash-here"],
+      ["trailing slash", "acme/"],
+      ["leading slash", "/repo-a"],
+    ])("%s → skipped, no fetch", async (_label, repo) => {
+      seedGithubRepo(fixture.createSyncContext(), repo);
       const res = await createCircleciSyncable(ENSURE_MCP).sync(fixture.createSyncContext(), null);
       expect(fixture.fetchMock.calls).toHaveLength(0);
       expect(res.itemsUpserted).toBe(0);

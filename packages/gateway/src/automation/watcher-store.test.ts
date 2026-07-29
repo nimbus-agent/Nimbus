@@ -39,7 +39,7 @@ describe("watcher-store", () => {
 
   test("deleteWatcher no-op when schema below v8", () => {
     const db = new Database(":memory:");
-    deleteWatcher(db, "any-id");
+    expect(() => deleteWatcher(db, "any-id")).not.toThrow();
   });
 
   test("setWatcherEnabled returns false when schema below v8", () => {

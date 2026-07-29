@@ -16,20 +16,12 @@ describe("[hitl.quorum] config", () => {
     expect(parseQuorumConfig("").size).toBe(0);
   });
 
-  it("ignores malformed rows — non-numeric approvers", () => {
-    const raw = ['[hitl.quorum."x.y"]', "approvers = bad", "window_seconds = 300"].join("\n");
-    const cfg = parseQuorumConfig(raw);
-    expect(cfg.has("x.y")).toBe(false);
-  });
-
-  it("ignores malformed rows — approvers < 1", () => {
-    const raw = ['[hitl.quorum."x.y"]', "approvers = 0", "window_seconds = 300"].join("\n");
-    const cfg = parseQuorumConfig(raw);
-    expect(cfg.has("x.y")).toBe(false);
-  });
-
-  it("ignores malformed rows — window_seconds <= 0", () => {
-    const raw = ['[hitl.quorum."x.y"]', "approvers = 2", "window_seconds = 0"].join("\n");
+  it.each([
+    ["non-numeric approvers", "approvers = bad", "window_seconds = 300"],
+    ["approvers < 1", "approvers = 0", "window_seconds = 300"],
+    ["window_seconds <= 0", "approvers = 2", "window_seconds = 0"],
+  ])("ignores malformed rows — %s", (_label, approvers, windowSeconds) => {
+    const raw = ['[hitl.quorum."x.y"]', approvers, windowSeconds].join("\n");
     const cfg = parseQuorumConfig(raw);
     expect(cfg.has("x.y")).toBe(false);
   });

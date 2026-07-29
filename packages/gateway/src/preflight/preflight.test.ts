@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ServiceConfig } from "../metrics/dora-config.ts";
+import type { DoraProvider, ServiceConfig } from "../metrics/dora-config.ts";
 import { computeDeployPreflight } from "./preflight.ts";
 
 // ---------------------------------------------------------------------------
@@ -543,45 +543,27 @@ describe("failing_ci_runs gaps", () => {
     expect(result.checks.failing_ci_runs.count).toBe(1);
   });
 
-  test("gitlab repo uses gitlab service column", () => {
-    const cfg = baseConfig({ repos: [{ provider: "gitlab", providerId: "group/proj" }] });
-    insertItem(db, "gitlab", "ci_run", "Pipeline", NOW - ONE_HOUR, {
-      branch: "main",
-      conclusion: "failure",
-    });
-    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
-    expect(result.checks.failing_ci_runs.count).toBe(1);
-  });
+  // Every non-github provider reads its failing ci_run rows from its own service column, so a
+  // single failure row seeded under that column must be counted.
+  const OWN_COLUMN_PROVIDERS: ReadonlyArray<readonly [DoraProvider, string, string]> = [
+    ["gitlab", "group/proj", "Pipeline"],
+    ["bitbucket", "org/bb-repo", "Pipeline"],
+    ["jenkins", "deploy-job", "Build"],
+    ["circleci", "org/repo", "Pipeline"],
+  ];
 
-  test("bitbucket repo uses bitbucket service column", () => {
-    const cfg = baseConfig({ repos: [{ provider: "bitbucket", providerId: "org/bb-repo" }] });
-    insertItem(db, "bitbucket", "ci_run", "Pipeline", NOW - ONE_HOUR, {
-      branch: "main",
-      conclusion: "failure",
-    });
-    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
-    expect(result.checks.failing_ci_runs.count).toBe(1);
-  });
-
-  test("jenkins repo uses jenkins service column", () => {
-    const cfg = baseConfig({ repos: [{ provider: "jenkins", providerId: "deploy-job" }] });
-    insertItem(db, "jenkins", "ci_run", "Build", NOW - ONE_HOUR, {
-      branch: "main",
-      conclusion: "failure",
-    });
-    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
-    expect(result.checks.failing_ci_runs.count).toBe(1);
-  });
-
-  test("circleci repo uses circleci service column", () => {
-    const cfg = baseConfig({ repos: [{ provider: "circleci", providerId: "org/repo" }] });
-    insertItem(db, "circleci", "ci_run", "Pipeline", NOW - ONE_HOUR, {
-      branch: "main",
-      conclusion: "failure",
-    });
-    const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
-    expect(result.checks.failing_ci_runs.count).toBe(1);
-  });
+  test.each(OWN_COLUMN_PROVIDERS)(
+    "%s repo uses its own service column",
+    (provider, providerId, runTitle) => {
+      const cfg = baseConfig({ repos: [{ provider, providerId }] });
+      insertItem(db, provider, "ci_run", runTitle, NOW - ONE_HOUR, {
+        branch: "main",
+        conclusion: "failure",
+      });
+      const result = computeDeployPreflight(db, cfg, "main", NOW, 5);
+      expect(result.checks.failing_ci_runs.count).toBe(1);
+    },
+  );
 
   test("multiple repos deduplicates service columns", () => {
     // Two github repos → only one 'github_actions' column entry

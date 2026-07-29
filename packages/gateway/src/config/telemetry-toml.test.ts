@@ -235,33 +235,14 @@ describe("applyTelemetryEnvOverrides (via loadNimbusTelemetryFromPath)", () => {
     return loadNimbusTelemetryFromPath(join(dir, "no-such-file.toml"));
   }
 
-  test("NIMBUS_TELEMETRY_ENABLED=1 forces enabled=true", () => {
-    process.env[ENV_ENABLED] = "1";
+  // Truthy/falsy spellings are matched case-insensitively.
+  test.each(["1", "true", "TRUE"])("NIMBUS_TELEMETRY_ENABLED=%s forces enabled=true", (raw) => {
+    process.env[ENV_ENABLED] = raw;
     expect(loadDefaults().enabled).toBe(true);
   });
 
-  test("NIMBUS_TELEMETRY_ENABLED=true forces enabled=true", () => {
-    process.env[ENV_ENABLED] = "true";
-    expect(loadDefaults().enabled).toBe(true);
-  });
-
-  test("NIMBUS_TELEMETRY_ENABLED=TRUE forces enabled=true (case-insensitive)", () => {
-    process.env[ENV_ENABLED] = "TRUE";
-    expect(loadDefaults().enabled).toBe(true);
-  });
-
-  test("NIMBUS_TELEMETRY_ENABLED=0 forces enabled=false", () => {
-    process.env[ENV_ENABLED] = "0";
-    expect(loadDefaults().enabled).toBe(false);
-  });
-
-  test("NIMBUS_TELEMETRY_ENABLED=false forces enabled=false", () => {
-    process.env[ENV_ENABLED] = "false";
-    expect(loadDefaults().enabled).toBe(false);
-  });
-
-  test("NIMBUS_TELEMETRY_ENABLED=FALSE forces enabled=false (case-insensitive)", () => {
-    process.env[ENV_ENABLED] = "FALSE";
+  test.each(["0", "false", "FALSE"])("NIMBUS_TELEMETRY_ENABLED=%s forces enabled=false", (raw) => {
+    process.env[ENV_ENABLED] = raw;
     expect(loadDefaults().enabled).toBe(false);
   });
 
@@ -300,29 +281,15 @@ describe("applyTelemetryEnvOverrides (via loadNimbusTelemetryFromPath)", () => {
     expect(loadDefaults().flushIntervalSeconds).toBe(86_400);
   });
 
-  test("NIMBUS_TELEMETRY_FLUSH_SECONDS = 0 is rejected (must be > 0)", () => {
-    process.env[ENV_FLUSH] = "0";
-    expect(loadDefaults().flushIntervalSeconds).toBe(
-      DEFAULT_NIMBUS_TELEMETRY_TOML.flushIntervalSeconds,
-    );
-  });
-
-  test("NIMBUS_TELEMETRY_FLUSH_SECONDS negative is rejected", () => {
-    process.env[ENV_FLUSH] = "-100";
-    expect(loadDefaults().flushIntervalSeconds).toBe(
-      DEFAULT_NIMBUS_TELEMETRY_TOML.flushIntervalSeconds,
-    );
-  });
-
-  test("NIMBUS_TELEMETRY_FLUSH_SECONDS non-numeric is rejected", () => {
-    process.env[ENV_FLUSH] = "not-a-number";
-    expect(loadDefaults().flushIntervalSeconds).toBe(
-      DEFAULT_NIMBUS_TELEMETRY_TOML.flushIntervalSeconds,
-    );
-  });
-
-  test("NIMBUS_TELEMETRY_FLUSH_SECONDS empty string leaves default", () => {
-    process.env[ENV_FLUSH] = "";
+  // A value that is not a positive number at all leaves the default untouched — unlike an
+  // out-of-range positive number, which clamps.
+  test.each([
+    ["0 (must be > 0)", "0"],
+    ["negative", "-100"],
+    ["non-numeric", "not-a-number"],
+    ["empty string", ""],
+  ])("NIMBUS_TELEMETRY_FLUSH_SECONDS %s leaves the default", (_label, raw) => {
+    process.env[ENV_FLUSH] = raw;
     expect(loadDefaults().flushIntervalSeconds).toBe(
       DEFAULT_NIMBUS_TELEMETRY_TOML.flushIntervalSeconds,
     );

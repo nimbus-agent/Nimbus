@@ -221,13 +221,14 @@ describe("runTeamFederationRpc", () => {
 
   it("audit (no entries array) takes the empty branch without throwing", async () => {
     const { client } = fakeClient({}); // r.entries undefined → Array.isArray false → []
-    await runTeamFederationRpc(client, {
-      kind: "audit",
-      namespace: "ns",
-      purpose: "why",
-      sinceMs: 5,
-    });
-    // no throw == pass
+    await expect(
+      runTeamFederationRpc(client, {
+        kind: "audit",
+        namespace: "ns",
+        purpose: "why",
+        sinceMs: 5,
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

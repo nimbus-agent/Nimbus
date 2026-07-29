@@ -147,49 +147,19 @@ describe("driftHintsFromIndex", () => {
     expect(lines.some((l) => l.includes("differs"))).toBe(false);
   });
 
-  // Branch: metadata is null literal → skips inner snap block
-  test("skips lambda snapshot block when metadata is JSON null", () => {
+  // One row per guard on the way to the lambda-snapshot block. In every case the heartbeat
+  // timestamp line still renders — only the snapshot line is suppressed.
+  test.each([
+    ["metadata is JSON null (skips the inner snap block)", "null"],
+    ["metadata is a JSON array (!Array.isArray guard fires)", "[1, 2, 3]"],
+    ["awsLambdaIndexedCount is a string (typeof-false arm)", '{"awsLambdaIndexedCount":"many"}'],
+    // JSON.parse("1e309") yields Infinity — a value that passes `typeof === "number"` but fails
+    // `Number.isFinite`, so this row is what covers the isFinite-false arm specifically.
+    ["awsLambdaIndexedCount is non-finite (isFinite-false arm)", '{"awsLambdaIndexedCount":1e309}'],
+  ])("skips the lambda snapshot lines when %s", (_label, metadata) => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
-    const t = Date.now();
-    insertHeartbeat(db, "null", t);
-    const lines = driftHintsFromIndex(db);
-    // Should have the heartbeat timestamp line but no "indexed Lambda count" line
-    expect(lines.some((l) => l.startsWith("IaC heartbeat last updated:"))).toBe(true);
-    expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);
-  });
-
-  // Branch: metadata is a JSON array → !Array.isArray guard fires
-  test("skips lambda snapshot block when metadata is a JSON array", () => {
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const t = Date.now();
-    insertHeartbeat(db, "[1, 2, 3]", t);
-    const lines = driftHintsFromIndex(db);
-    expect(lines.some((l) => l.startsWith("IaC heartbeat last updated:"))).toBe(true);
-    expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);
-  });
-
-  // Branch: metadata is a valid object but awsLambdaIndexedCount is not a number
-  test("skips lambda snapshot lines when awsLambdaIndexedCount is a string", () => {
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const t = Date.now();
-    insertHeartbeat(db, JSON.stringify({ awsLambdaIndexedCount: "many" }), t);
-    const lines = driftHintsFromIndex(db);
-    expect(lines.some((l) => l.startsWith("IaC heartbeat last updated:"))).toBe(true);
-    expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);
-  });
-
-  // Branch: awsLambdaIndexedCount is a number but non-finite (Number.isFinite() false arm).
-  test("skips lambda snapshot lines when awsLambdaIndexedCount is non-finite", () => {
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const t = Date.now();
-    // JSON.parse("1e309") yields Infinity — a value that passes `typeof === "number"`
-    // but fails `Number.isFinite`, exercising the isFinite-false arm specifically (the
-    // typeof-false arm is covered by the "non-numeric" test above).
-    insertHeartbeat(db, '{"awsLambdaIndexedCount":1e309}', t);
+    insertHeartbeat(db, metadata, Date.now());
     const lines = driftHintsFromIndex(db);
     expect(lines.some((l) => l.startsWith("IaC heartbeat last updated:"))).toBe(true);
     expect(lines.some((l) => l.includes("indexed Lambda count was"))).toBe(false);

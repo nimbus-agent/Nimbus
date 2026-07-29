@@ -440,19 +440,9 @@ describe("projectRankedItem — missing/wrong field branches", () => {
     expect(out["url"]).toBeUndefined();
   });
 
-  it("omits score when score is absent", () => {
+  it.each(["score", "modifiedAt", "semanticSnippet"])("omits %s when absent", (field) => {
     const out = projectRankedItem({ name: "x" });
-    expect(out["score"]).toBeUndefined();
-  });
-
-  it("omits modifiedAt when absent", () => {
-    const out = projectRankedItem({ name: "x" });
-    expect(out["modifiedAt"]).toBeUndefined();
-  });
-
-  it("omits semanticSnippet when absent", () => {
-    const out = projectRankedItem({ name: "x" });
-    expect(out["semanticSnippet"]).toBeUndefined();
+    expect(out[field]).toBeUndefined();
   });
 
   it("omits meta when rawMeta is null", () => {

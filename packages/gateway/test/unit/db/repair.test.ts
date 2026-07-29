@@ -79,13 +79,10 @@ describe("repairIndex — orphaned sync tokens", () => {
   });
 });
 
-describe("repairIndex — FTS5 rebuild", () => {
-  test.skip("FTS5 rebuild — unreachable from :memory: (would need real FTS5 corruption to trigger fts5_consistency = fail)", () => {
-    // repairFts5 only runs when verifyIndex flags fts5_consistency = "fail",
-    // which requires actual FTS5 shadow-table corruption. Bun's :memory: SQLite
-    // cannot induce that state without lower-level manipulation outside the API.
-  });
-});
+// KNOWN GAP — repairIndex's FTS5 rebuild is unreachable from this suite: repairFts5 only runs
+// when verifyIndex flags fts5_consistency = "fail", which requires actual FTS5 shadow-table
+// corruption. Bun's :memory: SQLite cannot induce that state without lower-level manipulation
+// outside the public API, so no stub test is carried here.
 
 describe("repairIndex — audit log entry", () => {
   test("writes audit_log entry when repairs are applied", () => {

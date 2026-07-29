@@ -115,23 +115,13 @@ describe("env-var parsers", () => {
       expect(m.size).toBe(0);
     });
 
-    test("whitespace-only env returns empty map", () => {
-      process.env["NIMBUS_SEARCH_PRIORITY_JSON"] = "   ";
-      expect(parseSearchPriorityJson().size).toBe(0);
-    });
-
-    test("invalid JSON returns empty map", () => {
-      process.env["NIMBUS_SEARCH_PRIORITY_JSON"] = "{not json";
-      expect(parseSearchPriorityJson().size).toBe(0);
-    });
-
-    test("non-object JSON (array) returns empty map", () => {
-      process.env["NIMBUS_SEARCH_PRIORITY_JSON"] = "[1,2,3]";
-      expect(parseSearchPriorityJson().size).toBe(0);
-    });
-
-    test("null JSON returns empty map", () => {
-      process.env["NIMBUS_SEARCH_PRIORITY_JSON"] = "null";
+    test.each([
+      ["whitespace-only", "   "],
+      ["invalid JSON", "{not json"],
+      ["non-object JSON (array)", "[1,2,3]"],
+      ["null JSON", "null"],
+    ])("%s env returns empty map", (_label, raw) => {
+      process.env["NIMBUS_SEARCH_PRIORITY_JSON"] = raw;
       expect(parseSearchPriorityJson().size).toBe(0);
     });
 
@@ -157,28 +147,18 @@ describe("env-var parsers", () => {
       expect(parseEngineContextWindowItems()).toBe(20);
     });
 
-    test("empty string returns default 20", () => {
-      process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = "";
-      expect(parseEngineContextWindowItems()).toBe(20);
-    });
-
     test("in-range value (1..200) is accepted", () => {
       process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = "42";
       expect(parseEngineContextWindowItems()).toBe(42);
     });
 
-    test("out-of-range value (<1) falls back to 20", () => {
-      process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = "0";
-      expect(parseEngineContextWindowItems()).toBe(20);
-    });
-
-    test("out-of-range value (>200) falls back to 20", () => {
-      process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = "300";
-      expect(parseEngineContextWindowItems()).toBe(20);
-    });
-
-    test("non-numeric value falls back to 20", () => {
-      process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = "abc";
+    test.each([
+      ["empty string", ""],
+      ["out-of-range (<1)", "0"],
+      ["out-of-range (>200)", "300"],
+      ["non-numeric", "abc"],
+    ])("%s falls back to 20", (_label, raw) => {
+      process.env["NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS"] = raw;
       expect(parseEngineContextWindowItems()).toBe(20);
     });
   });
@@ -188,23 +168,17 @@ describe("env-var parsers", () => {
       expect(parseConversationalAgentMaxSteps()).toBe(20);
     });
 
-    test("empty string returns default 20", () => {
-      process.env["NIMBUS_ASK_MAX_STEPS"] = "";
-      expect(parseConversationalAgentMaxSteps()).toBe(20);
-    });
-
     test("in-range (1..64) is accepted", () => {
       process.env["NIMBUS_ASK_MAX_STEPS"] = "8";
       expect(parseConversationalAgentMaxSteps()).toBe(8);
     });
 
-    test("out-of-range (>64) falls back to 20", () => {
-      process.env["NIMBUS_ASK_MAX_STEPS"] = "1000";
-      expect(parseConversationalAgentMaxSteps()).toBe(20);
-    });
-
-    test("non-numeric falls back to 20", () => {
-      process.env["NIMBUS_ASK_MAX_STEPS"] = "nope";
+    test.each([
+      ["empty string", ""],
+      ["out-of-range (>64)", "1000"],
+      ["non-numeric", "nope"],
+    ])("%s falls back to 20", (_label, raw) => {
+      process.env["NIMBUS_ASK_MAX_STEPS"] = raw;
       expect(parseConversationalAgentMaxSteps()).toBe(20);
     });
   });
@@ -214,28 +188,18 @@ describe("env-var parsers", () => {
       expect(parseMaxAgentDepth()).toBe(3);
     });
 
-    test("empty string returns default 3", () => {
-      process.env["NIMBUS_MAX_AGENT_DEPTH"] = "";
-      expect(parseMaxAgentDepth()).toBe(3);
-    });
-
     test("in-range (1..10) is accepted", () => {
       process.env["NIMBUS_MAX_AGENT_DEPTH"] = "5";
       expect(parseMaxAgentDepth()).toBe(5);
     });
 
-    test("out-of-range (<1) falls back to 3", () => {
-      process.env["NIMBUS_MAX_AGENT_DEPTH"] = "0";
-      expect(parseMaxAgentDepth()).toBe(3);
-    });
-
-    test("out-of-range (>10) falls back to 3", () => {
-      process.env["NIMBUS_MAX_AGENT_DEPTH"] = "99";
-      expect(parseMaxAgentDepth()).toBe(3);
-    });
-
-    test("non-numeric falls back to 3", () => {
-      process.env["NIMBUS_MAX_AGENT_DEPTH"] = "deep";
+    test.each([
+      ["empty string", ""],
+      ["out-of-range (<1)", "0"],
+      ["out-of-range (>10)", "99"],
+      ["non-numeric", "deep"],
+    ])("%s falls back to 3", (_label, raw) => {
+      process.env["NIMBUS_MAX_AGENT_DEPTH"] = raw;
       expect(parseMaxAgentDepth()).toBe(3);
     });
   });
@@ -245,23 +209,17 @@ describe("env-var parsers", () => {
       expect(parseMaxToolCallsPerSession()).toBe(20);
     });
 
-    test("empty string returns default 20", () => {
-      process.env["NIMBUS_MAX_TOOL_CALLS_PER_SESSION"] = "";
-      expect(parseMaxToolCallsPerSession()).toBe(20);
-    });
-
     test("in-range (1..200) is accepted", () => {
       process.env["NIMBUS_MAX_TOOL_CALLS_PER_SESSION"] = "150";
       expect(parseMaxToolCallsPerSession()).toBe(150);
     });
 
-    test("out-of-range (>200) falls back to 20", () => {
-      process.env["NIMBUS_MAX_TOOL_CALLS_PER_SESSION"] = "500";
-      expect(parseMaxToolCallsPerSession()).toBe(20);
-    });
-
-    test("non-numeric falls back to 20", () => {
-      process.env["NIMBUS_MAX_TOOL_CALLS_PER_SESSION"] = "many";
+    test.each([
+      ["empty string", ""],
+      ["out-of-range (>200)", "500"],
+      ["non-numeric", "many"],
+    ])("%s falls back to 20", (_label, raw) => {
+      process.env["NIMBUS_MAX_TOOL_CALLS_PER_SESSION"] = raw;
       expect(parseMaxToolCallsPerSession()).toBe(20);
     });
   });

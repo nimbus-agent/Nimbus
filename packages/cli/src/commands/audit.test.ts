@@ -211,14 +211,19 @@ describe("runAudit (dispatcher)", () => {
     expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 50 } });
   });
 
-  it("respects --limit in the bare list path", async () => {
+  // A usable --limit is passed through; anything non-finite or non-positive falls back to 50.
+  it.each([
+    ["a valid value is respected", "7", 7],
+    ["an invalid (non-finite) value falls back to 50", "abc", 50],
+    ["zero falls back to 50", "0", 50],
+  ])("--limit in the bare list path: %s", async (_label, raw, limit) => {
     const ipc = createMockIpcClient([[]]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },
       ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
     });
-    await runAudit(["--limit", "7"]);
-    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 7 } });
+    await runAudit(["--limit", raw]);
+    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit } });
   });
 
   it("throws the gateway-not-running error from the verify branch", async () => {
@@ -275,25 +280,5 @@ describe("runAudit (dispatcher)", () => {
     expect(ipc.calls[0]).toEqual({ method: "audit.exportAll", params: {} });
     expect(writes[0]?.path).toBe(outPath);
     expect(out.stdout).toContain(`wrote 1 audit rows to ${outPath}`);
-  });
-
-  it("falls back to limit 50 when --limit is given an invalid (non-finite) value", async () => {
-    const ipc = createMockIpcClient([[]]);
-    setFixture({
-      gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
-    });
-    await runAudit(["--limit", "abc"]);
-    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 50 } });
-  });
-
-  it("falls back to limit 50 when --limit is zero", async () => {
-    const ipc = createMockIpcClient([[]]);
-    setFixture({
-      gatewayState: { socketPath: FAKE_SOCKET_PATH },
-      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
-    });
-    await runAudit(["--limit", "0"]);
-    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 50 } });
   });
 });

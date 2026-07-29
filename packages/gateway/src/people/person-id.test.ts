@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "./person-id.ts";
 
+/** 36 chars, lowercase hex, 8-4-4-4-12. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 // ---------------------------------------------------------------------------
 // NIMBUS_PERSON_NAMESPACE_UUID — value contract
 // ---------------------------------------------------------------------------
@@ -14,10 +17,13 @@ test("NIMBUS_PERSON_NAMESPACE_UUID has the expected value", () => {
 // version nibble 0x8 — intentionally NOT RFC 4122 v5; see person-id.ts).
 // ---------------------------------------------------------------------------
 describe("uuidV5 — happy path", () => {
-  test("returns a lowercase hyphenated UUID string", () => {
-    const result = uuidV5("alice@example.com", NIMBUS_PERSON_NAMESPACE_UUID);
-    // Must be 36 chars: 8-4-4-4-12
-    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  test.each([
+    ["a plain email", "alice@example.com"],
+    ["an empty string", ""],
+    ["unicode characters", "Ålice Ångström <alice@example.se>"],
+    ["a 10k-character name", "a".repeat(10_000)],
+  ])("returns a lowercase hyphenated UUID string for %s", (_label, name) => {
+    expect(uuidV5(name, NIMBUS_PERSON_NAMESPACE_UUID)).toMatch(UUID_SHAPE);
   });
 
   test("is deterministic — same name+namespace → same UUID", () => {
@@ -40,14 +46,9 @@ describe("uuidV5 — happy path", () => {
     expect(a).not.toBe(b);
   });
 
-  test("empty string name does not throw and returns a UUID", () => {
-    const result = uuidV5("", NIMBUS_PERSON_NAMESPACE_UUID);
-    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  });
-
   test("whitespace-only name produces a valid UUID (whitespace is preserved, not stripped)", () => {
     const result = uuidV5("   ", NIMBUS_PERSON_NAMESPACE_UUID);
-    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(result).toMatch(UUID_SHAPE);
     // Confirm whitespace-only produces a different UUID than empty string
     const empty = uuidV5("", NIMBUS_PERSON_NAMESPACE_UUID);
     expect(result).not.toBe(empty);
@@ -57,17 +58,6 @@ describe("uuidV5 — happy path", () => {
     const lower = uuidV5("alice@example.com", NIMBUS_PERSON_NAMESPACE_UUID);
     const upper = uuidV5("ALICE@EXAMPLE.COM", NIMBUS_PERSON_NAMESPACE_UUID);
     expect(lower).not.toBe(upper);
-  });
-
-  test("name with unicode characters produces a valid UUID", () => {
-    const result = uuidV5("Ålice Ångström <alice@example.se>", NIMBUS_PERSON_NAMESPACE_UUID);
-    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  });
-
-  test("long name does not throw", () => {
-    const long = "a".repeat(10_000);
-    const result = uuidV5(long, NIMBUS_PERSON_NAMESPACE_UUID);
-    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 });
 

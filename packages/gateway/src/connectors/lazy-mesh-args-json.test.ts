@@ -88,8 +88,8 @@ describe("LazyConnectorMesh — args_json failure (S8-F9)", () => {
         },
       ],
     });
-    await mesh.ensureUserMcpRunning("broken-svc");
-    await mesh.disconnect();
+    await expect(mesh.ensureUserMcpRunning("broken-svc")).resolves.toBeUndefined();
+    await expect(mesh.disconnect()).resolves.toBeUndefined();
   });
 });
 

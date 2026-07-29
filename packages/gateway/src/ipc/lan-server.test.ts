@@ -40,7 +40,7 @@ describe("LanServer boot/stop", () => {
   test("stop cleanly releases the port", async () => {
     server = makeServer();
     await server.start();
-    await server.stop();
+    await expect(server.stop()).resolves.toBeUndefined();
     server = undefined;
   });
 });

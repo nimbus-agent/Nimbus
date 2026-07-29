@@ -392,12 +392,12 @@ describe("tryDispatchIndexReembedRpc", () => {
     const localIndex = new LocalIndex(db);
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-reembed-"));
     const { ctx } = makeCtx({ localIndex, dataDir: tmp });
-    try {
-      await tryDispatchIndexReembedRpc(ctx, "index.reembedCancel", { jobId: "missing" });
-    } catch {
-      // typed error from dispatcher is acceptable; we only want the
-      // delegation code path covered.
-    }
+    // A typed error from the dispatcher is acceptable; what's under test is that the method was
+    // delegated rather than skipped.
+    const outcome = await tryDispatchIndexReembedRpc(ctx, "index.reembedCancel", {
+      jobId: "missing",
+    }).catch((e: unknown) => e);
+    expect(outcome).not.toBe(phase4RpcSkipped);
   });
 });
 
@@ -667,11 +667,12 @@ describe("tryDispatchConnectorRpc", () => {
       localIndex,
       openUrl: async () => {},
     });
-    try {
-      await tryDispatchConnectorRpc(ctx, "connector.auth", {}, "c1");
-    } catch {
-      // typed error acceptable
-    }
+    // A typed error is acceptable; what's under test is that the inner branch ran rather than
+    // the dispatcher returning the `skipped` sentinel.
+    const outcome = await tryDispatchConnectorRpc(ctx, "connector.auth", {}, "c1").catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toBe(connectorRpcSkipped);
   });
 });
 

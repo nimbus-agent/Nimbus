@@ -352,42 +352,16 @@ describe("loadBm25Hits", () => {
 // ---------------------------------------------------------------------------
 
 describe("runVectorSearch", () => {
-  test("returns [] when semantic=false", () => {
+  // No opts here ever carry a queryEmbedding / queryEmbedding1536, so the third row is the
+  // "semantic on, non-empty query, but nothing to search with" case.
+  test.each([
+    ["semantic=false", "test", false],
+    ["nameQ is empty string", "", true],
+    ["no embedding vectors provided", "hello", true],
+  ])("returns [] when %s", (_label, query, semantic) => {
     const db = freshDb();
-    const opts: HybridSearchOptions = {
-      query: "test",
-      limit: 10,
-      embeddingModel: "m1",
-      semantic: false,
-    };
-    const result = runVectorSearch(db, opts, 10, undefined, "test");
-    expect(result).toEqual([]);
-    db.close();
-  });
-
-  test("returns [] when nameQ is empty string", () => {
-    const db = freshDb();
-    const opts: HybridSearchOptions = {
-      query: "",
-      limit: 10,
-      embeddingModel: "m1",
-      semantic: true,
-    };
-    const result = runVectorSearch(db, opts, 10, undefined, "");
-    expect(result).toEqual([]);
-    db.close();
-  });
-
-  test("returns [] when no embedding vectors provided", () => {
-    const db = freshDb();
-    const opts: HybridSearchOptions = {
-      query: "hello",
-      limit: 10,
-      embeddingModel: "m1",
-      semantic: true,
-      // no queryEmbedding or queryEmbedding1536
-    };
-    const result = runVectorSearch(db, opts, 10, undefined, "hello");
+    const opts: HybridSearchOptions = { query, limit: 10, embeddingModel: "m1", semantic };
+    const result = runVectorSearch(db, opts, 10, undefined, query);
     expect(result).toEqual([]);
     db.close();
   });

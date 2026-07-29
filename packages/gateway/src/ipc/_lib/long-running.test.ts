@@ -148,8 +148,9 @@ describe("LongRunningJobRegistry", () => {
       emit,
       run: async () => undefined,
     });
-    await registry.awaitJob(jobId);
-    await registry.awaitJob(jobId);
-    await registry.awaitJob("never-existed");
+    await expect(registry.awaitJob(jobId)).resolves.toBeUndefined();
+    // Already-settled job: awaiting a second time must still resolve, not hang.
+    await expect(registry.awaitJob(jobId)).resolves.toBeUndefined();
+    await expect(registry.awaitJob("never-existed")).resolves.toBeUndefined();
   });
 });

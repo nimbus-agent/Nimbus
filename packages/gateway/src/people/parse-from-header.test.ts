@@ -32,9 +32,23 @@ test("parseFromHeaderForPerson: multiple comma-separated addresses (last named p
   expect(r.email).toBe("second@example.com");
 });
 
-test("parseFromHeaderForPerson: angle-bracket-only (no display name)", () => {
-  const r = parseFromHeaderForPerson("<addr@host.com>");
-  expect(r.email).toBe("addr@host.com");
+// All three yield an email with no display name, but each reaches it by a different internal
+// route — see the per-row notes.
+test.each([
+  ["angle-bracket-only", "<addr@host.com>", "addr@host.com"],
+  // Inner of the first pair is "<addr@host.com", which contains "<", so
+  // extractFirstAngleBracketEmail skips it; searchFrom advances to 1 and the inner pair parses.
+  ["nested angle brackets (skips to the valid inner pair)", "<<addr@host.com>>", "addr@host.com"],
+  // open === 0 → tryParseNamedAngleMailbox returns null (no display name to its left), so
+  // extractFirstAngleBracketEmail is what ends up finding the address.
+  [
+    "a '<' at index 0 (tryParseNamedAngleMailbox open <= 0 bail-out)",
+    "<email@example.com>",
+    "email@example.com",
+  ],
+])("parseFromHeaderForPerson: %s → email, no display name", (_label, header, email) => {
+  const r = parseFromHeaderForPerson(header);
+  expect(r.email).toBe(email);
   expect(r.displayName).toBeUndefined();
 });
 
@@ -147,15 +161,6 @@ test("parseFromHeaderForPerson: angle bracket with bad email inside → skips, n
   expect(parseFromHeaderForPerson("<notanemail>")).toEqual({});
 });
 
-test("parseFromHeaderForPerson: nested angle brackets — outer inner has <, skips; inner pair is valid", () => {
-  // extractFirstAngleBracketEmail: inner.includes("<") branch causes searchFrom to advance
-  // <<addr@host.com>> — inner of first pair is "<addr@host.com" which contains "<", so skip
-  // searchFrom advances to 1; next < is at 1, next > at 15; inner = "addr@host.com" which is valid
-  const r = parseFromHeaderForPerson("<<addr@host.com>>");
-  expect(r.email).toBe("addr@host.com");
-  expect(r.displayName).toBeUndefined();
-});
-
 test("parseFromHeaderForPerson: angle with > inside inner — inner.includes(>) branch", () => {
   // inner contains ">" which causes isBareMailboxShape to fail (has ">")
   // "<a>b@c.com>" — open=0 close=2, inner="a" which has no @, searchFrom=1
@@ -164,15 +169,6 @@ test("parseFromHeaderForPerson: angle with > inside inner — inner.includes(>) 
   // The character ">" causes isBareMailboxShape to return false
   // Use a string that has no second valid pair
   expect(parseFromHeaderForPerson("<no-at-sign>")).toEqual({});
-});
-
-test("parseFromHeaderForPerson: tryParseNamedAngleMailbox open <= 0 when < is at index 0", () => {
-  // open === 0 means open <= 0 → returns null; falls through to extractFirstAngleBracketEmail
-  // "<email@example.com>" — open is at 0, so tryParseNamedAngle returns null (no displayName)
-  // extractFirstAngleBracketEmail then finds it
-  const r = parseFromHeaderForPerson("<email@example.com>");
-  expect(r.email).toBe("email@example.com");
-  expect(r.displayName).toBeUndefined();
 });
 
 test("parseFromHeaderForPerson: tryParseNamedAngleMailbox with bad inner email → null, extract also fails → empty", () => {

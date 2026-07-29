@@ -191,39 +191,16 @@ describe("data-profile-sync — JSONL happy path", () => {
     expectServiceItemCount(db, "dataprofile", 1);
   });
 
-  test("indexes a .ndjson file (same as jsonl)", async () => {
+  // The file is upserted either way: a .ndjson extension is treated as jsonl, and a first line
+  // that isn't a JSON object just yields empty columns rather than failing the sync.
+  test.each([
+    ["a .ndjson file (same as jsonl)", "records.ndjson", '{"a":1}\n{"b":2}\n'],
+    ["JSONL with an invalid first line", "bad.jsonl", 'not-json\n{"a":1}\n'],
+    ["JSONL with a non-object first line (array)", "arr.jsonl", '[1,2,3]\n{"a":1}\n'],
+  ])("indexes %s", async (_label, name, body) => {
     const { dir, cleanup: c } = await makeTempDir();
     cleanup = c;
-    await writeFile(join(dir, "records.ndjson"), '{"a":1}\n{"b":2}\n');
-
-    const db = createMemoryIndexDb();
-    const sync = createDataProfileSyncable(makeOptions());
-    const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
-      null,
-    );
-    expect(r.itemsUpserted).toBe(1);
-  });
-
-  test("JSONL with invalid first line → empty columns but still upserted", async () => {
-    const { dir, cleanup: c } = await makeTempDir();
-    cleanup = c;
-    // First line is not valid JSON
-    await writeFile(join(dir, "bad.jsonl"), 'not-json\n{"a":1}\n');
-
-    const db = createMemoryIndexDb();
-    const sync = createDataProfileSyncable(makeOptions());
-    const r = await sync.sync(
-      syncTestContext(db, createStubVault({ "dataprofile.dir": dir })),
-      null,
-    );
-    expect(r.itemsUpserted).toBe(1);
-  });
-
-  test("JSONL with non-object first line (array) → empty columns", async () => {
-    const { dir, cleanup: c } = await makeTempDir();
-    cleanup = c;
-    await writeFile(join(dir, "arr.jsonl"), '[1,2,3]\n{"a":1}\n');
+    await writeFile(join(dir, name), body);
 
     const db = createMemoryIndexDb();
     const sync = createDataProfileSyncable(makeOptions());

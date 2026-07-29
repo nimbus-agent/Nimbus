@@ -82,29 +82,16 @@ describeWithFetchRestore("jira-sync", () => {
 
   // ── no-op when only some credentials are provided ──────────────────────────
 
-  test("no-op when email is empty", async () => {
+  // Any one blank credential is enough to make the whole sync a no-op. `"///"` is included here
+  // because a base_url of only slashes normalizes to "".
+  test.each([
+    ["email is empty", "jira.email", ""],
+    ["api_token is empty", "jira.api_token", ""],
+    ["base_url normalizes to empty", "jira.base_url", "///"],
+  ])("no-op when %s", async (_label, key, value) => {
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const db = createMemoryIndexDb();
-    const ctx = { db, vault: credVault({ "jira.email": "" }), ...silentSyncContextExtras() };
-    const r = await sync.sync(ctx, null);
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toBeNull();
-  });
-
-  test("no-op when api_token is empty", async () => {
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const db = createMemoryIndexDb();
-    const ctx = { db, vault: credVault({ "jira.api_token": "" }), ...silentSyncContextExtras() };
-    const r = await sync.sync(ctx, null);
-    expect(r.itemsUpserted).toBe(0);
-    expect(r.cursor).toBeNull();
-  });
-
-  test("no-op when base_url normalizes to empty", async () => {
-    // A base_url of only slashes normalizes to "" → noop
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    const db = createMemoryIndexDb();
-    const ctx = { db, vault: credVault({ "jira.base_url": "///" }), ...silentSyncContextExtras() };
+    const ctx = { db, vault: credVault({ [key]: value }), ...silentSyncContextExtras() };
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toBeNull();
@@ -365,46 +352,21 @@ describeWithFetchRestore("jira-sync", () => {
     await expect(sync.sync(ctx, null)).rejects.toThrow("rate limited");
   });
 
-  test("throws UnauthenticatedError on HTTP 401", async () => {
+  // 401/403 surface as UnauthenticatedError, other non-ok statuses as a generic error, and a
+  // 200 with an unparseable body as a JSON error — in each case the message names the cause.
+  test.each([
+    ["UnauthenticatedError on HTTP 401", 401, "Unauthorized", "401"],
+    ["UnauthenticatedError on HTTP 403", 403, "Forbidden", "403"],
+    ["a generic error on non-ok HTTP status (500)", 500, "Server Error", "500"],
+    ["an error on an invalid JSON response", 200, "not-json{{{", "invalid JSON"],
+  ])("throws %s", async (_label, status, body, expectedMessage) => {
     const { ctx } = credCtx();
     globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("Unauthorized", { status: 401 });
+      return new Response(body, { status });
     }) as unknown as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("401");
-  });
-
-  test("throws UnauthenticatedError on HTTP 403", async () => {
-    const { ctx } = credCtx();
-    globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("Forbidden", { status: 403 });
-    }) as unknown as typeof fetch;
-
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("403");
-  });
-
-  test("throws generic error on non-ok HTTP status (500)", async () => {
-    const { ctx } = credCtx();
-    globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("Server Error", { status: 500 });
-    }) as unknown as typeof fetch;
-
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("500");
-  });
-
-  // ── JSON parse errors ──────────────────────────────────────────────────────
-
-  test("throws error on invalid JSON response", async () => {
-    const { ctx } = credCtx();
-    globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("not-json{{{", { status: 200 });
-    }) as unknown as typeof fetch;
-
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("invalid JSON");
+    await expect(sync.sync(ctx, null)).rejects.toThrow(expectedMessage);
   });
 
   test("throws error when issues field is missing from response", async () => {

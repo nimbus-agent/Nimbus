@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import type { AgentUnavailableReason } from "./gateway-agent-error.ts";
 import { GatewayAgentUnavailableError } from "./gateway-agent-error.ts";
 import { classifyIntent } from "./router.ts";
+
+/** Status → reason mapping, identical for every provider. */
+const HTTP_STATUS_REASONS: ReadonlyArray<readonly [number, string, AgentUnavailableReason]> = [
+  [429, "Too Many Requests", "rate_limited"],
+  [404, "Not Found", "model_not_found"],
+  [500, "Internal Server Error", "provider_error"],
+];
 
 const BUN_NATIVE_FETCH = globalThis.fetch;
 const ORIGINAL_ANTHROPIC = process.env["ANTHROPIC_API_KEY"];
@@ -372,9 +380,9 @@ describe("classifyIntent — Anthropic error paths", () => {
     expect((caught as GatewayAgentUnavailableError).provider).toBe("anthropic");
   });
 
-  test("HTTP 429 → rate_limited", async () => {
+  test.each(HTTP_STATUS_REASONS)("HTTP %s → %s", async (status, body, reason) => {
     useAnthropicOnly();
-    stubFetch(async () => textResponse("Too Many Requests", 429));
+    stubFetch(async () => textResponse(body, status));
 
     let caught: unknown;
     try {
@@ -383,35 +391,7 @@ describe("classifyIntent — Anthropic error paths", () => {
       caught = e;
     }
     expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("rate_limited");
-  });
-
-  test("HTTP 404 → model_not_found", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => textResponse("Not Found", 404));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi");
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("model_not_found");
-  });
-
-  test("HTTP 500 → provider_error", async () => {
-    useAnthropicOnly();
-    stubFetch(async () => textResponse("Internal Server Error", 500));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi");
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("provider_error");
+    expect((caught as GatewayAgentUnavailableError).reason).toBe(reason);
   });
 
   test("fetch throws (network exception) → network_error", async () => {
@@ -588,9 +568,9 @@ describe("classifyIntent — OpenAI error paths", () => {
     expect((caught as GatewayAgentUnavailableError).provider).toBe("openai");
   });
 
-  test("HTTP 429 → rate_limited", async () => {
+  test.each(HTTP_STATUS_REASONS)("HTTP %s → %s", async (status, body, reason) => {
     useOpenAiOnly();
-    stubFetch(async () => textResponse("Too Many Requests", 429));
+    stubFetch(async () => textResponse(body, status));
 
     let caught: unknown;
     try {
@@ -599,35 +579,7 @@ describe("classifyIntent — OpenAI error paths", () => {
       caught = e;
     }
     expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("rate_limited");
-  });
-
-  test("HTTP 404 → model_not_found", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => textResponse("Not Found", 404));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi");
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("model_not_found");
-  });
-
-  test("HTTP 500 → provider_error", async () => {
-    useOpenAiOnly();
-    stubFetch(async () => textResponse("Internal Server Error", 500));
-
-    let caught: unknown;
-    try {
-      await classifyIntent("hi");
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(GatewayAgentUnavailableError);
-    expect((caught as GatewayAgentUnavailableError).reason).toBe("provider_error");
+    expect((caught as GatewayAgentUnavailableError).reason).toBe(reason);
   });
 
   test("fetch throws → network_error with openai provider", async () => {

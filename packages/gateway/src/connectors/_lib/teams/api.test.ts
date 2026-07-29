@@ -270,18 +270,27 @@ describe("nextMessageCursorFromDeltaPage", () => {
     expect(result.stored).not.toBeNull();
   });
 
-  test("deltaLink present, pairIdx still < pairs.length: hasMore=true (L165 branch)", () => {
-    const state = makeBaseState({ pairIdx: 0 });
-    const page = { "@odata.deltaLink": "https://delta.link" };
+  // pairs.length is 2 in the base state, so pairIdx 1 is the last pair (hasMore=false); an empty
+  // deltaLink is not a deltaLink at all and falls through to the last branch (L165).
+  test.each([
+    [
+      "deltaLink present, pairIdx still < pairs.length (L165 branch)",
+      0,
+      "https://delta.link",
+      true,
+    ],
+    [
+      "deltaLink present, pairIdx reaches pairs.length → pairIdx resets to 0 (L168 branch)",
+      1,
+      "https://delta.link",
+      false,
+    ],
+    ["deltaLink empty string → falls through to the last branch (L165)", 0, "", true],
+  ])("%s: hasMore=%s", (_label, pairIdx, deltaLink, expected) => {
+    const state = makeBaseState({ pairIdx });
+    const page = { "@odata.deltaLink": deltaLink };
     const result = nextMessageCursorFromDeltaPage(page, state, "t1|c1", encodeTeamsSyncCursor);
-    expect(result.hasMore).toBe(true);
-  });
-
-  test("deltaLink present, pairIdx reaches pairs.length: pairIdx resets to 0, hasMore=false (L168 branch)", () => {
-    const state = makeBaseState({ pairIdx: 1 }); // pairIdx+1 = 2 >= pairs.length (2)
-    const page = { "@odata.deltaLink": "https://delta.link" };
-    const result = nextMessageCursorFromDeltaPage(page, state, "t1|c1", encodeTeamsSyncCursor);
-    expect(result.hasMore).toBe(false);
+    expect(result.hasMore).toBe(expected);
   });
 
   test("neither nextLink nor deltaLink: falls through to last branch (L179)", () => {
@@ -310,13 +319,6 @@ describe("nextMessageCursorFromDeltaPage", () => {
       encodeTeamsSyncCursor,
     );
     // No nextLink, no deltaLink → last branch, pairIdx 0→1 < 2, hasMore=true
-    expect(result.hasMore).toBe(true);
-  });
-
-  test("deltaLink empty string: falls through to last branch (L165 branch: empty string)", () => {
-    const state = makeBaseState({ pairIdx: 0 });
-    const page = { "@odata.deltaLink": "" };
-    const result = nextMessageCursorFromDeltaPage(page, state, "t1|c1", encodeTeamsSyncCursor);
     expect(result.hasMore).toBe(true);
   });
 

@@ -181,36 +181,18 @@ describeWithFetchRestore("confluence-sync", () => {
   });
 
   // -------------------------------------------------------------------------
-  // HTTP 429 rate-limited response (lines 181-183)
+  // Failure responses: rate-limit (lines 181-183), non-OK (185-186), unparseable body (193)
   // -------------------------------------------------------------------------
-  test("throws on 429 rate-limit response", async () => {
+  test.each([
+    ["429 rate-limit response", 429, "rate limited", "rate limited"],
+    ["non-ok HTTP response", 500, "internal server error", "Confluence sync HTTP 500"],
+    ["invalid JSON body", 200, "not json {{{{", "invalid JSON"],
+  ])("throws on %s", async (_label, status, body, expectedMessage) => {
     const ctx = makeCtx();
-    globalThis.fetch = makeFetch(429, "rate limited") as typeof fetch;
+    globalThis.fetch = makeFetch(status, body) as typeof fetch;
 
     const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("rate limited");
-  });
-
-  // -------------------------------------------------------------------------
-  // HTTP non-OK (e.g. 500) response (lines 185-186)
-  // -------------------------------------------------------------------------
-  test("throws on non-ok HTTP response", async () => {
-    const ctx = makeCtx();
-    globalThis.fetch = makeFetch(500, "internal server error") as typeof fetch;
-
-    const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("Confluence sync HTTP 500");
-  });
-
-  // -------------------------------------------------------------------------
-  // Invalid JSON body (line 193)
-  // -------------------------------------------------------------------------
-  test("throws on invalid JSON body", async () => {
-    const ctx = makeCtx();
-    globalThis.fetch = makeFetch(200, "not json {{{{") as typeof fetch;
-
-    const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
-    await expect(sync.sync(ctx, null)).rejects.toThrow("invalid JSON");
+    await expect(sync.sync(ctx, null)).rejects.toThrow(expectedMessage);
   });
 
   // -------------------------------------------------------------------------

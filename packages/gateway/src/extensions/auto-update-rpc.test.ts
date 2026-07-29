@@ -335,90 +335,29 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(audits[0]?.payload["message"]).toBe("boom string, not an Error");
   });
 
-  // lines 222-229 extractPhase: each branch via distinct Error messages
-  it("records phase=signature_failed when error message contains 'signature_failed'", async () => {
+  // lines 222-229 extractPhase: one row per branch, keyed off a keyword in the Error message —
+  // plus the fall-through row whose message matches no known keyword.
+  it.each([
+    ["signature_failed verification", "signature_failed"],
+    ["swap_failed on disk", "swap_failed"],
+    ["download timeout exceeded", "download_failed"],
+    ["extract tarball failed", "extract_failed"],
+    ["something completely unexpected", "internal_error"],
+  ])("an error reading '%s' records phase=%s", async (message, phase) => {
     const deps = baseDeps();
     const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
     deps.appendAudit = async (type, payload) => {
       audits.push({ type, payload });
     };
     deps.performUpgrade = async () => {
-      throw new Error("signature_failed verification");
+      throw new Error(message);
     };
     await dispatchAutoUpdateRpc(
       "extension.update",
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
     );
-    expect(audits[0]?.payload["phase"]).toBe("signature_failed");
-  });
-
-  it("records phase=swap_failed when error message contains 'swap_failed'", async () => {
-    const deps = baseDeps();
-    const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    deps.appendAudit = async (type, payload) => {
-      audits.push({ type, payload });
-    };
-    deps.performUpgrade = async () => {
-      throw new Error("swap_failed on disk");
-    };
-    await dispatchAutoUpdateRpc(
-      "extension.update",
-      { id: "com.example.a", toVersion: "1.1.0" },
-      deps,
-    );
-    expect(audits[0]?.payload["phase"]).toBe("swap_failed");
-  });
-
-  it("records phase=download_failed when error message contains 'download'", async () => {
-    const deps = baseDeps();
-    const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    deps.appendAudit = async (type, payload) => {
-      audits.push({ type, payload });
-    };
-    deps.performUpgrade = async () => {
-      throw new Error("download timeout exceeded");
-    };
-    await dispatchAutoUpdateRpc(
-      "extension.update",
-      { id: "com.example.a", toVersion: "1.1.0" },
-      deps,
-    );
-    expect(audits[0]?.payload["phase"]).toBe("download_failed");
-  });
-
-  it("records phase=extract_failed when error message contains 'extract'", async () => {
-    const deps = baseDeps();
-    const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    deps.appendAudit = async (type, payload) => {
-      audits.push({ type, payload });
-    };
-    deps.performUpgrade = async () => {
-      throw new Error("extract tarball failed");
-    };
-    await dispatchAutoUpdateRpc(
-      "extension.update",
-      { id: "com.example.a", toVersion: "1.1.0" },
-      deps,
-    );
-    expect(audits[0]?.payload["phase"]).toBe("extract_failed");
-  });
-
-  it("records phase=internal_error when error message matches no known phase keyword", async () => {
-    const deps = baseDeps();
-    const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
-    deps.appendAudit = async (type, payload) => {
-      audits.push({ type, payload });
-    };
-    deps.performUpgrade = async () => {
-      throw new Error("something completely unexpected");
-    };
-    await dispatchAutoUpdateRpc(
-      "extension.update",
-      { id: "com.example.a", toVersion: "1.1.0" },
-      deps,
-    );
-    expect(audits[0]?.payload["phase"]).toBe("internal_error");
+    expect(audits[0]?.payload["phase"]).toBe(phase);
   });
 
   // Happy path audit: upgrade applied emits extension.autoUpdate.applied

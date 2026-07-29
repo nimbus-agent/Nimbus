@@ -1602,23 +1602,14 @@ describe("handleConnectorAuth — OAuth dispatch (error paths)", () => {
     });
   }
 
-  test("onedrive: missing NIMBUS_OAUTH_MICROSOFT_CLIENT_ID throws -32602", async () => {
-    const ctx = makeOAuthCtx({ service: "onedrive" }, vault, localIndex);
-    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
-  });
-
-  test("outlook: missing NIMBUS_OAUTH_MICROSOFT_CLIENT_ID throws -32602", async () => {
-    const ctx = makeOAuthCtx({ service: "outlook" }, vault, localIndex);
-    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
-  });
-
-  test("slack: missing NIMBUS_OAUTH_SLACK_CLIENT_ID throws -32602", async () => {
-    const ctx = makeOAuthCtx({ service: "slack" }, vault, localIndex);
-    await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
-  });
-
-  test("notion: missing NIMBUS_OAUTH_NOTION_CLIENT_ID throws -32602", async () => {
-    const ctx = makeOAuthCtx({ service: "notion" }, vault, localIndex);
+  // Each service needs its provider's client-id env var; absent it, auth is a -32602.
+  test.each([
+    ["onedrive", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID"],
+    ["outlook", "NIMBUS_OAUTH_MICROSOFT_CLIENT_ID"],
+    ["slack", "NIMBUS_OAUTH_SLACK_CLIENT_ID"],
+    ["notion", "NIMBUS_OAUTH_NOTION_CLIENT_ID"],
+  ])("%s: missing %s throws -32602", async (service) => {
+    const ctx = makeOAuthCtx({ service }, vault, localIndex);
     await expect(handleConnectorAuth(ctx)).rejects.toMatchObject({ rpcCode: -32602 });
   });
 });

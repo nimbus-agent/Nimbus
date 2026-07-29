@@ -354,13 +354,15 @@ describe("resolveNimbusTomlForProfile", () => {
     expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
   });
 
-  test("returns nimbus.toml when NIMBUS_PROFILE is empty string", () => {
-    process.env["NIMBUS_PROFILE"] = "";
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
-  });
-
-  test("returns nimbus.toml when NIMBUS_PROFILE is 'default'", () => {
-    process.env["NIMBUS_PROFILE"] = "default";
+  // Anything that isn't a non-default profile name resolves to the plain nimbus.toml — including
+  // "staging", whose alt file is deliberately never created (fall-back path).
+  test.each([
+    ["an empty string", ""],
+    ["'default'", "default"],
+    ["'default' padded with whitespace", "  default  "],
+    ["a profile whose alt file does not exist", "staging"],
+  ])("returns nimbus.toml when NIMBUS_PROFILE is %s", (_label, profile) => {
+    process.env["NIMBUS_PROFILE"] = profile;
     expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
   });
 
@@ -369,17 +371,6 @@ describe("resolveNimbusTomlForProfile", () => {
     // create the alt file
     writeToml(dir, "", "nimbus.work.toml");
     expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.work.toml"));
-  });
-
-  test("falls back to nimbus.toml when NIMBUS_PROFILE is set but alt file does not exist", () => {
-    process.env["NIMBUS_PROFILE"] = "staging";
-    // do NOT create nimbus.staging.toml
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
-  });
-
-  test("trims whitespace from NIMBUS_PROFILE", () => {
-    process.env["NIMBUS_PROFILE"] = "  default  ";
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
   });
 });
 

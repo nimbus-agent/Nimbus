@@ -120,15 +120,17 @@ test("ingest never throws even if embed fails", async () => {
       },
     }),
   );
-  await w.ingest({
-    platform: "slack",
-    channelId: "C1",
-    userId: "U",
-    text: "how do I deploy?",
-    ts: "1",
-    addressedToBot: false,
-  });
-  // no throw = pass
+  // A failing embed must be swallowed: ingest resolves rather than propagating "worker down".
+  await expect(
+    w.ingest({
+      platform: "slack",
+      channelId: "C1",
+      userId: "U",
+      text: "how do I deploy?",
+      ts: "1",
+      addressedToBot: false,
+    }),
+  ).resolves.toBeUndefined();
 });
 
 test("an Error thrown during ingest is logged via the optional log seam (err.message branch)", async () => {

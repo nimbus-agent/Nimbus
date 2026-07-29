@@ -868,10 +868,16 @@ describe("phase3AddSnowflakeMcp", () => {
     expect(servers["snowflake"]).toBeUndefined();
   });
 
-  test("no-op when both are whitespace-only", async () => {
+  // Blank credentials and an account that would be unsafe to hand to a spawn (leading dash =
+  // looks like a flag; control character) all leave the server unregistered.
+  test.each([
+    ["both are whitespace-only", "   ", "   "],
+    ["account has a leading dash (unsafe)", "-bad-account", "tok"],
+    ["account contains a control character (unsafe)", "acme\x01xy", "tok"],
+  ])("no-op when %s", async (_label, account, token) => {
     const vault = createMockVault();
-    await vault.set("snowflake.account", "   ");
-    await vault.set("snowflake.oauth_token", "   ");
+    await vault.set("snowflake.account", account);
+    await vault.set("snowflake.oauth_token", token);
     const servers: Record<string, ServerSpec> = {};
     await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
     expect(servers["snowflake"]).toBeUndefined();
@@ -914,24 +920,6 @@ describe("phase3AddSnowflakeMcp", () => {
     expect(spec).toBeDefined();
     if (spec === undefined) return;
     expect(spec.env?.["SNOWFLAKE_TOKEN"]).toBe("jwt-only");
-  });
-
-  test("no-op when account has a leading dash (unsafe)", async () => {
-    const vault = createMockVault();
-    await vault.set("snowflake.account", "-bad-account");
-    await vault.set("snowflake.oauth_token", "tok");
-    const servers: Record<string, ServerSpec> = {};
-    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
-    expect(servers["snowflake"]).toBeUndefined();
-  });
-
-  test("no-op when account contains a control character (unsafe)", async () => {
-    const vault = createMockVault();
-    await vault.set("snowflake.account", "acme\x01xy");
-    await vault.set("snowflake.oauth_token", "tok");
-    const servers: Record<string, ServerSpec> = {};
-    await phase3AddSnowflakeMcp(vault, servers, SANDBOX_CWD);
-    expect(servers["snowflake"]).toBeUndefined();
   });
 
   test("no-op when account exceeds 253 characters (unsafe)", async () => {
@@ -1101,31 +1089,22 @@ describe("phase3AddPowerBiMcp", () => {
     expect(servers["powerbi"]).toBeUndefined();
   });
 
-  test("no-op when credentials are whitespace-only", async () => {
+  // Same shape as the Snowflake no-op table: blank credentials, or a tenant_id that would be
+  // unsafe to hand to a spawn, both leave powerbi unregistered.
+  test.each([
+    ["credentials are whitespace-only", "   ", "   ", "   "],
+    ["tenant_id has a leading dash (unsafe)", "-bad-tenant", "my-client-id", "my-client-secret"],
+    [
+      "tenant_id contains a control character (unsafe)",
+      "acme\x01tenant",
+      "my-client-id",
+      "my-client-secret",
+    ],
+  ])("no-op when %s", async (_label, tenantId, clientId, clientSecret) => {
     const vault = createMockVault();
-    await vault.set("powerbi.tenant_id", "   ");
-    await vault.set("powerbi.client_id", "   ");
-    await vault.set("powerbi.client_secret", "   ");
-    const servers: Record<string, ServerSpec> = {};
-    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
-    expect(servers["powerbi"]).toBeUndefined();
-  });
-
-  test("no-op when tenant_id has a leading dash (unsafe)", async () => {
-    const vault = createMockVault();
-    await vault.set("powerbi.tenant_id", "-bad-tenant");
-    await vault.set("powerbi.client_id", "my-client-id");
-    await vault.set("powerbi.client_secret", "my-client-secret");
-    const servers: Record<string, ServerSpec> = {};
-    await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
-    expect(servers["powerbi"]).toBeUndefined();
-  });
-
-  test("no-op when tenant_id contains a control character (unsafe)", async () => {
-    const vault = createMockVault();
-    await vault.set("powerbi.tenant_id", "acme\x01tenant");
-    await vault.set("powerbi.client_id", "my-client-id");
-    await vault.set("powerbi.client_secret", "my-client-secret");
+    await vault.set("powerbi.tenant_id", tenantId);
+    await vault.set("powerbi.client_id", clientId);
+    await vault.set("powerbi.client_secret", clientSecret);
     const servers: Record<string, ServerSpec> = {};
     await phase3AddPowerBiMcp(vault, servers, SANDBOX_CWD);
     expect(servers["powerbi"]).toBeUndefined();

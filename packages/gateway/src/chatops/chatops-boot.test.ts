@@ -517,6 +517,7 @@ describe("buildChatopsBoot — full production graph", () => {
     h.socket.emit(mention("C0", "U_BOB", "@nimbus who is on call?", "35"));
     // Non-JSON → raw string → not an object → emailless → unmapped → refusal under refuse mode.
     await until(() => h.audits.some((a) => a.actionType === "chatops.refusal"));
+    expect(h.audits.map((a) => a.actionType)).toContain("chatops.refusal");
     await h.boot.service.stop();
   });
 

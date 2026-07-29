@@ -133,37 +133,17 @@ describe("runLan — dispatcher", () => {
     expect(out.stdout).toContain("no");
   });
 
-  it("grant <peerId> → lan.grantWrite + confirmation", async () => {
+  // Each per-peer subcommand maps to one IPC method and prints its own confirmation line.
+  it.each([
+    ["grant", "lan.grantWrite", "Write access granted to peer peer-1"],
+    ["revoke", "lan.revokeWrite", "Write access revoked for peer peer-1"],
+    ["remove", "lan.removePeer", "Peer peer-1 removed."],
+  ])("%s <peerId> → %s + confirmation", async (subcommand, method, confirmation) => {
     const mock = createMockIpcClient([{ ok: true }]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runLan(["grant", "peer-1"]);
-    expect(mock.calls[0]).toEqual({
-      method: "lan.grantWrite",
-      params: { peerId: "peer-1" },
-    });
-    expect(out.stdout).toContain("Write access granted to peer peer-1");
-  });
-
-  it("revoke <peerId> → lan.revokeWrite + confirmation", async () => {
-    const mock = createMockIpcClient([{ ok: true }]);
-    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runLan(["revoke", "peer-1"]);
-    expect(mock.calls[0]).toEqual({
-      method: "lan.revokeWrite",
-      params: { peerId: "peer-1" },
-    });
-    expect(out.stdout).toContain("Write access revoked for peer peer-1");
-  });
-
-  it("remove <peerId> → lan.removePeer + confirmation", async () => {
-    const mock = createMockIpcClient([{ ok: true }]);
-    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
-    await runLan(["remove", "peer-1"]);
-    expect(mock.calls[0]).toEqual({
-      method: "lan.removePeer",
-      params: { peerId: "peer-1" },
-    });
-    expect(out.stdout).toContain("Peer peer-1 removed.");
+    await runLan([subcommand, "peer-1"]);
+    expect(mock.calls[0]).toEqual({ method, params: { peerId: "peer-1" } });
+    expect(out.stdout).toContain(confirmation);
   });
 
   it("throws 'Gateway is not running' when state is undefined (parser passes, gateway absent)", async () => {

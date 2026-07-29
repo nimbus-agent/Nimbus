@@ -16,62 +16,33 @@ describe("parseNimbusTomlSessionSection", () => {
     expect(out).toEqual({});
   });
 
-  test("[session] block with memory_ttl_hours = 12 applies the value", () => {
-    const src = "[session]\nmemory_ttl_hours = 12\n";
-    const out = parseNimbusTomlSessionSection(src);
-    expect(out.memoryTtlHours).toBe(12);
+  test.each([
+    ["a plain in-range value", "[session]\nmemory_ttl_hours = 12\n", 12],
+    ["an inline comment stripped after the value", "[session]\nmemory_ttl_hours = 8 # eight\n", 8],
+    [
+      "the [session] key winning over an earlier foreign section",
+      "[other]\nmemory_ttl_hours = 99\n\n[session]\nmemory_ttl_hours = 5\n",
+      5,
+    ],
+    [
+      "a later section switching the parser back off",
+      "[session]\nmemory_ttl_hours = 5\n[other]\nmemory_ttl_hours = 99\n",
+      5,
+    ],
+    ["CRLF line endings", "[session]\r\nmemory_ttl_hours = 6\r\n", 6],
+  ])("applies memory_ttl_hours from %s", (_label, src, expected) => {
+    expect(parseNimbusTomlSessionSection(src).memoryTtlHours).toBe(expected);
   });
 
-  test("memory_ttl_hours = 0 is rejected (must be > 0)", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours = 0\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("absurd out-of-range value (100000) is rejected", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours = 100000\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("negative value is rejected", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours = -5\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("non-numeric value is rejected (parseInt -> NaN)", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours = abc\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("inline comment after value is stripped before parsing", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours = 8 # eight hours\n");
-    expect(out.memoryTtlHours).toBe(8);
-  });
-
-  test("keys outside [session] are ignored", () => {
-    const src = "[other]\nmemory_ttl_hours = 99\n\n[session]\nmemory_ttl_hours = 5\n";
-    const out = parseNimbusTomlSessionSection(src);
-    expect(out.memoryTtlHours).toBe(5);
-  });
-
-  test("after [session], a new section switches the parser off", () => {
-    const src = "[session]\nmemory_ttl_hours = 5\n[other]\nmemory_ttl_hours = 99\n";
-    const out = parseNimbusTomlSessionSection(src);
-    expect(out.memoryTtlHours).toBe(5);
-  });
-
-  test("unknown key inside [session] is ignored", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nunknown_key = 99\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("line with no '=' is skipped (eq <= 0 guard)", () => {
-    const out = parseNimbusTomlSessionSection("[session]\nmemory_ttl_hours\n");
-    expect(out.memoryTtlHours).toBeUndefined();
-  });
-
-  test("CRLF line endings are handled", () => {
-    const out = parseNimbusTomlSessionSection("[session]\r\nmemory_ttl_hours = 6\r\n");
-    expect(out.memoryTtlHours).toBe(6);
+  test.each([
+    ["0 (must be > 0)", "[session]\nmemory_ttl_hours = 0\n"],
+    ["an absurd out-of-range value (100000)", "[session]\nmemory_ttl_hours = 100000\n"],
+    ["a negative value", "[session]\nmemory_ttl_hours = -5\n"],
+    ["a non-numeric value (parseInt -> NaN)", "[session]\nmemory_ttl_hours = abc\n"],
+    ["an unknown key inside [session]", "[session]\nunknown_key = 99\n"],
+    ["a line with no '=' (eq <= 0 guard)", "[session]\nmemory_ttl_hours\n"],
+  ])("leaves memoryTtlHours unset for %s", (_label, src) => {
+    expect(parseNimbusTomlSessionSection(src).memoryTtlHours).toBeUndefined();
   });
 });
 

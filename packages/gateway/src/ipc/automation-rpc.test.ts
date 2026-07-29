@@ -590,11 +590,17 @@ describe("extension.info", () => {
 });
 
 describe("extension.enable / disable / remove", () => {
-  test("enable returns ok:true for an existing extension", async () => {
+  // None of the three needs a mesh, and `remove` reports ok even when install_path is missing
+  // from disk — its cleanup is best-effort.
+  test.each([
+    ["enable an existing extension", "extension.enable", "/p/a"],
+    ["disable an existing extension", "extension.disable", "/p/a"],
+    ["remove with a non-existent install_path", "extension.remove", "/definitely/not/a/real/path"],
+  ])("%s returns ok:true", async (_label, method, installPath) => {
     const db = seededDb();
-    seedExtensionRow(db, "com.example.a", "/p/a");
+    seedExtensionRow(db, "com.example.a", installPath);
     const out = await dispatchAutomationRpc({
-      method: "extension.enable",
+      method,
       params: { id: "com.example.a" },
       db,
     });
@@ -609,17 +615,6 @@ describe("extension.enable / disable / remove", () => {
       db,
     });
     expect((out as { value: { ok: boolean } }).value.ok).toBe(false);
-  });
-
-  test("disable returns ok:true and does not require a mesh", async () => {
-    const db = seededDb();
-    seedExtensionRow(db, "com.example.a", "/p/a");
-    const out = await dispatchAutomationRpc({
-      method: "extension.disable",
-      params: { id: "com.example.a" },
-      db,
-    });
-    expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
   });
 
   test("disable invokes mesh.stopExtensionClient when mesh is provided", async () => {
@@ -685,17 +680,6 @@ describe("extension.enable / disable / remove", () => {
         db,
       }),
     ).rejects.toThrow(/not found/i);
-  });
-
-  test("remove tolerates a non-existent install_path on disk (best-effort cleanup)", async () => {
-    const db = seededDb();
-    seedExtensionRow(db, "com.example.a", "/definitely/not/a/real/path-xyz-12345");
-    const out = await dispatchAutomationRpc({
-      method: "extension.remove",
-      params: { id: "com.example.a" },
-      db,
-    });
-    expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
   });
 
   test("remove refuses when reverseDeps is non-empty and --force not set", async () => {

@@ -219,7 +219,7 @@ describe("awaitLogin — buffers events that race ahead of jobId", () => {
       // backlog buffer + replay path (the event would otherwise be dropped and the Promise hang).
       handlers.get("identity.loginDone")?.({ jobId });
     });
-    await awaitLogin(ipc);
+    await expect(awaitLogin(ipc)).resolves.toBeUndefined();
   });
 });
 

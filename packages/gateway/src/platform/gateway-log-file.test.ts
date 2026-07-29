@@ -90,46 +90,20 @@ describe("scrubRedactedValuePatterns", () => {
     expect(scrubRedactedValuePatterns("hello world")).toBe("hello world");
   });
 
-  test("redacts Bearer token", () => {
-    const result = scrubRedactedValuePatterns("Authorization: Bearer abc123def456ghi789jkl");
+  // One row per credential shape the scrubber knows: the line it appears on, and the exact
+  // substring that must not survive.
+  test.each([
+    ["Bearer token", "Authorization: Bearer ", "abc123def456ghi789jkl"],
+    ["sk- style key (OpenAI pattern)", "key=", "sk-abcdefghijklmnopqrstuvwxyz01234567890"],
+    ["sk-ant- anthropic key", "key=", "sk-ant-abcdefghijklmnopqrstuvwxyz0123456789"],
+    ["ghp_ github token", "token=", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"],
+    ["gho_ github oauth token", "token=", "gho_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567"],
+    ["xoxb- Slack bot token", "slack=", "xoxb-12345678-abcdefgh"],
+    ["AKIA AWS access key", "aws=", "AKIAIOSFODNN7EXAMPLE"],
+  ])("redacts %s", (_label, prefix, secret) => {
+    const result = scrubRedactedValuePatterns(`${prefix}${secret}`);
     expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("abc123def456ghi789jkl");
-  });
-
-  test("redacts sk- style key (OpenAI pattern)", () => {
-    const result = scrubRedactedValuePatterns("key=sk-abcdefghijklmnopqrstuvwxyz01234567890");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("sk-abcdefghijklmnopqrstuvwxyz01234567890");
-  });
-
-  test("redacts sk-ant- anthropic key", () => {
-    const result = scrubRedactedValuePatterns("key=sk-ant-abcdefghijklmnopqrstuvwxyz0123456789");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz0123456789");
-  });
-
-  test("redacts ghp_ github token", () => {
-    const result = scrubRedactedValuePatterns("token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567");
-  });
-
-  test("redacts gho_ github oauth token", () => {
-    const result = scrubRedactedValuePatterns("token=gho_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("gho_ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567");
-  });
-
-  test("redacts xoxb- Slack bot token", () => {
-    const result = scrubRedactedValuePatterns("slack=xoxb-12345678-abcdefgh");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("xoxb-12345678-abcdefgh");
-  });
-
-  test("redacts AKIA AWS access key", () => {
-    const result = scrubRedactedValuePatterns("aws=AKIAIOSFODNN7EXAMPLE");
-    expect(result).toContain("[REDACTED]");
-    expect(result).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(result).not.toContain(secret);
   });
 
   test("redacts JWT token (eyJ...)", () => {
@@ -169,85 +143,40 @@ describe("resolveLogLevel (via createGatewayPinoLogger)", () => {
     }
   });
 
-  test("defaults to warn when NIMBUS_LOG_LEVEL is unset", () => {
-    delete process.env["NIMBUS_LOG_LEVEL"];
+  /**
+   * Build a logger in a throwaway dir with NIMBUS_LOG_LEVEL set (or deleted, for `undefined`)
+   * and stdout forced non-TTY — the simpler of the two branches — and report the level it chose.
+   */
+  function resolvedLevel(raw: string | undefined): string {
+    if (raw === undefined) {
+      delete process.env["NIMBUS_LOG_LEVEL"];
+    } else {
+      process.env["NIMBUS_LOG_LEVEL"] = raw;
+    }
     const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
     try {
-      // isTTY=false so we get the simpler path
       const restore = forceIsTty(false);
       try {
-        const log = createGatewayPinoLogger(dir);
-        expect(log.level).toBe("warn");
+        return createGatewayPinoLogger(dir).level;
       } finally {
         restore();
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }
 
-  test("defaults to warn when NIMBUS_LOG_LEVEL is empty string", () => {
-    process.env["NIMBUS_LOG_LEVEL"] = "";
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
-    try {
-      const restore = forceIsTty(false);
-      try {
-        const log = createGatewayPinoLogger(dir);
-        expect(log.level).toBe("warn");
-      } finally {
-        restore();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  // Unset, blank and unrecognised levels all fall back to warn; a recognised level is honoured.
+  const LEVEL_CASES: ReadonlyArray<readonly [string | undefined, string]> = [
+    [undefined, "warn"],
+    ["", "warn"],
+    ["verbose", "warn"],
+    ["debug", "debug"],
+    ["silent", "silent"],
+  ];
 
-  test("defaults to warn when NIMBUS_LOG_LEVEL is an unknown level", () => {
-    process.env["NIMBUS_LOG_LEVEL"] = "verbose";
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
-    try {
-      const restore = forceIsTty(false);
-      try {
-        const log = createGatewayPinoLogger(dir);
-        expect(log.level).toBe("warn");
-      } finally {
-        restore();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("uses NIMBUS_LOG_LEVEL=debug when valid", () => {
-    process.env["NIMBUS_LOG_LEVEL"] = "debug";
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
-    try {
-      const restore = forceIsTty(false);
-      try {
-        const log = createGatewayPinoLogger(dir);
-        expect(log.level).toBe("debug");
-      } finally {
-        restore();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("uses NIMBUS_LOG_LEVEL=silent when valid", () => {
-    process.env["NIMBUS_LOG_LEVEL"] = "silent";
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-gw-log-level-"));
-    try {
-      const restore = forceIsTty(false);
-      try {
-        const log = createGatewayPinoLogger(dir);
-        expect(log.level).toBe("silent");
-      } finally {
-        restore();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test.each(LEVEL_CASES)("NIMBUS_LOG_LEVEL=%s resolves to level %s", (raw, expected) => {
+    expect(resolvedLevel(raw)).toBe(expected);
   });
 });
 

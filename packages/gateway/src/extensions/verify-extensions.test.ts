@@ -1024,8 +1024,10 @@ describe("verifyExtensionsBestEffort — orphan sweep branch coverage", () => {
     const fakeRoot = join(extensionsDir, "not-a-dir-file");
     writeFileSync(fakeRoot, "blocking", "utf8");
     try {
-      await verifyExtensionsBestEffort(db, logger, undefined, undefined, fakeRoot);
-      // No crash — just a silent catch
+      // No crash — the readdirSync ENOTDIR is swallowed by the best-effort sweep's catch.
+      await expect(
+        verifyExtensionsBestEffort(db, logger, undefined, undefined, fakeRoot),
+      ).resolves.toBeUndefined();
     } finally {
       try {
         dbRun(db, "DELETE FROM extension WHERE 1=1");

@@ -21,12 +21,9 @@ function ctx(): PolicyRpcCtx {
 }
 
 describe("dispatchPolicyRpc", () => {
-  test("policy.show returns the current state (hit)", async () => {
-    const out = await dispatchPolicyRpc("policy.show", {}, ctx());
-    expect(out.kind).toBe("hit");
-  });
-  test("policy.verify returns the current state (hit)", async () => {
-    const out = await dispatchPolicyRpc("policy.verify", {}, ctx());
+  // The param-free reads need no anchor role and no arguments — they just report current state.
+  test.each(["policy.show", "policy.verify", "policy.refetch"])("%s returns a hit", async (m) => {
+    const out = await dispatchPolicyRpc(m, {}, ctx());
     expect(out.kind).toBe("hit");
   });
   test("policy.sign on a non-anchor fails closed", async () => {
@@ -52,10 +49,6 @@ describe("dispatchPolicyRpc", () => {
     await expect(
       dispatchPolicyRpc("policy.trust", { pubkey: "x" }, { ...ctx(), isAnchor: false }),
     ).rejects.toThrow();
-  });
-  test("policy.refetch returns the refresh outcome (hit)", async () => {
-    const out = await dispatchPolicyRpc("policy.refetch", {}, ctx());
-    expect(out.kind).toBe("hit");
   });
   test("unknown method => miss", async () => {
     expect((await dispatchPolicyRpc("policy.nope", {}, ctx())).kind).toBe("miss");

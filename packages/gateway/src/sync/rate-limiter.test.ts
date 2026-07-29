@@ -127,7 +127,7 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
       github: { requestsPerMinute: 999, burstSize: base.burstSize },
     });
     // Acquire burstSize tokens — if burstSize were 0 this would throw
-    await limiter.acquire("github", base.burstSize);
+    await expect(limiter.acquire("github", base.burstSize)).resolves.toBeUndefined();
   });
 
   test("quota override merges partial fields: only burstSize overridden", async () => {

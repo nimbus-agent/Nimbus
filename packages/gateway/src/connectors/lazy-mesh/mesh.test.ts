@@ -78,64 +78,40 @@ describe("createLazyConnectorMesh", () => {
   });
 });
 
+/**
+ * Every `ensure<Service>Running` delegator resolves to a no-op when the vault holds no key
+ * for that service. Table-driven because the assertion is identical for all 18 — the only
+ * thing under test is that the delegator exists and short-circuits.
+ */
+const ENSURE_DELEGATORS: ReadonlyArray<readonly [string, (m: LazyConnectorMesh) => Promise<void>]> =
+  [
+    ["ensurePhase3BundleRunning", (m) => m.ensurePhase3BundleRunning()],
+    ["ensureGoogleDriveRunning", (m) => m.ensureGoogleDriveRunning()],
+    ["ensureGithubRunning", (m) => m.ensureGithubRunning()],
+    ["ensureGitlabRunning", (m) => m.ensureGitlabRunning()],
+    ["ensureBitbucketRunning", (m) => m.ensureBitbucketRunning()],
+    ["ensureSlackRunning", (m) => m.ensureSlackRunning()],
+    ["ensureLinearRunning", (m) => m.ensureLinearRunning()],
+    ["ensureJiraRunning", (m) => m.ensureJiraRunning()],
+    ["ensureNotionRunning", (m) => m.ensureNotionRunning()],
+    ["ensureMendeleyRunning", (m) => m.ensureMendeleyRunning()],
+    ["ensureAppleRunning", (m) => m.ensureAppleRunning()],
+    ["ensureObsidianRunning", (m) => m.ensureObsidianRunning()],
+    ["ensureConfluenceRunning", (m) => m.ensureConfluenceRunning()],
+    ["ensureDiscordRunning", (m) => m.ensureDiscordRunning()],
+    ["ensureJenkinsRunning", (m) => m.ensureJenkinsRunning()],
+    ["ensureCircleciRunning", (m) => m.ensureCircleciRunning()],
+    ["ensurePagerdutyRunning", (m) => m.ensurePagerdutyRunning()],
+    ["ensureKubernetesRunning", (m) => m.ensureKubernetesRunning()],
+  ];
+
 describe("ensure<Service>Running delegators (no vault keys → all no-op)", () => {
   beforeEach(() => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault());
   });
 
-  test("ensurePhase3BundleRunning is a no-op without vault keys", async () => {
-    await mesh!.ensurePhase3BundleRunning();
-  });
-  test("ensureGoogleDriveRunning", async () => {
-    await mesh!.ensureGoogleDriveRunning();
-  });
-  test("ensureGithubRunning", async () => {
-    await mesh!.ensureGithubRunning();
-  });
-  test("ensureGitlabRunning", async () => {
-    await mesh!.ensureGitlabRunning();
-  });
-  test("ensureBitbucketRunning", async () => {
-    await mesh!.ensureBitbucketRunning();
-  });
-  test("ensureSlackRunning", async () => {
-    await mesh!.ensureSlackRunning();
-  });
-  test("ensureLinearRunning", async () => {
-    await mesh!.ensureLinearRunning();
-  });
-  test("ensureJiraRunning", async () => {
-    await mesh!.ensureJiraRunning();
-  });
-  test("ensureNotionRunning", async () => {
-    await mesh!.ensureNotionRunning();
-  });
-  test("ensureMendeleyRunning", async () => {
-    await mesh!.ensureMendeleyRunning();
-  });
-  test("ensureAppleRunning", async () => {
-    await mesh!.ensureAppleRunning();
-  });
-  test("ensureObsidianRunning", async () => {
-    await mesh!.ensureObsidianRunning();
-  });
-  test("ensureConfluenceRunning", async () => {
-    await mesh!.ensureConfluenceRunning();
-  });
-  test("ensureDiscordRunning", async () => {
-    await mesh!.ensureDiscordRunning();
-  });
-  test("ensureJenkinsRunning", async () => {
-    await mesh!.ensureJenkinsRunning();
-  });
-  test("ensureCircleciRunning", async () => {
-    await mesh!.ensureCircleciRunning();
-  });
-  test("ensurePagerdutyRunning", async () => {
-    await mesh!.ensurePagerdutyRunning();
-  });
-  test("ensureKubernetesRunning", async () => {
-    await mesh!.ensureKubernetesRunning();
+  test.each(ENSURE_DELEGATORS)("%s is a no-op without vault keys", async (_name, run) => {
+    await expect(run(mesh!)).resolves.toBeUndefined();
   });
 });
 
@@ -144,20 +120,21 @@ describe("user-mcp + extension lifecycle (no rows)", () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
       listUserMcpConnectors: () => [],
     });
-    await mesh.ensureUserMcpRunning("nonexistent");
+    await expect(mesh.ensureUserMcpRunning("nonexistent")).resolves.toBeUndefined();
   });
 
   test("stopExtensionClient on unknown id is a no-op", async () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault());
-    await mesh.stopExtensionClient("unknown.ext");
+    await expect(mesh.stopExtensionClient("unknown.ext")).resolves.toBeUndefined();
   });
 });
 
 describe("disconnect with no active slots", () => {
   test("disconnect after construction tears down filesystem MCP cleanly", async () => {
     mesh = new LazyConnectorMesh(makePaths(), createMockVault());
-    await mesh.disconnect();
-    await mesh.disconnect();
+    await expect(mesh.disconnect()).resolves.toBeUndefined();
+    // Idempotent: a second disconnect on an already-torn-down mesh must also be a no-op.
+    await expect(mesh.disconnect()).resolves.toBeUndefined();
     mesh = undefined;
   });
 });

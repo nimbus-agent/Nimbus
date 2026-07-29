@@ -183,19 +183,13 @@ describe("toMastraModelId (via agentModel)", () => {
     ).not.toThrow();
   });
 
-  test("bare gpt id is accepted", () => {
+  test.each([
+    ["a bare gpt id", "gpt-4o-mini"],
+    ["a bare o3 id", "o3-mini"],
+    ["an unknown family (passed through unmodified)", "llama-3"],
+  ])("accepts %s", (_label, agentModel) => {
     const { localIndex } = freshIndex();
-    expect(() => createNimbusEngineAgent({ localIndex, agentModel: "gpt-4o-mini" })).not.toThrow();
-  });
-
-  test("bare o3 id is accepted", () => {
-    const { localIndex } = freshIndex();
-    expect(() => createNimbusEngineAgent({ localIndex, agentModel: "o3-mini" })).not.toThrow();
-  });
-
-  test("unknown family passes through unmodified", () => {
-    const { localIndex } = freshIndex();
-    expect(() => createNimbusEngineAgent({ localIndex, agentModel: "llama-3" })).not.toThrow();
+    expect(() => createNimbusEngineAgent({ localIndex, agentModel })).not.toThrow();
   });
 });
 

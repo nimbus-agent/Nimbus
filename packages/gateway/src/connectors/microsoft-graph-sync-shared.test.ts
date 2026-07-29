@@ -36,22 +36,14 @@ describe("decodeMicrosoftGraphDeltaCursor", () => {
     expect(decodeMicrosoftGraphDeltaCursor(enc, PREFIX)).toEqual(cursor);
   });
 
-  // L19 true branch: decodeNimbusJsonCursorPayload returns null (payload decodes to JSON null)
-  test("returns undefined when payload is JSON null (o === null)", () => {
-    // encodeNimbusJsonCursor with null payload → base64url of "null"
-    const enc = PREFIX + Buffer.from("null", "utf8").toString("base64url");
-    expect(decodeMicrosoftGraphDeltaCursor(enc, PREFIX)).toBeUndefined();
-  });
-
-  // L19 true branch: decodeNimbusJsonCursorPayload returns an array
-  test("returns undefined when payload is a JSON array (Array.isArray branch)", () => {
-    const enc = PREFIX + Buffer.from("[1,2,3]", "utf8").toString("base64url");
-    expect(decodeMicrosoftGraphDeltaCursor(enc, PREFIX)).toBeUndefined();
-  });
-
-  // L19 true branch: decodeNimbusJsonCursorPayload returns a non-object primitive
-  test("returns undefined when payload is a JSON string (typeof !== object)", () => {
-    const enc = PREFIX + Buffer.from('"hello"', "utf8").toString("base64url");
+  // L19 true branch — every payload that decodes to something other than a plain object is
+  // rejected: JSON null (o === null), an array (Array.isArray), and a primitive (typeof !== object).
+  test.each([
+    ["JSON null (o === null)", "null"],
+    ["a JSON array (Array.isArray branch)", "[1,2,3]"],
+    ["a JSON string (typeof !== object)", '"hello"'],
+  ])("returns undefined when payload is %s", (_label, json) => {
+    const enc = PREFIX + Buffer.from(json, "utf8").toString("base64url");
     expect(decodeMicrosoftGraphDeltaCursor(enc, PREFIX)).toBeUndefined();
   });
 

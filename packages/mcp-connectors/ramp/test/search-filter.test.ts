@@ -65,34 +65,22 @@ describe("filterRampTransactions", () => {
     expect(filterRampTransactions(many, { query: "amazon", limit: 3 })).toHaveLength(3);
   });
 
-  test("card_holder present but first_name missing — filter still matches on last_name and department", () => {
-    // Exercises the (p !== "") false arm in the .filter() for first_name = ""
-    const row = txn();
-    const holder = row["card_holder"] as Record<string, unknown>;
-    delete holder["first_name"];
-    // last_name + department_name remain, so "Lovelace" still matches
-    expect(filterRampTransactions([row], { query: "Lovelace" })).toHaveLength(1);
-    // first_name is gone — searching for "Ada" yields nothing
-    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(0);
-  });
-
-  test("card_holder present but last_name missing — filter still matches on first_name and department", () => {
-    // Exercises the (p !== "") false arm in the .filter() for last_name = ""
-    const row = txn();
-    const holder = row["card_holder"] as Record<string, unknown>;
-    delete holder["last_name"];
-    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(1);
-    expect(filterRampTransactions([row], { query: "Lovelace" })).toHaveLength(0);
-  });
-
-  test("card_holder present but department_name missing — filter still matches on first_name", () => {
-    // Exercises the (p !== "") false arm in the .filter() for department_name = ""
-    const row = txn();
-    const holder = row["card_holder"] as Record<string, unknown>;
-    delete holder["department_name"];
-    expect(filterRampTransactions([row], { query: "Ada" })).toHaveLength(1);
-    expect(filterRampTransactions([row], { query: "Engineering" })).toHaveLength(0);
-  });
+  // One row per card_holder field, each exercising the (p !== "") false arm in the .filter() for
+  // that field: the surviving fields still match, and the deleted one no longer does.
+  test.each([
+    ["first_name", "Lovelace", "Ada"],
+    ["last_name", "Ada", "Lovelace"],
+    ["department_name", "Ada", "Engineering"],
+  ])(
+    "card_holder present but %s missing — still matches the remaining fields",
+    (field, stillMatches, noLongerMatches) => {
+      const row = txn();
+      const holder = row["card_holder"] as Record<string, unknown>;
+      delete holder[field];
+      expect(filterRampTransactions([row], { query: stillMatches })).toHaveLength(1);
+      expect(filterRampTransactions([row], { query: noLongerMatches })).toHaveLength(0);
+    },
+  );
 
   test("card_holder present with all name fields missing — cardHolderName returns empty string", () => {
     // All three filter(p !== "") arms produce false; cardHolderName contributes "" to the haystack

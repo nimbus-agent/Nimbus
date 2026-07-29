@@ -9,7 +9,7 @@ import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
-import { phase4RpcSkipped, type ServerCtx } from "./context.ts";
+import { diagnosticsRpcSkipped, phase4RpcSkipped, type ServerCtx } from "./context.ts";
 import {
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
@@ -69,11 +69,12 @@ function trackDb(): Database {
 describe("assertDiagnosticsRpcAccess fall-through (the `return;` after each guard)", () => {
   test("config.* with configDir present falls through to dispatch", async () => {
     const ctx = makeCtx({ configDir: tmpDir });
-    try {
-      await tryDispatchDiagnosticsRpc(ctx, "config.validate", null);
-    } catch {
-      /* expected — handler reports errors */
-    }
+    // The handler itself may report a typed error; what's under test is that the access guard
+    // fell THROUGH rather than returning the `skipped` sentinel.
+    const outcome = await tryDispatchDiagnosticsRpc(ctx, "config.validate", null).catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toBe(diagnosticsRpcSkipped);
   });
 
   test("telemetry.* (non-preview) with dataDir present falls through", async () => {

@@ -90,45 +90,18 @@ describe("clip-token-store", () => {
     expect(a).not.toBe(b);
   });
 
-  test("corrupt JSON in vault → empty map (fail-safe, no throw)", async () => {
+  // Every non-conforming vault payload is fail-safe: an empty map, never a throw.
+  test.each([
+    ["corrupt JSON", "{not json"],
+    ["empty object (isStringMap vacuous-true)", "{}"],
+    ["non-object JSON (number)", "42"],
+    ["JSON array (Array rejected)", '["a","b"]'],
+    ["null JSON", "null"],
+    ["object with a non-string value (every→false)", '{"chrome":5}'],
+    ["empty string", ""],
+  ])("stored %s → empty map", async (_label, stored) => {
     const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, "{not json");
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("stored empty object → empty map (isStringMap vacuous-true)", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, "{}");
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("stored non-object JSON (number) → empty map", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, "42");
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("stored JSON array → empty map (Array rejected)", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, '["a","b"]');
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("stored null JSON → empty map", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, "null");
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("object with a non-string value → empty map (every→false)", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, '{"chrome":5}');
-    expect(await loadClipTokens(v)).toEqual({});
-  });
-
-  test("empty-string vault value → empty map", async () => {
-    const v = fakeVault();
-    await v.set(CLIP_TOKENS_VAULT_KEY, "");
+    await v.set(CLIP_TOKENS_VAULT_KEY, stored);
     expect(await loadClipTokens(v)).toEqual({});
   });
 });

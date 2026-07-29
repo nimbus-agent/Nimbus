@@ -134,10 +134,14 @@ describeWithFetchRestore("notion-sync", () => {
     expect(row?.author_id).not.toBeNull();
   });
 
-  // ── covers lines 109–111: HTTP 429 → throws "rate limited" ──
-  test("throws on HTTP 429 rate-limited response", async () => {
+  // ── covers lines 109–111 (429), 113–114 (non-ok status) and 117–121 (unparseable body) ──
+  test.each([
+    ["HTTP 429 rate-limited response", 429, "", "rate limited"],
+    ["non-ok HTTP response", 500, "Internal Server Error", "Notion sync HTTP 500"],
+    ["invalid JSON response body", 200, "not json at all!!!", "invalid JSON"],
+  ])("throws on %s", async (_label, status, body, expectedMessage) => {
     globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("", { status: 429 });
+      return new Response(body, { status });
     }) as unknown as typeof fetch;
 
     const db = createMemoryIndexDb();
@@ -147,39 +151,7 @@ describeWithFetchRestore("notion-sync", () => {
       db,
       ...silentSyncContextExtras(),
     };
-    await expect(sync.sync(ctx, null)).rejects.toThrow("rate limited");
-  });
-
-  // ── covers lines 113–114: non-ok HTTP (e.g. 500) → throws with status ──
-  test("throws on non-ok HTTP response", async () => {
-    globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("Internal Server Error", { status: 500 });
-    }) as unknown as typeof fetch;
-
-    const db = createMemoryIndexDb();
-    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = {
-      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
-      db,
-      ...silentSyncContextExtras(),
-    };
-    await expect(sync.sync(ctx, null)).rejects.toThrow("Notion sync HTTP 500");
-  });
-
-  // ── covers lines 117–121: invalid JSON response body ──
-  test("throws on invalid JSON response body", async () => {
-    globalThis.fetch = (async (): Promise<Response> => {
-      return new Response("not json at all!!!", { status: 200 });
-    }) as unknown as typeof fetch;
-
-    const db = createMemoryIndexDb();
-    const sync = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
-    const ctx = {
-      vault: createStubVault({ "notion.oauth": makeOauthPayload() }),
-      db,
-      ...silentSyncContextExtras(),
-    };
-    await expect(sync.sync(ctx, null)).rejects.toThrow("invalid JSON");
+    await expect(sync.sync(ctx, null)).rejects.toThrow(expectedMessage);
   });
 
   // ── covers lines 122–124: valid JSON but not a record (e.g. array) ──

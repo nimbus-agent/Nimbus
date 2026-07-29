@@ -119,6 +119,6 @@ test("Slice-7: mappers return null for incomplete raw inputs (no network needed)
   ).toBeNull();
 });
 
-test.skip("FULL 6-hop chain Tableau→Looker→dbt→Snowflake→Airflow→PR (needs dbt+Airflow graph participation — review F2)", () => {
-  // Unskip once the dbt + Airflow connectors become graph-participating.
-});
+// KNOWN GAP (review F2): the FULL 6-hop chain Tableau→Looker→dbt→Snowflake→Airflow→PR is not
+// asserted yet — it needs the dbt + Airflow connectors to become graph-participating first. Add
+// the test then rather than carrying a permanently-skipped stub here.

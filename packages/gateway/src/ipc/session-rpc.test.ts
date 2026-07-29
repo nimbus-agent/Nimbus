@@ -257,34 +257,18 @@ describe("session.recall", () => {
     expect(stub.recallCalls[0]?.topK).toBe(8);
   });
 
-  test("clamps topK to upper bound 32", async () => {
+  test.each([
+    ["clamps topK to upper bound 32", 999, 32],
+    ["clamps topK to lower bound 1", 0, 1],
+    ["floors fractional topK", 5.9, 5],
+  ])("%s", async (_label, topK, expected) => {
     const stub = makeStubStore();
     await dispatchSessionRpc({
       method: "session.recall",
-      params: { sessionId: "s", query: "q", topK: 999 },
+      params: { sessionId: "s", query: "q", topK },
       store: stub.store,
     });
-    expect(stub.recallCalls[0]?.topK).toBe(32);
-  });
-
-  test("clamps topK to lower bound 1", async () => {
-    const stub = makeStubStore();
-    await dispatchSessionRpc({
-      method: "session.recall",
-      params: { sessionId: "s", query: "q", topK: 0 },
-      store: stub.store,
-    });
-    expect(stub.recallCalls[0]?.topK).toBe(1);
-  });
-
-  test("floors fractional topK", async () => {
-    const stub = makeStubStore();
-    await dispatchSessionRpc({
-      method: "session.recall",
-      params: { sessionId: "s", query: "q", topK: 5.9 },
-      store: stub.store,
-    });
-    expect(stub.recallCalls[0]?.topK).toBe(5);
+    expect(stub.recallCalls[0]?.topK).toBe(expected);
   });
 
   test("non-finite topK (NaN, Infinity) falls back to default 8", async () => {

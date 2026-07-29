@@ -322,25 +322,10 @@ describe("db/snapshot", () => {
       }
     });
 
-    it("includes a FILENAME header line", () => {
+    it.each(["FILENAME", "TIMESTAMP", "SIZE"])("includes a %s column header", (header) => {
       takeSnapshot(db, dataDir);
       const entries = listSnapshots(dataDir);
-      const output = formatSnapshotList(entries);
-      expect(output).toContain("FILENAME");
-    });
-
-    it("includes a TIMESTAMP column", () => {
-      takeSnapshot(db, dataDir);
-      const entries = listSnapshots(dataDir);
-      const output = formatSnapshotList(entries);
-      expect(output).toContain("TIMESTAMP");
-    });
-
-    it("includes a SIZE column", () => {
-      takeSnapshot(db, dataDir);
-      const entries = listSnapshots(dataDir);
-      const output = formatSnapshotList(entries);
-      expect(output).toContain("SIZE");
+      expect(formatSnapshotList(entries)).toContain(header);
     });
 
     it("formats multiple entries as separate lines", async () => {

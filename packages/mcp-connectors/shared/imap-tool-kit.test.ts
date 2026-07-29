@@ -208,39 +208,17 @@ describe("envInt", () => {
     expect(envInt("__TEST_IMAP_PORT", 993)).toBe(993);
   });
 
-  test("returns fallback for empty string", () => {
-    process.env["__TEST_IMAP_PORT"] = "";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(993);
-    delete process.env["__TEST_IMAP_PORT"];
-  });
-
-  test("parses a valid port", () => {
-    process.env["__TEST_IMAP_PORT"] = "587";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(587);
-    delete process.env["__TEST_IMAP_PORT"];
-  });
-
-  test("returns fallback for non-numeric value", () => {
-    process.env["__TEST_IMAP_PORT"] = "notanumber";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(993);
-    delete process.env["__TEST_IMAP_PORT"];
-  });
-
-  test("returns fallback for 0 (below range)", () => {
-    process.env["__TEST_IMAP_PORT"] = "0";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(993);
-    delete process.env["__TEST_IMAP_PORT"];
-  });
-
-  test("returns fallback for 65536 (above range)", () => {
-    process.env["__TEST_IMAP_PORT"] = "65536";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(993);
-    delete process.env["__TEST_IMAP_PORT"];
-  });
-
-  test("accepts 65535 (boundary)", () => {
-    process.env["__TEST_IMAP_PORT"] = "65535";
-    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(65535);
+  // fallback 993 throughout, so the expected value doubles as "was the raw value accepted?"
+  test.each([
+    ["empty string", "", 993],
+    ["a valid port", "587", 587],
+    ["a non-numeric value", "notanumber", 993],
+    ["0 (below range)", "0", 993],
+    ["65536 (above range)", "65536", 993],
+    ["65535 (upper boundary)", "65535", 65535],
+  ])("%s → %s", (_label, raw, expected) => {
+    process.env["__TEST_IMAP_PORT"] = raw;
+    expect(envInt("__TEST_IMAP_PORT", 993)).toBe(expected);
     delete process.env["__TEST_IMAP_PORT"];
   });
 

@@ -48,7 +48,7 @@ test("returns null when title is empty string", () => {
   expect(mapLookerDashboardToItem({ id: "1", title: "" }, { syncedAt: 1 })).toBeNull();
 });
 
-test("returns null for non-record input", () => {
+test("returns null for non-record dashboard input", () => {
   expect(mapLookerDashboardToItem(null, { syncedAt: 1 })).toBeNull();
   expect(mapLookerDashboardToItem("string", { syncedAt: 1 })).toBeNull();
   expect(mapLookerDashboardToItem(42, { syncedAt: 1 })).toBeNull();
@@ -115,7 +115,7 @@ test("returns null when name is empty string", () => {
   ).toBeNull();
 });
 
-test("returns null for non-record input", () => {
+test("returns null for non-record view input", () => {
   expect(mapLookerViewToItem(null, { syncedAt: 1 })).toBeNull();
   expect(mapLookerViewToItem("string", { syncedAt: 1 })).toBeNull();
 });

@@ -113,7 +113,9 @@ describe("ClientSession.push — reader parse error (sendParseFailure)", () => {
   // lineLimitCtor and parseJsonRpcLine only ever throws JsonRpcParseError, so no production
   // input can deliver a non-JsonRpcParseError to that catch. Reaching it would require a DI seam
   // on the reader/parser ctor — deferred to Sub-project D. The other 16/18 arms clear the 80% floor.
-  test.skip("non-JsonRpcParseError from reader falls back to 'Parse error' (branch=1) — D candidate", () => {});
+  // KNOWN GAP (D candidate): a non-JsonRpcParseError thrown by the reader should fall back to
+  // the generic 'Parse error' response (branch=1). Left uncovered rather than stubbed — the
+  // reader cannot be driven into that state through the public session surface.
 });
 
 // ---------------------------------------------------------------------------

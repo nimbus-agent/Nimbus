@@ -44,9 +44,14 @@ describe("ConnectorHealth", () => {
     unmount();
   });
 
-  test("prefixes degraded statuses (backoff/error) with ⚠", async () => {
+  // A single connector in each status, and the glyph its row must carry.
+  test.each([
+    ["error is prefixed with the degraded marker", "slack", "error", "⚠"],
+    ["syncing maps to the half-circle glyph (in-flight)", "github", "syncing", "◐"],
+    ["backoff maps to the empty-circle glyph (failure)", "slack", "backoff", "○"],
+  ])("%s", async (_label, serviceId, status, glyph) => {
     const stub = new StubIpcClient({
-      results: { "connector.listStatus": [{ serviceId: "slack", status: "error" }] },
+      results: { "connector.listStatus": [{ serviceId, status }] },
     });
     const { lastFrame, unmount } = render(
       <IpcContext.Provider value={ctx(stub)}>
@@ -54,7 +59,7 @@ describe("ConnectorHealth", () => {
       </IpcContext.Provider>,
     );
     await new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("⚠");
+    expect(lastFrame() ?? "").toContain(glyph);
     unmount();
   });
 
@@ -92,34 +97,6 @@ describe("ConnectorHealth", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("No connectors registered");
     expect(frame).not.toContain("(none)");
-    unmount();
-  });
-
-  test("syncing maps to the half-circle glyph (in-flight)", async () => {
-    const stub = new StubIpcClient({
-      results: { "connector.listStatus": [{ serviceId: "github", status: "syncing" }] },
-    });
-    const { lastFrame, unmount } = render(
-      <IpcContext.Provider value={ctx(stub)}>
-        <ConnectorHealth mode="idle" />
-      </IpcContext.Provider>,
-    );
-    await new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("◐");
-    unmount();
-  });
-
-  test("backoff maps to the empty-circle glyph (failure)", async () => {
-    const stub = new StubIpcClient({
-      results: { "connector.listStatus": [{ serviceId: "slack", status: "backoff" }] },
-    });
-    const { lastFrame, unmount } = render(
-      <IpcContext.Provider value={ctx(stub)}>
-        <ConnectorHealth mode="idle" />
-      </IpcContext.Provider>,
-    );
-    await new Promise((r) => setTimeout(r, 20));
-    expect(lastFrame() ?? "").toContain("○");
     unmount();
   });
 });

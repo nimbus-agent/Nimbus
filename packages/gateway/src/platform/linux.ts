@@ -212,7 +212,7 @@ export function probeLinuxVault(
   }
 
   const locked = runFirstAvailable(exec, collectionLockedCommands(collection));
-  if (locked === null || locked.code !== 0) {
+  if (locked?.code !== 0) {
     return { state: "unverified", detail: locked?.stderr.trim() ?? "" };
   }
   const flag = BOOLEAN_RE.exec(locked.stdout);

@@ -99,14 +99,6 @@ describe("WhisperSttProvider", () => {
     expect(await provider.isAvailable()).toBe(true);
   });
 
-  test("isAvailable returns false when binary not found", async () => {
-    const provider = new WhisperSttProvider({
-      whisperBin: "whisper-cli",
-      which: (_name) => null,
-    });
-    expect(await provider.isAvailable()).toBe(false);
-  });
-
   test("isAvailable with absolute forward-slash path checks file existence (file exists)", async () => {
     // import.meta.path is an absolute path that exists
     const provider = new WhisperSttProvider({
@@ -116,20 +108,14 @@ describe("WhisperSttProvider", () => {
     expect(await provider.isAvailable()).toBe(true);
   });
 
-  test("isAvailable with absolute forward-slash path checks file existence (file missing)", async () => {
-    const provider = new WhisperSttProvider({
-      whisperBin: "/absolutely/nonexistent/whisper",
-      which: (_name) => null,
-    });
-    expect(await provider.isAvailable()).toBe(false);
-  });
-
-  test("isAvailable with backslash path checks file existence", async () => {
-    // A path with backslash that doesn't exist → false
-    const provider = new WhisperSttProvider({
-      whisperBin: "C:\\nonexistent\\whisper.exe", // cross-platform-ok: intentional Windows backslash to exercise the `includes("\\")` branch
-      which: (_name) => null,
-    });
+  // With `which` stubbed to null, availability rests entirely on the path itself: a bare name has
+  // nowhere left to resolve, and an absolute path (either separator) must exist on disk.
+  test.each([
+    ["a bare binary name not found on PATH", "whisper-cli"],
+    ["an absolute forward-slash path that does not exist", "/absolutely/nonexistent/whisper"],
+    ["a backslash path that does not exist", "C:\\nonexistent\\whisper.exe"], // cross-platform-ok: intentional Windows backslash to exercise the `includes("\\")` branch
+  ])("isAvailable returns false for %s", async (_label, whisperBin) => {
+    const provider = new WhisperSttProvider({ whisperBin, which: (_name) => null });
     expect(await provider.isAvailable()).toBe(false);
   });
 
