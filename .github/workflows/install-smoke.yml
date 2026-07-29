@@ -304,6 +304,56 @@ jobs:
 
           nimbus stop || true
 
+        # Name is quoted: an unquoted ` #932)` would be parsed as a YAML comment
+        # and silently truncate the step name in the Actions UI.
+      - name: "Locked keychain fails fast, never hangs (macOS, issue #932)"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Issue #932: a LOCKED keychain used to send the gateway into
+          # AuthorizationCopyRights -> synchronous XPC -> mach_msg and block
+          # forever. Because bun:ffi calls are synchronous, that also froze the
+          # event loop: no timeout, no log line, no bound socket. `nimbus init`
+          # simply hung — the worst possible first-run experience.
+          #
+          # This step recreates exactly that state. It runs AFTER the smoke test
+          # so it inherits a HOME that is already installed and initialised: the
+          # config and the Vault keys exist, so gateway startup is guaranteed to
+          # touch the keychain and cannot fail early for an unrelated reason.
+          export HOME="$RUNNER_TEMP/fake-home"
+
+          security lock-keychain nimbus-smoke.keychain
+          echo "Locked nimbus-smoke.keychain; starting gateway."
+
+          # `timeout` is the whole point: exit 124 means it hung, which is the
+          # regression. Any other non-zero exit is the fix working as intended.
+          set +e
+          timeout 90 "$HOME/.local/bin/nimbus-gateway" > "$RUNNER_TEMP/locked.log" 2>&1
+          rc=$?
+          set -e
+          echo "gateway exited rc=$rc"
+          echo "----- gateway output -----"
+          cat "$RUNNER_TEMP/locked.log" || true
+          echo "----- end gateway output -----"
+
+          # Unlock again so nothing downstream inherits a locked keychain.
+          security unlock-keychain -p "" nimbus-smoke.keychain || true
+
+          if [ "$rc" -eq 124 ]; then
+            echo "::error::gateway HUNG on a locked keychain (timed out) — #932 has regressed"
+            exit 1
+          fi
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::gateway exited 0 with a locked keychain — expected a fast, explicit failure"
+            exit 1
+          fi
+          # A fast failure is only useful if it says what to do about it.
+          grep -q "security unlock-keychain" "$RUNNER_TEMP/locked.log" || {
+            echo "::error::failed fast but without the actionable keychain remedy"; exit 1; }
+          grep -q "Nimbus never prompts" "$RUNNER_TEMP/locked.log" || {
+            echo "::error::message does not explain that Nimbus deliberately never prompts"; exit 1; }
+          echo "Locked keychain produced a fast, actionable failure (rc=$rc)."
+
       - name: Run uninstall.sh + verify (Unix)
         if: runner.os != 'Windows'
         shell: bash

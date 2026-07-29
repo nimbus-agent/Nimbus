@@ -3,14 +3,29 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { PlatformPaths } from "../platform/paths.ts";
+import {
+  describeKeychainFailure,
+  ERR_SEC_ITEM_NOT_FOUND,
+  ERR_SEC_SUCCESS,
+  type KeychainOp,
+} from "./darwin-keychain-status.ts";
 import { addressAsPointer } from "./ffi-ptr.ts";
 import { compareVaultKeysAlphabetically, validateVaultKeyOrThrow } from "./key-format.ts";
 import type { NimbusVault } from "./nimbus-vault.ts";
 
 const SERVICE = "dev.nimbus";
-const ERR_SEC_ITEM_NOT_FOUND = -25300;
 
 const security = dlopen("/System/Library/Frameworks/Security.framework/Security", {
+  /**
+   * Turns the keychain's GUI authorization dialog OFF for this process.
+   *
+   * `Boolean` in Apple's headers is a 1-byte `unsigned char`, so `u8` (0/1) is
+   * declared rather than a bool whose FFI width would be less obvious.
+   */
+  SecKeychainSetUserInteractionAllowed: {
+    args: [FFIType.u8],
+    returns: FFIType.int32_t,
+  },
   SecKeychainAddGenericPassword: {
     args: [
       FFIType.pointer,
@@ -57,6 +72,43 @@ const coreFoundation = dlopen(
   },
 );
 
+/**
+ * Refuse the keychain UI for the whole gateway process.
+ *
+ * WHY THIS IS LOAD-BEARING. `SecKeychainAddGenericPassword` against a locked
+ * default keychain escalates to a GUI authorization prompt:
+ *
+ *   SecKeychainAddGenericPassword -> StorageManager::defaultKeychainUI
+ *     -> makeLoginAuthUI -> AuthorizationCopyRights
+ *       -> xpc_connection_send_message_with_reply_SYNC -> mach_msg  [blocks]
+ *
+ * With no GUI session nobody can answer that dialog, and the XPC round-trip is
+ * synchronous, so the call never returns. Because every symbol here is a
+ * *synchronous* `bun:ffi` call on the main thread, the blocked call also freezes
+ * the event loop: no timer fires, nothing logs, and the IPC socket is never
+ * bound. `nimbus init` hung forever with no diagnostic at all (issue #932).
+ *
+ * That also rules out the obvious-looking fix: you cannot wrap a synchronous FFI
+ * call in a `Promise.race` timeout, because the timer can never run. The block
+ * has to be prevented, not bounded — so interaction is disabled up front and a
+ * locked keychain returns `errSecInteractionNotAllowed` immediately instead.
+ *
+ * A background daemon has no business presenting a modal dialog in any case, and
+ * this brings macOS into line with Linux, which already fails fast on a locked
+ * keyring rather than waiting on a prompt.
+ */
+function denyKeychainUserInteraction(): void {
+  // Best-effort: if this ever fails we are no worse off than before the fix, and
+  // failing startup over it would be a worse outcome than the risk it removes.
+  try {
+    security.symbols.SecKeychainSetUserInteractionAllowed(0);
+  } catch {
+    /* best-effort */
+  }
+}
+
+denyKeychainUserInteraction();
+
 export class DarwinKeychainVault implements NimbusVault {
   private readonly vaultDir: string;
   private readonly indexPath: string;
@@ -64,6 +116,10 @@ export class DarwinKeychainVault implements NimbusVault {
   constructor(paths: PlatformPaths) {
     this.vaultDir = join(paths.configDir, "vault");
     this.indexPath = join(this.vaultDir, ".keyindex.json");
+    // The process-wide setting is applied at module load; re-asserting it per
+    // instance costs nothing and keeps the guarantee true if anything in the
+    // process re-enabled interaction behind our back.
+    denyKeychainUserInteraction();
   }
 
   private async readIndex(): Promise<string[]> {
@@ -110,13 +166,13 @@ export class DarwinKeychainVault implements NimbusVault {
     }
   }
 
-  private deleteKeychainItemAndRelease(itemRef: bigint): void {
+  private deleteKeychainItemAndRelease(itemRef: bigint, op: KeychainOp): void {
     if (itemRef === 0n) {
       return;
     }
     const delStatus = security.symbols.SecKeychainItemDelete(addressAsPointer(itemRef));
-    if (delStatus !== 0) {
-      throw new Error("Vault delete failed");
+    if (delStatus !== ERR_SEC_SUCCESS) {
+      throw new Error(describeKeychainFailure(op, delStatus));
     }
     coreFoundation.symbols.CFRelease(addressAsPointer(itemRef));
   }
@@ -200,9 +256,9 @@ export class DarwinKeychainVault implements NimbusVault {
     return status === ERR_SEC_ITEM_NOT_FOUND;
   }
 
-  private throwIfDeleteLookupFailed(status: number): void {
-    if (status !== 0) {
-      throw new Error("Vault delete lookup failed");
+  private throwIfDeleteLookupFailed(status: number, op: KeychainOp): void {
+    if (status !== ERR_SEC_SUCCESS) {
+      throw new Error(describeKeychainFailure(op, status));
     }
   }
 
@@ -210,34 +266,41 @@ export class DarwinKeychainVault implements NimbusVault {
     pwdLen: number,
     pwdPtr: bigint,
     itemRef: bigint,
+    op: KeychainOp,
   ): void {
     try {
       this.freePasswordDataIfPresent(pwdLen, pwdPtr);
-      this.deleteKeychainItemAndRelease(itemRef);
+      this.deleteKeychainItemAndRelease(itemRef, op);
     } catch (err) {
       this.bestEffortReleaseItemRef(itemRef);
       throw err;
     }
   }
 
-  private async deleteKeychainOnly(key: string): Promise<void> {
+  /**
+   * `op` is the caller's operation, not necessarily "delete": `set()` clears any
+   * existing item first, so a keychain that refuses this lookup must report the
+   * failure as a failed *store*. Reporting "delete failed" during `nimbus init`
+   * would send a stuck user looking in the wrong place.
+   */
+  private async deleteKeychainOnly(key: string, op: KeychainOp): Promise<void> {
     const { status, passwordLengthBuf, passwordDataOutBuf, itemRefBuf } =
       this.keychainFindGenericPassword(key);
 
     if (this.isSecItemNotFoundStatus(status)) {
       return;
     }
-    this.throwIfDeleteLookupFailed(status);
+    this.throwIfDeleteLookupFailed(status, op);
 
     const pwdLen = passwordLengthBuf.readUInt32LE(0);
     const pwdPtr = passwordDataOutBuf.readBigUInt64LE(0);
     const itemRef = itemRefBuf.readBigUInt64LE(0);
-    this.performKeychainDeleteAfterSuccessfulLookup(pwdLen, pwdPtr, itemRef);
+    this.performKeychainDeleteAfterSuccessfulLookup(pwdLen, pwdPtr, itemRef, op);
   }
 
   async set(key: string, value: string): Promise<void> {
     validateVaultKeyOrThrow(key);
-    await this.deleteKeychainOnly(key);
+    await this.deleteKeychainOnly(key, "store");
 
     const { svcBuf, keyBuf } = this.serviceAndKeyBuffers(key);
     const pass = Buffer.from(value, "utf8");
@@ -251,8 +314,8 @@ export class DarwinKeychainVault implements NimbusVault {
       ptr(pass),
       null,
     );
-    if (status !== 0) {
-      throw new Error("Vault store failed");
+    if (status !== ERR_SEC_SUCCESS) {
+      throw new Error(describeKeychainFailure("store", status));
     }
     await this.addToIndex(key);
   }
@@ -265,8 +328,8 @@ export class DarwinKeychainVault implements NimbusVault {
     if (status === ERR_SEC_ITEM_NOT_FOUND) {
       return null;
     }
-    if (status !== 0) {
-      throw new Error("Vault read failed");
+    if (status !== ERR_SEC_SUCCESS) {
+      throw new Error(describeKeychainFailure("read", status));
     }
 
     const pwdLen = passwordLengthBuf.readUInt32LE(0);
@@ -287,7 +350,7 @@ export class DarwinKeychainVault implements NimbusVault {
 
   async delete(key: string): Promise<void> {
     validateVaultKeyOrThrow(key);
-    await this.deleteKeychainOnly(key);
+    await this.deleteKeychainOnly(key, "delete");
     await this.removeFromIndex(key);
   }
 

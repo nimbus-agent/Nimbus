@@ -45,6 +45,12 @@ Three things, in one query:
 # Linux only — credentials live in the OS keystore, and the Gateway will not
 # start without it:  sudo apt install libsecret-tools   (Debian/Ubuntu)
 #                    sudo dnf install libsecret         (Fedora/RHEL)
+# macOS only — the keychain must be UNLOCKED. Nimbus never shows an
+# authorization dialog (a background service could not answer one), so on a
+# locked keychain it fails immediately and tells you what to run. Over SSH or
+# in CI, give it its own keychain:  security create-keychain -p "" nimbus.keychain
+#                                   security default-keychain -s nimbus.keychain
+#                                   security unlock-keychain  -p "" nimbus.keychain
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh -o /tmp/nimbus-install.sh
 # inspect it first if you like:  less /tmp/nimbus-install.sh
 bash /tmp/nimbus-install.sh

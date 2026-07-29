@@ -8,6 +8,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-30 — macOS `nimbus init` can no longer hang on a locked keychain, issue #932.**
+  The remaining half of the first-run hang. With #928 fixed the boot log still stopped dead, and a
+  sampled stack showed why: on first run the gateway writes new Vault keys (federation identity,
+  policy anchor keypair), and `SecKeychainAddGenericPassword` against a **locked** default keychain
+  escalates to a GUI authorization prompt —
+  `defaultKeychainUI` → `makeLoginAuthUI` → `AuthorizationCopyRights` → a *synchronous* XPC
+  round-trip → `mach_msg`. With no GUI session nobody can answer that dialog, so the call never
+  returns. Because every `bun:ffi` symbol is a synchronous call on the main thread, the block froze
+  the whole event loop: no timer fired, nothing logged, and the IPC socket was never bound.
+  `nimbus init` — the first command a new user runs — hung forever with no diagnostic at all, which
+  is strictly worse than the Linux behaviour (#925) that at least fails fast.
+  That also rules out the obvious fix: a synchronous FFI call **cannot** be bounded by a
+  `Promise.race` timeout, because the timer can never run. The block has to be prevented, not
+  bounded. `vault/darwin.ts` now calls `SecKeychainSetUserInteractionAllowed(0)` at module load and
+  per instance, so a locked keychain returns `errSecInteractionNotAllowed` (-25308) immediately
+  instead of waiting on a dialog; a background daemon has no business presenting a modal prompt, and
+  this brings macOS into line with Linux, which already fails fast on a locked keyring. The four
+  previously generic throws (`"Vault store failed"` and friends) now render through the new pure
+  `vault/darwin-keychain-status.ts`, which maps -25308 and `errSecAuthFailed` (-25293) to the raw
+  `OSStatus` plus a runnable remedy (`security unlock-keychain`, or a dedicated unlocked keychain for
+  SSH/CI) and states plainly that Nimbus never prompts, so a missing dialog does not read as a bug.
+  The operation name is threaded through `deleteKeychainOnly`, because `set()` clears any existing
+  item first and a refused lookup during `nimbus init` used to be reported as a failed *delete*.
+  Verification is layered, since the FFI itself is unreachable off macOS: the message logic is a
+  pure module unit-tested on every platform (100% covered — `vault/darwin.ts` is coverage-exempt as
+  platform code); three source guards, each independently red-proved, pin that the symbol is
+  declared, actually *called*, called at module scope, and never passed `1`; and a new macOS
+  `install-smoke` step locks the keychain and asserts the gateway fails **fast** with the remedy —
+  `timeout` exit 124 is treated as the regression, so a hang can never pass as green. That step's
+  five-way decision logic (works / hangs / exits 0 / no remedy / no never-prompts line) was
+  red-proved locally against stub gateways before it ever reached CI.
+
 - **2026-07-29 — Gateway binds IPC BEFORE the embedding model loads (bind-first), issue #928.**
   The gateway used to `await` the embedding runtime inside `assemblePlatformServices` before
   `ipc.start()`. With `[embedding] provider = "hybrid"` (or `openai`) that awaited
