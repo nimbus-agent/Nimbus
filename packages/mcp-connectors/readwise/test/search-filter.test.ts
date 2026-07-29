@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { filterReadwiseHighlights } from "../src/search-filter.ts";
+import { filterReadwiseBooks, filterReadwiseHighlights } from "../src/search-filter.ts";
 
 function highlight(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -73,5 +73,76 @@ describe("filterReadwiseHighlights", () => {
     expect(filterReadwiseHighlights(many, { query: "exponential backoff", limit: 3 })).toHaveLength(
       3,
     );
+  });
+});
+
+function book(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 9001,
+    title: "Release It! Design and Deploy Production-Ready Software",
+    author: "Michael T. Nygard",
+    category: "books",
+    source: "kindle",
+    num_highlights: 42,
+    cover_image_url: "https://cover.example.com/nygard.png",
+    highlights_url: "https://readwise.io/bookreview/9001",
+    source_url: null,
+    asin: "B00A32NXZO",
+    tags: [
+      { id: 1, name: "reliability" },
+      { id: 2, name: "retries" },
+    ],
+    document_note: "the stability-patterns chapters",
+    ...over,
+  };
+}
+
+describe("filterReadwiseBooks", () => {
+  test("matches against the title (case-insensitive)", () => {
+    expect(filterReadwiseBooks([book()], { query: "release it" })).toHaveLength(1);
+  });
+
+  test("matches against author, category, source, document note, and tag names", () => {
+    expect(filterReadwiseBooks([book()], { query: "nygard" })).toHaveLength(1);
+    expect(filterReadwiseBooks([book()], { query: "books" })).toHaveLength(1);
+    expect(filterReadwiseBooks([book()], { query: "kindle" })).toHaveLength(1);
+    expect(filterReadwiseBooks([book()], { query: "stability-patterns" })).toHaveLength(1);
+    expect(filterReadwiseBooks([book()], { query: "reliability" })).toHaveLength(1);
+    expect(filterReadwiseBooks([book()], { query: "retries" })).toHaveLength(1);
+  });
+
+  test("non-match returns empty", () => {
+    expect(filterReadwiseBooks([book()], { query: "nonsense" })).toHaveLength(0);
+  });
+
+  test("does not match against the cover/highlights urls (not in the haystack)", () => {
+    expect(filterReadwiseBooks([book()], { query: "cover.example.com" })).toHaveLength(0);
+    expect(filterReadwiseBooks([book()], { query: "bookreview" })).toHaveLength(0);
+  });
+
+  test("skips non-object entries", () => {
+    expect(filterReadwiseBooks([null, 42, "x", book()], { query: "nygard" })).toHaveLength(1);
+  });
+
+  test("tolerates missing string fields and non-object tags", () => {
+    const sparse = book();
+    delete sparse["author"];
+    delete sparse["document_note"];
+    sparse["tags"] = [null, 7, { id: 3, name: "ops" }];
+    expect(filterReadwiseBooks([sparse], { query: "release it" })).toHaveLength(1);
+    expect(filterReadwiseBooks([sparse], { query: "ops" })).toHaveLength(1);
+    expect(filterReadwiseBooks([sparse], { query: "nygard" })).toHaveLength(0);
+  });
+
+  test("tolerates a missing tags array", () => {
+    const noTags = book();
+    delete noTags["tags"];
+    expect(filterReadwiseBooks([noTags], { query: "release it" })).toHaveLength(1);
+    expect(filterReadwiseBooks([noTags], { query: "reliability" })).toHaveLength(0);
+  });
+
+  test("honors the limit cap", () => {
+    const many = Array.from({ length: 10 }, (_, i) => book({ id: i }));
+    expect(filterReadwiseBooks(many, { query: "release it", limit: 3 })).toHaveLength(3);
   });
 });

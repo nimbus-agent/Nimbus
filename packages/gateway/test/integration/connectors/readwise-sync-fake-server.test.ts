@@ -18,8 +18,12 @@ interface RecordedReq {
 
 interface FakeReadwiseConfig {
   pages?: unknown[][];
+  /** Pages served by `/api/v2/books/`; defaults to a single empty page. */
+  bookPages?: unknown[][];
   status?: number;
   badJson?: boolean;
+  /** Valid JSON returned verbatim by the highlights path, bypassing the DRF envelope. */
+  highlightsBody?: unknown;
 }
 
 interface FakeReadwise {
@@ -27,6 +31,11 @@ interface FakeReadwise {
   requests: RecordedReq[];
   stop(): void;
 }
+
+const HIGHLIGHTS_PATH = "/api/v2/highlights/";
+const BOOKS_PATH = "/api/v2/books/";
+const DRF_LIST_PATHS = [HIGHLIGHTS_PATH, BOOKS_PATH] as const;
+const EMPTY_PAGES: unknown[][] = [[]];
 
 function startFakeReadwise(config: FakeReadwiseConfig): FakeReadwise {
   const requests: RecordedReq[] = [];
@@ -41,20 +50,25 @@ function startFakeReadwise(config: FakeReadwiseConfig): FakeReadwise {
         query: u.search,
         authorization: req.headers.get("authorization"),
       });
-      if (u.pathname === "/api/v2/highlights/") {
+      const listPath = DRF_LIST_PATHS.find((p) => p === u.pathname);
+      if (listPath !== undefined) {
         if (config.status !== undefined && config.status !== 200) {
           return new Response("error", { status: config.status });
         }
         if (config.badJson === true) {
           return new Response("{not json", { status: 200 });
         }
-        const pages = config.pages ?? [[]];
+        if (listPath === HIGHLIGHTS_PATH && config.highlightsBody !== undefined) {
+          return Response.json(config.highlightsBody);
+        }
+        const pages =
+          (listPath === HIGHLIGHTS_PATH ? config.pages : config.bookPages) ?? EMPTY_PAGES;
         const page = Number(u.searchParams.get("page") ?? "1");
         const results = pages[page - 1] ?? [];
         const hasNext = page < pages.length && (pages[page] ?? []).length > 0;
         return Response.json({
           count: pages.reduce((n, p) => n + p.length, 0),
-          next: hasNext ? `https://readwise.io/api/v2/highlights/?page=${String(page + 1)}` : null,
+          next: hasNext ? `https://readwise.io${listPath}?page=${String(page + 1)}` : null,
           previous: null,
           results,
         });
@@ -108,6 +122,26 @@ function highlight(id: number, over: Record<string, unknown> = {}): Record<strin
     url: "https://example.com/article",
     tags: [{ id: 1, name: "reliability" }],
     highlighted_at: "2024-03-01T12:00:00.000Z",
+    updated: "2024-03-02T08:00:00.000Z",
+    ...over,
+  };
+}
+
+function book(id: number, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    title: `Book ${String(id)} — Release It!`,
+    author: "Michael T. Nygard",
+    category: "books",
+    source: "kindle",
+    num_highlights: 42,
+    cover_image_url: "https://example.com/cover.png",
+    highlights_url: `https://readwise.io/bookreview/${String(id)}`,
+    source_url: null,
+    asin: "B00A32NXZO",
+    tags: [{ id: 1, name: "reliability" }],
+    document_note: "worth re-reading",
+    last_highlight_at: "2024-03-01T12:00:00.000Z",
     updated: "2024-03-02T08:00:00.000Z",
     ...over,
   };
@@ -209,12 +243,12 @@ describe("readwise-sync against Bun.serve fake API", () => {
       )
       .get();
     expect(web?.canonical_url).toBe("https://example.com/article");
-    const book = h.db
+    const fromBook = h.db
       .query<{ canonical_url: string | null }, []>(
         "SELECT canonical_url FROM item WHERE service = 'readwise' AND external_id = '2'",
       )
       .get();
-    expect(book?.canonical_url).toBeNull();
+    expect(fromBook?.canonical_url).toBeNull();
   });
 
   test("noop when token unset — no requests", async () => {
@@ -254,5 +288,153 @@ describe("readwise-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-readwise1:")).toBe(true);
+  });
+
+  test("a valid-JSON but non-object page body degrades to zero items", async () => {
+    h = startHarness({ highlightsBody: [], bookPages: [[book(9001)]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    // The highlights walk yields nothing; the books walk is unaffected.
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.cursor?.startsWith("nimbus-readwise1:")).toBe(true);
+  });
+
+  test("a page envelope with no `results` array degrades to zero items", async () => {
+    h = startHarness({ highlightsBody: { count: 0, next: null, previous: null } });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.cursor?.startsWith("nimbus-readwise1:")).toBe(true);
+  });
+
+  test("books walk: `/api/v2/books/` upserts readwise:book/<id> rows with Token auth", async () => {
+    h = startHarness({ pages: [[highlight(1)]], bookPages: [[book(9001), book(9002)]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "readwise_test_token");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(3);
+    const bookReqs = h.fake.requests.filter((r) => r.path === BOOKS_PATH);
+    expect(bookReqs).toHaveLength(1);
+    expect(bookReqs[0]?.query).toContain("page_size=1000");
+    expect(bookReqs[0]?.authorization).toBe("Token readwise_test_token");
+
+    const rows = h.db
+      .query<{ id: string; external_id: string; title: string }, []>(
+        "SELECT id, external_id, title FROM item WHERE service = 'readwise' AND type = 'book' ORDER BY external_id",
+      )
+      .all();
+    expect(rows.map((r) => r.external_id)).toEqual(["book/9001", "book/9002"]);
+    expect(rows.map((r) => r.id)).toEqual(["readwise:book/9001", "readwise:book/9002"]);
+    expect(rows[0]?.title).toBe("Book 9001 — Release It!");
+  });
+
+  test("a book and a highlight sharing the numeric id both survive the sync", async () => {
+    h = startHarness({ pages: [[highlight(9001)]], bookPages: [[book(9001)]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(2);
+    const rows = h.db
+      .query<{ id: string; type: string }, []>(
+        "SELECT id, type FROM item WHERE service = 'readwise' ORDER BY id",
+      )
+      .all();
+    expect(rows).toEqual([
+      { id: "readwise:9001", type: "highlight" },
+      { id: "readwise:book/9001", type: "book" },
+    ]);
+  });
+
+  test("the book's metadata.book_id joins its highlights' metadata.book_id", async () => {
+    h = startHarness({
+      pages: [[highlight(1, { book_id: 9001 })]],
+      bookPages: [[book(9001)]],
+    });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+
+    const joined = h.db
+      .query<{ n: number }, []>(
+        `SELECT COUNT(*) AS n FROM item h
+           JOIN item b ON b.service = 'readwise' AND b.type = 'book'
+             AND json_extract(b.metadata, '$.book_id') = json_extract(h.metadata, '$.book_id')
+          WHERE h.service = 'readwise' AND h.type = 'highlight'`,
+      )
+      .get();
+    expect(joined?.n).toBe(1);
+  });
+
+  test("the books walk paginates independently of the highlights walk", async () => {
+    h = startHarness({
+      pages: [[highlight(1)]],
+      bookPages: [[book(9001)], [book(9002)], [book(9003)]],
+    });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(4);
+    expect(h.fake.requests.filter((r) => r.path === HIGHLIGHTS_PATH)).toHaveLength(1);
+    expect(
+      h.fake.requests
+        .filter((r) => r.path === BOOKS_PATH)
+        .map((r) => new URL(`https://x${r.query}`).searchParams.get("page")),
+    ).toEqual(["1", "2", "3"]);
+  });
+
+  test("an empty books page leaves the highlight upserts untouched", async () => {
+    h = startHarness({ pages: [[highlight(1), highlight(2)]], bookPages: [[]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(2);
+    const books = h.db
+      .query<{ n: number }, []>(
+        "SELECT COUNT(*) AS n FROM item WHERE service = 'readwise' AND type = 'book'",
+      )
+      .get();
+    expect(books?.n).toBe(0);
+  });
+
+  test("book rows carry epoch-ms timestamps and the Readwise book-review canonical url", async () => {
+    h = startHarness({ pages: [[]], bookPages: [[book(9001)]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("readwise.token", "k");
+
+    const syncable = createReadwiseSyncable({ ensureReadwiseMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+
+    const row = h.db
+      .query<{ canonical_url: string | null; modified_at: number; metadata: string }, []>(
+        "SELECT canonical_url, modified_at, metadata FROM item WHERE id = 'readwise:book/9001'",
+      )
+      .get();
+    expect(row?.canonical_url).toBe("https://readwise.io/bookreview/9001");
+    expect(row?.modified_at).toBe(Date.parse("2024-03-02T08:00:00.000Z"));
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["last_highlight_at"]).toBe(Date.parse("2024-03-01T12:00:00.000Z"));
+    expect(meta["cover_image_url"]).toBeUndefined();
   });
 });

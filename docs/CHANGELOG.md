@@ -198,6 +198,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   participants request. `google_meet:meeting` stays on local MiniLM embeddings, with a
   regression test naming the decision. **Transcripts remain deferred** — they are the most
   sensitive content a person owns and need their own scope and consent design.
+- **2026-07-29 — Readwise connector: books indexed as `readwise:book` (issue #891).**
+  A `readwise:highlight` carried a `book_id` with nothing to resolve it against. The sync
+  handler now runs a second, independent single-pass walk over `GET /api/v2/books/` — the same
+  DRF `{ count, next, previous, results }` envelope, the same `MAX_PAGES=20` cap, the same
+  `Authorization: Token <token>` credential, resolved once so the unconfigured case still
+  returns the exact `syncNoopResult` (no MCP spawn, no HTTP) it did before. A failure in one
+  walk degrades that walk only. The new pure mapper `mapReadwiseBookToItem` stores
+  book_id/title/author/category/source/num_highlights/asin/tags/document_note/source_url/
+  highlights_url/last_highlight_at/updated_at/canonical_url; `cover_image_url` and the
+  resurface-scheduler fields are deliberately not indexed. **`external_id` is `book/<id>`, not
+  the bare numeric id** — Readwise numbers books and highlights in separate sequences, the item
+  primary key is `<service>:<external_id>`, and `upsertIndexedItem` writes
+  `ON CONFLICT(id) DO UPDATE`, so an unprefixed book id would have let book 9001 and highlight
+  9001 silently overwrite each other on every sync; an integration test drives a real sync with
+  both and asserts both rows survive. Highlights keep their existing bare-id `external_id` —
+  re-prefixing them would orphan every already-indexed row. `metadata.book_id` is the raw
+  **number** so it joins a highlight's `metadata.book_id` (also covered by an integration test
+  that runs the join in SQL). `canonical_url` is `source_url`, falling back to the Readwise
+  book-review page for Kindle/ePub books with no public source URL. `readwise:book` stays OFF
+  `PROSE_HEAVY_TYPES` (local MiniLM 384-dim), matching `readwise:highlight`: a book record is a
+  title, an author and a short note, and adding it would push every hybrid-mode user's whole
+  library through OpenAI on the next embed pass. Three new read tools
+  (`readwise_books_list` / `readwise_book_get` / `readwise_books_search`); `hitlRequired`
+  stays empty. Catalog / secrets-manifest / rate-limiter / sync-registration wiring already
+  existed and was verified unchanged.
 
 - **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
   The zero-config path shipped (#887) with its sync step covered only by unit tests using an
