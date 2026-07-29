@@ -219,7 +219,9 @@ jobs:
             # /var and /tmp are symlinks into /private, and a bind/connect
             # mismatch across that boundary would look exactly like a hang.
             echo "----- socket + process probe -----"
-            for d in "${TMPDIR:-/tmp}" "/private${TMPDIR:-/tmp}" /tmp "$XDG_RUNTIME_DIR"; do
+            # Every expansion needs a default: this runs under `set -u`, where
+            # a bare $XDG_RUNTIME_DIR aborts the probe on macOS (unset there).
+            for d in "${TMPDIR:-/tmp}" "/private${TMPDIR:-/tmp}" /tmp "${XDG_RUNTIME_DIR:-}"; do
               [ -n "$d" ] && [ -d "$d" ] || continue
               ls -la "$d" 2>/dev/null | grep -i nimbus || true
             done
