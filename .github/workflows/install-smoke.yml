@@ -99,9 +99,26 @@ jobs:
           # Export the bus + daemon addresses to every later step.
           eval "$(dbus-launch --sh-syntax)"
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          # `--unlock` reads the password from stdin; an empty one is fine for
-          # a throwaway runner keyring.
-          eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
+
+          # Starting the daemon is not enough on a fresh runner: there is no
+          # keyring file, so it exposes no collection and secret-tool fails
+          # with `Object does not exist at path .../collection/login`. Create
+          # an unlocked, empty-password default keyring first and alias it as
+          # the default collection.
+          mkdir -p "$HOME/.local/share/keyrings"
+          cat > "$HOME/.local/share/keyrings/login.keyring" <<'KEYRING'
+[keyring]
+display-name=login
+ctime=0
+mtime=0
+lock-on-idle=false
+lock-after=false
+KEYRING
+          printf 'login' > "$HOME/.local/share/keyrings/default"
+
+          # `--unlock` reads the password from stdin; empty matches the
+          # empty-password keyring written above.
+          eval "$(printf '' | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
           echo "GNOME_KEYRING_CONTROL=${GNOME_KEYRING_CONTROL:-}" >> "$GITHUB_ENV"
           # Prove the Secret Service is actually answering before the smoke
           # test depends on it, so a keyring failure is diagnosed here rather
@@ -192,6 +209,19 @@ jobs:
                 tail -200 "$f"
               done
             done
+            # The gateway log's last line is only the last thing WRITTEN, not
+            # necessarily where execution stopped — nothing after the embedding
+            # stage logs to stdout. Probe the actual end state instead of
+            # inferring it. On macOS also check the /private-prefixed path:
+            # /var and /tmp are symlinks into /private, and a bind/connect
+            # mismatch across that boundary would look exactly like a hang.
+            echo "----- socket + process probe -----"
+            for d in "${TMPDIR:-/tmp}" "/private${TMPDIR:-/tmp}" /tmp "$XDG_RUNTIME_DIR"; do
+              [ -n "$d" ] && [ -d "$d" ] || continue
+              ls -la "$d" 2>/dev/null | grep -i nimbus || true
+            done
+            echo "-- live gateway processes --"
+            ps aux 2>/dev/null | grep "[n]imbus-gateway" || echo "(none)"
             echo "----- end gateway log -----"
           }
           trap 'rc=$?; if [ "$rc" -ne 0 ]; then dump_gateway_log; fi; exit "$rc"' EXIT

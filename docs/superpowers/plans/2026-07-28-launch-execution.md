@@ -717,9 +717,33 @@ The three gates in the spec are human process. They are checklists, not tasks �
 
 ### Gate 1 runbook — foreign-machine proof
 
-- [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus.
+**Two Gate 1 blockers are already known — CI found them before a human did.**
+Task 1's assertions caught both on their first real run; `nimbus --help` had
+been passing on machines where `nimbus init` cannot work at all.
+
+- **[#925](https://github.com/nimbus-agent/Nimbus/issues/925) — Linux `init`
+  fails on any headless machine.** Installing `secret-tool` is necessary but
+  not sufficient: libsecret reaches a Secret Service provider over D-Bus, so
+  with no session bus and no unlocked keyring every Vault operation fails and
+  the Gateway aborts. That is the state of any server, container, SSH session,
+  or WSL install — a large share of the ICP's machines. The README quickstart
+  never named the prerequisite; that half is fixed. Note `nimbus doctor` shares
+  the blind spot: it reports `[ok] Vault: secret-tool is on PATH` from a
+  `Bun.which` check alone, so it says OK where the Vault cannot work.
+- **[#928](https://github.com/nimbus-agent/Nimbus/issues/928) — first run
+  blocks on a HuggingFace fetch.** The Gateway does not bind its socket until
+  the embedding runtime initializes, which on a cold machine means downloading
+  MiniLM (`DEFAULT_EMBEDDING_INIT_TIMEOUT_MS = 600_000`). The macOS runner sat
+  at "starting embedding runtime" for a full 300 s without binding. For the
+  first command a new user ever runs, this is indistinguishable from a hang.
+
+Both are product-behaviour changes, deliberately **not** made under this plan's
+freeze. Gate 1 cannot pass while either stands: they are exactly the
+"works only on the author's machine" failures this gate exists to catch.
+
+- [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. **Blocked by [#925](https://github.com/nimbus-agent/Nimbus/issues/925).**
 - [ ] Windows: fresh local user account or a VM (Win 11 Home has neither Hyper-V nor Windows Sandbox). Same quickstart, same foreign repo.
-- [ ] macOS: covered by Task 1's `macos-14` job, or defer to a Gate 2 tester with a Mac and label it unverified.
+- [ ] macOS: covered by Task 1's `macos-14` job, or defer to a Gate 2 tester with a Mac and label it unverified. **Caveat:** that job now sets `NIMBUS_SKIP_EMBEDDING_RUNTIME=1`, so it does **not** cover the cold first-run model fetch ([#928](https://github.com/nimbus-agent/Nimbus/issues/928)) — a human still has to run one genuinely cold macOS first-run.
 - [ ] Every break gets a fix **and** a regression test at the real-gateway layer. A unit test with an injected fake does not count.
 - [ ] **Exit:** Linux and Windows complete with zero manual intervention.
 
