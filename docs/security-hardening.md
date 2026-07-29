@@ -5,6 +5,7 @@ Items marked **Automated** run in CI; **Manual** require human sign-off before a
 | Item | Status | Evidence |
 |------|--------|----------|
 | `bun audit --audit-level high` clean | **Automated** | `.github/workflows/security.yml` job `Dependency audit` |
+| Every live npm advisory has a written, dated decision | **Automated** | `security.yml` job `Dependency audit`, step `Accepted-advisory registry` (`bun run audit:advisories`). Registry: [`scripts/structure-audit/accepted-advisories.ts`](../scripts/structure-audit/accepted-advisories.ts). Covers what `--audit-level high` does not: a moderate/low advisory below the blocking threshold must be fixed or accepted with a reason, an unblocking condition and a `recheckBy` date. The gate fails on an unjudged advisory, an expired row, a stale row whose advisory has cleared, or a severity re-scored above the accepted level. JS-side mirror of the `[advisories].ignore` list in `packages/ui/src-tauri/deny.toml`. |
 | Trivy on dependency / config surface | **Automated** | `security.yml` job `Trivy vulnerability scan` (filesystem scan of repo root; includes all workspace `package.json` and lockfiles) |
 | `cargo audit` (Tauri / `Cargo.lock`) | **Automated** | `security.yml` job `Cargo audit (Tauri)` (`packages/ui/src-tauri`) |
 | `cargo deny` (licenses + advisories + bans) | **Automated** | `security.yml` job `Cargo deny (licenses + advisories + bans)` (AGPL-compatibility + unmaintained-crate bans + registry pinning) |

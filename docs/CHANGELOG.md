@@ -38,6 +38,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `embedQuery` to start the load), a terminated worker bridge stops claiming `warming`, and the
   600 s worker init window is unchanged but no longer sits on the bind path.
 
+- **2026-07-29 — The last two `bun audit` advisories closed: one fixed, one written down.**
+  `bun audit` reported 2 (1 moderate, 1 low). Neither blocked CI — the gate is
+  `--audit-level high` — which is exactly why both had persisted.
+  **`@hono/node-server` (GHSA-frvp-7c67-39w9, moderate, path traversal in `serve-static`
+  on Windows via `%5C`) is FIXED**: root override `"@hono/node-server": "2.0.12"`. The 1.x
+  line tops out at 1.19.17 with no backport, but `@modelcontextprotocol/sdk@1.30.0` already
+  declares `"^1.19.9 || ^2.0.5"`, so 2.x needs no upstream change. Verified on a clean
+  install that both SDK copies in the graph (1.29.0 via `@mastra/*`, 1.30.0 at root) relink
+  to the single 2.0.12 copy, that `getRequestListener` — the only symbol the SDK imports —
+  still exists, and that `server/{mcp,stdio,streamableHttp}.js` all load. Worth recording:
+  nothing in this repo imports `@hono/node-server` or `serve-static` at all, and every one
+  of the ~90 MCP connector entry points imports only `server/mcp.js` + `server/stdio.js`,
+  so the vulnerable path was already unreachable — the upgrade was cheap, so it was taken
+  rather than argued.
+  **`@ai-sdk/provider-utils` (GHSA-866g-f22w-33x8, low, CWE-400) is ACCEPTED, with a
+  re-check date.** No fix exists: the range is `<=3.0.97` and the published 3.x line ends at
+  3.0.30, so GitHub lists patched = `None`; even `@mastra/core@1.54.0` still pins the alias
+  at 3.0.30. No override can reach it either — `@mastra/core` pins it as
+  `"@ai-sdk/provider-utils-v5": "npm:@ai-sdk/provider-utils@3.0.25"`, and regenerating
+  `bun.lock` from scratch with either a bare key or the alias key still resolves 3.0.25
+  (bun 1.3.14 records the override and ignores it). The sharper finding: `@mastra/core`
+  **vendors** its own copy of the vulnerable `createJsonResponseHandler` into
+  `dist/chunk-RTETZOAY.js` and imports only base64/URL/abort helpers from the flagged
+  package — so a version bump would have cleared the audit line without changing a byte of
+  executing code. Security theatre, declined.
+  Backing this decision: **`bun run audit:advisories`**, a new step in the `Dependency audit`
+  job. It reads `bun audit --json` and fails when a live advisory has no row, when a row is
+  past its `recheckBy`, when a row's advisory has cleared (delete the row, never leave
+  drift), when an advisory is re-scored above the accepted level, or when a row's
+  justification is blank / its window exceeds one quarter. Registry:
+  `scripts/structure-audit/accepted-advisories.ts` — the JS mirror of the
+  `[advisories].ignore` list in `packages/ui/src-tauri/deny.toml`. All six guards
+  red-proven against live audit output. `bun audit`: **2 → 1**, and the 1 now has an owner
+  and a date.
 - **2026-07-29 — Mercury connector indexes transactions (`mercury:transaction`), issue #890.**
   The Mercury connector shipped accounts-only; transactions were a documented deferral. The
   gateway syncable now walks each indexed account's

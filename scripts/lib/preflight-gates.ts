@@ -83,6 +83,7 @@ export const CI_ONLY_GATES: readonly string[] = [
   "audit:ci-latency:update-baseline", // explicit human action that rewrites the committed baseline; never a gate
   "audit:release-staleness", // needs network + gh (public reads across release + channel repos); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:actions-allowlist", // needs network + gh (reads each repo's Actions permissions); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
+  "audit:advisories", // needs network (npm registry via `bun audit`); runs beside `bun audit` in security.yml, never the local FAST tier
 ];
 
 export function selectGates(tier: GateTier): Gate[] {
