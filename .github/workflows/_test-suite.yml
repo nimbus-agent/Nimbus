@@ -100,6 +100,14 @@ jobs:
         # This gate fails the build if an upstream ever becomes fork-reachable.
         run: bun run audit:workflow-run-triggers
 
+      - name: Workflow lint (block-scalar escapes + shell syntax)
+        # A heredoc body at column 0 terminates the enclosing `run: |` block
+        # scalar and invalidates the whole file. GitHub then records a run with
+        # ZERO jobs and a failure conclusion — no job, no log, no annotation —
+        # which reads like a product failure. js-yaml parses it happily, so
+        # "it parses" is not sufficient validation.
+        run: bun run audit:workflow-lint
+
       - name: regen-slo drift check
         run: bun run regen-slo:check
 

@@ -168,6 +168,7 @@
     "audit:status-drift": "bun scripts/structure-audit/check-status-drift.ts",
     "audit:action-sha-pins": "bun scripts/structure-audit/check-action-sha-pins.ts",
     "audit:workflow-run-triggers": "bun scripts/structure-audit/check-workflow-run-triggers.ts",
+    "audit:workflow-lint": "bun scripts/audit/workflow-lint.ts",
     "audit:coverage-gate-pal": "bun scripts/structure-audit/check-coverage-gate-pal.ts",
     "audit:pin-freshness": "bun scripts/structure-audit/check-pin-freshness.ts",
     "audit:ci-latency": "bun scripts/ci-latency/check.ts",

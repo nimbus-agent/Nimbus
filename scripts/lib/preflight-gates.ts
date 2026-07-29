@@ -30,6 +30,14 @@ const FAST: readonly Gate[] = [
     tier: "fast",
   },
   {
+    // An invalid workflow file is uniquely expensive to diagnose: GitHub
+    // records a run with ZERO jobs and a failure conclusion, so there is no
+    // log or annotation to read. Catch it before the push, not after.
+    name: "audit:workflow-lint",
+    cmd: ["bun", "run", "audit:workflow-lint"],
+    tier: "fast",
+  },
+  {
     name: "audit:coverage-gate-pal",
     cmd: ["bun", "run", "audit:coverage-gate-pal"],
     tier: "fast",
