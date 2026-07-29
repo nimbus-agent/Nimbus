@@ -53,7 +53,7 @@
       "dependencies": {
         "@clack/prompts": "^1.7.0",
         "@modelcontextprotocol/sdk": "1.30.0",
-        "@nimbus-dev/client": "^0.13.0",
+        "@nimbus-dev/client": "^0.14.0",
         "@nimbus-dev/sdk": "^1.8.1",
         "ink": "^7.1.1",
         "ink-text-input": "^6.0.0",
@@ -1814,7 +1814,7 @@
 
     "@nimbus-dev/admin-console": ["@nimbus-dev/admin-console@workspace:packages/admin-console"],
 
-    "@nimbus-dev/client": ["@nimbus-dev/client@0.13.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-Pwi/V9CLeliNshspQgJj9hS/kCcqkKfw5vz/OChmIVaky28V4eNTXvf9UNH3c817+ndHKuhdoVUw3R5PnwQtQA=="],
+    "@nimbus-dev/client": ["@nimbus-dev/client@0.14.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-s4tNoOHq8JCjMuoNEDRVWmQ4afWHU6FMyBwRSjeqAAjsOrswjDiz8mlQycu/gejCyNp+VabqXcJ6nbuJZeTBcg=="],
 
     "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.8.1", "", {}, "sha512-FzTiXa5GzG4Bdlw+gA1kg/cIFmvyH1FvLlQowGHZAhGbjX1BJB/ncFXQZijH9MO+mIDLkd/jMEwVfuiB7BNHkA=="],
 
