@@ -117,7 +117,7 @@ Design of record:
 | P2 | Release Train | ✅ done — both phases (run 30231918767) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, when a release phantoms, when an npm package is tagged but unpublished, or when a consumer's **lockfile-resolved** dependency lags npm `@latest`. Red-proved on a real phantom and on three real dependency edges; green after both, `OK (12 edges current)`. |
 | P3 | Review Layer | 🔨 first step done (#846) | The monorepo now carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban — closing the satellites→monorepo direction of the pattern above. **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
-| P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after (run `30353595114`): 105 → 77 jobs, DAG wait 60.5 → 2.5 min, wall clock 36-74 → 20 min.** `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
+| P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after, re-measured at n>1 on 2026-07-30: 105 → 77 jobs (4/4 runs), DAG wait 60.5 → 3.0 min median (n=15, and all 45 sampled E2E legs now gated by `ci-rust` — the edge the slice rewrote), non-macOS wall 23-89 → 16-38 min.** Wall clock measured as *last job in the run* did not improve (45 → 67 min median over 20+20 runs); instrumented, that tail is entirely the nine macOS PAL coverage gates queuing for scarce macOS runners, and it is unchanged at like congestion — see the progress log. `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
 | P6 | Access & Contribution Model | 🔨 P6a + CLA done | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos. Remaining: bypass-actor audit |
 
@@ -517,6 +517,68 @@ moves to P6).
   the change itself — but re-run both probes once ~15 green push runs have
   accumulated for a like-for-like median. Use `--runs 1` to isolate post-change
   runs; the default window of 15 is still dominated by pre-tuning runs.
+- **RE-MEASUREMENT AT n>1 (2026-07-30).** The n=1 figures above are kept as
+  taken; these supersede them. 15 green push runs had accumulated entirely
+  after the tuning, so `--runs 15` is a clean post-change window with no
+  blending (verified: the oldest run in the window post-dates
+  `30353595114`). `probe-dag.ts --runs 15`, `probe-concurrency.ts --runs 4`:
+
+  | metric | before (2026-07-28, n=15) | after n=1 | **after n>1 (2026-07-30)** |
+  | --- | --- | --- | --- |
+  | DAG wait per `E2E Desktop` leg | 60.5 min median (max 110.8) | 2.5 min | **3.0 min median (max 27.1), n=15 per leg** |
+  | job that gated E2E | coverage shards | `Rust/Tauri (ubuntu)` 3× | **`CI — Rust/Tauri`, all 45 legs** (macOS 18× / ubuntu 15× / windows 12×) |
+  | jobs per run | 105 | 77 | **77 on 4/4 runs** (66 excluding skipped; ubuntu 35 / win 18 / macOS 18) |
+  | created-but-waiting at peak | 32–41 | 19 | **5–15** (peak concurrent 17–33) |
+  | wall clock (last job in run) | 36–74 min | 20 min | **see below — this metric does not measure the slice** |
+
+  The DAG-wait win holds at n=15 and the binding-job row is now unambiguous:
+  **every one of the 45 sampled E2E legs was gated by `CI — Rust/Tauri`**, which
+  is the dependency edge the slice rewrote. The n=1 reading of "ubuntu 3×" was
+  an artifact of a single run; which *OS* of `ci-rust` finishes last varies.
+- **⚠️ Wall clock did NOT improve, and the honest reason is that it never
+  measured this slice.** Over 20 pre- and 20 post-tuning green push runs the
+  median wall clock went **45 min → 67 min**. That reads as a regression and is
+  not one. Instrumented rather than assumed, per-run, splitting the run's last
+  completion into macOS and non-macOS:
+
+  | | non-macOS wall | macOS tail | run's last job |
+  | --- | --- | --- | --- |
+  | before (8 runs) | 23–89 min | 21–111 min | mixed — ubuntu/windows in 4/8 |
+  | after (8 runs) | **16–38 min** | 39–113 min | **a macOS PAL coverage gate in 7/8** |
+
+  So after the tuning, **everything except the nine macOS PAL coverage gates
+  finishes in 16–38 minutes** — a large, real improvement on the 23–89 min the
+  same measurement gave before. What remains is a pure macOS-runner-availability
+  tail: the 9 PAL gates only become eligible when `Unit + Coverage — macos-15`
+  completes, and each then queues separately for a scarce macOS runner (observed
+  in run `30487196015`: `Static — macos-15` waited **46 min** for its first
+  runner, and the PAL gates waited a further **31 min** after their upstream
+  finished, then ran ~1–2 min each).
+
+  Comparing like congestion rather than like dates, the macOS tail is
+  **unchanged** by the tuning — congested runs before: 88/99/111 min, after:
+  93/105/110/113 min; quiet runs before: 21/24/26/37 min, after: 18/19/21/25 min.
+  The 45 → 67 median gap is **sample-window composition**: the 20 most recent
+  post-tuning runs drew heavily on the congested 2026-07-29 evening, the
+  pre-tuning 20 did not. Same external drift already recorded above (the
+  baseline that moved 33.4 → 60.5 min between 07-27 and 07-28).
+- **Two methodology traps this re-measurement exposed**, both worth honouring
+  next time:
+  1. `probe-concurrency.ts` defaults to `--runs 4` and takes the four *most
+     recent* runs. In a congested hour that sample says "wall clock 99–114 min"
+     and in a quiet one "18–25 min" — from the same unchanged workflow. Its
+     wall-clock and waiting figures are hostage to when you run it; its job
+     count is not. Read it accordingly.
+  2. "Wall clock" here is *last job to complete in the run*, which is a
+     different question from *how long until the thing anyone waits on is
+     green*. The tuning moved `E2E Desktop` off the critical path (60.5 → 3.0
+     min) and left a long tail of low-value macOS coverage gates behind it. The
+     metric got worse while the experience got better.
+- **Next latency target, if P4b is ever reopened:** the nine macOS PAL coverage
+  gates are now the entire critical path of a push run. Options worth measuring
+  before choosing: fold them into `Unit + Coverage — macos-15` as steps (nine
+  runner acquisitions → one), or run them on a schedule rather than per-push.
+  Not done here — P4b's stated bar is met and this is new scope.
 - **The co-gate enforcement gap is CLOSED.** `PlatformFileEntry` gained
   `coGates`, and rule 3 now checks the primary gate and every co-gate
   identically, so demoting **either** `Embedding` or `DB layer` is caught.
