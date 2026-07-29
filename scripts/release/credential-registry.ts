@@ -49,6 +49,32 @@ export interface CredentialEntry {
  *  because a deadline may require investigation, not just a rotation. */
 export const HARD_DEADLINE_LEAD_DAYS = 90;
 
+/**
+ * The point at which an approaching hard deadline stops being *scheduled work*
+ * and becomes a *failure*.
+ *
+ * Between `HARD_DEADLINE_LEAD_DAYS` and this, a deadline row is
+ * `deadline-approaching`: a warning, never an exit-1, because nothing is broken
+ * — the credential still authenticates and the only fact in evidence is a date
+ * on a calendar. At or inside this window it becomes `deadline-critical`, a hard
+ * failure, because the runway a replacement needs is gone.
+ *
+ * **Why 14 and not 7 or 21.** The monitor runs on one weekly cron (Mondays
+ * 09:00 UTC). A 7-day window yields exactly ONE run before the deadline — and
+ * this org has already lost queued scheduled runs to shared-concurrency
+ * eviction, so a single-run alarm can produce zero alarms. 14 days yields TWO
+ * (one at 8–14 days out, one at 1–7), so a lost run still leaves an alarm while
+ * the credential is alive. 21 days (the cert `thresholdDays` default) would buy
+ * a third run at the cost of a third week of standing red, and standing red is
+ * the exact failure mode this split exists to end: the escalation must mean
+ * "act this week", not "act eventually".
+ *
+ * The 76 days before escalation are not silent — they are the
+ * `deadline-approaching` warning, which files/updates the health issue without
+ * failing the job.
+ */
+export const HARD_DEADLINE_CRITICAL_DAYS = 14;
+
 /** Quarterly, matching the default maxAgeDays so the cadences cannot drift apart. */
 export const MANUAL_AUDIT_MAX_AGE_DAYS = 90;
 

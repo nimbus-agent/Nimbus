@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { auditCredentials, daysBetween, type LiveSecret } from "./credential-audit";
 import {
   type CredentialEntry,
+  HARD_DEADLINE_CRITICAL_DAYS,
   HARD_DEADLINE_LEAD_DAYS,
   LAST_MANUAL_AUDIT,
   MANUAL_AUDIT_MAX_AGE_DAYS,
@@ -114,14 +115,14 @@ describe("auditCredentials", () => {
     expect(row?.detail).not.toContain("NaN");
   });
 
-  test("a hard deadline inside the 90-day lead time warns", () => {
+  test("a hard deadline inside the 90-day lead time warns as approaching, not as broken", () => {
     const rows = auditCredentials(
       [entry({ maxAgeDays: null, hardDeadline: "2026-09-01" })],
       [live()],
       NOW,
     );
     const row = find(rows, "TEST_SECRET");
-    expect(row?.status).toBe("deadline");
+    expect(row?.status).toBe("deadline-approaching");
     expect(row?.detail).toContain("2026-09-01");
   });
 
@@ -141,9 +142,36 @@ describe("auditCredentials", () => {
       NOW,
     );
     const row = find(rows, "TEST_SECRET");
-    expect(row?.status).toBe("deadline");
+    expect(row?.status).toBe("deadline-critical");
     expect(row?.detail).toContain("overdue by 200d");
     expect(row?.detail).not.toContain("in -200d");
+  });
+
+  // The whole point of the two-state split: a calendar row must never be
+  // readable as "a provider rejected this credential". Both deadline details
+  // therefore say, in words, that the credential still authenticates.
+  test("both deadline states state in words that nothing has been rejected", () => {
+    for (const days of [HARD_DEADLINE_LEAD_DAYS, HARD_DEADLINE_CRITICAL_DAYS]) {
+      const rows = auditCredentials(
+        [entry({ maxAgeDays: null, hardDeadline: deadlineDaysOut(days) })],
+        [live()],
+        NOW,
+      );
+      const row = find(rows, "TEST_SECRET");
+      expect(row?.detail).toContain("scheduled expiry");
+      expect(row?.detail).toContain("not a rejected credential");
+    }
+  });
+
+  test("an approaching deadline names the day it escalates, so the warning is actionable", () => {
+    const rows = auditCredentials(
+      [entry({ maxAgeDays: null, hardDeadline: deadlineDaysOut(HARD_DEADLINE_LEAD_DAYS) })],
+      [live()],
+      NOW,
+    );
+    expect(find(rows, "TEST_SECRET")?.detail).toContain(
+      `escalates to a hard failure at ${HARD_DEADLINE_CRITICAL_DAYS}d`,
+    );
   });
 
   test("org visibility differs from declared warns, in either direction", () => {
@@ -241,7 +269,7 @@ describe("auditCredentials", () => {
         [live()],
         NOW,
       );
-      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline");
+      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline-approaching");
     });
 
     test("a hard deadline one day beyond the lead time stays quiet", () => {
@@ -259,7 +287,70 @@ describe("auditCredentials", () => {
         [live()],
         NOW,
       );
-      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline");
+      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline-approaching");
+    });
+
+    // The escalation boundary. `deadline-approaching` warns; `deadline-critical`
+    // fails. One day either side of HARD_DEADLINE_CRITICAL_DAYS is the exact
+    // seam, so pin both sides and the boundary day itself.
+    test("a hard deadline one day beyond the critical window still only warns", () => {
+      const rows = auditCredentials(
+        [
+          entry({
+            maxAgeDays: null,
+            hardDeadline: deadlineDaysOut(HARD_DEADLINE_CRITICAL_DAYS + 1),
+          }),
+        ],
+        [live()],
+        NOW,
+      );
+      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline-approaching");
+    });
+
+    test("a hard deadline exactly at the critical window escalates to critical", () => {
+      const rows = auditCredentials(
+        [entry({ maxAgeDays: null, hardDeadline: deadlineDaysOut(HARD_DEADLINE_CRITICAL_DAYS) })],
+        [live()],
+        NOW,
+      );
+      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline-critical");
+    });
+
+    test("a hard deadline one day inside the critical window is critical", () => {
+      const rows = auditCredentials(
+        [
+          entry({
+            maxAgeDays: null,
+            hardDeadline: deadlineDaysOut(HARD_DEADLINE_CRITICAL_DAYS - 1),
+          }),
+        ],
+        [live()],
+        NOW,
+      );
+      expect(find(rows, "TEST_SECRET")?.status).toBe("deadline-critical");
+    });
+
+    test("a hard deadline landing today is critical, and reads as 0 days, not overdue", () => {
+      const rows = auditCredentials(
+        [entry({ maxAgeDays: null, hardDeadline: deadlineDaysOut(0) })],
+        [live()],
+        NOW,
+      );
+      const row = find(rows, "TEST_SECRET");
+      expect(row?.status).toBe("deadline-critical");
+      expect(row?.detail).toContain("in 0d");
+      expect(row?.detail).not.toContain("overdue");
+    });
+
+    test("a hard deadline one day past is critical and reads as overdue by 1d", () => {
+      const rows = auditCredentials(
+        [entry({ maxAgeDays: null, hardDeadline: deadlineDaysOut(-1) })],
+        [live()],
+        NOW,
+      );
+      const row = find(rows, "TEST_SECRET");
+      expect(row?.status).toBe("deadline-critical");
+      expect(row?.detail).toContain("overdue by 1d");
     });
 
     test("manual audit age exactly at the policy threshold is ok, not overdue", () => {

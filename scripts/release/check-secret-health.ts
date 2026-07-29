@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { auditCredentials, type InventoryStatus } from "./credential-audit";
 import { enumerateSecrets } from "./credential-enumerate";
-import { CREDENTIAL_REGISTRY } from "./credential-registry";
+import { CREDENTIAL_REGISTRY, HARD_DEADLINE_CRITICAL_DAYS } from "./credential-registry";
 import { createGitHubApi, type GitHubApi } from "./gh-api.ts";
 import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.ts";
 
@@ -109,11 +109,170 @@ export function composeProvenanceDetail(version: string, actionDetail: string): 
   return actionDetail === "" ? versionPart : `${versionPart}: ${actionDetail}`;
 }
 
+export type HealthStatus = PatStatus | CertStatus | ProvenanceStatus | InventoryStatus;
+
 export interface HealthRow {
   readonly name: string;
   readonly kind: "pat" | "cert" | "provenance" | "inventory";
-  readonly status: PatStatus | CertStatus | ProvenanceStatus | InventoryStatus;
+  readonly status: HealthStatus;
   readonly detail: string;
+}
+
+/** How loudly a row speaks. `hard` is the only one that exits non-zero. */
+export type Severity = "hard" | "warn" | "healthy";
+
+/**
+ * Every status any row kind can carry. Its completeness against the union is
+ * proven at COMPILE time by `HEALTH_STATUS_CATALOGUE_COMPLETE` below, so this
+ * list cannot silently fall behind a new status.
+ */
+export const ALL_HEALTH_STATUSES = [
+  "ok",
+  "dead",
+  "insufficient",
+  "indeterminate",
+  "not-configured",
+  "expiring",
+  "expired",
+  "missing-provenance",
+  "source-mismatch",
+  "missing",
+  "present",
+  "undocumented",
+  "stale",
+  "deadline-approaching",
+  "deadline-critical",
+  "visibility-drift",
+  "audit-overdue",
+] as const satisfies readonly HealthStatus[];
+
+/**
+ * `true` only when `ALL_HEALTH_STATUSES` covers the whole `HealthStatus` union.
+ * Adding a status to any of the four unions without cataloguing it here makes
+ * this type `false`, and the `= true` initializer stops compiling.
+ */
+export const HEALTH_STATUS_CATALOGUE_COMPLETE: [
+  Exclude<HealthStatus, (typeof ALL_HEALTH_STATUSES)[number]>,
+] extends [never]
+  ? true
+  : false = true;
+
+/**
+ * An unrecognised status is a bug, not a healthy credential. The `never`
+ * parameter makes omitting a case from `severityOf` a COMPILE error; the body
+ * covers the runtime case where a value reached us past the type system (a
+ * renamed composite-action output, a hand-built row) and fails it closed.
+ */
+function unclassifiedSeverity(status: never): Severity {
+  console.error(
+    `check-secret-health: unclassified status ${JSON.stringify(status)} — treating as a hard failure`,
+  );
+  return "hard";
+}
+
+/**
+ * The single place a status becomes a verdict.
+ *
+ * The load-bearing split is between the two ways a credential can be in
+ * trouble, which an operator must never confuse:
+ *
+ * - **Rejected** (`dead`, `insufficient`, `expired`, and the provenance
+ *   verdicts) — a live probe just came back bad. Something IS broken. Hard.
+ * - **Dated** (`deadline-approaching`, `expiring`, `stale`, …) — a calendar in
+ *   `credential-registry.ts` says this will break later. Nothing is broken yet.
+ *   Warn — with ONE exception: `deadline-critical`, the point at which the
+ *   remaining runway is shorter than the time a replacement takes to arrange
+ *   (`HARD_DEADLINE_CRITICAL_DAYS`), where a date becomes an emergency.
+ *
+ * `dead` is hard unconditionally and is never softened by anything in this
+ * function — that is the guarantee the deadline split must not erode.
+ */
+export function severityOf(status: HealthStatus): Severity {
+  switch (status) {
+    // A provider said no, a signature did not verify, or a credential that must
+    // not exist does. Broken now.
+    case "dead":
+    case "insufficient":
+    case "expired":
+    case "missing-provenance":
+    case "source-mismatch":
+    case "present":
+    // Inventory: a credential nobody recorded is a credential nobody assessed.
+    case "undocumented":
+    case "missing":
+    // A recorded deadline whose replacement runway has run out.
+    case "deadline-critical":
+      return "hard";
+
+    // Dated, inconclusive, or hygiene. Real work, but nothing is rejected.
+    case "expiring":
+    case "indeterminate":
+    case "stale":
+    case "deadline-approaching":
+    case "visibility-drift":
+    case "audit-overdue":
+      return "warn";
+
+    // `not-configured` is healthy only because every credential that may be
+    // legitimately unset is declared `optional`/`forbidden` in the registry; a
+    // `required` one that is absent surfaces as `missing`, above.
+    case "ok":
+    case "not-configured":
+      return "healthy";
+
+    default:
+      return unclassifiedSeverity(status);
+  }
+}
+
+export const BROKEN_HEADING = "## ❌ BROKEN — rejected, absent, or out of runway";
+export const SCHEDULED_HEADING = "## 🟡 SCHEDULED — dated work; nothing here is broken";
+export const HEALTHY_HEADING = "## ✅ Healthy";
+
+/**
+ * Why the issue body is sectioned rather than one flat table.
+ *
+ * A standing warning (an approaching deadline is one for up to 76 days) keeps
+ * this issue permanently open. In a flat 45-row table, a credential that died
+ * overnight arrives as one more row among forty-five — the same shape, the same
+ * place, one word different in the status column. Sections make the two
+ * outcomes structurally different: a newly-dead credential appears under a
+ * heading that was empty, and an approaching expiry can never appear there.
+ */
+const SECTIONS: readonly { severity: Severity; heading: string; blurb: string }[] = [
+  {
+    severity: "hard",
+    heading: BROKEN_HEADING,
+    blurb:
+      "Every row here either failed a **live probe** (a provider rejected the credential) or has run out of the lead time its replacement needs. This section is the only reason this job ever exits non-zero.",
+  },
+  {
+    severity: "warn",
+    heading: SCHEDULED_HEADING,
+    blurb: `No row here has been rejected by anything. These are calendar and hygiene signals with runway left — a deadline row moves up into BROKEN at ${HARD_DEADLINE_CRITICAL_DAYS} days out. The job still succeeds.`,
+  },
+  { severity: "healthy", heading: HEALTHY_HEADING, blurb: "" },
+];
+
+const VOCABULARY_NOTE = [
+  "> **Reading this table.** `dead` / `insufficient` / `expired` come from a **live probe**:",
+  "> a provider rejected the credential just now. `deadline-approaching` /",
+  "> `deadline-critical` come from the **calendar** in",
+  "> `scripts/release/credential-registry.ts`: the credential still authenticates, and the",
+  "> date is when it is expected to stop. They are different findings and never share a",
+  "> section.",
+  ">",
+  "> PATs are checked dead/alive + authorization only — fine-grained PAT *expiry dates* are",
+  "> not exposed by the API, so a dead PAT is caught within one weekly cycle, not ahead.",
+  "> Certs and registered hard deadlines get true N-days-ahead warning.",
+].join("\n");
+
+function renderTable(rows: readonly HealthRow[]): string {
+  return [
+    "| Credential | Kind | Status | Detail |",
+    "|---|---|---|---|",
+    ...rows.map((r) => `| ${r.name} | ${r.kind} | ${r.status} | ${r.detail} |`),
+  ].join("\n");
 }
 
 export function summarize(rows: readonly HealthRow[]): {
@@ -122,37 +281,110 @@ export function summarize(rows: readonly HealthRow[]): {
   table: string;
   state: string;
 } {
-  const hard = new Set<string>([
-    "dead",
-    "insufficient",
-    "expired",
-    "missing-provenance",
-    "source-mismatch",
-    "present",
-    // Inventory: a credential nobody recorded is a credential nobody assessed.
-    "undocumented",
-    "missing",
+  const bySeverity = new Map<Severity, HealthRow[]>([
+    ["hard", []],
+    ["warn", []],
+    ["healthy", []],
   ]);
-  const warn = new Set<string>([
-    "expiring",
-    "indeterminate",
-    "stale",
-    "deadline",
-    "visibility-drift",
-    "audit-overdue",
-  ]);
-  const hasHardFailure = rows.some((r) => hard.has(r.status));
-  const hasWarning = rows.some((r) => warn.has(r.status));
-  const table = [
-    "| Credential | Kind | Status | Detail |",
-    "|---|---|---|---|",
-    ...rows.map((r) => `| ${r.name} | ${r.kind} | ${r.status} | ${r.detail} |`),
-  ].join("\n");
+  for (const r of rows) bySeverity.get(severityOf(r.status))?.push(r);
+  const hard = bySeverity.get("hard") ?? [];
+  const warn = bySeverity.get("warn") ?? [];
+  const healthy = bySeverity.get("healthy") ?? [];
+
+  const parts: string[] = [
+    `**BROKEN: ${hard.length} · scheduled: ${warn.length} · healthy: ${healthy.length}**`,
+  ];
+  for (const section of SECTIONS) {
+    const sectionRows = bySeverity.get(section.severity) ?? [];
+    // The BROKEN and SCHEDULED headings are rendered even when empty, so the
+    // 0 → 1 transition is a visible change in the body rather than a new row
+    // buried mid-table. The healthy section is dropped when empty because "0
+    // healthy" carries no signal.
+    if (sectionRows.length === 0 && section.severity === "healthy") continue;
+    parts.push(
+      section.severity === "healthy"
+        ? `${section.heading} (${sectionRows.length})`
+        : `${section.heading} (${sectionRows.length})\n\n${section.blurb}`,
+    );
+    parts.push(
+      sectionRows.length === 0
+        ? "_None._"
+        : // Healthy rows are the bulk of the body and none of the signal;
+          // collapsing them keeps the two actionable sections above the fold.
+          section.severity === "healthy"
+          ? `<details><summary>Show ${sectionRows.length} healthy rows</summary>\n\n${renderTable(sectionRows)}\n\n</details>`
+          : renderTable(sectionRows),
+    );
+  }
+  parts.push(VOCABULARY_NOTE);
+
   const state = rows
     .map((r) => `${r.name}=${r.status}`)
     .sort()
     .join(";");
-  return { hasHardFailure, hasWarning, table, state };
+  return {
+    hasHardFailure: hard.length > 0,
+    hasWarning: warn.length > 0,
+    table: parts.join("\n\n"),
+    state,
+  };
+}
+
+// --- GitHub Actions annotations ---
+//
+// Workflow commands are line-delimited and `::`-delimited, so any interpolated
+// text must be escaped or a row could terminate the command and inject its own.
+// Registry notes are ours, but secret NAMES arrive from the GitHub API, so this
+// is applied unconditionally. Escape `%` FIRST or the later replacements'
+// own percent signs get double-encoded.
+function escapeAnnotationData(value: string): string {
+  return value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+}
+
+function escapeAnnotationProperty(value: string): string {
+  return escapeAnnotationData(value).replaceAll(":", "%3A").replaceAll(",", "%2C");
+}
+
+/**
+ * One annotation per non-healthy row, at a level that matches its severity.
+ *
+ * The Actions run page groups annotations by level, so the same
+ * expiring-vs-dead separation the issue body makes in sections is also made in
+ * the run summary: an approaching deadline is a yellow warning that leaves the
+ * job green, a rejected credential is a red error.
+ */
+export function annotationsFor(rows: readonly HealthRow[]): string[] {
+  const lines: string[] = [];
+  for (const r of rows) {
+    const severity = severityOf(r.status);
+    if (severity === "healthy") continue;
+    const level = severity === "hard" ? "error" : "warning";
+    const title = severity === "hard" ? "BROKEN credential" : "Scheduled credential work";
+    lines.push(
+      `::${level} title=${escapeAnnotationProperty(`${title}: ${r.name}`)}::${escapeAnnotationData(
+        `${r.name} — ${r.status} — ${r.detail}`,
+      )}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * The `detail` column for a probed PAT.
+ *
+ * A `dead` row is the single most urgent thing this monitor can say, and the
+ * bare strategy kind ("alive", "scopes") said none of it. Both loud outcomes now
+ * name their own provenance in words, so the row still reads correctly when it
+ * is quoted out of the table — the mirror of what the deadline details do.
+ */
+export function describePatOutcome(status: PatStatus, strategy: PatStrategy): string {
+  if (status === "dead") {
+    return `${strategy.kind} probe: the provider REJECTED this credential — it is revoked or expired NOW`;
+  }
+  if (status === "insufficient") {
+    return `${strategy.kind} probe: authenticates, but lacks the authorization the release path needs`;
+  }
+  return strategy.kind;
 }
 
 // --- I/O orchestration (injected cert decoders so tests never spawn gpg/openssl) ---
@@ -207,7 +439,7 @@ export async function runSecretHealth(deps: {
         name: p.env,
         kind: "pat",
         status,
-        detail: p.strategy.kind,
+        detail: describePatOutcome(status, p.strategy),
       });
     } catch {
       rows.push({ name: p.env, kind: "pat", status: "indeterminate", detail: "probe error" });
@@ -235,13 +467,11 @@ export async function runSecretHealth(deps: {
     });
   }
   const s = summarize(rows);
-  const caveat =
-    "\n\n> Note: PATs are checked dead/alive + authorization only — fine-grained PAT *expiry dates* are not exposed by the API, so a dead PAT is caught within one weekly cycle, not ahead. Certs get true N-days-ahead warning.";
   if (s.hasHardFailure || s.hasWarning) {
     await openOrUpdateHealthIssue(deps.api, {
       key: "secret-health",
       title: "🔑 Release secret-health alert",
-      body: s.table + caveat,
+      body: s.table,
       state: s.state,
     });
   } else {
@@ -252,7 +482,11 @@ export async function runSecretHealth(deps: {
     );
   }
   const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
-  if (summaryPath) await Bun.write(summaryPath, `## Secret health\n\n${s.table}${caveat}\n`);
+  if (summaryPath) await Bun.write(summaryPath, `# Secret health\n\n${s.table}\n`);
+  // Annotations before the table: on the run page they surface at the top of
+  // the job, separated by level, so "expiring" and "dead" are distinguishable
+  // without opening the issue at all.
+  for (const line of annotationsFor(rows)) console.log(line);
   console.log(s.table);
   return { hardFailure: s.hasHardFailure };
 }
