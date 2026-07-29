@@ -455,13 +455,31 @@ describe("auditCoverageGatePal", () => {
     expect(result.ok).toBe(true);
   });
 
-  test("the real workflow carries all 24 gates, 9 PAL and 15 Linux-only", () => {
-    const gates = parseCoverageGateMatrix(
-      readFileSync(join(REPO_ROOT, ".github/workflows/_test-suite.yml"), "utf8"),
-    );
-    expect(gates).toHaveLength(24);
+  test("the real workflow carries 9 PAL gates and 3 Linux batches covering all 15 Linux scripts", () => {
+    const yaml = readFileSync(join(REPO_ROOT, ".github/workflows/_test-suite.yml"), "utf8");
+    const gates = parseCoverageGateMatrix(yaml);
+
+    // #936 batched `coverage-gates-linux` from 15 one-gate jobs into 3, to hand
+    // 12 job slots back to a saturated concurrency pool. Matrix ENTRIES are
+    // therefore 12, not 24.
+    expect(gates).toHaveLength(12);
     expect(gates.filter((g) => g.pal === true)).toHaveLength(9);
-    expect(gates.filter((g) => g.pal === false)).toHaveLength(15);
+    expect(gates.filter((g) => g.pal === false)).toHaveLength(3);
+
+    // The count above is about scheduling. THIS is the property that matters and
+    // the one the old `toHaveLength(15)` was really protecting: batching changed
+    // how many jobs run, not how much is covered. A batch that silently dropped
+    // a script would keep the entry count at 3 and go unnoticed otherwise.
+    const batched = [...yaml.matchAll(/^ {12}scripts: "([^"]+)"$/gm)].flatMap((m) =>
+      (m[1] ?? "").split(" ").filter((s) => s !== ""),
+    );
+    expect(new Set(batched).size, "a Linux coverage script was dropped or duplicated").toBe(15);
+    expect(batched).toHaveLength(15);
+    for (const script of batched) {
+      expect(script, "batched entries must name `test:coverage:*` scripts").toMatch(
+        /^test:coverage:[a-z-]+$/,
+      );
+    }
   });
 
   test("the untouched fixture passes — so every red below is caused by its own edit", () => {
