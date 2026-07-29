@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.7.1](https://github.com/nimbus-agent/Nimbus/compare/v1.7.0...v1.7.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **cli:** handle the embedding warm-up error in `nimbus search` ([#937](https://github.com/nimbus-agent/Nimbus/issues/937)) ([8640972](https://github.com/nimbus-agent/Nimbus/commit/8640972adbc81a88c7999597a6feaf381491fc39))
+
 ## [1.7.0](https://github.com/nimbus-agent/Nimbus/compare/v1.6.0...v1.7.0) (2026-07-29)
 
 
