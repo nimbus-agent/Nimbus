@@ -133,6 +133,39 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   (`raindrop_collections_list` / `raindrop_collection_get` / `raindrop_collections_search`);
   `hitlRequired` stays empty. Catalog / secrets-manifest / rate-limiter / sync-registration
   wiring already existed and was verified unchanged.
+- **2026-07-29 — Google Meet indexes participant detail, issue #893.**
+  The Meet connector indexed conference records — a start time, an end time and an id — which
+  made a meeting essentially unfindable. Participants now enrich the **existing**
+  `google_meet:meeting` item rather than becoming their own item type: a participant has no
+  title, no body, no URL and no meaning outside its conference record, so N rows per meeting
+  would only dilute search results, and the codebase precedent is already
+  `apple:event.attendees` / `imap:email.participants` — there is no attendee item type
+  anywhere. The syncable issues one extra
+  `GET /v2/conferenceRecords/{id}/participants?pageSize=100` per record, in a SINGLE page,
+  using the collection's `totalSize` for the true head-count when the roster is clipped at
+  `MAX_INDEXED_PARTICIPANTS=100` (~8 KB, well inside the 64 KB per-item metadata ceiling).
+  **No scope change:** `conferenceRecords.participants.list` accepts the
+  `meetings.space.readonly` scope this connector already declares, so there is no re-consent
+  and no OAuth-registry / config / Tauri-allowlist edit. Each participant is reduced to
+  `{ kind: "signed_in" | "anonymous" | "phone", id, displayName }` — `id` is the `users/{id}`
+  directory id (People API / Admin SDK interoperable), present only for signed-in users; a
+  phone join keeps the partially-redacted number Google itself returns, because it is the only
+  thing identifying a dial-in participant. **`earliestStartTime` / `latestEndTime` are
+  deliberately not indexed**: they answer "how long did each person stay", which is attendance
+  surveillance, not "who was in that meeting" — the conference record's own start/end already
+  bound the meeting. The opaque participant resource `name` is dropped for the same reason `id`
+  is kept. The synthesized title now leads with who was there
+  (`Meeting with Ada Lovelace, Grace Hopper +37 — 2024-01-02`, capped at three names), a
+  deliberate change: `Meeting 2024-01-02` was unsearchable, and nobody recalls a meeting by its
+  date. The v1 title survives as the fallback whenever no participant carried a name, and
+  `body_preview` carries the full stored roster so every attendee is searchable, not just the
+  three the title has room for. A per-record participants `403`/`404`/parse failure warns and
+  indexes the record with an empty roster rather than aborting the cycle and losing the
+  conference records; `UnauthenticatedError` still propagates so a dead token reaches the
+  scheduler. A record with no `name` — which the mapper would reject anyway — costs no
+  participants request. `google_meet:meeting` stays on local MiniLM embeddings, with a
+  regression test naming the decision. **Transcripts remain deferred** — they are the most
+  sensitive content a person owns and need their own scope and consent design.
 
 - **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
   The zero-config path shipped (#887) with its sync step covered only by unit tests using an

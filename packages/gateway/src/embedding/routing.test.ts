@@ -93,6 +93,13 @@ describe("embedding/routing", () => {
     expect(isProseHeavy("mercury", "account")).toBe(false);
   });
 
+  test("google_meet:meeting is not prose-heavy even with participant names", () => {
+    // Conference records are sparse timestamps + ids + a name list, not
+    // paragraph prose. Participant detail does not change that; routing to
+    // OpenAI would bill the user per meeting.
+    expect(isProseHeavy("google_meet", "meeting")).toBe(false);
+  });
+
   test("workday item types are not prose-heavy (384-dim default)", () => {
     for (const t of ["worker", "time_off", "job_posting", "report"]) {
       expect(isProseHeavy("workday", t)).toBe(false);

@@ -59,6 +59,30 @@ describe("Google Meet sync cursor codec", () => {
   });
 });
 
+/** Route a fake fetch: participants requests first, then the records list. */
+function meetFetch(handlers: {
+  records: (url: string) => Response;
+  participants?: (url: string) => Response;
+}): typeof fetch {
+  return (async (input: string | URL | Request) => {
+    const url = requestUrlString(input);
+    if (url.includes("/participants")) {
+      if (handlers.participants === undefined) {
+        throw new Error(`unexpected participants fetch: ${url}`);
+      }
+      return handlers.participants(url);
+    }
+    if (url.includes("conferenceRecords")) {
+      return handlers.records(url);
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+}
+
+function emptyParticipants(): Response {
+  return new Response(JSON.stringify({ participants: [], totalSize: 0 }), { status: 200 });
+}
+
 describe("createGoogleMeetSyncable", () => {
   registerGlobalFetchRestore(afterEach);
 
@@ -66,9 +90,8 @@ describe("createGoogleMeetSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = requestUrlString(input);
-      if (url.includes("conferenceRecords")) {
+    globalThis.fetch = meetFetch({
+      records: (url) => {
         expect(url).toContain("pageSize=50");
         return new Response(
           JSON.stringify({
@@ -84,9 +107,9 @@ describe("createGoogleMeetSyncable", () => {
           }),
           { status: 200 },
         );
-      }
-      throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+      },
+      participants: emptyParticipants,
+    });
 
     const r = await syncable.sync(ctx, null);
     expect(r.itemsUpserted).toBe(1);
@@ -108,16 +131,20 @@ describe("createGoogleMeetSyncable", () => {
     const { ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
 
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = requestUrlString(input);
-      expect(url).toContain("pageToken=n1");
-      return new Response(
-        JSON.stringify({
-          conferenceRecords: [{ name: "conferenceRecords/c2", startTime: "2024-02-03T00:00:00Z" }],
-        }),
-        { status: 200 },
-      );
-    }) as typeof fetch;
+    globalThis.fetch = meetFetch({
+      records: (url) => {
+        expect(url).toContain("pageToken=n1");
+        return new Response(
+          JSON.stringify({
+            conferenceRecords: [
+              { name: "conferenceRecords/c2", startTime: "2024-02-03T00:00:00Z" },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+      participants: emptyParticipants,
+    });
 
     const cursor = encodeGoogleMeetSyncCursor({ v: 1, pageToken: "n1" });
     const r = await syncable.sync(ctx, cursor);
@@ -194,12 +221,39 @@ describe("createGoogleMeetSyncable", () => {
           { status: 200 },
         );
       }
+      if (url.includes("/participants")) {
+        return emptyParticipants();
+      }
       throw new Error(`unexpected fetch: ${url}`);
     }) as typeof fetch;
 
     const r = await syncable.sync(ctx, null);
     // The nameless record is skipped, only c99 is upserted
     expect(r.itemsUpserted).toBe(1);
+  });
+
+  test("a nameless record costs no participants request", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+    const participantUrls: string[] = [];
+
+    globalThis.fetch = meetFetch({
+      records: () =>
+        new Response(
+          JSON.stringify({
+            conferenceRecords: [{ startTime: "2024-03-01T10:00:00Z" }],
+          }),
+          { status: 200 },
+        ),
+      participants: (url) => {
+        participantUrls.push(url);
+        return emptyParticipants();
+      },
+    });
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(0);
+    expect(participantUrls).toEqual([]);
   });
 
   test("401 throws UnauthenticatedError with API message", async () => {
@@ -219,5 +273,265 @@ describe("createGoogleMeetSyncable", () => {
     }
     expect(caught).toBeInstanceOf(UnauthenticatedError);
     expect((caught as Error).message).toMatch(/Invalid Credentials/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Participant detail (issue #893)
+// ---------------------------------------------------------------------------
+
+function oneRecord(): Response {
+  return new Response(
+    JSON.stringify({
+      conferenceRecords: [
+        {
+          name: "conferenceRecords/c1",
+          startTime: "2024-01-02T09:00:00Z",
+          endTime: "2024-01-02T10:00:00Z",
+          space: "spaces/s1",
+        },
+      ],
+    }),
+    { status: 200 },
+  );
+}
+
+function meetingRow(db: {
+  query: (sql: string) => { get: (id: string) => unknown };
+}): { title: string; body_preview: string | null; metadata: string } | undefined {
+  return db
+    .query("SELECT title, body_preview, metadata FROM item WHERE id = ?")
+    .get(itemPrimaryKey("google_meet", "c1")) as
+    | { title: string; body_preview: string | null; metadata: string }
+    | undefined;
+}
+
+describe("createGoogleMeetSyncable — participants", () => {
+  registerGlobalFetchRestore(afterEach);
+
+  test("fetches the roster per record and stores it on the meeting item", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+    const participantUrls: string[] = [];
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: (url) => {
+        participantUrls.push(url);
+        return new Response(
+          JSON.stringify({
+            participants: [
+              {
+                name: "conferenceRecords/c1/participants/p1",
+                earliestStartTime: "2024-01-02T09:01:00Z",
+                latestEndTime: "2024-01-02T09:59:00Z",
+                signedinUser: { user: "users/1", displayName: "Ada Lovelace" },
+              },
+              { anonymousUser: { displayName: "Guest" } },
+            ],
+            totalSize: 2,
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    expect(participantUrls).toHaveLength(1);
+    expect(participantUrls[0]).toContain(
+      "https://meet.googleapis.com/v2/conferenceRecords/c1/participants",
+    );
+    expect(participantUrls[0]).toContain("pageSize=100");
+
+    const row = meetingRow(db);
+    expect(row?.title).toBe("Meeting with Ada Lovelace, Guest — 2024-01-02");
+    expect(row?.body_preview).toBe("Ada Lovelace, Guest");
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participants"]).toEqual([
+      { kind: "signed_in", id: "users/1", displayName: "Ada Lovelace" },
+      { kind: "anonymous", id: null, displayName: "Guest" },
+    ]);
+    expect(meta["participantCount"]).toBe(2);
+  });
+
+  test("join/leave times never reach the indexed row", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(
+          JSON.stringify({
+            participants: [
+              {
+                name: "conferenceRecords/c1/participants/p1",
+                earliestStartTime: "2024-01-02T09:01:00Z",
+                latestEndTime: "2024-01-02T09:59:00Z",
+                signedinUser: { user: "users/1", displayName: "Ada Lovelace" },
+              },
+            ],
+            totalSize: 1,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await syncable.sync(ctx, null);
+    const meta = meetingRow(db)?.metadata ?? "";
+    expect(meta).toContain("Ada Lovelace");
+    expect(meta).not.toContain("2024-01-02T09:01:00Z");
+    expect(meta).not.toContain("2024-01-02T09:59:00Z");
+    expect(meta).not.toContain("participants/p1");
+  });
+
+  test("totalSize larger than the stored roster drives the `+N` remainder", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(
+          JSON.stringify({
+            participants: ["Ada", "Grace", "Alan"].map((n, i) => ({
+              signedinUser: { user: `users/${String(i)}`, displayName: n },
+            })),
+            totalSize: 40,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await syncable.sync(ctx, null);
+    const row = meetingRow(db);
+    expect(row?.title).toBe("Meeting with Ada, Grace, Alan +37 — 2024-01-02");
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participantCount"]).toBe(40);
+  });
+
+  test("a nonsense totalSize falls back to the stored roster length", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(
+          JSON.stringify({
+            participants: [{ signedinUser: { user: "users/1", displayName: "Ada" } }],
+            // Smaller than the returned list, and the wrong type in a second run.
+            totalSize: 0,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await syncable.sync(ctx, null);
+    const meta = JSON.parse(meetingRow(db)?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participantCount"]).toBe(1);
+  });
+
+  test("a missing participants key yields an empty roster and the v1 title", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () => new Response(JSON.stringify({}), { status: 200 }),
+    });
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+    const row = meetingRow(db);
+    expect(row?.title).toBe("Meeting 2024-01-02");
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participants"]).toEqual([]);
+    expect(meta["participantCount"]).toBe(0);
+  });
+
+  test("a 403 on participants still indexes the conference record", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(JSON.stringify({ error: { message: "Insufficient Permission" } }), {
+          status: 403,
+        }),
+    });
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+    const row = meetingRow(db);
+    expect(row?.title).toBe("Meeting 2024-01-02");
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participants"]).toEqual([]);
+  });
+
+  test("a 401 on participants still surfaces UnauthenticatedError", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(JSON.stringify({ error: { message: "Invalid Credentials" } }), {
+          status: 401,
+        }),
+    });
+
+    let caught: unknown;
+    try {
+      await syncable.sync(ctx, null);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(UnauthenticatedError);
+  });
+
+  test("invalid participants JSON degrades to an empty roster", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () => new Response("{not json", { status: 200 }),
+    });
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+    const meta = JSON.parse(meetingRow(db)?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["participants"]).toEqual([]);
+  });
+
+  test("the stored roster is clipped at 100 names", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGoogleMeetSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = meetFetch({
+      records: oneRecord,
+      participants: () =>
+        new Response(
+          JSON.stringify({
+            participants: Array.from({ length: 150 }, (_, i) => ({
+              signedinUser: { user: `users/${String(i)}`, displayName: `P${String(i)}` },
+            })),
+            totalSize: 150,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await syncable.sync(ctx, null);
+    const meta = JSON.parse(meetingRow(db)?.metadata ?? "{}") as {
+      participants: unknown[];
+      participantCount: number;
+    };
+    expect(meta.participants).toHaveLength(100);
+    expect(meta.participantCount).toBe(150);
   });
 });
