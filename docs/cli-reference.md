@@ -33,6 +33,7 @@ Index the git repository in the current directory. Needs no credentials, no API 
 cd ~/code/your-project
 nimbus init
 nimbus init --no-sync           # Write the config only; do not start or sync
+nimbus init --help              # Usage and the exit-code table
 ```
 
 What it does:
@@ -44,10 +45,19 @@ What it does:
 
 Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
 
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The repository was indexed. A concrete `nimbus why` target may or may not have been found — if the index had nothing to suggest yet, `init` says so and prints the generic next step. |
+| `1` | The current directory is not a git repository. Nothing was written. |
+| `2` | The Gateway never became ready, so **nothing was indexed**. The failure names what happened, inlines the tail of the gateway log, and tells you what to run next. |
+| `3` | The Gateway is reachable but this repository was still not indexed — the `filesystem` sync failed, or a Gateway that is already running has to be restarted before it can see the new root. |
+
 Two behaviours worth knowing:
 
-- **If a Gateway is already running**, it cannot see a root that was just added: filesystem roots are read once at startup. `nimbus init` says so and asks you to `nimbus stop && nimbus start` rather than syncing nothing or restarting your daemon for you.
-- **If anything after the config write fails** — the Gateway will not start, the sync errors, or the index has no symbols yet — `init` still exits 0 and falls back to printing the generic `nimbus why <file>:<line>` next step. The config edit is the durable half of the work.
+- **If a Gateway is already running**, it cannot see a root that was just added: filesystem roots are read once at startup. `nimbus init` says so and asks you to `nimbus stop && nimbus start` rather than syncing nothing or restarting your daemon for you (exit `3`).
+- **The config edit is the durable half of the work** and survives every failure above — a second `nimbus init` after fixing the Gateway will not duplicate it. What does *not* survive is the pretence that the command succeeded: a run that indexed nothing exits non-zero and never prints a next step it cannot back up.
 
 `NIMBUS_CONFIG_DIR` overrides the config directory this command writes to (the Gateway honours the same variable). It moves the config directory only — never the data directory.
 

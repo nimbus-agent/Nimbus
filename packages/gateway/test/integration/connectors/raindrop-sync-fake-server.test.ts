@@ -18,8 +18,14 @@ interface RecordedReq {
 
 interface FakeRaindropConfig {
   pages?: unknown[][];
+  /** Items served by `GET /rest/v1/collections` (root collections). */
+  rootCollections?: unknown[];
+  /** Items served by `GET /rest/v1/collections/childrens` (nested collections). */
+  childCollections?: unknown[];
   status?: number;
   badJson?: boolean;
+  /** Valid JSON returned verbatim by the raindrops path, bypassing the `{ items }` envelope. */
+  raindropsBody?: unknown;
 }
 
 interface FakeRaindrop {
@@ -27,6 +33,10 @@ interface FakeRaindrop {
   requests: RecordedReq[];
   stop(): void;
 }
+
+const RAINDROPS_PATH = "/rest/v1/raindrops/0";
+const ROOT_COLLECTIONS_PATH = "/rest/v1/collections";
+const CHILD_COLLECTIONS_PATH = "/rest/v1/collections/childrens";
 
 function startFakeRaindrop(config: FakeRaindropConfig): FakeRaindrop {
   const requests: RecordedReq[] = [];
@@ -41,12 +51,15 @@ function startFakeRaindrop(config: FakeRaindropConfig): FakeRaindrop {
         query: u.search,
         authorization: req.headers.get("authorization"),
       });
-      if (u.pathname === "/rest/v1/raindrops/0") {
-        if (config.status !== undefined && config.status !== 200) {
-          return new Response("error", { status: config.status });
-        }
-        if (config.badJson === true) {
-          return new Response("{not json", { status: 200 });
+      if (config.status !== undefined && config.status !== 200) {
+        return new Response("error", { status: config.status });
+      }
+      if (config.badJson === true) {
+        return new Response("{not json", { status: 200 });
+      }
+      if (u.pathname === RAINDROPS_PATH) {
+        if (config.raindropsBody !== undefined) {
+          return Response.json(config.raindropsBody);
         }
         const pages = config.pages ?? [[]];
         const page = Number(u.searchParams.get("page") ?? "0");
@@ -56,6 +69,12 @@ function startFakeRaindrop(config: FakeRaindropConfig): FakeRaindrop {
           items,
           count: pages.reduce((n, p) => n + p.length, 0),
         });
+      }
+      if (u.pathname === ROOT_COLLECTIONS_PATH) {
+        return Response.json({ result: true, items: config.rootCollections ?? [] });
+      }
+      if (u.pathname === CHILD_COLLECTIONS_PATH) {
+        return Response.json({ result: true, items: config.childCollections ?? [] });
       }
       return new Response("not found", { status: 404 });
     },
@@ -114,6 +133,25 @@ function bookmark(id: number, over: Record<string, unknown> = {}): Record<string
 
 function fullPage(base: number): unknown[] {
   return Array.from({ length: 50 }, (_, i) => bookmark(base + i));
+}
+
+function collection(id: number, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    _id: id,
+    title: `Collection ${String(id)} — distributed systems`,
+    count: 137,
+    public: false,
+    view: "list",
+    color: "#0N0N0N",
+    sort: -1,
+    expanded: true,
+    cover: ["https://example.com/cover.png"],
+    access: { level: 4, draggable: true },
+    user: { $id: 42 },
+    created: "2024-03-01T12:00:00.000Z",
+    lastUpdate: "2024-03-02T08:00:00.000Z",
+    ...over,
+  };
 }
 
 function withRewrittenFetch(fakeBase: string): () => void {
@@ -256,5 +294,152 @@ describe("raindrop-sync against Bun.serve fake API", () => {
     const result = await syncable.sync(h.ctx, null);
     expect(result.itemsUpserted).toBe(0);
     expect(result.cursor?.startsWith("nimbus-raindrop1:")).toBe(true);
+  });
+
+  test("a valid-JSON but non-object raindrops body degrades to zero bookmarks", async () => {
+    h = startHarness({ raindropsBody: [], rootCollections: [collection(1)] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+    // The bookmarks walk yields nothing; the collections walk is unaffected.
+    expect(result.itemsUpserted).toBe(1);
+    expect(result.cursor?.startsWith("nimbus-raindrop1:")).toBe(true);
+  });
+
+  test("collections walk: both endpoints upsert raindrop:collection/<id> rows", async () => {
+    h = startHarness({
+      pages: [[bookmark(1)]],
+      rootCollections: [collection(9001)],
+      childCollections: [collection(9002, { parent: { $id: 9001 } })],
+    });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "raindrop_test_token");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(3);
+    // Neither collection endpoint is paginated — exactly one request each.
+    expect(h.fake.requests.filter((r) => r.path === ROOT_COLLECTIONS_PATH)).toHaveLength(1);
+    expect(h.fake.requests.filter((r) => r.path === CHILD_COLLECTIONS_PATH)).toHaveLength(1);
+    for (const r of h.fake.requests) {
+      expect(r.authorization).toBe("Bearer raindrop_test_token");
+    }
+
+    const rows = h.db
+      .query<{ id: string; external_id: string; title: string; url: string | null }, []>(
+        "SELECT id, external_id, title, url FROM item WHERE service = 'raindrop' AND type = 'collection' ORDER BY external_id",
+      )
+      .all();
+    expect(rows.map((r) => r.external_id)).toEqual(["collection/9001", "collection/9002"]);
+    expect(rows.map((r) => r.id)).toEqual(["raindrop:collection/9001", "raindrop:collection/9002"]);
+    expect(rows[0]?.title).toBe("Collection 9001 — distributed systems");
+    expect(rows[0]?.url).toBeNull();
+  });
+
+  test("a collection and a bookmark sharing the numeric id both survive the sync", async () => {
+    h = startHarness({ pages: [[bookmark(9001)]], rootCollections: [collection(9001)] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(2);
+    const rows = h.db
+      .query<{ id: string; type: string }, []>(
+        "SELECT id, type FROM item WHERE service = 'raindrop' ORDER BY id",
+      )
+      .all();
+    expect(rows).toEqual([
+      { id: "raindrop:9001", type: "bookmark" },
+      { id: "raindrop:collection/9001", type: "collection" },
+    ]);
+  });
+
+  test("the collection's metadata.collection_id joins its bookmarks' metadata.collection_id", async () => {
+    h = startHarness({
+      pages: [[bookmark(1, { collectionId: 9001 })]],
+      rootCollections: [collection(9001)],
+    });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+
+    const joined = h.db
+      .query<{ n: number }, []>(
+        `SELECT COUNT(*) AS n FROM item bm
+           JOIN item col ON col.service = 'raindrop' AND col.type = 'collection'
+             AND json_extract(col.metadata, '$.collection_id') = json_extract(bm.metadata, '$.collection_id')
+          WHERE bm.service = 'raindrop' AND bm.type = 'bookmark'`,
+      )
+      .get();
+    expect(joined?.n).toBe(1);
+  });
+
+  test("a child collection records its parent_id; a root collection records null", async () => {
+    h = startHarness({
+      pages: [[]],
+      rootCollections: [collection(9001)],
+      childCollections: [collection(9002, { parent: { $id: 9001 } })],
+    });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+
+    const parentOf = (externalId: string): unknown => {
+      const row = h?.db
+        .query<{ metadata: string }, [string]>(
+          "SELECT metadata FROM item WHERE service = 'raindrop' AND external_id = ?",
+        )
+        .get(externalId);
+      return (JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>)["parent_id"];
+    };
+    expect(parentOf("collection/9002")).toBe(9001);
+    expect(parentOf("collection/9001")).toBeNull();
+  });
+
+  test("collection rows carry epoch-ms timestamps and omit the cover", async () => {
+    h = startHarness({ pages: [[]], rootCollections: [collection(9001)] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    await syncable.sync(h.ctx, null);
+
+    const row = h.db
+      .query<{ canonical_url: string | null; modified_at: number; metadata: string }, []>(
+        "SELECT canonical_url, modified_at, metadata FROM item WHERE id = 'raindrop:collection/9001'",
+      )
+      .get();
+    expect(row?.canonical_url).toBeNull();
+    expect(row?.modified_at).toBe(Date.parse("2024-03-02T08:00:00.000Z"));
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["created_at"]).toBe(Date.parse("2024-03-01T12:00:00.000Z"));
+    expect(meta["count"]).toBe(137);
+    expect(meta["cover"]).toBeUndefined();
+    expect(meta["access"]).toBeUndefined();
+  });
+
+  test("empty collection endpoints leave the bookmark upserts untouched", async () => {
+    h = startHarness({ pages: [[bookmark(1), bookmark(2)]] });
+    restoreFetch = withRewrittenFetch(h.fake.baseUrl);
+    await h.ctx.vault.set("raindrop.token", "k");
+
+    const syncable = createRaindropSyncable({ ensureRaindropMcpRunning: async () => {} });
+    const result = await syncable.sync(h.ctx, null);
+
+    expect(result.itemsUpserted).toBe(2);
+    const collections = h.db
+      .query<{ n: number }, []>(
+        "SELECT COUNT(*) AS n FROM item WHERE service = 'raindrop' AND type = 'collection'",
+      )
+      .get();
+    expect(collections?.n).toBe(0);
   });
 });

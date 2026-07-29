@@ -2,6 +2,36 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.8.0](https://github.com/nimbus-agent/Nimbus/compare/v1.7.0...v1.8.0) (2026-07-29)
+
+
+### Features
+
+* **connectors:** index Google Meet participant detail on conference records ([#927](https://github.com/nimbus-agent/Nimbus/issues/927)) ([69282ef](https://github.com/nimbus-agent/Nimbus/commit/69282ef9712ec966afd9b5e6f4bc11527aa77d35))
+
+
+### Bug Fixes
+
+* **ci:** repair the coverage-gate count assertion broken by [#936](https://github.com/nimbus-agent/Nimbus/issues/936) ([#941](https://github.com/nimbus-agent/Nimbus/issues/941)) ([af9d246](https://github.com/nimbus-agent/Nimbus/commit/af9d246b5f06dceaeee4f43e8665c8b70932e956))
+* **cli:** handle the embedding warm-up error in `nimbus search` ([#937](https://github.com/nimbus-agent/Nimbus/issues/937)) ([8640972](https://github.com/nimbus-agent/Nimbus/commit/8640972adbc81a88c7999597a6feaf381491fc39))
+
+## [1.7.0](https://github.com/nimbus-agent/Nimbus/compare/v1.6.0...v1.7.0) (2026-07-29)
+
+
+### Features
+
+* **ci:** split secret-health's "expiring" from "dead" so a new failure is visible ([#922](https://github.com/nimbus-agent/Nimbus/issues/922)) ([2adae3c](https://github.com/nimbus-agent/Nimbus/commit/2adae3cc3d036ca97b1771ae9f880fbea5929881))
+* **connectors:** index Mercury transactions (`mercury:transaction`) ([#924](https://github.com/nimbus-agent/Nimbus/issues/924)) ([d9a4708](https://github.com/nimbus-agent/Nimbus/commit/d9a4708318fc0ccd321f1e1dd96ad6fc074e863d))
+* **connectors:** index Raindrop collections as `raindrop:collection` ([#929](https://github.com/nimbus-agent/Nimbus/issues/929)) ([bbe2be7](https://github.com/nimbus-agent/Nimbus/commit/bbe2be71a72fbea2f336ae47787c9aa535f755a0))
+
+
+### Bug Fixes
+
+* **cli:** make `nimbus init` fail loudly when the Gateway never starts ([#933](https://github.com/nimbus-agent/Nimbus/issues/933)) ([a28e3f0](https://github.com/nimbus-agent/Nimbus/commit/a28e3f049fbe85ef275d0c10149bf2fce95d2120))
+* **gateway:** bind IPC before the embedding model loads ([#928](https://github.com/nimbus-agent/Nimbus/issues/928)) ([#934](https://github.com/nimbus-agent/Nimbus/issues/934)) ([79b18f0](https://github.com/nimbus-agent/Nimbus/commit/79b18f0e484d22a381324f660aa0631dce1385d5))
+* **security:** close the last two bun audit advisories — @hono/node-server fixed, @ai-sdk/provider-utils accepted with a re-check date ([#923](https://github.com/nimbus-agent/Nimbus/issues/923)) ([ede61eb](https://github.com/nimbus-agent/Nimbus/commit/ede61eb4772b443abc1f7d24f843f04b8b90d7b5))
+* **vault:** probe the Linux Secret Service instead of secret-tool's PATH ([#935](https://github.com/nimbus-agent/Nimbus/issues/935)) ([ccba4aa](https://github.com/nimbus-agent/Nimbus/commit/ccba4aa2dde285c7145ca2b6a94f3a6677954199))
+
 ## [1.6.0](https://github.com/nimbus-agent/Nimbus/compare/v1.5.1...v1.6.0) (2026-07-29)
 
 

@@ -916,54 +916,41 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # BATCHED, not one-gate-per-job. These 15 gates each ran 0.6-1.3 min but
+    # QUEUED 11-20 min behind a saturated concurrent-job cap, and ~0.5 min of
+    # every leg was runner start + checkout + `bun install` — the matrix spent
+    # far more wall time on setup and queueing than on the thresholds it
+    # enforces. Three batches pay that setup 3x instead of 15x and hand 12 job
+    # slots back to the account-wide pool that every other PR is waiting on.
+    #
+    # The trade is honest: this branch of the DAG gets SLOWER in isolation
+    # (~1 min of parallel legs becomes ~3-5 min of serial ones). It wins because
+    # queueing, not execution, is the dominant term — and it stops being the
+    # right call if that ever ceases to be true.
+    #
+    # Every entry still carries an explicit `pal: false`: `audit:coverage-gate-pal`
+    # rule 4 requires the field on every entry, and rule 5 requires every entry in
+    # THIS job to be false. That audit parses only `- name:` and `pal:`, so the
+    # `scripts:` (plural) key below is invisible to it.
+    #
+    # Batches group by subsystem so a red check names a coherent area, and the
+    # run step below executes every script in a batch even after one fails —
+    # preserving the failure locality the 15-way `fail-fast: false` matrix gave.
     strategy:
       fail-fast: false
       matrix:
         gate:
-          - name: Engine
-            script: "test:coverage:engine"
+          - name: Engine & agents
+            flag: engine-agents
+            scripts: "test:coverage:engine test:coverage:agents test:coverage:workflow test:coverage:mcp test:coverage:preflight"
             pal: false
-          - name: Agents
-            script: "test:coverage:agents"
+          - name: Runtime services
+            flag: runtime-services
+            scripts: "test:coverage:sync test:coverage:rate-limiter test:coverage:watcher test:coverage:health test:coverage:metrics"
             pal: false
-          - name: Sync scheduler
-            script: "test:coverage:sync"
-            pal: false
-          - name: Rate limiter
-            script: "test:coverage:rate-limiter"
-            pal: false
-          - name: People
-            script: "test:coverage:people"
-            pal: false
-          - name: Workflow
-            script: "test:coverage:workflow"
-            pal: false
-          - name: Watcher
-            script: "test:coverage:watcher"
-            pal: false
-          - name: Config
-            script: "test:coverage:config"
-            pal: false
-          - name: TUI
-            script: "test:coverage:tui"
-            pal: false
-          - name: Deployment
-            script: "test:coverage:deployment"
-            pal: false
-          - name: Health
-            script: "test:coverage:health"
-            pal: false
-          - name: Metrics
-            script: "test:coverage:metrics"
-            pal: false
-          - name: Preflight
-            script: "test:coverage:preflight"
-            pal: false
-          - name: MCP
-            script: "test:coverage:mcp"
-            pal: false
-          - name: LAN
-            script: "test:coverage:lan"
+          - name: Interfaces & data
+            flag: interfaces-data
+            scripts: "test:coverage:people test:coverage:config test:coverage:tui test:coverage:deployment test:coverage:lan"
             pal: false
     steps:
       - name: Harden Runner
@@ -979,42 +966,32 @@ jobs:
       - name: Setup Bun and install dependencies
         uses: ./.github/actions/setup-nimbus-ci
 
-      - name: Linux — libsecret + D-Bus (vault tests)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Vault'
-        shell: bash
-        run: sudo bash scripts/linux/install-vault-deps.sh
+      # The Vault and Sandbox prep steps that used to sit here were dead: this
+      # job's matrix has never contained a `Vault` or `Sandbox` entry (both are
+      # `pal: true` and live in `coverage-gates-pal`), so every one of their
+      # `matrix.gate.name == '…'` conditions was permanently false. The live
+      # copies remain in `coverage-gates-pal`, which is where those gates run.
 
-      - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
+      - name: Run coverage gates
         shell: bash
         run: |
-          # Drop the GHA runner's preinstalled Microsoft apt repos (azure-cli + prod);
-          # they periodically 403 and fail `apt-get update` wholesale. Not needed here.
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
-          sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck
-
-      - name: Build sandbox helper (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: bun run build:sandbox-helper
-
-      - name: Static-analyse sandbox helper with cppcheck (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
-
-      - name: Setcap on sandbox helper (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
-
-      - name: Run coverage gate
-        shell: bash
-        run: |
-          if [[ "${{ matrix.gate.name }}" == "Vault" && "${{ runner.os }}" == "Linux" ]]; then
-            bash scripts/ci/run-with-optional-dbus.sh bun run ${{ matrix.gate.script }}
-          else
-            bun run ${{ matrix.gate.script }}
+          # Run every gate in the batch even after one fails, so a red check
+          # reports ALL failing gates rather than only the first — the failure
+          # locality the old 15-way `fail-fast: false` matrix gave, preserved.
+          failed=()
+          for script in ${{ matrix.gate.scripts }}; do
+            echo "::group::${script}"
+            if bun run "${script}"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::coverage gate failed: ${script}"
+              failed+=("${script}")
+            fi
+          done
+          if [[ ${#failed[@]} -gt 0 ]]; then
+            echo "Failing coverage gates in this batch: ${failed[*]}"
+            exit 1
           fi
         env:
           CI: "true"
@@ -1030,4 +1007,4 @@ jobs:
         with:
           # No `token:` — same reason as the upload step above (Nimbus#782).
           use_oidc: true
-          flags: ${{ matrix.gate.name }}
+          flags: ${{ matrix.gate.flag }}

@@ -398,41 +398,9 @@
       "execMedian": 1.83,
       "execSpread": 0.04
     },
-    "Nimbus :: Docs Quality :: Bencher Report": {
-      "execMedian": 0,
-      "execSpread": 0
-    },
-    "Nimbus :: Docs Quality :: Cast transcript tripwire": {
-      "execMedian": 0.7,
-      "execSpread": 0.05
-    },
-    "Nimbus :: Docs Quality :: OG card render": {
-      "execMedian": 0.65,
-      "execSpread": 0.05
-    },
-    "Nimbus :: Docs Quality :: Package READMEs audit": {
-      "execMedian": 0.64,
-      "execSpread": 0.08
-    },
-    "Nimbus :: Docs Quality :: README CLI-command tripwire": {
-      "execMedian": 0.64,
-      "execSpread": 0.08
-    },
-    "Nimbus :: Docs Quality :: SVG asset audit": {
-      "execMedian": 0.68,
-      "execSpread": 0.11
-    },
-    "Nimbus :: Docs Quality :: Starlight build test": {
-      "execMedian": 0.63,
-      "execSpread": 0.1
-    },
     "Nimbus :: Docs Quality :: lychee link check": {
       "execMedian": 0.66,
       "execSpread": 0.18
-    },
-    "Nimbus :: Docs Quality :: markdownlint-cli2": {
-      "execMedian": 0.61,
-      "execSpread": 0.12
     },
     "Nimbus :: Performance Benchmarks :: Bench (macos-15)": {
       "execMedian": 32.58,

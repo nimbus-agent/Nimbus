@@ -37,6 +37,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   silent-degrade site is greppable. Also: the lazy runtime now warms eagerly (nothing has to call
   `embedQuery` to start the load), a terminated worker bridge stops claiming `warming`, and the
   600 s worker init window is unchanged but no longer sits on the bind path.
+- **2026-07-29 — CI fan-out cut from ~34 jobs per PR to ~11; the queue was arithmetic, not misconfiguration.**
+  PRs were taking hours, all of them queued. Measured rather than guessed: 18-19
+  jobs running against GitHub Free's 20-concurrent-job account cap, macOS pinned
+  at exactly 5/5 (its own sub-cap) on two consecutive samples, and 85-133 jobs
+  waiting — of which 85 were cheap ubuntu ones. One PR push fanned out to ~34
+  jobs across 9 workflows, against ~10 branches in flight. The org moved to Team
+  (20 -> 60 concurrent, verified live: a later sample showed 36 running), and
+  this change removes the fan-out that made the cap bind in the first place.
+  **`coverage-gates-linux`: 15 one-gate jobs -> 3 batched jobs (-12).** Each leg
+  ran 0.6-1.3 min but queued 11-20 min, and ~0.5 min of every leg was runner
+  start + checkout + `bun install` — the matrix spent more wall time on setup and
+  queueing than on the thresholds it enforced. The batch step runs every script
+  even after one fails, preserving the failure locality `fail-fast: false` gave.
+  Five `Vault`/`Sandbox` prep steps were deleted from that job as provably dead:
+  its matrix has never held either gate, so every `matrix.gate.name == '…'`
+  condition was permanently false. **docs-quality: 8 jobs -> 2 (-6)** — seven
+  runners each paying ~30s of identical setup for one near-instant `bun run`;
+  `link-check` stays separate because it is the slow, network-touching one.
+  **`js-licenses` folded into `Dependency audit` (-1)**, which moves a license
+  violation onto a required check — a behaviour change, recorded as such.
+  **`cargo-audit`/`cargo-deny` skipped on PRs touching no Rust (-2)** and
+  **the cross-platform matrix narrowed to the packages a PR can affect (-2)**.
+  Both touch required-check semantics and both were verified against the LIVE
+  ruleset rather than the comments describing it: the `ci.yml` comment asserting
+  that rulesets require the expanded `Cross-platform (pkg, os)` names is stale —
+  the General ruleset requires only `PR quality — required gates`, the six
+  Security contexts, two CodeQL contexts and `cla`. The cargo gate is written
+  `!= 'false'` and `!cancelled()`, so a failed detector, an unresolvable base
+  SHA, or a red gitleaks all run the scans rather than posting a passing
+  `skipped`. The `audit:coverage-gate-pal` guard was red-proved against the new
+  batch entries before trusting it. Eight dead `ci-latency-baseline.json` rows
+  pruned (seven deleted jobs plus a `Bencher Report` entry that named no job).
 
 - **2026-07-29 — The last two `bun audit` advisories closed: one fixed, one written down.**
   `bun audit` reported 2 (1 moderate, 1 low). Neither blocked CI — the gate is
@@ -104,6 +136,68 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   because routing to OpenAI would bill the user per bank transaction. Catalog / secrets-manifest
   / rate-limiter / sandbox-host wiring was already in place from the accounts release; no new
   vault key, no new host, no new tool surface, no schema change.
+- **2026-07-29 — Raindrop connector: collections indexed as `raindrop:collection` (issue #892).**
+  A `raindrop:bookmark` carried a `collection_id` with nothing to resolve it against. The sync
+  handler now runs a second, independent walk over Raindrop's **two unpaginated** collection
+  endpoints — `GET /rest/v1/collections` (root) and `GET /rest/v1/collections/childrens` (every
+  nested one), one request each, both returning the same `{ result, items }` envelope. The
+  bookmark walk deliberately reads collection id `0` (the "all raindrops" pseudo-collection),
+  which is a query id neither collections endpoint returns, so it is never indexed as an item.
+  `ensureRunning` / `loadCreds` are resolved once, so the unconfigured case still returns the
+  exact `syncNoopResult` (no MCP spawn, no HTTP) it did before; a failure in one walk degrades
+  that walk only. The new pure mapper `mapRaindropCollectionToItem` stores
+  collection_id/title/count/public/view/color/sort/parent_id/created_at/updated_at/
+  canonical_url; `cover` (matching the bookmark mapper's existing restraint) plus
+  `access`/`collaborators`/`user`/`expanded` are deliberately not indexed.
+  **`external_id` is `collection/<id>`, not the bare numeric id** — Raindrop numbers
+  collections and raindrops in separate id spaces, the item primary key is
+  `<service>:<external_id>`, and `upsertIndexedItem` writes `ON CONFLICT(id) DO UPDATE`, so an
+  unprefixed collection id would have let collection 9001 and bookmark 9001 silently overwrite
+  each other on every sync; an integration test drives a real sync with both and asserts both
+  rows survive. Bookmarks keep their existing bare-id `external_id` — re-prefixing them would
+  orphan every already-indexed row. `metadata.collection_id` is the raw **number** so it joins
+  a bookmark's `metadata.collection_id` (also covered by an integration test that runs the join
+  in SQL), and `parent_id` comes from `parent.$id` (null for a root collection). `url` /
+  `canonical_url` are **null**: the API returns no URL for a collection, and constructing an
+  app deep link would invent data the vendor did not send. `raindrop:collection` stays OFF
+  `PROSE_HEAVY_TYPES` (local MiniLM 384-dim), matching `raindrop:bookmark`: the Collection
+  object has no description field at all, so there is no prose to embed. Three new read tools
+  (`raindrop_collections_list` / `raindrop_collection_get` / `raindrop_collections_search`);
+  `hitlRequired` stays empty. Catalog / secrets-manifest / rate-limiter / sync-registration
+  wiring already existed and was verified unchanged.
+- **2026-07-29 — Google Meet indexes participant detail, issue #893.**
+  The Meet connector indexed conference records — a start time, an end time and an id — which
+  made a meeting essentially unfindable. Participants now enrich the **existing**
+  `google_meet:meeting` item rather than becoming their own item type: a participant has no
+  title, no body, no URL and no meaning outside its conference record, so N rows per meeting
+  would only dilute search results, and the codebase precedent is already
+  `apple:event.attendees` / `imap:email.participants` — there is no attendee item type
+  anywhere. The syncable issues one extra
+  `GET /v2/conferenceRecords/{id}/participants?pageSize=100` per record, in a SINGLE page,
+  using the collection's `totalSize` for the true head-count when the roster is clipped at
+  `MAX_INDEXED_PARTICIPANTS=100` (~8 KB, well inside the 64 KB per-item metadata ceiling).
+  **No scope change:** `conferenceRecords.participants.list` accepts the
+  `meetings.space.readonly` scope this connector already declares, so there is no re-consent
+  and no OAuth-registry / config / Tauri-allowlist edit. Each participant is reduced to
+  `{ kind: "signed_in" | "anonymous" | "phone", id, displayName }` — `id` is the `users/{id}`
+  directory id (People API / Admin SDK interoperable), present only for signed-in users; a
+  phone join keeps the partially-redacted number Google itself returns, because it is the only
+  thing identifying a dial-in participant. **`earliestStartTime` / `latestEndTime` are
+  deliberately not indexed**: they answer "how long did each person stay", which is attendance
+  surveillance, not "who was in that meeting" — the conference record's own start/end already
+  bound the meeting. The opaque participant resource `name` is dropped for the same reason `id`
+  is kept. The synthesized title now leads with who was there
+  (`Meeting with Ada Lovelace, Grace Hopper +37 — 2024-01-02`, capped at three names), a
+  deliberate change: `Meeting 2024-01-02` was unsearchable, and nobody recalls a meeting by its
+  date. The v1 title survives as the fallback whenever no participant carried a name, and
+  `body_preview` carries the full stored roster so every attendee is searchable, not just the
+  three the title has room for. A per-record participants `403`/`404`/parse failure warns and
+  indexes the record with an empty roster rather than aborting the cycle and losing the
+  conference records; `UnauthenticatedError` still propagates so a dead token reaches the
+  scheduler. A record with no `name` — which the mapper would reject anyway — costs no
+  participants request. `google_meet:meeting` stays on local MiniLM embeddings, with a
+  regression test naming the decision. **Transcripts remain deferred** — they are the most
+  sensitive content a person owns and need their own scope and consent design.
 
 - **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
   The zero-config path shipped (#887) with its sync step covered only by unit tests using an

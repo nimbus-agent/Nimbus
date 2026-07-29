@@ -100,15 +100,38 @@ jobs:
           echo "gateway-touched=$GW" >> "$GITHUB_OUTPUT"
           echo "cli-touched=$CLI" >> "$GITHUB_OUTPUT"
 
-          # Cross-platform matrix: always emit all 4 entries. Branch
-          # protection rulesets require the expanded check names
-          # (`PR quality — Cross-platform (cli, macos-15)` etc.); a
-          # per-package skip would post the un-expanded template name and
-          # leave the 4 required checks "Expected — Waiting for status to
-          # be reported" forever. The `code-changed` gate already
-          # short-circuits docs-only PRs, so per-package gating saves
-          # nothing here.
-          MATRIX='[{"os":"macos-15","pkg":"gateway"},{"os":"windows-2025","pkg":"gateway"},{"os":"macos-15","pkg":"cli"},{"os":"windows-2025","pkg":"cli"}]'
+          # Cross-platform matrix: emit only the packages this PR can affect.
+          #
+          # This used to always emit all 4 entries, on the stated grounds that
+          # branch-protection rulesets require the expanded check names. That is
+          # no longer true — the General ruleset (14784377) requires exactly:
+          # "PR quality — required gates", the six Security contexts, the two
+          # CodeQL "Analyze (…)" contexts and "cla". No expanded Cross-platform
+          # name appears in any ruleset, so narrowing the matrix removes no
+          # required context. `pr-quality-required` still `needs:` this job, so
+          # the gate keeps its dependency either way.
+          #
+          # gateway-touched / cli-touched are exclude-logic (true unless every
+          # changed file is provably irrelevant to that package) and both fall
+          # back to true on an empty diff, so the failure mode is running MORE
+          # than needed, never less. A PR touching only packages/cli/ drops the
+          # two gateway legs — macOS especially, where the account-wide cap is
+          # just 5 concurrent jobs.
+          ENTRIES=()
+          if [[ "$GW" == "true" ]]; then
+            ENTRIES+=('{"os":"macos-15","pkg":"gateway"}' '{"os":"windows-2025","pkg":"gateway"}')
+          fi
+          if [[ "$CLI" == "true" ]]; then
+            ENTRIES+=('{"os":"macos-15","pkg":"cli"}' '{"os":"windows-2025","pkg":"cli"}')
+          fi
+          # An empty matrix makes GitHub fail the job rather than skip it, which
+          # would red every docs-only PR through `pr-quality-required`. Neither
+          # flag can be false on an empty diff, but belt-and-braces: fall back to
+          # the cli pair, the cheaper of the two.
+          if [[ ${#ENTRIES[@]} -eq 0 ]]; then
+            ENTRIES+=('{"os":"macos-15","pkg":"cli"}' '{"os":"windows-2025","pkg":"cli"}')
+          fi
+          MATRIX="[$(IFS=,; echo "${ENTRIES[*]}")]"
           echo "cross-platform-matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
           # Fail-safe: an empty diff (e.g. base resolution glitch) is treated as
@@ -202,14 +225,16 @@ jobs:
   # restore that isolation by construction.
   pr-quality-cross-platform:
     name: PR quality — Cross-platform (${{ matrix.pkg }}, ${{ matrix.os }})
-    # The filter always emits the full 4-entry matrix on `pull_request`
-    # events (see ci.yml#Detect-changed-paths). Branch-protection rulesets
-    # require the expanded check names (`PR quality — Cross-platform
-    # (cli, macos-15)` etc.), so this job must RUN on every PR — even
-    # docs-only ones — or those 4 required checks never post and sit
-    # "Expected — Waiting for status to be reported" forever. The expensive
-    # steps below are individually gated on `code-changed`, so a docs-only PR
-    # spins up the 4 matrix legs but does no test work (they report success).
+    # The filter emits only the packages this PR can affect (see
+    # ci.yml#Detect-changed-paths). No expanded Cross-platform check name is a
+    # required context in any ruleset — verified against the live General
+    # ruleset — so a narrowed matrix leaves nothing "Expected — Waiting for
+    # status to be reported". `pr-quality-required` needs: this job, which is
+    # what actually gates.
+    #
+    # The job still RUNS on every PR: the expensive steps below are individually
+    # gated on `code-changed`, so a docs-only PR spins up the remaining legs and
+    # reports success without doing test work.
     if: github.event_name == 'pull_request'
     needs: filter
     strategy:
