@@ -132,6 +132,27 @@ jobs:
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/fake-home"
+
+          # `nimbus init` prints only the PATH of the gateway log, never its
+          # contents, so a failure here is undiagnosable from the CI log alone.
+          # Dump it on any non-zero exit. Both platform log locations are
+          # probed because dataDir is XDG on Linux and Application Support on
+          # macOS.
+          dump_gateway_log() {
+            echo "----- gateway log (post-failure diagnostics) -----"
+            for d in "$HOME/.local/share/nimbus/logs" \
+                     "$HOME/Library/Application Support/Nimbus/logs"; do
+              [ -d "$d" ] || continue
+              for f in "$d"/*.log; do
+                [ -f "$f" ] || continue
+                echo "== $f =="
+                tail -200 "$f"
+              done
+            done
+            echo "----- end gateway log -----"
+          }
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then dump_gateway_log; fi; exit "$rc"' EXIT
+
           for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
             if [ -f "$rc" ]; then . "$rc"; break; fi
           done
