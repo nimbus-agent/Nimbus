@@ -68,6 +68,17 @@ function parseReadwisePage(parsed: unknown): { items: unknown[]; hasMore: boolea
 }
 
 /**
+ * `SyncResult.bytesTransferred` is optional on the shared type, but every
+ * terminal result {@link runSinglePassPaginatedSync} can return populates it —
+ * its one un-populated path (`syncNoopResult`) is unreachable here because
+ * `sync()` returns early when the credential is missing. The `?? 0` is a
+ * type-level guard, not a live branch.
+ */
+function bytesOf(result: SyncResult): number {
+  return result.bytesTransferred ?? 0;
+}
+
+/**
  * Two independent single-pass walks over the same credential: highlights
  * (`readwise:highlight`) then books (`readwise:book`). They are separate DRF
  * list endpoints with no ordering dependency, so a failure in one degrades that
@@ -118,7 +129,7 @@ export function createReadwiseSyncable(options: ReadwiseSyncableOptions): Syncab
       return {
         ...highlights,
         itemsUpserted: highlights.itemsUpserted + books.itemsUpserted,
-        bytesTransferred: (highlights.bytesTransferred ?? 0) + (books.bytesTransferred ?? 0),
+        bytesTransferred: bytesOf(highlights) + bytesOf(books),
         durationMs: Math.round(performance.now() - t0),
       };
     },
