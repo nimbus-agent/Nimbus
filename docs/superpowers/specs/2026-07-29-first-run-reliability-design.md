@@ -128,11 +128,34 @@ sheds a chunk of the ICP for no gain. Defer **B** pending owner input below.
 ### Cost of the recommendation
 
 The honest cost of A is that a container user must wrap the gateway in a session
-bus, and unlock the keyring non-interactively — in practice with an empty
-password, exactly as `linux-dbus-tests.sh` does. We should say that out loud in
-the docs rather than let a reader assume a keyring unlocked with `""` is
-protecting anything at rest. If that reads as unacceptable for the ICP, the
-answer is B(3) — TPM-bound — and not B(2), and it is a post-launch project.
+bus and unlock the keyring non-interactively — in practice with an empty
+password, exactly as `linux-dbus-tests.sh:21` does (`echo "" |
+gnome-keyring-daemon --unlock`). That form is CI-only today: every call site is a
+test path (`_test-suite.yml`, `scripts/lib/ci-tests.ts`,
+`scripts/coverage-floor/reseed-docker.sh`), no installer or runtime path invokes
+it, and the one headless line we already ship to users (`docs/README.md:311`)
+names no password. Promoting it verbatim into the README/quickstart would be the
+first time an empty-password unlock appears in a user-facing document, so A ships
+it **scoped**:
+
+1. **Scope the empty-password form to CI and disposable dev containers**, at the
+   callsite in the docs rather than in a footnote, and say out loud there that a
+   keyring unlocked with `""` is not protecting anything at rest.
+2. **Any box holding real credentials gets the passphrase-unlocked form**, with
+   the consequence stated: the keyring is unlocked once per boot, so unattended
+   restart does not survive it.
+3. **There is no protected and unattended option at launch.** That is B(3),
+   TPM-bound, not B(2), and it is a post-launch project.
+
+This narrows the B(2) argument above: an environment-variable key is strictly
+worse than an *interactively unlocked* login keyring, not than an empty-password
+one, against which the two are roughly equivalent. B(2) stays rejected (it buys a
+new backend and a #3 amendment for nothing), but A's headless variant carries no
+at-rest property either and must not be written as if it does. What an empty
+password leaves of gnome-keyring's key derivation is not measured anywhere in
+this tree, and `vault/linux.ts` never sees a keyring password — it shells out to
+`secret-tool` only — so the degradation is entirely at rest, and this fix is
+docs-level with no code path behind it.
 
 ---
 
@@ -142,9 +165,19 @@ Four sub-questions, in the order they bite a new user.
 
 ### 2a. Ship the model, pre-warm it at install, or fetch lazily?
 
-- **Ship weights in the installer.** +22.59 MB on installers that are 49–76 MB
-  (+30% to +46%). It is the only option that works air-gapped or behind a proxy
-  that will never answer. It also pins the model version to a release — which
+- **Ship weights in the installer.** 22.59 MB is the **uncompressed** weight
+  total, not the installer delta: every headless format compresses its payload,
+  and not with one codec (`.deb` `data.tar.zst` zstd, `.rpm`
+  `PAYLOADCOMPRESSOR=gzip`, AppImage gzip squashfs, `.pkg` gzip cpio inside the
+  xar, `.msi` LZX cabinet — read off the shipped v1.6.0 assets). Compressed
+  standalone the four files are 15.1–15.7 MB (measured on the real
+  `model_quantized.onnx`: zstd -19 15.09, xz -9 15.11, gzip -9 15.65 MiB), so
+  against installers that are 49–76 MB the range is roughly **+20% to +32%**,
+  not +30% to +46% — and the exact per-artifact delta is not established until
+  each one is rebuilt (`bun scripts/package-headless-bundle.ts`, then
+  `bun scripts/package-linux-installers.ts`, diffed against the v1.6.0 assets).
+  It is the only option that works air-gapped or behind a proxy that will never
+  answer. It also pins the model version to a release — which
   makes vectors reproducible per version — and takes a third-party CDN off the
   first-run critical path, which is a supply-chain reduction as much as a UX one.
 - **Pre-warm at install time.** Moves the hang from `nimbus init` into
@@ -155,12 +188,15 @@ Four sub-questions, in the order they bite a new user.
 
 **Recommendation:** ship the weights in the **headless installers**
 (`.deb`/`.rpm`/`.pkg`/`.msi`/AppImage/tarball), where `package-headless-bundle.ts`
-already knows how to do it and the release job simply never calls it that way.
-Keep the lazy fetch for the raw single-binary downloads and for brew/scoop,
-where +23 MB per formula is not our budget to spend. Explicitly reject
-pre-warming at install.
+already knows how to do it. Note this is a new release-workflow step, not a flag
+flip: `release.yml` never invokes that script at all — repo-wide it appears only
+in `_test-suite.yml:744` and `package.json:232`. Keep the lazy fetch for the raw
+single-binary downloads and for brew/scoop, where even the compressed ~15 MB per
+formula is not our budget to spend. Explicitly reject pre-warming at install.
 
-**Costs:** +22.59 MB per headless installer; the release job gains a model
+**Costs:** ~15–16 MB per headless installer — 22.59 MB uncompressed, shrunk by
+each format's own codec, with the firm number owed from a rebuild before this is
+quoted anywhere binding; the release job gains a model
 download that must be checksum-pinned like `nfpm` already is; a model bump
 becomes a release-notes line. One item must be checked before this lands —
 redistributing the MiniLM/Xenova weights inside an AGPL artifact needs a pass
@@ -189,8 +225,20 @@ entirely and the spinner question dissolves.
 
 **Recommendation:** surface `backfill_progress` — already emitted by the worker
 and already tracked on the bridge — as `embedding: warming (n/m)` in
-`nimbus status`. Real *download* progress is a nice-to-have, not launch-blocking:
-it is a one-time 22.6 MB fetch, and for installer users 2a removes it.
+`nimbus status`. That covers one phase. Warm-up has three, they carry three
+different signals, and 2d depends on the distinction:
+
+- **download** — `model_progress`, bytes per file, emitted before the worker
+  posts `ready`. The in-flight bind-first work (#928) wires it through
+  `EmbeddingReadiness.download` to `gateway.ping`; `nimbus status` does not read
+  that field yet, and should.
+- **model load** — from the last `model_progress` to `ready`. No signal exists
+  here. A run that finds the weights already on disk (2a, or
+  `NIMBUS_EMBEDDING_MODEL_DIR`) is this phase and nothing else.
+- **backfill** — `backfill_progress`, n/m items, emitted only *after* `ready`.
+
+So download progress is not a deferred nice-to-have: the signal exists and 2d
+consumes it. What is unbuilt is the CLI rendering.
 
 ### 2d. Air-gapped or proxied, where the fetch can never succeed
 
@@ -205,8 +253,18 @@ told to read.
    when no bytes have arrived for N seconds, not when N seconds have passed.
    Simply lowering 600 → 90 would punish a slow-but-working link, which is a
    check more lenient than the network it models in one direction and stricter
-   in the other. A stall timeout is strictly better in both. It needs a real
-   progress signal, which is the same wiring as 2c.
+   in the other. A stall timeout is strictly better in both. It is driven by
+   `model_progress`, not by `backfill_progress`: the latter is emitted only
+   after `ready`, so at the moment a fetch is the thing that has stalled, zero
+   of them have been sent. Today `worker-bridge.ts` arms one `setTimeout` and
+   races it against readiness; a stall timeout re-arms on each event instead.
+   Two things must be settled before it is implementable. The model-load window
+   emits nothing, so the timeout has to tolerate a silent stretch after the last
+   byte or it will kill a working slow load. And N is unmeasured — take it from
+   the worst inter-event gap on a real cold fetch (clear the model cache, run
+   `nimbus start` with `NIMBUS_EMBEDDING_INIT_TIMEOUT_MS` raised high enough that
+   the run finishes, and log the `model_progress` arrivals), not from a round
+   number.
 3. The give-up message must name `NIMBUS_EMBEDDING_MODEL_DIR` and
    `[embedding] enabled = false`, not just say "disabled".
 4. Do not silently re-attempt the fetch on every restart. Record the state and
@@ -222,7 +280,9 @@ told to read.
    lazy write plus the live probe is complete and cheap. **My recommendation:
    no for launch** — laptop-first, with a documented headless path — and revisit
    when a user asks for it rather than because we imagined they would.
-2. **Approve +22.59 MB per headless installer**, and confirm we may redistribute
+2. **Approve ~15–16 MB per headless installer** (22.59 MB uncompressed, before
+   each format's codec; firm per-artifact number owed from a rebuild), and
+   confirm we may redistribute
    the MiniLM/Xenova weights (license check against `docs/license-policy.md`,
    plus SBOM/NOTICE). If the answer is no, 2a collapses to the lazy fetch and 2b
    through 2d carry the whole first-run contract on their own.
