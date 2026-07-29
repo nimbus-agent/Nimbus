@@ -618,6 +618,53 @@ moves to P6).
   December date; at 90-day lead that would have stayed silent past the expiry
   that actually bites.
 
+### Code-scanning progress log
+
+**Scorecard `DangerousWorkflowID` ×3 (alerts 158/159/160) — the premise now has a
+gate, `audit:workflow-run-triggers` (`scripts/structure-audit/check-workflow-run-triggers.ts`).**
+
+Scorecard flags `ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag_name }}`
+on `actions/checkout` in `.github/workflows/publish-package-managers.yml` (two
+jobs) and `.github/workflows/publish-linux-repo.yml`. The *shape* is real and
+the finding is not noise: those jobs run in the base-repo context with the
+release-bot App key, `WINGET_PAT` and the GPG signing subkey in scope, and they
+execute the checked-out tree (`bun scripts/release/*.ts`, `./.github/actions/setup-nimbus-ci`).
+
+The **premise fails**, verified from source rather than taken on trust:
+
+1. Both workflows list exactly one upstream — `workflows: ["Release"]`.
+2. Exactly one workflow in the repo is named `Release`
+   (`.github/workflows/release.yml`), and its only trigger is
+   `push: tags: [v*]`.
+3. Pushing a tag to this repo requires write access, so no fork-PR commit can
+   ever become `workflow_run.head_sha`.
+
+**The job-level `if:` guards are not the control, and must not be mistaken for
+one.** For a fork PR, `workflow_run.head_branch` is the contributor's own branch
+name, so a branch called `v1` satisfies both `startsWith(..., 'v')` and
+`!contains(..., '-')`. Step 3 is the entire defense.
+
+That defense was an unwritten assumption about a *different file*, which is
+exactly the shape that rots. `audit:workflow-run-triggers` now asserts it: every
+`workflow_run` consumer must name upstreams that trigger only on `push`,
+`workflow_dispatch` or `schedule` (deny-by-default), must carry a non-empty
+`workflows:` filter, and must name upstreams that actually resolve. Adding
+`pull_request` to `release.yml` reds the gate — red-proved that way before
+merge. Local, deterministic, `preflight:fast` tier.
+
+**CodeQL `js/useless-regexp-character-escape` (alert 161) — false positive,
+fixed at the source anyway.** The flagged `\$` sits in a *template literal* in
+`scripts/release/documented-asset-urls.test.ts`, where it is load-bearing: it
+stops `${GITHUB_REF_NAME}` being read as an interpolation. The string is a YAML
+fixture passed to `stagedAssetNames()` and is never compiled as a regex, so the
+query's "may still represent a meta-character in a regular expression" premise
+does not apply. Rather than suppress, the fixture became a single-quoted string
+— `${` is not special there, so no escape is needed and the alert has no source
+to fire on. The literal value is byte-identical.
+
+None of the four alerts were dismissed here; dismissal is the repository
+owner's call.
+
 ---
 
 ## How to update this document

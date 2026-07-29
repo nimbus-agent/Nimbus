@@ -123,6 +123,7 @@ bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails o
 bun scripts/structure-audit/count-any-usage.ts --update    # rewrite docs/structure-audit/any-baseline.json
 
 bun run audit:doc-refs                  # doc-ref drift (broken markdown links + backtick paths)
+bun run audit:workflow-run-triggers      # workflow_run upstreams must be write-access-only (pwn-request premise)
 ```
 
 Baselines: `docs/structure-audit/{any-baseline.json,baseline.md,churn-90d.json,coverage-baseline.json,db-run-census.json}`.
