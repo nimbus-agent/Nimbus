@@ -50,6 +50,15 @@ jobs:
       - name: bun audit
         run: bun audit --audit-level high
 
+      # `bun audit --audit-level high` only blocks HIGH/CRITICAL. Everything
+      # below that used to persist silently — two advisories sat in the output
+      # with nothing failing and no record that anyone had judged them. This
+      # step holds every live advisory to a written, dated decision in
+      # scripts/structure-audit/accepted-advisories.ts, and fails when a
+      # decision expires, goes stale, or was never made.
+      - name: Accepted-advisory registry
+        run: bun run audit:advisories
+
   trivy-scan:
     name: Trivy vulnerability scan
     runs-on: ubuntu-24.04

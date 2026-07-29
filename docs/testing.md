@@ -8,7 +8,7 @@ Five-layer pyramid:
 4. **UI Components (Vitest + Testing Library)** — React components in the Tauri WebView. Vitest is used here because `bun test` does not support jsdom.
 5. **E2E Desktop (Playwright + Tauri WebDriver)** — full desktop flows on all three platforms. Runs on push to `main` and release tags.
 
-Security scans: `bun audit`, `trivy`, CodeQL on every PR; Dependabot for dependency updates. HIGH/CRITICAL findings block merges. License compatibility (`bun run audit:js-licenses` + `cargo-deny`) and committed-secret detection (`gitleaks`) are also enforced on every PR — see [`license-policy.md`](./license-policy.md) and [`SECURITY.md`](./SECURITY.md).
+Security scans: `bun audit`, `trivy`, CodeQL on every PR; Dependabot for dependency updates. HIGH/CRITICAL findings block merges, and `bun run audit:advisories` blocks any *other* live advisory that has no dated decision in [`scripts/structure-audit/accepted-advisories.ts`](../scripts/structure-audit/accepted-advisories.ts) — see [`security-hardening.md`](./security-hardening.md). License compatibility (`bun run audit:js-licenses` + `cargo-deny`) and committed-secret detection (`gitleaks`) are also enforced on every PR — see [`license-policy.md`](./license-policy.md) and [`SECURITY.md`](./SECURITY.md).
 
 **Structure-audit gates** (also CI-enforced) sit alongside the test pyramid:
 
