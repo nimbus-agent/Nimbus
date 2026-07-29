@@ -2,6 +2,7 @@ import type { HealthRow } from "./check-secret-health";
 import {
   CREDENTIAL_REGISTRY,
   type CredentialEntry,
+  HARD_DEADLINE_CRITICAL_DAYS,
   HARD_DEADLINE_LEAD_DAYS,
   LAST_MANUAL_AUDIT,
   MANUAL_AUDIT_MAX_AGE_DAYS,
@@ -19,13 +20,23 @@ export interface LiveSecret {
   readonly visibility?: "all" | "selected";
 }
 
+/**
+ * `deadline-approaching` and `deadline-critical` are deliberately two statuses,
+ * not one. They are the *same fact* (a date in `credential-registry.ts`) at two
+ * different distances, and only the second one means "act now" — collapsing them
+ * into a single warning meant a blown deadline never escalated, while
+ * collapsing them into a single failure meant 90 days of standing red on a
+ * credential that still works. Neither is the same class of finding as `dead`,
+ * which comes from a provider rejecting the credential in a live probe.
+ */
 export type InventoryStatus =
   | "ok"
   | "missing"
   | "present"
   | "undocumented"
   | "stale"
-  | "deadline"
+  | "deadline-approaching"
+  | "deadline-critical"
   | "visibility-drift"
   | "audit-overdue"
   | "indeterminate";
@@ -129,7 +140,26 @@ export function auditCredentials(
         // must never be phrased as negative time ("in -200d" reads like a
         // countdown that hasn't happened yet).
         const when = remaining < 0 ? `overdue by ${Math.abs(remaining)}d` : `in ${remaining}d`;
-        rows.push(row(name, "deadline", `hard deadline ${e.hardDeadline} ${when} — ${e.note}`));
+        // Both details assert, in words, that this is a CALENDAR finding. A
+        // reader skimming a 45-row table must not be able to mistake it for the
+        // row above it that says a provider rejected a token — the detail
+        // carries that distinction even if the status column is truncated or the
+        // row is quoted out of the table into a chat message.
+        const provenance =
+          "this is a scheduled expiry recorded in credential-registry.ts, not a rejected credential";
+        rows.push(
+          remaining <= HARD_DEADLINE_CRITICAL_DAYS
+            ? row(
+                name,
+                "deadline-critical",
+                `hard deadline ${e.hardDeadline} ${when} — the replacement runway is gone, act now (${provenance}) — ${e.note}`,
+              )
+            : row(
+                name,
+                "deadline-approaching",
+                `hard deadline ${e.hardDeadline} ${when} — still working, nothing is broken yet; escalates to a hard failure at ${HARD_DEADLINE_CRITICAL_DAYS}d (${provenance}) — ${e.note}`,
+              ),
+        );
         continue;
       }
     }

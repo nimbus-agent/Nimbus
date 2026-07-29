@@ -29,7 +29,21 @@ describe("stagedAssetNames", () => {
   });
 
   test("ignores a variable-interpolated destination", () => {
-    const yaml = `          cp dist/sbom.cdx.json "dist/stage/nimbus-\${GITHUB_REF_NAME}-sbom.cdx.json"`;
+    // The fixture must contain a literal dollar-brace interpolation, and both
+    // obvious spellings trip a linter:
+    //   - a template literal with a backslash-escaped dollar → CodeQL
+    //     js/useless-regexp-character-escape (alert 161), because the escape
+    //     collapses to the regex meta-character `$`. That is a FALSE POSITIVE
+    //     here — this string is a YAML fixture, never a regex source — but it
+    //     is avoidable, so avoid it rather than suppress it.
+    //   - a plain-quoted string → Biome suspicious/noTemplateCurlyInString.
+    // Interpolating the dollar needs neither, and the value is unchanged.
+    const DOLLAR = "$";
+    const yaml = `          cp dist/sbom.cdx.json "dist/stage/nimbus-${DOLLAR}{GITHUB_REF_NAME}-sbom.cdx.json"`;
+    // Guards the fixture, not the code: `toEqual(new Set())` also passes on a
+    // fixture that lost its interpolation entirely, which would make this test
+    // silently stop testing anything.
+    expect(yaml.includes(`${DOLLAR}{GITHUB_REF_NAME}`)).toBe(true);
     expect(stagedAssetNames(yaml)).toEqual(new Set());
   });
 });

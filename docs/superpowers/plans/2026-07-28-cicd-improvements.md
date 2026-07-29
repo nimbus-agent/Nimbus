@@ -289,6 +289,32 @@ exits 1. The deadline entered the 90-day lead window when #841 corrected the dat
 The consequence is not the red itself (rotation is a real action) but that **a newly dead
 credential would be indistinguishable from the standing red.**
 
+> **Correction, 2026-07-29 (added while implementing the fix; the original text above is left
+> as written).** Two of the mechanics in this finding are wrong, and the root cause is
+> different — though the conclusion in the last sentence survives and is what the fix targets.
+>
+> 1. **`deadline` was in the `warn` set, not the `hard` set.** Line 140 *is* `"deadline",`, but
+>    the `hard` set closes at line 135 and the `warn` set opens at line 136 — line 140 is the
+>    fourth entry of `warn`. A `deadline` row therefore opened/kept the `release-health` issue
+>    open but returned `hardFailure: false`.
+> 2. **The 2026-07-27 exit 1 came from a different row.** Reading the run log
+>    ([30265485703](https://github.com/nimbus-agent/Nimbus/actions/runs/30265485703)), the only
+>    non-`ok`, non-`deadline` row is:
+>
+>    ```text
+>    | org/CLA_BOT_APP_ID | inventory | undocumented | actions secret in org is absent from credential-registry.ts — add it or delete it
+>    ```
+>
+>    `undocumented` **is** in the `hard` set, and it is the row that failed the job. It is also
+>    a genuine, unactioned finding: an org secret exists that the manifest does not declare.
+>
+> This is a worked example of the finding itself. The standing `deadline` warning kept issue
+> #854 permanently open, so a real new finding — an undeclared org secret — arrived as one more
+> row in an already-open issue and was read as the deadline everyone already knew about. The
+> channel was saturated before the signal arrived, which is exactly what the "indistinguishable
+> from the standing red" sentence predicted; it simply happened one week earlier than expected
+> and to `undocumented` rather than to `dead`.
+
 ### Failure MODES (not individual failures)
 
 All 73 Nimbus failures were classified by the *names of the jobs and steps that failed*, not by

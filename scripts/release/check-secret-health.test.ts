@@ -1,14 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ALL_HEALTH_STATUSES,
+  annotationsFor,
+  BROKEN_HEADING,
   classifyAppMint,
   classifyPatProbe,
   classifyProvenanceOutcome,
   composeProvenanceDetail,
+  describePatOutcome,
   evaluateCertExpiry,
+  HEALTH_STATUS_CATALOGUE_COMPLETE,
+  HEALTHY_HEADING,
   type HealthRow,
   type PatStrategy,
   runSecretHealth,
+  SCHEDULED_HEADING,
   safeParseDate,
+  severityOf,
   summarize,
 } from "./check-secret-health.ts";
 import type { GitHubApi, IssueRef, ProbeResult, Release, RepoPerms } from "./gh-api.ts";
@@ -366,6 +374,78 @@ describe("runSecretHealth (orchestration)", () => {
     expect(api.calls.createIssue.length).toBe(0);
   });
 
+  // --- the guard this split must never weaken ---
+  test("DEAD STILL FAILS: a dead PAT hard-fails even when a deadline row is also present", async () => {
+    // The regression this guards: softening the deadline row (so the weekly job
+    // stops being red on a scheduled expiry) must not soften the row next to it.
+    // A credential the provider just rejected is broken NOW and exits 1, always.
+    const api = createFakeApi({ probeResults: { "dead-token": { status: 401, scopes: null } } });
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-29T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [
+        { env: "WINGET_PAT", token: "dead-token", strategy: { kind: "alive" } as PatStrategy },
+      ],
+      certs: [],
+      extraRows: [
+        {
+          name: "nimbus-vscode/VSCE_PAT",
+          kind: "inventory",
+          status: "deadline-approaching",
+          detail: "hard deadline 2026-09-20 in 53d",
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(true);
+    expect(api.calls.createIssue.length).toBe(1);
+    const body = String(api.calls.createIssue[0]?.[1] ?? "");
+    expect(body).toContain(BROKEN_HEADING);
+    expect(body).toContain("WINGET_PAT");
+  });
+
+  test("an approaching deadline alone files the issue but does NOT fail the job", async () => {
+    const api = createFakeApi();
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-07-29T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [],
+      certs: [],
+      extraRows: [
+        {
+          name: "nimbus-vscode/VSCE_PAT",
+          kind: "inventory",
+          status: "deadline-approaching",
+          detail: "hard deadline 2026-09-20 in 53d",
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(false);
+    expect(api.calls.createIssue.length).toBe(1);
+    expect(api.calls.closeIssue.length).toBe(0);
+  });
+
+  test("the same deadline inside the critical window DOES fail the job", async () => {
+    const api = createFakeApi();
+    const result = await runSecretHealth({
+      api,
+      now: new Date("2026-09-10T00:00:00Z"),
+      thresholdDays: 21,
+      pats: [],
+      certs: [],
+      extraRows: [
+        {
+          name: "nimbus-vscode/VSCE_PAT",
+          kind: "inventory",
+          status: "deadline-critical",
+          detail: "hard deadline 2026-09-20 in 10d",
+        },
+      ],
+    });
+    expect(result.hardFailure).toBe(true);
+  });
+
   test("repo-write: a repo perms-lookup error object → indeterminate, NOT a hard failure (T6)", async () => {
     const api = createFakeApi({
       probeResults: { "pm-token": { status: 200, scopes: null } },
@@ -549,11 +629,213 @@ describe("summarize with inventory rows", () => {
     expect(s.hasHardFailure).toBe(true);
   });
 
-  test("stale, deadline, visibility-drift and audit-overdue warn but do not fail", () => {
-    for (const status of ["stale", "deadline", "visibility-drift", "audit-overdue"] as const) {
+  test("stale, deadline-approaching, visibility-drift and audit-overdue warn but do not fail", () => {
+    for (const status of [
+      "stale",
+      "deadline-approaching",
+      "visibility-drift",
+      "audit-overdue",
+    ] as const) {
       const s = summarize([{ name: "org/X", kind: "inventory", status, detail: "d" }]);
       expect(s.hasHardFailure).toBe(false);
       expect(s.hasWarning).toBe(true);
     }
+  });
+
+  test("deadline-critical is a hard failure — the escalated half of the deadline split", () => {
+    const s = summarize([
+      {
+        name: "nimbus-vscode/VSCE_PAT",
+        kind: "inventory",
+        status: "deadline-critical",
+        detail: "d",
+      },
+    ]);
+    expect(s.hasHardFailure).toBe(true);
+  });
+});
+
+// --- expiring vs dead: the two states this monitor must never conflate ---
+
+describe("severityOf", () => {
+  test("a provider-rejected credential is hard — dead is never downgraded", () => {
+    expect(severityOf("dead")).toBe("hard");
+    expect(severityOf("insufficient")).toBe("hard");
+    expect(severityOf("expired")).toBe("hard");
+  });
+
+  test("a calendar deadline with runway left is a warning, and with none is hard", () => {
+    expect(severityOf("deadline-approaching")).toBe("warn");
+    expect(severityOf("deadline-critical")).toBe("hard");
+  });
+
+  test("ok and not-configured are healthy; nothing else is", () => {
+    expect(severityOf("ok")).toBe("healthy");
+    expect(severityOf("not-configured")).toBe("healthy");
+    for (const status of ALL_HEALTH_STATUSES) {
+      if (status === "ok" || status === "not-configured") continue;
+      expect(severityOf(status)).not.toBe("healthy");
+    }
+  });
+
+  test("every declared status is classified — nothing falls through as silently healthy", () => {
+    // `not-configured` sitting in NEITHER the old hard nor warn set is exactly
+    // how an unreported provenance probe once took the issue-CLOSING branch.
+    // Now classification is total: every status names its own severity.
+    for (const status of ALL_HEALTH_STATUSES) {
+      expect(["hard", "warn", "healthy"]).toContain(severityOf(status));
+    }
+  });
+
+  test("the status catalogue covers the whole union (compile-time proof, asserted at runtime)", () => {
+    expect(HEALTH_STATUS_CATALOGUE_COMPLETE).toBe(true);
+    expect(new Set(ALL_HEALTH_STATUSES).size).toBe(ALL_HEALTH_STATUSES.length);
+  });
+
+  test("an unrecognised status fails closed to hard, never to healthy", () => {
+    // A value that slipped past the type system (a renamed action output, a
+    // hand-built row) must alarm, not vanish into the healthy section.
+    // biome-ignore lint/suspicious/noExplicitAny: deliberately bypassing the type system to prove the runtime guard
+    expect(severityOf("something-nobody-declared" as any)).toBe("hard");
+  });
+});
+
+describe("summarize sections", () => {
+  const section = (table: string, heading: string): string => {
+    const start = table.indexOf(heading);
+    if (start < 0) return "";
+    const rest = table.slice(start + heading.length);
+    const nextHeading = rest.search(/^## /m);
+    return nextHeading < 0 ? rest : rest.slice(0, nextHeading);
+  };
+
+  const rows: readonly HealthRow[] = [
+    { name: "WINGET_PAT", kind: "pat", status: "dead", detail: "the provider REJECTED it" },
+    {
+      name: "nimbus-vscode/VSCE_PAT",
+      kind: "inventory",
+      status: "deadline-approaching",
+      detail: "hard deadline 2026-09-20 in 53d",
+    },
+    { name: "org/SONAR_TOKEN", kind: "inventory", status: "ok", detail: "secret last set 10d ago" },
+  ];
+
+  test("a dead credential lands in the BROKEN section and a live deadline in the SCHEDULED one", () => {
+    const { table } = summarize(rows);
+    expect(section(table, BROKEN_HEADING)).toContain("WINGET_PAT");
+    expect(section(table, SCHEDULED_HEADING)).toContain("nimbus-vscode/VSCE_PAT");
+    expect(section(table, HEALTHY_HEADING)).toContain("org/SONAR_TOKEN");
+  });
+
+  test("neither state can appear in the other's section — this is the whole point", () => {
+    const { table } = summarize(rows);
+    expect(section(table, SCHEDULED_HEADING)).not.toContain("WINGET_PAT");
+    expect(section(table, BROKEN_HEADING)).not.toContain("nimbus-vscode/VSCE_PAT");
+  });
+
+  test("the two headings differ in words AND in leading glyph, not just in status text", () => {
+    expect(BROKEN_HEADING).not.toBe(SCHEDULED_HEADING);
+    expect(BROKEN_HEADING).toContain("❌");
+    expect(SCHEDULED_HEADING).toContain("🟡");
+    expect(SCHEDULED_HEADING.toLowerCase()).toContain("nothing here is broken");
+  });
+
+  test("the BROKEN heading is always rendered, so 0 → 1 is visible at a glance", () => {
+    const clean = summarize([
+      { name: "org/SONAR_TOKEN", kind: "inventory", status: "ok", detail: "fresh" },
+    ]);
+    expect(clean.table).toContain(BROKEN_HEADING);
+    expect(section(clean.table, BROKEN_HEADING)).toContain("_None._");
+  });
+
+  test("the headline counts each severity so the summary line alone carries the verdict", () => {
+    const { table } = summarize(rows);
+    expect(table.split("\n")[0]).toBe("**BROKEN: 1 · scheduled: 1 · healthy: 1**");
+  });
+
+  test("the body defines the two vocabularies so no reader has to infer them", () => {
+    const { table } = summarize(rows);
+    expect(table).toContain("live probe");
+    expect(table).toContain("credential-registry.ts");
+  });
+
+  test("every row reaches the body exactly once — sectioning can never drop a finding", () => {
+    // Bucketing rows into sections introduces a way for a row to vanish that a
+    // flat table did not have. A dropped row would be a silent false-negative,
+    // so assert the count survives across every status the monitor can emit.
+    const all: HealthRow[] = ALL_HEALTH_STATUSES.map((status, i) => ({
+      name: `CRED_${i}`,
+      kind: "inventory",
+      status,
+      detail: "d",
+    }));
+    const { table } = summarize(all);
+    for (const row of all) {
+      expect(table.split(`| ${row.name} |`)).toHaveLength(2);
+    }
+  });
+});
+
+describe("annotationsFor", () => {
+  test("an approaching deadline emits a ::warning:: annotation, never ::error::", () => {
+    const [line] = annotationsFor([
+      {
+        name: "nimbus-vscode/VSCE_PAT",
+        kind: "inventory",
+        status: "deadline-approaching",
+        detail: "hard deadline 2026-09-20 in 53d",
+      },
+    ]);
+    expect(line).toStartWith("::warning ");
+    expect(line).toContain("nimbus-vscode/VSCE_PAT");
+    expect(line).toContain("deadline-approaching");
+  });
+
+  test("a dead credential emits ::error::, so the run's annotation list separates them too", () => {
+    const [line] = annotationsFor([
+      { name: "WINGET_PAT", kind: "pat", status: "dead", detail: "rejected" },
+    ]);
+    expect(line).toStartWith("::error ");
+  });
+
+  test("healthy rows emit nothing", () => {
+    expect(annotationsFor([{ name: "X", kind: "pat", status: "ok", detail: "" }])).toEqual([]);
+  });
+
+  test("detail text can never break out of the workflow command", () => {
+    // A workflow command is recognised only at the START of a line, so the
+    // property that matters is that no interpolated text can begin a new one:
+    // every CR/LF must be encoded. (A bare `::` mid-message is inert once that
+    // holds — the runner does not re-scan within a line.) Registry notes are
+    // ours, but secret NAMES arrive from the GitHub API, so escape always.
+    const lines = annotationsFor([
+      {
+        name: "EVIL\n::error::spoofed",
+        kind: "inventory",
+        status: "undocumented",
+        detail: "100% broken\r\nsecond line",
+      },
+    ]);
+    expect(lines).toHaveLength(1);
+    const line = lines[0] ?? "";
+    expect(line.split(/\r|\n/)).toHaveLength(1);
+    // Exactly one command is emitted: the one this function intended.
+    expect(line.split(/^::/gm)).toHaveLength(2);
+    expect(line).toStartWith("::error ");
+    expect(line).toContain("%0A");
+    expect(line).toContain("%0D");
+    expect(line).toContain("%25");
+  });
+});
+
+describe("describePatOutcome", () => {
+  test("a dead PAT says, in words, that the provider rejected it right now", () => {
+    const detail = describePatOutcome("dead", { kind: "alive" });
+    expect(detail.toLowerCase()).toContain("rejected");
+    expect(detail.toLowerCase()).toContain("now");
+  });
+
+  test("a healthy PAT keeps the original strategy-kind detail", () => {
+    expect(describePatOutcome("ok", { kind: "scopes", required: "public_repo" })).toBe("scopes");
   });
 });

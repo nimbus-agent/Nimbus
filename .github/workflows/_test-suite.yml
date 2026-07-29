@@ -93,6 +93,13 @@ jobs:
       - name: GitHub Actions SHA-pin audit (org policy)
         run: bun run audit:action-sha-pins
 
+      - name: workflow_run upstream-trigger audit (pwn-request premise)
+        # The two publish-* workflows check out `workflow_run.head_sha` with
+        # release secrets in scope. That is only safe because their sole
+        # upstream ("Release") runs on tag push, which needs write access.
+        # This gate fails the build if an upstream ever becomes fork-reachable.
+        run: bun run audit:workflow-run-triggers
+
       - name: regen-slo drift check
         run: bun run regen-slo:check
 

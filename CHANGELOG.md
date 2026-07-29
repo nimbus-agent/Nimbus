@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.6.0](https://github.com/nimbus-agent/Nimbus/compare/v1.5.1...v1.6.0) (2026-07-29)
+
+
+### Features
+
+* **audit:** detect when main is red ([#917](https://github.com/nimbus-agent/Nimbus/issues/917)) ([0f0b140](https://github.com/nimbus-agent/Nimbus/commit/0f0b14029396f4bc6cc5f73ce6427f115d03d1e5))
+* **ci:** widen audit:org-settings-drift from 2 settings to 12 across 4 endpoints ([#918](https://github.com/nimbus-agent/Nimbus/issues/918)) ([04961ba](https://github.com/nimbus-agent/Nimbus/commit/04961ba9edf1d2ba0ccd2a9c4f122996df546783))
+
 ## [1.5.1](https://github.com/nimbus-agent/Nimbus/compare/v1.5.0...v1.5.1) (2026-07-28)
 
 

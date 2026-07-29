@@ -415,6 +415,36 @@ Findings are filed as a single, de-duped **`release-health`** GitHub issue
 (opened or updated in place per run, not re-created every week) — see
 `scripts/release/open-health-issue.ts`.
 
+#### Two failures that must never be confused: *rejected* vs *dated*
+
+A credential can be in trouble in two unrelated ways, and the remedy, the
+urgency, and the evidence differ:
+
+| | **Rejected** | **Dated** |
+| --- | --- | --- |
+| statuses | `dead`, `insufficient`, `expired`, `missing-provenance`, `source-mismatch` | `deadline-approaching`, `deadline-critical`, `expiring`, `stale` |
+| evidence | a **live probe** came back bad, just now | a **date** in `scripts/release/credential-registry.ts` |
+| is anything broken? | yes, already | not yet |
+| exits non-zero? | always | only `deadline-critical` / `expired` |
+
+The issue body is therefore **sectioned, not one flat table**: a
+`## ❌ BROKEN` section, a `## 🟡 SCHEDULED` section, and a collapsed
+`## ✅ Healthy` section, with a headline count above all three. This is not
+cosmetic. A `deadline-approaching` row keeps the `release-health` issue open for
+up to 76 consecutive days; in a flat 45-row table a credential that died
+overnight would arrive as one more row among forty-five, one word different in
+the status column. Under sections it appears beneath a heading that was empty,
+and an approaching expiry can never appear there. The run's GitHub Actions
+annotations carry the same split: `::warning::` for dated rows, `::error::` for
+rejected ones.
+
+**Escalation.** A hard deadline enters the body as `deadline-approaching` at
+`HARD_DEADLINE_LEAD_DAYS` (90) — a warning, the job stays green — and becomes
+`deadline-critical`, a hard failure, at `HARD_DEADLINE_CRITICAL_DAYS` (**14**).
+14 days is two weekly cron runs, so one lost or evicted scheduled run still
+leaves an alarm while the credential is alive; 7 would leave only one, and 21
+would buy a third run at the price of a third week of standing red.
+
 **Responding to an alert** — the fix depends on which kind of row fired,
 "rotate" is only correct for the first:
 
@@ -422,6 +452,14 @@ Findings are filed as a single, de-duped **`release-health`** GitHub issue
   the three PATs, the three cert pairs): rotate the flagged secret using the
   per-secret runbook earlier in this document, confirm the new value is
   stored under the correct scope (repo secret vs. the `release` environment).
+- **A `deadline-approaching` row**: nothing is broken and nothing authenticates
+  any worse than last week. Schedule the replacement — the row names the date
+  and the day it escalates. **Do not** treat it as a rotation emergency, and do
+  not silence it; it is the only lead time this monitor can give for a credential
+  whose expiry the API does not expose.
+- **A `deadline-critical` row**: the same credential, now inside the replacement
+  window. Replace it this week; the job is red until the registry entry's
+  `hardDeadline` is updated to the new expiry.
 - **A `missing-provenance` or `source-mismatch` provenance row**: this is not
   a credential problem, so there is nothing to rotate. Either unpublish the
   affected version within npm's 72-hour unpublish window, or once that window

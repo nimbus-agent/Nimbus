@@ -42,6 +42,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `[advisories].ignore` list in `packages/ui/src-tauri/deny.toml`. All six guards
   red-proven against live audit output. `bun audit`: **2 → 1**, and the 1 now has an owner
   and a date.
+- **2026-07-29 — Mercury connector indexes transactions (`mercury:transaction`), issue #890.**
+  The Mercury connector shipped accounts-only; transactions were a documented deferral. The
+  gateway syncable now walks each indexed account's
+  `GET /api/v1/account/{accountId}/transactions?limit=500&offset=N&order=desc` (the
+  `{ total, transactions: [...] }` envelope, offset pagination, short page ends the walk) and
+  maps rows through the new pure `mapMercuryTransactionToItem`. Two caps bound the cycle:
+  `MAX_TRANSACTION_PAGES_PER_ACCOUNT=4` (2 000 rows per account, matching Ramp's 20 × 100
+  ceiling) and a shared `MAX_TRANSACTION_PAGES=20` budget so an operator with many accounts
+  cannot turn one 10-minute cycle into hundreds of requests. A transactions-page failure warns
+  and stops **that account's** walk only — the accounts pass has already succeeded by then and
+  must not be discarded. **Because this is a finance connector the omissions are the design:**
+  `details` never reaches the index, because it carries the COUNTERPARTY's payment credentials
+  (the `electronicRoutingInfo` / `domesticWireRoutingInfo` / `internationalWireRoutingInfo`
+  account and routing numbers, a postal `address`, and `debitCardInfo` / `creditCardInfo`
+  card digits) —
+  the same line `account_number_last4` already draws for the owner's own account. `attachments`
+  (receipt names + download links), `glAllocations`, `relatedTransactions`, `merchant`,
+  `categoryData`, `currencyExchangeInfo`, `checkNumber`, `trackingNumber`, `feeId`,
+  `requestId`, `counterpartyId` and `counterpartyNickname` are omitted too. What IS indexed:
+  transaction_id / account_id / amount / status / kind / counterparty_name / bank_description /
+  mercury_category / note / external_memo / created_at / posted_at / canonical_url, with the
+  two memo fields truncated at Ramp's 500-char `MEMO_MAX`. Timestamps are ISO-8601 parsed to
+  epoch-ms via `parseIsoMs` (`modifiedAt` = posted ?? created ?? syncedAt). Unlike the account
+  row, a transaction has a real permalink: `dashboardLink` becomes `url` + `canonical_url`.
+  Title is `<counterparty_name> — <amount> USD` (falling back to `bank_description`, then
+  `Mercury transaction — <amount> USD`, then bare `Mercury transaction`); the USD suffix
+  mirrors the account mapper, since Mercury accounts are USD-denominated and the transaction
+  payload carries no currency field of its own. `mercury:transaction` stays on local MiniLM
+  embeddings — NOT added to `PROSE_HEAVY_TYPES`, with a regression test naming the decision,
+  because routing to OpenAI would bill the user per bank transaction. Catalog / secrets-manifest
+  / rate-limiter / sandbox-host wiring was already in place from the accounts release; no new
+  vault key, no new host, no new tool surface, no schema change.
 
 - **2026-07-28 — `nimbus init` could never actually index; found by running the funnel.**
   The zero-config path shipped (#887) with its sync step covered only by unit tests using an

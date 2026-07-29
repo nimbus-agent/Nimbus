@@ -25,6 +25,11 @@ const FAST: readonly Gate[] = [
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   {
+    name: "audit:workflow-run-triggers",
+    cmd: ["bun", "run", "audit:workflow-run-triggers"],
+    tier: "fast",
+  },
+  {
     name: "audit:coverage-gate-pal",
     cmd: ["bun", "run", "audit:coverage-gate-pal"],
     tier: "fast",
