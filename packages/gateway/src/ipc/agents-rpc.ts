@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
+import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
 import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
 import { emitConflictsBrief } from "../agents/conflicts.ts";
 import { emitExpertBrief } from "../agents/expert.ts";
 import { emitGhostBrief } from "../agents/ghost.ts";
+import { emitGlossaryBrief } from "../agents/glossary.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
@@ -182,6 +184,7 @@ function newSessionId(
     | "impact"
     | "catchup"
     | "ghost"
+    | "glossary"
     | "conflicts"
     | "huddle"
     | "janitor"
@@ -429,6 +432,37 @@ async function handleWhyPeek(params: unknown, ctx: AgentsRpcContext): Promise<Wh
   return await runWhyPeek(input, { db: ctx.db, roots: whyRoots(ctx) });
 }
 
+function requireGlossaryParams(params: unknown): GlossaryInput {
+  if (params === null || typeof params !== "object") return {};
+  const p = params as { term?: unknown; limit?: unknown };
+  if (p.term !== undefined && typeof p.term !== "string") {
+    throw new AgentsRpcError(-32602, "term must be a string");
+  }
+  if (
+    p.limit !== undefined &&
+    (typeof p.limit !== "number" || !Number.isInteger(p.limit) || p.limit < 1)
+  ) {
+    throw new AgentsRpcError(-32602, "limit must be a positive integer");
+  }
+  return {
+    ...(p.term === undefined ? {} : { term: p.term }),
+    ...(p.limit === undefined ? {} : { limit: p.limit as number }),
+  };
+}
+
+async function handleGlossary(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireGlossaryParams(params);
+  return await emitGlossaryBrief(input, {
+    db: ctx.db,
+    notify: ctx.notify,
+    sessionId: newSessionId("glossary"),
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+  });
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -445,5 +479,6 @@ export async function dispatchAgentsRpc(
     "agents.preflight": handlePreflight,
     "agents.why": handleWhy,
     "agents.whyPeek": handleWhyPeek,
+    "agents.glossary": handleGlossary,
   });
 }

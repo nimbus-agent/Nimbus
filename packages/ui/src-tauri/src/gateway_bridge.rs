@@ -60,6 +60,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "agents.conflicts",
     "agents.expert",
     "agents.ghost",
+    "agents.glossary",
     "agents.huddle",
     "agents.impact",
     "agents.janitor",
@@ -515,7 +516,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 101);
+        assert_eq!(ALLOWED_METHODS.len(), 102);
     }
 
     #[test]
