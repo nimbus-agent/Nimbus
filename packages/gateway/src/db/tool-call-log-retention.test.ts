@@ -156,6 +156,22 @@ describe("startToolCallLogRetention", () => {
     }
   });
 
+  test("falls back to Date.now when no clock is injected", () => {
+    // `opts.nowMs ?? Date.now` — the DEFAULT arm. Every other case here injects a
+    // clock, so production's actual clock source was never exercised. Seeded far
+    // enough in the real past that the assertion cannot depend on the wall clock.
+    const db = freshDb();
+    seedCall(db, Date.now() - 200 * DAY_MS);
+    seedCall(db, Date.now() - 1 * DAY_MS);
+    const handle = startToolCallLogRetention(db, { retentionDays: 90 });
+    try {
+      // Only the 200-day-old row is past a 90-day cutoff measured from the real now.
+      expect(countCalls(db)).toBe(1);
+    } finally {
+      handle.stop();
+    }
+  });
+
   test("a prune error does not throw out of the tick", () => {
     const db = freshDb();
     db.exec("DROP TABLE audit_log");
