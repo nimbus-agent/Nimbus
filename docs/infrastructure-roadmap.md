@@ -118,7 +118,7 @@ Design of record:
 | P3 | Review Layer | ✅ done — `review-coverage` green in sweep run 30518344699 | The monorepo carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban (#846), and `audit:review-coverage` now fails when any gated repo's `.coderabbit.yaml` goes missing, stops parsing, or goes **inert** (`auto_review.enabled` off, `base_branches` no longer covering `main`, or empty `path_instructions`). **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. The real gap was that only *this* repo's review config was validated. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after, re-measured at n>1 on 2026-07-30: 105 → 77 jobs (4/4 runs), DAG wait 60.5 → 3.0 min median (n=15, and all 45 sampled E2E legs now gated by `ci-rust` — the edge the slice rewrote), non-macOS wall 23-89 → 16-38 min.** Wall clock measured as *last job in the run* did not improve (45 → 67 min median over 20+20 runs); instrumented, that tail is entirely the nine macOS PAL coverage gates queuing for scarce macOS runners, and it is unchanged at like congestion — see the progress log. `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
-| P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
+| P5 | Org Legibility | ✅ done — both gates green (run 30231918767); dashboard decided against 2026-07-30 | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. |
 | P6 | Access & Contribution Model | ✅ done — `bypass-attestation` green in sweep run 30530210861 | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos; bypass actors gated by the owner-run `audit:bypass-actors` + the sweep's `audit:bypass-attestation` |
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
@@ -775,6 +775,37 @@ was genuinely missing was the *review* layer, in two halves.
   actually asks for, so **a permission the probe omits is one it cannot detect
   being lost**. Fixed in #837; the general rule — a health probe must exercise
   the superset of what it guards — belongs in this sub-program.
+- **The legibility dashboard — NOT BUILT, decided against 2026-07-30. P5 is
+  closed.** Its definition lived only in the design of record (pruned in #831,
+  recoverable from git): *"P5 Tier A plans to write markdown to the `.github`
+  repository profile or a pinned issue showing version status and secret-expiry
+  countdowns."* Both of those contents are now served by mechanisms that
+  **escalate rather than display**:
+
+  | dashboard content | what covers it | behaviour |
+  | --- | --- | --- |
+  | version status | `audit:release-staleness` | reds the sweep across 12 edges |
+  | secret-expiry countdown | `scripts/release/check-secret-health.ts` | `deadline-approaching` warns, `deadline-critical` hard-fails, and it **opens a GitHub issue** |
+
+  `check-secret-health` is the stronger of the two and already does more than
+  the dashboard proposed: it splits *"a calendar says this breaks later"* from
+  *"the remaining runway is now shorter than the time a replacement takes to
+  arrange"*, and `VSCE_PAT`'s 2026-09-20 expiry is encoded as a `hardDeadline`
+  producing `hard deadline 2026-09-20 in Nd`.
+
+  **The argument against building it is this file's own operating principle.** A
+  page that displays what two mechanisms already escalate is a control nobody is
+  obliged to read — indistinguishable from having no control, which is the exact
+  failure this document exists to prevent. Adding one would have *weakened* P5 by
+  giving a second, staler place to look.
+  - The privacy constraint the design review accepted also still applies and made
+    the cheapest version unbuildable anyway: the `.github` repo is **public** and
+    the org has **6 private repos**, so aggregating status there would make them
+    publicly enumerable with commit cadence attached.
+  - Recorded as *decided against*, not dropped. If a need ever appears it will be
+    a different thing with a different audience — an outward-facing "is this
+    project maintained" signal — and should be scoped as that, not resurrected
+    as this row.
 - **Known inventory item with a deadline:** `VSCE_PAT` expires **2026-09-20**,
   and three release PATs retired during the App migration were never deleted.
   The date is the token's **own expiry**, per
