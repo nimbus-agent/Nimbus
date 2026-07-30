@@ -3649,6 +3649,27 @@ Then add one line to the existing `onConnectorSyncSuccess` callback, immediately
       glossaryRefresher.trigger();
 ```
 
+**Wire `stop()` into shutdown — without this the refresher's own guarantee is unmet.** A pending 60 s debounce timer would otherwise fire mid-shutdown and run a pass against a closing database. `createSchedulerWithMesh` must return the refresher alongside its other products:
+
+```typescript
+): Promise<{
+  syncScheduler: SyncScheduler;
+  connectorMesh: LazyConnectorMesh;
+  glossaryRefresher: GlossaryRefresher;
+}> {
+```
+
+return it at the end of that function, destructure it at the call site, and register it beside the existing sidecars (`sidecarStops` is already in scope there, immediately below the `auditShipper` registration):
+
+```typescript
+  const { syncScheduler, connectorMesh, glossaryRefresher } = await createSchedulerWithMesh({
+    // ...unchanged
+  });
+  sidecarStops.push(() => glossaryRefresher.stop());
+```
+
+This matches how `gdprPurgeRetry`, `auditShipper` and `toolCallLogRetention` are registered. Shutdown then reaches it via `disposeSidecars()`.
+
 The pass runs without an LLM here; definitions are snippet-sourced until an LLM-backed path is wired in a follow-up. That is the documented degradation (spec §5.7), not a gap.
 
 - [ ] **Step 8: Verify the gateway still builds and boots**
