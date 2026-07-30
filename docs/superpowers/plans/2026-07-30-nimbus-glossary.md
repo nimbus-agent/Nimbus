@@ -906,6 +906,17 @@ test("a spread below one never reduces the score", () => {
 test("score is finite for large inputs", () => {
   expect(Number.isFinite(scoreTerm({ docFreq: 1e6, serviceSpread: 50, form: "acronym" }))).toBe(true);
 });
+
+test("a cross-service term outranks a high-frequency single-channel term", () => {
+  // The motivating case from the docstring, pinned with EXACT expected values.
+  // The other tests here assert only relative ordering, so a coefficient change
+  // that preserved monotonicity would slip past them — this one would not.
+  const noisy = scoreTerm({ docFreq: 40, serviceSpread: 1, form: "phrase" });
+  const crossService = scoreTerm({ docFreq: 10, serviceSpread: 2, form: "phrase" });
+  expect(crossService).toBeGreaterThan(noisy);
+  expect(noisy).toBeCloseTo(3.714, 2);
+  expect(crossService).toBeCloseTo(3.836, 2);
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -935,6 +946,17 @@ export const FORM_BOOST: Record<CandidateForm, number> = {
   phrase: 1.0,
 };
 
+/**
+ * Spread grows GEOMETRICALLY, not linearly.
+ *
+ * A linear bonus does not actually deliver the intent above: with
+ * `1 + 0.5*(spread-1)`, a term seen 40 times in one noisy channel scores 3.714
+ * and beats a genuine two-service term at 3.597 — the precise case the
+ * weighting exists to defeat. At base 1.6 the two-service term scores 3.836
+ * and wins, while frequency still separates terms at equal spread.
+ */
+const SPREAD_BASE = 1.6;
+
 export function scoreTerm(input: {
   docFreq: number;
   serviceSpread: number;
@@ -942,7 +964,7 @@ export function scoreTerm(input: {
 }): number {
   if (input.docFreq <= 0) return 0;
   const spread = Math.max(1, input.serviceSpread);
-  return Math.log1p(input.docFreq) * (1 + 0.5 * (spread - 1)) * FORM_BOOST[input.form];
+  return Math.log1p(input.docFreq) * SPREAD_BASE ** (spread - 1) * FORM_BOOST[input.form];
 }
 ```
 

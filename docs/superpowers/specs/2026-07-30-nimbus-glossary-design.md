@@ -221,11 +221,18 @@ interrupted pass, doing more work to achieve strictly less.
 | Capitalized multi-word phrase (2–4 words) | `Shadow Traffic` | 1.0 |
 
 ```
-score = log1p(doc_freq) * (1 + 0.5 * (service_spread - 1)) * formBoost
+score = log1p(doc_freq) * 1.6^(service_spread - 1) * formBoost
 ```
 
 Spread across services is weighted deliberately: a term appearing in both Slack *and* Jira is far
 more likely to be real team vocabulary than one appearing 40 times in a single noisy channel.
+
+**The spread term is geometric, not linear** — corrected 2026-07-30 after the Task 5 review showed
+a linear bonus did not deliver that intent. Under `1 + 0.5*(spread − 1)`, the 40-mentions-one-channel
+term scored 3.714 and *beat* a two-service term at 3.597, exactly inverting the rule this paragraph
+states. At base 1.6 the two-service term scores 3.836 and wins, while frequency still separates
+terms at equal spread. A test pins both values, because the surrounding tests assert only relative
+ordering and would not catch a coefficient regression.
 
 `stopwords.ts` ships a static baseline in three layers, so the glossary does not fill with
 vocabulary that carries no team-specific meaning:
