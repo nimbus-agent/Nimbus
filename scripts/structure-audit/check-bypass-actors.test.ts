@@ -64,6 +64,20 @@ describe("validateDeclaredBypass", () => {
       expect(validateDeclaredBypass(f)[0]).toContain("attestation_grace_days");
     }
   });
+
+  test("Finding 2: rejects a null-id-eligible actor_type carrying a numeric actor_id, distinctly from an unknown type", () => {
+    const f = goodFile();
+    f.bypass.by_repo["Nimbus"] = [
+      { actor_type: "OrganizationAdmin", actor_id: 4382579, bypass_mode: "always" },
+    ];
+    const errors = validateDeclaredBypass(f);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("OrganizationAdmin");
+    expect(errors[0]).toContain("numeric actor_id (4382579)");
+    expect(errors[0]).toContain("not human-reviewable");
+    expect(errors[0]).not.toContain("unsupported actor_type");
+    expect(errors[0]).not.toContain("unknown actor_type");
+  });
 });
 
 describe("loadDeclaredBypass", () => {
@@ -146,21 +160,99 @@ describe("diffBypassActors", () => {
   });
 
   test("is order-independent across the actor set", () => {
-    const twoDeclared: Record<string, BypassActor[]> = {
+    // A legitimately-passing single-repo set: one null-id OrganizationAdmin on
+    // Nimbus, nothing on nimbus-sdk, reordered relative to `declared()`/
+    // `observed()`. (A SECOND actor on one repo is no longer expressible here
+    // without either a duplicate identity — Finding 1 — or a numeric actor_id
+    // — Finding 2 — both of which are now hard errors by design; see
+    // "is order-independent on the error path" below for that case instead.)
+    const oneDeclared: Record<string, BypassActor[]> = {
+      "nimbus-sdk": [],
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+    };
+    const oneLive: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }],
+      "nimbus-sdk": [],
+    };
+    expect(diffBypassActors(REPOS, oneDeclared, oneLive).ok).toBe(true);
+  });
+
+  test("is order-independent on the error path: same findings regardless of input order", () => {
+    // Two repos, each contributing one finding, checked in both orders.
+    const declaredTwoRepos: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+      "nimbus-sdk": [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+    };
+    const liveTwoRepos: Record<string, BypassActor[]> = {
+      // Nimbus: a numeric-id OrganizationAdmin — unsupported (Finding 2).
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" }],
+      // nimbus-sdk: a duplicated identity — Finding 1.
+      "nimbus-sdk": [
+        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "pull_request" },
+      ],
+    };
+    const forward = diffBypassActors(["Nimbus", "nimbus-sdk"], declaredTwoRepos, liveTwoRepos);
+    const reversed = diffBypassActors(["nimbus-sdk", "Nimbus"], declaredTwoRepos, liveTwoRepos);
+    expect(forward.ok).toBe(false);
+    expect(reversed.ok).toBe(false);
+    expect([...forward.errors].sort()).toEqual([...reversed.errors].sort());
+  });
+
+  test("Finding 1: a duplicate OBSERVED identity is a hard error, never normalized to the last entry", () => {
+    // Proven failure: declared has a single pull_request-mode actor; observed
+    // repeats the same identity as `always` then `pull_request`. Map-based
+    // dedup on actorIdentity would keep only the LAST entry (pull_request),
+    // matching declared and returning a false green — silently discarding the
+    // more permissive `always` bypass, which is exactly what this gate exists
+    // to catch.
+    const declaredOne: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "pull_request" }],
+    };
+    const dupedActors: BypassActor[] = [
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "pull_request" },
+    ];
+    const r = diffBypassActors(["Nimbus"], declaredOne, { Nimbus: dupedActors });
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain(
+      "duplicate observed bypass actor identity OrganizationAdmin:null",
+    );
+
+    // Order-dependence proof: swapping the two observed entries must NOT change
+    // the verdict (both must be errors — this was the reported symptom).
+    const rSwapped = diffBypassActors(["Nimbus"], declaredOne, {
+      Nimbus: [...dupedActors].reverse(),
+    });
+    expect(rSwapped.ok).toBe(false);
+  });
+
+  test("Finding 1: a duplicate DECLARED identity is also a hard error", () => {
+    const declaredDuped: Record<string, BypassActor[]> = {
       Nimbus: [
         { actor_type: "OrganizationAdmin", bypass_mode: "always" },
-        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", bypass_mode: "pull_request" },
       ],
-      "nimbus-sdk": [],
     };
-    const twoLive: Record<string, BypassActor[]> = {
-      Nimbus: [
-        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
-        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
-      ],
-      "nimbus-sdk": [],
+    const live: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }],
     };
-    expect(diffBypassActors(REPOS, twoDeclared, twoLive).ok).toBe(true);
+    const r = diffBypassActors(["Nimbus"], declaredDuped, live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain(
+      "duplicate declared bypass actor identity OrganizationAdmin:null",
+    );
+  });
+
+  test("Finding 2: a numeric-id OrganizationAdmin is a hard error on the diff side, not merely 'unknown type'", () => {
+    const live = observed();
+    live["nimbus-sdk"] = [{ actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" }];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain("unsupported bypass actor type OrganizationAdmin");
+    expect(r.errors[0]).toContain("numeric actor_id (7)");
+    expect(r.errors[0]).toContain("not human-reviewable");
+    expect(r.errors[0]).not.toContain("unknown actor_type");
   });
 });
 

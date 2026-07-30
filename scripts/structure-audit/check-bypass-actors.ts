@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { ATTESTATION_PATH, decideAttestWrite, writeAttestation } from "./_bypass-attestation.ts";
-import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 
 export interface AuditResult {
   ok: boolean;
@@ -62,6 +62,17 @@ export const KNOWN_ACTOR_TYPES: readonly string[] = [
   "RepositoryRole",
   "DeployKey",
 ];
+
+/**
+ * True only for an actor this gate can render human-checkably: a type in
+ * `NULL_ID_ACTOR_TYPES` carrying an actually-null `actor_id`. Checking the type
+ * name alone is not enough — a null-id type can still show up with a numeric id
+ * (e.g. a GitHub API quirk or a hand-edited config), and that is exactly the
+ * shape the reviewability rationale above exists to reject.
+ */
+function isSupportedActor(actor: BypassActor): boolean {
+  return NULL_ID_ACTOR_TYPES.includes(actor.actor_type) && (actor.actor_id ?? null) === null;
+}
 
 const DECLARED_PATH = ".github/rulesets/general-branch.json";
 
@@ -113,6 +124,14 @@ export function validateDeclaredBypass(file: DeclaredBypassFile): string[] {
             ? `unsupported actor_type "${actor.actor_type}" in bypass.by_repo.${repo} — only null-id org-level actors (${NULL_ID_ACTOR_TYPES.join("|")}) are supported`
             : `unknown actor_type "${actor.actor_type}" in bypass.by_repo.${repo}`,
         );
+      } else if ((actor.actor_id ?? null) !== null) {
+        // The type is null-id-eligible, but THIS entry carries a numeric id — the
+        // exact shape the reviewability rationale (see NULL_ID_ACTOR_TYPES above)
+        // exists to reject. Distinct message from "unsupported actor_type" above:
+        // the type is fine, the numeric id is the defect.
+        errors.push(
+          `bypass.by_repo.${repo} declares "${actor.actor_type}" with a numeric actor_id (${actor.actor_id}) — unsupported: a numeric id is not human-reviewable in a PR diff`,
+        );
       }
     }
   }
@@ -133,6 +152,24 @@ export function actorKey(actor: BypassActor): string {
 /** Identity WITHOUT the mode, so a mode change reports as a change, not add+remove. */
 function actorIdentity(actor: BypassActor): string {
   return `${actor.actor_type}:${actor.actor_id ?? "null"}`;
+}
+
+/**
+ * Identity keys that occur more than once in an actor array.
+ *
+ * `new Map(array.map(...))` silently keeps only the LAST entry for a repeated
+ * key — a duplicate identity (e.g. the same actor listed twice with different
+ * `bypass_mode`s) would otherwise be discarded with no signal, and which entry
+ * "wins" depends on array order. Both sides of the diff must be checked before
+ * either is turned into a Map.
+ */
+function duplicateIdentities(actors: BypassActor[]): string[] {
+  const counts = new Map<string, number>();
+  for (const actor of actors) {
+    const id = actorIdentity(actor);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([id]) => id);
 }
 
 /**
@@ -161,13 +198,42 @@ export function diffBypassActors(
       continue;
     }
 
-    // An actor type we cannot render human-checkably is a hard error, never
-    // silently normalized — otherwise a Team bypass added in the UI reads green.
-    const unsupported = got.filter((a) => !NULL_ID_ACTOR_TYPES.includes(a.actor_type));
+    // A duplicate identity must never be silently resolved by `Map` keeping the
+    // last entry — that would discard the most permissive bypass_mode with no
+    // signal, and the surviving entry would depend on array order. Checked on
+    // BOTH sides before either is turned into a Map.
+    const wantDupes = duplicateIdentities(want);
+    if (wantDupes.length > 0) {
+      for (const id of wantDupes) {
+        errors.push(
+          `${repo}: duplicate declared bypass actor identity ${id} in bypass.by_repo.${repo}`,
+        );
+      }
+      continue;
+    }
+    const gotDupes = duplicateIdentities(got);
+    if (gotDupes.length > 0) {
+      for (const id of gotDupes) {
+        errors.push(
+          `${repo}: duplicate observed bypass actor identity ${id} — cannot safely diff against declared intent`,
+        );
+      }
+      continue;
+    }
+
+    // An actor we cannot render human-checkably is a hard error, never silently
+    // normalized — otherwise a Team bypass, or a null-id type carrying a numeric
+    // id, added in the UI reads green. The two cases get DISTINCT messages: an
+    // unknown/non-null-id type is a type problem, but a null-id type carrying a
+    // numeric actor_id is a reviewability problem, not a type problem — saying
+    // "unknown type" there would misdescribe the defect.
+    const unsupported = got.filter((a) => !isSupportedActor(a));
     if (unsupported.length > 0) {
       for (const actor of unsupported) {
         errors.push(
-          `${repo}: unsupported bypass actor type ${actor.actor_type} (id ${actor.actor_id ?? "null"}) — declared bypass intent supports only null-id org-level actors`,
+          NULL_ID_ACTOR_TYPES.includes(actor.actor_type)
+            ? `${repo}: unsupported bypass actor type ${actor.actor_type} with a numeric actor_id (${actor.actor_id}) — a numeric id is not human-reviewable in a PR diff`
+            : `${repo}: unsupported bypass actor type ${actor.actor_type} (id ${actor.actor_id ?? "null"}) — declared bypass intent supports only null-id org-level actors`,
         );
       }
       continue;
@@ -202,8 +268,12 @@ export function diffBypassActors(
  * Exit decision for the per-repo loop.
  *
  * INVARIANT, mirroring check-ruleset-drift: real drift on a reachable repo is
- * never discarded because a DIFFERENT repo's read failed. `queried === 0` is the
- * only skip-green case.
+ * never discarded because a DIFFERENT repo's read failed. `queried === 0` is
+ * the skip-green case — but ONLY when there are also no errors. A confirmed
+ * 404 (repo absent) is folded into `errors` even when it drove `queried` to 0
+ * (e.g. every declared repo turned out to be renamed/deleted); that is real
+ * signal that `gh` worked, not "nothing was readable", so it must never be
+ * swallowed by the soft skip.
  */
 export function decideExit(input: {
   queried: number;
@@ -213,7 +283,7 @@ export function decideExit(input: {
 }): { code: 0 | 1; message: string } {
   const { queried, errors, unreachable, strict = false } = input;
 
-  if (queried === 0) return strictSkip("audit:bypass-actors", strict);
+  if (queried === 0 && errors.length === 0) return strictSkip("audit:bypass-actors", strict);
 
   if (errors.length > 0) {
     const lines = errors.map((err) => `audit:bypass-actors: ${err}`);
@@ -248,6 +318,13 @@ if (import.meta.main) {
 
   const observed: Record<string, BypassActor[]> = {};
   const unreachable: string[] = [];
+  // A confirmed 404 on the repo itself is NOT "unreachable" — that bucket is for
+  // transient/indeterminate failures (5xx, rate-limit, network) that must never
+  // be read as a finding. A 404 means the repo is genuinely absent (renamed or
+  // deleted), which is real drift: it must exit 1, never a soft "could not
+  // query" warning that leaves the gate green. Mirrors check-cla-coverage.ts's
+  // classifyReadFailure handling.
+  const absentErrors: string[] = [];
   let queried = 0;
 
   for (const repo of file.repos) {
@@ -259,7 +336,13 @@ if (import.meta.main) {
       '.[] | select(.name=="General") | .id',
     ]);
     if (!listResult.ok) {
-      unreachable.push(repo);
+      if (classifyReadFailure(listResult.httpStatus) === "absent") {
+        absentErrors.push(
+          `${repo}: repository not found (HTTP 404 on rulesets) — likely renamed or deleted; update bypass.by_repo if intentional`,
+        );
+      } else {
+        unreachable.push(repo);
+      }
       continue;
     }
     const id = listResult.stdout.trim();
@@ -272,7 +355,13 @@ if (import.meta.main) {
 
     const detail = runGh(["gh", "api", `repos/nimbus-agent/${repo}/rulesets/${id}`]);
     if (!detail.ok) {
-      unreachable.push(repo);
+      if (classifyReadFailure(detail.httpStatus) === "absent") {
+        absentErrors.push(
+          `${repo}: repository not found (HTTP 404 on rulesets/${id}) — likely renamed or deleted; update bypass.by_repo if intentional`,
+        );
+      } else {
+        unreachable.push(repo);
+      }
       continue;
     }
 
@@ -283,7 +372,11 @@ if (import.meta.main) {
     observed[repo] = actors.filter(isRecord) as unknown as BypassActor[];
   }
 
-  const result = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
+  const diffResult = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
+  const result: AuditResult = {
+    ok: diffResult.ok && absentErrors.length === 0,
+    errors: [...absentErrors, ...diffResult.errors],
+  };
   const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
 
   if (attest) {

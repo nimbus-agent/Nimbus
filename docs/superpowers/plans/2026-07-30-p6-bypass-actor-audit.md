@@ -11,6 +11,45 @@
 **Spec:** [`../specs/2026-07-30-p6-bypass-actor-audit-design.md`](../specs/2026-07-30-p6-bypass-actor-audit-design.md)
 **Review response:** [`../specs/2026-07-30-p6-bypass-actor-audit-design-review-response.md`](../specs/2026-07-30-p6-bypass-actor-audit-design-review-response.md)
 
+> **2026-07-30 fix wave (whole-branch review, after this plan shipped).** Three
+> Important findings landed against the code blocks below, since corrected in
+> `check-bypass-actors.ts` (this document's embedded code and tests are updated
+> to match, so it never contradicts the shipped code):
+>
+> 1. **Duplicate actor identities silently collapsed.** `diffBypassActors` built
+>    `wantById`/`gotById` via `new Map(array.map(...))` keyed on identity
+>    (type + id, mode excluded) — `Map` keeps only the LAST entry for a repeated
+>    key, discarding a duplicate (e.g. the same actor listed as both `always` and
+>    `pull_request`) with no signal, and the outcome depended on array order.
+>    Fixed by `duplicateIdentities`, checked on both `want` and `got` before
+>    either becomes a Map.
+> 2. **The null-id rule checked the type name only, never `actor_id`.** A
+>    null-id-eligible type (`OrganizationAdmin`) carrying a numeric `actor_id`
+>    sailed through in both `diffBypassActors` and `validateDeclaredBypass`,
+>    directly defeating the reviewability rationale documented at
+>    `NULL_ID_ACTOR_TYPES`. Fixed by `isSupportedActor` (diff side) and the
+>    parallel `else if` branch (validator side) — both now require
+>    `actor_type` in `NULL_ID_ACTOR_TYPES` **and** `(actor_id ?? null) === null`.
+>    This also required rewriting the original "is order-independent across the
+>    actor set" test, which used a numeric-id `OrganizationAdmin` and asserted
+>    the diff PASSED — under the corrected rule that is a hard error, so the old
+>    test locked in the defect. See the rewritten test below plus the new
+>    "...on the error path" test for order-independence of the error case.
+> 3. **A 404 was laundered into "unreachable" instead of a finding.** Gate 1's CLI
+>    treated every `runGh` failure identically. A 404 on the repo itself (renamed
+>    or deleted) means the repo is genuinely absent — a real finding — not an
+>    indeterminate/transient failure. Fixed by classifying with
+>    `classifyReadFailure` (from `_gh-audit.ts`, already used by the sibling
+>    `check-cla-coverage.ts`): `"absent"` becomes a hard error folded into
+>    `result.errors`; anything else stays `unreachable` as before. `decideExit`'s
+>    `queried === 0` skip-green guard was also narrowed to
+>    `queried === 0 && errors.length === 0`, so a confirmed-absent repo can never
+>    be swallowed by the soft skip even in the edge case where every declared
+>    repo turns out to be absent.
+>
+> Full writeup + red-proof output: `task-6-report.md` in this branch's
+> `.superpowers/sdd/2026-07-30-p6-bypass-actor-audit/` folder.
+
 ## Global Constraints
 
 - **No `any`.** Use `unknown` for external data and narrow it. TypeScript strict mode is non-negotiable.
@@ -303,6 +342,14 @@ export function validateDeclaredBypass(file: DeclaredBypassFile): string[] {
             ? `unsupported actor_type "${actor.actor_type}" in bypass.by_repo.${repo} — only null-id org-level actors (${NULL_ID_ACTOR_TYPES.join("|")}) are supported`
             : `unknown actor_type "${actor.actor_type}" in bypass.by_repo.${repo}`,
         );
+      } else if ((actor.actor_id ?? null) !== null) {
+        // The type is null-id-eligible, but THIS entry carries a numeric id — the
+        // exact shape the reviewability rationale (see NULL_ID_ACTOR_TYPES above)
+        // exists to reject. Distinct message from "unsupported actor_type" above:
+        // the type is fine, the numeric id is the defect.
+        errors.push(
+          `bypass.by_repo.${repo} declares "${actor.actor_type}" with a numeric actor_id (${actor.actor_id}) — unsupported: a numeric id is not human-reviewable in a PR diff`,
+        );
       }
     }
   }
@@ -427,21 +474,102 @@ describe("diffBypassActors", () => {
   });
 
   test("is order-independent across the actor set", () => {
-    const twoDeclared: Record<string, BypassActor[]> = {
+    // A legitimately-passing single-repo set, reordered relative to
+    // `declared()`/`observed()`. NOTE (2026-07-30 fix wave): the original version
+    // of this test used a SECOND actor per repo — `{ actor_type:
+    // "OrganizationAdmin", actor_id: 7, bypass_mode: "always" }` — and asserted
+    // the diff PASSED. Under the corrected rule (an actor is supported only when
+    // its type is null-id-eligible AND its actor_id is actually null — see the
+    // Task 2 implementation note below) that numeric-id actor is a hard error, so
+    // the old assertion locked in exactly the defect the correction closes. See
+    // "is order-independent on the error path" for order-independence of the
+    // error case instead.
+    const oneDeclared: Record<string, BypassActor[]> = {
+      "nimbus-sdk": [],
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+    };
+    const oneLive: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }],
+      "nimbus-sdk": [],
+    };
+    expect(diffBypassActors(REPOS, oneDeclared, oneLive).ok).toBe(true);
+  });
+
+  test("is order-independent on the error path: same findings regardless of input order", () => {
+    const declaredTwoRepos: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+      "nimbus-sdk": [{ actor_type: "OrganizationAdmin", bypass_mode: "always" }],
+    };
+    const liveTwoRepos: Record<string, BypassActor[]> = {
+      // Nimbus: a numeric-id OrganizationAdmin — unsupported (Finding 2).
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" }],
+      // nimbus-sdk: a duplicated identity — Finding 1.
+      "nimbus-sdk": [
+        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "pull_request" },
+      ],
+    };
+    const forward = diffBypassActors(["Nimbus", "nimbus-sdk"], declaredTwoRepos, liveTwoRepos);
+    const reversed = diffBypassActors(["nimbus-sdk", "Nimbus"], declaredTwoRepos, liveTwoRepos);
+    expect(forward.ok).toBe(false);
+    expect(reversed.ok).toBe(false);
+    expect([...forward.errors].sort()).toEqual([...reversed.errors].sort());
+  });
+
+  test("Finding 1: a duplicate OBSERVED identity is a hard error, never normalized to the last entry", () => {
+    // Proven failure: declared has a single pull_request-mode actor; observed
+    // repeats the same identity as `always` then `pull_request`. Map-based
+    // dedup on actorIdentity would keep only the LAST entry (pull_request),
+    // matching declared and returning a false green — silently discarding the
+    // more permissive `always` bypass, which is exactly what this gate exists
+    // to catch.
+    const declaredOne: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", bypass_mode: "pull_request" }],
+    };
+    const dupedActors: BypassActor[] = [
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "pull_request" },
+    ];
+    const r = diffBypassActors(["Nimbus"], declaredOne, { Nimbus: dupedActors });
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain(
+      "duplicate observed bypass actor identity OrganizationAdmin:null",
+    );
+
+    // Order-dependence proof: swapping the two observed entries must NOT change
+    // the verdict (both must be errors — this was the reported symptom).
+    const rSwapped = diffBypassActors(["Nimbus"], declaredOne, {
+      Nimbus: [...dupedActors].reverse(),
+    });
+    expect(rSwapped.ok).toBe(false);
+  });
+
+  test("Finding 1: a duplicate DECLARED identity is also a hard error", () => {
+    const declaredDuped: Record<string, BypassActor[]> = {
       Nimbus: [
         { actor_type: "OrganizationAdmin", bypass_mode: "always" },
-        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", bypass_mode: "pull_request" },
       ],
-      "nimbus-sdk": [],
     };
-    const twoLive: Record<string, BypassActor[]> = {
-      Nimbus: [
-        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
-        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
-      ],
-      "nimbus-sdk": [],
+    const live: Record<string, BypassActor[]> = {
+      Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }],
     };
-    expect(diffBypassActors(REPOS, twoDeclared, twoLive).ok).toBe(true);
+    const r = diffBypassActors(["Nimbus"], declaredDuped, live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain(
+      "duplicate declared bypass actor identity OrganizationAdmin:null",
+    );
+  });
+
+  test("Finding 2: a numeric-id OrganizationAdmin is a hard error on the diff side, not merely 'unknown type'", () => {
+    const live = observed();
+    live["nimbus-sdk"] = [{ actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" }];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain("unsupported bypass actor type OrganizationAdmin");
+    expect(r.errors[0]).toContain("numeric actor_id (7)");
+    expect(r.errors[0]).toContain("not human-reviewable");
+    expect(r.errors[0]).not.toContain("unknown actor_type");
   });
 });
 
@@ -478,6 +606,35 @@ function actorIdentity(actor: BypassActor): string {
 }
 
 /**
+ * True only for an actor this gate can render human-checkably: a type in
+ * `NULL_ID_ACTOR_TYPES` carrying an actually-null `actor_id`. Checking the type
+ * name alone is not enough — a null-id type can still show up with a numeric id
+ * (e.g. a GitHub API quirk or a hand-edited config), and that is exactly the
+ * shape the reviewability rationale (see `NULL_ID_ACTOR_TYPES`) exists to reject.
+ */
+function isSupportedActor(actor: BypassActor): boolean {
+  return NULL_ID_ACTOR_TYPES.includes(actor.actor_type) && (actor.actor_id ?? null) === null;
+}
+
+/**
+ * Identity keys that occur more than once in an actor array.
+ *
+ * `new Map(array.map(...))` silently keeps only the LAST entry for a repeated
+ * key — a duplicate identity (e.g. the same actor listed twice with different
+ * `bypass_mode`s) would otherwise be discarded with no signal, and which entry
+ * "wins" depends on array order. Both sides of the diff must be checked before
+ * either is turned into a Map.
+ */
+function duplicateIdentities(actors: BypassActor[]): string[] {
+  const counts = new Map<string, number>();
+  for (const actor of actors) {
+    const id = actorIdentity(actor);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+}
+
+/**
  * Pure diff — the whole verdict, so both gates share it and neither needs network.
  * Gate 1 passes live `gh` data as `observed`; Gate 2 passes the attested snapshot.
  *
@@ -503,13 +660,42 @@ export function diffBypassActors(
       continue;
     }
 
-    // An actor type we cannot render human-checkably is a hard error, never
-    // silently normalized — otherwise a Team bypass added in the UI reads green.
-    const unsupported = got.filter((a) => !NULL_ID_ACTOR_TYPES.includes(a.actor_type));
+    // A duplicate identity must never be silently resolved by `Map` keeping the
+    // last entry — that would discard the most permissive bypass_mode with no
+    // signal, and the surviving entry would depend on array order. Checked on
+    // BOTH sides before either is turned into a Map.
+    const wantDupes = duplicateIdentities(want);
+    if (wantDupes.length > 0) {
+      for (const id of wantDupes) {
+        errors.push(
+          `${repo}: duplicate declared bypass actor identity ${id} in bypass.by_repo.${repo}`,
+        );
+      }
+      continue;
+    }
+    const gotDupes = duplicateIdentities(got);
+    if (gotDupes.length > 0) {
+      for (const id of gotDupes) {
+        errors.push(
+          `${repo}: duplicate observed bypass actor identity ${id} — cannot safely diff against declared intent`,
+        );
+      }
+      continue;
+    }
+
+    // An actor we cannot render human-checkably is a hard error, never silently
+    // normalized — otherwise a Team bypass, or a null-id type carrying a numeric
+    // id, added in the UI reads green. The two cases get DISTINCT messages: an
+    // unknown/non-null-id type is a type problem, but a null-id type carrying a
+    // numeric actor_id is a reviewability problem, not a type problem — saying
+    // "unknown type" there would misdescribe the defect.
+    const unsupported = got.filter((a) => !isSupportedActor(a));
     if (unsupported.length > 0) {
       for (const actor of unsupported) {
         errors.push(
-          `${repo}: unsupported bypass actor type ${actor.actor_type} (id ${actor.actor_id ?? "null"}) — declared bypass intent supports only null-id org-level actors`,
+          NULL_ID_ACTOR_TYPES.includes(actor.actor_type)
+            ? `${repo}: unsupported bypass actor type ${actor.actor_type} with a numeric actor_id (${actor.actor_id}) — a numeric id is not human-reviewable in a PR diff`
+            : `${repo}: unsupported bypass actor type ${actor.actor_type} (id ${actor.actor_id ?? "null"}) — declared bypass intent supports only null-id org-level actors`,
         );
       }
       continue;
@@ -756,8 +942,12 @@ Append to `scripts/structure-audit/check-bypass-actors.ts`:
  * Exit decision for the per-repo loop.
  *
  * INVARIANT, mirroring check-ruleset-drift: real drift on a reachable repo is
- * never discarded because a DIFFERENT repo's read failed. `queried === 0` is the
- * only skip-green case.
+ * never discarded because a DIFFERENT repo's read failed. `queried === 0` is
+ * the skip-green case — but ONLY when there are also no errors. A confirmed
+ * 404 (repo absent) is folded into `errors` even when it drove `queried` to 0
+ * (e.g. every declared repo turned out to be renamed/deleted); that is real
+ * signal that `gh` worked, not "nothing was readable", so it must never be
+ * swallowed by the soft skip.
  */
 export function decideExit(input: {
   queried: number;
@@ -767,7 +957,7 @@ export function decideExit(input: {
 }): { code: 0 | 1; message: string } {
   const { queried, errors, unreachable, strict = false } = input;
 
-  if (queried === 0) return strictSkip("audit:bypass-actors", strict);
+  if (queried === 0 && errors.length === 0) return strictSkip("audit:bypass-actors", strict);
 
   if (errors.length > 0) {
     const lines = errors.map((err) => `audit:bypass-actors: ${err}`);
@@ -802,6 +992,13 @@ if (import.meta.main) {
 
   const observed: Record<string, BypassActor[]> = {};
   const unreachable: string[] = [];
+  // A confirmed 404 on the repo itself is NOT "unreachable" — that bucket is for
+  // transient/indeterminate failures (5xx, rate-limit, network) that must never
+  // be read as a finding. A 404 means the repo is genuinely absent (renamed or
+  // deleted), which is real drift: it must exit 1, never a soft "could not
+  // query" warning that leaves the gate green. Mirrors check-cla-coverage.ts's
+  // classifyReadFailure handling.
+  const absentErrors: string[] = [];
   let queried = 0;
 
   for (const repo of file.repos) {
@@ -813,7 +1010,13 @@ if (import.meta.main) {
       '.[] | select(.name=="General") | .id',
     ]);
     if (!listResult.ok) {
-      unreachable.push(repo);
+      if (classifyReadFailure(listResult.httpStatus) === "absent") {
+        absentErrors.push(
+          `${repo}: repository not found (HTTP 404 on rulesets) — likely renamed or deleted; update bypass.by_repo if intentional`,
+        );
+      } else {
+        unreachable.push(repo);
+      }
       continue;
     }
     const id = listResult.stdout.trim();
@@ -826,21 +1029,28 @@ if (import.meta.main) {
 
     const detail = runGh(["gh", "api", `repos/nimbus-agent/${repo}/rulesets/${id}`]);
     if (!detail.ok) {
-      unreachable.push(repo);
+      if (classifyReadFailure(detail.httpStatus) === "absent") {
+        absentErrors.push(
+          `${repo}: repository not found (HTTP 404 on rulesets/${id}) — likely renamed or deleted; update bypass.by_repo if intentional`,
+        );
+      } else {
+        unreachable.push(repo);
+      }
       continue;
     }
 
     queried += 1;
     const live: unknown = JSON.parse(detail.stdout);
-    const actors = isRecord(live) && Array.isArray(live["bypass_actors"]) ? live["bypass_actors"] : [];
+    const actors =
+      isRecord(live) && Array.isArray(live["bypass_actors"]) ? live["bypass_actors"] : [];
     observed[repo] = actors.filter(isRecord) as unknown as BypassActor[];
   }
 
-  const result = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
-  // Diff only the repos actually observed — unreachable repos are already
-  // reported by decideExit's "could not query" warning, so feeding them into
-  // the diff too would manufacture a bogus "no observed bypass_actors"
-  // finding and make a partial read misreport as a drift finding.
+  const diffResult = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
+  const result: AuditResult = {
+    ok: diffResult.ok && absentErrors.length === 0,
+    errors: [...absentErrors, ...diffResult.errors],
+  };
   const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
 
   if (attest) {
@@ -877,13 +1087,25 @@ if (import.meta.main) {
 Add these imports at the top of `check-bypass-actors.ts`, beneath the existing `node:` imports:
 
 ```ts
-import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+import { classifyReadFailure, isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
 import {
   ATTESTATION_PATH,
   decideAttestWrite,
   writeAttestation,
 } from "./_bypass-attestation.ts";
 ```
+
+> **2026-07-30 fix wave (post-review), Finding 3.** The version above (and shipped
+> in the original PR) treated every `runGh` failure identically, pushing the repo
+> onto `unreachable` regardless of cause — so a genuinely deleted/renamed repo
+> (both `gh api` calls 404) read as an "unreachable" WARNING and the gate still
+> exited 0. `_gh-audit.ts` exports exactly the primitive to fix this —
+> `classifyReadFailure(httpStatus)`, already consumed the same way by the sibling
+> `check-cla-coverage.ts` — so a confirmed 404 is now folded into `absentErrors`
+> (a hard error, exit 1) while any other failure (5xx, rate-limit, network) stays
+> `unreachable` as before. `decideExit`'s `queried === 0` guard was also narrowed
+> to `queried === 0 && errors.length === 0` so a fully-absent repo set can never
+> be swallowed by the soft skip. The code block above already reflects the fix.
 
 - [ ] **Step 6: Add a decideExit test**
 
