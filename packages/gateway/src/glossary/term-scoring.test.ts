@@ -41,3 +41,14 @@ test("score is finite for large inputs", () => {
     true,
   );
 });
+
+test("a cross-service term outranks a high-frequency single-channel term", () => {
+  // The motivating case from the docstring, pinned with EXACT expected values.
+  // The other tests here assert only relative ordering, so a coefficient change
+  // that preserved monotonicity would slip past them — this one would not.
+  const noisy = scoreTerm({ docFreq: 40, serviceSpread: 1, form: "phrase" });
+  const crossService = scoreTerm({ docFreq: 10, serviceSpread: 2, form: "phrase" });
+  expect(crossService).toBeGreaterThan(noisy);
+  expect(noisy).toBeCloseTo(3.714, 2);
+  expect(crossService).toBeCloseTo(3.836, 2);
+});
