@@ -77,49 +77,63 @@ work and not part of this spec:
 Until one is chosen, every registry-fed aggregator (PulseMCP's server directory
 included) stays out of reach. The curated lists do not depend on it.
 
-### Glama: the introspection Dockerfile
+### Glama: the build spec
 
-Glama builds and introspects the server from a Dockerfile supplied on the server's
-admin page — it explicitly does **not** need to live in this repository, and it is kept
-out on purpose. A root `Dockerfile` on a local-first project reads as "run Nimbus in
-Docker", which does not work: the container has no Gateway, index, or keystore, so
-protocol introspection succeeds while tool *calls* fail. It would also rot, since the
-pinned version and digest need bumping at every release.
+Glama's admin page (`/mcp/servers/nimbus-agent/Nimbus/admin/dockerfile`) is **not** a
+Dockerfile editor, despite the URL. It takes a structured **build spec** — a JSON array
+of shell commands plus a JSON `cmd` array — and Glama generates the Dockerfile around
+them. Pasting a `FROM … RUN …` file there fails with an invalid-JSON error.
 
-Recorded here because Glama's admin UI is not version-controlled:
+Nothing needs to be added to this repository, and nothing should be. A root
+`Dockerfile` on a local-first project reads as "run Nimbus in Docker", which does not
+work: the container has no Gateway, index, or keystore, so protocol introspection
+succeeds while tool *calls* fail. It would also rot, since the pinned version and digest
+need bumping at every release.
 
-```dockerfile
-FROM --platform=linux/amd64 debian:bookworm-slim
+Recorded here because Glama's admin UI is not version-controlled.
 
-ARG NIMBUS_VERSION=v1.12.1
-ARG NIMBUS_CLI_SHA256=78e43ec607d2fcd62e7395ff09bdf829558f772578c2bde4d4d2970ffaa6e444
+**Build steps:**
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && curl -fsSL -o /tmp/nimbus \
-      "https://github.com/nimbus-agent/Nimbus/releases/download/${NIMBUS_VERSION}/nimbus-cli-linux-x64" \
- && echo "${NIMBUS_CLI_SHA256}  /tmp/nimbus" | sha256sum -c - \
- && install -m 0755 /tmp/nimbus /usr/local/bin/nimbus \
- && rm -f /tmp/nimbus \
- && apt-get purge -y --auto-remove curl \
- && rm -rf /var/lib/apt/lists/*
-
-ENTRYPOINT ["nimbus", "mcp-server", "--stdio"]
+```json
+[
+  "command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null; }",
+  "curl -fsSL -o /tmp/nimbus https://github.com/nimbus-agent/Nimbus/releases/download/v1.12.1/nimbus-cli-linux-x64",
+  "echo '78e43ec607d2fcd62e7395ff09bdf829558f772578c2bde4d4d2970ffaa6e444  /tmp/nimbus' | sha256sum -c -",
+  "install -m 0755 /tmp/nimbus /usr/local/bin/nimbus",
+  "rm -f /tmp/nimbus"
+]
 ```
 
-Three things about it are deliberate:
+**`cmd`:**
 
-- **`--platform=linux/amd64`.** Nimbus publishes one Linux CLI asset, x64 only. There is
-  no arm64 binary for a `TARGETARCH` switch to select, so an arm64 builder would
-  otherwise install an x64 binary that fails at runtime.
-- **The SHA-256 check.** `docs/install.md` tells users the checksum is their trust
-  anchor; the image follows the same rule. It is fail-closed and runs before install —
-  verified by building with a wrong digest, which aborts (`sha256sum: FAILED`).
-- **No `COPY`.** Nothing from the repo is needed, so the build context stays empty.
+```json
+["nimbus", "mcp-server", "--stdio"]
+```
 
-Bumping `NIMBUS_VERSION` requires updating `NIMBUS_CLI_SHA256` from that release's
-`SHA256SUMS`, or the build fails by design. Verified against v1.12.1: the image builds,
-starts, and returns all six tools to `tools/list` with no Gateway present.
+What Glama wraps around that, from a generated build:
+
+- Base is `debian:trixie-slim`, with Node, `pnpm`, `uv`/Python and `mcp-proxy`
+  preinstalled, so `curl` is already present and the first step is a no-op guard.
+- It `git clone`s this repo at a pinned commit before running the steps, even though the
+  steps do not use the source.
+- It rewrites `cmd` as `CMD ["mcp-proxy", "--", "nimbus", "mcp-server", "--stdio"]`,
+  bridging stdio to HTTP. Verified: a full MCP handshake through `mcp-proxy@6.4.3`
+  returns all six tools, so the wrapper does not disturb the server.
+
+Two details are load-bearing:
+
+- **Two spaces** between the digest and `/tmp/nimbus`, or `sha256sum -c` fails. The
+  check is fail-closed and runs before install — red-proved with a wrong digest, which
+  aborts the build (`sha256sum: FAILED`).
+- **The `cmd` array is self-contained** (`nimbus` first, not just its arguments), so it
+  works whether Glama replaces the command or appends to it. Both paths were tested.
+
+The platform cannot be pinned from a build spec. Nimbus publishes one Linux CLI asset,
+x64 only, so an arm64 builder would fail with an exec-format error at start rather than
+at build. That is a support question, not something the steps can fix.
+
+Bumping the version requires updating the digest from that release's `SHA256SUMS`, and
+then cutting a new Glama release — a new release replaces the previous one.
 
 ### Server-side listing caveat
 
@@ -146,8 +160,8 @@ resources, prompts, sampling, or MCP roots.
 | --- | --- | --- | --- | --- |
 | ❌ | ❌ | ✅ | ❌ | ❌ |
 
-This is the same support level as Cursor, Goose, and Witsy. If the mesh later
-consumes another capability, update every listing — a stale ✅ is worse than a ❌.
+This is the same support level most listed clients declare. If the mesh later consumes
+another capability, update every listing — a stale ✅ is worse than a ❌.
 
 ## Tier 1 — MCP ecosystem
 
@@ -155,7 +169,7 @@ Highest-intent audience. Ordered by yield per hour.
 
 | Target | Mechanism | Notes |
 | --- | --- | --- |
-| `modelcontextprotocol/docs` → `clients.mdx` | Pull request | Official list. Add one matrix row **and** a link-reference definition at the bottom of the file. No popularity bar: "if you've added MCP support to your application, we encourage you to submit a pull request." |
+| ~~`modelcontextprotocol/docs` → `clients.mdx`~~ | **DEAD — do not attempt** | The official "Example Clients" list has been **retired**. `modelcontextprotocol.io/clients` redirects to the homepage, `modelcontextprotocol/docs` is archived (last push 2025-04-08), and no `clients.mdx` exists anywhere in the org. The site now only name-drops clients in prose. The Registry replaced it and is servers-only, so there is no official client list to join. |
 | PulseMCP | Email `hello@pulsemcp.com` | **Not a form.** `pulsemcp.com/submit` no longer takes direct submissions — it redirects to the Official MCP Registry, which it ingests daily and processes weekly. Since that registry is servers-only, email is the only route for the client surface. |
 | `punkpeye/awesome-mcp-clients` | Pull request | Exact category match. Entry format is `### Name` + an HTML `<table>` (GitHub, Website, License, Type, Platforms, Pricing, Programming Languages) + a one-paragraph description + optional screenshots. Add a TOC entry too. |
 | mcp.so | Manual — see `mcp.so/clients` | The site is server-first, but a clients section exists. It returns HTTP 403 to automated fetches, so confirm the submission route in a browser before budgeting time for it. |
@@ -303,15 +317,16 @@ column would be the same name on every row.
 
 | Target | Surface | Status | Submission link | Completed |
 | --- | --- | --- | --- | --- |
-| README MCP statement | — | **done** | commit on `dev/asafgolombek/directory-listings` | 2026-07-30 |
-| PulseMCP (email) | client | not started | | |
-| modelcontextprotocol/docs `clients.mdx` | client | not started | | |
-| `punkpeye/awesome-mcp-servers` | server | **PR open** — Aggregators | <https://github.com/punkpeye/awesome-mcp-servers/pull/11216> | |
+| README MCP statement | — | **done** | <https://github.com/nimbus-agent/Nimbus/pull/979> | 2026-07-30 |
+| Glama | server | **listed + claimed**; release pending | <https://glama.ai/mcp/servers/nimbus-agent/Nimbus> | 2026-07-30 |
+| `punkpeye/awesome-mcp-clients` | client | **PR open** | <https://github.com/punkpeye/awesome-mcp-clients/pull/265> | |
+| `punkpeye/awesome-mcp-servers` | server | **PR open** — gated on a passing Glama check | <https://github.com/punkpeye/awesome-mcp-servers/pull/11216> | |
+| PulseMCP | client | **email sent** to `hello@pulsemcp.com` | | 2026-07-30 |
+| ~~modelcontextprotocol/docs~~ | client | **dead** — list retired, repo archived | | |
 | Official MCP Registry | server | **blocked** — needs a packaging decision | | |
-| `punkpeye/awesome-mcp-clients` | client | not started | | |
 | mcp.so (confirm route first) | client + server | not started | | |
 | wong2 / appcypher | server | not started | | |
-| Glama / Smithery (speculative) | server | not started | | |
+| Smithery (speculative) | server | not started | | |
 | Tier 2 | client | not started | | |
 | Tier 3 | client | not started | | |
 | Tier 4 | client | not started | | |
