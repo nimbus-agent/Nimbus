@@ -201,6 +201,25 @@ jobs:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
         run: bun scripts/structure-audit/check-review-coverage.ts --strict
 
+  bypass-attestation:
+    name: bypass-attestation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      # No App token: this gate reads only the committed attestation + declared
+      # config. Reading bypass_actors needs Administration:write, which is the
+      # whole reason the attestation indirection exists.
+      - name: Audit the bypass-actor attestation
+        run: bun scripts/structure-audit/check-bypass-attestation.ts --strict
+
   release-staleness:
     name: release-staleness
     runs-on: ubuntu-24.04

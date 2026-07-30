@@ -38,9 +38,9 @@ export interface SharedRuleset {
 
 /**
  * The on-disk shape of `.github/rulesets/general-branch.json`: one shared
- * declared ruleset plus the flat list of repos it is asserted against. There are
- * no per-repo overrides — bypass actors are intentionally not diffed (see
- * `diffRuleset` / the P1 progress log), and everything else is uniform.
+ * declared ruleset plus the flat list of repos it is asserted against.
+ * `shared` is uniform across repos; per-repo bypass intent lives in the sibling
+ * `bypass` block and is consumed by check-bypass-actors.ts, not by this gate.
  */
 export interface DesiredRulesetFile {
   shared: SharedRuleset;
@@ -112,15 +112,14 @@ export function diffRuleset(desired: DesiredRuleset, live: unknown): AuditResult
     }
   }
 
-  // Bypass actors are intentionally NOT diffed. The CI credential is a repo-
-  // scoped App installation token with `Administration: read`, which returns an
-  // EMPTY `bypass_actors` for org-level actors (OrganizationAdmin) — proven live
-  // that even adding `organization-administration: read` does not restore it, and
-  // reading them would need `Administration: write`, which an audit gate must not
-  // hold. Diffing the field against a declared value therefore false-fails on
-  // every repo that carries an org-level bypass. Auditing bypass actors is a
-  // follow-up requiring a higher-privilege context (see the P1 progress log in
-  // docs/infrastructure-roadmap.md).
+  // Bypass actors are intentionally NOT diffed HERE. This gate's credential is a
+  // repo-scoped App installation token with `Administration: read`, which returns
+  // an EMPTY `bypass_actors` for org-level actors (OrganizationAdmin) — proven
+  // live that adding `organization-administration: read` does not restore it, and
+  // reading them would need `Administration: write`, which a read-only audit gate
+  // must not hold. The field IS gated, by the owner-run `audit:bypass-actors`
+  // plus the sweep's `audit:bypass-attestation`, both reading the `bypass` block
+  // of .github/rulesets/general-branch.json. See docs/infrastructure-roadmap.md, P6.
 
   const prRule = rules.find((r) => isRecord(r) && r["type"] === "pull_request");
   if (!isRecord(prRule)) {

@@ -93,6 +93,8 @@ export const CI_ONLY_GATES: readonly string[] = [
   "audit:release-staleness", // needs network + gh (public reads across release + channel repos); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:actions-allowlist", // needs network + gh (reads each repo's Actions permissions); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:advisories", // needs network (npm registry via `bun audit`); runs beside `bun audit` in security.yml, never the local FAST tier
+  "audit:bypass-actors", // needs an OWNER gh token (admin:org) — the CI App token cannot read bypass_actors; an explicit human action, never a gate
+  "audit:bypass-attestation", // local + deterministic, but its red depends on the OWNER's re-attestation cadence; sweep-only so a stale attestation never blocks a contributor's PR
 ];
 
 export function selectGates(tier: GateTier): Gate[] {

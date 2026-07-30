@@ -179,6 +179,8 @@
     "audit:team-reachability": "bun scripts/structure-audit/check-team-reachability.ts",
     "audit:cla-coverage": "bun scripts/structure-audit/check-cla-coverage.ts",
     "audit:review-coverage": "bun scripts/structure-audit/check-review-coverage.ts",
+    "audit:bypass-actors": "bun scripts/structure-audit/check-bypass-actors.ts",
+    "audit:bypass-attestation": "bun scripts/structure-audit/check-bypass-attestation.ts",
     "audit:release-staleness": "bun scripts/structure-audit/check-release-staleness.ts",
     "audit:secret-inventory": "bun scripts/structure-audit/check-secret-inventory.ts",
     "audit:actions-allowlist": "bun scripts/structure-audit/check-actions-allowlist.ts",
