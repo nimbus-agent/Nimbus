@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.12.0](https://github.com/nimbus-agent/Nimbus/compare/v1.11.0...v1.12.0) (2026-07-30)
+
+
+### Documentation
+
+* **claude:** record that release tags are immutable, and how to recover ([#962](https://github.com/nimbus-agent/Nimbus/issues/962)) ([039176c](https://github.com/nimbus-agent/Nimbus/commit/039176c781f6f2617c581d50c8a8921c152f3cfc))
+
 ## [1.11.0](https://github.com/nimbus-agent/Nimbus/compare/v1.10.0...v1.11.0) (2026-07-30)
 
 > **Never published — superseded by 1.12.0.** This tag's release build failed its
