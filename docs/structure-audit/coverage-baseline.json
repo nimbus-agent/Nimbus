@@ -1,7 +1,12 @@
 {
   "version": 2,
-  "generated_at": "2026-06-13T06:14:31.440Z",
-  "files": {},
+  "generated_at": "2026-07-30T20:05:59.187Z",
+  "files": {
+    "packages/gateway/src/glossary/glossary-reconcile.ts": {
+      "min_line_pct": 85,
+      "min_branch_pct": 75
+    }
+  },
   "targets": {
     "packages/gateway/src/engine/executor.ts": {
       "min_line_pct": 100,
