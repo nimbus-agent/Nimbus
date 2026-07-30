@@ -18,6 +18,7 @@ export const COMMAND_NAMES = [
   "expert",
   "extension",
   "ghost",
+  "glossary",
   "help",
   "huddle",
   "identity",
