@@ -113,7 +113,13 @@ test("the briefReady notification carries markdown and typed findings", async ()
 });
 
 test("zero HITL: the agent source imports no executor and declares no HITL", async () => {
-  const src = await Bun.file("packages/gateway/src/agents/glossary.ts").text();
+  // Anchored to this file, not the CWD — the sibling expert.e2e.test.ts does the
+  // same. A CWD-relative read resolves locally but throws on CI, where the runner
+  // starts from a different directory.
+  const src = require("node:fs").readFileSync(
+    require("node:path").resolve(__dirname, "../../../src/agents/glossary.ts"),
+    "utf8",
+  ) as string;
   expect(src).not.toContain("ToolExecutor");
   expect(src).not.toContain("HITL_REQUIRED");
 });

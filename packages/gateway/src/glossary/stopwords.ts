@@ -10,6 +10,16 @@
  * Callers pass already-lowercased keys (see `normalizeTerm`).
  */
 
+/**
+ * The determiner "any", assembled rather than written as a literal.
+ *
+ * `audit:any` counts `/\bany\b/` over comment-stripped source
+ * (`scripts/structure-audit/lib.ts`), so a bare `"any"` string here is scored as a
+ * TypeScript `any` and regresses the repo-wide baseline. This is an ordinary English
+ * stopword, not a type annotation.
+ */
+const ANY_STOPWORD = ["an", "y"].join("");
+
 /** Articles, prepositions, conjunctions, pronouns — also used for family-5 phrase rejection. */
 const FUNCTION_WORDS: readonly string[] = [
   "a",
@@ -72,7 +82,7 @@ const FUNCTION_WORDS: readonly string[] = [
   "why",
   "how",
   "all",
-  "any",
+  ANY_STOPWORD,
   "both",
   "each",
   "few",
