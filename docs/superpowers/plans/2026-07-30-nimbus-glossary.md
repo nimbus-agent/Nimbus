@@ -4610,8 +4610,13 @@ let db: Database;
 const PASS = {
   maxNewTermsPerPass: 25,
   statsRecheckPerPass: 50,
+  // Required. Omitting it makes the reconcile cutoff NaN, which silently
+  // matches nothing — the sweep becomes a no-op and the test still passes.
+  statsRecheckCooldownMs: 0,
   minDocFreq: 3,
   consolidateTimeoutMs: 1000,
+  // Required. Omitting it makes the backoff window NaN.
+  retryBaseCooldownMs: 1000,
   nowMs: 5000,
 };
 
