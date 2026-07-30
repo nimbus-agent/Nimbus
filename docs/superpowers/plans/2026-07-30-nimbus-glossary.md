@@ -1832,7 +1832,7 @@ export function clearGlossary(db: Database): void {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/glossary-store.test.ts`
-Expected: PASS (26 tests).
+Expected: PASS (25 tests).
 
 If `computeTermStats` returns 0 for a multi-word key, check `ftsQuery` — an unquoted multi-word MATCH is an implicit AND, not a phrase.
 
