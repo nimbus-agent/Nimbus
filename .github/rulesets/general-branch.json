@@ -1,12 +1,13 @@
 {
-  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs `shared` against each repo in `repos`. P6 flips the contributor-two switches in `shared.pull_request`. NOT diffed: `required_status_checks`/`code_quality` (per-repo CI shape) and `bypass_actors` (the CI App token cannot read org-level bypass actors — see the P1 progress log). Intended bypass, for the future higher-privilege check: OrganizationAdmin on Nimbus/nimbus-vscode/nimbus-web-clipper; none on nimbus-client/nimbus-sdk.",
+  "$comment": "Desired shape of the 'General' branch ruleset on every active org repo. audit:ruleset-drift diffs `shared` against each repo in `repos`. NOT diffed there: `required_status_checks`/`code_quality` (per-repo CI shape) and `bypass_actors` (the CI App installation token cannot read org-level bypass actors — see the P1 progress log). Bypass actors are instead gated by the owner-run `audit:bypass-actors`, whose attestation the sweep's `audit:bypass-attestation` checks; both read the `bypass` block below.",
   "$contributor_two": {
-    "note": "Solo-mode switches to flip when a second maintainer gains write access — one reviewed diff. Three live in shared.pull_request below and are already drift-gated; the bypass switch is not (the CI App token cannot read bypass_actors — see the roadmap).",
+    "note": "Solo-mode switches to flip when a second maintainer gains write access — one reviewed diff. All four are now drift-gated: three by audit:ruleset-drift (shared.pull_request) and two by audit:bypass-actors (the bypass block).",
     "switches": {
       "shared.pull_request.required_approving_review_count": { "solo": 0, "team": 1 },
       "shared.pull_request.require_code_owner_review": { "solo": false, "team": true },
       "shared.pull_request.require_last_push_approval": { "solo": false, "team": true },
-      "bypass_actors.OrganizationAdmin.bypass_mode": { "solo": "always", "team": "pull_request" }
+      "bypass.by_repo[*].bypass_mode": { "solo": "always", "team": "pull_request" },
+      "bypass.attestation_grace_days": { "solo": 90, "team": 30 }
     }
   },
   "shared": {
@@ -23,6 +24,16 @@
       "require_code_owner_review": false,
       "require_last_push_approval": false,
       "required_approving_review_count": 0
+    }
+  },
+  "bypass": {
+    "attestation_grace_days": 90,
+    "by_repo": {
+      "Nimbus": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }],
+      "nimbus-client": [],
+      "nimbus-sdk": [],
+      "nimbus-vscode": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }],
+      "nimbus-web-clipper": [{ "actor_type": "OrganizationAdmin", "bypass_mode": "always" }]
     }
   },
   "repos": ["Nimbus", "nimbus-client", "nimbus-sdk", "nimbus-vscode", "nimbus-web-clipper"]
