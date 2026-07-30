@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { emitGlossaryBrief, runGlossary } from "../../../src/agents/glossary.ts";
 import { runGlossaryPass } from "../../../src/glossary/glossary-extract.ts";
@@ -27,6 +29,23 @@ const PASS = {
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
 };
+
+/** Narrows the `glossary.briefReady` payload instead of casting it into shape. */
+function isBriefReadyParams(v: unknown): v is { brief: string; findings: { kind: string } } {
+  if (v === null || typeof v !== "object") return false;
+  const o = v as { brief?: unknown; findings?: unknown };
+  if (typeof o.brief !== "string") return false;
+  if (o.findings === null || typeof o.findings !== "object") return false;
+  return typeof (o.findings as { kind?: unknown }).kind === "string";
+}
+
+/** Narrows a `COUNT(*)` row from SQLite before the count is read. */
+function countOf(v: unknown): number {
+  if (v === null || typeof v !== "object") throw new Error("expected a count row");
+  const c = (v as { c?: unknown }).c;
+  if (typeof c !== "number") throw new Error("expected a numeric count");
+  return c;
+}
 
 function seedThreads(): void {
   const texts = [
@@ -80,6 +99,34 @@ test("extraction to brief: a term evidenced by 3 threads is defined with dates",
 
 test("the no-argument list is frequency ranked", async () => {
   seedThreads();
+  // A second term evidenced by strictly fewer threads than CDR (3 vs 5), so a
+  // non-empty assertion alone cannot pass an unsorted result.
+  [
+    "Every SLO breach pages the on-call.",
+    "The SLO dashboard is stale.",
+    "SLO review Friday.",
+  ].forEach((t, i) => {
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: `slo${String(i)}`,
+      title: t,
+      bodyPreview: t,
+      modifiedAt: 2000 + i,
+      syncedAt: 2000 + i,
+    });
+  });
+  ["The CDR schema changed.", "CDR replay finished."].forEach((t, i) => {
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: `extra${String(i)}`,
+      title: t,
+      bodyPreview: t,
+      modifiedAt: 3000 + i,
+      syncedAt: 3000 + i,
+    });
+  });
   const llm = {
     generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d" }),
   };
@@ -87,7 +134,20 @@ test("the no-argument list is frequency ranked", async () => {
 
   const brief = await runGlossary({}, { db, notify: () => undefined, sessionId: "e2e" });
   expect(brief.mode).toBe("list");
-  expect(brief.entries.length).toBeGreaterThan(0);
+  expect(brief.entries.length).toBeGreaterThan(1);
+
+  const ranks = brief.entries.map((e) => e.term.toLowerCase());
+  expect(ranks).toContain("cdr");
+  expect(ranks).toContain("slo");
+  // CDR wins on BOTH inputs to the score — more citing documents (5 vs 3) and a
+  // wider service spread (slack+jira vs slack) — so its position is unambiguous.
+  // The list is score-ranked rather than docFreq-ranked, so asserting a globally
+  // descending docFreq sequence would be asserting something the code does not
+  // promise.
+  const cdr = brief.entries[ranks.indexOf("cdr")];
+  const slo = brief.entries[ranks.indexOf("slo")];
+  expect(cdr?.docFreq).toBeGreaterThan(slo?.docFreq ?? 0);
+  expect(ranks.indexOf("cdr")).toBeLessThan(ranks.indexOf("slo"));
 });
 
 test("the briefReady notification carries markdown and typed findings", async () => {
@@ -106,20 +166,23 @@ test("the briefReady notification carries markdown and typed findings", async ()
 
   const ready = seen.find((s) => s.method === "glossary.briefReady");
   expect(ready).toBeDefined();
-  const p = ready?.params as { brief?: string; findings?: { kind?: string } };
-  expect(typeof p.brief).toBe("string");
-  expect(p.brief?.length).toBeGreaterThan(0);
-  expect(p.findings?.kind).toBe("glossary");
+  // The notification payload crosses the IPC boundary, so it is narrowed from
+  // `unknown` rather than asserted into shape with a cast.
+  const params: unknown = ready?.params;
+  expect(isBriefReadyParams(params)).toBe(true);
+  if (!isBriefReadyParams(params)) return;
+  expect(params.brief.length).toBeGreaterThan(0);
+  expect(params.findings.kind).toBe("glossary");
 });
 
 test("zero HITL: the agent source imports no executor and declares no HITL", async () => {
   // Anchored to this file, not the CWD — the sibling expert.e2e.test.ts does the
   // same. A CWD-relative read resolves locally but throws on CI, where the runner
   // starts from a different directory.
-  const src = require("node:fs").readFileSync(
-    require("node:path").resolve(__dirname, "../../../src/agents/glossary.ts"),
+  const src = readFileSync(
+    path.join(__dirname, "..", "..", "..", "src", "agents", "glossary.ts"),
     "utf8",
-  ) as string;
+  );
   expect(src).not.toContain("ToolExecutor");
   expect(src).not.toContain("HITL_REQUIRED");
 });
@@ -132,8 +195,8 @@ test("zero egress: a full pass plus a brief appends no egress_ledger rows", asyn
   await runGlossaryPass(db, { ...PASS, llm });
   await runGlossary({ term: "CDR" }, { db, notify: () => undefined, sessionId: "e2e" });
 
-  const rows = db.query("SELECT COUNT(*) AS c FROM egress_ledger").get() as { c: number };
-  expect(rows.c).toBe(0);
+  const row: unknown = db.query("SELECT COUNT(*) AS c FROM egress_ledger").get();
+  expect(countOf(row)).toBe(0);
 });
 
 test("an unknown term returns did-you-mean suggestions", async () => {

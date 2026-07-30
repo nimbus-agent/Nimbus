@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
-import { glossarySourceTypeList } from "./glossary-source-types.ts";
+import { glossarySourceFilter } from "./glossary-source-types.ts";
 import type {
   CandidateForm,
   DefinitionSource,
@@ -97,18 +97,13 @@ function safeFtsGet<T>(run: () => T, fallback: T): T {
   }
 }
 
-function typePlaceholders(): { sql: string; params: string[] } {
-  const types = glossarySourceTypeList();
-  return { sql: types.map(() => "?").join(", "), params: types };
-}
-
 /**
  * The spec-§5.1 recompute. Statistics are ALWAYS derived from the live FTS
  * index — never accumulated — so the result is idempotent under re-runs,
  * edits and deletions.
  */
 export function computeTermStats(db: Database, termKey: string): TermStats {
-  const { sql: ph, params: types } = typePlaceholders();
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   const agg = safeFtsGet(
     () =>
       db
@@ -119,9 +114,9 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
                   MAX(i.modified_at) AS last_seen
            FROM item_fts f
            JOIN item i ON i.rowid = f.rowid
-           WHERE item_fts MATCH ? AND i.type IN (${ph})`,
+           WHERE item_fts MATCH ? AND ${sourceFilter}`,
         )
-        .get(ftsQuery(termKey), ...types) as {
+        .get(ftsQuery(termKey), ...sourceKeys) as {
         doc_freq: number;
         service_spread: number;
         first_seen: number | null;
@@ -139,11 +134,11 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
       `SELECT i.id, i.title, i.url, i.service, i.modified_at
        FROM item_fts f
        JOIN item i ON i.rowid = f.rowid
-       WHERE item_fts MATCH ? AND i.type IN (${ph})
+       WHERE item_fts MATCH ? AND ${sourceFilter}
        ORDER BY i.modified_at DESC
        LIMIT ?`,
     )
-    .all(ftsQuery(termKey), ...types, TOP_SOURCE_LIMIT) as Array<{
+    .all(ftsQuery(termKey), ...sourceKeys, TOP_SOURCE_LIMIT) as Array<{
     id: string;
     title: string;
     url: string | null;
@@ -405,6 +400,8 @@ export function countByStatus(db: Database): { total: number; pending: number; v
 
 export type GlossaryPassState = {
   watermarkMs: number;
+  /** Tiebreaker within `watermarkMs` — the `item.id` of the last scanned row. */
+  watermarkId: string;
   lastPassAt: number | null;
   lastPassNew: number;
   scannedItems: number;
@@ -413,13 +410,17 @@ export type GlossaryPassState = {
 export function readPassState(db: Database): GlossaryPassState {
   const r = db.query("SELECT * FROM glossary_pass_state WHERE id = 1").get() as {
     watermark_ms: number;
+    watermark_id: string;
     last_pass_at: number | null;
     last_pass_new: number;
     scanned_items: number;
   } | null;
-  if (r === null) return { watermarkMs: 0, lastPassAt: null, lastPassNew: 0, scannedItems: 0 };
+  if (r === null) {
+    return { watermarkMs: 0, watermarkId: "", lastPassAt: null, lastPassNew: 0, scannedItems: 0 };
+  }
   return {
     watermarkMs: r.watermark_ms,
+    watermarkId: r.watermark_id,
     lastPassAt: r.last_pass_at,
     lastPassNew: r.last_pass_new,
     scannedItems: r.scanned_items,
@@ -429,12 +430,14 @@ export function readPassState(db: Database): GlossaryPassState {
 export function writePassState(db: Database, s: GlossaryPassState): void {
   dbRun(
     db,
-    `INSERT INTO glossary_pass_state (id, watermark_ms, last_pass_at, last_pass_new, scanned_items)
-     VALUES (1, ?, ?, ?, ?)
+    `INSERT INTO glossary_pass_state
+       (id, watermark_ms, watermark_id, last_pass_at, last_pass_new, scanned_items)
+     VALUES (1, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
-       watermark_ms = excluded.watermark_ms, last_pass_at = excluded.last_pass_at,
+       watermark_ms = excluded.watermark_ms, watermark_id = excluded.watermark_id,
+       last_pass_at = excluded.last_pass_at,
        last_pass_new = excluded.last_pass_new, scanned_items = excluded.scanned_items`,
-    [s.watermarkMs, s.lastPassAt, s.lastPassNew, s.scannedItems],
+    [s.watermarkMs, s.watermarkId, s.lastPassAt, s.lastPassNew, s.scannedItems],
   );
 }
 

@@ -314,9 +314,9 @@ nimbus glossary --limit 50 --json
 | Flag | Description |
 |---|---|
 | `--limit <n>` | Cap the number of terms/entries returned |
-| `--refresh` | Parsed and forwarded, but **not yet wired**: the gateway's `agents.glossary` handler only reads `term` and `limit`, so this currently has no effect. Extraction is driven solely by the post-sync background trigger. |
-| `--rebuild` | Same caveat as `--refresh` — parsed and forwarded, currently a no-op gateway-side. |
 | `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+`--refresh` and `--rebuild` are **not implemented** and are **rejected with an error**. The gateway's `agents.glossary` handler reads only `term` and `limit`, so neither ever triggered a pass; they previously parsed and forwarded silently, which meant `nimbus glossary --rebuild` printed an ordinary listing while looking like it had re-derived the glossary. Extraction is driven solely by the post-sync background trigger.
 
 **Output (Markdown):** with no argument, a frequency-sorted term list with coverage stats (how many terms are consolidated vs. still pending). With `<term>`, the consolidated definition, first-seen / last-seen dates, up to 5 top sources, and known synonyms/near-misses; gap notes explain an empty or partially-built glossary (no pass has run yet, every candidate fell below the frequency floor, consolidation is still in progress) rather than looking broken.
 

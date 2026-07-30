@@ -24,6 +24,7 @@ Usage:
   nimbus index reembed --model <id> [--item-type <key>] [--service <name>] [--limit N] [--batch-size N] [--dry-run] [--yes] [--json]
                             Selective re-embedding to a target model; required --yes for non-dry runs
   nimbus catchup [--since 3d] [--json] [--service <id>]   Personalised retrospective digest weighted by your involvement
+  nimbus glossary [<term>] [--limit N] [--json]   The team's own terminology, mined from the local index
   nimbus llm status [--json]   Show selected LLM provider/model per task type and availability
   nimbus metrics dora --service <id> [--since 30d] [--json]   DORA four-key metrics for a configured service
   nimbus deploy preflight --service <id> --target-ref <ref> [--mode warn|block|off] [--json]   Pre-deploy index check

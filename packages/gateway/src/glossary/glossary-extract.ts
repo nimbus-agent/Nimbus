@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { type ConsolidatorLlm, consolidateTerm } from "./glossary-consolidate.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
-import { glossarySourceTypeList } from "./glossary-source-types.ts";
+import { glossarySourceFilter } from "./glossary-source-types.ts";
 import {
   clearGlossary,
   computeTermStats,
@@ -53,18 +53,36 @@ const NEAR_MISS_POOL = 500;
 
 type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
 
-function scanDelta(db: Database, watermarkMs: number): ScanRow[] {
-  const types = glossarySourceTypeList();
-  const ph = types.map(() => "?").join(", ");
+/**
+ * The delta scan, resumed from a COMPOSITE `(modified_at, id)` cursor.
+ *
+ * A plain `modified_at > watermark` cursor loses rows whenever a tie group is
+ * larger than what `LIMIT` returns: `ORDER BY modified_at` picks an arbitrary
+ * subset of the rows sharing the boundary timestamp, the watermark advances to
+ * that timestamp, and the rest are no longer `>` it — permanently invisible to
+ * the glossary. Bulk imports stamping one job-level timestamp across thousands
+ * of items make that ordinary rather than exotic. Ordering and comparing by
+ * `(modified_at, id)` makes the cursor total, so a truncated batch resumes
+ * exactly where it stopped.
+ */
+function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: string }): ScanRow[] {
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   return db
     .query(
-      `SELECT id, title, body_preview, modified_at
-       FROM item
-       WHERE type IN (${ph}) AND modified_at > ?
-       ORDER BY modified_at ASC
+      `SELECT i.id, i.title, i.body_preview, i.modified_at
+       FROM item i
+       WHERE ${sourceFilter}
+         AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
+       ORDER BY i.modified_at ASC, i.id ASC
        LIMIT ?`,
     )
-    .all(...types, watermarkMs, SCAN_BATCH_LIMIT) as ScanRow[];
+    .all(
+      ...sourceKeys,
+      cursor.watermarkMs,
+      cursor.watermarkMs,
+      cursor.watermarkId,
+      SCAN_BATCH_LIMIT,
+    ) as ScanRow[];
 }
 
 /** Snippets handed to consolidation — the indexed text of a term's top sources. */
@@ -89,17 +107,15 @@ function discoverPhase(
   opts: GlossaryPassOptions,
 ): { scanned: number; discovered: number; demoted: number } {
   const state = readPassState(db);
-  const rows = scanDelta(db, state.watermarkMs);
+  const rows = scanDelta(db, state);
 
   let discovered = 0;
-  let maxModified = state.watermarkMs;
 
   const seen = new Map<
     string,
     { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }
   >();
   for (const row of rows) {
-    if (row.modified_at > maxModified) maxModified = row.modified_at;
     const text = `${row.title}\n${row.body_preview ?? ""}`;
     for (const c of mineTerms(text)) {
       if (!seen.has(c.key)) seen.set(c.key, { surface: c.surface, form: c.form });
@@ -131,8 +147,13 @@ function discoverPhase(
     cooldownMs: opts.statsRecheckCooldownMs,
   });
 
+  // The cursor advances to the LAST row of the batch, which under
+  // `ORDER BY modified_at, id` is the largest `(modified_at, id)` pair scanned.
+  // An empty batch leaves the cursor where it was.
+  const last = rows.at(-1);
   writePassState(db, {
-    watermarkMs: maxModified,
+    watermarkMs: last?.modified_at ?? state.watermarkMs,
+    watermarkId: last?.id ?? state.watermarkId,
     lastPassAt: opts.nowMs,
     lastPassNew: discovered,
     scannedItems: rows.length,

@@ -541,7 +541,10 @@ CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
 -- more than one row (the same single-row pattern as other watermark tables in this schema).
 CREATE TABLE IF NOT EXISTS glossary_pass_state (
     id            INTEGER PRIMARY KEY CHECK(id = 1),
-    watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- max item.modified_at scanned by the last pass
+    watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- modified_at of the last row the scan consumed
+    watermark_id  TEXT    NOT NULL DEFAULT '',  -- item.id tiebreaker: the cursor is (modified_at, id),
+                                                -- so a batch truncated inside a group of rows sharing
+                                                -- one modified_at resumes instead of skipping the rest
     last_pass_at  INTEGER,                      -- wall-clock time of the last completed pass
     last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new candidates discovered by the last pass
     scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass

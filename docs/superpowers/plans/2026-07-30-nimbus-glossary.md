@@ -225,6 +225,7 @@ CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
 CREATE TABLE IF NOT EXISTS glossary_pass_state (
   id            INTEGER PRIMARY KEY CHECK(id = 1),
   watermark_ms  INTEGER NOT NULL DEFAULT 0,
+  watermark_id  TEXT    NOT NULL DEFAULT '',
   last_pass_at  INTEGER,
   last_pass_new INTEGER NOT NULL DEFAULT 0,
   scanned_items INTEGER NOT NULL DEFAULT 0
@@ -981,7 +982,7 @@ export function scoreTerm(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/term-scoring.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1156,7 +1157,7 @@ git commit -m "feat(glossary): acronym-expansion synonyms and edit-distance near
 **Interfaces:**
 
 - Consumes: `dbRun` from `../db/write.ts`; `GlossaryTerm`, `TermStats`, `GlossarySource`, `CandidateForm`, `GlossaryStatus`, `DefinitionSource` (Task 4).
-- Produces: `GLOSSARY_SOURCE_TYPES`, `glossarySourceTypeList()`, `computeTermStats(db, termKey): TermStats`, `upsertCandidate(db, c)`, `getTerm(db, key): GlossaryTerm | null`, `findBySynonym(db, q): GlossaryTerm | null`, `selectPendingBatch(db, limit, { nowMs, retryBaseCooldownMs })`, `recordAttempt(db, key, nowMs)`, `retryCooldownMs(attempts, baseMs)`, `selectStaleForRecheck(db, limit, verifiedBefore)`, `listConsolidated(db, limit)`, `listAllKeys(db)`, `markConsolidated(db, p)`, `markVetoed(db, key, nowMs)`, `demoteTerm(db, key, nowMs)`, `applyStats(db, key, stats, score, nowMs)`, `countByStatus(db)`, `readPassState(db)`, `writePassState(db, s)`, `clearGlossary(db)`.
+- Produces: `GLOSSARY_SOURCE_TYPES`, `glossarySourceFilter()`, `computeTermStats(db, termKey): TermStats`, `upsertCandidate(db, c)`, `getTerm(db, key): GlossaryTerm | null`, `findBySynonym(db, q): GlossaryTerm | null`, `selectPendingBatch(db, limit, { nowMs, retryBaseCooldownMs })`, `recordAttempt(db, key, nowMs)`, `retryCooldownMs(attempts, baseMs)`, `selectStaleForRecheck(db, limit, verifiedBefore)`, `listConsolidated(db, limit)`, `listAllKeys(db)`, `markConsolidated(db, p)`, `markVetoed(db, key, nowMs)`, `demoteTerm(db, key, nowMs)`, `applyStats(db, key, stats, score, nowMs)`, `countByStatus(db)`, `readPassState(db)`, `writePassState(db, s)`, `clearGlossary(db)`.
 
 - [ ] **Step 1: Write the source-scope module**
 
@@ -1170,11 +1171,16 @@ Create `packages/gateway/src/glossary/glossary-source-types.ts`:
  * and mining a personal inbox into a TEAM glossary is not a posture to adopt
  * silently. Keys are `service:type`, matching PROSE_HEAVY_TYPES style.
  *
- * `filesystem:git_commit` is the ONLY confirmed commit source
+ * `filesystem:git_commit` is the ONLY commit source that exists today
  * (`connectors/filesystem-v2-sync.ts`). That row stores the commit subject in
  * `title` and the SHA in `body_preview`, so mining reads it from the title —
  * which is why the scan concatenates title and body rather than reading the
- * body alone.
+ * body alone. `github:commit` and `gitlab:commit` are listed because the
+ * roadmap names commit messages as a glossary source, but no connector writes
+ * `item.type = 'commit'` today: the GitHub sync emits `pr`/`issue` and the
+ * GitLab sync `pr`/`issue`/`ci_run` (verified 2026-07-31). Under the
+ * service-qualified filter below they match nothing until such a connector
+ * lands, which is the safe direction for a dead allowlist row.
  *
  * No generic markdown item type exists, so ADRs are mined only when their
  * repository is indexed as an Obsidian vault (`obsidian:obsidian_note`).
@@ -1196,16 +1202,34 @@ export const GLOSSARY_SOURCE_TYPES: ReadonlySet<string> = new Set([
   "filesystem:git_commit",
 ]);
 
-/** The bare `type` values, for the SQL `type IN (...)` filter. */
-export function glossarySourceTypeList(): string[] {
-  const types = new Set<string>();
-  for (const key of GLOSSARY_SOURCE_TYPES) {
-    const idx = key.indexOf(":");
-    types.add(idx === -1 ? key : key.slice(idx + 1));
-  }
-  return [...types];
+/**
+ * SQL predicate matching an `item` row against the allowlist, service half
+ * included. The table MUST be aliased `i`.
+ *
+ * Filtering on the bare `type` half alone would silently widen the scope:
+ * `message`, `page`, `issue` and `commit` are generic type names shared across
+ * services, so `type IN (...)` also admits every out-of-scope source that
+ * happens to reuse one — `wiz:issue` (cloud-security posture findings) today,
+ * and any user-installed extension emitting `message` tomorrow. That is the
+ * "mining a personal inbox is not a posture to adopt silently" rule leaking in
+ * through the back door, and because `service_spread` is a geometric multiplier
+ * in `scoreTerm`, an unintended service also inflates the score of every term
+ * it mentions.
+ */
+const GLOSSARY_SOURCE_MATCH_SQL = "(i.service || ':' || i.type)";
+
+/** The `service:type` keys plus the SQL that compares a row against them. */
+export function glossarySourceFilter(): { sql: string; params: string[] } {
+  const keys = [...GLOSSARY_SOURCE_TYPES];
+  const placeholders = keys.map(() => "?").join(", ");
+  return { sql: `${GLOSSARY_SOURCE_MATCH_SQL} IN (${placeholders})`, params: keys };
 }
 ```
+
+> **Corrected 2026-07-31** (CodeRabbit review of PR #981, independently found by the whole-branch
+> review). This block originally exported a bare-`type` list and both SQL consumers filtered on
+> `i.type IN (...)`, discarding the service half of every allowlist key. The blocks below —
+> `computeTermStats` in Task 7 and `scanDelta` in Task 11 — are shown in their corrected form.
 
 - [ ] **Step 2: Write the failing store test**
 
@@ -1471,7 +1495,7 @@ Create `packages/gateway/src/glossary/glossary-store.ts`. Every write uses `dbRu
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
-import { glossarySourceTypeList } from "./glossary-source-types.ts";
+import { glossarySourceFilter } from "./glossary-source-types.ts";
 import type {
   CandidateForm, DefinitionSource, GlossarySource, GlossaryStatus,
   GlossaryTerm, TermStats,
@@ -1552,18 +1576,13 @@ function safeFtsGet<T>(run: () => T, fallback: T): T {
   }
 }
 
-function typePlaceholders(): { sql: string; params: string[] } {
-  const types = glossarySourceTypeList();
-  return { sql: types.map(() => "?").join(", "), params: types };
-}
-
 /**
  * The spec-§5.1 recompute. Statistics are ALWAYS derived from the live FTS
  * index — never accumulated — so the result is idempotent under re-runs,
  * edits and deletions.
  */
 export function computeTermStats(db: Database, termKey: string): TermStats {
-  const { sql: ph, params: types } = typePlaceholders();
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   const agg = safeFtsGet(
     () =>
       db
@@ -1574,9 +1593,9 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
                   MAX(i.modified_at) AS last_seen
            FROM item_fts f
            JOIN item i ON i.rowid = f.rowid
-           WHERE item_fts MATCH ? AND i.type IN (${ph})`,
+           WHERE item_fts MATCH ? AND ${sourceFilter}`,
         )
-        .get(ftsQuery(termKey), ...types) as {
+        .get(ftsQuery(termKey), ...sourceKeys) as {
         doc_freq: number; service_spread: number;
         first_seen: number | null; last_seen: number | null;
       } | null,
@@ -1592,11 +1611,11 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
       `SELECT i.id, i.title, i.url, i.service, i.modified_at
        FROM item_fts f
        JOIN item i ON i.rowid = f.rowid
-       WHERE item_fts MATCH ? AND i.type IN (${ph})
+       WHERE item_fts MATCH ? AND ${sourceFilter}
        ORDER BY i.modified_at DESC
        LIMIT ?`,
     )
-    .all(ftsQuery(termKey), ...types, TOP_SOURCE_LIMIT) as Array<{
+    .all(ftsQuery(termKey), ...sourceKeys, TOP_SOURCE_LIMIT) as Array<{
     id: string; title: string; url: string | null; service: string; modified_at: number;
   }>;
 
@@ -3061,7 +3080,7 @@ import type { Database } from "bun:sqlite";
 import { type ConsolidatorLlm, consolidateTerm } from "./glossary-consolidate.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
-import { glossarySourceTypeList } from "./glossary-source-types.ts";
+import { glossarySourceFilter } from "./glossary-source-types.ts";
 import {
   clearGlossary,
   computeTermStats,
@@ -3107,18 +3126,39 @@ const SCAN_BATCH_LIMIT = 5000;
 
 type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
 
-function scanDelta(db: Database, watermarkMs: number): ScanRow[] {
-  const types = glossarySourceTypeList();
-  const ph = types.map(() => "?").join(", ");
+/**
+ * The delta scan, resumed from a COMPOSITE `(modified_at, id)` cursor.
+ *
+ * A plain `modified_at > watermark` cursor loses rows whenever a tie group is
+ * larger than what `LIMIT` returns: `ORDER BY modified_at` picks an arbitrary
+ * subset of the rows sharing the boundary timestamp, the watermark advances to
+ * that timestamp, and the rest are no longer `>` it — permanently invisible to
+ * the glossary. Bulk imports stamping one job-level timestamp across thousands
+ * of items make that ordinary rather than exotic. Ordering and comparing by
+ * `(modified_at, id)` makes the cursor total, so a truncated batch resumes
+ * exactly where it stopped.
+ *
+ * Corrected 2026-07-31 (CodeRabbit review of PR #981); `glossary_pass_state`
+ * gained `watermark_id` in the same change.
+ */
+function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: string }): ScanRow[] {
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   return db
     .query(
-      `SELECT id, title, body_preview, modified_at
-       FROM item
-       WHERE type IN (${ph}) AND modified_at > ?
-       ORDER BY modified_at ASC
+      `SELECT i.id, i.title, i.body_preview, i.modified_at
+       FROM item i
+       WHERE ${sourceFilter}
+         AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
+       ORDER BY i.modified_at ASC, i.id ASC
        LIMIT ?`,
     )
-    .all(...types, watermarkMs, SCAN_BATCH_LIMIT) as ScanRow[];
+    .all(
+      ...sourceKeys,
+      cursor.watermarkMs,
+      cursor.watermarkMs,
+      cursor.watermarkId,
+      SCAN_BATCH_LIMIT,
+    ) as ScanRow[];
 }
 
 /** Snippets handed to consolidation — the indexed text of a term's top sources. */
@@ -3143,14 +3183,12 @@ function discoverPhase(
   opts: GlossaryPassOptions,
 ): { scanned: number; discovered: number; demoted: number } {
   const state = readPassState(db);
-  const rows = scanDelta(db, state.watermarkMs);
+  const rows = scanDelta(db, state);
 
   let discovered = 0;
-  let maxModified = state.watermarkMs;
 
   const seen = new Map<string, { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }>();
   for (const row of rows) {
-    if (row.modified_at > maxModified) maxModified = row.modified_at;
     const text = `${row.title}\n${row.body_preview ?? ""}`;
     for (const c of mineTerms(text)) {
       if (!seen.has(c.key)) seen.set(c.key, { surface: c.surface, form: c.form });
@@ -3178,8 +3216,13 @@ function discoverPhase(
     cooldownMs: opts.statsRecheckCooldownMs,
   });
 
+  // The cursor advances to the LAST row of the batch, which under
+  // `ORDER BY modified_at, id` is the largest `(modified_at, id)` pair scanned.
+  // An empty batch leaves the cursor where it was.
+  const last = rows.at(-1);
   writePassState(db, {
-    watermarkMs: maxModified,
+    watermarkMs: last?.modified_at ?? state.watermarkMs,
+    watermarkId: last?.id ?? state.watermarkId,
     lastPassAt: opts.nowMs,
     lastPassNew: discovered,
     scannedItems: rows.length,

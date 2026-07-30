@@ -126,6 +126,27 @@ test("with no LLM the definition is snippet-sourced", async () => {
   expect(t?.definitionSource).toBe("snippet");
 });
 
+test("the scan skips a non-allowlisted service even when its bare type is allowlisted", async () => {
+  // `issue` is allowlisted for linear/jira/github/gitlab. `wiz:issue` is a
+  // cloud-security-posture finding: same bare type, out of scope. A bare-type
+  // filter would mine it, and its terms would enter the glossary.
+  for (let i = 0; i < 3; i++) {
+    upsertIndexedItem(db, {
+      service: "wiz",
+      type: "issue",
+      externalId: `w${String(i)}`,
+      title: "the CDR bucket is publicly readable",
+      bodyPreview: "the CDR bucket is publicly readable",
+      modifiedAt: 1000 + i,
+      syncedAt: 1000 + i,
+    });
+  }
+  const out = await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
+  expect(out.scanned).toBe(0);
+  expect(out.discovered).toBe(0);
+  expect(getTerm(db, "cdr")).toBe(null);
+});
+
 test("the watermark advances past the scanned items", async () => {
   seedTermItems(3, "the CDR pipeline runs nightly");
   await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
@@ -188,9 +209,43 @@ test("items sharing one modified_at value do not each re-trigger the watermark a
   }
   const out = await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
   expect(out.scanned).toBe(3);
-  // Only the FIRST tied row actually raises maxModified; the other two see
-  // `modified_at > maxModified` as false and must not push it further.
+  // The cursor lands on the LAST row of the batch, so the timestamp half is
+  // that shared value and the id half identifies which tied row it stopped on.
+  const state = readPassState(db);
+  expect(state.watermarkMs).toBe(2000);
+  expect(state.watermarkId).toBe("slack:tie2");
+});
+
+test("a tie group truncated by SCAN_BATCH_LIMIT resumes instead of being skipped", async () => {
+  // The batch limit is 5000. Seeding 5001 items that share ONE modified_at —
+  // ordinary whenever a connector bulk-imports with a job-level timestamp —
+  // truncates the batch strictly inside the tie group. A timestamp-only
+  // watermark would advance to that value and the 5001st row, no longer
+  // `> watermark`, would never be scanned again.
+  const text = "the CDR pipeline runs nightly";
+  db.transaction(() => {
+    for (let i = 0; i < 5001; i++) {
+      upsertIndexedItem(db, {
+        service: "slack",
+        type: "message",
+        externalId: `bulk${String(i).padStart(5, "0")}`,
+        title: text,
+        bodyPreview: text,
+        modifiedAt: 2000,
+        syncedAt: 2000,
+      });
+    }
+  })();
+
+  const first = await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
+  expect(first.scanned).toBe(5000);
   expect(readPassState(db).watermarkMs).toBe(2000);
+
+  const second = await runGlossaryPass(db, { ...OPTS, llm: definingLlm(), nowMs: 6000 });
+  expect(second.scanned).toBe(1);
+
+  const third = await runGlossaryPass(db, { ...OPTS, llm: definingLlm(), nowMs: 7000 });
+  expect(third.scanned).toBe(0);
 });
 
 test("a term whose row vanishes mid-consolidation (concurrent rebuild) still counts, unprojected", async () => {

@@ -10,7 +10,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-07-30 — `nimbus glossary` — implicit-knowledge glossary.**
   A tenth built-in read-only agent plus a background extraction pass that mines domain
-  terminology from the already-indexed graph. Deterministic candidate mining (5 families,
+  terminology from the already-indexed graph. Mining is scoped to an explicit **`service:type`**
+  allowlist (`GLOSSARY_SOURCE_TYPES`) matched as `(item.service || ':' || item.type)` — the service
+  half is enforced, not just the bare type, so a different service reusing a generic type name
+  (`message` / `page` / `issue` / `commit`) is never mined by accident; email and calendar are
+  deliberately excluded. The delta scan resumes from a composite `(modified_at, id)` cursor so a
+  batch truncated inside a group of items sharing one timestamp continues rather than skipping the
+  remainder. Deterministic candidate mining (5 families,
   family-5 sentence-initial guard) recomputes every statistic from the existing FTS index rather
   than accumulating counters, so passes are idempotent; per-term consolidation makes a local-LLM
   call to write or veto a definition, capped at 25 calls per pass and running sequentially. A
@@ -24,8 +30,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `egress_ledger` rows. `[glossary]` defaults ON.
   The extraction pass is triggered only by the debounced post-connector-sync hook — the
   `agents.glossary` IPC handler reads only `term` and `limit`; the CLI's `--refresh` / `--rebuild`
-  flags are parsed and forwarded but not yet honored gateway-side, so they currently do nothing
-  (a follow-up). The scheduler-triggered pass itself also runs without an LLM available to it, so
+  flags are not implemented and are **rejected with an explicit error** rather than silently
+  running an ordinary query (wiring them is a follow-up). The scheduler-triggered pass itself also runs without an LLM available to it, so
   unattended passes produce `definition_source: "snippet"` definitions (the verbatim sentence
   containing the term) rather than LLM-consolidated ones, and there is no automatic upgrade path —
   nothing re-queues an existing snippet-sourced term for re-consolidation once an LLM becomes

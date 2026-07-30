@@ -139,6 +139,21 @@ test("no LLM falls back to a verbatim snippet definition", async () => {
   }
 });
 
+test("the snippet path dedupes repeated expansions and honours the synonym cap", async () => {
+  // detectAcronymExpansions runs over every joined snippet, so an expansion
+  // repeated across a busy channel would otherwise be stored once per sighting
+  // — uncapped metadata on the path the scheduler actually takes.
+  const repeated = Array.from({ length: 25 }, (_, i) => ({
+    text: `Thread ${String(i)}. We adopted Change Data Record (CDR) for the sync path.`,
+  }));
+  const out = await consolidateTerm(term(), repeated, { timeoutMs: 1000 });
+  expect(out.kind).toBe("defined");
+  if (out.kind === "defined") {
+    expect(out.source).toBe("snippet");
+    expect(out.synonyms).toEqual(["Change Data Record"]);
+  }
+});
+
 test("no LLM and no usable snippet yields retry", async () => {
   const out = await consolidateTerm(term(), [{ text: "unrelated prose" }], { timeoutMs: 1000 });
   expect(out.kind).toBe("retry");

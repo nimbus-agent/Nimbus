@@ -19,8 +19,17 @@ const IDENTIFIER_RE = /\b[a-z]+[A-Z][A-Za-z0-9]*\b|\b[A-Z][a-z0-9]+[A-Z][A-Za-z0
 const HYPHENATED_RE = /\b[a-z]{2,}(?:-[a-z]{2,}){1,3}\b/g;
 const PHRASE_RE = /\b[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+){1,3}\b/g;
 
-/** End-of-sentence punctuation followed by whitespace. */
-const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
+/**
+ * End-of-sentence punctuation followed by whitespace — OR a line break.
+ *
+ * `PHRASE_RE` treats `\n` as ordinary whitespace, so without the line-break arm
+ * a phrase can span a boundary that is not prose at all: the scan feeds
+ * `${title}\n${body_preview}` to `mineTerms`, which turned a "Shadow Traffic"
+ * title above a body opening with "Migration plan..." into the fabricated
+ * candidate `Shadow Traffic Migration`. Markdown headings and bullet lists
+ * produce the same shape with no terminating punctuation at all.
+ */
+const SENTENCE_SPLIT = /(?<=[.!?])\s+|\r?\n+/;
 
 type Hit = { surface: string; form: CandidateForm; sentenceInitial: boolean };
 

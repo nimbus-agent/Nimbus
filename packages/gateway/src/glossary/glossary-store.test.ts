@@ -36,13 +36,14 @@ let db: Database;
 function seedItem(o: {
   externalId: string;
   service?: string;
+  type?: string;
   title: string;
   body: string;
   modifiedAt: number;
 }): void {
   upsertIndexedItem(db, {
     service: o.service ?? "slack",
-    type: "message",
+    type: o.type ?? "message",
     externalId: o.externalId,
     title: o.title,
     bodyPreview: o.body,
@@ -84,6 +85,7 @@ test("computeTermStats counts distinct citing items and services", () => {
   seedItem({
     externalId: "c",
     service: "jira",
+    type: "issue",
     title: "CDR ticket",
     body: "CDR work",
     modifiedAt: 200,
@@ -93,6 +95,26 @@ test("computeTermStats counts distinct citing items and services", () => {
   expect(s.serviceSpread).toBe(2);
   expect(s.firstSeenAt).toBe(100);
   expect(s.lastSeenAt).toBe(300);
+});
+
+test("computeTermStats ignores an allowlisted type carried by a non-allowlisted service", () => {
+  // `issue` is an allowlisted BARE type (linear/jira/github/gitlab), but
+  // `wiz:issue` is a cloud-security-posture finding, not team prose. Filtering
+  // on the bare type alone would mine it — and, because service_spread is a
+  // geometric multiplier in scoreTerm, inflate every term it mentions.
+  seedItem({ externalId: "a", title: "CDR rollout", body: "the CDR is live", modifiedAt: 100 });
+  seedItem({
+    externalId: "w",
+    service: "wiz",
+    type: "issue",
+    title: "CDR exposure",
+    body: "CDR bucket is public",
+    modifiedAt: 200,
+  });
+  const s = computeTermStats(db, "cdr");
+  expect(s.docFreq).toBe(1);
+  expect(s.serviceSpread).toBe(1);
+  expect(s.topSources.map((t) => t.service)).toEqual(["slack"]);
 });
 
 test("computeTermStats returns at most five top sources", () => {
@@ -319,10 +341,25 @@ test("listConsolidated is ranked by score", () => {
 
 test("pass state defaults to a zero watermark and round-trips", () => {
   expect(readPassState(db).watermarkMs).toBe(0);
-  writePassState(db, { watermarkMs: 42, lastPassAt: 99, lastPassNew: 2, scannedItems: 7 });
+  expect(readPassState(db).watermarkId).toBe("");
+  writePassState(db, {
+    watermarkMs: 42,
+    watermarkId: "slack:m1",
+    lastPassAt: 99,
+    lastPassNew: 2,
+    scannedItems: 7,
+  });
   expect(readPassState(db).watermarkMs).toBe(42);
-  writePassState(db, { watermarkMs: 50, lastPassAt: 100, lastPassNew: 1, scannedItems: 8 });
+  expect(readPassState(db).watermarkId).toBe("slack:m1");
+  writePassState(db, {
+    watermarkMs: 50,
+    watermarkId: "slack:m9",
+    lastPassAt: 100,
+    lastPassNew: 1,
+    scannedItems: 8,
+  });
   expect(readPassState(db).watermarkMs).toBe(50);
+  expect(readPassState(db).watermarkId).toBe("slack:m9");
 });
 
 test("listAllKeys and clearGlossary", () => {

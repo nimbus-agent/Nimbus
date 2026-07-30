@@ -32,10 +32,25 @@ test("--limit rejects a missing value", () => {
   expect(() => parseGlossaryArgs(["--limit"])).toThrow();
 });
 
-test("--refresh and --rebuild are recognised and mutually exclusive", () => {
-  expect(parseGlossaryArgs(["--refresh"]).refresh).toBe(true);
-  expect(parseGlossaryArgs(["--rebuild"]).rebuild).toBe(true);
-  expect(() => parseGlossaryArgs(["--refresh", "--rebuild"])).toThrow();
+test("--refresh and --rebuild fail loudly instead of running an ordinary query", () => {
+  // The gateway handler reads only `term` and `limit`. Accepting these flags
+  // meant `nimbus glossary --rebuild` printed a normal listing while the user
+  // believed the glossary had been re-derived from scratch.
+  expect(() => parseGlossaryArgs(["--refresh"])).toThrow(/--refresh is not implemented yet/);
+  expect(() => parseGlossaryArgs(["--rebuild"])).toThrow(/--rebuild is not implemented yet/);
+  expect(() => parseGlossaryArgs(["CDR", "--rebuild"])).toThrow(/Nothing was rebuilt/);
+});
+
+test("the usage line does not advertise the unwired flags", () => {
+  let usage = "";
+  try {
+    parseGlossaryArgs(["--help"]);
+  } catch (err) {
+    usage = err instanceof Error ? err.message : "";
+  }
+  expect(usage).toContain("nimbus glossary");
+  expect(usage).not.toContain("--refresh");
+  expect(usage).not.toContain("--rebuild");
 });
 
 test("flags combine with a term", () => {

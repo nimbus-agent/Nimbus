@@ -21,6 +21,13 @@
  * lower-scoring term would ever consolidate. Some failures are PERMANENT
  * (e.g. in snippet mode, a term whose sources never state it in a full
  * sentence), so this is starvation by construction, not a rare race.
+ *
+ * `glossary_pass_state` carries a COMPOSITE scan cursor: `watermark_ms` alone
+ * cannot express "resume inside a group of items sharing one `modified_at`".
+ * A bulk import stamping thousands of rows with a single job-level timestamp
+ * is ordinary, and a batch truncated inside such a group would otherwise
+ * advance past it and skip the remainder permanently. `watermark_id` breaks
+ * the tie using `item.id`, which is a primary key and therefore total.
  */
 export const GLOSSARY_V45_SQL = `
 CREATE TABLE IF NOT EXISTS glossary_term (
@@ -57,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
 CREATE TABLE IF NOT EXISTS glossary_pass_state (
   id            INTEGER PRIMARY KEY CHECK(id = 1),
   watermark_ms  INTEGER NOT NULL DEFAULT 0,
+  watermark_id  TEXT    NOT NULL DEFAULT '',
   last_pass_at  INTEGER,
   last_pass_new INTEGER NOT NULL DEFAULT 0,
   scanned_items INTEGER NOT NULL DEFAULT 0

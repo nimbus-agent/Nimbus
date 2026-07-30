@@ -438,7 +438,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const glossaryRefresher = createGlossaryRefresher({
     enabled: glossaryCfg.enabled,
     debounceMs: glossaryCfg.debounceMs,
-    runPass: async () => {
+    runPass: async (signal) => {
       await runGlossaryPass(db, {
         maxNewTermsPerPass: glossaryCfg.maxNewTermsPerPass,
         statsRecheckPerPass: glossaryCfg.statsRecheckPerPass,
@@ -447,6 +447,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         consolidateTimeoutMs: glossaryCfg.consolidateTimeoutMs,
         retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
         nowMs: Date.now(),
+        signal,
       });
     },
     onError: (err) => {

@@ -50,6 +50,24 @@ test("family 5 — sentenceInitial is false when the phrase also appears mid-sen
   expect(c?.sentenceInitial).toBe(false);
 });
 
+test("family 5 — a phrase never spans a line break", () => {
+  // discoverPhase mines `${title}\n${body_preview}`, so a title ending in a
+  // capitalized phrase, above a body opening with another capitalized word,
+  // must not fuse into one candidate. The phrase has to sit mid-line for this
+  // to bite: a line-initial fabrication is dropped by the sentence-initial
+  // rule anyway, which would make the assertion pass for the wrong reason.
+  const k = keys("Notes on Shadow Traffic\nMigration plan for the sync path");
+  expect(k).not.toContain("shadow traffic migration");
+  expect(k).toContain("shadow traffic");
+});
+
+test("family 5 — a mid-line phrase survives the line-break boundary", () => {
+  // The boundary must not swallow real terminology: the phrase is mid-sentence
+  // on its own line, so it is still mined.
+  const k = keys("Rollout notes\nWe route Shadow Traffic daily.");
+  expect(k).toContain("shadow traffic");
+});
+
 test("stopwords are excluded", () => {
   const k = keys("the API returned JSON with `const` values");
   expect(k).not.toContain("api");

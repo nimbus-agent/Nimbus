@@ -167,7 +167,17 @@ export async function consolidateTerm(
   if (opts.llm === undefined) {
     const snippet = pickSnippetDefinition(term.displayTerm, snippets);
     if (snippet === null) return { kind: "retry", reason: "no snippet mentions the term" };
-    return { kind: "defined", definition: snippet, source: "snippet", synonyms: detected };
+    // Same dedupe + cap as the LLM path below. `detectAcronymExpansions` runs
+    // over every joined snippet, so one expansion repeats once per occurrence,
+    // and this is the path the scheduler actually takes (no `llm` is supplied
+    // from `platform/assemble.ts`) — leaving it uncapped is the unbounded
+    // metadata hazard MAX_SYNONYMS exists to close.
+    return {
+      kind: "defined",
+      definition: snippet,
+      source: "snippet",
+      synonyms: [...new Set(detected)].slice(0, MAX_SYNONYMS),
+    };
   }
 
   // I11: indexed third-party content reaching the model must be enveloped.
