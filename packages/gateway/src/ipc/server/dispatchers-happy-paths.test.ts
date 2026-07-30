@@ -87,11 +87,14 @@ describe("assertDiagnosticsRpcAccess fall-through (the `return;` after each guar
     const db = trackDb();
     const localIndex = new LocalIndex(db);
     const ctx = makeCtx({ dataDir: tmpDir, localIndex });
-    try {
-      await tryDispatchDiagnosticsRpc(ctx, "telemetry.preview", {});
-    } catch {
-      /* expected for some handlers */
-    }
+    // Same shape as the sibling cases above: the handler may report a typed error, and what
+    // is under test is that the access guard fell THROUGH rather than returning the `skipped`
+    // sentinel. Swallowing the rejection without asserting made this test pass even if the
+    // guard had started skipping — which is the whole behaviour it exists to pin.
+    const outcome = await tryDispatchDiagnosticsRpc(ctx, "telemetry.preview", {}).catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toBe(diagnosticsRpcSkipped);
   });
 });
 

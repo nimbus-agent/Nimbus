@@ -54,11 +54,39 @@ export function isCredentialEnvName(name: string): boolean {
   return CREDENTIAL_SUFFIXES.some((s) => name.endsWith(s));
 }
 
+/**
+ * Behaviour-affecting markers that are NOT credentials but still silently change what the
+ * product does, and therefore what a test observes.
+ *
+ * Issue #967: `NIMBUS_DISTRIBUTION_CHANNEL` is the marker `resolveDistributionChannel()` reads
+ * to decide "this is a package-manager install, disable self-update". A developer who installed
+ * Nimbus via the MSI, Homebrew or apt legitimately has it exported — and it silently flipped
+ * `updater/wiring.test.ts` to red, with a failure message that named an updater assertion and
+ * gave no hint that the environment was responsible. CI never set it, so CI never saw it.
+ *
+ * Enumerated rather than pattern-matched, unlike the credentials above: this set is small,
+ * and the suffix shapes here (`_CHANNEL`) are too generic to blank by pattern without also
+ * catching legitimate settings.
+ *
+ * A test that wants one of these set does it itself, after preload — `cli/src/commands/
+ * update.test.ts` already sets and restores this exact var. Only shell INHERITANCE is removed.
+ */
+const BEHAVIOUR_MARKER_NAMES = ["NIMBUS_DISTRIBUTION_CHANNEL"] as const;
+
+export function isBehaviourMarkerEnvName(name: string): boolean {
+  return (BEHAVIOUR_MARKER_NAMES as readonly string[]).includes(name);
+}
+
+/** True for any name the preload blanks — credential or behaviour marker. */
+export function isBlankedEnvName(name: string): boolean {
+  return isCredentialEnvName(name) || isBehaviourMarkerEnvName(name);
+}
+
 /** Blanks matching keys in `env`; returns the NAMES blanked (never the values). */
 export function blankCredentialEnv(env: Record<string, string | undefined>): string[] {
   const blanked: string[] = [];
   for (const name of Object.keys(env)) {
-    if (env[name] !== undefined && env[name] !== "" && isCredentialEnvName(name)) {
+    if (env[name] !== undefined && env[name] !== "" && isBlankedEnvName(name)) {
       env[name] = "";
       blanked.push(name);
     }
@@ -72,6 +100,6 @@ if (blanked.length > 0 && process.env["NIMBUS_TEST_PRELOAD_QUIET"] !== "1") {
   // into CI logs and terminal scrollback. Announced rather than silent so the behaviour is
   // discoverable: #812 was hard to read precisely because the leak was invisible.
   console.error(
-    `[test-preload] blanked ${blanked.length} credential env var(s) for hermetic tests: ${blanked.join(", ")}`,
+    `[test-preload] blanked ${blanked.length} env var(s) for hermetic tests: ${blanked.join(", ")}`,
   );
 }

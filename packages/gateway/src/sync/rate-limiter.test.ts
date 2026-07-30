@@ -148,7 +148,11 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
     const limiter = new ProviderRateLimiter({ google: fastQuota });
     const slackBase = DEFAULT_QUOTAS.slack;
     // burstSize tokens are available at start; acquire exactly burstSize
-    await limiter.acquire("slack", slackBase.burstSize);
+    await expect(limiter.acquire("slack", slackBase.burstSize)).resolves.toBeUndefined();
+    // One MORE than burstSize is refused outright — a capacity check, not a wait. This is
+    // the assertion that actually pins the fallback to DEFAULT_QUOTAS.slack: acquiring
+    // burstSize alone would also succeed under any quota with a larger bucket.
+    await expect(limiter.acquire("slack", slackBase.burstSize + 1)).rejects.toThrow(/burstSize/);
   });
 
   test("penalise then acquire: penalty arm in acquireUnderLock fires and resolves", async () => {

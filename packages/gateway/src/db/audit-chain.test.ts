@@ -15,6 +15,47 @@ describe("computeAuditRowHash", () => {
     expect(computeAuditRowHash(row)).toBe(computeAuditRowHash(row));
   });
 
+  describe("federationJson participates in the hash", () => {
+    // The federated leg of the chain was entirely untested: every case above omits
+    // `federationJson`, so neither arm of the `typeof … === "string" && length > 0`
+    // guard was exercised. A federated audit row whose provenance did NOT change the
+    // hash would let that field be rewritten after the fact without breaking the chain.
+    const base = {
+      prevHash: GENESIS_HASH,
+      actionType: "federation.query",
+      hitlStatus: "approved",
+      actionJson: '{"q":"x"}',
+      timestamp: 42,
+    };
+
+    test("a non-empty federationJson changes the hash", () => {
+      const withFed = computeAuditRowHash({ ...base, federationJson: '{"peer":"alice"}' });
+      expect(withFed).not.toBe(computeAuditRowHash(base));
+      expect(withFed).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test("a different federationJson yields a different hash", () => {
+      expect(computeAuditRowHash({ ...base, federationJson: '{"peer":"alice"}' })).not.toBe(
+        computeAuditRowHash({ ...base, federationJson: '{"peer":"bob"}' }),
+      );
+    });
+
+    test("empty string and null are equivalent to the field being absent", () => {
+      // The `length > 0` guard exists so a nullish/blank provenance cannot silently
+      // fork the chain away from rows written before the column existed. (Passing an
+      // explicit `undefined` is a type error under exactOptionalPropertyTypes, so
+      // "absent" is expressed by omitting the key.)
+      const absent = computeAuditRowHash(base);
+      expect(computeAuditRowHash({ ...base, federationJson: "" })).toBe(absent);
+      expect(computeAuditRowHash({ ...base, federationJson: null })).toBe(absent);
+    });
+
+    test("is still deterministic with federationJson set", () => {
+      const row = { ...base, federationJson: '{"peer":"alice","ns":"team"}' };
+      expect(computeAuditRowHash(row)).toBe(computeAuditRowHash(row));
+    });
+  });
+
   test("differs when any field differs", () => {
     const base = {
       prevHash: GENESIS_HASH,

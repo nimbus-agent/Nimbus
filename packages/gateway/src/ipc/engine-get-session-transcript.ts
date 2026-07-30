@@ -74,7 +74,13 @@ export function createGetSessionTranscriptHandler(
       timestamp: number;
       action_json: string | null;
     };
-    const rows = stmt.all(sid, limit + 1) as Row[];
+    // db.prepare() statements are not released by db.close() (#969).
+    let rows: Row[];
+    try {
+      rows = stmt.all(sid, limit + 1) as Row[];
+    } finally {
+      stmt.finalize();
+    }
 
     const hasMore = rows.length > limit;
     const used = hasMore ? rows.slice(0, limit) : rows;

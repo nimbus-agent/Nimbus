@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +13,17 @@ import { LAZY_MESH, userMcpMeshKey } from "./keys.ts";
 import { createLazyConnectorMesh, LazyConnectorMesh } from "./mesh.ts";
 import type { LazyMcpSlot } from "./slot.ts";
 
+/**
+ * Roots handed out by `makePaths()`, removed in `afterEach`. Without this the
+ * suite leaked one temp directory per `makePaths()` call — 40 per run, on every
+ * platform — because the root was never referenced again after construction.
+ * Same family as #969, different cause: there was no cleanup at all here.
+ */
+const createdRoots: string[] = [];
+
 function makePaths(): PlatformPaths {
   const root = mkdtempSync(join(tmpdir(), "nimbus-mesh-"));
+  createdRoots.push(root);
   return {
     configDir: join(root, "config"),
     dataDir: join(root, "data"),
@@ -39,6 +48,10 @@ afterEach(async () => {
       /* ignore */
     }
     mesh = undefined;
+  }
+  // Remove after disconnect(), so nothing is still writing under the root.
+  for (const root of createdRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -57,7 +57,10 @@ export function expectSyncNoopResult(
 }
 
 export function expectServiceItemCount(db: Database, service: string, count: number): void {
-  const row = db.prepare("SELECT COUNT(*) AS c FROM item WHERE service = ?").get(service) as {
+  // db.query() is cache-managed by bun:sqlite and released on close; a bare
+  // db.prepare() here left the database file pinned open for every connector
+  // test that called this helper (#969).
+  const row = db.query("SELECT COUNT(*) AS c FROM item WHERE service = ?").get(service) as {
     c: number;
   };
   expect(row.c).toBe(count);
