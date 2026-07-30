@@ -525,8 +525,11 @@ describe("startLatencyFlushScheduler", () => {
 
     const scheduler = startLatencyFlushScheduler(db, { intervalMs: 5, buffer });
     try {
-      // The first tick drains the sample, then fails the table constraint.
-      await Bun.sleep(20);
+      // Wait until the first tick drains the sample and hits the constraint.
+      for (let attempt = 0; attempt < 20 && buffer.isDirty(); attempt += 1) {
+        await Bun.sleep(5);
+      }
+      expect(buffer.isDirty()).toBe(false);
 
       db.exec("DROP TABLE query_latency_log");
       createLatencyTable(db);
@@ -559,6 +562,7 @@ describe("startLatencyFlushScheduler", () => {
     const buffer = new LatencyRingBuffer();
     buffer.push({ latencyMs: 42, queryType: "sql", recordedAt: Date.now() });
     const listenersBefore = new Set(process.listeners("SIGTERM"));
+    const sigIntListenersBefore = process.listenerCount("SIGINT");
 
     const scheduler = startLatencyFlushScheduler(db, { buffer });
     try {
@@ -572,5 +576,6 @@ describe("startLatencyFlushScheduler", () => {
     }
 
     expect(process.listenerCount("SIGTERM")).toBe(listenersBefore.size);
+    expect(process.listenerCount("SIGINT")).toBe(sigIntListenersBefore);
   });
 });
