@@ -180,7 +180,7 @@ test("a term key with FTS-hostile characters degrades to zero, never throws", ()
   expect(() => computeTermStats(db, 'we"ird^(term)')).not.toThrow();
 });
 
-const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
 
 test("markVetoed is sticky and keeps the row out of the pending batch", () => {
   seedCandidate("cdr");
@@ -200,14 +200,22 @@ test("a freshly-attempted term is withheld while its backoff is active", () => {
   seedCandidate("high", 9);
   seedCandidate("low", 1);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, { nowMs: 10_500, retryBaseCooldownMs: 1000 });
+  const batch = selectPendingBatch(db, 10, {
+    nowMs: 10_500,
+    retryBaseCooldownMs: 1000,
+    minDocFreq: 0,
+  });
   expect(batch.map((t) => t.termKey)).toEqual(["low"]);
 });
 
 test("a term returns to the queue once its backoff expires", () => {
   seedCandidate("high", 9);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, { nowMs: 12_000, retryBaseCooldownMs: 1000 });
+  const batch = selectPendingBatch(db, 10, {
+    nowMs: 12_000,
+    retryBaseCooldownMs: 1000,
+    minDocFreq: 0,
+  });
   expect(batch.map((t) => t.termKey)).toEqual(["high"]);
 });
 
@@ -217,8 +225,35 @@ test("backoff grows with repeated failures", () => {
   recordAttempt(db, "high", 0);
   recordAttempt(db, "high", 0);
   // attempts=3 -> base * 2^2 = 4000 ms
-  expect(selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000 }).length).toBe(0);
-  expect(selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000 }).length).toBe(1);
+  expect(
+    selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 }).length,
+  ).toBe(0);
+  expect(
+    selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 }).length,
+  ).toBe(1);
+});
+
+test("selectPendingBatch excludes a term demoted below the floor", () => {
+  seedCandidate("cdr"); // docFreq 3, above the floor
+  seedCandidate("slo"); // docFreq 3, above the floor
+  // Simulate what `reconcilePass` does to a term whose sources vanished:
+  // demote to pending and zero out its statistics/score.
+  demoteTerm(db, "cdr", 3000);
+  applyStats(
+    db,
+    "cdr",
+    { docFreq: 1, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    0,
+    3000,
+  );
+
+  const batch = selectPendingBatch(db, 10, {
+    nowMs: 10_000,
+    retryBaseCooldownMs: 1000,
+    minDocFreq: 3,
+  });
+  expect(batch.map((t) => t.termKey)).toEqual(["slo"]);
+  expect(getTerm(db, "cdr")?.status).toBe("pending");
 });
 
 test("retryCooldownMs caps at 24 hours", () => {

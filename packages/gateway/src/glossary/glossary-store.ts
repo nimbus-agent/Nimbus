@@ -234,7 +234,7 @@ export function retryCooldownMs(attempts: number, baseMs: number): number {
 export function selectPendingBatch(
   db: Database,
   limit: number,
-  opts: { nowMs: number; retryBaseCooldownMs: number },
+  opts: { nowMs: number; retryBaseCooldownMs: number; minDocFreq: number },
 ): GlossaryTerm[] {
   // Selects across the WHOLE table, not just this pass's discoveries: a
   // high-scoring candidate deferred by the cap three passes ago must still
@@ -245,10 +245,17 @@ export function selectPendingBatch(
   // top-scoring failures would monopolise every batch forever. Some failures
   // never succeed (snippet mode with no full-sentence mention), so this is
   // starvation by construction rather than a rare race.
+  //
+  // `doc_freq >= min_doc_freq` keeps a below-floor demotion (`glossary-reconcile.ts`)
+  // out of the batch: without it, a term the sweep just demoted at a
+  // sub-floor doc_freq is re-selected on the very next pass and re-projected
+  // from its single surviving source, contradicting §5.5's "sits pending
+  // below the floor and never reaches the index again."
   const rows = db
     .query(
       `SELECT * FROM glossary_term
        WHERE status = 'pending'
+         AND doc_freq >= ?
          AND (
            attempts = 0
            OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
@@ -256,7 +263,7 @@ export function selectPendingBatch(
        ORDER BY score DESC
        LIMIT ?`,
     )
-    .all(opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
+    .all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
   return rows.map(toTerm);
 }
 

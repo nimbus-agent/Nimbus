@@ -27,7 +27,7 @@ const BASE = {
 };
 
 /** Far-future `nowMs` so assertions see every pending row regardless of backoff. */
-const QUEUE = { nowMs: 9_000_000, retryBaseCooldownMs: 1000 };
+const QUEUE = { nowMs: 9_000_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
 
 function seed(text: string, count = 3, startId = 0): void {
   for (let i = 0; i < count; i++) {

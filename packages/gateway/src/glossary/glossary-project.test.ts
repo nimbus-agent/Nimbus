@@ -91,3 +91,15 @@ test("unprojectTerm is safe when nothing is projected", () => {
 test("a term with no definition is not projected", () => {
   expect(() => projectTerm(db, term({ definition: null }), 1000)).toThrow();
 });
+
+test("the projected item's modified_at is the term's lastSeenAt (a content date), not nowMs", () => {
+  // Guards against a refactor silently swapping the two args: `modified_at`
+  // must track when the team last USED the term, not when Nimbus happened to
+  // run the pass.
+  projectTerm(db, term({ lastSeenAt: 777 }), 999_999);
+  const row = db.query("SELECT modified_at FROM item WHERE type = 'glossary_term'").get() as {
+    modified_at: number;
+  } | null;
+  expect(row?.modified_at).toBe(777);
+  expect(row?.modified_at).not.toBe(999_999);
+});

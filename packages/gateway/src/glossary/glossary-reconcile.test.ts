@@ -92,6 +92,30 @@ test("statistics are refreshed rather than left stale", () => {
   expect(getTerm(db, "cdr")?.docFreq).toBe(3);
 });
 
+test("a retained term's projected item is re-projected with its refreshed topSources", () => {
+  // `seedConsolidated` projects with an EMPTY topSources (its stats.topSources
+  // is always `[]`) — real citing items exist only in `item_fts`. A sweep must
+  // pick them up and write them into the projected item's metadata, not just
+  // into the `glossary_term` row.
+  seedItem("a", "CDR one", 100);
+  seedItem("b", "CDR two", 100);
+  seedItem("c", "CDR three", 100);
+  seedConsolidated("cdr", 3);
+
+  const before = db.query("SELECT metadata FROM item WHERE type = 'glossary_term'").get() as {
+    metadata: string;
+  } | null;
+  expect(JSON.parse(before?.metadata ?? "{}").topSources).toEqual([]);
+
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+
+  const after = db.query("SELECT metadata FROM item WHERE type = 'glossary_term'").get() as {
+    metadata: string;
+  } | null;
+  const topSources = JSON.parse(after?.metadata ?? "{}").topSources as unknown[];
+  expect(topSources.length).toBe(3);
+});
+
 test("the sweep honours its limit", () => {
   seedItem("a", "CDR one AAA BBB", 100);
   seedConsolidated("cdr", 3, 1000);

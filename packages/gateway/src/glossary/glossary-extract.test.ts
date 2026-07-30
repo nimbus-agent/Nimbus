@@ -12,7 +12,14 @@ function runMigrations(db: Database): void {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
-import { clearGlossary, getTerm, listAllKeys, readPassState } from "./glossary-store.ts";
+import {
+  clearGlossary,
+  getTerm,
+  listAllKeys,
+  markConsolidated,
+  readPassState,
+  upsertCandidate,
+} from "./glossary-store.ts";
 
 let db: Database;
 
@@ -232,4 +239,66 @@ test("a pending term whose stored sources were wiped retries instead of fabricat
   expect(calls).toBe(0);
   expect(out.retried).toBe(1);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
+});
+
+test("consolidation is atomic — a crash between markConsolidated and projectTerm rolls both back", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  // Simulates a crash exactly in the un-self-healing window: after
+  // markConsolidated's UPDATE has already run, but before projectTerm's
+  // INSERT into `item` commits. A DB-level trigger fires precisely on that
+  // INSERT and raises, so the first write is genuinely applied before the
+  // failure — this exercises consolidatePhase's own `db.transaction()`.
+  db.run(
+    `CREATE TRIGGER simulated_crash_before_project
+     BEFORE INSERT ON item
+     WHEN NEW.type = 'glossary_term'
+     BEGIN SELECT RAISE(ABORT, 'simulated crash before projectTerm'); END`,
+  );
+
+  await expect(runGlossaryPass(db, { ...OPTS, llm: definingLlm() })).rejects.toThrow();
+
+  db.run("DROP TRIGGER simulated_crash_before_project");
+
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("pending");
+  expect(t?.definition).toBe(null);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+});
+
+test("stored near-misses draw from consolidated keys only, not pending or vetoed ones", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+
+  // A consolidated near-miss (edit distance 1 from "cdr") must surface.
+  upsertCandidate(db, {
+    key: "cdz",
+    surface: "CDZ",
+    form: "acronym",
+    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 1,
+    nowMs: 5000,
+  });
+  markConsolidated(db, {
+    termKey: "cdz",
+    definition: "d",
+    definitionSource: "llm",
+    synonyms: [],
+    nearMisses: [],
+    nowMs: 5000, // matches OPTS.nowMs so the reconcile sweep does not touch it
+  });
+
+  // A pending near-miss (edit distance 1 from "cdr") must NOT surface.
+  upsertCandidate(db, {
+    key: "cdq",
+    surface: "CDQ",
+    form: "acronym",
+    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 1,
+    nowMs: 5000,
+  });
+
+  await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
+
+  const t = getTerm(db, "cdr");
+  expect(t?.nearMisses).toContain("cdz");
+  expect(t?.nearMisses).not.toContain("cdq");
 });

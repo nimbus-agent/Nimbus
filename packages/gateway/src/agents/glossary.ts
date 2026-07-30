@@ -158,10 +158,10 @@ export async function runGlossary(
     // count, so they are computed after the lanes rather than inside one —
     // otherwise the empty-index note cannot know whether anything is
     // actually being returned.
-    const tasks: SubTask[] = [
-      subAgent(() => listConsolidated(ctx.db, limit)),
-      subAgent(() => countByStatus(ctx.db)),
-    ];
+    // One lane: `countByStatus` for stats/gaps is already computed in the
+    // outer `counts` variable above — a second sub-task recomputing it was
+    // dead code, its result never decoded. Matches term mode's earlier fix.
+    const tasks: SubTask[] = [subAgent(() => listConsolidated(ctx.db, limit))];
     const results = await coordinator.run(tasks);
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);

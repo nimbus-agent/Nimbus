@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 
-import { unprojectTerm } from "./glossary-project.ts";
+import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import {
   applyStats,
   computeTermStats,
   demoteTerm,
+  getTerm,
   selectStaleForRecheck,
 } from "./glossary-store.ts";
 import { scoreTerm } from "./term-scoring.ts";
@@ -62,6 +63,12 @@ export function reconcilePass(
       form: term.form,
     });
     applyStats(db, term.termKey, stats, score, opts.nowMs);
+    // Re-project so the searchable copy self-heals too — `applyStats` alone
+    // only refreshes the `glossary_term` row; the projected `item` row (what
+    // `nimbus ask` actually retrieves) would otherwise keep pointing at
+    // sources the reconcile pass just confirmed are stale.
+    const refreshed = getTerm(db, term.termKey);
+    if (refreshed !== null) projectTerm(db, refreshed, opts.nowMs);
   }
 
   return { verified: stale.length, demoted };

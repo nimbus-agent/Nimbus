@@ -9,6 +9,7 @@ import {
   computeTermStats,
   getTerm,
   listAllKeys,
+  listConsolidated,
   markConsolidated,
   markVetoed,
   readPassState,
@@ -46,6 +47,9 @@ export type GlossaryPassSummary = {
 };
 
 const SCAN_BATCH_LIMIT = 5000;
+
+/** How many consolidated terms to consider as near-miss candidates — mirrors `agents/glossary.ts`. */
+const NEAR_MISS_POOL = 500;
 
 type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
 
@@ -151,8 +155,13 @@ async function consolidatePhase(
   const batch = selectPendingBatch(db, opts.maxNewTermsPerPass, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
+    minDocFreq: opts.minDocFreq,
   });
-  const knownKeys = listAllKeys(db);
+  // Consolidated keys only — mirrors the agent's near-miss lane. Drawing from
+  // every status (via `listAllKeys`) let a `pending` or `vetoed` key surface
+  // as a stored "Easily confused with:" suggestion, which either points at a
+  // term with no definition yet or one deliberately rejected.
+  const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
 
   let consolidated = 0;
   let vetoed = 0;
@@ -188,16 +197,24 @@ async function consolidatePhase(
       continue;
     }
 
-    markConsolidated(db, {
-      termKey: term.termKey,
-      definition: outcome.definition,
-      definitionSource: outcome.source,
-      synonyms: outcome.synonyms,
-      nearMisses: findNearMisses(term.termKey, knownKeys),
-      nowMs: opts.nowMs,
-    });
-    const stored = getTerm(db, term.termKey);
-    if (stored !== null) projectTerm(db, stored, opts.nowMs);
+    // One transaction: a crash between markConsolidated and projectTerm would
+    // otherwise strand the term `consolidated` with no projected item row —
+    // invisible in search, and (per the reconciliation sweep's own contract)
+    // never self-healed, since the sweep only re-verifies rows already
+    // `consolidated` and this row genuinely is. `db.transaction` nests safely
+    // via savepoints, so this composes with any outer transaction.
+    db.transaction(() => {
+      markConsolidated(db, {
+        termKey: term.termKey,
+        definition: outcome.definition,
+        definitionSource: outcome.source,
+        synonyms: outcome.synonyms,
+        nearMisses: findNearMisses(term.termKey, knownKeys),
+        nowMs: opts.nowMs,
+      });
+      const stored = getTerm(db, term.termKey);
+      if (stored !== null) projectTerm(db, stored, opts.nowMs);
+    })();
     consolidated += 1;
   }
 
