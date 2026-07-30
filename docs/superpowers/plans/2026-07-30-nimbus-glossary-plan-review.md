@@ -1,6 +1,6 @@
 # Review & Suggestions: `nimbus glossary` Implementation Plan
 
-This document contains a structured review, suggestions, improvements, and open questions regarding the implementation plan specified in [2026-07-30-nimbus-glossary.md](file:///C:/gitrep/Nimbus/.claude/worktrees/nimbus-glossary/docs/superpowers/plans/2026-07-30-nimbus-glossary.md).
+This document contains a structured review, suggestions, improvements, and open questions regarding the implementation plan specified in [2026-07-30-nimbus-glossary.md](./2026-07-30-nimbus-glossary.md).
 
 ---
 

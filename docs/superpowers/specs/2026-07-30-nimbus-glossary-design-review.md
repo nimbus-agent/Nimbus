@@ -1,6 +1,6 @@
 # Review & Feedback: `nimbus glossary` Design
 
-This document contains a structured review, suggestions, improvements, and open questions regarding the design of the `nimbus glossary` command and agent system specified in [2026-07-30-nimbus-glossary-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/nimbus-glossary/docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md).
+This document contains a structured review, suggestions, improvements, and open questions regarding the design of the `nimbus glossary` command and agent system specified in [2026-07-30-nimbus-glossary-design.md](./2026-07-30-nimbus-glossary-design.md).
 
 ---
 
