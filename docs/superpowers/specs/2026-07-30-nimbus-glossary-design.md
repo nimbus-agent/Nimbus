@@ -405,10 +405,16 @@ projected items, and re-mines from `watermark_ms = 0`.
 `runGlossary` fans out four `AgentCoordinator` lanes. Each lane reads a different table, so the
 parallelism is real rather than ceremonial:
 
-| Mode | Lane 1 | Lane 2 | Lane 3 | Lane 4 |
-| --- | --- | --- | --- | --- |
-| `glossary <term>` | term row + definition | hydrate `top_sources` → join `item` | synonyms | near-misses |
-| `glossary` (no arg) | ranked consolidated list | coverage stats | gap notes | — |
+| Mode | Lane 1 | Lane 2 |
+| --- | --- | --- |
+| `glossary <term>` | term row + definition (carries `top_sources` and synonyms) | near-misses over consolidated terms |
+| `glossary` (no arg) | ranked consolidated list | coverage stats |
+
+Two lanes per mode, corrected 2026-07-30 after the Task 13 review. The original design called for
+four, but the resolved term already carries `top_sources` and `synonyms`, so dedicated lanes for
+them re-ran the same lookup and discarded the result — burning coordinator budget while making
+"four parallel lanes" a misnomer. Gap notes moved out of a lane because they need the entry count,
+which is only known once the lanes return.
 
 Per the agent shape invariant: read-only, HITL-free, parallel, and emitting
 `glossary.briefReady { sessionId, brief, findings }` via `emitBriefWithSynthesis`.
@@ -428,6 +434,11 @@ this lookup and the FTS-visible projection in §6.
 **Miss path.** An unknown term does not return an empty brief — it returns near-misses as "did you
 mean", which is the single most likely first interaction for the new-engineer use case the feature
 exists to serve.
+
+Suggestions are drawn from **consolidated terms only**. Drawing from every known key offered
+pending terms that have no definition yet, so following the suggestion returned another miss — a
+loop with no exit. Confirmed by probe during the Task 13 review, 2026-07-30: querying `cdq`
+suggested `cdc`, and querying `cdc` returned `mode: "miss"`.
 
 **Gap notes** reuse `_lib/gap-notes.ts`, covering: empty index; glossary never run; a pass ran but
 every candidate fell below `min_doc_freq`; and `pending > 0` (fill-in still in progress), so a

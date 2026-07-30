@@ -3741,7 +3741,8 @@ export type GlossaryEntry = {
 
 export type GlossaryBrief = {
   kind: "glossary";
-  agentVersion: number;
+  /** Literal 1 so a future typo cannot silently compile. Matches the SDK brief shape. */
+  agentVersion: 1;
   generatedAt: number;
   latencyMs: number;
   gaps: GapNote[];
@@ -3926,6 +3927,9 @@ export type GlossaryContext = {
 
 const DEFAULT_LIMIT = 50;
 
+/** How many consolidated terms to consider as near-miss candidates. */
+const NEAR_MISS_POOL = 500;
+
 function toEntry(t: GlossaryTerm): GlossaryEntry {
   return {
     term: t.displayTerm,
@@ -3987,11 +3991,15 @@ function buildGaps(
   db: Database,
   counts: { total: number; pending: number; vetoed: number },
   lastPassAt: number | null,
+  entryCount: number,
 ): GapNote[] {
   const gaps: GapNote[] = [];
   const anyItems = db.query("SELECT 1 FROM item LIMIT 1").get() !== null;
 
-  if (!anyItems) {
+  // Only claim an empty index when we are ALSO returning nothing. An index
+  // reset clears `item` while consolidated glossary rows survive, and telling
+  // a user the index is empty while showing them entries is self-contradictory.
+  if (!anyItems && entryCount === 0) {
     gaps.push({
       category: "empty_index",
       detail: "The local index is empty, so no terminology could be extracted.",
@@ -4049,16 +4057,18 @@ export async function runGlossary(
 
   if (rawTerm === "") {
     // List mode: ranked list / coverage stats / gap notes.
+    // Gap notes need the entry count, so they are computed after the lanes
+    // rather than inside one — otherwise the empty-index note cannot know
+    // whether anything is actually being returned.
     const tasks: SubTask[] = [
       subAgent(() => listConsolidated(ctx.db, limit)),
       subAgent(() => countByStatus(ctx.db)),
-      subAgent(() => buildGaps(ctx.db, counts, passState.lastPassAt)),
     ];
     const results = await coordinator.run(tasks);
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);
     mode = "list";
-    const gaps = decode<GapNote[]>(results[2]?.text, []);
+    const gaps = buildGaps(ctx.db, counts, passState.lastPassAt, entries.length);
     return {
       kind: "glossary",
       agentVersion: 1,
@@ -4075,17 +4085,22 @@ export async function runGlossary(
   }
 
   // Term mode: resolution / source hydration / synonyms / near-misses.
+  // Two lanes, not four. `toEntry` already carries topSources and synonyms from
+  // the resolved term, so separate lanes for them recomputed `resolveTerm` and
+  // threw the result away — burning coordinator budget and making "four parallel
+  // lanes" a misnomer.
+  //
+  // Near-miss keys come from CONSOLIDATED terms only. Drawing from every key
+  // suggests pending terms that have no definition yet, so following the
+  // suggestion returns another miss — a loop with no exit.
   const tasks: SubTask[] = [
     subAgent(() => resolveTerm(ctx.db, rawTerm)),
-    subAgent(() => {
-      const r = resolveTerm(ctx.db, rawTerm);
-      return r.term === null ? [] : r.term.topSources;
-    }),
-    subAgent(() => {
-      const r = resolveTerm(ctx.db, rawTerm);
-      return r.term === null ? [] : r.term.synonyms;
-    }),
-    subAgent(() => findNearMisses(normalizeTerm(rawTerm), listAllKeys(ctx.db))),
+    subAgent(() =>
+      findNearMisses(
+        normalizeTerm(rawTerm),
+        listConsolidated(ctx.db, NEAR_MISS_POOL).map((t) => t.termKey),
+      ),
+    ),
   ];
   const results = await coordinator.run(tasks);
 
@@ -4093,7 +4108,7 @@ export async function runGlossary(
     results[0]?.text,
     { term: null, matchedVia: null },
   );
-  const nearMisses = decode<string[]>(results[3]?.text, []);
+  const nearMisses = decode<string[]>(results[1]?.text, []);
 
   if (resolved.term === null) {
     mode = "miss";
@@ -4109,7 +4124,7 @@ export async function runGlossary(
     agentVersion: 1,
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
-    gaps: buildGaps(ctx.db, counts, passState.lastPassAt),
+    gaps: buildGaps(ctx.db, counts, passState.lastPassAt, entries.length),
     query: { term: rawTerm, limit },
     mode,
     entries,
