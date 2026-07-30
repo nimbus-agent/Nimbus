@@ -4,6 +4,12 @@ All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-
 
 ## [1.11.0](https://github.com/nimbus-agent/Nimbus/compare/v1.10.0...v1.11.0) (2026-07-30)
 
+> **Never published — superseded by 1.12.0.** This tag's release build failed its
+> Unit + Coverage gate, which skipped every build and publish job, so no GitHub Release,
+> installer, or updater manifest was ever produced for `v1.11.0`; the git tag is its only
+> trace. The tag is immutable under the *Protected release tags* ruleset and was left in
+> place rather than moved, so the feature below shipped in 1.12.0 instead.
+> See [#957](https://github.com/nimbus-agent/Nimbus/issues/957).
 
 ### Features
 
