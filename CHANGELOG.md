@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.11.0](https://github.com/nimbus-agent/Nimbus/compare/v1.10.0...v1.11.0) (2026-07-30)
+
+
+### Features
+
+* **p6:** gate ruleset bypass actors — owner-run audit + credential-free attestation ([#954](https://github.com/nimbus-agent/Nimbus/issues/954)) ([2a3187b](https://github.com/nimbus-agent/Nimbus/commit/2a3187bd4942e33b128a09df3e59d9680d275960))
+
 ## [1.10.0](https://github.com/nimbus-agent/Nimbus/compare/v1.9.0...v1.10.0) (2026-07-30)
 
 
