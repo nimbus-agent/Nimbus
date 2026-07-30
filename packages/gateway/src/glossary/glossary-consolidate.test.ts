@@ -231,3 +231,19 @@ test("alsoKnownAs from the model is capped at 10 synonyms", async () => {
   if (out.kind !== "defined") throw new Error("expected defined");
   expect(out.synonyms.length).toBeLessThanOrEqual(10);
 });
+
+test("the synonym cap keeps verified expansions over model-invented ones", async () => {
+  // 15 model synonyms would fill the cap on their own; the locally-detected
+  // expansion is grounded in the snippet text and must not be crowded out.
+  // Counting entries alone cannot catch this — assert the detected one is present.
+  const alsoKnownAs = Array.from({ length: 15 }, (_, i) => `model-synonym-${i}`);
+  const llm = {
+    generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d", alsoKnownAs }),
+  };
+  // SNIPPETS contains a genuine "Change Data Record (CDR)" pattern, so
+  // detectAcronymExpansions finds a verified expansion for termKey "cdr".
+  const out = await consolidateTerm(term(), SNIPPETS, { llm, timeoutMs: 1000 });
+  if (out.kind !== "defined") throw new Error("expected defined");
+  expect(out.synonyms).toContain("Change Data Record");
+  expect(out.synonyms.length).toBe(10);
+});
