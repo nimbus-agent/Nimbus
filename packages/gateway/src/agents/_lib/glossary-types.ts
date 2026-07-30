@@ -29,7 +29,8 @@ export type GlossaryEntry = {
 
 export type GlossaryBrief = {
   kind: "glossary";
-  agentVersion: number;
+  /** Literal 1 so a future typo cannot silently compile. Matches the SDK brief shape. */
+  agentVersion: 1;
   generatedAt: number;
   latencyMs: number;
   gaps: GapNote[];

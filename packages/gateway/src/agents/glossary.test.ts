@@ -87,10 +87,33 @@ test("an unknown term with no close match still returns a miss brief", async () 
   expect(brief.suggestions).toEqual([]);
 });
 
+test("a pending (never-consolidated) term is never suggested as a near-miss", async () => {
+  seed("cdr");
+  upsertCandidate(db, {
+    key: "cdc",
+    surface: "CDC",
+    form: "acronym",
+    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 1,
+    nowMs: 1000,
+  });
+  const brief = await runGlossary({ term: "cdq" }, ctx());
+  expect(brief.mode).toBe("miss");
+  expect(brief.suggestions).toContain("cdr");
+  expect(brief.suggestions).not.toContain("cdc");
+});
+
 test("an empty glossary reports a gap note", async () => {
   const brief = await runGlossary({}, ctx());
   expect(brief.entries).toEqual([]);
   expect(brief.gaps.length).toBeGreaterThan(0);
+});
+
+test("a brief returning entries does not carry the empty-index gap note", async () => {
+  seed("cdr");
+  const brief = await runGlossary({}, ctx());
+  expect(brief.entries.length).toBeGreaterThan(0);
+  expect(brief.gaps.some((g) => g.detail.includes("index is empty"))).toBe(false);
 });
 
 test("pending terms are reported in the stats", async () => {
