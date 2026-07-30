@@ -27,8 +27,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   flags are parsed and forwarded but not yet honored gateway-side, so they currently do nothing
   (a follow-up). The scheduler-triggered pass itself also runs without an LLM available to it, so
   unattended passes produce `definition_source: "snippet"` definitions (the verbatim sentence
-  containing the term) rather than LLM-consolidated ones; a later pass with an LLM configured
-  upgrades a snippet-sourced term automatically. ADRs are mined only from Obsidian-indexed
+  containing the term) rather than LLM-consolidated ones, and there is no automatic upgrade path —
+  nothing re-queues an existing snippet-sourced term for re-consolidation once an LLM becomes
+  available. Wiring the LLM into the scheduled pass, and adding a snippet→LLM upgrade path, are both
+  follow-ups. ADRs are mined only from Obsidian-indexed
   roots (there is no generic markdown item type), and commit messages are mined from the subject
   line only. Spec: `docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md`; plan:
   `docs/superpowers/plans/2026-07-30-nimbus-glossary.md`.

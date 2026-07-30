@@ -508,7 +508,7 @@ CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
 -- `min_doc_freq`. Every write goes through `dbRun` (I14); see `glossary/glossary-store.ts`.
 CREATE TABLE IF NOT EXISTS glossary_term (
     term_key          TEXT PRIMARY KEY,      -- normalized: casefold + de-pluralized + backticks stripped
-    display_term      TEXT NOT NULL,         -- most-frequent observed surface form
+    display_term      TEXT NOT NULL,         -- first surface form observed in the scan batch (overwritten each pass, not frequency-tracked)
     status            TEXT NOT NULL CHECK(status IN ('pending','consolidated','vetoed')),
     definition        TEXT,                  -- NULL until consolidated
     definition_source TEXT CHECK(definition_source IN ('llm','snippet')),
@@ -520,7 +520,7 @@ CREATE TABLE IF NOT EXISTS glossary_term (
     last_seen_at      INTEGER NOT NULL,      -- MAX(item.modified_at) over citing items — a CONTENT date
     top_sources       TEXT NOT NULL DEFAULT '[]',  -- JSON [{itemId,title,url,service,modifiedAt}], max 5
     synonyms          TEXT NOT NULL DEFAULT '[]',  -- JSON string[] — LLM alsoKnownAs + detected acronym expansions
-    near_misses       TEXT NOT NULL DEFAULT '[]',  -- JSON string[] — edit-distance <=2 or shared-stem term keys
+    near_misses       TEXT NOT NULL DEFAULT '[]',  -- JSON string[] — edit-distance <=2 term keys (no shared-stem matching)
     consolidated_at   INTEGER,               -- NULL until first consolidation; cleared on demotion
     stats_verified_at INTEGER NOT NULL DEFAULT 0,  -- last recompute; drives the reconciliation sweep round-robin
     attempts          INTEGER NOT NULL DEFAULT 0,   -- failed-consolidation count; feeds the retry backoff

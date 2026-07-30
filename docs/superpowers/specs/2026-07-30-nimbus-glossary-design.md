@@ -88,13 +88,15 @@ Two tables. `glossary_term` is the SSoT; `glossary_pass_state` is a single-row w
 ```sql
 CREATE TABLE IF NOT EXISTS glossary_term (
   term_key          TEXT PRIMARY KEY,       -- normalized: casefold + singular
-  display_term      TEXT NOT NULL,          -- most-frequent observed surface form
+  display_term      TEXT NOT NULL,          -- the first surface form observed in the mining scan
+                                             -- batch (overwritten on every upsert, not frequency-tracked)
   status            TEXT NOT NULL CHECK(status IN ('pending','consolidated','vetoed')),
   definition        TEXT,                   -- NULL until consolidated
   definition_source TEXT CHECK(definition_source IN ('llm','snippet')),
   doc_freq          INTEGER NOT NULL DEFAULT 0,
   service_spread    INTEGER NOT NULL DEFAULT 0,
   score             REAL    NOT NULL DEFAULT 0,
+  form              TEXT    NOT NULL DEFAULT 'phrase',  -- mining family; re-used by the reconciliation sweep
   first_seen_at     INTEGER NOT NULL,       -- MIN(item.modified_at) over citing items
   last_seen_at      INTEGER NOT NULL,       -- MAX(item.modified_at) over citing items
   top_sources       TEXT NOT NULL DEFAULT '[]',  -- JSON, max 5
@@ -102,11 +104,15 @@ CREATE TABLE IF NOT EXISTS glossary_term (
   near_misses       TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
   consolidated_at   INTEGER,
   stats_verified_at INTEGER NOT NULL DEFAULT 0,  -- drives the reconciliation sweep (§5.5)
+  attempts          INTEGER NOT NULL DEFAULT 0,  -- failed-consolidation count; feeds the retry backoff
+  last_attempt_at   INTEGER NOT NULL DEFAULT 0,  -- last consolidation attempt, success or failure
   updated_at        INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_glossary_term_status_score
   ON glossary_term(status, score DESC);
+CREATE INDEX IF NOT EXISTS idx_glossary_term_pending_attempt
+  ON glossary_term(status, last_attempt_at);       -- the retry-backoff filter
 CREATE INDEX IF NOT EXISTS idx_glossary_term_display
   ON glossary_term(display_term);
 CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
@@ -160,8 +166,9 @@ definition keeps citing dead sources. The FTS index itself is correct throughout
 `item_fts_delete` trigger maintains it — so the missing piece is purely *when* the recompute is
 triggered. §5.5 adds the sweep that closes it.
 
-The same query yields `top_sources` — the 5 highest-ranked citing items by FTS rank blended with
-recency, stored as `[{itemId, title, url, service, modifiedAt}]`.
+The same query yields `top_sources` — the 5 most-recently-modified citing items, ordered by
+`i.modified_at DESC` (recency only, no FTS-rank blend), stored as
+`[{itemId, title, url, service, modifiedAt}]`.
 
 ### 5.2 Sequence
 
@@ -277,8 +284,8 @@ Expected response:
   vetoed: an unparseable response is a model failure, not a judgment about the term.
 - `alsoKnownAs` merges into `synonyms` alongside the deterministic acronym↔expansion detection
   in `near-miss.ts` (which recognizes the `Change Data Record (CDR)` pattern in source text).
-- `near_misses` are computed deterministically: other known terms within edit distance ≤ 2, or
-  sharing a normalized stem.
+- `near_misses` are computed deterministically: other known terms within edit distance ≤ 2.
+  (`findNearMisses` is edit-distance only — there is no shared-stem matching.)
 
 ### 5.5 Reconciliation sweep
 
@@ -338,8 +345,14 @@ Glossary must not be dead there.
 - **No LLM configured** → the term is consolidated with `definition_source='snippet'`: the
   verbatim sentence containing the term, drawn from its highest-ranked source. Honest,
   attributable, zero-cost. No veto is possible in this mode.
-- **LLM configured later** → the next pass re-queues `snippet`-sourced terms for upgrade to
-  `definition_source='llm'`. No rebuild, no user action.
+- **No automatic upgrade path exists.** Nothing re-queues a `snippet`-sourced term for
+  re-consolidation once an LLM becomes available: `selectPendingBatch` selects `status='pending'`
+  rows only, and a consolidated term (snippet or LLM) never returns to `pending` on its own. A
+  snippet-sourced definition stays snippet-sourced until `--rebuild` re-derives it (once that flag
+  is wired — see Known Limits) or a follow-up adds a dedicated upgrade path. The scheduler-triggered
+  pass itself also runs with no `llm` supplied (`platform/assemble.ts`), so today every unattended
+  pass produces snippet-sourced definitions regardless of whether a local LLM is configured —
+  wiring the LLM into that call site is a separate follow-up.
 - The brief always labels which mode produced a definition, so a raw quote is never mistaken for
   a synthesized definition.
 
