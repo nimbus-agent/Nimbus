@@ -20,7 +20,7 @@
 - **Cross-platform paths** via `path.join()` — never hardcoded separators.
 - **No new runtime dependencies.** Do not `bun add` anything; everything needed is already present.
 - **Brief types stay local to the gateway in this slice.** `GlossaryBrief` is defined in `packages/gateway/src/agents/_lib/glossary-types.ts`, NOT added to `@nimbus-dev/sdk` (a separate published repo). This mirrors how `why` shipped: local types first, SDK promotion in a follow-up (#825). `findings.ts` is only a re-export shim for SDK types — do not add glossary types to it.
-- **Default config values** (spec §7): `enabled = true`, `max_new_terms_per_pass = 25`, `stats_recheck_per_pass = 50`, `min_doc_freq = 3`, `debounce_ms = 60000`, `consolidate_timeout_ms = 30000`.
+- **Default config values** (spec §7 plus two added in plan review): `enabled = true`, `max_new_terms_per_pass = 25`, `stats_recheck_per_pass = 50`, `stats_recheck_cooldown_ms = 43200000` (12 h), `min_doc_freq = 3`, `debounce_ms = 60000`, `consolidate_timeout_ms = 30000`, `retry_base_cooldown_ms = 900000` (15 min).
 - **Coverage floor:** every new source file needs **≥80% line AND branch** coverage.
 - **Commit on the branch** `dev/asafgolombek/nimbus-glossary` inside the worktree `.claude/worktrees/nimbus-glossary`. Never commit on `main`.
 - **Run tests with** `bun test <path>` from the worktree root.
@@ -169,6 +169,14 @@ Create `packages/gateway/src/index/glossary-v45-sql.ts`:
  * `stats_verified_at` drives the reconciliation sweep: terms are re-verified
  * round-robin oldest-first so that a term whose sources were deleted is
  * eventually demoted rather than lingering with inflated statistics.
+ *
+ * `attempts` / `last_attempt_at` prevent head-of-line blocking in the
+ * consolidation queue. The queue is ordered by score, and a failed
+ * consolidation leaves the row `pending` — so without a backoff the same
+ * high-scoring failures would be re-selected every pass forever and no
+ * lower-scoring term would ever consolidate. Some failures are PERMANENT
+ * (e.g. in snippet mode, a term whose sources never state it in a full
+ * sentence), so this is starvation by construction, not a rare race.
  */
 export const GLOSSARY_V45_SQL = `
 CREATE TABLE IF NOT EXISTS glossary_term (
@@ -188,11 +196,15 @@ CREATE TABLE IF NOT EXISTS glossary_term (
   near_misses       TEXT NOT NULL DEFAULT '[]',
   consolidated_at   INTEGER,
   stats_verified_at INTEGER NOT NULL DEFAULT 0,
+  attempts          INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at   INTEGER NOT NULL DEFAULT 0,
   updated_at        INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_glossary_term_status_score
   ON glossary_term(status, score DESC);
+CREATE INDEX IF NOT EXISTS idx_glossary_term_pending_attempt
+  ON glossary_term(status, last_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_glossary_term_display
   ON glossary_term(display_term);
 CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
@@ -1094,7 +1106,7 @@ git commit -m "feat(glossary): acronym-expansion synonyms and edit-distance near
 
 **Interfaces:**
 - Consumes: `dbRun` from `../db/write.ts`; `GlossaryTerm`, `TermStats`, `GlossarySource`, `CandidateForm`, `GlossaryStatus`, `DefinitionSource` (Task 4).
-- Produces: `GLOSSARY_SOURCE_TYPES`, `glossarySourceTypeList()`, `computeTermStats(db, termKey): TermStats`, `upsertCandidate(db, c)`, `getTerm(db, key): GlossaryTerm | null`, `findBySynonym(db, q): GlossaryTerm | null`, `selectPendingBatch(db, limit)`, `selectStaleForRecheck(db, limit)`, `listConsolidated(db, limit)`, `listAllKeys(db)`, `markConsolidated(db, p)`, `markVetoed(db, key, nowMs)`, `demoteTerm(db, key, nowMs)`, `applyStats(db, key, stats, score, nowMs)`, `countByStatus(db)`, `readPassState(db)`, `writePassState(db, s)`, `clearGlossary(db)`.
+- Produces: `GLOSSARY_SOURCE_TYPES`, `glossarySourceTypeList()`, `computeTermStats(db, termKey): TermStats`, `upsertCandidate(db, c)`, `getTerm(db, key): GlossaryTerm | null`, `findBySynonym(db, q): GlossaryTerm | null`, `selectPendingBatch(db, limit, { nowMs, retryBaseCooldownMs })`, `recordAttempt(db, key, nowMs)`, `retryCooldownMs(attempts, baseMs)`, `selectStaleForRecheck(db, limit, verifiedBefore)`, `listConsolidated(db, limit)`, `listAllKeys(db)`, `markConsolidated(db, p)`, `markVetoed(db, key, nowMs)`, `demoteTerm(db, key, nowMs)`, `applyStats(db, key, stats, score, nowMs)`, `countByStatus(db)`, `readPassState(db)`, `writePassState(db, s)`, `clearGlossary(db)`.
 
 - [ ] **Step 1: Write the source-scope module**
 
@@ -1147,8 +1159,8 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import {
   applyStats, clearGlossary, computeTermStats, countByStatus, demoteTerm,
   findBySynonym, getTerm, listAllKeys, listConsolidated, markConsolidated,
-  markVetoed, readPassState, selectPendingBatch, selectStaleForRecheck,
-  upsertCandidate, writePassState,
+  markVetoed, readPassState, recordAttempt, retryCooldownMs, selectPendingBatch,
+  selectStaleForRecheck, upsertCandidate, writePassState,
 } from "./glossary-store.ts";
 
 let db: Database;
@@ -1241,18 +1253,74 @@ test("upsertCandidate never downgrades a consolidated row", () => {
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
 });
 
+test("a hyphenated term is matched (documented phrase-equivalence)", () => {
+  seedItem({ externalId: "h1", title: "caching", body: "we use write-behind caching", modifiedAt: 100 });
+  seedItem({ externalId: "h2", title: "caching", body: "write-behind again", modifiedAt: 101 });
+  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+});
+
+test("hyphenated matching is phrase-equivalent — unhyphenated prose also counts", () => {
+  // Asserts ACTUAL FTS5 unicode61 behaviour, not an ideal: `-` is a token
+  // separator, so this is a phrase search for `write behind`. Documented in
+  // `ftsQuery`. If this ever starts failing, the tokenizer changed.
+  seedItem({ externalId: "h1", title: "caching", body: "we use write-behind caching", modifiedAt: 100 });
+  seedItem({ externalId: "h2", title: "prose", body: "we write behind the scenes", modifiedAt: 101 });
+  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+});
+
+test("an underscored term is matched", () => {
+  seedItem({ externalId: "u1", title: "keys", body: "set the shard_key first", modifiedAt: 100 });
+  expect(computeTermStats(db, "shard_key").docFreq).toBe(1);
+});
+
+test("a term key with FTS-hostile characters degrades to zero, never throws", () => {
+  expect(() => computeTermStats(db, 'we"ird^(term)')).not.toThrow();
+});
+
+const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+
 test("markVetoed is sticky and keeps the row out of the pending batch", () => {
   seedCandidate("cdr");
   markVetoed(db, "cdr", 2000);
   expect(getTerm(db, "cdr")?.status).toBe("vetoed");
-  expect(selectPendingBatch(db, 10).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
 });
 
 test("selectPendingBatch orders by score descending and honours the limit", () => {
   seedCandidate("low", 1);
   seedCandidate("high", 9);
   seedCandidate("mid", 5);
-  expect(selectPendingBatch(db, 2).map((t) => t.termKey)).toEqual(["high", "mid"]);
+  expect(selectPendingBatch(db, 2, QUEUE).map((t) => t.termKey)).toEqual(["high", "mid"]);
+});
+
+test("a freshly-attempted term is withheld while its backoff is active", () => {
+  seedCandidate("high", 9);
+  seedCandidate("low", 1);
+  recordAttempt(db, "high", 10_000);
+  const batch = selectPendingBatch(db, 10, { nowMs: 10_500, retryBaseCooldownMs: 1000 });
+  expect(batch.map((t) => t.termKey)).toEqual(["low"]);
+});
+
+test("a term returns to the queue once its backoff expires", () => {
+  seedCandidate("high", 9);
+  recordAttempt(db, "high", 10_000);
+  const batch = selectPendingBatch(db, 10, { nowMs: 12_000, retryBaseCooldownMs: 1000 });
+  expect(batch.map((t) => t.termKey)).toEqual(["high"]);
+});
+
+test("backoff grows with repeated failures", () => {
+  seedCandidate("high", 9);
+  recordAttempt(db, "high", 0);
+  recordAttempt(db, "high", 0);
+  recordAttempt(db, "high", 0);
+  // attempts=3 -> base * 2^2 = 4000 ms
+  expect(selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000 }).length).toBe(0);
+  expect(selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000 }).length).toBe(1);
+});
+
+test("retryCooldownMs caps at 24 hours", () => {
+  expect(retryCooldownMs(50, 1000)).toBe(24 * 60 * 60 * 1000);
+  expect(retryCooldownMs(0, 1000)).toBe(0);
 });
 
 test("selectStaleForRecheck returns consolidated rows oldest-verified first", () => {
@@ -1261,7 +1329,14 @@ test("selectStaleForRecheck returns consolidated rows oldest-verified first", ()
   consolidate("a", 5000);
   consolidate("b", 5000);
   applyStats(db, "b", { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] }, 1, 9000);
-  expect(selectStaleForRecheck(db, 1)[0]?.termKey).toBe("a");
+  expect(selectStaleForRecheck(db, 1, 20_000)[0]?.termKey).toBe("a");
+});
+
+test("selectStaleForRecheck skips terms verified after the cutoff", () => {
+  seedCandidate("a");
+  consolidate("a", 5000);
+  expect(selectStaleForRecheck(db, 10, 4000).length).toBe(0);
+  expect(selectStaleForRecheck(db, 10, 6000).length).toBe(1);
 });
 
 test("findBySynonym resolves the canonical term", () => {
@@ -1377,9 +1452,37 @@ function toTerm(r: Row): GlossaryTerm {
   };
 }
 
-/** FTS MATCH needs the key quoted so a multi-word term is a phrase, not an AND. */
+/**
+ * FTS MATCH needs the key quoted so a multi-word term is a phrase, not an AND.
+ *
+ * KNOWN LIMIT — the default unicode61 tokenizer treats `-` and `_` as
+ * separators, so `"write-behind"` is really the PHRASE `write behind` and also
+ * matches unhyphenated prose ("we write behind the scenes"). Measured, not
+ * assumed: that query returns 2 rows against a 3-row corpus. Hyphenated and
+ * underscored terms can therefore over-count slightly, and in the worst case a
+ * non-term clears `min_doc_freq` on adjacent-word coincidences.
+ *
+ * Accepted rather than fixed: the alternative is re-scanning candidate bodies
+ * for the exact surface form, which trades the whole point of using the FTS
+ * index for a small accuracy gain on two of five families. The test suite
+ * asserts the ACTUAL behaviour so nobody "fixes" it into a false ideal.
+ */
 function ftsQuery(termKey: string): string {
   return `"${termKey.replace(/"/g, '""')}"`;
+}
+
+/**
+ * FTS5 raises on malformed query syntax, and term keys derive from arbitrary
+ * indexed content. One bad key must not abort a whole extraction pass, so a
+ * failed match degrades to "no evidence" — the term simply falls below the
+ * frequency floor and is skipped.
+ */
+function safeFtsGet<T>(run: () => T, fallback: T): T {
+  try {
+    return run();
+  } catch {
+    return fallback;
+  }
 }
 
 function typePlaceholders(): { sql: string; params: string[] } {
@@ -1394,20 +1497,24 @@ function typePlaceholders(): { sql: string; params: string[] } {
  */
 export function computeTermStats(db: Database, termKey: string): TermStats {
   const { sql: ph, params: types } = typePlaceholders();
-  const agg = db
-    .query(
-      `SELECT COUNT(*) AS doc_freq,
-              COUNT(DISTINCT i.service) AS service_spread,
-              MIN(i.modified_at) AS first_seen,
-              MAX(i.modified_at) AS last_seen
-       FROM item_fts f
-       JOIN item i ON i.rowid = f.rowid
-       WHERE item_fts MATCH ? AND i.type IN (${ph})`,
-    )
-    .get(ftsQuery(termKey), ...types) as {
-    doc_freq: number; service_spread: number;
-    first_seen: number | null; last_seen: number | null;
-  } | null;
+  const agg = safeFtsGet(
+    () =>
+      db
+        .query(
+          `SELECT COUNT(*) AS doc_freq,
+                  COUNT(DISTINCT i.service) AS service_spread,
+                  MIN(i.modified_at) AS first_seen,
+                  MAX(i.modified_at) AS last_seen
+           FROM item_fts f
+           JOIN item i ON i.rowid = f.rowid
+           WHERE item_fts MATCH ? AND i.type IN (${ph})`,
+        )
+        .get(ftsQuery(termKey), ...types) as {
+        doc_freq: number; service_spread: number;
+        first_seen: number | null; last_seen: number | null;
+      } | null,
+    null,
+  );
 
   if (agg === null || agg.doc_freq === 0) {
     return { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] };
@@ -1480,23 +1587,74 @@ export function findBySynonym(db: Database, normalizedQuery: string): GlossaryTe
   return null;
 }
 
-export function selectPendingBatch(db: Database, limit: number): GlossaryTerm[] {
+/** Exponential backoff, capped at 24 h, so a permanently-failing term steps aside. */
+export function retryCooldownMs(attempts: number, baseMs: number): number {
+  if (attempts <= 0) return 0;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  return Math.min(DAY_MS, baseMs * 2 ** (attempts - 1));
+}
+
+export function selectPendingBatch(
+  db: Database,
+  limit: number,
+  opts: { nowMs: number; retryBaseCooldownMs: number },
+): GlossaryTerm[] {
   // Selects across the WHOLE table, not just this pass's discoveries: a
   // high-scoring candidate deferred by the cap three passes ago must still
   // reach consolidation.
+  //
+  // The backoff filter is what stops head-of-line blocking. Ordering is by
+  // score, and a failed consolidation stays `pending`, so without this the
+  // top-scoring failures would monopolise every batch forever. Some failures
+  // never succeed (snippet mode with no full-sentence mention), so this is
+  // starvation by construction rather than a rare race.
   const rows = db
-    .query("SELECT * FROM glossary_term WHERE status = 'pending' ORDER BY score DESC LIMIT ?")
-    .all(limit) as Row[];
+    .query(
+      `SELECT * FROM glossary_term
+       WHERE status = 'pending'
+         AND (
+           attempts = 0
+           OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
+         )
+       ORDER BY score DESC
+       LIMIT ?`,
+    )
+    .all(opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
   return rows.map(toTerm);
 }
 
-export function selectStaleForRecheck(db: Database, limit: number): GlossaryTerm[] {
+/** Records a failed consolidation so the backoff above takes effect. */
+export function recordAttempt(db: Database, termKey: string, nowMs: number): void {
+  dbRun(
+    db,
+    `UPDATE glossary_term
+     SET attempts = attempts + 1, last_attempt_at = ?, updated_at = ?
+     WHERE term_key = ?`,
+    [nowMs, nowMs, termKey],
+  );
+}
+
+/**
+ * Terms due for re-verification.
+ *
+ * `verifiedBefore` keeps the sweep from re-checking a term that was verified
+ * minutes ago: the pass fires after every connector sync, and re-running ~100
+ * FTS queries each time buys nothing when the last check is fresh. With a
+ * 12 h cooldown the sweep is a no-op on most passes and still reaches full
+ * coverage daily.
+ */
+export function selectStaleForRecheck(
+  db: Database,
+  limit: number,
+  verifiedBefore: number,
+): GlossaryTerm[] {
   const rows = db
     .query(
-      `SELECT * FROM glossary_term WHERE status = 'consolidated'
+      `SELECT * FROM glossary_term
+       WHERE status = 'consolidated' AND stats_verified_at < ?
        ORDER BY stats_verified_at ASC LIMIT ?`,
     )
-    .all(limit) as Row[];
+    .all(verifiedBefore, limit) as Row[];
   return rows.map(toTerm);
 }
 
@@ -1621,7 +1779,7 @@ export function clearGlossary(db: Database): void {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/glossary-store.test.ts`
-Expected: PASS (16 tests).
+Expected: PASS (26 tests).
 
 If `computeTermStats` returns 0 for a multi-word key, check `ftsQuery` — an unquoted multi-word MATCH is an implicit AND, not a phrase.
 
@@ -1958,6 +2116,47 @@ test("a hung LLM times out into retry", async () => {
   expect(out.kind).toBe("retry");
 });
 
+test("an abort settles a hung call without waiting for the timeout", async () => {
+  const llm = { generateJson: () => new Promise<string>(() => undefined) };
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 10);
+
+  const started = Date.now();
+  const out = await consolidateTerm(term(), SNIPPETS, {
+    llm,
+    timeoutMs: 30_000,
+    signal: controller.signal,
+  });
+
+  expect(out.kind).toBe("retry");
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+
+test("an already-aborted signal returns immediately", async () => {
+  const llm = { generateJson: () => new Promise<string>(() => undefined) };
+  const controller = new AbortController();
+  controller.abort();
+  const out = await consolidateTerm(term(), SNIPPETS, {
+    llm,
+    timeoutMs: 30_000,
+    signal: controller.signal,
+  });
+  expect(out.kind).toBe("retry");
+});
+
+test("the signal is forwarded to the provider", async () => {
+  let seen: AbortSignal | undefined;
+  const controller = new AbortController();
+  const llm = {
+    generateJson: async (_p: string, signal?: AbortSignal) => {
+      seen = signal;
+      return JSON.stringify({ isDomainTerm: true, definition: "d" });
+    },
+  };
+  await consolidateTerm(term(), SNIPPETS, { llm, timeoutMs: 1000, signal: controller.signal });
+  expect(seen).toBe(controller.signal);
+});
+
 test("no LLM falls back to a verbatim snippet definition", async () => {
   const out = await consolidateTerm(term(), SNIPPETS, { timeoutMs: 1000 });
   expect(out.kind).toBe("defined");
@@ -2010,9 +2209,14 @@ import { wrapToolOutput } from "../engine/tool-output-envelope.ts";
 import type { DefinitionSource, GlossaryTerm } from "./glossary-types.ts";
 import { detectAcronymExpansions } from "./near-miss.ts";
 
-/** Injected so the module is testable without `mock.module` (CI-Linux leaks it). */
+/**
+ * Injected so the module is testable without `mock.module` (CI-Linux leaks it).
+ *
+ * The optional `signal` lets a provider cancel the underlying request on
+ * shutdown. It is optional so existing fakes and simple providers stay valid.
+ */
 export type ConsolidatorLlm = {
-  generateJson: (prompt: string) => Promise<string | null>;
+  generateJson: (prompt: string, signal?: AbortSignal) => Promise<string | null>;
 };
 
 export type ConsolidationOutcome =
@@ -2078,17 +2282,40 @@ function parseResponse(raw: string): ParsedResponse | null {
   return { isDomainTerm: o.isDomainTerm, definition, alsoKnownAs };
 }
 
-async function withTimeout(p: Promise<string | null>, ms: number): Promise<string | null> {
+/**
+ * Bounds the wait on a model call by BOTH a timeout and an abort.
+ *
+ * Without the abort arm, a 30 s timeout means shutdown waits up to 30 s per
+ * in-flight term. We can only stop WAITING — if the provider ignores its
+ * signal the request may keep running in the background — but that is what
+ * makes shutdown responsive.
+ */
+async function withTimeout(
+  p: Promise<string | null>,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       p,
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), ms);
       }),
+      new Promise<null>((resolve) => {
+        if (signal === undefined) return;
+        if (signal.aborted) {
+          resolve(null);
+          return;
+        }
+        onAbort = () => resolve(null);
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -2103,7 +2330,7 @@ async function withTimeout(p: Promise<string | null>, ms: number): Promise<strin
 export async function consolidateTerm(
   term: GlossaryTerm,
   snippets: readonly { text: string }[],
-  opts: { llm?: ConsolidatorLlm; timeoutMs: number },
+  opts: { llm?: ConsolidatorLlm; timeoutMs: number; signal?: AbortSignal },
 ): Promise<ConsolidationOutcome> {
   const detected = detectAcronymExpansions(snippets.map((s) => s.text).join("\n"))
     .filter((e) => e.acronymKey === term.termKey)
@@ -2124,7 +2351,11 @@ export async function consolidateTerm(
 
   let raw: string | null;
   try {
-    raw = await withTimeout(opts.llm.generateJson(prompt), opts.timeoutMs);
+    raw = await withTimeout(
+      opts.llm.generateJson(prompt, opts.signal),
+      opts.timeoutMs,
+      opts.signal,
+    );
   } catch (err) {
     return { kind: "retry", reason: err instanceof Error ? err.message : String(err) };
   }
@@ -2148,7 +2379,7 @@ export async function consolidateTerm(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/glossary-consolidate.test.ts`
-Expected: PASS (13 tests).
+Expected: PASS (17 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -2220,7 +2451,7 @@ test("a term whose sources vanished is demoted and unprojected", () => {
   seedConsolidated("cdr", 3);
   db.run("DELETE FROM item WHERE type = 'message'");
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000 });
+  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
 
   expect(out.demoted).toEqual(["cdr"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
@@ -2233,7 +2464,7 @@ test("a term still above the floor keeps its definition and is re-stamped", () =
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 3);
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000 });
+  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
 
   expect(out.demoted).toEqual([]);
   const t = getTerm(db, "cdr");
@@ -2247,7 +2478,7 @@ test("statistics are refreshed rather than left stale", () => {
   seedItem("b", "CDR two", 100);
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 99);
-  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000 });
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
   expect(getTerm(db, "cdr")?.docFreq).toBe(3);
 });
 
@@ -2256,11 +2487,11 @@ test("the sweep honours its limit", () => {
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
   seedConsolidated("bbb", 3, 1000);
-  expect(reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000 }).verified).toBe(2);
+  expect(reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }).verified).toBe(2);
 });
 
 test("the sweep is a no-op on an empty glossary", () => {
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000 });
+  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
   expect(out).toEqual({ verified: 0, demoted: [] });
 });
 
@@ -2268,10 +2499,28 @@ test("round-robin reaches a different term on the next pass", () => {
   seedItem("a", "CDR one AAA", 100);
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000 });
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000 });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000, cooldownMs: 0 });
   expect(getTerm(db, "cdr")?.statsVerifiedAt).toBeGreaterThan(1000);
   expect(getTerm(db, "aaa")?.statsVerifiedAt).toBeGreaterThan(1000);
+});
+
+test("the cooldown makes a repeat sweep a no-op", () => {
+  seedItem("a", "CDR one", 100);
+  seedItem("b", "CDR two", 100);
+  seedItem("c", "CDR three", 100);
+  seedConsolidated("cdr", 3, 1000);
+
+  const first = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_000, cooldownMs: 1000 });
+  expect(first.verified).toBe(1);
+
+  // Immediately after: the term was just verified, so nothing is due.
+  const second = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_500, cooldownMs: 1000 });
+  expect(second.verified).toBe(0);
+
+  // Once the cooldown lapses it becomes due again.
+  const third = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 102_000, cooldownMs: 1000 });
+  expect(third.verified).toBe(1);
 });
 ```
 
@@ -2310,9 +2559,14 @@ export type ReconcileSummary = { verified: number; demoted: string[] };
  */
 export function reconcilePass(
   db: Database,
-  opts: { limit: number; minDocFreq: number; nowMs: number },
+  opts: { limit: number; minDocFreq: number; nowMs: number; cooldownMs: number },
 ): ReconcileSummary {
-  const stale = selectStaleForRecheck(db, opts.limit);
+  // The cooldown is what keeps this cheap. The pass fires after EVERY
+  // successful connector sync, and each verified term costs 2 FTS queries —
+  // re-checking 50 terms every minute would be ~100 FTS queries a minute for
+  // no new information. With a 12 h cooldown the sweep is a no-op on most
+  // passes and still reaches full coverage daily.
+  const stale = selectStaleForRecheck(db, opts.limit, opts.nowMs - opts.cooldownMs);
   const demoted: string[] = [];
 
   for (const term of stale) {
@@ -2343,7 +2597,7 @@ export function reconcilePass(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/glossary-reconcile.test.ts`
-Expected: PASS (6 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -2388,8 +2642,10 @@ let db: Database;
 const OPTS = {
   maxNewTermsPerPass: 25,
   statsRecheckPerPass: 50,
+  statsRecheckCooldownMs: 0,
   minDocFreq: 3,
   consolidateTimeoutMs: 1000,
+  retryBaseCooldownMs: 1000,
   nowMs: 5000,
 };
 
@@ -2531,10 +2787,15 @@ let db: Database;
 const BASE = {
   maxNewTermsPerPass: 25,
   statsRecheckPerPass: 50,
+  statsRecheckCooldownMs: 0,
   minDocFreq: 3,
   consolidateTimeoutMs: 1000,
+  retryBaseCooldownMs: 1000,
   nowMs: 5000,
 };
+
+/** Far-future `nowMs` so assertions see every pending row regardless of backoff. */
+const QUEUE = { nowMs: 9_000_000, retryBaseCooldownMs: 1000 };
 
 function seed(text: string, count = 3, startId = 0): void {
   for (let i = 0; i < count; i++) {
@@ -2566,7 +2827,7 @@ test("aborting phase B holds the watermark and leaves candidates pending", async
   expect(out.aborted).toBe(true);
   // Phase A committed before any LLM call, so the scan is not repeated.
   expect(readPassState(db).watermarkMs).toBeGreaterThan(0);
-  expect(selectPendingBatch(db, 10).length).toBeGreaterThan(0);
+  expect(selectPendingBatch(db, 10, QUEUE).length).toBeGreaterThan(0);
 });
 
 test("the next pass completes candidates stranded by an abort", async () => {
@@ -2585,7 +2846,7 @@ test("the next pass completes candidates stranded by an abort", async () => {
   };
   await runGlossaryPass(db, { ...BASE, llm: goodLlm, nowMs: 6000 });
 
-  expect(selectPendingBatch(db, 10).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
 });
 
 test("a candidate stranded by the cap is reached by a later pass", async () => {
@@ -2594,13 +2855,13 @@ test("a candidate stranded by the cap is reached by a later pass", async () => {
     generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d" }),
   };
   await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 1, llm });
-  const afterFirst = selectPendingBatch(db, 10).length;
+  const afterFirst = selectPendingBatch(db, 10, QUEUE).length;
   expect(afterFirst).toBeGreaterThan(0);
 
   // No new items — the batch must still be selected globally, not from this
   // pass's (empty) discoveries.
   await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 10, llm, nowMs: 6000 });
-  expect(selectPendingBatch(db, 10).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
 });
 
 test("a retry outcome leaves the term pending rather than vetoed", async () => {
@@ -2608,6 +2869,38 @@ test("a retry outcome leaves the term pending rather than vetoed", async () => {
   const badLlm: ConsolidatorLlm = { generateJson: async () => "not json" };
   await runGlossaryPass(db, { ...BASE, llm: badLlm });
   expect(getTerm(db, "cdr")?.status).toBe("pending");
+});
+
+test("a persistently failing high-score term does not starve lower-score terms", async () => {
+  // `zzz` is seeded far more often, so it outranks `cdr` and is selected
+  // first — and it ALWAYS fails. Without the retry backoff it would occupy
+  // the single consolidation slot on every pass forever and `cdr` would never
+  // be defined. This is the head-of-line-blocking regression test.
+  seed("ZZZ metric review", 8, 0);
+  seed("the CDR pipeline runs nightly", 3, 100);
+
+  const llm: ConsolidatorLlm = {
+    generateJson: async (prompt: string) =>
+      prompt.includes("ZZZ")
+        ? "not json"
+        : JSON.stringify({ isDomainTerm: true, definition: "defined" }),
+  };
+
+  await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 1, llm, nowMs: 5000 });
+  expect(getTerm(db, "zzz")?.status).toBe("pending");
+
+  // Second pass, still inside zzz's backoff window: cdr must get the slot.
+  await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 1, llm, nowMs: 5500 });
+  expect(getTerm(db, "cdr")?.status).toBe("consolidated");
+});
+
+test("a failed term records an attempt and is withheld while backing off", async () => {
+  seed("the CDR pipeline runs nightly");
+  const badLlm: ConsolidatorLlm = { generateJson: async () => "not json" };
+  await runGlossaryPass(db, { ...BASE, llm: badLlm, nowMs: 5000 });
+
+  const out = await runGlossaryPass(db, { ...BASE, llm: badLlm, nowMs: 5100 });
+  expect(out.retried).toBe(0); // still cooling down — not re-attempted
 });
 ```
 
@@ -2635,6 +2928,7 @@ import {
   markConsolidated,
   markVetoed,
   readPassState,
+  recordAttempt,
   selectPendingBatch,
   upsertCandidate,
   writePassState,
@@ -2646,8 +2940,12 @@ import { scoreTerm } from "./term-scoring.ts";
 export type GlossaryPassOptions = {
   maxNewTermsPerPass: number;
   statsRecheckPerPass: number;
+  /** Skip re-verifying terms checked more recently than this. */
+  statsRecheckCooldownMs: number;
   minDocFreq: number;
   consolidateTimeoutMs: number;
+  /** Base for the exponential retry backoff that prevents queue starvation. */
+  retryBaseCooldownMs: number;
   llm?: ConsolidatorLlm;
   nowMs: number;
   signal?: AbortSignal;
@@ -2735,6 +3033,7 @@ function discoverPhase(
     limit: opts.statsRecheckPerPass,
     minDocFreq: opts.minDocFreq,
     nowMs: opts.nowMs,
+    cooldownMs: opts.statsRecheckCooldownMs,
   });
 
   writePassState(db, {
@@ -2758,7 +3057,10 @@ async function consolidatePhase(
   db: Database,
   opts: GlossaryPassOptions,
 ): Promise<{ consolidated: number; vetoed: number; retried: number; aborted: boolean }> {
-  const batch = selectPendingBatch(db, opts.maxNewTermsPerPass);
+  const batch = selectPendingBatch(db, opts.maxNewTermsPerPass, {
+    nowMs: opts.nowMs,
+    retryBaseCooldownMs: opts.retryBaseCooldownMs,
+  });
   const knownKeys = listAllKeys(db);
 
   let consolidated = 0;
@@ -2774,6 +3076,7 @@ async function consolidatePhase(
     const outcome = await consolidateTerm(term, snippets, {
       ...(opts.llm === undefined ? {} : { llm: opts.llm }),
       timeoutMs: opts.consolidateTimeoutMs,
+      ...(opts.signal === undefined ? {} : { signal: opts.signal }),
     });
 
     if (outcome.kind === "vetoed") {
@@ -2783,6 +3086,10 @@ async function consolidatePhase(
       continue;
     }
     if (outcome.kind === "retry") {
+      // Stamp the attempt so the backoff in `selectPendingBatch` lets
+      // lower-scoring terms through on the next pass. Without this the
+      // top-scoring failures would monopolise every batch forever.
+      recordAttempt(db, term.termKey, opts.nowMs);
       retried += 1;
       continue;
     }
@@ -2868,6 +3175,8 @@ test("defaults are enabled with the documented caps", () => {
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.enabled).toBe(true);
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.maxNewTermsPerPass).toBe(25);
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.statsRecheckPerPass).toBe(50);
+  expect(DEFAULT_NIMBUS_GLOSSARY_TOML.statsRecheckCooldownMs).toBe(43_200_000);
+  expect(DEFAULT_NIMBUS_GLOSSARY_TOML.retryBaseCooldownMs).toBe(900_000);
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.minDocFreq).toBe(3);
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.debounceMs).toBe(60000);
   expect(DEFAULT_NIMBUS_GLOSSARY_TOML.consolidateTimeoutMs).toBe(30000);
@@ -2883,6 +3192,8 @@ test("parses every key", () => {
     "enabled = false",
     "max_new_terms_per_pass = 5",
     "stats_recheck_per_pass = 10",
+    "stats_recheck_cooldown_ms = 3600000",
+    "retry_base_cooldown_ms = 60000",
     "min_doc_freq = 7",
     "debounce_ms = 1000",
     "consolidate_timeout_ms = 2000",
@@ -2891,6 +3202,8 @@ test("parses every key", () => {
   expect(cfg.enabled).toBe(false);
   expect(cfg.maxNewTermsPerPass).toBe(5);
   expect(cfg.statsRecheckPerPass).toBe(10);
+  expect(cfg.statsRecheckCooldownMs).toBe(3_600_000);
+  expect(cfg.retryBaseCooldownMs).toBe(60_000);
   expect(cfg.minDocFreq).toBe(7);
   expect(cfg.debounceMs).toBe(1000);
   expect(cfg.consolidateTimeoutMs).toBe(2000);
@@ -2925,18 +3238,24 @@ export type NimbusGlossaryToml = {
   maxNewTermsPerPass: number;
   /** Reconciliation sweep width — pure SQL, no LLM cost. */
   statsRecheckPerPass: number;
+  /** Skip re-verifying a term checked more recently than this (default 12 h). */
+  statsRecheckCooldownMs: number;
   minDocFreq: number;
   debounceMs: number;
   consolidateTimeoutMs: number;
+  /** Base for the exponential retry backoff that prevents queue starvation. */
+  retryBaseCooldownMs: number;
 };
 
 export const DEFAULT_NIMBUS_GLOSSARY_TOML: NimbusGlossaryToml = {
   enabled: true,
   maxNewTermsPerPass: 25,
   statsRecheckPerPass: 50,
+  statsRecheckCooldownMs: 12 * 60 * 60 * 1000,
   minDocFreq: 3,
   debounceMs: 60000,
   consolidateTimeoutMs: 30000,
+  retryBaseCooldownMs: 15 * 60 * 1000,
 };
 
 function applyNimbusGlossaryKey(
@@ -2957,6 +3276,12 @@ function applyNimbusGlossaryKey(
       break;
     case "stats_recheck_per_pass":
       out.statsRecheckPerPass = n;
+      break;
+    case "stats_recheck_cooldown_ms":
+      out.statsRecheckCooldownMs = n;
+      break;
+    case "retry_base_cooldown_ms":
+      out.retryBaseCooldownMs = n;
       break;
     case "min_doc_freq":
       out.minDocFreq = n;
@@ -3185,8 +3510,10 @@ In `packages/gateway/src/platform/assemble.ts`, inside `createSchedulerWithMesh`
       await runGlossaryPass(db, {
         maxNewTermsPerPass: glossaryCfg.maxNewTermsPerPass,
         statsRecheckPerPass: glossaryCfg.statsRecheckPerPass,
+        statsRecheckCooldownMs: glossaryCfg.statsRecheckCooldownMs,
         minDocFreq: glossaryCfg.minDocFreq,
         consolidateTimeoutMs: glossaryCfg.consolidateTimeoutMs,
+        retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
         nowMs: Date.now(),
       });
     },
@@ -4363,6 +4690,7 @@ The description becomes the permanent commit body, so put the reasoning there: w
 
 **Known deviations from the spec, deliberate:**
 - The V45 table adds a `form` column not listed in spec §4. The reconciliation sweep re-scores a term and needs its mining family; re-deriving it from the surface string would duplicate mining logic in a second place.
+- The V45 table also adds `attempts` / `last_attempt_at`, and `[glossary]` gains `retry_base_cooldown_ms` + `stats_recheck_cooldown_ms`. Added during plan review to close a queue-starvation defect and to stop the reconciliation sweep re-running on every sync; see the plan-review response. The spec's §5.2 and §5.5 descriptions remain accurate — these bound *when* work is retried, not what the pass does.
 - The scheduler-triggered pass in Task 12 runs without an LLM, so unattended passes produce snippet-sourced definitions until an LLM-backed path is wired. This is the documented §5.7 degradation, and the upgrade path (re-queue on next pass) is already specified.
 
 **Type consistency check.** `GlossaryTerm` (domain, camelCase, `glossary/glossary-types.ts`) is distinct from `GlossaryEntry` (brief-facing, `agents/_lib/glossary-types.ts`) — deliberate, and the two files are never cross-imported except through `agents/glossary.ts`. `ConsolidatorLlm.generateJson` (Task 9) is distinct from `SynthesizerLlm.generateMarkdown` (existing) — different contracts, correctly not merged. `CandidateForm` is used identically in Tasks 4, 5, 7 and 10. `unprojectTerm` is called from Tasks 10 and 11 with the same `(db, termKey)` signature defined in Task 8.
