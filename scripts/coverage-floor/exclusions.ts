@@ -178,6 +178,15 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // handlers with no in-process seam). Same untestable-socket-shell class as `socket-listeners.ts`.
   // Held below the line floor (85) raise; not relaxed for the branch floor (80, which it clears).
   { kind: "exact", path: "packages/gateway/src/ipc/server/server.ts" },
+  // `glossary/near-miss.ts`: 7 uncovered branches are all the RHS of `??` fallbacks that
+  // `noUncheckedIndexedAccess` (tsconfig.base.json) FORCES us to write but that cannot execute —
+  // `w[0]` inside a `.split()` map, the mandatory capture groups `m[1]`/`m[2]` of a matched regex,
+  // and `row[j-1]`/`prev[j]`/`prev[j-1]`/`prev[b.length]` inside loops whose bounds guarantee the
+  // index. Deleting them would not compile. Verified three ways during the glossary slice
+  // (2026-07-30): lcov BRDA zero-hit records, empirical regex probing, and raw istanbul
+  // `branchMap` counts — all agreeing. TS-strict-unreachable class, not a testing gap; its line
+  // coverage clears the floor comfortably.
+  { kind: "exact", path: "packages/gateway/src/glossary/near-miss.ts" },
   // ──────────────────────────────────────────────────────────────────────────────────────────────
 ]);
 
