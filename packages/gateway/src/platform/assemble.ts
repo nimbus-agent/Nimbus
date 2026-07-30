@@ -119,7 +119,7 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
 import { runGlossaryPass } from "../glossary/glossary-extract.ts";
-import { createGlossaryRefresher } from "../glossary/glossary-refresh.ts";
+import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -406,9 +406,11 @@ interface SchedulerWithMeshOpts {
   isConnectorAllowed: (serviceId: string) => boolean;
 }
 
-async function createSchedulerWithMesh(
-  opts: SchedulerWithMeshOpts,
-): Promise<{ syncScheduler: SyncScheduler; connectorMesh: LazyConnectorMesh }> {
+async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
+  syncScheduler: SyncScheduler;
+  connectorMesh: LazyConnectorMesh;
+  glossaryRefresher: GlossaryRefresher;
+}> {
   const {
     paths,
     vault,
@@ -504,7 +506,7 @@ async function createSchedulerWithMesh(
   registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
   syncScheduler.start();
   evaluateWatchersStartupCatchUp(db, Date.now(), (t, b) => notifications.show(t, b), watcherOpts);
-  return { syncScheduler, connectorMesh };
+  return { syncScheduler, connectorMesh, glossaryRefresher };
 }
 
 interface HttpSidecarOpts {
@@ -1752,7 +1754,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     sidecarStops.push(() => auditShipper.stop());
   }
 
-  const { syncScheduler, connectorMesh } = await createSchedulerWithMesh({
+  const { syncScheduler, connectorMesh, glossaryRefresher } = await createSchedulerWithMesh({
     paths,
     vault,
     db,
@@ -1762,6 +1764,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     syncLogger,
     isConnectorAllowed,
   });
+  sidecarStops.push(() => glossaryRefresher.stop());
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 
