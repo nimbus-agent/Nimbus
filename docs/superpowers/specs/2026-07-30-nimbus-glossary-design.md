@@ -522,6 +522,15 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   wrong. Worth noting that MTTR is itself Nimbus domain vocabulary (DORA metrics), so this is not
   a hypothetical gap. Fixing it means allowing lowercase connectors in the phrase while computing
   initials from the capitalized words only.
+- **Snippet fallback misses terms ending in punctuation.** `pickSnippetDefinition` matches on a
+  word boundary, so a mined term ending in a non-word character — `c++`, a backticked `foo_` —
+  never matches its own sentence and falls through to `retry`. Introduced deliberately during the
+  Task 9 review, 2026-07-30, replacing substring matching that was far worse: `AI` matched
+  "ex**plai**n", `ML` matched "HT**ML**", `IT` matched "revis**it**", so short acronyms were being
+  given a wholly unrelated sentence as a `source: "snippet"` definition — which reads as *more*
+  trustworthy than an LLM one because it looks like a verbatim team quote. The current behaviour
+  fails **closed** (no definition) rather than open (a confidently wrong one). Affects only the
+  backticked-code mining family; the LLM path is unaffected.
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
