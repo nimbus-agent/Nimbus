@@ -119,7 +119,7 @@ Design of record:
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after, re-measured at n>1 on 2026-07-30: 105 → 77 jobs (4/4 runs), DAG wait 60.5 → 3.0 min median (n=15, and all 45 sampled E2E legs now gated by `ci-rust` — the edge the slice rewrote), non-macOS wall 23-89 → 16-38 min.** Wall clock measured as *last job in the run* did not improve (45 → 67 min median over 20+20 runs); instrumented, that tail is entirely the nine macOS PAL coverage gates queuing for scarce macOS runners, and it is unchanged at like congestion — see the progress log. `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
-| P6 | Access & Contribution Model | 🔨 P6a + CLA done | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos. Remaining: bypass-actor audit |
+| P6 | Access & Contribution Model | ✅ done — bypass gates wired; sweep proof pending (run id TBD — backfill after the post-merge `org-drift-sweep` dispatch) | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos; bypass actors gated by the owner-run `audit:bypass-actors` + the sweep's `audit:bypass-attestation` |
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
 land immediately: P4a, `nimbus-client` rulesets, and the contribution-licensing
@@ -228,9 +228,25 @@ moves to P6).
   (`first_time_contributors`) so a loosening is caught; tightening it to
   `all_external_contributors` remains a separate, deliberate change to this file
   and the org setting together.
-- **Deferred:** the CLA (own spec) and a higher-privilege **bypass-actor audit**
-  (the CI App token cannot read `bypass_actors`; a future owner-`gh`-run check,
-  no PAT). Private-repo ruleset protection stays **blocked-on-Team** (Free plan).
+- **Bypass-actor audit — CLOSED (2026-07-30).** The last P6 item. `audit:ruleset-drift`
+  still cannot read `bypass_actors` (its App token gets an empty array; reading the
+  field needs `Administration: write`, which a read-only gate must not hold), so the
+  field is gated by a pair instead: the owner-run `audit:bypass-actors` diffs live
+  state against a new machine-readable `bypass` block and writes a committed
+  attestation, and the credential-free `audit:bypass-attestation` runs in the sweep
+  checking freshness (90d, flipping to 30 at contributor-two), repo coverage, and
+  that the snapshot still agrees with declared intent.
+- **What the design review caught before any code existed.** `--attest` originally
+  keyed off the diff alone. But `decideExit` returns exit 0 for a partial read with
+  no drift — correct for a reporting gate, wrong for an attesting one — so a 4-of-5
+  read would have written an attestation claiming five repos, which the sweep gate
+  then accepts as full coverage for the whole grace window. `--attest` now requires
+  a complete read, and the written `repos` field derives from what was observed.
+- **Honest limit.** The attestation is a committed file and can be hand-edited, so
+  the gate proves *a green attestation was committed recently and still agrees with
+  declared intent*, not *the org is clean now*. The control is that the file is
+  PR-visible and diff-reviewed. Residual exposure is bounded by the grace window.
+- **Deferred:** private-repo ruleset protection stays **blocked-on-Team** (Free plan).
 
 ### CLA progress log
 

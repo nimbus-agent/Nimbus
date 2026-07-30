@@ -1,0 +1,37 @@
+{
+  "attested_at": "2026-07-30T07:39:28.479Z",
+  "attested_by": "asafgolombek",
+  "grace_days": 90,
+  "repos": [
+    "Nimbus",
+    "nimbus-client",
+    "nimbus-sdk",
+    "nimbus-vscode",
+    "nimbus-web-clipper"
+  ],
+  "observed": {
+    "Nimbus": [
+      {
+        "actor_id": null,
+        "actor_type": "OrganizationAdmin",
+        "bypass_mode": "always"
+      }
+    ],
+    "nimbus-client": [],
+    "nimbus-sdk": [],
+    "nimbus-vscode": [
+      {
+        "actor_id": null,
+        "actor_type": "OrganizationAdmin",
+        "bypass_mode": "always"
+      }
+    ],
+    "nimbus-web-clipper": [
+      {
+        "actor_id": null,
+        "actor_type": "OrganizationAdmin",
+        "bypass_mode": "always"
+      }
+    ]
+  }
+}
