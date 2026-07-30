@@ -1,0 +1,4 @@
+# The Dockerfile installs a released binary and COPYs nothing from the repo,
+# so the build context can be empty. This keeps registry builders from
+# uploading the whole monorepo on every build.
+*
