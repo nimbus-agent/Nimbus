@@ -2438,7 +2438,7 @@ export async function consolidateTerm(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/gateway/src/glossary/glossary-consolidate.test.ts`
-Expected: PASS (17 tests).
+Expected: PASS (16 tests).
 
 - [ ] **Step 5: Commit**
 
