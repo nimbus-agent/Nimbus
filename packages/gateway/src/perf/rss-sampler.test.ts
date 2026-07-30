@@ -184,14 +184,26 @@ describe("sampleRss", () => {
   });
 
   test("intervalsMissed increments when pidusage throws", async () => {
+    // Clock-injected for the reason `virtualClock` above exists. What this test cares about is
+    // the throw/sample bookkeeping, not the scheduler's punctuality — but `samples.length >= 2`
+    // needed 3 of the 5 boundaries to land inside the window, so a loaded runner that overshot
+    // into the deadline collected 1 sample and failed it. That is the flake that blocked the
+    // v1.11.0 release gate; it is the same overshoot the comment above records, on the one count
+    // assertion left against the real clock.
+    const clock = virtualClock();
     const result = await sampleRss({
       pid: 1,
       durationMs: 100,
       intervalMs: 20,
       pidusage: fakePidusage([100, "throw", 200, "throw", 300]),
+      now: clock.now,
+      sleep: clock.sleep,
     });
-    expect(result.intervalsMissed).toBeGreaterThan(0);
-    expect(result.samples.length).toBeGreaterThanOrEqual(2);
+    // Exact, not a floor: boundaries at 0/20/40/60/80, and the sequence throws on the 2nd and
+    // 4th. Pinning all three numbers makes the test stricter than the band it replaces — it now
+    // also catches a miscount that a `>= 2` floor would have accepted.
+    expect(result.intervalsMissed).toBe(2);
+    expect(result.samples).toEqual([100, 200, 300]);
   });
 
   test("respects abort signal", async () => {
