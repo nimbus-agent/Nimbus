@@ -550,6 +550,11 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   case is a warning log and a wasted pass — but if shutdown stalls, a pass can fire against a
   closing database. Found during the Task 12 re-review, 2026-07-30; pre-existing rather than
   introduced by the shutdown wiring, since before that fix `stop()` was unreachable entirely.
+- **Near-miss suggestions consider only the top 500 consolidated terms.** `listConsolidated` orders
+  by score descending, so past 500 terms the lowest-scoring tail can never be offered as a "did you
+  mean". It degrades to under-suggestion, never to a wrong answer — but the excluded tail is the
+  rare, low-frequency jargon most likely to need the suggestion in the first place. Noted during
+  the Task 13 re-review, 2026-07-30; raise `NEAR_MISS_POOL` if real glossaries outgrow it.
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
