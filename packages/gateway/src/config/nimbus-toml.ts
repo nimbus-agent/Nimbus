@@ -1483,6 +1483,96 @@ export function loadNimbusBriefsFromPath(tomlPath: string): NimbusBriefsToml {
 }
 
 // ---------------------------------------------------------------------------
+// [glossary] — implicit-knowledge glossary (Spine S1)
+// ---------------------------------------------------------------------------
+
+export type NimbusGlossaryToml = {
+  /**
+   * Default ON, unlike [briefs]. Briefs open an HTTP write surface; the
+   * glossary opens nothing — it reads the local index and writes local rows.
+   */
+  enabled: boolean;
+  /** LLM calls per pass (sequential). */
+  maxNewTermsPerPass: number;
+  /** Reconciliation sweep width — pure SQL, no LLM cost. */
+  statsRecheckPerPass: number;
+  /** Skip re-verifying a term checked more recently than this (default 12 h). */
+  statsRecheckCooldownMs: number;
+  minDocFreq: number;
+  debounceMs: number;
+  consolidateTimeoutMs: number;
+  /** Base for the exponential retry backoff that prevents queue starvation. */
+  retryBaseCooldownMs: number;
+};
+
+export const DEFAULT_NIMBUS_GLOSSARY_TOML: NimbusGlossaryToml = {
+  enabled: true,
+  maxNewTermsPerPass: 25,
+  statsRecheckPerPass: 50,
+  statsRecheckCooldownMs: 12 * 60 * 60 * 1000,
+  minDocFreq: 3,
+  debounceMs: 60000,
+  consolidateTimeoutMs: 30000,
+  retryBaseCooldownMs: 15 * 60 * 1000,
+};
+
+function applyNimbusGlossaryKey(
+  out: Partial<NimbusGlossaryToml>,
+  key: string,
+  valRaw: string,
+): void {
+  if (key === "enabled") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.enabled = b;
+    return;
+  }
+  const n = parseIntDec(valRaw);
+  if (n === undefined || n <= 0) return;
+  switch (key) {
+    case "max_new_terms_per_pass":
+      out.maxNewTermsPerPass = n;
+      break;
+    case "stats_recheck_per_pass":
+      out.statsRecheckPerPass = n;
+      break;
+    case "stats_recheck_cooldown_ms":
+      out.statsRecheckCooldownMs = n;
+      break;
+    case "retry_base_cooldown_ms":
+      out.retryBaseCooldownMs = n;
+      break;
+    case "min_doc_freq":
+      out.minDocFreq = n;
+      break;
+    case "debounce_ms":
+      out.debounceMs = n;
+      break;
+    case "consolidate_timeout_ms":
+      out.consolidateTimeoutMs = n;
+      break;
+    default:
+      break;
+  }
+}
+
+export function parseNimbusGlossaryToml(
+  raw: string,
+  defaults: NimbusGlossaryToml = DEFAULT_NIMBUS_GLOSSARY_TOML,
+): NimbusGlossaryToml {
+  const out: Partial<NimbusGlossaryToml> = {};
+  forEachSectionEntry(raw, "[glossary]", (key, valRaw) => applyNimbusGlossaryKey(out, key, valRaw));
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusGlossaryFromConfigDir(configDir: string): NimbusGlossaryToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_GLOSSARY_TOML,
+    parseNimbusGlossaryToml,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the

@@ -33,6 +33,7 @@ import {
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusFederationFromConfigDir,
+  loadNimbusGlossaryFromConfigDir,
   loadNimbusIdentityFromConfigDir,
   loadNimbusLanFromConfigDir,
   loadNimbusLlmFromPath,
@@ -117,6 +118,8 @@ import {
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
+import { runGlossaryPass } from "../glossary/glossary-extract.ts";
+import { createGlossaryRefresher } from "../glossary/glossary-refresh.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
 import { buildTeamsBotJwtValidator } from "../identity/teams-bot-jwt.ts";
 import { isOperatorValid } from "../identity/verifier.ts";
@@ -429,6 +432,26 @@ async function createSchedulerWithMesh(
   const automation = loadNimbusAutomationFromConfigDir(paths.configDir);
   const watcherOpts = { graphConditionsEnabled: automation.graphConditions };
 
+  const glossaryCfg = loadNimbusGlossaryFromConfigDir(paths.configDir);
+  const glossaryRefresher = createGlossaryRefresher({
+    enabled: glossaryCfg.enabled,
+    debounceMs: glossaryCfg.debounceMs,
+    runPass: async () => {
+      await runGlossaryPass(db, {
+        maxNewTermsPerPass: glossaryCfg.maxNewTermsPerPass,
+        statsRecheckPerPass: glossaryCfg.statsRecheckPerPass,
+        statsRecheckCooldownMs: glossaryCfg.statsRecheckCooldownMs,
+        minDocFreq: glossaryCfg.minDocFreq,
+        consolidateTimeoutMs: glossaryCfg.consolidateTimeoutMs,
+        retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
+        nowMs: Date.now(),
+      });
+    },
+    onError: (err) => {
+      syncLogger.warn({ err }, "glossary extraction pass failed");
+    },
+  });
+
   const syncScheduler = new SyncScheduler(syncContext, undefined, {
     notify: async (title, body) => {
       await notifications.show(title, body);
@@ -438,6 +461,7 @@ async function createSchedulerWithMesh(
       syncAnomaly.recordSample(`sync:duration_ms:${serviceId}`, durationMs, at);
       syncAnomaly.recordSample(`sync:items_upserted:${serviceId}`, result.itemsUpserted, at);
       evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
+      glossaryRefresher.trigger();
     },
   });
   const tomlRoots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
