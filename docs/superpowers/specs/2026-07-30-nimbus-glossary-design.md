@@ -12,13 +12,14 @@
 A tenth built-in read-only agent that turns terminology the team already uses — but has never
 written down — into a queryable glossary, extracted entirely from the local index.
 
-```
+```text
 nimbus glossary            # terms, sorted by frequency
 nimbus glossary CDR        # the team's consolidated definition of CDR
 nimbus glossary --json     # typed findings
-nimbus glossary --refresh  # force an extraction pass now
-nimbus glossary --rebuild  # wipe and re-mine from scratch
 ```
+
+(`--refresh` and `--rebuild` are parsed by the CLI but not yet honoured by the gateway handler —
+see Known Limits.)
 
 The onboarding story it serves: a new engineer asks "what does CDR mean here?" and gets the
 team's actual usage — with first-seen / last-seen dates and the threads that define it — rather
@@ -56,7 +57,7 @@ Four decisions were taken at design time, each with the rejected alternatives re
 
 ## 3. Module layout
 
-```
+```text
 packages/gateway/src/glossary/
   glossary-types.ts          GlossaryTerm, GlossaryCandidate, GlossaryBrief, GlossaryFinding
   term-mining.ts             pure: text -> candidate surface forms (5 regex families)
@@ -181,7 +182,7 @@ in-flight work.
 
 **Phase B — consolidate (one transaction per term):**
 
-9. Select the consolidation batch **globally across the whole table**, not just this pass's
+1. Select the consolidation batch **globally across the whole table**, not just this pass's
    discoveries:
 
    ```sql
@@ -195,8 +196,8 @@ in-flight work.
    consolidated even though nothing touched it since. Restricting the batch to newly-discovered
    candidates would strand it permanently — the exact failure the "resume next pass" cap decision
    was chosen to avoid.
-10. Consolidate each (§5.4), **committing per term**; `vetoed` rows stop here.
-11. Project each consolidated row into `item` (§6) in the same per-term transaction.
+2. Consolidate each (§5.4), **committing per term**; `vetoed` rows stop here.
+3. Project each consolidated row into `item` (§6) in the same per-term transaction.
 
 **Why the watermark advances in phase A, before any LLM call.** Candidates are durable as
 `pending` rows the moment phase A commits, so consolidation carries no watermark dependency. A
@@ -220,7 +221,7 @@ interrupted pass, doing more work to achieve strictly less.
 | Hyphenated compound | `write-behind` | 1.05 |
 | Capitalized multi-word phrase (2–4 words) | `Shadow Traffic` | 1.0 |
 
-```
+```text
 score = log1p(doc_freq) * 1.6^(service_spread - 1) * formBoost
 ```
 

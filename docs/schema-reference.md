@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V44** (`egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V45** (`glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -485,6 +485,67 @@ CREATE TABLE egress_ledger (
 CREATE INDEX idx_egress_ledger_ts     ON egress_ledger(timestamp);
 CREATE INDEX idx_egress_ledger_source ON egress_ledger(source_type, source_id);
 CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
+
+-- Implicit-knowledge glossary (S1 "Local Brain") — V45.
+-- `glossary_term` is the SSoT for the extraction pass: it holds candidates in every status,
+-- including `pending` work not yet consolidated and `vetoed` rejections that must never be
+-- re-asked. Only `status='consolidated'` rows are projected into the searchable `item` table as
+-- `nimbus:glossary_term` (see `glossary/glossary-project.ts`); a term leaving `consolidated`
+-- (demoted by the reconciliation sweep, or re-vetoed) has its projected item row deleted.
+-- `first_seen_at` / `last_seen_at` are CONTENT dates — MIN/MAX(item.modified_at) across the items
+-- citing the term — not row timestamps; they are RECOMPUTED every time the term's statistics are
+-- touched, never stamped once on insert, so they track when the team actually used the term
+-- rather than when Nimbus happened to notice it. `attempts` / `last_attempt_at` back an
+-- exponential retry backoff (capped 24h) over the pending-consolidation queue: a term whose LLM
+-- call failed or timed out stays `pending` rather than `vetoed` (an infrastructure failure is not
+-- a judgment about the term), and without backoff the same high-scoring failure would be
+-- re-selected — and re-fail — every pass forever, starving every lower-scoring term behind it.
+-- `stats_verified_at` drives the separate reconciliation sweep (round-robin oldest-first): it is
+-- stamped whenever a term's statistics are freshly recomputed (at consolidation, and at each
+-- sweep re-verification), so a term whose sources were later deleted or edited away — which the
+-- incremental mining scan can never rediscover, since there is no surviving item to re-scan — is
+-- still revisited on a bounded cadence and demoted back to `pending` if it now falls below
+-- `min_doc_freq`. Every write goes through `dbRun` (I14); see `glossary/glossary-store.ts`.
+CREATE TABLE IF NOT EXISTS glossary_term (
+    term_key          TEXT PRIMARY KEY,      -- normalized: casefold + de-pluralized + backticks stripped
+    display_term      TEXT NOT NULL,         -- most-frequent observed surface form
+    status            TEXT NOT NULL CHECK(status IN ('pending','consolidated','vetoed')),
+    definition        TEXT,                  -- NULL until consolidated
+    definition_source TEXT CHECK(definition_source IN ('llm','snippet')),
+    doc_freq          INTEGER NOT NULL DEFAULT 0,   -- recomputed from item_fts, never accumulated
+    service_spread    INTEGER NOT NULL DEFAULT 0,   -- COUNT(DISTINCT service) among citing items
+    score             REAL    NOT NULL DEFAULT 0,   -- log1p(doc_freq) * 1.6^(service_spread-1) * formBoost
+    form              TEXT    NOT NULL DEFAULT 'phrase',  -- mining family; re-used by the reconciliation sweep
+    first_seen_at     INTEGER NOT NULL,      -- MIN(item.modified_at) over citing items — a CONTENT date
+    last_seen_at      INTEGER NOT NULL,      -- MAX(item.modified_at) over citing items — a CONTENT date
+    top_sources       TEXT NOT NULL DEFAULT '[]',  -- JSON [{itemId,title,url,service,modifiedAt}], max 5
+    synonyms          TEXT NOT NULL DEFAULT '[]',  -- JSON string[] — LLM alsoKnownAs + detected acronym expansions
+    near_misses       TEXT NOT NULL DEFAULT '[]',  -- JSON string[] — edit-distance <=2 or shared-stem term keys
+    consolidated_at   INTEGER,               -- NULL until first consolidation; cleared on demotion
+    stats_verified_at INTEGER NOT NULL DEFAULT 0,  -- last recompute; drives the reconciliation sweep round-robin
+    attempts          INTEGER NOT NULL DEFAULT 0,   -- failed-consolidation count; feeds the retry backoff
+    last_attempt_at   INTEGER NOT NULL DEFAULT 0,   -- last consolidation attempt, success or failure
+    updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_glossary_term_status_score
+    ON glossary_term(status, score DESC);          -- the pending-consolidation batch select
+CREATE INDEX IF NOT EXISTS idx_glossary_term_pending_attempt
+    ON glossary_term(status, last_attempt_at);      -- the retry-backoff filter
+CREATE INDEX IF NOT EXISTS idx_glossary_term_display
+    ON glossary_term(display_term);
+CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
+    ON glossary_term(status, stats_verified_at);    -- the reconciliation sweep's oldest-first select
+
+-- Single-row watermark for the extraction pass. `id` is CHECK'd to 1 so the table can never hold
+-- more than one row (the same single-row pattern as other watermark tables in this schema).
+CREATE TABLE IF NOT EXISTS glossary_pass_state (
+    id            INTEGER PRIMARY KEY CHECK(id = 1),
+    watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- max item.modified_at scanned by the last pass
+    last_pass_at  INTEGER,                      -- wall-clock time of the last completed pass
+    last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new candidates discovered by the last pass
+    scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass
+);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

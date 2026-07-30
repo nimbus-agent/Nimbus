@@ -8,6 +8,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-30 — `nimbus glossary` — implicit-knowledge glossary.**
+  A tenth built-in read-only agent plus a background extraction pass that mines domain
+  terminology from the already-indexed graph. Deterministic candidate mining (5 families,
+  family-5 sentence-initial guard) recomputes every statistic from the existing FTS index rather
+  than accumulating counters, so passes are idempotent; per-term consolidation makes a local-LLM
+  call to write or veto a definition, capped at 25 calls per pass and running sequentially. A
+  pure-SQL reconciliation sweep re-verifies 50 terms per pass so a term whose sources were
+  deleted is demoted and unprojected rather than lingering with inflated statistics.
+  Consolidated terms are projected into the unified index as `nimbus:glossary_term` (joining
+  `PROSE_HEAVY_TYPES`, 22 → 23) with synonyms written into `body_preview` so
+  `nimbus ask "what does Change Data Record mean?"` resolves through ordinary search. Schema
+  **V45** (`glossary_term`, `glossary_pass_state`); Tauri `ALLOWED_METHODS` 101 → 102 (I7). No
+  new invariant, no new HTTP write route, no new connector; zero HITL actions and zero
+  `egress_ledger` rows. `[glossary]` defaults ON.
+  The extraction pass is triggered only by the debounced post-connector-sync hook — the
+  `agents.glossary` IPC handler reads only `term` and `limit`; the CLI's `--refresh` / `--rebuild`
+  flags are parsed and forwarded but not yet honored gateway-side, so they currently do nothing
+  (a follow-up). The scheduler-triggered pass itself also runs without an LLM available to it, so
+  unattended passes produce `definition_source: "snippet"` definitions (the verbatim sentence
+  containing the term) rather than LLM-consolidated ones; a later pass with an LLM configured
+  upgrades a snippet-sourced term automatically. ADRs are mined only from Obsidian-indexed
+  roots (there is no generic markdown item type), and commit messages are mined from the subject
+  line only. Spec: `docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md`; plan:
+  `docs/superpowers/plans/2026-07-30-nimbus-glossary.md`.
+
 - **2026-07-30 — macOS `nimbus init` can no longer hang on a locked keychain, issue #932.**
   The remaining half of the first-run hang. With #928 fixed the boot log still stopped dead, and a
   sampled stack showed why: on first run the gateway writes new Vault keys (federation identity,

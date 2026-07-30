@@ -297,6 +297,37 @@ nimbus why src/billing/retry.ts --line 42 --json
 
 ---
 
+### `nimbus glossary`
+
+Turn terminology the team already uses — but has never written down — into a queryable glossary, extracted entirely from the local index. `nimbus glossary` with no argument prints terms sorted by frequency; `nimbus glossary <term>` prints the team's consolidated definition, resolved against an exact term match, then a known synonym, then (on a miss) a "did you mean" list of near-misses. Candidates are mined deterministically from indexed titles/bodies (5 surface-form families — acronyms, backticked tokens, PascalCase identifiers, hyphenated compounds, capitalized phrases) and require evidence across at least `min_doc_freq` (default 3) source items before a term is considered; a local LLM then consolidates or vetoes each candidate.
+
+Extraction itself is **not** triggered by this command — it runs as a background pass, debounced after a successful connector sync (`[glossary]` in `nimbus.toml`, default on). `nimbus glossary` only reads the already-materialized `glossary_term` table.
+
+```bash
+nimbus glossary
+nimbus glossary CDR
+nimbus glossary --limit 50 --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--limit <n>` | Cap the number of terms/entries returned |
+| `--refresh` | Parsed and forwarded, but **not yet wired**: the gateway's `agents.glossary` handler only reads `term` and `limit`, so this currently has no effect. Extraction is driven solely by the post-sync background trigger. |
+| `--rebuild` | Same caveat as `--refresh` — parsed and forwarded, currently a no-op gateway-side. |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+
+**Output (Markdown):** with no argument, a frequency-sorted term list with coverage stats (how many terms are consolidated vs. still pending). With `<term>`, the consolidated definition, first-seen / last-seen dates, up to 5 top sources, and known synonyms/near-misses; gap notes explain an empty or partially-built glossary (no pass has run yet, every candidate fell below the frequency floor, consolidation is still in progress) rather than looking broken.
+
+**Definition provenance.** A definition's `definitionSource` is either `"llm"` (the local model consolidated it from source snippets) or `"snippet"` (no LLM was available at consolidation time, so the verbatim sentence containing the term was used instead — honest and attributable, but not synthesized). The background pass runs without an LLM, so unattended passes produce snippet-sourced definitions; a term is upgraded to an LLM-consolidated one automatically once a local LLM is configured and a later pass reaches it.
+
+**Read-only:** never triggers HITL, never makes a live API call — the extraction pass calls only the local LLM (when configured), and the `nimbus glossary` read path is pure SQLite. Zero `egress_ledger` rows.
+
+**Exit codes:** `1` = gateway not running; `2` = agent error (timeout or a malformed `agents.glossary` response). An unknown term is not an error — it returns a "did you mean" brief of near-misses.
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).

@@ -82,11 +82,13 @@
 ### Task 1: V45 migration
 
 **Files:**
+
 - Create: `packages/gateway/src/index/glossary-v45-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - Test: `packages/gateway/src/index/migrations/runner-v45.test.ts`
 
 **Interfaces:**
+
 - Consumes: `simpleStep` from `runner.ts` (existing).
 - Produces: `GLOSSARY_V45_SQL` — a `string` of `CREATE TABLE IF NOT EXISTS` statements. Tables `glossary_term` and `glossary_pass_state` exist at schema version 45.
 
@@ -268,10 +270,12 @@ git commit -m "feat(glossary): V45 glossary_term + glossary_pass_state schema"
 ### Task 2: Stopwords baseline
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/stopwords.ts`
 - Test: `packages/gateway/src/glossary/stopwords.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `isStopword(termKey: string): boolean`, `isFunctionWord(word: string): boolean`, `STOPWORDS: ReadonlySet<string>`. All inputs are expected already lowercased by the caller.
 
@@ -443,10 +447,12 @@ git commit -m "feat(glossary): three-layer stopword baseline"
 ### Task 3: Term normalization
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/term-normalize.ts`
 - Test: `packages/gateway/src/glossary/term-normalize.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `normalizeTerm(surface: string): string` — returns the `term_key` (lowercased, backticks stripped, whitespace collapsed, trailing plural removed). Returns `""` for input that normalizes to nothing; callers MUST treat `""` as "not a term".
 
@@ -575,11 +581,13 @@ git commit -m "feat(glossary): term normalization to a stable term_key"
 ### Task 4: Candidate mining
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-types.ts`
 - Create: `packages/gateway/src/glossary/term-mining.ts`
 - Test: `packages/gateway/src/glossary/term-mining.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isFunctionWord`, `isStopword` (Task 2); `normalizeTerm` (Task 3).
 - Produces:
   - `type CandidateForm = "acronym" | "code" | "identifier" | "hyphenated" | "phrase"`
@@ -853,10 +861,12 @@ git commit -m "feat(glossary): deterministic candidate mining with family-5 guar
 ### Task 5: Scoring
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/term-scoring.ts`
 - Test: `packages/gateway/src/glossary/term-scoring.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CandidateForm` (Task 4).
 - Produces: `FORM_BOOST: Record<CandidateForm, number>`, `scoreTerm(input: { docFreq: number; serviceSpread: number; form: CandidateForm }): number`.
 
@@ -985,10 +995,12 @@ git commit -m "feat(glossary): candidate scoring with service-spread weighting"
 ### Task 6: Synonyms and near-misses
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/near-miss.ts`
 - Test: `packages/gateway/src/glossary/near-miss.test.ts`
 
 **Interfaces:**
+
 - Consumes: `normalizeTerm` (Task 3).
 - Produces:
   - `detectAcronymExpansions(text: string): Array<{ acronymKey: string; expansion: string }>` — recognizes the `Change Data Record (CDR)` pattern.
@@ -1136,11 +1148,13 @@ git commit -m "feat(glossary): acronym-expansion synonyms and edit-distance near
 ### Task 7: Source scope + FTS statistics recompute + V45 store
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-source-types.ts`
 - Create: `packages/gateway/src/glossary/glossary-store.ts`
 - Test: `packages/gateway/src/glossary/glossary-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `dbRun` from `../db/write.ts`; `GlossaryTerm`, `TermStats`, `GlossarySource`, `CandidateForm`, `GlossaryStatus`, `DefinitionSource` (Task 4).
 - Produces: `GLOSSARY_SOURCE_TYPES`, `glossarySourceTypeList()`, `computeTermStats(db, termKey): TermStats`, `upsertCandidate(db, c)`, `getTerm(db, key): GlossaryTerm | null`, `findBySynonym(db, q): GlossaryTerm | null`, `selectPendingBatch(db, limit, { nowMs, retryBaseCooldownMs })`, `recordAttempt(db, key, nowMs)`, `retryCooldownMs(attempts, baseMs)`, `selectStaleForRecheck(db, limit, verifiedBefore)`, `listConsolidated(db, limit)`, `listAllKeys(db)`, `markConsolidated(db, p)`, `markVetoed(db, key, nowMs)`, `demoteTerm(db, key, nowMs)`, `applyStats(db, key, stats, score, nowMs)`, `countByStatus(db)`, `readPassState(db)`, `writePassState(db, s)`, `clearGlossary(db)`.
 
@@ -1853,12 +1867,14 @@ git commit -m "feat(glossary): V45 store plus the FTS statistics recompute"
 ### Task 8: Item projection (and the 512-char trap)
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-project.ts`
 - Modify: `packages/gateway/src/embedding/routing.ts`
 - Modify: `packages/gateway/src/embedding/routing.test.ts`
 - Test: `packages/gateway/src/glossary/glossary-project.test.ts`
 
 **Interfaces:**
+
 - Consumes: `upsertIndexedItem`, `itemPrimaryKey` from `../index/item-store.ts`; `dbRun`; `GlossaryTerm` (Task 4).
 - Produces: `projectTerm(db, term, nowMs): string`, `unprojectTerm(db, termKey): void`, `glossaryItemExternalId(termKey): string`, `buildProjectedBody(definition, synonyms): string`.
 
@@ -2079,10 +2095,12 @@ git commit -m "feat(glossary): project consolidated terms into the searchable in
 ### Task 9: Consolidation (LLM, veto, timeout, snippet fallback)
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-consolidate.ts`
 - Test: `packages/gateway/src/glossary/glossary-consolidate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `wrapToolOutput` from `../engine/tool-output-envelope.ts`; `GlossaryTerm`, `GlossarySource` (Task 4); `detectAcronymExpansions` (Task 6).
 - Produces:
   - `type ConsolidatorLlm = { generateJson: (prompt: string) => Promise<string | null> }`
@@ -2485,10 +2503,12 @@ git commit -m "feat(glossary): LLM consolidation with veto, timeout and snippet 
 ### Task 10: Reconciliation sweep
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-reconcile.ts`
 - Test: `packages/gateway/src/glossary/glossary-reconcile.test.ts`
 
 **Interfaces:**
+
 - Consumes: `selectStaleForRecheck`, `computeTermStats`, `applyStats`, `demoteTerm` (Task 7); `unprojectTerm` (Task 8); `scoreTerm` (Task 5).
 - Produces: `reconcilePass(db, opts: { limit: number; minDocFreq: number; nowMs: number; cooldownMs: number }): { verified: number; demoted: string[] }`.
 
@@ -2719,11 +2739,13 @@ git commit -m "feat(glossary): reconciliation sweep for deleted and edited sourc
 ### Task 11: The two-phase pass orchestrator
 
 **Files:**
+
 - Create: `packages/gateway/src/glossary/glossary-extract.ts`
 - Test: `packages/gateway/src/glossary/glossary-extract.test.ts`
 - Test: `packages/gateway/src/glossary/glossary-resume.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 2–10.
 - Produces:
   - `type GlossaryPassOptions = { maxNewTermsPerPass: number; statsRecheckPerPass: number; minDocFreq: number; consolidateTimeoutMs: number; llm?: ConsolidatorLlm; nowMs: number; signal?: AbortSignal }`
@@ -3270,6 +3292,7 @@ git commit -m "feat(glossary): two-phase extraction pass with crash-safe waterma
 ### Task 12: `[glossary]` config + debounced refresh trigger + scheduler wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Create: `packages/gateway/src/config/nimbus-toml-glossary.test.ts`
 - Create: `packages/gateway/src/glossary/glossary-refresh.ts`
@@ -3277,6 +3300,7 @@ git commit -m "feat(glossary): two-phase extraction pass with crash-safe waterma
 - Modify: `packages/gateway/src/platform/assemble.ts`
 
 **Interfaces:**
+
 - Consumes: `runGlossaryPass` (Task 11); `forEachSectionEntry`, `parseBool`, `parseIntDec` (existing, in `nimbus-toml.ts`).
 - Produces:
   - `NimbusGlossaryToml`, `DEFAULT_NIMBUS_GLOSSARY_TOML`, `parseNimbusGlossaryToml(raw, defaults?)`
@@ -3692,6 +3716,7 @@ git commit -m "feat(glossary): [glossary] config and debounced post-sync refresh
 ### Task 13: The agent (4 lanes) + rendering
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/glossary-types.ts`
 - Create: `packages/gateway/src/agents/glossary.ts`
 - Modify: `packages/gateway/src/agents/_lib/render.ts`
@@ -3700,6 +3725,7 @@ git commit -m "feat(glossary): [glossary] config and debounced post-sync refresh
 - Test: `packages/gateway/src/agents/glossary.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AgentCoordinator`, `SubTask` from `../engine/coordinator.ts`; `emitBriefWithSynthesis`; `GapNote`; store readers (Task 7); `normalizeTerm` (Task 3); `findNearMisses` (Task 6).
 - Produces: `GlossaryBrief`, `GlossaryEntry`, `GlossaryInput`, `runGlossary(input, ctx): Promise<GlossaryBrief>`, `emitGlossaryBrief(input, ctx): Promise<{ sessionId: string }>`, `renderGlossary(brief): string`.
 
@@ -4216,6 +4242,7 @@ In `packages/gateway/src/agents/_lib/synthesize.ts`: add `import type { Glossary
 ```typescript
   if (brief.kind === "glossary") return renderGlossary(brief);
 ```
+
 ```typescript
   if (brief.kind === "glossary") return "agents.glossary";
 ```
@@ -4244,11 +4271,13 @@ git commit -m "feat(glossary): four-lane read-only agent with synonym resolution
 ### Task 14: IPC method + Tauri allowlist
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts`
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs`
 - Test: `packages/gateway/src/ipc/agents-rpc.glossary.test.ts`
 
 **Interfaces:**
+
 - Consumes: `emitGlossaryBrief` (Task 13); `dispatchByMethod`, `AgentsRpcError`, `newSessionId` (existing in `agents-rpc.ts`).
 - Produces: IPC method `agents.glossary { term?: string; limit?: number }` → `{ sessionId: string }`, followed by `glossary.briefReady` / `glossary.briefError`.
 
@@ -4369,11 +4398,13 @@ git commit -m "feat(glossary): agents.glossary IPC method and Tauri allowlist en
 ### Task 15: CLI command
 
 **Files:**
+
 - Create: `packages/cli/src/commands/glossary.ts`
 - Modify: `packages/cli/src/index.ts`
 - Test: `packages/cli/src/commands/glossary.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runAgentBriefCli`, `flagValue` from `./_agent-brief-cli.ts`.
 - Produces: `parseGlossaryArgs(args: string[]): GlossaryCliArgs`, `runGlossaryCommand(args: string[]): Promise<void>`.
 
@@ -4576,9 +4607,11 @@ git commit -m "feat(glossary): nimbus glossary CLI command"
 ### Task 16: End-to-end scenario
 
 **Files:**
+
 - Test: `packages/gateway/test/e2e/scenarios/glossary.e2e.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: nothing — this task only proves the assembled behaviour.
 
@@ -4755,6 +4788,7 @@ git commit -m "test(glossary): end-to-end scenario covering extraction, brief, z
 ### Task 17: Documentation + ship-readiness
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md`
 - Modify: `docs/cli-reference.md`
@@ -4763,6 +4797,7 @@ git commit -m "test(glossary): end-to-end scenario covering extraction, brief, z
 - Modify: `CLAUDE.md` and `GEMINI.md` (schema version only)
 
 **Interfaces:**
+
 - Consumes: the shipped feature.
 - Produces: no code.
 
@@ -4791,6 +4826,7 @@ In `docs/CHANGELOG.md`, add a dated entry under the current unreleased section. 
 - [ ] **Step 2: Check off the roadmap rows**
 
 In `docs/roadmap.md`:
+
 - In the S1 "Remaining" bullet (~line 913), note that `glossary` shipped and leave `decisions` (+ `pre-mortem`, `negotiate`) outstanding.
 - Move a `**nimbus glossary`** entry into the S1 "Delivered so far" list with the 2026-07-30 date.
 - Tick the Wave 5 `nimbus glossary [<term>]` checkbox (~line 1071).
@@ -4867,6 +4903,7 @@ The description becomes the permanent commit body, so put the reasoning there: w
 **Deferred by design (spec §12), with no task:** manual term authoring via `[glossary.terms]`. Named in the spec as an additive follow-up.
 
 **Known deviations from the spec, deliberate:**
+
 - The V45 table adds a `form` column not listed in spec §4. The reconciliation sweep re-scores a term and needs its mining family; re-deriving it from the surface string would duplicate mining logic in a second place.
 - The V45 table also adds `attempts` / `last_attempt_at`, and `[glossary]` gains `retry_base_cooldown_ms` + `stats_recheck_cooldown_ms`. Added during plan review to close a queue-starvation defect and to stop the reconciliation sweep re-running on every sync; see the plan-review response. The spec's §5.2 and §5.5 descriptions remain accurate — these bound *when* work is retried, not what the pass does.
 - The scheduler-triggered pass in Task 12 runs without an LLM, so unattended passes produce snippet-sourced definitions until an LLM-backed path is wired. This is the documented §5.7 degradation, and the upgrade path (re-queue on next pass) is already specified.
