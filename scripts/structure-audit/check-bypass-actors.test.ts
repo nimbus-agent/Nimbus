@@ -2,11 +2,16 @@ import { describe, expect, test } from "bun:test";
 
 import {
   actorKey,
+  assessBypassReadCapability,
   type BypassActor,
+  capabilityErrors,
   type DeclaredBypassFile,
   decideExit,
   diffBypassActors,
   loadDeclaredBypass,
+  parseOAuthScopes,
+  probeCredentialScopes,
+  scopesCanReadBypassActors,
   validateDeclaredBypass,
 } from "./check-bypass-actors.ts";
 
@@ -290,5 +295,132 @@ describe("decideExit", () => {
     const out = decideExit({ queried: 4, errors: [], unreachable: ["nimbus-sdk"] });
     expect(out.code).toBe(0);
     expect(out.message).toContain("WARNING");
+  });
+});
+
+const ORG_ADMIN: BypassActor = {
+  actor_type: "OrganizationAdmin",
+  actor_id: null,
+  bypass_mode: "always",
+};
+
+describe("assessBypassReadCapability (#961)", () => {
+  test("verified when a repo declaring actors actually reads them back", () => {
+    const verdict = assessBypassReadCapability({
+      declared: { Nimbus: [ORG_ADMIN], "nimbus-sdk": [] },
+      observed: { Nimbus: [ORG_ADMIN], "nimbus-sdk": [] },
+    });
+    expect(verdict).toEqual({ kind: "verified", witness: "Nimbus" });
+  });
+
+  test("blind when every declared-non-empty repo reads back empty", () => {
+    // The proven App-token behaviour: bypass_actors comes back empty for org-level actors.
+    const verdict = assessBypassReadCapability({
+      declared: { Nimbus: [ORG_ADMIN], "nimbus-vscode": [ORG_ADMIN], "nimbus-sdk": [] },
+      observed: { Nimbus: [], "nimbus-vscode": [], "nimbus-sdk": [] },
+    });
+    expect(verdict).toEqual({ kind: "blind", declaredNonEmpty: ["Nimbus", "nimbus-vscode"] });
+  });
+
+  test("one surviving witness is enough — a genuine single removal is not called blind", () => {
+    const verdict = assessBypassReadCapability({
+      declared: { Nimbus: [ORG_ADMIN], "nimbus-vscode": [ORG_ADMIN] },
+      observed: { Nimbus: [], "nimbus-vscode": [ORG_ADMIN] },
+    });
+    expect(verdict.kind).toBe("verified");
+  });
+
+  test("no-positive-control once bypass.by_repo is all-empty — the future state #961 is about", () => {
+    const verdict = assessBypassReadCapability({
+      declared: { Nimbus: [], "nimbus-sdk": [] },
+      observed: { Nimbus: [], "nimbus-sdk": [] },
+    });
+    expect(verdict).toEqual({ kind: "no-positive-control" });
+  });
+
+  test("an unreachable repo is absence of evidence, not evidence of blindness", () => {
+    // `observed` only carries repos actually queried; a declared-non-empty repo that
+    // failed to read must not be counted as a repo that read empty.
+    const verdict = assessBypassReadCapability({
+      declared: { Nimbus: [ORG_ADMIN], "nimbus-vscode": [ORG_ADMIN] },
+      observed: { Nimbus: [ORG_ADMIN] },
+    });
+    expect(verdict).toEqual({ kind: "verified", witness: "Nimbus" });
+  });
+});
+
+describe("parseOAuthScopes / scopesCanReadBypassActors (#961)", () => {
+  test("parses a classic token's scope header case-insensitively", () => {
+    expect(parseOAuthScopes("HTTP/2 200\r\nX-OAuth-Scopes: admin:org, repo\r\n")).toEqual([
+      "admin:org",
+      "repo",
+    ]);
+    expect(parseOAuthScopes("x-oauth-scopes: repo\n")).toEqual(["repo"]);
+  });
+
+  test("absent header is UNDEFINED, not an empty list", () => {
+    // An App installation token / fine-grained PAT sends no header at all. That is
+    // "unknown", and must not be conflated with a token that has zero scopes.
+    expect(parseOAuthScopes("HTTP/2 200\r\ncontent-type: application/json\r\n")).toBeUndefined();
+    expect(parseOAuthScopes("x-oauth-scopes: \n")).toEqual([]);
+  });
+
+  test("only admin:org (or site_admin) demonstrates capability", () => {
+    expect(scopesCanReadBypassActors(["admin:org"])).toBe(true);
+    expect(scopesCanReadBypassActors(["site_admin"])).toBe(true);
+    expect(scopesCanReadBypassActors(["repo", "read:org"])).toBe(false);
+    expect(scopesCanReadBypassActors([])).toBe(false);
+    expect(scopesCanReadBypassActors(undefined)).toBe(false);
+  });
+});
+
+describe("capabilityErrors (#961) — fail-closed", () => {
+  test("verified is the only silent path", () => {
+    expect(capabilityErrors({ kind: "verified", witness: "Nimbus" }, undefined)).toEqual([]);
+  });
+
+  test("blind fails closed and names the repos that read empty", () => {
+    const errs = capabilityErrors({ kind: "blind", declaredNonEmpty: ["Nimbus"] }, ["admin:org"]);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain("Nimbus");
+    expect(errs[0]).toContain("Refusing to report a clean read");
+  });
+
+  test("no-positive-control passes only when the token proves admin:org", () => {
+    expect(capabilityErrors({ kind: "no-positive-control" }, ["admin:org", "repo"])).toEqual([]);
+  });
+
+  test("no-positive-control fails closed for an App/fine-grained token (no scope header)", () => {
+    // THE #961 scenario: all-empty config + a credential that cannot see the field.
+    // Without this, the diff is green, the read is complete, decideAttestWrite permits
+    // the write, and a false-clean attestation is honoured for the full grace window.
+    const errs = capabilityErrors({ kind: "no-positive-control" }, undefined);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain("no X-OAuth-Scopes header");
+    expect(errs[0]).toContain("Refusing to report a clean read");
+  });
+
+  test("no-positive-control fails closed for a token holding the wrong scopes", () => {
+    const errs = capabilityErrors({ kind: "no-positive-control" }, ["repo", "read:org"]);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain("scopes: repo, read:org");
+  });
+});
+
+describe("probeCredentialScopes (#961)", () => {
+  test("returns the parsed scopes when gh succeeds", () => {
+    expect(
+      probeCredentialScopes(() => ({
+        ok: true,
+        stdout: "HTTP/2 200\r\nX-OAuth-Scopes: admin:org\r\n\r\n{}",
+        stderr: "",
+      })),
+    ).toEqual(["admin:org"]);
+  });
+
+  test("returns undefined when gh fails, so the caller fails closed", () => {
+    expect(
+      probeCredentialScopes(() => ({ ok: false, stdout: "", stderr: "HTTP 401" })),
+    ).toBeUndefined();
   });
 });

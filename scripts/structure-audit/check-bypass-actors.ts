@@ -265,6 +265,122 @@ export function diffBypassActors(
 }
 
 /**
+ * Whether this run's reads can be TRUSTED to reflect the org, as opposed to
+ * reflecting a credential that cannot see `bypass_actors` at all (#961).
+ *
+ * The gate reads an absent-or-empty `bypass_actors` as `[]`, and `[]` diffs
+ * cleanly against a declared `[]`. So "this repo has no bypass actors" and "my
+ * token cannot see them" are the same observation — and the second is not
+ * hypothetical, it is the proven behaviour of the App installation token, which
+ * is the entire reason this gate is separate from `audit:ruleset-drift`.
+ *
+ * Today the config is accidentally load-bearing: three repos declare a non-empty
+ * actor list, so a blind credential reds immediately with three `missing declared
+ * bypass actor` findings. The moment `bypass.by_repo` is all-`[]` — which is the
+ * program's stated direction — that accident is gone and a blind read produces a
+ * green diff, a complete read, and a false-clean attestation honoured for the
+ * full 90-day grace window.
+ */
+export type CapabilityVerdict =
+  /** At least one repo whose declared intent is non-empty actually read non-empty. */
+  | { kind: "verified"; witness: string }
+  /** Every repo whose declared intent is non-empty read empty — almost certainly blind. */
+  | { kind: "blind"; declaredNonEmpty: string[] }
+  /** Nothing is declared non-empty, so no positive control exists in the data. */
+  | { kind: "no-positive-control" };
+
+/**
+ * The cheapest correct probe: use the DECLARED non-empty repos as a positive
+ * control. If every one of them reads empty, that is far more likely a blind
+ * credential than a simultaneous org-wide bypass removal — and the two are worth
+ * distinguishing precisely because the second is the outcome the program wants,
+ * so it is the moment someone will be tempted to believe the green.
+ *
+ * Only repos actually queried this run are considered; an unreachable repo is
+ * absence of evidence, not evidence of blindness.
+ */
+export function assessBypassReadCapability(input: {
+  declared: Record<string, BypassActor[]>;
+  observed: Record<string, BypassActor[]>;
+}): CapabilityVerdict {
+  const { declared, observed } = input;
+  const declaredNonEmpty = Object.keys(observed)
+    .filter((repo) => (declared[repo] ?? []).length > 0)
+    .sort();
+
+  if (declaredNonEmpty.length === 0) {
+    return { kind: "no-positive-control" };
+  }
+  const witness = declaredNonEmpty.find((repo) => (observed[repo] ?? []).length > 0);
+  if (witness !== undefined) {
+    return { kind: "verified", witness };
+  }
+  return { kind: "blind", declaredNonEmpty };
+}
+
+/**
+ * Fallback for the all-empty config, where no positive control exists in the
+ * data: ask the CREDENTIAL directly.
+ *
+ * Reading org-level `bypass_actors` needs `admin:org` — the same finding that
+ * root-caused the App `403` in the P2 progress log. A classic OAuth/PAT token
+ * advertises its grants in `X-OAuth-Scopes`; an App installation token and a
+ * fine-grained PAT send no such header, which is reported as UNKNOWN rather than
+ * as absence, because "no header" must not be read as "no scope" — nor as "fine".
+ */
+export function parseOAuthScopes(headerBlock: string): string[] | undefined {
+  const match = /^x-oauth-scopes:\s*(.*)$/im.exec(headerBlock);
+  if (match === null) return undefined;
+  return (match[1] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** `admin:org` (or the broader `site_admin`) is what exposes org-level bypass actors. */
+export function scopesCanReadBypassActors(scopes: string[] | undefined): boolean {
+  if (scopes === undefined) return false;
+  return scopes.includes("admin:org") || scopes.includes("site_admin");
+}
+
+/** Impure companion: ask GitHub what the ambient credential is allowed to do. */
+export function probeCredentialScopes(
+  run: (args: string[]) => { ok: boolean; stdout: string; stderr: string } = runGh,
+): string[] | undefined {
+  const res = run(["gh", "api", "-i", "user"]);
+  if (!res.ok) return undefined;
+  return parseOAuthScopes(res.stdout);
+}
+
+/**
+ * Turns a verdict into findings. Fail-closed by construction: the only silent
+ * path is `verified`, and the only way to reach it is to have actually SEEN an
+ * actor this run.
+ */
+export function capabilityErrors(
+  verdict: CapabilityVerdict,
+  scopes: string[] | undefined,
+): string[] {
+  if (verdict.kind === "verified") return [];
+  if (verdict.kind === "blind") {
+    return [
+      `every repo declaring a non-empty bypass actor list read back EMPTY (${verdict.declaredNonEmpty.join(", ")}) — ` +
+        `this is far more likely a credential that cannot see bypass_actors than a simultaneous org-wide removal. ` +
+        `Re-run with a personal admin:org token, not an App installation token. Refusing to report a clean read.`,
+    ];
+  }
+  // no-positive-control: nothing declared non-empty, so the data cannot vouch
+  // for the credential and the credential must vouch for itself.
+  if (scopesCanReadBypassActors(scopes)) return [];
+  return [
+    `no repo declares a non-empty bypass actor list, so an empty read cannot be distinguished from a blind credential, ` +
+      `and the token does not demonstrate admin:org ` +
+      `(${scopes === undefined ? "no X-OAuth-Scopes header — App installation or fine-grained token" : `scopes: ${scopes.join(", ") || "none"}`}). ` +
+      `Re-run with a personal admin:org token. Refusing to report a clean read.`,
+  ];
+}
+
+/**
  * Exit decision for the per-repo loop.
  *
  * INVARIANT, mirroring check-ruleset-drift: real drift on a reachable repo is
@@ -373,9 +489,22 @@ if (import.meta.main) {
   }
 
   const diffResult = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
+
+  // #961: a clean diff is only meaningful if the credential could see the field
+  // at all. Probed only when something was actually read — with `queried === 0`
+  // the strict-skip path below already owns the outcome, and probing there would
+  // turn an unauthenticated contributor's soft skip into a hard red.
+  let capabilityFindings: string[] = [];
+  if (queried > 0) {
+    const verdict = assessBypassReadCapability({ declared: file.bypass.by_repo, observed });
+    // Only pay for the network probe when the data cannot vouch for itself.
+    const scopes = verdict.kind === "no-positive-control" ? probeCredentialScopes() : undefined;
+    capabilityFindings = capabilityErrors(verdict, scopes);
+  }
+
   const result: AuditResult = {
-    ok: diffResult.ok && absentErrors.length === 0,
-    errors: [...absentErrors, ...diffResult.errors],
+    ok: diffResult.ok && absentErrors.length === 0 && capabilityFindings.length === 0,
+    errors: [...capabilityFindings, ...absentErrors, ...diffResult.errors],
   };
   const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
 
