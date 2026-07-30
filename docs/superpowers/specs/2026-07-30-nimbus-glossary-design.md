@@ -513,6 +513,15 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
 - **Commit messages are mined from the subject line only.** `filesystem:git_commit` stores the
   commit subject in `title` and the SHA in `body_preview`, so the body of a commit message is not
   indexed and cannot be mined.
+- **Acronym expansions with lowercase connectors are missed.** `detectAcronymExpansions` matches
+  only runs of Title-Case words, so `Bill of Materials (BOM)`, `Return on Investment (ROI)` and
+  `Mean Time to Recovery (MTTR)` yield no synonym — the lowercase connector breaks the run, the
+  regex backtracks to the last capitalized word, and the initials check correctly rejects the
+  mismatch. Confirmed by probe during the Task 6 review, 2026-07-30. This fails **safe**: the
+  result is a missed synonym, never a fabricated one, so the glossary is incomplete rather than
+  wrong. Worth noting that MTTR is itself Nimbus domain vocabulary (DORA metrics), so this is not
+  a hypothetical gap. Fixing it means allowing lowercase connectors in the phrase while computing
+  initials from the capitalized words only.
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
