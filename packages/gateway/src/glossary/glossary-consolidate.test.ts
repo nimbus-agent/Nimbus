@@ -155,7 +155,36 @@ test("pickSnippetDefinition returns null when the term is absent", () => {
   expect(pickSnippetDefinition("CDR", [{ text: "no mention" }])).toBe(null);
 });
 
-test("the prompt wraps source snippets in a tool-output envelope", async () => {
+test("pickSnippetDefinition does not substring-match a short acronym inside a longer word", () => {
+  expect(
+    pickSnippetDefinition("AI", [{ text: "Please explain the billing cycle to the customer." }]),
+  ).toBe(null);
+  expect(pickSnippetDefinition("ML", [{ text: "The HTML template renders the page." }])).toBe(null);
+});
+
+test("pickSnippetDefinition still matches a whole-word acronym", () => {
+  expect(pickSnippetDefinition("CDR", [{ text: "The CDR is the per-row change envelope." }])).toBe(
+    "The CDR is the per-row change envelope.",
+  );
+});
+
+test("pickSnippetDefinition handles a term ending in a word character", () => {
+  expect(
+    pickSnippetDefinition("shard_key", [{ text: "The shard_key determines placement." }]),
+  ).toBe("The shard_key determines placement.");
+});
+
+test("pickSnippetDefinition does not throw for a term containing regex metacharacters", () => {
+  // A trailing non-word character (e.g. "+") means the closing `\b` may not
+  // land on a boundary, so a match is not guaranteed here — the contract
+  // under test is "never throws", not "always matches".
+  expect(() =>
+    pickSnippetDefinition("c++", [{ text: "We rewrote it in c++ last quarter." }]),
+  ).not.toThrow();
+  expect(() => pickSnippetDefinition("foo(", [{ text: "Call foo( ) to start." }])).not.toThrow();
+});
+
+test("the prompt wraps source snippets in a tool-output envelope, and the term does not leak outside it", async () => {
   let seen = "";
   const llm = {
     generateJson: async (p: string) => {
@@ -163,6 +192,11 @@ test("the prompt wraps source snippets in a tool-output envelope", async () => {
       return JSON.stringify({ isDomainTerm: true, definition: "d" });
     },
   };
-  await consolidateTerm(term(), SNIPPETS, { llm, timeoutMs: 1000 });
+  await consolidateTerm(term({ displayTerm: "ZQMARKERZQ" }), SNIPPETS, {
+    llm,
+    timeoutMs: 1000,
+  });
   expect(seen).toContain("<tool_output");
+  const [beforeEnvelope] = seen.split("<tool_output");
+  expect(beforeEnvelope).not.toContain("ZQMARKERZQ");
 });

@@ -20,7 +20,7 @@ export type ConsolidationOutcome =
 const DEFINITION_MAX = 400;
 
 const INSTRUCTIONS = [
-  "You are consolidating how one engineering team actually uses a term.",
+  "You are consolidating how one engineering team actually uses the term given in the `term` field below.",
   "Given the term and quoted source snippets, respond with JSON only:",
   '{"isDomainTerm": boolean, "definition": string, "alsoKnownAs": string[]}',
   "Rules:",
@@ -38,6 +38,17 @@ function sentences(text: string): string[] {
     .filter((s) => s !== "");
 }
 
+/** Escapes regex metacharacters — mined terms can contain `.`, `(`, `+`, etc. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Word-boundary containment check — a plain substring match misfires on
+ * short acronyms (e.g. "AI" inside "explain", "ML" inside "HTML"). */
+function mentionsTerm(sentence: string, displayTerm: string): boolean {
+  return new RegExp(String.raw`\b` + escapeRegex(displayTerm) + String.raw`\b`, "i").test(sentence);
+}
+
 /**
  * The no-LLM definition: the first sentence that actually mentions the term.
  * Honest and attributable — a raw quote rather than a synthesis, which the
@@ -47,10 +58,9 @@ export function pickSnippetDefinition(
   displayTerm: string,
   snippets: readonly { text: string }[],
 ): string | null {
-  const needle = displayTerm.toLowerCase();
   for (const s of snippets) {
     for (const sentence of sentences(s.text)) {
-      if (sentence.toLowerCase().includes(needle)) return sentence.slice(0, DEFINITION_MAX);
+      if (mentionsTerm(sentence, displayTerm)) return sentence.slice(0, DEFINITION_MAX);
     }
   }
   return null;
@@ -140,7 +150,7 @@ export async function consolidateTerm(
     { service: "nimbus", tool: "glossary.consolidate" },
     { term: term.displayTerm, snippets: snippets.map((s) => s.text) },
   );
-  const prompt = `${INSTRUCTIONS}\n\nTerm: ${term.displayTerm}\n\nSources:\n${wrapped}`;
+  const prompt = `${INSTRUCTIONS}\n\nSources:\n${wrapped}`;
 
   let raw: string | null;
   try {
