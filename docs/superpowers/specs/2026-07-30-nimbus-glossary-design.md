@@ -68,6 +68,7 @@ packages/gateway/src/glossary/
   glossary-store.ts          V45 reads/writes (every write via dbRun/dbExec — I14)
   glossary-consolidate.ts    local-LLM call + JSON parse + veto handling
   glossary-project.ts        consolidated row -> nimbus:glossary_term item upsert
+  glossary-reconcile.ts      the pure-SQL reconciliation sweep (§5.5)
   glossary-extract.ts        the pass orchestrator
   glossary-refresh.ts        debounced post-sync trigger
 
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS glossary_term (
   synonyms          TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
   near_misses       TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
   consolidated_at   INTEGER,
+  stats_verified_at INTEGER NOT NULL DEFAULT 0,  -- drives the reconciliation sweep (§5.5)
   updated_at        INTEGER NOT NULL
 );
 
@@ -106,6 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_glossary_term_status_score
   ON glossary_term(status, score DESC);
 CREATE INDEX IF NOT EXISTS idx_glossary_term_display
   ON glossary_term(display_term);
+CREATE INDEX IF NOT EXISTS idx_glossary_term_verified
+  ON glossary_term(status, stats_verified_at);
 
 CREATE TABLE IF NOT EXISTS glossary_pass_state (
   id            INTEGER PRIMARY KEY CHECK(id = 1),
@@ -147,10 +151,24 @@ and the drift is invisible, because nothing ever recomputes the truth. Recompute
 idempotent: running the pass twice, or ten times, converges on identical numbers. A
 **run-pass-twice-converges** integration test locks this in (§10).
 
+**Scope of that guarantee.** Idempotence holds for terms the pass *touches*. It does not by itself
+cover a term whose sources disappear: item deletion bumps no `modified_at` (the row is gone), and
+an edit that removes the last mention leaves no surviving item to re-discover the term from. Such a
+term is never re-examined by the incremental scan, so its `doc_freq` stays inflated and its
+definition keeps citing dead sources. The FTS index itself is correct throughout — the
+`item_fts_delete` trigger maintains it — so the missing piece is purely *when* the recompute is
+triggered. §5.5 adds the sweep that closes it.
+
 The same query yields `top_sources` — the 5 highest-ranked citing items by FTS rank blended with
 recency, stored as `[{itemId, title, url, service, modifiedAt}]`.
 
 ### 5.2 Sequence
+
+The pass runs in **two independently committed phases**. This is deliberate: phase A is pure SQL
+and fast, phase B spends bounded LLM time, and a crash between them must lose nothing but
+in-flight work.
+
+**Phase A — discover (one transaction):**
 
 1. Read `watermark_ms`; select source-scoped items with `modified_at > watermark_ms`.
 2. Mine candidate surface forms from `title || ' ' || body_preview`.
@@ -158,10 +176,34 @@ recency, stored as `[{itemId, title, url, service, modifiedAt}]`.
 4. Recompute statistics per candidate via §5.1.
 5. Drop candidates with `doc_freq < min_doc_freq` (default 3).
 6. Score; upsert as `status='pending'` (never downgrading an existing `consolidated` row).
-7. Take the top `max_new_terms_per_pass` (default 25) unconsolidated rows by score.
-8. Consolidate each (§5.4); `vetoed` rows stop here.
-9. Project consolidated rows into `item` (§6).
-10. Advance `watermark_ms` to the max `modified_at` scanned; record pass stats.
+7. Reconciliation sweep (§5.5).
+8. Advance `watermark_ms` to the max `modified_at` scanned; record pass stats. **Commit.**
+
+**Phase B — consolidate (one transaction per term):**
+
+9. Select the consolidation batch **globally across the whole table**, not just this pass's
+   discoveries:
+
+   ```sql
+   SELECT * FROM glossary_term
+   WHERE status = 'pending'
+   ORDER BY score DESC
+   LIMIT :max_new_terms_per_pass
+   ```
+
+   A high-scoring candidate discovered three passes ago and deferred by the cap must still get
+   consolidated even though nothing touched it since. Restricting the batch to newly-discovered
+   candidates would strand it permanently — the exact failure the "resume next pass" cap decision
+   was chosen to avoid.
+10. Consolidate each (§5.4), **committing per term**; `vetoed` rows stop here.
+11. Project each consolidated row into `item` (§6) in the same per-term transaction.
+
+**Why the watermark advances in phase A, before any LLM call.** Candidates are durable as
+`pending` rows the moment phase A commits, so consolidation carries no watermark dependency. A
+gateway shutdown mid-phase-B loses at most one in-flight LLM call; every unconsolidated candidate
+is simply picked up by the next pass's step 9. Deferring the watermark until after consolidation —
+the intuitive choice — would instead force a full re-scan of already-mined items on every
+interrupted pass, doing more work to achieve strictly less.
 
 `doc_freq >= 3` is not arbitrary: the Wave 5 acceptance criterion requires a term to be evidenced
 "across at least 3 source threads".
@@ -185,9 +227,29 @@ score = log1p(doc_freq) * (1 + 0.5 * (service_spread - 1)) * formBoost
 Spread across services is weighted deliberately: a term appearing in both Slack *and* Jira is far
 more likely to be real team vocabulary than one appearing 40 times in a single noisy channel.
 
-`stopwords.ts` ships a static baseline (common English + ubiquitous tech terms — `API`, `HTTP`,
-`JSON`, `TODO`, `PR`, `CI`) so the glossary does not fill with vocabulary that carries no
-team-specific meaning.
+`stopwords.ts` ships a static baseline in three layers, so the glossary does not fill with
+vocabulary that carries no team-specific meaning:
+
+1. **Common English** — function words, and the sentence-initial words that drive family-5 noise.
+2. **Ubiquitous tech** — `API`, `HTTP`, `JSON`, `TODO`, `PR`, `CI`, `SDK`, `URL`.
+3. **Programming-language keywords** — `const`, `import`, `return`, `async`, `await`, `function`,
+   `class`, `interface`, `struct`, `impl`, `def`, `select`, `where`, `null`, and equivalents across
+   TS/JS, Python, Go, Rust, SQL and shell.
+
+Layer 3 exists specifically because family 2 mines backticked tokens, and indexed commit messages,
+ADRs and technical pages are dense with `` `const` ``-style syntax quoting. Without it the pending
+queue fills with language syntax that would then spend real LLM calls earning a veto.
+
+**Family-5 validation.** Capitalized multi-word phrases are the noisiest family — English
+capitalizes the first word of every sentence, so `"The target"`, `"In addition"` and `"On Sunday"`
+would all qualify. Two rules apply:
+
+- **Function-word rejection** — a phrase is discarded if *any* constituent word is an article,
+  preposition, conjunction or pronoun, even when capitalized. This kills `"In addition"` outright.
+- **Sentence-initial guard** — a phrase whose first word begins a sentence is accepted only if that
+  same phrase also occurs mid-sentence, capitalized, somewhere in the corpus. Real proper
+  terminology (`Shadow Traffic`) appears mid-sentence routinely; a sentence opener like
+  `"The target"` essentially never does.
 
 ### 5.4 Consolidation
 
@@ -210,7 +272,57 @@ Expected response:
 - `near_misses` are computed deterministically: other known terms within edit distance ≤ 2, or
   sharing a normalized stem.
 
-### 5.5 Degradation without an LLM
+### 5.5 Reconciliation sweep
+
+Closes the gap named in §5.1: terms whose sources were deleted or edited away are never revisited
+by the incremental scan, because there is no surviving item to re-discover them from.
+
+Every pass, phase A also re-verifies the `stats_recheck_per_pass` (default 50) **least recently
+verified** consolidated terms, round-robin via `stats_verified_at`:
+
+```sql
+SELECT * FROM glossary_term
+WHERE status = 'consolidated'
+ORDER BY stats_verified_at ASC
+LIMIT :stats_recheck_per_pass
+```
+
+Each selected term is re-run through the §5.1 statistics query and gets fresh `doc_freq`,
+`service_spread`, `first_seen_at`, `last_seen_at` and `top_sources` — so a definition citing a
+deleted thread self-heals, rather than pointing at a source the user can no longer open.
+
+- `doc_freq` still `>= min_doc_freq` → statistics updated, `stats_verified_at` stamped, definition
+  retained. **No LLM call** — the term is still a term; only its evidence moved.
+- `doc_freq < min_doc_freq` → the term is **demoted** to `status='pending'` and its projected item
+  row is deleted (§6). If its sources come back, it re-consolidates through the normal path; if
+  they do not, it sits pending below the floor and never reaches the index again.
+
+The sweep is pure SQL — no LLM cost at all — so it runs on every pass unconditionally. At 50 terms
+per pass against a glossary of a few hundred, full coverage is reached within a handful of syncs,
+and the cost is bounded regardless of glossary size. This is what makes the idempotence claim in
+§5.1 true for the *whole* table rather than just the touched subset.
+
+### 5.6 Execution discipline
+
+Consolidation is the only expensive step, and it runs against a local model on the user's own
+machine — often the same machine that is trying to stay responsive.
+
+- **Sequential, not parallel.** The 25 consolidation calls run one at a time. Parallel requests to
+  Ollama multiply resident model memory and are a plausible way to make a laptop swap; the pass is
+  fully off the read path (reads hit the materialized table), so nothing user-facing is waiting on
+  it. A worst case near 25 × a few seconds is background time nobody is blocked on. Concurrency is
+  deliberately **not** offered as a config knob — it trades a real stability risk for latency in a
+  path where latency does not matter.
+- **Per-call timeout** (default 30 s). A hung model leaves the row `pending`, not `vetoed` — same
+  rule as a malformed response (§5.4): an infrastructure failure must never be recorded as a
+  judgment about the term.
+- **Pass deadline + cancellation.** The orchestrator takes an `AbortSignal`, checked between terms
+  and honored on gateway shutdown. Because phase A has already committed and each term commits
+  individually, cancelling is always safe — it costs at most the one call in flight.
+- **Single-flight.** A pass already running causes a new trigger to be dropped, not queued; the
+  debounce window plus the next sync will pick the work up anyway.
+
+### 5.7 Degradation without an LLM
 
 Zero-config onboarding (#887) demoted the LLM to optional, so a fresh machine may have none.
 Glossary must not be dead there.
@@ -236,8 +348,16 @@ Only `status='consolidated'` rows reach the searchable index:
 | `type` | `glossary_term` |
 | `external_id` | `glossary:<term_key>` |
 | `title` | `display_term` |
-| `body_preview` | `definition` |
+| `body_preview` | `definition`, followed by `Also known as: <synonyms>` when synonyms exist |
 | `metadata` | `{definitions, synonyms, nearMisses, topSources, firstSeenAt, lastSeenAt, docFreq, definitionSource, generatedAt}` |
+
+**Synonyms are appended to `body_preview` on purpose.** `item_fts` indexes only `title` and
+`body_preview` — metadata JSON is invisible to both FTS and the embedding pipeline. Leaving
+synonyms in metadata alone would mean `nimbus ask "what does Change Data Record mean?"` retrieves
+nothing while `nimbus ask "what does CDR mean?"` succeeds, which is precisely backwards: the person
+who needs the glossary is the one who does not yet know the acronym. Appending the surface forms to
+the indexed text makes every phrasing retrievable through the ordinary search path, with no schema
+change and no glossary-specific code in `ask`.
 
 Written via `upsertIndexedItem` (the `research_brief` precedent in `briefs/brief-save.ts`).
 `nimbus:glossary_term` joins `PROSE_HEAVY_TYPES` in `embedding/routing.ts` (22 → 23 entries).
@@ -258,10 +378,12 @@ syncs coalesces into a single pass, and the pass is skipped entirely when one is
 
 ```toml
 [glossary]
-enabled = true              # local-only, no egress
-max_new_terms_per_pass = 25
+enabled = true                 # local-only, no egress
+max_new_terms_per_pass = 25    # LLM calls per pass (§5.6, sequential)
+stats_recheck_per_pass = 50    # reconciliation sweep width (§5.5, pure SQL)
 min_doc_freq = 3
 debounce_ms = 60000
+consolidate_timeout_ms = 30000
 ```
 
 **Default-on**, unlike `[briefs]`. `[briefs]` is default-off because it opens an HTTP write
@@ -283,6 +405,18 @@ parallelism is real rather than ceremonial:
 
 Per the agent shape invariant: read-only, HITL-free, parallel, and emitting
 `glossary.briefReady { sessionId, brief, findings }` via `emitBriefWithSynthesis`.
+
+**Lookup order** for `glossary <term>`, applied in lane 1 against the normalized key:
+
+1. **Exact** `term_key` match.
+2. **Synonym** match — the query normalizes to a value in some term's `synonyms` array. Resolves
+   and renders the canonical term, noting which phrasing was matched (`Change Data Record → CDR`).
+3. **Near-miss** — no definition is returned; the brief offers "did you mean" candidates.
+
+Step 2 is not optional polish. The motivating use case is an engineer who encounters the *expanded*
+phrase and wants the team's meaning; requiring them to already know the acronym would inverse the
+feature. Synonym resolution is bidirectional by construction: the same `synonyms` array powers both
+this lookup and the FTS-visible projection in §6.
 
 **Miss path.** An unknown term does not return an empty brief — it returns near-misses as "did you
 mean", which is the single most likely first interaction for the new-engineer use case the feature
@@ -322,12 +456,14 @@ lcov build.
 | Unit | `term-normalize.test.ts` | casefold, plurals, backtick strip, key collisions |
 | Unit | `term-scoring.test.ts` | monotonicity, spread weighting, form boosts |
 | Unit | `near-miss.test.ts` | acronym↔expansion, edit distance, no self-match |
-| Unit | `stopwords.test.ts` | membership + exact-size assertion |
+| Unit | `stopwords.test.ts` | all 3 layers; language keywords rejected; exact-size assertion |
 | Unit | `glossary-store.test.ts` | real in-memory SQLite; status transitions; JSON round-trip |
-| Unit | `glossary-consolidate.test.ts` | injected fake LLM: veto, malformed, empty, happy |
-| Unit | `glossary-project.test.ts` | upsert shape; delete-on-unconsolidate |
+| Unit | `glossary-consolidate.test.ts` | injected fake LLM: veto, malformed, empty, timeout, happy |
+| Unit | `glossary-project.test.ts` | upsert shape; synonyms in `body_preview`; delete-on-demote |
 | Integration | `glossary-extract.test.ts` | full pass; **run-pass-twice-converges**; cap honored; watermark advance; no-LLM snippet path |
-| Agent | `agents/glossary.test.ts` | 4 lanes, miss→near-miss, gap notes, both modes |
+| Integration | `glossary-reconcile.test.ts` | **source-deleted → demote + item removed**; round-robin fairness; no LLM call on re-verify |
+| Integration | `glossary-resume.test.ts` | abort mid-phase-B → watermark held, pending rows survive, next pass completes them; global pending select reaches a stranded old candidate |
+| Agent | `agents/glossary.test.ts` | 4 lanes, exact→synonym→near-miss order, gap notes, both modes |
 | CLI | `commands/glossary.test.ts` | arg parsing, render, exit codes — **DI, not `mock.module`** |
 | E2E | `test/e2e/scenarios/glossary.e2e.test.ts` | brief sections, `briefReady` emitted, **zero HITL fires** |
 | Migration | `migrations/runner-v45.test.ts` | fresh create + upgrade from V44 |
@@ -364,6 +500,18 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
+- **No manual authoring or correction — deferred, with the seam named.** Every term in this slice
+  is mined; a user cannot add a term the sources never mention, nor correct a definition the model
+  got wrong (`--rebuild` re-derives, it does not let you author). This is a real limitation: the
+  first thing a team does with a wrong definition is want to fix it.
+
+  The extension seam is a `[glossary.terms]` block in `nimbus.toml`, read by `glossary-extract.ts`
+  as a pre-pass that upserts entries with `definition_source='manual'`. Two rules make it compose
+  rather than conflict: manual rows are **exempt from the reconciliation sweep and from veto** (a
+  human assertion outranks a doc-frequency floor), and on `term_key` collision manual **wins** over
+  a mined definition. This deliberately keeps authored terminology out of the mined statistics
+  rather than blending the two. Deferred because it is additive — it changes no table, no
+  invariant, and no read path, so it can land in a follow-up without reworking anything here.
 
 ## 13. Delivery
 
