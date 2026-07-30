@@ -24,6 +24,10 @@
 - **Coverage floor:** every new source file needs **≥80% line AND branch** coverage.
 - **Commit on the branch** `dev/asafgolombek/nimbus-glossary` inside the worktree `.claude/worktrees/nimbus-glossary`. Never commit on `main`.
 - **Run tests with** `bun test <path>` from the worktree root.
+- **Migrations in tests:** there is no `runMigrations` export. The real API is
+  `runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION)` from `index/migrations/runner.ts`, with
+  `CURRENT_SCHEMA_VERSION` (already bumped to 45 by Task 1) in `index/local-index.ts`. Every test
+  below defines a small local `runMigrations` wrapper around it — that is the repo-wide convention.
 
 ---
 
@@ -98,7 +102,13 @@ Create `packages/gateway/src/index/migrations/runner-v45.test.ts`:
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { runMigrations } from "./runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
+import { runIndexedSchemaMigrations } from "./runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 function tableExists(db: Database, name: string): boolean {
   const row = db
@@ -1169,7 +1179,13 @@ Create `packages/gateway/src/glossary/glossary-store.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { upsertIndexedItem } from "../index/item-store.ts";
 import {
   applyStats, clearGlossary, computeTermStats, countByStatus, demoteTerm,
@@ -1832,7 +1848,13 @@ Create `packages/gateway/src/glossary/glossary-project.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { buildProjectedBody, projectTerm, unprojectTerm } from "./glossary-project.ts";
 import type { GlossaryTerm } from "./glossary-types.ts";
 
@@ -2425,7 +2447,13 @@ Create `packages/gateway/src/glossary/glossary-reconcile.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { projectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
@@ -2646,7 +2674,13 @@ Create `packages/gateway/src/glossary/glossary-extract.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
@@ -2791,7 +2825,13 @@ Create `packages/gateway/src/glossary/glossary-resume.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { runGlossaryPass } from "./glossary-extract.ts";
@@ -3637,7 +3677,13 @@ Create `packages/gateway/src/agents/glossary.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { markConsolidated, upsertCandidate } from "../glossary/glossary-store.ts";
 import { runGlossary } from "./glossary.ts";
 
@@ -4449,7 +4495,13 @@ import { beforeEach, expect, test } from "bun:test";
 
 import { emitGlossaryBrief, runGlossary } from "../../../src/agents/glossary.ts";
 import { runGlossaryPass } from "../../../src/glossary/glossary-extract.ts";
-import { runMigrations } from "../../../src/index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+
+/** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 
 let db: Database;
