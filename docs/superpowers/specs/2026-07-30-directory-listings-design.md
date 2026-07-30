@@ -250,7 +250,7 @@ column would be the same name on every row.
 | README MCP statement | — | **done** | commit on `dev/asafgolombek/directory-listings` | 2026-07-30 |
 | PulseMCP (email) | client | not started | | |
 | modelcontextprotocol/docs `clients.mdx` | client | not started | | |
-| `punkpeye/awesome-mcp-servers` | server | not started | | |
+| `punkpeye/awesome-mcp-servers` | server | **PR open** — Aggregators | <https://github.com/punkpeye/awesome-mcp-servers/pull/11216> | |
 | Official MCP Registry | server | **blocked** — needs a packaging decision | | |
 | `punkpeye/awesome-mcp-clients` | client | not started | | |
 | mcp.so (confirm route first) | client + server | not started | | |
