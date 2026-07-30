@@ -4266,24 +4266,24 @@ import { dispatchAgentsRpc } from "./agents-rpc.ts";
 describe("dispatchAgentsRpc — agents.glossary", () => {
   test("returns a sessionId with no argument", async () => {
     const out = await dispatchAgentsRpc("agents.glossary", {}, makeCtx(freshDb()));
-    expect(out.hit).toBe(true);
+    expect(out.kind).toBe("hit");
   });
 
   test("accepts a term", async () => {
     const out = await dispatchAgentsRpc("agents.glossary", { term: "CDR" }, makeCtx(freshDb()));
-    expect(out.hit).toBe(true);
+    expect(out.kind).toBe("hit");
   });
 
   test("rejects a non-string term", async () => {
     await expect(
       dispatchAgentsRpc("agents.glossary", { term: 5 }, makeCtx(freshDb())),
-    ).rejects.toMatchObject({ code: -32602 });
+    ).rejects.toMatchObject({ rpcCode: -32602 });
   });
 
   test("rejects a non-positive limit", async () => {
     await expect(
       dispatchAgentsRpc("agents.glossary", { limit: 0 }, makeCtx(freshDb())),
-    ).rejects.toMatchObject({ code: -32602 });
+    ).rejects.toMatchObject({ rpcCode: -32602 });
   });
 });
 ```
