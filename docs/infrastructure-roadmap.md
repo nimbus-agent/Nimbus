@@ -119,7 +119,7 @@ Design of record:
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after, re-measured at n>1 on 2026-07-30: 105 → 77 jobs (4/4 runs), DAG wait 60.5 → 3.0 min median (n=15, and all 45 sampled E2E legs now gated by `ci-rust` — the edge the slice rewrote), non-macOS wall 23-89 → 16-38 min.** Wall clock measured as *last job in the run* did not improve (45 → 67 min median over 20+20 runs); instrumented, that tail is entirely the nine macOS PAL coverage gates queuing for scarce macOS runners, and it is unchanged at like congestion — see the progress log. `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
-| P6 | Access & Contribution Model | ✅ done — bypass gates wired; sweep proof pending (run id TBD — backfill after the post-merge `org-drift-sweep` dispatch) | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos; bypass actors gated by the owner-run `audit:bypass-actors` + the sweep's `audit:bypass-attestation` |
+| P6 | Access & Contribution Model | ✅ done — `bypass-attestation` green in sweep run 30530210861 | Every repo reachable through a team + org settings gated (both in the sweep); contributor-two switches recorded in checked-in config; CLA live and **actually executing** on all 6 repos; bypass actors gated by the owner-run `audit:bypass-actors` + the sweep's `audit:bypass-attestation` |
 
 **Sequence:** P1 → P6 → P2 → P5 → P3 → P4b. Three items ignore the sequence and
 land immediately: P4a, `nimbus-client` rulesets, and the contribution-licensing
@@ -236,6 +236,20 @@ moves to P6).
   attestation, and the credential-free `audit:bypass-attestation` runs in the sweep
   checking freshness (90d, flipping to 30 at contributor-two), repo coverage, and
   that the snapshot still agrees with declared intent.
+- **Sweep proof (2026-07-30, run `30530210861`): the `bypass-attestation` job is
+  green, which is what closes P6** — merging #954 was not the bar. Stated
+  precisely, as with P3 and P4b: the sweep run as a whole is **red**, on the
+  **known, unrelated** P2 dependency edges (below). Do not read that red as P6.
+- **Known gap, deliberately deferred:** nothing verifies that the credential a
+  run is using can actually *see* `bypass_actors` — an empty array is
+  indistinguishable from "this repo has none", which is precisely the App
+  token's proven behaviour. Harmless while three of five repos declare a
+  non-empty actor list (a wrong-token run reds immediately on three `missing
+  declared bypass actor` findings), but once `bypass.by_repo` is all-empty, a
+  run under the wrong token would read `[]` everywhere and write a false-clean
+  attestation the sweep then honours for the full grace window. A positive
+  capability probe closes it. Recorded rather than fixed because it is new
+  scope, and because the config that makes it dangerous does not exist yet.
 - **What the design review caught before any code existed.** `--attest` originally
   keyed off the diff alone. But `decideExit` returns exit 0 for a partial read with
   no drift — correct for a reporting gate, wrong for an attesting one — so a 4-of-5
