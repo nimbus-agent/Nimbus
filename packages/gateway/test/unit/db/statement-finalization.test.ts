@@ -4,6 +4,13 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { LocalIndex } from "../../../src/index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+
+/** How many of the V18 chain columns exist on `audit_log` right now (0 before V18, 2 after). */
+function auditLogHashColumnCount(db: Database): number {
+  const rows = db.query(`PRAGMA table_info(audit_log)`).all() as Array<{ name: string }>;
+  return rows.filter((r) => r.name === "row_hash" || r.name === "prev_hash").length;
+}
 
 /**
  * Regression cover for #969.
@@ -47,18 +54,35 @@ describe("db statement finalization (#969)", () => {
 
   it("leaves no unfinalized statement after the audit-chain backfill has rows to walk", () => {
     const db = new Database(freshDbPath());
-    LocalIndex.ensureSchema(db);
-    // Exercise the loop body of backfillAuditChain, not just its prepare().
-    db.run(
-      `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp)
-       VALUES ('test.action', 'approved', '{}', 1)`,
-    );
-    db.close(true);
 
-    const reopened = new Database(freshDbPath());
-    LocalIndex.ensureSchema(reopened);
+    // The backfill only iterates on the V17 -> V18 step, and only over rows that
+    // ALREADY exist when it runs. Migrating straight to current and inserting
+    // afterwards would leave the loop body unexecuted — the statement leaks either
+    // way, which is exactly why that weaker version of this test looked fine.
+    // Stopping at 17 first is what puts real rows in front of the backfill.
+    runIndexedSchemaMigrations(db, 17);
+    expect(auditLogHashColumnCount(db)).toBe(0); // pre-V18 shape: no row_hash/prev_hash yet
+
+    for (const [i, action] of ["a.one", "a.two", "a.three"].entries()) {
+      db.run(
+        `INSERT INTO audit_log (action_type, hitl_status, action_json, timestamp)
+         VALUES (?, 'approved', '{}', ?)`,
+        [action, i + 1],
+      );
+    }
+
+    // Now run the rest, including V17 -> V18 with three rows to walk.
+    LocalIndex.ensureSchema(db);
+
+    // Prove the loop body actually ran, so this test cannot silently decay back
+    // into the no-op version: every pre-existing row must now carry a chain hash.
+    const unhashed = db
+      .query(`SELECT COUNT(*) AS c FROM audit_log WHERE row_hash IS NULL`)
+      .get() as { c: number };
+    expect(unhashed.c).toBe(0);
+
     expect(() => {
-      reopened.close(true);
+      db.close(true);
     }).not.toThrow();
   });
 
