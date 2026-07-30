@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.9.0](https://github.com/nimbus-agent/Nimbus/compare/v1.8.0...v1.9.0) (2026-07-30)
+
+
+### Features
+
+* **connectors:** index Readwise books as `readwise:book` ([#926](https://github.com/nimbus-agent/Nimbus/issues/926)) ([83b83f4](https://github.com/nimbus-agent/Nimbus/commit/83b83f491479c3ca8f0f8f45e12d4d08c0b425f2))
+
 ## [1.8.0](https://github.com/nimbus-agent/Nimbus/compare/v1.7.0...v1.8.0) (2026-07-29)
 
 
