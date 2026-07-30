@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,25 +42,52 @@ describe("db/snapshot", () => {
   let dbPath: string;
   let dataDir: string;
   let db: Database;
+  let templateDir: string;
+  let templateDbPath: string;
+
+  /**
+   * Running every migration against a fresh SQLite file cost ~232 ms per test
+   * on Windows — ~2,000x the per-test cleanup and the dominant term behind the
+   * 30 s hook-timeout flake in #968. Migrating once into a template and copying
+   * the file per test is measured 16.6x faster end-to-end (231.8 ms -> 6.1 ms
+   * per test) and yields an identical database: same `user_version`, same 69
+   * tables, same seed rows.
+   *
+   * `ensureSchema` still runs on each copy — on an already-current
+   * `user_version` it skips every migration and only applies the
+   * connection-level pragmas, which do not survive in the file.
+   */
+  beforeAll(() => {
+    templateDir = mkdtempSync(join(tmpdir(), "nimbus-snapshot-template-"));
+    templateDbPath = join(templateDir, "template.db");
+    makeDbAt(templateDbPath).close();
+  });
+
+  afterAll(() => {
+    rmSync(templateDir, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "nimbus-snapshot-test-"));
     dbPath = join(tmp, "nimbus.db");
     dataDir = tmp;
-    db = makeDbAt(dbPath);
+    copyFileSync(templateDbPath, dbPath);
+    db = new Database(dbPath);
+    LocalIndex.ensureSchema(db);
   });
 
   afterEach(() => {
     try {
       db.close();
     } catch {
-      /* already closed in some tests */
+      /* the restoreSnapshot cases close and reopen `db` themselves */
     }
-    try {
-      rmSync(tmp, { recursive: true, force: true });
-    } catch {
-      /* Windows may hold a file lock briefly after close; ignore cleanup errors */
-    }
+    // Cleanup is expected to succeed on every platform. It used to fail EBUSY
+    // 30/30 on Windows because an unfinalized prepared statement kept the
+    // database file open (#969, fixed in migrations/runner.ts); the error was
+    // swallowed here, so every run silently leaked a temp directory. Do not
+    // re-add a catch: a failure here now means a handle is being retained again.
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   describe("takeSnapshot", () => {
@@ -152,6 +187,23 @@ describe("db/snapshot", () => {
       expect(row.c).toBe(2);
     });
 
+    it("reports currentItemCount 0 when the live DB has no item table yet", () => {
+      const snapshotPath = takeSnapshot(db, dataDir);
+
+      // The live-count read is wrapped in `catch { /* item table may not exist yet */ }`.
+      // That arm is reached with a database that has never been migrated — the real case
+      // being a restore attempted against a freshly created, schema-less file.
+      const bare = new Database(join(tmp, "bare.db"));
+      try {
+        const preview = previewRestore(bare, snapshotPath);
+        expect(preview.currentItemCount).toBe(0);
+        // The snapshot side still reads normally — only the live read degraded.
+        expect(preview.snapshotItemCount).toBe(2);
+      } finally {
+        bare.close();
+      }
+    });
+
     it("extracts snapshotTimestampMs from the filename", () => {
       const before = Date.now();
       const snapshotPath = takeSnapshot(db, dataDir);
@@ -240,6 +292,33 @@ describe("db/snapshot", () => {
       }
     });
 
+    it("counts only what it actually deleted when an entry cannot be removed", async () => {
+      takeSnapshot(db, dataDir);
+      await Bun.sleep(5);
+      takeSnapshot(db, dataDir);
+
+      // `pruneSnapshots` deletes with a bare `rmSync(path)` inside a best-effort
+      // try/catch. A DIRECTORY whose name matches the snapshot pattern is listed by
+      // `listSnapshots` (it only pattern-matches the name and stats the path) but
+      // `rmSync` without `recursive` refuses to remove it on every platform — so this
+      // exercises the catch arm without depending on file locking or a race.
+      const undeletable = join(dataDir, "snapshots", "nimbus-9999999999999.db.gz");
+      mkdirSync(undeletable);
+
+      expect(listSnapshots(dataDir)).toHaveLength(3);
+
+      // keepLast=0 → all three are candidates, but only the two real files go.
+      const deleted = pruneSnapshots(dataDir, 0);
+      expect(deleted).toBe(2);
+
+      // The directory survives and is still listed: prune degrades, it does not throw.
+      const remaining = listSnapshots(dataDir);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]?.filename).toBe("nimbus-9999999999999.db.gz");
+
+      rmSync(undeletable, { recursive: true, force: true });
+    });
+
     it("keeps exactly keepLast=1 (newest)", async () => {
       takeSnapshot(db, dataDir);
       await Bun.sleep(5);
@@ -290,6 +369,16 @@ describe("db/snapshot", () => {
 
       await Bun.sleep(100);
       expect(listSnapshots(dataDir)).toHaveLength(countAfterStop);
+    });
+
+    it("defaults runNow to false when the argument is omitted", () => {
+      // `runNow = false` is a default parameter; every other case here passes it
+      // explicitly, so the default arm was never taken. Omitting it must behave like
+      // passing false — i.e. no snapshot before the first interval elapses.
+      const config = { ...DEFAULT_SNAPSHOT_CONFIG, intervalMs: 100_000 };
+      const handle = startSnapshotScheduler(db, dataDir, config);
+      handle.stop();
+      expect(listSnapshots(dataDir)).toHaveLength(0);
     });
 
     it("stop() on a disabled scheduler does nothing (no throw)", () => {

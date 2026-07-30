@@ -1,0 +1,332 @@
+# Directory listings — discovery surfaces for Nimbus
+
+> Goal: get Nimbus in front of engineers who are already looking for what it is.
+> Scope is **listings only** — self-serve directories and community lists with no
+> gatekeeper judging project popularity. Vendor partnerships, credits programs, and
+> sponsorship are deliberately out of scope here and tracked separately.
+
+## Already covered — do not redo
+
+Distribution is not the gap. These channels exist and are documented in
+[`docs/install.md`](../../install.md):
+
+- Homebrew tap, Scoop bucket, winget
+- Signed apt / yum repositories
+- MSI / PKG / DEB / RPM / AppImage + portable archives
+- GitHub repository topics (20, ICP-aligned) and description
+
+## Out of scope, with reasons
+
+Recording these so they are not re-litigated:
+
+| Target | Why not |
+| --- | --- |
+| The ~80 MCP connectors, listed individually | Not publishable as standalone servers: unpublished on npm, and no `bin` / `main` / `exports` / `files` in their `package.json`. They load via `nimbus.extension.json` inside the gateway. Adding entry points and publishing ~80 packages multiplies the maintenance surface and routes users to the connectors rather than to Nimbus. |
+| mcpdirectory.com | Could not verify the site exists. Not added on an unverified reference — re-evaluate if a working URL turns up. |
+| awesome-selfhosted | Inclusion criteria require self-hostable **server** software. Nimbus is a local CLI + gateway. A PR would be rejected on criteria, not merit. |
+
+## The category — Nimbus is both a client and a server
+
+Nimbus speaks MCP in both directions, and each direction is a separate listable
+surface. Both are shipped; neither claim is aspirational.
+
+**As a client** it drives every connector as an MCP server, and hosts arbitrary
+third-party servers registered with `nimbus connector add --mcp` (see
+`connectors/lazy-mesh/user-mcp.ts` and `user-mcp-store.ts`). The client category is
+materially less crowded than the server category.
+
+**As a server**, `nimbus mcp-server --stdio` exposes the local index to editor AIs
+through six read-only tools — `searchIndex`, `getConnectorStatus`,
+`getRecentIncidents`, `getRecentPullRequests`, `getRecentDeployments`,
+`getDoraMetrics` (see `packages/cli/src/mcp/adapter.ts`; the command is registered in
+`COMMAND_NAMES`).
+
+> The parked `dev/asafgolombek/phase7-mcp-gateway-server` branch (invariant `I28`
+> reserved) is a **different, later** owner-sink surface. Its being unshipped does not
+> affect the read-only server above, which ships today.
+
+### Why the Official MCP Registry is blocked
+
+The registry is a **metaregistry**: it stores metadata pointing at an artifact hosted
+somewhere else, and `server.json` must name a package on a supported registry. The
+allowed set is npm (`registry.npmjs.org`), PyPI, NuGet, Cargo, Docker/OCI
+(Docker Hub, ghcr.io, quay.io, `*.pkg.dev`, `*.azurecr.io`, mcr.microsoft.com), and
+MCPB (a `.mcpb` binary attached to a GitHub or GitLab release). Publishing also
+requires an ownership-verification token inside the published package, checked by a
+per-registry validator.
+
+The registry has a second path: a **remote** server, consumed by URL, needs no package
+at all. It does not apply here — Nimbus's MCP server is local stdio, not a hosted
+endpoint — so the blocker is specific to the local/package-based route.
+
+On that route, Nimbus ships through Homebrew, Scoop, winget, apt/yum, and direct
+download. None is a supported registry type, and the server is a subcommand of an
+installed gateway rather than a standalone artifact — so there is nothing to point a
+local `server.json` at.
+
+Reaching the registry would need a deliberate packaging decision, which is engineering
+work and not part of this spec:
+
+- **MCPB** — build a `.mcpb` bundle into the release pipeline. Closest fit, since
+  releases already exist and MCPB is explicitly for prebuilt binaries.
+- **npm launcher** — publish a thin package whose `bin` shells out to
+  `nimbus mcp-server --stdio`. Cheapest, but it installs something that fails unless
+  the gateway is already installed and running, which is a poor first impression and
+  arguably misrepresents what the package is.
+
+Until one is chosen, every registry-fed aggregator (PulseMCP's server directory
+included) stays out of reach. The curated lists do not depend on it.
+
+### Glama: the build spec
+
+Glama's admin page (`/mcp/servers/nimbus-agent/Nimbus/admin/dockerfile`) is **not** a
+Dockerfile editor, despite the URL. It takes a structured **build spec** — a JSON array
+of shell commands plus a JSON `cmd` array — and Glama generates the Dockerfile around
+them. Pasting a `FROM … RUN …` file there fails with an invalid-JSON error.
+
+Nothing needs to be added to this repository, and nothing should be. A root
+`Dockerfile` on a local-first project reads as "run Nimbus in Docker", which does not
+work: the container has no Gateway, index, or keystore, so protocol introspection
+succeeds while tool *calls* fail. It would also rot, since the pinned version and digest
+need bumping at every release.
+
+Recorded here because Glama's admin UI is not version-controlled.
+
+**Build steps:**
+
+```json
+[
+  "command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null; }",
+  "curl -fsSL -o /tmp/nimbus https://github.com/nimbus-agent/Nimbus/releases/download/v1.12.1/nimbus-cli-linux-x64",
+  "echo '78e43ec607d2fcd62e7395ff09bdf829558f772578c2bde4d4d2970ffaa6e444  /tmp/nimbus' | sha256sum -c -",
+  "install -m 0755 /tmp/nimbus /usr/local/bin/nimbus",
+  "rm -f /tmp/nimbus"
+]
+```
+
+**`cmd`:**
+
+```json
+["nimbus", "mcp-server", "--stdio"]
+```
+
+What Glama wraps around that, from a generated build:
+
+- Base is `debian:trixie-slim`, with Node, `pnpm`, `uv`/Python and `mcp-proxy`
+  preinstalled, so `curl` is already present and the first step is a no-op guard.
+- It `git clone`s this repo at a pinned commit before running the steps, even though the
+  steps do not use the source.
+- It rewrites `cmd` as `CMD ["mcp-proxy", "--", "nimbus", "mcp-server", "--stdio"]`,
+  bridging stdio to HTTP. Verified: a full MCP handshake through `mcp-proxy@6.4.3`
+  returns all six tools, so the wrapper does not disturb the server.
+
+Two details are load-bearing:
+
+- **Two spaces** between the digest and `/tmp/nimbus`, or `sha256sum -c` fails. The
+  check is fail-closed and runs before install — red-proved with a wrong digest, which
+  aborts the build (`sha256sum: FAILED`).
+- **The `cmd` array is self-contained** (`nimbus` first, not just its arguments), so it
+  works whether Glama replaces the command or appends to it. Both paths were tested.
+
+The platform cannot be pinned from a build spec. Nimbus publishes one Linux CLI asset,
+x64 only, so an arm64 builder would fail with an exec-format error at start rather than
+at build. That is a support question, not something the steps can fix.
+
+Bumping the version requires updating the digest from that release's `SHA256SUMS`, and
+then cutting a new Glama release — a new release replaces the previous one.
+
+### Server-side listing caveat
+
+Glama auto-builds and introspects submissions, including Docker-based ones — it does
+not require an `npx`-installable package. Nimbus was submitted and **listed** at
+`glama.ai/mcp/servers/nimbus-agent/Nimbus`.
+
+The real caveat is narrower: introspection is all that succeeds in a sandbox. Tool
+*calls* need a Gateway running on the host, so a sandboxed run answers `initialize` and
+`tools/list` and then errors on every call. That is within Glama's stated bar, which is
+start-and-introspect, but it caps what an automated quality score can observe.
+
+Smithery is a separate case and stays speculative: publishing there is
+`smithery mcp publish` driven by a `smithery.yaml` describing how to run a server,
+which does not describe a subcommand of an installed gateway.
+
+### Feature-support matrix row (verified, do not inflate)
+
+The lazy mesh calls `listTools()` only — see
+`packages/gateway/src/connectors/lazy-mesh/{mesh,tool-map}.ts`. It does not consume
+resources, prompts, sampling, or MCP roots.
+
+| Resources | Prompts | Tools | Sampling | Roots |
+| --- | --- | --- | --- | --- |
+| ❌ | ❌ | ✅ | ❌ | ❌ |
+
+This is the same support level most listed clients declare. If the mesh later consumes
+another capability, update every listing — a stale ✅ is worse than a ❌.
+
+## Tier 1 — MCP ecosystem
+
+Highest-intent audience. Ordered by yield per hour.
+
+| Target | Mechanism | Notes |
+| --- | --- | --- |
+| ~~`modelcontextprotocol/docs` → `clients.mdx`~~ | **DEAD — do not attempt** | The official "Example Clients" list has been **retired**. `modelcontextprotocol.io/clients` redirects to the homepage, `modelcontextprotocol/docs` is archived (last push 2025-04-08), and no `clients.mdx` exists anywhere in the org. The site now only name-drops clients in prose. The Registry replaced it and is servers-only, so there is no official client list to join. |
+| PulseMCP | Email `hello@pulsemcp.com` | **Not a form.** `pulsemcp.com/submit` no longer takes direct submissions — it redirects to the Official MCP Registry, which it ingests daily and processes weekly. Since that registry is servers-only, email is the only route for the client surface. |
+| `punkpeye/awesome-mcp-clients` | Pull request | Exact category match. Entry format is `### Name` + an HTML `<table>` (GitHub, Website, License, Type, Platforms, Pricing, Programming Languages) + a one-paragraph description + optional screenshots. Add a TOC entry too. |
+| mcp.so | Manual — see `mcp.so/clients` | The site is server-first, but a clients section exists. It returns HTTP 403 to automated fetches, so confirm the submission route in a browser before budgeting time for it. |
+| `punkpeye/awesome-mcp-servers` | Pull request | The largest directory in the ecosystem by a wide margin (~91k stars) and actively maintained. Submit the **server** surface here. Highest-reach single target on this list. |
+| Official MCP Registry (`registry.modelcontextprotocol.io`) | **Blocked** — see below | The canonical registry, and PulseMCP plus other aggregators ingest it. Not currently reachable: it is a metaregistry that only stores metadata pointing at a package. |
+| `wong2/awesome-mcp-servers`, `appcypher/awesome-mcp-servers` | Pull request | Server lists; check whether a clients section also exists. |
+
+### Classification: submit as a Client, in one section only
+
+Lists that separate **Clients** (end-user applications) from **Frameworks / SDKs**
+(developer libraries) take Nimbus as a **Client**. It ships as an installable
+application — a gateway plus a CLI — not as a library you build against. The library
+is [`@nimbus-dev/sdk`](https://github.com/nimbus-agent/nimbus-sdk), a separately
+published MIT package that is not part of this work.
+
+Do **not** double-list as Client *and* Framework. That is one artifact wearing two
+labels; awesome lists reject duplicate entries, and a maintainer reading two entries
+for one project sees promotion rather than a contribution. Pick Client — if a
+maintainer prefers otherwise, follow their call.
+
+Listing as Client **and** Server is a different matter and is legitimate: they are two
+genuinely distinct surfaces (one consumes MCP servers, the other *is* one), and on a
+site carrying separate client and server directories both entries are accurate. Keep
+the descriptions distinct so each entry stands on its own — the client entry is about
+indexing ~80 services, the server entry is about the six read-only tools.
+
+### Before opening any pull request
+
+1. ~~**The README must declare MCP support.**~~ **Done.** It previously mentioned MCP
+   only as connector transport, which describes how connectors talk *outward* and left
+   a reviewer unable to confirm the submission's central claim. The "Three load-bearing
+   words" MCP bullet now states both directions explicitly and names
+   `nimbus mcp-server --stdio` and `nimbus connector add --mcp`.
+2. **Read that list's own contribution rules.** Do not assume `awesome-lint` applies:
+   it only governs lists that follow the awesome manifest, and
+   `punkpeye/awesome-mcp-clients` uses HTML tables that would fail it outright. Check
+   the repository's `CONTRIBUTING` file and its CI configuration, and match the
+   formatting of neighbouring entries — sort order, trailing slashes, punctuation.
+
+## Tier 2 — local-first / privacy AI
+
+The pitch is Ollama support and credentials that never leave the machine.
+
+- `awesome-local-ai`
+- `awesome-ai-agents`
+- LocalLLaMA-adjacent community lists
+
+## Tier 3 — ICP directories
+
+Smaller traffic, but it is the audience in [`audiences.md`](../../audiences.md).
+
+- `awesome-sre`
+- `awesome-devops`
+- `awesome-sysadmin`
+
+## Tier 4 — general
+
+Cheap, low yield. Product Hunt is a one-shot **launch**, not a listing — hold it.
+
+- AlternativeTo
+- OpenAlternative
+- Console.dev
+
+## Reusable submission block
+
+```text
+Name:       Nimbus
+GitHub:     https://github.com/nimbus-agent/Nimbus
+Website:    https://nimbus-agent.dev
+License:    AGPL-3.0 (gateway/CLI/connectors), MIT (SDK)
+Type:       CLI + headless gateway (also a VS Code extension)
+Platforms:  Windows, macOS, Linux
+Pricing:    Free
+Language:   TypeScript
+MCP:        Client — Tools (no resources, prompts, sampling, or roots)
+```
+
+For a **server**-directory submission, the entry is the `mcp-server` subcommand, not
+the gateway:
+
+```text
+Server name:  nimbus
+Launch:       nimbus mcp-server --stdio
+Transport:    stdio
+Requires:     the `nimbus` binary on PATH, with the Gateway running (`nimbus start`)
+Tools (6):    searchIndex, getConnectorStatus, getRecentIncidents,
+              getRecentPullRequests, getRecentDeployments, getDoraMetrics
+Access:       read-only
+```
+
+State the "Gateway must be running" prerequisite up front. It is the first thing a
+directory reviewer trips over, and volunteering it reads better than being caught by it.
+
+### The "alternative to" field
+
+AlternativeTo and similar sites surface entries by what they replace, so the field is
+worth filling — but the comparison set decides whether the listing reads as accurate.
+
+**Do not list coding assistants** (Cursor, Aider, OpenHands, Devin, Copilot). Two
+reasons, and both are disqualifying on their own. It is inaccurate: Nimbus does not
+write code — it indexes and answers over your tools, and its ICP is on-call and
+platform work. And it violates the positioning rule in
+[`launch-messaging.md`](../../launch-messaging.md), which flags framing Nimbus against
+coding assistants as the anti-pattern that reduces it to an accessory.
+
+The honest comparison is **AI search and context over your work tools**, where the
+local-first, no-account, no-relay architecture is the actual differentiator. Confirm
+each comparable still fits at submission time rather than pasting this list:
+
+```text
+Alternative to: Glean, Onyx — AI search over work tools, but local-first,
+                with no account, no cloud index, and no relay server
+```
+
+Description (one paragraph):
+
+> Nimbus is a local-first AI agent for on-call and platform engineers. It builds a
+> private SQLite index over ~80 developer and infrastructure services (GitHub, Jira,
+> Slack, PagerDuty, Google, and more) through MCP connectors, and every outbound
+> action passes a human-in-the-loop consent gate. Credentials live in the OS keystore
+> and never leave the machine; pointing it at a local Ollama model keeps prompts local
+> as well.
+
+## Honesty guardrails
+
+These carry over from [`launch-messaging.md`](../../launch-messaging.md) and are
+load-bearing in every listing:
+
+- Do not describe the `why` hover UI, or any unbuilt surface, as shipped.
+- The egress ledger records the agent's **dispatched actions**, never "everything that
+  left your machine." It is not a firewall or host DLP.
+- Do not claim "no telemetry." The collector exists and is opt-in, defaulting to
+  `[telemetry] enabled = false`.
+- Do not claim MCP capabilities beyond Tools (see the matrix above).
+
+## Adjacent, not part of this work
+
+- `.github/FUNDING.yml` does not exist. Adding it is unrelated to listings but is a
+  prerequisite for any later sponsorship path.
+
+## Tracking
+
+One row per target. No owner column — this is a single-maintainer project, and the
+column would be the same name on every row.
+
+| Target | Surface | Status | Submission link | Completed |
+| --- | --- | --- | --- | --- |
+| README MCP statement | — | **done** | <https://github.com/nimbus-agent/Nimbus/pull/979> | 2026-07-30 |
+| Glama | server | **listed + claimed**; release pending | <https://glama.ai/mcp/servers/nimbus-agent/Nimbus> | 2026-07-30 |
+| `punkpeye/awesome-mcp-clients` | client | **PR open** | <https://github.com/punkpeye/awesome-mcp-clients/pull/265> | |
+| `punkpeye/awesome-mcp-servers` | server | **PR open** — gated on a passing Glama check | <https://github.com/punkpeye/awesome-mcp-servers/pull/11216> | |
+| PulseMCP | client | **email sent** to `hello@pulsemcp.com` | | 2026-07-30 |
+| ~~modelcontextprotocol/docs~~ | client | **dead** — list retired, repo archived | | |
+| Official MCP Registry | server | **blocked** — needs a packaging decision | | |
+| mcp.so (confirm route first) | client + server | not started | | |
+| wong2 / appcypher | server | not started | | |
+| Smithery (speculative) | server | not started | | |
+| Tier 2 | client | not started | | |
+| Tier 3 | client | not started | | |
+| Tier 4 | client | not started | | |

@@ -131,16 +131,24 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
 
-      for (let i = 0; i < pieces.length; i++) {
-        const text = pieces[i] ?? "";
-        const vec = vectors[i];
-        if (vec === undefined) {
-          throw new Error(`missing vector for chunk ${String(i)}`);
+      // Both statements come from db.prepare(), which bun:sqlite does not
+      // auto-release on close — finalize them or the database file stays
+      // pinned open (#969).
+      try {
+        for (let i = 0; i < pieces.length; i++) {
+          const text = pieces[i] ?? "";
+          const vec = vectors[i];
+          if (vec === undefined) {
+            throw new Error(`missing vector for chunk ${String(i)}`);
+          }
+          const rowid = nextRowid;
+          nextRowid += 1;
+          dbStmtRun(insertVec, BigInt(rowid), new Float32Array(vec));
+          dbStmtRun(insertChunk, itemId, i, text, rowid, model, dims, now);
         }
-        const rowid = nextRowid;
-        nextRowid += 1;
-        dbStmtRun(insertVec, BigInt(rowid), new Float32Array(vec));
-        dbStmtRun(insertChunk, itemId, i, text, rowid, model, dims, now);
+      } finally {
+        insertVec.finalize();
+        insertChunk.finalize();
       }
     })();
   }

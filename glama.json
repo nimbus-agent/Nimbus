@@ -1,0 +1,18 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["asafgolombek"],
+  "name": "nimbus",
+  "description": "Read-only MCP access to a local index of your engineering stack: search plus recent incidents, pull requests, deployments, DORA metrics and connector status, built on your own machine from ~80 developer and infrastructure services.",
+  "keywords": [
+    "local-first",
+    "sre",
+    "on-call",
+    "incident-response",
+    "devops",
+    "platform-engineering",
+    "observability",
+    "dora",
+    "privacy-first",
+    "self-hosted"
+  ]
+}

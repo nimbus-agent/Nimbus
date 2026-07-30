@@ -74,6 +74,14 @@ describe("S6-F1: Updater wiring — factory + dispatch end-to-end", () => {
       emit: () => {},
       logger: noopLogger,
       _platformOverride: "linux-x86_64",
+      // null = "direct install"; do not probe the environment. Without this the
+      // factory calls resolveDistributionChannel(), which honours the ambient
+      // NIMBUS_DISTRIBUTION_CHANNEL marker — so on a developer machine that
+      // installed Nimbus via MSI/Homebrew/apt the factory correctly returns
+      // undefined and this assertion fails for a reason that has nothing to do
+      // with updater wiring (#967). CI has the var unset, which is why it only
+      // ever failed locally.
+      _channelOverride: null,
     });
     expect(updater).toBeDefined();
 
@@ -95,6 +103,11 @@ describe("S6-F1: Updater wiring — factory + dispatch end-to-end", () => {
       currentVersion: "0.1.0",
       emit: () => {},
       logger: noopLogger,
+      // Pinned for the same reason as above. This case passes either way today
+      // because the `enabled: false` guard returns before the channel probe —
+      // but that ordering is incidental, and pinning it keeps the assertion
+      // about the disabled flag rather than about the developer's environment.
+      _channelOverride: null,
     });
     expect(updater).toBeUndefined();
 

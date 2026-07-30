@@ -233,4 +233,20 @@ describe("runReadOnlySelect — worker round-trip (S5-F4)", () => {
     });
     expect(rows).toEqual([]);
   });
+
+  // `options?.timeoutMs ?? DEFAULT_TIMEOUT_MS` — the DEFAULT arm. Every other
+  // round-trip test above passes an explicit `timeoutMs`, and the two that omit
+  // `options` reject inside assertReadOnlySelectSql before the default is ever
+  // read, so omitting options on VALID sql was untested.
+  test("succeeds with no options object, applying the default timeout", async () => {
+    const dbPath = tempDbPath();
+    const rows = await runReadOnlySelect(dbPath, "SELECT name FROM t ORDER BY id");
+    expect(rows).toEqual([{ name: "a" }, { name: "b" }, { name: "c" }]);
+  });
+
+  test("omitting only timeoutMs within an options object also uses the default", async () => {
+    const dbPath = tempDbPath();
+    const rows = await runReadOnlySelect(dbPath, "SELECT id FROM t ORDER BY id", {});
+    expect(rows).toHaveLength(3);
+  });
 });

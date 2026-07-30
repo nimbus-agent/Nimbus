@@ -32,7 +32,7 @@ Three things, in one query:
 
 - **local** — the SQLite index, the Vault, and the audit log all live on your machine. The cloud is a connector, not the source of truth. Telemetry is opt-in and off by default (`[telemetry] enabled = false`).
 - **consent-gated** — every destructive or outbound action is intercepted by a human-in-the-loop gate *before* it runs. It lives in the executor, not the prompt, so it can't be jailbroken away.
-- **MCP** — every connector speaks the [Model Context Protocol](https://modelcontextprotocol.io/). The engine never calls a cloud API directly.
+- **MCP** — Nimbus speaks the [Model Context Protocol](https://modelcontextprotocol.io/) in both directions. As an **MCP client** it drives every connector as an MCP server (tools), and hosts any third-party server you register with `nimbus connector add --mcp`. As an **MCP server**, `nimbus mcp-server --stdio` exposes your local index to editor AIs through six read-only tools. The engine never calls a cloud API directly.
 
 ## Quickstart
 
