@@ -253,9 +253,22 @@ export const KNOWN_ACTOR_TYPES: readonly string[] = [
   "DeployKey",
 ];
 
+const DECLARED_PATH = ".github/rulesets/general-branch.json";
+
 export function loadDeclaredBypass(repoRoot: string): DeclaredBypassFile {
-  const raw = readFileSync(join(repoRoot, ".github/rulesets/general-branch.json"), "utf8");
-  return JSON.parse(raw) as DeclaredBypassFile;
+  const raw = readFileSync(join(repoRoot, DECLARED_PATH), "utf8");
+  try {
+    return JSON.parse(raw) as DeclaredBypassFile;
+  } catch (err) {
+    // Deliberately NOT an "unparseable" verdict like the attestation's. That file
+    // is generated and could plausibly be corrupted; THIS one is hand-authored and
+    // already covered by `biome check .`, so a parse failure means a broken repo,
+    // not a runtime condition to degrade around. Rethrow with the path so the
+    // failure names the file instead of a bare character offset.
+    throw new Error(
+      `${DECLARED_PATH} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /**
@@ -1038,6 +1051,23 @@ describe("evaluateAttestation", () => {
     expect(r.errors.some((e) => e.includes("do not match declared repos"))).toBe(true);
   });
 
+  // The second NaN fail-open: `elapsed > NaN` is false, so an unguarded missing
+  // attestation_grace_days would report a 10-year-old attestation as fresh.
+  test("a non-numeric grace window is a finding, not a silently disabled check", () => {
+    const raw = attestation({ attested_at: new Date(NOW - 3650 * DAY).toISOString() });
+    const r = evaluateAttestation(input({ raw, graceDays: Number.NaN }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes("attestation_grace_days"))).toBe(true);
+  });
+
+  test("a zero or negative grace window is a finding", () => {
+    for (const bad of [0, -30]) {
+      const r = evaluateAttestation(input({ graceDays: bad }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.some((e) => e.includes("attestation_grace_days"))).toBe(true);
+    }
+  });
+
   test("fails when the attested snapshot no longer agrees with declared intent", () => {
     const r = evaluateAttestation(
       input({ declaredBypass: { ...DECLARED, Nimbus: [] } }),
@@ -1081,7 +1111,11 @@ Create `scripts/structure-audit/check-bypass-attestation.ts`:
  */
 
 import type { AuditResult, BypassActor } from "./check-bypass-actors.ts";
-import { diffBypassActors, loadDeclaredBypass } from "./check-bypass-actors.ts";
+import {
+  diffBypassActors,
+  loadDeclaredBypass,
+  validateDeclaredBypass,
+} from "./check-bypass-actors.ts";
 import { ATTESTATION_PATH, parseAttestation, readAttestation } from "./_bypass-attestation.ts";
 
 /** Forward clock skew we absorb rather than treat as a hand edit. */
@@ -1119,6 +1153,18 @@ export function evaluateAttestation(input: AttestationCheckInput): AuditResult {
 
   const errors: string[] = [];
 
+  // The SECOND NaN fail-open, one level up from `attested_at`. A missing
+  // `attestation_grace_days` makes `graceDays * DAY_MS` NaN, and `elapsed > NaN`
+  // is false — so deleting one config line would silently disable the freshness
+  // check while the gate stayed green. Guarded here as well as in the CLI, since
+  // this pure function is what the tests exercise.
+  const graceValid = Number.isFinite(graceDays) && graceDays > 0;
+  if (!graceValid) {
+    errors.push(
+      `grace window is not a positive number (${String(graceDays)}) — check bypass.attestation_grace_days`,
+    );
+  }
+
   const attestedAtMs = Date.parse(parsed.attested_at);
   if (Number.isNaN(attestedAtMs)) {
     // Every comparison with NaN is false, so a naive staleness check would PASS.
@@ -1129,7 +1175,7 @@ export function evaluateAttestation(input: AttestationCheckInput): AuditResult {
       errors.push(
         `attested_at is ${Math.round(-elapsed / 60_000)} minutes in the future — clock skew or a hand-edited file`,
       );
-    } else if (elapsed > graceDays * DAY_MS) {
+    } else if (graceValid && elapsed > graceDays * DAY_MS) {
       errors.push(
         `attestation is ${Math.floor(elapsed / DAY_MS)}d old (grace ${graceDays}d) — re-run \`bun run audit:bypass-actors --attest\``,
       );
@@ -1155,6 +1201,15 @@ export function evaluateAttestation(input: AttestationCheckInput): AuditResult {
 if (import.meta.main) {
   const label = "audit:bypass-attestation";
   const file = loadDeclaredBypass(process.cwd());
+
+  // Validate the declared config BEFORE consuming its grace window. Gate 1 does
+  // this too; skipping it here would let a missing `attestation_grace_days`
+  // reach the comparison as NaN and silently disable the freshness check.
+  const configErrors = validateDeclaredBypass(file);
+  if (configErrors.length > 0) {
+    for (const err of configErrors) console.error(`${label}: ${err}`);
+    process.exit(1);
+  }
 
   const result = evaluateAttestation({
     raw: readAttestation(process.cwd()),
@@ -1185,7 +1240,7 @@ if (import.meta.main) {
 bun test scripts/structure-audit/check-bypass-attestation.test.ts
 ```
 
-Expected: PASS, 11 tests.
+Expected: PASS, 13 tests.
 
 - [ ] **Step 5: Lint and commit**
 
@@ -1473,5 +1528,39 @@ Verify `bypass-attestation` is `success`, then backfill the run id into the road
 **Review-response coverage.** 1.2 partial-read guard → Task 3 (`decideAttestWrite` + its test) and Task 6 Step 3. 1.1 unsupported-actor hard error → Task 2. 1.3 NaN and future-date → Task 4. 2.1 `attested_by` → "unknown" → Task 3 Step 5. 2.3 enum validation → Task 1. 2.2 was declined, so no task — correct.
 
 **Type consistency.** `AuditResult` is defined once in `check-bypass-actors.ts` and imported by Gate 2. `BypassActor` likewise. `diffBypassActors(repos, declared, observed)` keeps that argument order at all three call sites (Task 2 tests, Task 3 CLI, Task 4 `evaluateAttestation`). `ATTESTATION_PATH` is defined in `_bypass-attestation.ts` and used in Tasks 3 and 4.
+
+**Plan-review disposition (2026-07-30).** Reviewed in
+[`2026-07-30-p6-bypass-actor-audit-review.md`](./2026-07-30-p6-bypass-actor-audit-review.md);
+2 adopted, 2 declined.
+
+- **2.2 — adopted, and it found a second NaN fail-open.** Gate 2's CLI consumed
+  `attestation_grace_days` without validating it. A missing value makes
+  `graceDays * DAY_MS` NaN, and `elapsed > NaN` is false — verified: a
+  3650-day-old attestation evaluates as *fresh*. Deleting one config line would
+  have silently disabled the freshness check while the gate stayed green. Now
+  guarded in both `evaluateAttestation` (so tests cover it) and the CLI, with
+  two new tests. Same bug class as the `attested_at` NaN the design review
+  caught, one level up.
+- **1.1 — partially adopted.** `loadDeclaredBypass` now names the file on a parse
+  failure instead of throwing a bare offset. Deliberately *not* given an
+  `unparseable` verdict like the attestation's: that file is generated and could
+  plausibly be corrupted, while this one is hand-authored and already covered by
+  `biome check .`, so a parse failure is a broken repo rather than a runtime
+  condition. The existing `loadDesiredFile` in `check-ruleset-drift.ts` has the
+  identical bare `JSON.parse`; not touched here, as it is a working gate and out
+  of scope.
+- **1.2 (`--help`) — declined.** No gate in `scripts/structure-audit/` implements
+  it (verified by grep). These are `bun run audit:*` entry points invoked from
+  `package.json` and CI, not user-facing CLIs — `packages/cli` is the product's
+  CLI. Adding help text to 2 of ~20 gates would create inconsistency without a
+  consumer.
+- **2.1 (`attested_by` env fallback) — declined; already litigated.** This repeats
+  §2.1 of the design review response, where `git config`/`$USER` fallbacks were
+  rejected because they name the environment rather than the credential that
+  performed the read. The new motivation — easier offline `--attest` testing — is
+  impossible by construction: `--attest` requires five successful `gh` reads, so
+  offline it exits at `queried === 0` long before `attested_by` is resolved.
+  `GITHUB_ACTOR` would be actively worse, naming a CI principal for a gate that
+  is never meant to run in CI.
 
 **One asymmetry worth flagging to the implementer:** Gate 2 is the only sweep gate with no `--strict` branch. Every other one fails soft locally because it needs `gh` auth that an external contributor lacks; Gate 2 reads two committed files and nothing else, so there is no environment in which it cannot run. The workflow still passes `--strict` for consistency with its siblings, where it is a no-op. This is explained in a comment at the exit site rather than left for a reader to infer.
