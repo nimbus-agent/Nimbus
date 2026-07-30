@@ -207,18 +207,29 @@ export type LatencyFlushScheduler = {
   readonly stop: () => void;
 };
 
-export function startLatencyFlushScheduler(db: Database): LatencyFlushScheduler {
+export interface StartLatencyFlushSchedulerOptions {
+  /** Flush cadence; defaults to 30 seconds. Inject a shorter interval in tests. */
+  intervalMs?: number;
+  /** Flush target; defaults to the process-wide latency buffer. Injected in tests. */
+  buffer?: LatencyRingBuffer;
+}
+
+export function startLatencyFlushScheduler(
+  db: Database,
+  opts: StartLatencyFlushSchedulerOptions = {},
+): LatencyFlushScheduler {
+  const buffer = opts.buffer ?? latencyRingBuffer;
   const timer = setInterval(() => {
     try {
-      flushLatencyBuffer(db, latencyRingBuffer);
+      flushLatencyBuffer(db, buffer);
     } catch {
       /* telemetry loss acceptable */
     }
-  }, 30_000);
+  }, opts.intervalMs ?? 30_000);
 
   const onSig = (): void => {
     try {
-      flushLatencyBuffer(db, latencyRingBuffer);
+      flushLatencyBuffer(db, buffer);
     } catch {
       /* best-effort */
     }
@@ -232,7 +243,7 @@ export function startLatencyFlushScheduler(db: Database): LatencyFlushScheduler 
       process.off("SIGTERM", onSig);
       process.off("SIGINT", onSig);
       try {
-        flushLatencyBuffer(db, latencyRingBuffer);
+        flushLatencyBuffer(db, buffer);
       } catch {
         /* ignore */
       }

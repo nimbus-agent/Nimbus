@@ -509,4 +509,68 @@ describe("startLatencyFlushScheduler", () => {
     scheduler.stop();
     expect(() => scheduler.stop()).not.toThrow();
   });
+
+  test("an interval flush error is isolated and later ticks keep running", async () => {
+    db.exec(`
+      DROP TABLE query_latency_log;
+      CREATE TABLE query_latency_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        latency_ms INTEGER NOT NULL CHECK (latency_ms < 0),
+        query_type TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL
+      )
+    `);
+    const buffer = new LatencyRingBuffer();
+    buffer.push({ latencyMs: 42, queryType: "sql", recordedAt: Date.now() });
+
+    const scheduler = startLatencyFlushScheduler(db, { intervalMs: 5, buffer });
+    try {
+      // The first tick drains the sample, then fails the table constraint.
+      await Bun.sleep(20);
+
+      db.exec("DROP TABLE query_latency_log");
+      createLatencyTable(db);
+      buffer.push({ latencyMs: 7, queryType: "sql", recordedAt: Date.now() });
+
+      // A later tick must still run after the isolated failure.
+      for (
+        let attempt = 0;
+        attempt < 20 && countRows(db, "query_latency_log") === 0;
+        attempt += 1
+      ) {
+        await Bun.sleep(5);
+      }
+      expect(countRows(db, "query_latency_log")).toBe(1);
+    } finally {
+      scheduler.stop();
+    }
+  });
+
+  test("the SIGTERM handler isolates a flush error", () => {
+    db.exec(`
+      DROP TABLE query_latency_log;
+      CREATE TABLE query_latency_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        latency_ms INTEGER NOT NULL CHECK (latency_ms < 0),
+        query_type TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL
+      )
+    `);
+    const buffer = new LatencyRingBuffer();
+    buffer.push({ latencyMs: 42, queryType: "sql", recordedAt: Date.now() });
+    const listenersBefore = new Set(process.listeners("SIGTERM"));
+
+    const scheduler = startLatencyFlushScheduler(db, { buffer });
+    try {
+      const signalHandler = process
+        .listeners("SIGTERM")
+        .find((listener) => !listenersBefore.has(listener));
+      expect(signalHandler).toBeDefined();
+      expect(() => signalHandler?.("SIGTERM")).not.toThrow();
+    } finally {
+      scheduler.stop();
+    }
+
+    expect(process.listenerCount("SIGTERM")).toBe(listenersBefore.size);
+  });
 });
