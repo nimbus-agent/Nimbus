@@ -9,11 +9,13 @@ import type {
   JanitorBrief,
   PreflightBrief,
 } from "./findings.ts";
+import type { GlossaryBrief } from "./glossary-types.ts";
 import {
   renderCatchup,
   renderConflict,
   renderExpert,
   renderGhost,
+  renderGlossary,
   renderHuddle,
   renderImpact,
   renderJanitor,
@@ -50,7 +52,8 @@ type SynthInput =
   | HuddleBrief
   | JanitorBrief
   | PreflightBrief
-  | WhyBrief;
+  | WhyBrief
+  | GlossaryBrief;
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
@@ -61,6 +64,7 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "janitor") return renderJanitor(brief);
   if (brief.kind === "preflight") return renderPreflight(brief);
   if (brief.kind === "why") return renderWhy(brief);
+  if (brief.kind === "glossary") return renderGlossary(brief);
   return renderHuddle(brief);
 }
 
@@ -73,6 +77,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "janitor") return "agents.janitor";
   if (brief.kind === "preflight") return "agents.preflight";
   if (brief.kind === "why") return "agents.why";
+  if (brief.kind === "glossary") return "agents.glossary";
   return "agents.huddle";
 }
 

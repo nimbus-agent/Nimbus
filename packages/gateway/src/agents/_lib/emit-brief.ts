@@ -8,6 +8,7 @@ import type {
   JanitorBrief,
   PreflightBrief,
 } from "./findings.ts";
+import type { GlossaryBrief } from "./glossary-types.ts";
 import { type SynthesizerLlm, synthesize } from "./synthesize.ts";
 import type { WhyBrief } from "./why-types.ts";
 
@@ -20,7 +21,8 @@ type AnyBrief =
   | HuddleBrief
   | JanitorBrief
   | PreflightBrief
-  | WhyBrief;
+  | WhyBrief
+  | GlossaryBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

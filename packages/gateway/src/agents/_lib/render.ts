@@ -15,6 +15,7 @@ import type {
   PreflightBrief,
   PreflightDownstream,
 } from "./findings.ts";
+import type { GlossaryBrief } from "./glossary-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
 
 function renderGaps(gaps: GapNote[]): string {
@@ -259,6 +260,58 @@ export function renderWhy(brief: WhyBrief): string {
       lines.push(`- ${head}${when}\n  ${f.detail}`);
     }
   }
+  const gaps = renderGaps(brief.gaps);
+  if (gaps !== "") lines.push(gaps);
+  lines.push(renderLatency(brief.latencyMs));
+  return lines.join("\n");
+}
+
+function isoDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+export function renderGlossary(brief: GlossaryBrief): string {
+  const lines: string[] = ["# Glossary"];
+
+  if (brief.mode === "miss") {
+    lines.push(`\n_No glossary entry for \`${brief.query.term ?? ""}\`._`);
+    if (brief.suggestions.length > 0) {
+      lines.push(`\n**Did you mean:** ${brief.suggestions.join(", ")}`);
+    }
+  } else if (brief.mode === "term") {
+    const e = brief.entries[0];
+    if (e !== undefined) {
+      lines.push(`\n## ${e.term}`);
+      if (brief.matchedVia === "synonym") {
+        lines.push(`_Matched via synonym "${brief.query.term ?? ""}"._`);
+      }
+      lines.push(`\n${e.definition ?? "_No definition yet._"}`);
+      lines.push(
+        `\n- Seen in ${String(e.docFreq)} item(s) across ${String(e.serviceSpread)} service(s)`,
+      );
+      lines.push(`- First seen ${isoDay(e.firstSeenAt)}, last seen ${isoDay(e.lastSeenAt)}`);
+      if (e.synonyms.length > 0) lines.push(`- Also known as: ${e.synonyms.join(", ")}`);
+      if (e.nearMisses.length > 0) lines.push(`- Easily confused with: ${e.nearMisses.join(", ")}`);
+      if (e.definitionSource === "snippet") {
+        lines.push("- _Definition quoted verbatim from a source; no LLM configured._");
+      }
+      if (e.topSources.length > 0) {
+        lines.push("\n### Sources");
+        for (const s of e.topSources) {
+          const head = s.url === null ? s.title : `[${s.title}](${s.url})`;
+          lines.push(`- ${head} — ${s.service}, ${isoDay(s.modifiedAt)}`);
+        }
+      }
+    }
+  } else if (brief.entries.length === 0) {
+    lines.push("\n_No terms extracted yet._");
+  } else {
+    lines.push("");
+    for (const e of brief.entries) {
+      lines.push(`- **${e.term}** — ${String(e.docFreq)} mention(s)`);
+    }
+  }
+
   const gaps = renderGaps(brief.gaps);
   if (gaps !== "") lines.push(gaps);
   lines.push(renderLatency(brief.latencyMs));
