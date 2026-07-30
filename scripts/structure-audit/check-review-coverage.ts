@@ -47,7 +47,13 @@ export function classifyRepoRead(res: GhResult): { kind: "read" | "absent" | "in
  * nothing. Recorded as an explicit exemption rather than an omission, so the
  * next person can tell "decided" from "forgotten".
  */
-const GATED_REPOS = ["Nimbus", "nimbus-sdk", "nimbus-client", "nimbus-vscode", "nimbus-web-clipper"];
+const GATED_REPOS = [
+  "Nimbus",
+  "nimbus-sdk",
+  "nimbus-client",
+  "nimbus-vscode",
+  "nimbus-web-clipper",
+];
 
 export const EXEMPT_REPOS: Readonly<Record<string, string>> = {
   "awesome-nimbus": "curated link list — no source tree to review",
@@ -77,10 +83,7 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
  * Every check reports the repo by name, because the repair differs per finding:
  * "add a config" is a different job from "someone turned auto_review off".
  */
-export function diffReviewCoverage(
-  repos: string[],
-  live: Record<string, LiveConfig>,
-): AuditResult {
+export function diffReviewCoverage(repos: string[], live: Record<string, LiveConfig>): AuditResult {
   const errors: string[] = [];
   for (const repo of repos) {
     const cfg = live[repo];

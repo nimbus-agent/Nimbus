@@ -115,7 +115,7 @@ Design of record:
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
 | P2 | Release Train | ✅ done — both phases (run 30231918767) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, when a release phantoms, when an npm package is tagged but unpublished, or when a consumer's **lockfile-resolved** dependency lags npm `@latest`. Red-proved on a real phantom and on three real dependency edges; green after both, `OK (12 edges current)`. |
-| P3 | Review Layer | 🔨 first step done (#846) | The monorepo now carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban — closing the satellites→monorepo direction of the pattern above. **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. |
+| P3 | Review Layer | ✅ done — gate green locally, awaiting first sweep run | The monorepo carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban (#846), and `audit:review-coverage` now fails when any gated repo's `.coderabbit.yaml` goes missing, stops parsing, or goes **inert** (`auto_review.enabled` off, `base_branches` no longer covering `main`, or empty `path_instructions`). **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. The real gap was that only *this* repo's review config was validated. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after (run `30353595114`): 105 → 77 jobs, DAG wait 60.5 → 2.5 min, wall clock 36-74 → 20 min.** `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
@@ -548,6 +548,58 @@ moves to P6).
   OSes) have aged out of the sampling window
   (`MAX_RUNS_PER_WORKFLOW`). Regenerating sooner is a no-op: the window still
   holds pre-change runs carrying those keys.
+
+### P3 progress log
+
+**The stated gate was already met, so P3 was re-scoped rather than declared
+done.** `_structure.yml` already runs `audit:invariants`; the original acceptance
+criterion ("an invariant violation is caught in CI") needed no new work. What
+was genuinely missing was the *review* layer, in two halves.
+
+- **Half one — the monorepo's own config (#846, 2026-07-26).** The first
+  `.coderabbit.yaml` in the org, with `path_instructions` encoding I1–I30, the
+  triple rule and the PAL ban. `check-coderabbit-config.test.ts` validates it
+  locally and deeply: that it parses, that every instruction's glob resolves to
+  a real directory, that every cited `I<n>` exists as a heading in
+  `SECURITY-INVARIANTS.md`, and that nothing instructs the reviewer to enforce
+  the reserved I28. That last check is the load-bearing one — the config is
+  prose, so a renumbered invariant would otherwise teach the reviewer something
+  false forever, silently.
+- **Half two — `audit:review-coverage` (2026-07-30).** The monorepo's config was
+  tested; the four satellites' were not. That is the sub-program's own founding
+  pattern — a control that stops where it was written — sitting inside P3
+  itself. The sweep gate now reads `.coderabbit.yaml` from all five code repos.
+- **It asserts ACTIVE, not merely PRESENT.** This is the direct lesson from the
+  CLA outage and from `audit:actions-allowlist`'s `startup_failure` half: a
+  control can be committed, valid-looking and completely inert. A config with
+  `auto_review.enabled: false`, or whose `base_branches` no longer lists the
+  branch PRs actually target, reviews nothing while reading as covered. So the
+  gate checks `auto_review.enabled === true` (`!== true`, so a *missing* key
+  fails closed rather than defaulting to enabled), that `base_branches` includes
+  `main`, and that `path_instructions` is non-empty.
+- **`unparseable` is a distinct verdict from absent.** CodeRabbit silently
+  ignores a config it cannot parse, which is indistinguishable from having none
+  — but the repair differs, so the finding names which it is. A YAML document
+  that parses to a scalar or a list is also `unparseable`: legal YAML, unusable
+  config.
+- **Instruction CONTENT is deliberately NOT gated.** The five repos are
+  different products under different licences — the SDK must stay
+  dependency-free, the gateway carries I1–I30 — so any shared-content assertion
+  could only be satisfied by making every instruction vaguer. Content is the
+  owning repo's local test's job. A gate that would degrade the thing it guards
+  is not worth having.
+- **`awesome-nimbus` is an explicit exemption, not an omission.** It is a
+  curated link list with no source tree, so a review config there would assert a
+  control that reviews nothing. Recorded in `EXEMPT_REPOS` with its reason and
+  covered by a test, so the next reader can tell "decided" from "forgotten".
+- **Proof (2026-07-30):** live green — `audit:review-coverage: OK (5 repos, 1
+  exempt)`. Red-proved by adding the exempt `awesome-nimbus` to the gated set,
+  **verifying the mutation had actually landed in the file before trusting the
+  result**, and confirming exit 1 with `awesome-nimbus: no .coderabbit.yaml`.
+  23 unit tests cover the pure diff, the parse verdicts and the read
+  classification. Note the live red-prove exercised the *absent* path; the inert
+  and unparseable paths are proved by unit test, since red-proving those live
+  would mean degrading a real repo's config.
 
 ### P5 progress log
 

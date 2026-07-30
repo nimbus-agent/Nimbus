@@ -94,7 +94,6 @@ describe("diffReviewCoverage", () => {
 
   test("flags a missing auto_review block", () => {
     const cfg = goodConfig();
-    // biome-ignore lint/performance/noDelete: exercising the absent-key path
     delete (cfg["reviews"] as Record<string, unknown>)["auto_review"];
     const r = diffReviewCoverage(REPOS, live({ Nimbus: cfg }));
     expect(r.ok).toBe(false);
