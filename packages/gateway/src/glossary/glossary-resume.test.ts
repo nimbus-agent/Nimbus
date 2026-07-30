@@ -138,3 +138,28 @@ test("a failed term records an attempt and is withheld while backing off", async
   const out = await runGlossaryPass(db, { ...BASE, llm: badLlm, nowMs: 5100 });
   expect(out.retried).toBe(0); // still cooling down — not re-attempted
 });
+
+test("a signal aborted before the call starts skips phase B entirely, before any LLM call", async () => {
+  seed("CDR and SLO and RPO metrics");
+  const controller = new AbortController();
+  controller.abort(); // already aborted — distinct from aborting mid phase-B
+  let calls = 0;
+  const llm: ConsolidatorLlm = {
+    generateJson: async () => {
+      calls += 1;
+      return JSON.stringify({ isDomainTerm: true, definition: "d" });
+    },
+  };
+
+  const out = await runGlossaryPass(db, { ...BASE, llm, signal: controller.signal });
+
+  expect(out.aborted).toBe(true);
+  expect(out.consolidated).toBe(0);
+  expect(out.vetoed).toBe(0);
+  expect(out.retried).toBe(0);
+  // Proves consolidatePhase never started, not merely that it did nothing.
+  expect(calls).toBe(0);
+  // Phase A (pure SQL) still ran and left work for the next pass.
+  expect(out.discovered).toBeGreaterThan(0);
+  expect(selectPendingBatch(db, 10, QUEUE).length).toBeGreaterThan(0);
+});

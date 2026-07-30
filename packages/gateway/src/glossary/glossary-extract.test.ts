@@ -12,7 +12,7 @@ function runMigrations(db: Database): void {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
-import { getTerm, listAllKeys, readPassState } from "./glossary-store.ts";
+import { clearGlossary, getTerm, listAllKeys, readPassState } from "./glossary-store.ts";
 
 let db: Database;
 
@@ -146,4 +146,90 @@ test("rebuildGlossary clears rows, projections and the watermark", async () => {
   await rebuildGlossary(db, { ...OPTS, llm: definingLlm(), nowMs: 7000 });
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
   expect(readPassState(db).watermarkMs).toBeGreaterThan(0);
+});
+
+test("a null body preview falls back to empty text rather than the literal 'null'", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  // The most-recently-modified item is examined first for both mining text
+  // (discoverPhase) and snippet text (consolidatePhase, since all 3 items
+  // fit within TOP_SOURCE_LIMIT) — an item indexed with a title but no body
+  // preview (e.g. a bare link share) must not surface the string "null" in
+  // either place.
+  db.run("UPDATE item SET body_preview = NULL WHERE id = 'slack:m2'");
+
+  await runGlossaryPass(db, OPTS); // no llm => snippet-sourced definition
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("consolidated");
+  expect(t?.definition).not.toBeNull();
+  const definition = t?.definition ?? "";
+  expect(definition).not.toContain("null");
+  expect(definition.toLowerCase()).toContain("cdr");
+});
+
+test("items sharing one modified_at value do not each re-trigger the watermark advance", async () => {
+  const text = "the CDR pipeline runs nightly";
+  for (let i = 0; i < 3; i++) {
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: `tie${String(i)}`,
+      title: text,
+      bodyPreview: text,
+      modifiedAt: 2000,
+      syncedAt: 2000,
+    });
+  }
+  const out = await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
+  expect(out.scanned).toBe(3);
+  // Only the FIRST tied row actually raises maxModified; the other two see
+  // `modified_at > maxModified` as false and must not push it further.
+  expect(readPassState(db).watermarkMs).toBe(2000);
+});
+
+test("a term whose row vanishes mid-consolidation (concurrent rebuild) still counts, unprojected", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  const clearingLlm: ConsolidatorLlm = {
+    generateJson: async () => {
+      // Simulates a concurrent `rebuildGlossary` wiping the table while this
+      // term's LLM call is in flight: by the time `markConsolidated` runs,
+      // the row it targets no longer exists.
+      clearGlossary(db);
+      return JSON.stringify({ isDomainTerm: true, definition: "a definition" });
+    },
+  };
+  const out = await runGlossaryPass(db, { ...OPTS, llm: clearingLlm });
+
+  expect(out.consolidated).toBe(1);
+  expect(getTerm(db, "cdr")).toBe(null);
+  // projectTerm must have been skipped — no dangling glossary_term item.
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+});
+
+test("a pending term whose stored sources were wiped retries instead of fabricating a definition", async () => {
+  // Per the comment in glossary-consolidate.ts: a pending term's `topSources`
+  // can go empty if its sources are deleted between discovery and
+  // consolidation — `reconcilePass` cannot catch this because it only
+  // re-verifies `consolidated` rows. Simulate that exact state directly.
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  const controller = new AbortController();
+  controller.abort();
+  await runGlossaryPass(db, { ...OPTS, llm: definingLlm(), signal: controller.signal });
+  expect(getTerm(db, "cdr")?.status).toBe("pending");
+
+  db.run("UPDATE glossary_term SET top_sources = '[]' WHERE term_key = 'cdr'");
+
+  let calls = 0;
+  const countingLlm: ConsolidatorLlm = {
+    generateJson: async () => {
+      calls += 1;
+      return JSON.stringify({ isDomainTerm: true, definition: "should never be reached" });
+    },
+  };
+  const out = await runGlossaryPass(db, { ...OPTS, llm: countingLlm, nowMs: 6000 });
+
+  // `snippetsFor` short-circuits on an empty id list, so consolidateTerm sees
+  // zero snippets and retries without ever calling the model.
+  expect(calls).toBe(0);
+  expect(out.retried).toBe(1);
+  expect(getTerm(db, "cdr")?.status).toBe("pending");
 });
