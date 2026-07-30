@@ -2450,7 +2450,15 @@ export async function consolidateTerm(
   if (!parsed.isDomainTerm) return { kind: "vetoed" };
   if (parsed.definition.trim() === "") return { kind: "retry", reason: "empty definition" };
 
-  const synonyms = [...new Set([...parsed.alsoKnownAs, ...detected])].slice(0, MAX_SYNONYMS);
+  // `detected` FIRST — the cap must never discard a verified expansion.
+  //
+  // Locally-detected expansions are grounded in the actual snippet text (the
+  // `Change Data Record (CDR)` pattern, initials-checked). `alsoKnownAs` is the
+  // same unconstrained model channel Guard 1 exists to distrust. `Set` preserves
+  // insertion order and `.slice` keeps the front, so model-first ordering would
+  // silently drop every verified expansion whenever the model returned ten or
+  // more synonyms.
+  const synonyms = [...new Set([...detected, ...parsed.alsoKnownAs])].slice(0, MAX_SYNONYMS);
   return {
     kind: "defined",
     definition: parsed.definition.slice(0, DEFINITION_MAX),
