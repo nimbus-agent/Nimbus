@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  actorKey,
+  type BypassActor,
   type DeclaredBypassFile,
+  diffBypassActors,
   loadDeclaredBypass,
   validateDeclaredBypass,
 } from "./check-bypass-actors.ts";
@@ -68,5 +71,102 @@ describe("loadDeclaredBypass", () => {
     expect(validateDeclaredBypass(file)).toEqual([]);
     expect(file.repos.length).toBe(5);
     expect(Object.keys(file.bypass.by_repo).sort()).toEqual([...file.repos].sort());
+  });
+});
+
+const REPOS = ["Nimbus", "nimbus-sdk"];
+const ADMIN: BypassActor = { actor_type: "OrganizationAdmin", bypass_mode: "always" };
+
+function declared(): Record<string, BypassActor[]> {
+  return { Nimbus: [ADMIN], "nimbus-sdk": [] };
+}
+
+/** Live shape: GitHub always includes actor_id, null for org-level actors. */
+function observed(): Record<string, BypassActor[]> {
+  return {
+    Nimbus: [{ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }],
+    "nimbus-sdk": [],
+  };
+}
+
+describe("diffBypassActors", () => {
+  test("passes when live matches declared, with actor_id null vs omitted", () => {
+    const r = diffBypassActors(REPOS, declared(), observed());
+    expect(r.ok).toBe(true);
+    expect(r.errors).toEqual([]);
+  });
+
+  test("flags an unexpected bypass actor", () => {
+    const live = observed();
+    live["nimbus-sdk"] = [
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+    ];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain("nimbus-sdk: unexpected bypass actor");
+  });
+
+  test("flags a missing declared bypass actor", () => {
+    const live = observed();
+    live["Nimbus"] = [];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain("Nimbus: missing declared bypass actor");
+  });
+
+  test("reports a widened bypass_mode as a mode change, not as add+remove", () => {
+    const live = observed();
+    live["Nimbus"] = [
+      { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "pull_request" },
+    ];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.errors.length).toBe(1);
+    expect(r.errors[0]).toContain("bypass_mode: expected always, got pull_request");
+  });
+
+  test("treats a non-null-id actor type as a hard error, never normalizing it away", () => {
+    const live = observed();
+    live["nimbus-sdk"] = [{ actor_type: "Team", actor_id: 42, bypass_mode: "always" }];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain("unsupported bypass actor type Team (id 42)");
+  });
+
+  test("flags a repo that is not declared at all", () => {
+    const r = diffBypassActors([...REPOS, "nimbus-new"], declared(), observed());
+    expect(r.errors[0]).toContain("nimbus-new: not declared in bypass.by_repo");
+  });
+
+  test("flags a declared repo with no observation", () => {
+    const live = observed();
+    delete live["nimbus-sdk"];
+    const r = diffBypassActors(REPOS, declared(), live);
+    expect(r.errors[0]).toContain("nimbus-sdk: no observed bypass_actors");
+  });
+
+  test("is order-independent across the actor set", () => {
+    const twoDeclared: Record<string, BypassActor[]> = {
+      Nimbus: [
+        { actor_type: "OrganizationAdmin", bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
+      ],
+      "nimbus-sdk": [],
+    };
+    const twoLive: Record<string, BypassActor[]> = {
+      Nimbus: [
+        { actor_type: "OrganizationAdmin", actor_id: 7, bypass_mode: "always" },
+        { actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" },
+      ],
+      "nimbus-sdk": [],
+    };
+    expect(diffBypassActors(REPOS, twoDeclared, twoLive).ok).toBe(true);
+  });
+});
+
+describe("actorKey", () => {
+  test("normalizes an omitted actor_id to the same key as an explicit null", () => {
+    expect(actorKey({ actor_type: "OrganizationAdmin", bypass_mode: "always" })).toBe(
+      actorKey({ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }),
+    );
   });
 });
