@@ -109,7 +109,10 @@ function buildGaps(
     gaps.push({
       category: "missing_connector",
       detail: "The glossary extraction pass has not run yet.",
-      remediation: "Run `nimbus glossary --refresh`, or wait for the next connector sync.",
+      // Deliberately does NOT name `--refresh`: that flag is not wired, and the
+      // CLI rejects it. Pointing a user at a command that errors is worse than
+      // telling them to wait for the trigger that actually drives the pass.
+      remediation: "It runs automatically after the next connector sync.",
     });
     return gaps;
   }

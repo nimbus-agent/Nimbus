@@ -4440,11 +4440,19 @@ git commit -m "feat(glossary): agents.glossary IPC method and Tauri allowlist en
 
 ### Task 15: CLI command
 
+> **Superseded in part, 2026-07-31** (CodeRabbit review of PR #981). The blocks below parse
+> `--refresh` / `--rebuild` and forward them, which the shipped CLI no longer does: the gateway
+> handler reads only `term` and `limit`, so forwarding meant `nimbus glossary --rebuild` printed an
+> ordinary listing while the user believed the glossary had been re-derived. Both flags are now
+> rejected with an explicit "not implemented yet" error, `USAGE` no longer advertises them, and the
+> command was added to `commands/help.ts` (it was dispatchable but unlisted) plus a subprocess smoke
+> test at `packages/cli/test/e2e/glossary.smoke.e2e.test.ts`.
+
 **Files:**
 
 - Create: `packages/cli/src/commands/glossary.ts`
-- Modify: `packages/cli/src/index.ts`
-- Test: `packages/cli/src/commands/glossary.test.ts`
+- Modify: `packages/cli/src/index.ts`, `packages/cli/src/commands/help.ts`
+- Test: `packages/cli/src/commands/glossary.test.ts`, `packages/cli/test/e2e/glossary.smoke.e2e.test.ts`
 
 **Interfaces:**
 
