@@ -115,7 +115,7 @@ Design of record:
 | --- | --- | --- | --- |
 | P1 | Org CI Foundation | ✅ done | The scheduled sweep goes red on drift: SHA-pins across the 8 public org repos, ruleset shape across the 5 active code repos — proven green end-to-end (run 30060920603) |
 | P2 | Release Train | ✅ done — both phases (run 30231918767) | `audit:release-staleness` goes red when a channel (brew/scoop/linux/winget) lags the published Release past the grace window, when a release phantoms, when an npm package is tagged but unpublished, or when a consumer's **lockfile-resolved** dependency lags npm `@latest`. Red-proved on a real phantom and on three real dependency edges; green after both, `OK (12 edges current)`. |
-| P3 | Review Layer | ✅ done — gate green locally, awaiting first sweep run | The monorepo carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban (#846), and `audit:review-coverage` now fails when any gated repo's `.coderabbit.yaml` goes missing, stops parsing, or goes **inert** (`auto_review.enabled` off, `base_branches` no longer covering `main`, or empty `path_instructions`). **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. The real gap was that only *this* repo's review config was validated. |
+| P3 | Review Layer | ✅ done — `review-coverage` green in sweep run 30518344699 | The monorepo carries a tuned `.coderabbit.yaml` whose `path_instructions` encode I1–I30, the triple rule and the PAL ban (#846), and `audit:review-coverage` now fails when any gated repo's `.coderabbit.yaml` goes missing, stops parsing, or goes **inert** (`auto_review.enabled` off, `base_branches` no longer covering `main`, or empty `path_instructions`). **Note:** the previously-stated gate ("an invariant violation is caught in CI") was already met — `_structure.yml` runs `audit:invariants` and all 17 static checks execute there; the one branch `--binary-only` excludes is a census that always exits 0. The real gap was that only *this* repo's review config was validated. |
 | P4a | Main-CI concurrency | ✅ shipped | Every commit on `main` has a completed CI run |
 | P4b | Latency | ✅ done — `ci-latency` green in sweep run `30356357605` | `audit:ci-latency` tracks per-job execution, runner queue and DAG wait across the 9 org repos and fails when a job's execution regresses beyond its own measured noise band. Tuning followed the measurement, not the design of record's hunch: a push run demanded ~105 job slots against a pool granting 12-17, so the fix was cutting the fan-out (coverage gates 72 → 42 jobs, Linux-only except the 9 PAL-touching ones) and narrowing E2E's dependency edge — not the proposed cache tuning or sharding, which would have added jobs to the constrained pool. **Measured after, re-measured at n>1 on 2026-07-30: 105 → 77 jobs (4/4 runs), DAG wait 60.5 → 3.0 min median (n=15, and all 45 sampled E2E legs now gated by `ci-rust` — the edge the slice rewrote), non-macOS wall 23-89 → 16-38 min.** Wall clock measured as *last job in the run* did not improve (45 → 67 min median over 20+20 runs); instrumented, that tail is entirely the nine macOS PAL coverage gates queuing for scarce macOS runners, and it is unchanged at like congestion — see the progress log. `audit:coverage-gate-pal` keeps the platform classification honest, co-gates included. |
 | P5 | Org Legibility | ✅ both gates green (run 30231918767) | `audit:secret-inventory` fails on any workflow secret missing from the credential registry **or** `ci-secrets.md`; `audit:actions-allowlist` fails on an unpermitted action **or** any workflow whose latest run ended in `startup_failure`. The second found a live nightly outage on its first correct run. Remaining: the legibility dashboard. |
@@ -398,6 +398,24 @@ moves to P6).
   `cla-coverage`, which had failed at the App-token mint on every previous run
   (the installation did not cover `awesome-nimbus`). It also carried the first
   scheduled runs of the two P5 gates and of `pin-freshness`.
+- **OPEN remediation (2026-07-30, run `30518344699`) — four dependency edges are
+  red, and this is the gate working, not a gate defect.** The `client:Nimbus`
+  edge that reddened the 07-28 sweep was fixed at source in #848; these are
+  *new* drift on top of it, and they are precisely what the 2026-07-27 entry
+  above predicted would happen "once grace expires unless they are bumped":
+
+  | edge | lockfile-resolved | npm `@latest` |
+  | --- | --- | --- |
+  | `sdk:nimbus-client` | 1.7.0 | 1.9.0 |
+  | `sdk:nimbus-vscode` | 1.7.0 | 1.9.0 |
+  | `sdk:Nimbus` | 1.8.1 | 1.9.0 |
+  | `client:nimbus-vscode` | 0.12.1 | 0.14.0 |
+
+  All four are `1.x`/`0.1x` consumer bumps in three repos — the same shape as
+  the #848 / `nimbus-client#38` / `nimbus-vscode#58` batch, so the remediation
+  pattern is known. Note `client:nimbus-vscode` is a **`0.x`** edge and
+  therefore needs a manifest edit, not just a lockfile refresh: a caret on a
+  `0.x` pins the minor, so `^0.12.1` can never reach 0.14.0.
 
 ### P4b progress log
 
@@ -678,6 +696,11 @@ was genuinely missing was the *review* layer, in two halves.
   classification. Note the live red-prove exercised the *absent* path; the inert
   and unparseable paths are proved by unit test, since red-proving those live
   would mean degrading a real repo's config.
+- **Sweep proof (2026-07-30, run `30518344699`): the `review-coverage` job is
+  green, which closes P3 by this file's own bar** — the gate now runs in the
+  scheduled harness, not just locally. Stated precisely, as with P4b: the sweep
+  run as a whole is **red**, on the **known, unrelated** P2 dependency edges
+  (below). 16 of 17 jobs green. Do not read that red as P3.
 
 ### P5 progress log
 
