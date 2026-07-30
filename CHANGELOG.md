@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.12.1](https://github.com/nimbus-agent/Nimbus/compare/v1.12.0...v1.12.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **db:** finalize prepared statements so close() releases the database file ([#970](https://github.com/nimbus-agent/Nimbus/issues/970)) ([fa4aca2](https://github.com/nimbus-agent/Nimbus/commit/fa4aca2602a79cd64349c3e003ca01708f042976))
+
 ## [1.12.0](https://github.com/nimbus-agent/Nimbus/compare/v1.11.0...v1.12.0) (2026-07-30)
 
 
