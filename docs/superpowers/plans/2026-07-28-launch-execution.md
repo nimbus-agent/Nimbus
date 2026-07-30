@@ -717,9 +717,12 @@ The three gates in the spec are human process. They are checklists, not tasks �
 
 ### Gate 1 runbook — foreign-machine proof
 
-**Two Gate 1 blockers are already known — CI found them before a human did.**
-Task 1's assertions caught both on their first real run; `nimbus --help` had
-been passing on machines where `nimbus init` cannot work at all.
+**Three Gate 1 blockers were found by CI before a human did — all now RESOLVED
+(2026-07-30). Gate 1 is unblocked.** Task 1's assertions caught them on their
+first real runs; `nimbus --help` had been passing on machines where
+`nimbus init` cannot work at all. Kept here because the runbook exists to
+re-check exactly these failure classes on a real foreign machine — a closed
+issue is evidence the fix landed, not evidence the machine works.
 
 - **[#925](https://github.com/nimbus-agent/Nimbus/issues/925) — Linux `init`
   fails on any headless machine.** Installing `secret-tool` is necessary but
@@ -727,23 +730,33 @@ been passing on machines where `nimbus init` cannot work at all.
   with no session bus and no unlocked keyring every Vault operation fails and
   the Gateway aborts. That is the state of any server, container, SSH session,
   or WSL install — a large share of the ICP's machines. The README quickstart
-  never named the prerequisite; that half is fixed. Note `nimbus doctor` shares
-  the blind spot: it reports `[ok] Vault: secret-tool is on PATH` from a
-  `Bun.which` check alone, so it says OK where the Vault cannot work.
+  never named the prerequisite. **CLOSED:** the README states the prerequisite,
+  and `nimbus doctor` no longer shares the blind spot — it probed nothing but
+  `Bun.which("secret-tool")` and so reported `[ok]` where the Vault could not
+  work; `doctor-core.ts` now probes the session bus and collection state.
 - **[#928](https://github.com/nimbus-agent/Nimbus/issues/928) — first run
-  blocks on a HuggingFace fetch.** The Gateway does not bind its socket until
-  the embedding runtime initializes, which on a cold machine means downloading
+  blocks on a HuggingFace fetch.** The Gateway did not bind its socket until
+  the embedding runtime initialized, which on a cold machine means downloading
   MiniLM (`DEFAULT_EMBEDDING_INIT_TIMEOUT_MS = 600_000`). The macOS runner sat
   at "starting embedding runtime" for a full 300 s without binding. For the
   first command a new user ever runs, this is indistinguishable from a hang.
+  **CLOSED:** bind-first — the runtime constructs in the background and a failed
+  fetch settles to `unavailable` while the gateway keeps serving.
+- **[#932](https://github.com/nimbus-agent/Nimbus/issues/932) — macOS `init`
+  hung forever on a locked keychain.** Found only after #928 was fixed: the boot
+  log still stopped, for a different reason. A first-run Vault write escalated
+  to a GUI authorization dialog no background service can answer, and because
+  `bun:ffi` calls are synchronous the block froze the event loop — so no timeout
+  could ever fire. **CLOSED (PR #946):** keychain user interaction is refused
+  process-wide, so a locked keychain fails immediately with a runnable remedy.
 
-Both are product-behaviour changes, deliberately **not** made under this plan's
-freeze. Gate 1 cannot pass while either stands: they are exactly the
-"works only on the author's machine" failures this gate exists to catch.
+All three were product-behaviour changes, deliberately **not** made under this
+plan's original freeze; the freeze was lifted for them once they proved to be
+Gate 1 blockers rather than polish.
 
-- [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. **Blocked by [#925](https://github.com/nimbus-agent/Nimbus/issues/925).**
-- [ ] Windows: fresh local user account or a VM (Win 11 Home has neither Hyper-V nor Windows Sandbox). Same quickstart, same foreign repo.
-- [ ] macOS: covered by Task 1's `macos-14` job, or defer to a Gate 2 tester with a Mac and label it unverified. **Caveat:** that job now sets `NIMBUS_SKIP_EMBEDDING_RUNTIME=1`, so it does **not** cover the cold first-run model fetch ([#928](https://github.com/nimbus-agent/Nimbus/issues/928)) — a human still has to run one genuinely cold macOS first-run.
+- [ ] Linux: clean `ubuntu:24.04` container, no Bun preinstalled. Run the README quickstart verbatim against a **cloned third-party repo**, not Nimbus. (#925 is fixed, but a headless container is precisely where it bit — verify the documented prerequisite is sufficient in practice.)
+- [ ] Windows: fresh local user account or a VM (Win 11 Home has neither Hyper-V nor Windows Sandbox). Same quickstart, same foreign repo. **Least-covered platform:** no first-run defect was ever found here, which is weaker evidence than it looks — the macOS and Linux failures were only found because CI ran them.
+- [ ] macOS: partly covered by Task 1's `macos-14` job, which no longer sets `NIMBUS_SKIP_EMBEDDING_RUNTIME` and now asserts embeddings are not `disabled`. **Remaining gap:** it accepts `warming` and `unavailable`, so it proves the shipped configuration boots — **not** that the MiniLM download completes. A human still has to do one genuinely cold macOS first-run and confirm semantic search actually works afterwards.
 - [ ] Every break gets a fix **and** a regression test at the real-gateway layer. A unit test with an injected fake does not count.
 - [ ] **Exit:** Linux and Windows complete with zero manual intervention.
 

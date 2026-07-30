@@ -179,19 +179,19 @@ jobs:
       - name: Quickstart smoke — init + why (Unix)
         if: runner.os != 'Windows'
         shell: bash
-        env:
-          # The Gateway does not bind its socket until the embedding runtime
-          # finishes initializing, and on a cold machine that means fetching
-          # MiniLM from HuggingFace (init timeout defaults to 600 s). The
-          # macOS runner sat at "starting embedding runtime" for a full 300 s
-          # without binding, so this is a real first-run cost, not slowness —
-          # tracked as a launch blocker; see the Gate 1 runbook.
-          #
-          # Skip it here: what this job exists to prove is the init → sync →
-          # why path, and neither `index.demoSymbol` (reads indexed symbols)
-          # nor `nimbus why` (blame + graph lanes) touches a vector table.
-          # Leaving it on would couple every run to a third-party CDN.
-          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1"
+        # No `NIMBUS_SKIP_EMBEDDING_RUNTIME` here — deliberately. This job used
+        # to set it because the gateway would not bind its socket until the
+        # embedding runtime finished, which on a cold machine meant fetching
+        # MiniLM from a third-party CDN; the macOS runner sat at "starting
+        # embedding runtime" for 300 s without binding. #928 removed that
+        # coupling (bind-first: the runtime constructs in the background and a
+        # failed fetch settles to `unavailable` while the gateway keeps
+        # serving), so the skip now hides the very configuration real users run.
+        #
+        # Green is still NOT coupled to that CDN: nothing asserted below needs a
+        # vector — `index.demoSymbol` reads indexed symbols and `nimbus why`
+        # uses blame + graph lanes. The embedding assertion after the quickstart
+        # checks that embeddings are ENABLED, never that the model finished.
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/fake-home"
@@ -301,6 +301,38 @@ jobs:
             echo "::error::nimbus why produced no Authorship section"; exit 1; }
           grep -q "Smoke Test" "$RUNNER_TEMP/why.log" || {
             echo "::error::nimbus why did not resolve the commit author"; exit 1; }
+
+          # The gateway logs `[gateway] embeddings: <state>` at bind time (#928).
+          # Assert embeddings are genuinely ON in this run — the guard against
+          # someone quietly restoring NIMBUS_SKIP_EMBEDDING_RUNTIME and turning
+          # this job back into a test of a configuration nobody ships.
+          #
+          # `disabled` is the ONLY failing state. `warming` and `unavailable`
+          # both pass on purpose: the first means the fetch is still running,
+          # the second that it failed — and bind-first says neither may stop the
+          # gateway serving. Requiring `ready` would couple green CI to a
+          # third-party CDN, which is exactly what made this job flaky before.
+          embed_line=""
+          for d in "$HOME/.local/share/nimbus/logs" \
+                   "$HOME/Library/Application Support/Nimbus/logs"; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*.log; do
+              [ -f "$f" ] || continue
+              line=$(grep -h "\[gateway\] embeddings:" "$f" | tail -1 || true)
+              [ -n "$line" ] && embed_line="$line"
+            done
+          done
+          if [ -z "$embed_line" ]; then
+            echo "::error::gateway never logged its embedding readiness — expected '[gateway] embeddings: <state>'"
+            exit 1
+          fi
+          echo "observed: $embed_line"
+          case "$embed_line" in
+            *"embeddings: disabled"*)
+              echo "::error::embeddings are DISABLED — the skip flag is back, so this job no longer covers the shipped first-run configuration"
+              exit 1
+              ;;
+          esac
 
           nimbus stop || true
 
@@ -481,6 +513,27 @@ jobs:
           }
           if ($why -notmatch "Smoke Test") {
             Write-Error "nimbus why did not resolve the commit author"; exit 1
+          }
+
+          # Same guard as the Unix leg: prove embeddings are ENABLED, never that
+          # the model finished. Windows never set NIMBUS_SKIP_EMBEDDING_RUNTIME,
+          # so this leg has always exercised the shipped configuration — the
+          # assertion keeps it that way.
+          $logDir = Join-Path $env:LOCALAPPDATA "Nimbus\data\logs"
+          $embedLine = $null
+          if (Test-Path $logDir) {
+            $embedLine = Get-ChildItem -Path $logDir -Filter *.log -ErrorAction SilentlyContinue |
+              ForEach-Object { Select-String -Path $_.FullName -Pattern '\[gateway\] embeddings:' } |
+              Select-Object -Last 1
+          }
+          if ($null -eq $embedLine) {
+            Write-Error "gateway never logged its embedding readiness — expected '[gateway] embeddings: <state>'"
+            exit 1
+          }
+          Write-Host "observed: $($embedLine.Line)"
+          if ($embedLine.Line -match 'embeddings: disabled') {
+            Write-Error "embeddings are DISABLED — this job no longer covers the shipped first-run configuration"
+            exit 1
           }
 
           nimbus stop
