@@ -1240,7 +1240,7 @@ if (import.meta.main) {
 bun test scripts/structure-audit/check-bypass-attestation.test.ts
 ```
 
-Expected: PASS, 13 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Lint and commit**
 
