@@ -12,15 +12,23 @@
 #
 # See docs/install.md for the supported install channels.
 
-FROM debian:bookworm-slim
+# Nimbus publishes one Linux CLI binary, x64 only — there is no linux/arm64
+# asset to select. The platform is therefore pinned rather than resolved from
+# TARGETARCH; on an arm64 builder this runs under emulation.
+FROM --platform=linux/amd64 debian:bookworm-slim
 
+# Bumping NIMBUS_VERSION requires updating NIMBUS_CLI_SHA256 to match, taken
+# from that release's SHA256SUMS. A mismatch fails the build by design.
 ARG NIMBUS_VERSION=v1.12.1
+ARG NIMBUS_CLI_SHA256=78e43ec607d2fcd62e7395ff09bdf829558f772578c2bde4d4d2970ffaa6e444
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
- && curl -fsSL -o /usr/local/bin/nimbus \
+ && curl -fsSL -o /tmp/nimbus \
       "https://github.com/nimbus-agent/Nimbus/releases/download/${NIMBUS_VERSION}/nimbus-cli-linux-x64" \
- && chmod +x /usr/local/bin/nimbus \
+ && echo "${NIMBUS_CLI_SHA256}  /tmp/nimbus" | sha256sum -c - \
+ && install -m 0755 /tmp/nimbus /usr/local/bin/nimbus \
+ && rm -f /tmp/nimbus \
  && apt-get purge -y --auto-remove curl \
  && rm -rf /var/lib/apt/lists/*
 

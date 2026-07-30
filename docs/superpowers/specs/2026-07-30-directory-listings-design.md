@@ -55,9 +55,14 @@ MCPB (a `.mcpb` binary attached to a GitHub or GitLab release). Publishing also
 requires an ownership-verification token inside the published package, checked by a
 per-registry validator.
 
-Nimbus ships through Homebrew, Scoop, winget, apt/yum, and direct download. None is a
-supported registry type, and the server is a subcommand of an installed gateway rather
-than a standalone artifact — so there is nothing to point a `server.json` at.
+The registry has a second path: a **remote** server, consumed by URL, needs no package
+at all. It does not apply here — Nimbus's MCP server is local stdio, not a hosted
+endpoint — so the blocker is specific to the local/package-based route.
+
+On that route, Nimbus ships through Homebrew, Scoop, winget, apt/yum, and direct
+download. None is a supported registry type, and the server is a subcommand of an
+installed gateway rather than a standalone artifact — so there is nothing to point a
+local `server.json` at.
 
 Reaching the registry would need a deliberate packaging decision, which is engineering
 work and not part of this spec:
