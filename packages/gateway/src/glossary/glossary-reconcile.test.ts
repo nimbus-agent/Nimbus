@@ -134,3 +134,41 @@ test("the cooldown makes a repeat sweep a no-op", () => {
   const third = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 102_000, cooldownMs: 1000 });
   expect(third.verified).toBe(1);
 });
+
+test("demotion is atomic — a failure between the writes rolls all three back", () => {
+  seedItem("a", "CDR one", 100);
+  seedItem("b", "CDR two", 100);
+  seedItem("c", "CDR three", 100);
+  seedConsolidated("cdr", 3);
+  db.run("DELETE FROM item WHERE type = 'message'");
+
+  const before = getTerm(db, "cdr");
+  expect(before?.status).toBe("consolidated");
+
+  // Simulates a crash exactly in the un-self-healing window the reviewer
+  // found: after unprojectTerm's DELETE and demoteTerm's UPDATE have already
+  // run, but before applyStats' UPDATE commits. A DB-level trigger fires
+  // precisely on applyStats' write (score -> 0) and raises, so the first two
+  // writes are genuinely applied (not merely "about to run") before the
+  // failure — this is NOT wrapped in an outer transaction, so it exercises
+  // reconcilePass's own `db.transaction()` and nothing else's.
+  db.run(
+    `CREATE TRIGGER simulated_crash_before_apply_stats
+     BEFORE UPDATE OF score ON glossary_term
+     WHEN NEW.score = 0
+     BEGIN SELECT RAISE(ABORT, 'simulated crash before applyStats'); END`,
+  );
+
+  expect(() =>
+    reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }),
+  ).toThrow();
+
+  db.run("DROP TRIGGER simulated_crash_before_apply_stats");
+
+  const after = getTerm(db, "cdr");
+  expect(after?.status).toBe("consolidated");
+  expect(after?.definition).toBe("a definition");
+  expect(db.query("SELECT COUNT(*) AS c FROM item WHERE type = 'glossary_term'").get()).toEqual({
+    c: 1,
+  });
+});

@@ -39,9 +39,19 @@ export function reconcilePass(
       // Below the floor: the evidence is gone. Drop it from the searchable
       // index first — a stale definition surfacing in search after its
       // sources vanished is worse than no glossary at all.
-      unprojectTerm(db, term.termKey);
-      demoteTerm(db, term.termKey, opts.nowMs);
-      applyStats(db, term.termKey, stats, 0, opts.nowMs);
+      //
+      // All three writes are ONE transaction. Without it, a crash between
+      // demoteTerm and applyStats leaves the row 'pending' with a stale score
+      // and docFreq — and `selectStaleForRecheck` only looks at 'consolidated'
+      // rows, so no later sweep can ever repair it. The term could then be
+      // picked for consolidation and spend an LLM call on sources that no
+      // longer exist. Ordering alone cannot fix this: without a transaction one
+      // of the two crash windows is always exposed.
+      db.transaction(() => {
+        unprojectTerm(db, term.termKey);
+        demoteTerm(db, term.termKey, opts.nowMs);
+        applyStats(db, term.termKey, stats, 0, opts.nowMs);
+      })();
       demoted.push(term.termKey);
       continue;
     }
