@@ -200,3 +200,34 @@ test("the prompt wraps source snippets in a tool-output envelope, and the term d
   const [beforeEnvelope] = seen.split("<tool_output");
   expect(beforeEnvelope).not.toContain("ZQMARKERZQ");
 });
+
+test("empty snippets with an LLM configured yields retry and never calls the model", async () => {
+  let called = false;
+  const llm = {
+    generateJson: async () => {
+      called = true;
+      return JSON.stringify({
+        isDomainTerm: true,
+        definition: "A Call Detail Record used in telecoms billing.",
+      });
+    },
+  };
+  const out = await consolidateTerm(term(), [], { llm, timeoutMs: 1000 });
+  expect(out.kind).toBe("retry");
+  expect(called).toBe(false);
+});
+
+test("empty snippets with no LLM also yields retry", async () => {
+  const out = await consolidateTerm(term(), [], { timeoutMs: 1000 });
+  expect(out.kind).toBe("retry");
+});
+
+test("alsoKnownAs from the model is capped at 10 synonyms", async () => {
+  const alsoKnownAs = Array.from({ length: 50 }, (_, i) => `synonym-${i}`);
+  const llm = {
+    generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d", alsoKnownAs }),
+  };
+  const out = await consolidateTerm(term(), SNIPPETS, { llm, timeoutMs: 1000 });
+  if (out.kind !== "defined") throw new Error("expected defined");
+  expect(out.synonyms.length).toBeLessThanOrEqual(10);
+});

@@ -19,6 +19,17 @@ export type ConsolidationOutcome =
 
 const DEFINITION_MAX = 400;
 
+/**
+ * Caps synonyms taken from model JSON.
+ *
+ * `alsoKnownAs` arrives straight from the model and is otherwise unbounded.
+ * `projectTerm` writes synonyms into item metadata, and `upsertIndexedItem`
+ * THROWS above a 64 KB ceiling — before any write — so a misbehaving model
+ * returning hundreds of synonyms could abort a whole consolidation pass and
+ * strand a term `consolidated` with no searchable item row.
+ */
+const MAX_SYNONYMS = 10;
+
 const INSTRUCTIONS = [
   "You are consolidating how one engineering team actually uses the term given in the `term` field below.",
   "Given the term and quoted source snippets, respond with JSON only:",
@@ -135,6 +146,20 @@ export async function consolidateTerm(
   snippets: readonly { text: string }[],
   opts: { llm?: ConsolidatorLlm; timeoutMs: number; signal?: AbortSignal },
 ): Promise<ConsolidationOutcome> {
+  // No sources, no definition — for EITHER path.
+  //
+  // A model handed an empty sources array falls back to its own priors: asked
+  // to define "CDR" with nothing to read, it returns "A Call Detail Record used
+  // in telecoms billing" — Wikipedia's meaning, stored as the team's, labelled
+  // `source: "llm"`. That is precisely the outcome this feature exists to
+  // prevent. Reachable whenever a pending term's `topSources` are deleted
+  // between discovery and consolidation, which `reconcilePass` cannot catch
+  // because it only re-checks `consolidated` rows. The prompt's "definition
+  // must come from the snippets" instruction is not enforcement.
+  if (snippets.length === 0) {
+    return { kind: "retry", reason: "no source snippets available" };
+  }
+
   const detected = detectAcronymExpansions(snippets.map((s) => s.text).join("\n"))
     .filter((e) => e.acronymKey === term.termKey)
     .map((e) => e.expansion);
@@ -169,7 +194,7 @@ export async function consolidateTerm(
   if (!parsed.isDomainTerm) return { kind: "vetoed" };
   if (parsed.definition.trim() === "") return { kind: "retry", reason: "empty definition" };
 
-  const synonyms = [...new Set([...parsed.alsoKnownAs, ...detected])];
+  const synonyms = [...new Set([...parsed.alsoKnownAs, ...detected])].slice(0, MAX_SYNONYMS);
   return {
     kind: "defined",
     definition: parsed.definition.slice(0, DEFINITION_MAX),
