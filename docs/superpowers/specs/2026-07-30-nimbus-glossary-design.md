@@ -497,6 +497,15 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   considered and rejected. Revisit only with evidence from real usage.
 - **Email and calendar are excluded** from `GLOSSARY_SOURCE_TYPES`. The roadmap does not list
   them, and mining a personal inbox into a team glossary is not a posture to adopt silently.
+- **ADRs are mined only from Obsidian-indexed roots.** The roadmap names ADRs as a source, but
+  the index has no generic markdown item type — filesystem indexing produces `git_commit`,
+  `dependency` and `code_symbol`, and the only prose-from-disk type is `obsidian:obsidian_note`.
+  So `docs/adrs/*.md` contributes terminology only when that repository is indexed as an Obsidian
+  vault. Closing this properly needs a filesystem markdown indexer, which is new indexing work
+  outside this slice. Found during plan pre-flight, 2026-07-30.
+- **Commit messages are mined from the subject line only.** `filesystem:git_commit` stores the
+  commit subject in `title` and the SHA in `body_preview`, so the body of a commit message is not
+  indexed and cannot be mined.
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
