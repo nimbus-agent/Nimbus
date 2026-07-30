@@ -4653,6 +4653,7 @@ git commit -m "test(glossary): end-to-end scenario covering extraction, brief, z
 - Modify: `docs/roadmap.md`
 - Modify: `docs/cli-reference.md`
 - Modify: `docs/architecture.md`
+- Modify: `docs/schema-reference.md`
 - Modify: `CLAUDE.md` and `GEMINI.md` (schema version only)
 
 **Interfaces:**
@@ -4693,9 +4694,11 @@ In `docs/roadmap.md`:
 
 In `docs/cli-reference.md`, add a `nimbus glossary` section documenting `[<term>]`, `--limit`, `--refresh`, `--rebuild`, `--json`, and the exit codes (1 = gateway not running, 2 = agent error).
 
-- [ ] **Step 4: Update the architecture schema table**
+- [ ] **Step 4: Update the architecture and schema docs**
 
 In `docs/architecture.md`, add the V45 row to the schema reference and `agents.glossary` to the IPC method catalogue.
+
+In `docs/schema-reference.md`, document both new tables the way V44's `egress_ledger` is documented — read that entry first and match its depth and formatting. Cover every column of `glossary_term` and `glossary_pass_state`, including why `first_seen_at`/`last_seen_at` are content dates rather than row timestamps, and what `attempts`/`last_attempt_at` and `stats_verified_at` are for.
 
 In `CLAUDE.md` and `GEMINI.md`, change `schema V44` to `schema V45` in the status line. **Do not** add the delivery narrative there — that belongs in the CHANGELOG.
 
