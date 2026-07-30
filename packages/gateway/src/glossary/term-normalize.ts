@@ -8,7 +8,11 @@
  */
 
 /** Leading/trailing punctuation that clings to a term in prose. */
-const EDGE_PUNCT = /^[`"'""''([{<.,;:!?\-–—]+|[`"'""'')\]}>.,;:!?\-–—]+$/g;
+const CURLY_QUOTES = "\u{201C}\u{201D}\u{2018}\u{2019}";
+const EDGE_PUNCT = new RegExp(
+  `^[\`"'${CURLY_QUOTES}([{<.,;:!?\\-–—]+|[\`"'${CURLY_QUOTES})\\]}>.,;:!?\\-–—]+$`,
+  "g",
+);
 
 const MIN_DEPLURAL_LENGTH = 3;
 

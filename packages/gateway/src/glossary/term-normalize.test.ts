@@ -44,3 +44,12 @@ test("preserves internal underscores and hyphens", () => {
   expect(normalizeTerm("shard_key")).toBe("shard_key");
   expect(normalizeTerm("write-behind")).toBe("write-behind");
 });
+
+test("strips curly quotes as well as straight ones", () => {
+  expect(normalizeTerm("\u{201C}CDR\u{201D}")).toBe("cdr");
+  expect(normalizeTerm("\u{2018}CDR\u{2019}")).toBe("cdr");
+});
+
+test("does not strip s from words ending in is", () => {
+  expect(normalizeTerm("axis")).toBe("axis");
+});
