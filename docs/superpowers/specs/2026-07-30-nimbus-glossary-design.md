@@ -531,6 +531,14 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   trustworthy than an LLM one because it looks like a verbatim team quote. The current behaviour
   fails **closed** (no definition) rather than open (a confidently wrong one). Affects only the
   backticked-code mining family; the LLM path is unaffected.
+- **A sync completing during shutdown can re-arm the debounce timer.** `SyncScheduler.stop()` does
+  not abort in-flight jobs — it drains them. A job finishing during that drain calls
+  `onConnectorSyncSuccess`, which calls `glossaryRefresher.trigger()`, arming a fresh 60 s timer
+  after `disposeSidecars()` has already run. Nothing cancels that one. In practice the process
+  exits long before 60 s elapse, and the refresher's `onError` swallows any failure, so the worst
+  case is a warning log and a wasted pass — but if shutdown stalls, a pass can fire against a
+  closing database. Found during the Task 12 re-review, 2026-07-30; pre-existing rather than
+  introduced by the shutdown wiring, since before that fix `stop()` was unreachable entirely.
 - **Vetoes are sticky.** `--rebuild` is the only reset.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
