@@ -2,6 +2,21 @@
 
 Feedback, open questions, and suggestions for the [directory-listings design](./2026-07-30-directory-listings-design.md) specification.
 
+> **Status: reviewed and dispositioned.** This is the original review as submitted,
+> kept for the record. Several suggestions were **rejected** — do not action anything
+> here without reading its disposition note first. The design document is
+> authoritative.
+>
+> | Suggestion | Disposition |
+> | --- | --- |
+> | Q1.1 README declares MCP support | **Accepted** — README now states both directions |
+> | Q1.2 Client vs Framework | **Accepted as Client**; double-listing **rejected** |
+> | 2.1 "Alternatives" field | **Field accepted, values rejected** — see note below |
+> | 2.2 `awesome-lint` | **Accepted, reframed** — do not assume it applies |
+> | 2.3 Tracking columns | **Partly accepted** — owner column rejected |
+> | 2.4 mcpdirectory.com | **Deferred** — could not verify the site exists |
+> | 2.4 Smithery | **Rejected** — server-publish oriented |
+
 ---
 
 ## 1. Open Questions
@@ -33,6 +48,11 @@ For directories like **AlternativeTo** (Tier 4), entries are discoverable primar
   ```text
   Alternatives to: Aider, Cursor (for SRE/infrastructure automation), OpenHands, Devin
   ```
+
+> **Disposition — field accepted, these values rejected.** Nimbus does not write code,
+> so it is not an alternative to a coding agent, and `docs/launch-messaging.md` flags
+> comparing Nimbus to coding assistants as the anti-pattern that reduces it to an
+> accessory. The design document uses AI-search-over-work-tools comparables instead.
 
 ### Suggestion 2.2: Add Awesome-List Linting Checks
 

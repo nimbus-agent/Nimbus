@@ -123,11 +123,18 @@ starts, and returns all six tools to `tools/list` with no Gateway present.
 
 ### Server-side listing caveat
 
-Directories that auto-build submissions — Glama, Smithery — expect a standalone,
-`npx`-installable server. Nimbus's server is a subcommand of an installed binary and
-needs the Gateway running, so those pipelines may fail or score it poorly. Submit to
-the curated lists first; treat Glama and Smithery as speculative and do not spend
-time debugging their build bots.
+Glama auto-builds and introspects submissions, including Docker-based ones — it does
+not require an `npx`-installable package. Nimbus was submitted and **listed** at
+`glama.ai/mcp/servers/nimbus-agent/Nimbus`.
+
+The real caveat is narrower: introspection is all that succeeds in a sandbox. Tool
+*calls* need a Gateway running on the host, so a sandboxed run answers `initialize` and
+`tools/list` and then errors on every call. That is within Glama's stated bar, which is
+start-and-introspect, but it caps what an automated quality score can observe.
+
+Smithery is a separate case and stays speculative: publishing there is
+`smithery mcp publish` driven by a `smithery.yaml` describing how to run a server,
+which does not describe a subcommand of an installed gateway.
 
 ### Feature-support matrix row (verified, do not inflate)
 
