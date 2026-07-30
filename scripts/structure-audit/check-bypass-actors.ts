@@ -17,6 +17,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { ATTESTATION_PATH, decideAttestWrite, writeAttestation } from "./_bypass-attestation.ts";
+import { isRecord, isStrict, runGh, strictSkip } from "./_gh-audit.ts";
+
 export interface AuditResult {
   ok: boolean;
   errors: string[];
@@ -193,4 +196,122 @@ export function diffBypassActors(
   }
 
   return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Exit decision for the per-repo loop.
+ *
+ * INVARIANT, mirroring check-ruleset-drift: real drift on a reachable repo is
+ * never discarded because a DIFFERENT repo's read failed. `queried === 0` is the
+ * only skip-green case.
+ */
+export function decideExit(input: {
+  queried: number;
+  errors: string[];
+  unreachable: string[];
+  strict?: boolean;
+}): { code: 0 | 1; message: string } {
+  const { queried, errors, unreachable, strict = false } = input;
+
+  if (queried === 0) return strictSkip("audit:bypass-actors", strict);
+
+  if (errors.length > 0) {
+    const lines = errors.map((err) => `audit:bypass-actors: ${err}`);
+    if (unreachable.length > 0) {
+      lines.push(`audit:bypass-actors: WARNING — could not query: ${unreachable.join(", ")}`);
+    }
+    return { code: 1, message: lines.join("\n") };
+  }
+
+  if (unreachable.length > 0) {
+    return {
+      code: 0,
+      message: `audit:bypass-actors: OK (${queried} repos) — WARNING: could not query ${unreachable.join(", ")}`,
+    };
+  }
+
+  return { code: 0, message: `audit:bypass-actors: OK (${queried} repos)` };
+}
+
+if (import.meta.main) {
+  const argv = process.argv.slice(2);
+  const strict = isStrict(argv, process.env);
+  const attest = argv.includes("--attest");
+  const label = "audit:bypass-actors";
+  const file = loadDeclaredBypass(process.cwd());
+
+  const configErrors = validateDeclaredBypass(file);
+  if (configErrors.length > 0) {
+    for (const err of configErrors) console.error(`${label}: ${err}`);
+    process.exit(1);
+  }
+
+  const observed: Record<string, BypassActor[]> = {};
+  const unreachable: string[] = [];
+  let queried = 0;
+
+  for (const repo of file.repos) {
+    const listResult = runGh([
+      "gh",
+      "api",
+      `repos/nimbus-agent/${repo}/rulesets`,
+      "--jq",
+      '.[] | select(.name=="General") | .id',
+    ]);
+    if (!listResult.ok) {
+      unreachable.push(repo);
+      continue;
+    }
+    const id = listResult.stdout.trim();
+    if (id === "") {
+      // gh succeeded and simply found no matching ruleset — real drift, not a skip.
+      queried += 1;
+      observed[repo] = [];
+      continue;
+    }
+
+    const detail = runGh(["gh", "api", `repos/nimbus-agent/${repo}/rulesets/${id}`]);
+    if (!detail.ok) {
+      unreachable.push(repo);
+      continue;
+    }
+
+    queried += 1;
+    const live: unknown = JSON.parse(detail.stdout);
+    const actors =
+      isRecord(live) && Array.isArray(live["bypass_actors"]) ? live["bypass_actors"] : [];
+    observed[repo] = actors.filter(isRecord) as unknown as BypassActor[];
+  }
+
+  const result = diffBypassActors(file.repos, file.bypass.by_repo, observed);
+  const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
+
+  if (attest) {
+    const decision = decideAttestWrite({
+      ok: result.ok,
+      queried,
+      total: file.repos.length,
+      unreachable,
+    });
+    if (!decision.write) {
+      if (outcome.code === 1) console.error(outcome.message);
+      console.error(`${label}: ${decision.reason ?? "refusing to attest"}`);
+      process.exit(1);
+    }
+    const who = runGh(["gh", "api", "user", "--jq", ".login"]);
+    writeAttestation(process.cwd(), {
+      attested_at: new Date().toISOString(),
+      attested_by: who.ok ? who.stdout.trim() : "unknown",
+      grace_days: file.bypass.attestation_grace_days,
+      repos: Object.keys(observed).sort(),
+      observed,
+    });
+    console.log(`${label}: OK (${queried} repos) — wrote ${ATTESTATION_PATH}`);
+    process.exit(0);
+  }
+
+  if (outcome.code === 1) console.error(outcome.message);
+  else if (outcome.message.includes("skipped")) console.warn(outcome.message);
+  else console.log(outcome.message);
+  process.exit(outcome.code);
 }

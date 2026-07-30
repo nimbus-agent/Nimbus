@@ -4,6 +4,7 @@ import {
   actorKey,
   type BypassActor,
   type DeclaredBypassFile,
+  decideExit,
   diffBypassActors,
   loadDeclaredBypass,
   validateDeclaredBypass,
@@ -168,5 +169,34 @@ describe("actorKey", () => {
     expect(actorKey({ actor_type: "OrganizationAdmin", bypass_mode: "always" })).toBe(
       actorKey({ actor_type: "OrganizationAdmin", actor_id: null, bypass_mode: "always" }),
     );
+  });
+});
+
+describe("decideExit", () => {
+  test("skips green when nothing was readable and not strict", () => {
+    expect(decideExit({ queried: 0, errors: [], unreachable: ["Nimbus"] }).code).toBe(0);
+  });
+
+  test("fails when nothing was readable under --strict", () => {
+    expect(decideExit({ queried: 0, errors: [], unreachable: ["Nimbus"], strict: true }).code).toBe(
+      1,
+    );
+  });
+
+  test("keeps drift found on a reachable repo despite another repo failing", () => {
+    const out = decideExit({
+      queried: 1,
+      errors: ["Nimbus: unexpected"],
+      unreachable: ["nimbus-sdk"],
+    });
+    expect(out.code).toBe(1);
+    expect(out.message).toContain("Nimbus: unexpected");
+    expect(out.message).toContain("could not query: nimbus-sdk");
+  });
+
+  test("passes with a warning on a partial read with no drift", () => {
+    const out = decideExit({ queried: 4, errors: [], unreachable: ["nimbus-sdk"] });
+    expect(out.code).toBe(0);
+    expect(out.message).toContain("WARNING");
   });
 });
