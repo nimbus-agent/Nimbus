@@ -555,7 +555,12 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   mean". It degrades to under-suggestion, never to a wrong answer — but the excluded tail is the
   rare, low-frequency jargon most likely to need the suggestion in the first place. Noted during
   the Task 13 re-review, 2026-07-30; raise `NEAR_MISS_POOL` if real glossaries outgrow it.
-- **Vetoes are sticky.** `--rebuild` is the only reset.
+- **`--refresh` and `--rebuild` are parsed but not yet wired.** The CLI accepts and forwards them,
+  but the gateway's `agents.glossary` handler reads only `term` and `limit`, so neither flag
+  currently triggers a pass. Found during the Task 15 review, 2026-07-30. Forwarding is harmless
+  (unknown JSON-RPC params are ignored), but until the handler honours them the extraction pass is
+  driven solely by the post-sync trigger. Wiring them is a follow-up.
+- **Vetoes are sticky.** A rebuild is the only reset — see the flag caveat above.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
 - **No manual authoring or correction — deferred, with the seam named.** Every term in this slice

@@ -4793,7 +4793,9 @@ In `docs/roadmap.md`:
 
 - [ ] **Step 3: Document the CLI**
 
-In `docs/cli-reference.md`, add a `nimbus glossary` section documenting `[<term>]`, `--limit`, `--refresh`, `--rebuild`, `--json`, and the exit codes (1 = gateway not running, 2 = agent error).
+In `docs/cli-reference.md`, add a `nimbus glossary` section documenting `[<term>]`, `--limit`, `--json`, and the exit codes (1 = gateway not running, 2 = agent error).
+
+**Do NOT document `--refresh` / `--rebuild` as working flags.** The CLI parses them and forwards them, but the gateway's `agents.glossary` handler reads only `term` and `limit`, so they currently do nothing. Found during the Task 15 review, 2026-07-30. Either omit them entirely, or list them as accepted-but-not-yet-implemented — documenting them as functional would describe behaviour that does not exist. Wiring them gateway-side is a follow-up, not part of this slice.
 
 - [ ] **Step 4: Update the architecture and schema docs**
 
