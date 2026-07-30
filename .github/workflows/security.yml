@@ -47,8 +47,43 @@ jobs:
         with:
           verify-lock: "false"
 
-      - name: bun audit
-        run: bun audit --audit-level high
+      # `bun audit` exits non-zero for two unrelated reasons: a HIGH/CRITICAL
+      # advisory (which MUST block) and an unreachable audit service (which says
+      # nothing about our dependencies). Conflating them let a registry 503 block
+      # the 1.12.0 release — see #966.
+      #
+      # So the two cases are separated rather than blanket-retried:
+      #   * a transport failure is retried up to 3 times with backoff;
+      #   * anything else fails IMMEDIATELY on attempt 1, with no retry and no
+      #     delay, because a real advisory fails identically on every attempt and
+      #     re-running it only slows down the feedback.
+      # If all 3 attempts hit transport failures the step still FAILS. That is
+      # deliberate: `continue-on-error` here would also swallow genuine
+      # HIGH/CRITICAL findings, which is the one thing this gate exists to catch.
+      - name: bun audit (retry transport failures only)
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            out="$(bun audit --audit-level high 2>&1)"
+            code=$?
+            printf '%s\n' "$out"
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            # Bun prints e.g. `error: audit request failed (status 503)` when the
+            # registry endpoint is unreachable or erroring.
+            if ! printf '%s' "$out" | grep -qE 'audit request failed \(status [0-9]+\)'; then
+              echo "bun audit reported a finding (exit $code) — not a transport error, failing without retry."
+              exit "$code"
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "bun audit was unreachable on all 3 attempts (exit $code) — failing closed."
+              exit "$code"
+            fi
+            delay=$((attempt * 10))
+            echo "Audit service unreachable (attempt $attempt, exit $code), retrying in ${delay}s..."
+            sleep "$delay"
+          done
 
       # `bun audit --audit-level high` only blocks HIGH/CRITICAL. Everything
       # below that used to persist silently — two advisories sat in the output

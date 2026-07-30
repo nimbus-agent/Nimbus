@@ -190,6 +190,18 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
 
   // --- Nimbus: CLA bot ---
   {
+    name: "CLA_BOT_APP_ID",
+    state: "forbidden",
+    location: { scope: "org" },
+    product: "actions",
+    type: "app-key",
+    owner: OWNER,
+    consumedBy: [],
+    maxAgeDays: null,
+    hardDeadline: null,
+    note: "Deleted 2026-07-30 (Nimbus#854). Same shape as RELEASE_BOT_APP_ID: created 2026-07-24T09:30Z while wiring the CLA Assistant App, then superseded hours later by CLA_BOT_CLIENT_ID (12:39Z) when the mint step used the `client-id` input rather than the deprecated `app-id`. It was never removed, so it sat in the org unreferenced — secret-health could only report it as `undocumented`, which is why it is registered here rather than silently deleted. `cla.yml` reads only CLA_BOT_CLIENT_ID + CLA_BOT_PRIVATE_KEY. If it reappears, someone has reintroduced the deprecated input.",
+  },
+  {
     name: "CLA_BOT_CLIENT_ID",
     state: "required",
     location: { scope: "org" },

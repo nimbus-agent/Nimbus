@@ -47,15 +47,15 @@ describe("CREDENTIAL_REGISTRY", () => {
     }
   });
 
-  test("the manifest holds exactly the audited set: 38 entries across 4 locations", () => {
-    expect(CREDENTIAL_REGISTRY.length).toBe(38);
+  test("the manifest holds exactly the audited set: 39 entries across 4 locations", () => {
+    expect(CREDENTIAL_REGISTRY.length).toBe(39);
 
     const counts = new Map<string, number>();
     for (const e of CREDENTIAL_REGISTRY) {
       const loc = e.location.scope === "org" ? "ORG" : (e.location.repo ?? "-");
       counts.set(loc, (counts.get(loc) ?? 0) + 1);
     }
-    expect(counts.get("ORG")).toBe(6);
+    expect(counts.get("ORG")).toBe(7);
     expect(counts.get("Nimbus")).toBe(23);
     expect(counts.get("nimbus-vscode")).toBe(2);
     expect(counts.get("nimbus-web-clipper")).toBe(7);
