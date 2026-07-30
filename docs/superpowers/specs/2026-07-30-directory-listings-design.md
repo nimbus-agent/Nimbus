@@ -45,6 +45,33 @@ through six read-only tools — `searchIndex`, `getConnectorStatus`,
 > reserved) is a **different, later** owner-sink surface. Its being unshipped does not
 > affect the read-only server above, which ships today.
 
+### Why the Official MCP Registry is blocked
+
+The registry is a **metaregistry**: it stores metadata pointing at an artifact hosted
+somewhere else, and `server.json` must name a package on a supported registry. The
+allowed set is npm (`registry.npmjs.org`), PyPI, NuGet, Cargo, Docker/OCI
+(Docker Hub, ghcr.io, quay.io, `*.pkg.dev`, `*.azurecr.io`, mcr.microsoft.com), and
+MCPB (a `.mcpb` binary attached to a GitHub or GitLab release). Publishing also
+requires an ownership-verification token inside the published package, checked by a
+per-registry validator.
+
+Nimbus ships through Homebrew, Scoop, winget, apt/yum, and direct download. None is a
+supported registry type, and the server is a subcommand of an installed gateway rather
+than a standalone artifact — so there is nothing to point a `server.json` at.
+
+Reaching the registry would need a deliberate packaging decision, which is engineering
+work and not part of this spec:
+
+- **MCPB** — build a `.mcpb` bundle into the release pipeline. Closest fit, since
+  releases already exist and MCPB is explicitly for prebuilt binaries.
+- **npm launcher** — publish a thin package whose `bin` shells out to
+  `nimbus mcp-server --stdio`. Cheapest, but it installs something that fails unless
+  the gateway is already installed and running, which is a poor first impression and
+  arguably misrepresents what the package is.
+
+Until one is chosen, every registry-fed aggregator (PulseMCP's server directory
+included) stays out of reach. The curated lists do not depend on it.
+
 ### Server-side listing caveat
 
 Directories that auto-build submissions — Glama, Smithery — expect a standalone,
@@ -73,11 +100,11 @@ Highest-intent audience. Ordered by yield per hour.
 | Target | Mechanism | Notes |
 | --- | --- | --- |
 | `modelcontextprotocol/docs` → `clients.mdx` | Pull request | Official list. Add one matrix row **and** a link-reference definition at the bottom of the file. No popularity bar: "if you've added MCP support to your application, we encourage you to submit a pull request." |
-| PulseMCP | Form at `pulsemcp.com/submit` | Accepts both servers and clients. Requires only a URL. No stated eligibility bar. Lowest-effort item on this list. |
+| PulseMCP | Email `hello@pulsemcp.com` | **Not a form.** `pulsemcp.com/submit` no longer takes direct submissions — it redirects to the Official MCP Registry, which it ingests daily and processes weekly. Since that registry is servers-only, email is the only route for the client surface. |
 | `punkpeye/awesome-mcp-clients` | Pull request | Exact category match. Entry format is `### Name` + an HTML `<table>` (GitHub, Website, License, Type, Platforms, Pricing, Programming Languages) + a one-paragraph description + optional screenshots. Add a TOC entry too. |
 | mcp.so | Manual — see `mcp.so/clients` | The site is server-first, but a clients section exists. It returns HTTP 403 to automated fetches, so confirm the submission route in a browser before budgeting time for it. |
 | `punkpeye/awesome-mcp-servers` | Pull request | The largest directory in the ecosystem by a wide margin (~91k stars) and actively maintained. Submit the **server** surface here. Highest-reach single target on this list. |
-| Official MCP Registry (`registry.modelcontextprotocol.io`) | Server publish | The canonical registry, and PulseMCP ingests it — one submission, two placements. |
+| Official MCP Registry (`registry.modelcontextprotocol.io`) | **Blocked** — see below | The canonical registry, and PulseMCP plus other aggregators ingest it. Not currently reachable: it is a metaregistry that only stores metadata pointing at a package. |
 | `wong2/awesome-mcp-servers`, `appcypher/awesome-mcp-servers` | Pull request | Server lists; check whether a clients section also exists. |
 
 ### Classification: submit as a Client, in one section only
@@ -221,10 +248,10 @@ column would be the same name on every row.
 | Target | Surface | Status | Submission link | Completed |
 | --- | --- | --- | --- | --- |
 | README MCP statement | — | **done** | commit on `dev/asafgolombek/directory-listings` | 2026-07-30 |
-| PulseMCP | client + server | not started | | |
+| PulseMCP (email) | client | not started | | |
 | modelcontextprotocol/docs `clients.mdx` | client | not started | | |
 | `punkpeye/awesome-mcp-servers` | server | not started | | |
-| Official MCP Registry | server | not started | | |
+| Official MCP Registry | server | **blocked** — needs a packaging decision | | |
 | `punkpeye/awesome-mcp-clients` | client | not started | | |
 | mcp.so (confirm route first) | client + server | not started | | |
 | wong2 / appcypher | server | not started | | |
