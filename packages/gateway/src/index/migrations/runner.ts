@@ -25,6 +25,7 @@ import {
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
+import { GLOSSARY_V45_SQL } from "../glossary-v45-sql.ts";
 import { GRAPH_LINEAGE_TYPES_V40_SQL } from "../graph-lineage-types-v40-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
@@ -405,6 +406,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(41, 42, "tool_call_log.params_json (recipe params v42)", TOOL_CALL_PARAMS_V42_SQL),
   simpleStep(42, 43, "share_inbox (sovereign-mesh referral v43)", SHARE_INBOX_V43_SQL),
   simpleStep(43, 44, "egress_ledger (provable-locality primitive v44)", EGRESS_LEDGER_V44_SQL),
+  simpleStep(
+    44,
+    45,
+    "glossary_term + glossary_pass_state (implicit-knowledge glossary v45)",
+    GLOSSARY_V45_SQL,
+  ),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
