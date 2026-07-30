@@ -106,6 +106,28 @@ Declared entries omit `actor_id`. Comparison is therefore an order-independent
 set of `${actor_type}:${actor_id ?? "null"}:${bypass_mode}` triples. Set
 comparison, not array equality — actor order is not meaningful.
 
+**Supported scope: org-level actors with a null `actor_id`.** Every bypass actor
+in the org today is `OrganizationAdmin`, whose `actor_id` is `null` on all five
+repos. `Team`, `Integration` and `RepositoryRole` actors instead carry a numeric
+id, and that raises a problem this design does not yet solve — **not portability,
+but reviewability.** The whole control here is that the attestation and the
+declared config are PR-visible and diff-reviewed; `"actor_id": 4382579` in a JSON
+file is not something a human reviewer can meaningfully check, so a numeric id
+would quietly degrade the gate into a shape-check.
+
+An undeclared actor type is therefore a **hard error**, not a silent pass:
+`<repo>: unsupported bypass actor type <t> (id <n>) — declared bypass intent
+supports only null-id org-level actors; see the design`. Fail-closed: a Team
+bypass added in the UI reds the gate rather than being normalized away.
+
+**Wildcard `actor_id` matching is deliberately rejected.** Allowing `"*"` to
+match any id would mean *any* team's bypass satisfies a declared entry — which
+erases precisely the distinction the gate exists to detect. If a Team or
+Integration bypass is ever genuinely wanted, the follow-up is to resolve ids to
+names at read time (`/orgs/{org}/teams/{id}`) and diff on the **name**, keeping
+the config human-checkable. Deferred until such an actor actually exists (YAGNI);
+until then the hard error above ensures one cannot be added unnoticed.
+
 **Findings are directional**, because the repairs differ:
 
 - `unexpected bypass actor: <triple>` — someone added an override
@@ -113,9 +135,31 @@ comparison, not array equality — actor order is not meaningful.
 - `bypass_mode: expected <x>, got <y>` — an override was widened or narrowed
 - `<repo>: not declared in bypass.by_repo` — config gap, see check 3 below
 
-**`--attest`** writes `docs/structure-audit/bypass-actors-attestation.json`
-**only when the diff is green.** A fresh attestation can therefore never encode a
-known-bad state. On a red diff it exits 1 and writes nothing.
+**`--attest`** writes `docs/structure-audit/bypass-actors-attestation.json` under
+**two** conditions, both required:
+
+1. **the diff is green** — so a fresh attestation can never encode a known-bad
+   state; and
+2. **every declared repo was read successfully** — `queried === repos.length`,
+   `unreachable` empty.
+
+Condition 2 is not redundant, and omitting it was a real hole in the first draft
+of this design. `decideExit` deliberately returns **exit 0 with a warning** when
+some repos are unreachable but no drift was found on the ones that were read —
+correct for a *reporting* gate, wrong for an *attesting* one. Keying `--attest`
+off exit code alone would let a 4-of-5 read produce an attestation whose `repos`
+field claims all five, which Gate 2's check 3 would then accept as complete
+coverage. A partial read would launder itself into a green sweep for the whole
+grace window.
+
+So: on any unreachable repo, `--attest` exits 1 and writes nothing, with
+`cannot attest: <repo> unreachable (read N of M)`. **The `repos` field is
+derived from the set actually observed, never copied from config** — belt and
+braces, so even a future refactor that loses condition 2 cannot silently claim
+uncovered repos.
+
+Attesting is an interactive act the owner can simply re-run; refusing on partial
+data costs nothing and removes the entire class of false-coverage bug.
 
 ### Gate 2 — `audit:bypass-attestation` (sweep)
 
@@ -134,6 +178,21 @@ Four checks, all offline — no `gh`, no token mint, no network:
    maintainer gains write access — exactly when the other three switches flip.
    Encoding the window as a fourth switch keeps that reasoning in one place and
    makes tightening it part of the same reviewed diff.
+
+   **Time handling.** `attested_at` is written by `new Date().toISOString()`,
+   which is UTC with a `Z` suffix by JS spec, and compared as
+   `Date.now() - Date.parse(attested_at)` — epoch milliseconds on both sides, so
+   the arithmetic is inherently offset-free and no timezone normalization step is
+   needed. Two edge cases do need explicit handling, because both **fail open**:
+   - **an unparseable `attested_at`** yields `NaN`, and every comparison against
+     `NaN` is false — so a naive `elapsed > grace` check passes. Treated as
+     `unparseable` (check 1's verdict), never as fresh.
+   - **a future-dated `attested_at`** — clock skew on the attesting machine, or a
+     hand edit — yields negative elapsed time and would stay "fresh" until real
+     time caught up, i.e. potentially forever. Any timestamp more than **1 hour**
+     ahead of now is a hard error: `attested_at is N minutes in the future —
+     clock skew or a hand-edited file`. The tolerance absorbs ordinary NTP drift
+     without absorbing a meaningful backdate.
 3. **the attested `repos` set equals the declared `repos` set.** Load-bearing:
    adding a sixth repo to `general-branch.json` must invalidate an attestation
    that never covered it. Without this check a newly-added repo would be silently
@@ -174,8 +233,18 @@ operating rule warns about.
 ```
 
 `attested_by` comes from `gh api user --jq .login`, so the commit records who
-attested as well as when. `grace_days` is denormalized into the file for
-diagnostics only; **check 2 reads
+attested as well as when. It is **best-effort diagnostic metadata**: if that call
+fails the field is written as `"unknown"` and the attestation still succeeds — it
+is never a reason to fail an otherwise-complete audit.
+
+It must **not** fall back to `git config user.name`/`user.email` or `$USER`.
+Those name whoever configured the checkout, not the credential that performed the
+read, so on failure they would assert an identity the audit cannot support —
+worse than recording nothing. (The failure is near-impossible in isolation
+anyway: `gh api user` failing means `gh` auth is broken, in which case the
+ruleset reads have already failed and no attestation is written at all.)
+
+`grace_days` is denormalized into the file for diagnostics only; **check 2 reads
 `bypass.attestation_grace_days` from `general-branch.json`, never this field**,
 so a hand-edited `grace_days` cannot widen the window.
 
@@ -216,6 +285,17 @@ A unit test asserts `Object.keys(bypass.by_repo)` equals the `repos` set, so
 declaring a repo without its bypass intent fails locally rather than at sweep
 time.
 
+**Declared entries are schema-validated before diffing**: `bypass_mode` must be
+one of `always` / `pull_request`, and `actor_type` must be a known GitHub actor
+type. Not because an invalid value would slip through — a typo like `"alway"`
+produces a mismatch against live `"always"` and reds the gate loudly — but
+because of *which* error it produces. Unvalidated, the finding reads
+`bypass_mode: expected alway, got always`, which points the reader at the org
+setting when the defect is in the config. Validated, it reads `invalid
+bypass_mode "alway" in bypass.by_repo.Nimbus (expected always|pull_request)`.
+Same red, correct diagnosis — and misdiagnosis is expensive on a gate that fires
+a few times a year.
+
 ### Stale assertions this must correct
 
 Four places currently state that bypass actors are not audited. Leaving any is
@@ -254,14 +334,25 @@ in solo mode, 30 once a second maintainer has write access.
 **Pure diff (`diffBypassActors`)** — exact match; extra/unexpected actor; missing
 declared actor; correct actor with wrong `bypass_mode`; repo absent from
 `bypass.by_repo`; `actor_id` normalization (`null` vs omitted); order-independence
-of the actor set.
+of the actor set; **a non-null-id actor type (`Team`, `Integration`,
+`RepositoryRole`) is a hard error rather than being normalized away**; invalid
+declared `bypass_mode` / `actor_type` reports a config error, not a drift finding.
 
 **Gate 2 (`evaluateAttestation`)** — fresh; stale by one day past grace; missing
 file; unparseable; parses to a scalar/array; `repos` set mismatch in both
 directions; `observed` drifting from declared; grace read from
 `general-branch.json` (a 30-day config makes a 45-day-old attestation stale
 where a 90-day config does not); hand-edited `grace_days` in the attestation
-ignored in favour of the config value.
+ignored in favour of the config value; **`attested_at` unparseable → the
+`unparseable` verdict, never "fresh" via `NaN` comparison**; **`attested_at`
+2 hours in the future → hard error**; `attested_at` 10 minutes in the future →
+tolerated (NTP drift).
+
+**`--attest` write conditions** — writes on green + complete read; **refuses on a
+partial read even with zero drift** (the 1.2 hole: `decideExit` returns 0 there);
+refuses on drift; written `repos` derives from the observed set, not config;
+`attested_by` falls back to `"unknown"` when `gh api user` fails, and the write
+still succeeds.
 
 **Config** — `keys(bypass.by_repo)` equals `repos`.
 
