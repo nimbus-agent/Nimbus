@@ -77,6 +77,50 @@ work and not part of this spec:
 Until one is chosen, every registry-fed aggregator (PulseMCP's server directory
 included) stays out of reach. The curated lists do not depend on it.
 
+### Glama: the introspection Dockerfile
+
+Glama builds and introspects the server from a Dockerfile supplied on the server's
+admin page — it explicitly does **not** need to live in this repository, and it is kept
+out on purpose. A root `Dockerfile` on a local-first project reads as "run Nimbus in
+Docker", which does not work: the container has no Gateway, index, or keystore, so
+protocol introspection succeeds while tool *calls* fail. It would also rot, since the
+pinned version and digest need bumping at every release.
+
+Recorded here because Glama's admin UI is not version-controlled:
+
+```dockerfile
+FROM --platform=linux/amd64 debian:bookworm-slim
+
+ARG NIMBUS_VERSION=v1.12.1
+ARG NIMBUS_CLI_SHA256=78e43ec607d2fcd62e7395ff09bdf829558f772578c2bde4d4d2970ffaa6e444
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && curl -fsSL -o /tmp/nimbus \
+      "https://github.com/nimbus-agent/Nimbus/releases/download/${NIMBUS_VERSION}/nimbus-cli-linux-x64" \
+ && echo "${NIMBUS_CLI_SHA256}  /tmp/nimbus" | sha256sum -c - \
+ && install -m 0755 /tmp/nimbus /usr/local/bin/nimbus \
+ && rm -f /tmp/nimbus \
+ && apt-get purge -y --auto-remove curl \
+ && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["nimbus", "mcp-server", "--stdio"]
+```
+
+Three things about it are deliberate:
+
+- **`--platform=linux/amd64`.** Nimbus publishes one Linux CLI asset, x64 only. There is
+  no arm64 binary for a `TARGETARCH` switch to select, so an arm64 builder would
+  otherwise install an x64 binary that fails at runtime.
+- **The SHA-256 check.** `docs/install.md` tells users the checksum is their trust
+  anchor; the image follows the same rule. It is fail-closed and runs before install —
+  verified by building with a wrong digest, which aborts (`sha256sum: FAILED`).
+- **No `COPY`.** Nothing from the repo is needed, so the build context stays empty.
+
+Bumping `NIMBUS_VERSION` requires updating `NIMBUS_CLI_SHA256` from that release's
+`SHA256SUMS`, or the build fails by design. Verified against v1.12.1: the image builds,
+starts, and returns all six tools to `tools/list` with no Gateway present.
+
 ### Server-side listing caveat
 
 Directories that auto-build submissions — Glama, Smithery — expect a standalone,
