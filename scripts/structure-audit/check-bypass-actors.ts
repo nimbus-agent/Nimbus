@@ -283,7 +283,7 @@ if (import.meta.main) {
     observed[repo] = actors.filter(isRecord) as unknown as BypassActor[];
   }
 
-  const result = diffBypassActors(file.repos, file.bypass.by_repo, observed);
+  const result = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
   const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
 
   if (attest) {

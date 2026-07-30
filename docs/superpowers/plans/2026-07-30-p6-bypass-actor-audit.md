@@ -836,7 +836,11 @@ if (import.meta.main) {
     observed[repo] = actors.filter(isRecord) as unknown as BypassActor[];
   }
 
-  const result = diffBypassActors(file.repos, file.bypass.by_repo, observed);
+  const result = diffBypassActors(Object.keys(observed), file.bypass.by_repo, observed);
+  // Diff only the repos actually observed — unreachable repos are already
+  // reported by decideExit's "could not query" warning, so feeding them into
+  // the diff too would manufacture a bogus "no observed bypass_actors"
+  // finding and make a partial read misreport as a drift finding.
   const outcome = decideExit({ queried, errors: result.errors, unreachable, strict });
 
   if (attest) {
