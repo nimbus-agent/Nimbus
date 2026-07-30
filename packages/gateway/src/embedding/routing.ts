@@ -44,6 +44,9 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   // Saved research-brief reports are prose synthesis (summary/findings/gaps), like
   // nimbus:web_clip. MiniLM-only fallback when openai.api_key is absent.
   "nimbus:research_brief",
+  // Consolidated glossary definitions are prose synthesis, like
+  // nimbus:research_brief. MiniLM-only fallback when openai.api_key is absent.
+  "nimbus:glossary_term",
 ]);
 
 export function routingKey(service: string, type: string): string {

@@ -17,7 +17,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (22 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (23 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -41,6 +41,7 @@ describe("embedding/routing", () => {
       "apple:email",
       "nimbus:web_clip",
       "nimbus:research_brief",
+      "nimbus:glossary_term",
     ]);
     expect(PROSE_HEAVY_TYPES.size).toBe(expected.size);
     for (const key of expected) {
