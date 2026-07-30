@@ -2457,7 +2457,7 @@ git commit -m "feat(glossary): LLM consolidation with veto, timeout and snippet 
 
 **Interfaces:**
 - Consumes: `selectStaleForRecheck`, `computeTermStats`, `applyStats`, `demoteTerm` (Task 7); `unprojectTerm` (Task 8); `scoreTerm` (Task 5).
-- Produces: `reconcilePass(db, opts: { limit: number; minDocFreq: number; nowMs: number }): { verified: number; demoted: string[] }`.
+- Produces: `reconcilePass(db, opts: { limit: number; minDocFreq: number; nowMs: number; cooldownMs: number }): { verified: number; demoted: string[] }`.
 
 This closes the spec-§5.1 gap: a term whose sources were deleted is never re-discovered by the incremental scan, because deletion bumps no `modified_at`.
 
