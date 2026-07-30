@@ -1,6 +1,13 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,25 +41,52 @@ describe("db/snapshot", () => {
   let dbPath: string;
   let dataDir: string;
   let db: Database;
+  let templateDir: string;
+  let templateDbPath: string;
+
+  /**
+   * Running every migration against a fresh SQLite file cost ~232 ms per test
+   * on Windows — ~2,000x the per-test cleanup and the dominant term behind the
+   * 30 s hook-timeout flake in #968. Migrating once into a template and copying
+   * the file per test is measured 16.6x faster end-to-end (231.8 ms -> 6.1 ms
+   * per test) and yields an identical database: same `user_version`, same 69
+   * tables, same seed rows.
+   *
+   * `ensureSchema` still runs on each copy — on an already-current
+   * `user_version` it skips every migration and only applies the
+   * connection-level pragmas, which do not survive in the file.
+   */
+  beforeAll(() => {
+    templateDir = mkdtempSync(join(tmpdir(), "nimbus-snapshot-template-"));
+    templateDbPath = join(templateDir, "template.db");
+    makeDbAt(templateDbPath).close();
+  });
+
+  afterAll(() => {
+    rmSync(templateDir, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "nimbus-snapshot-test-"));
     dbPath = join(tmp, "nimbus.db");
     dataDir = tmp;
-    db = makeDbAt(dbPath);
+    copyFileSync(templateDbPath, dbPath);
+    db = new Database(dbPath);
+    LocalIndex.ensureSchema(db);
   });
 
   afterEach(() => {
     try {
       db.close();
     } catch {
-      /* already closed in some tests */
+      /* the restoreSnapshot cases close and reopen `db` themselves */
     }
-    try {
-      rmSync(tmp, { recursive: true, force: true });
-    } catch {
-      /* Windows may hold a file lock briefly after close; ignore cleanup errors */
-    }
+    // Cleanup is expected to succeed on every platform. It used to fail EBUSY
+    // 30/30 on Windows because an unfinalized prepared statement kept the
+    // database file open (#969, fixed in migrations/runner.ts); the error was
+    // swallowed here, so every run silently leaked a temp directory. Do not
+    // re-add a catch: a failure here now means a handle is being retained again.
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   describe("takeSnapshot", () => {

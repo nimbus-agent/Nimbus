@@ -243,16 +243,23 @@ function backfillAuditChain(db: Database): void {
   }>;
   let prev = "0".repeat(64);
   const update = db.prepare(`UPDATE audit_log SET row_hash = ?, prev_hash = ? WHERE id = ?`);
-  for (const r of rows) {
-    const row = computeAuditRowHash({
-      prevHash: prev,
-      actionType: r.action_type,
-      hitlStatus: r.hitl_status,
-      actionJson: r.action_json,
-      timestamp: r.timestamp,
-    });
-    dbStmtRun(update, row, prev, r.id);
-    prev = row;
+  // A statement from db.prepare() must be finalized explicitly: bun:sqlite only
+  // auto-releases the db.query() cache, so an unfinalized handle makes a later
+  // db.close() a silent no-op and pins the database file open (#969).
+  try {
+    for (const r of rows) {
+      const row = computeAuditRowHash({
+        prevHash: prev,
+        actionType: r.action_type,
+        hitlStatus: r.hitl_status,
+        actionJson: r.action_json,
+        timestamp: r.timestamp,
+      });
+      dbStmtRun(update, row, prev, r.id);
+      prev = row;
+    }
+  } finally {
+    update.finalize();
   }
 }
 
