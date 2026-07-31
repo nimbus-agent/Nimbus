@@ -442,6 +442,29 @@ export function countByStatus(db: Database): { total: number; pending: number; v
   return { total: r?.total ?? 0, pending: r?.pending ?? 0, vetoed: r?.vetoed ?? 0 };
 }
 
+/**
+ * How many CONSOLIDATED terms carry a verbatim-snippet definition rather than
+ * a model-consolidated one.
+ *
+ * Unlike `countByStatus` above, this has no `?? 0` fallback, and that is
+ * deliberate rather than an oversight: `countByStatus` aggregates with
+ * `SUM(CASE …)`, which genuinely returns NULL over zero rows. This query is a
+ * bare `COUNT(*)` with no `GROUP BY` — it always returns exactly one row, and
+ * `COUNT` (unlike `SUM`) never yields NULL, returning `0` over zero matches.
+ * So `.get()` cannot return `null` and `n` cannot be null here; adding the
+ * fallback back "for safety" would just re-introduce an unreachable branch.
+ */
+export function countSnippetSourced(db: Database): number {
+  return (
+    db
+      .query(
+        `SELECT COUNT(*) AS n FROM glossary_term
+         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+      )
+      .get() as { n: number }
+  ).n;
+}
+
 export type GlossaryPassState = {
   watermarkMs: number;
   /** Tiebreaker within `watermarkMs` — the `item.id` of the last scanned row. */

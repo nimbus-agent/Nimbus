@@ -149,22 +149,30 @@ test("the brief carries latency and a version", async () => {
 });
 
 test("reports how many definitions are raw snippets", async () => {
+  // Asymmetric on purpose: 2 snippet + 1 llm. A symmetric 1-of-2 split would
+  // make "count = 1" ambiguous between the two filters, so flipping the
+  // store query's `definition_source` predicate would coincidentally produce
+  // the identical "1 of 2" text and the assertion below would still pass —
+  // verifying message formatting, not that the count came from the intended
+  // filter. With 2-of-3, flipping the filter yields a different count
+  // (1-of-3), so this assertion catches that mutation on its own.
   seed("cdr", { definitionSource: "snippet" });
-  seed("slo", { definitionSource: "llm" });
+  seed("slo", { definitionSource: "snippet" });
+  seed("rpo", { definitionSource: "llm" });
   // A gap note about extraction never having run takes priority over the
   // snippet-ratio note (buildGaps returns early on lastPassAt === null), so a
   // completed pass must be on record for this test to reach that logic.
   writePassState(db, {
     watermarkMs: 900,
-    watermarkId: "slo",
+    watermarkId: "rpo",
     lastPassAt: 1000,
-    lastPassNew: 2,
-    scannedItems: 2,
+    lastPassNew: 3,
+    scannedItems: 3,
   });
   const brief = await runGlossary({}, ctx());
   const note = brief.gaps.find((g) => g.detail.includes("verbatim snippet"));
   expect(note).toBeDefined();
-  expect(note?.detail).toContain("1 of 2");
+  expect(note?.detail).toContain("2 of 3");
   expect(note?.remediation).toContain("--refresh");
 });
 

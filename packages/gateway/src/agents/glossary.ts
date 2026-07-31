@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
 import {
   countByStatus,
+  countSnippetSourced,
   findBySynonym,
   getTerm,
   listConsolidated,
@@ -132,15 +133,7 @@ function buildGaps(
   // simply not running has no way to notice the pattern — the glossary looks
   // built, just oddly worded. Report the ratio rather than picking a
   // "predominantly" threshold nobody can justify.
-  const snippetCount =
-    (
-      db
-        .query(
-          `SELECT COUNT(*) AS n FROM glossary_term
-         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
-        )
-        .get() as { n: number } | null
-    )?.n ?? 0;
+  const snippetCount = countSnippetSourced(db);
   if (snippetCount > 0) {
     gaps.push({
       category: "missing_connector",
