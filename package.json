@@ -243,6 +243,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@nimbus-dev/sdk": "^1.11.0",
     "astro": "^7.1.4",
     "zod": "^4.4.3"
   },

@@ -1,58 +1,18 @@
-export type BearerJsonFetchResult = {
-  ok: boolean;
-  status: number;
-  json: unknown;
-  text: string;
-};
-
 /**
- * Resolve a path-or-URL against `baseUrl`. A relative path is prefixed with the
- * base. An ABSOLUTE URL is only allowed when it shares the base's origin — this
- * is the single chokepoint that prevents a caller-supplied pagination link
- * (`@odata.nextLink`, etc.) from redirecting a credential-bearing fetch at an
- * attacker-controlled host (SSRF / bearer-token exfiltration). A cross-origin or
- * malformed absolute URL throws and is never fetched.
+ * fetch-bearer-json — re-export of the Bearer-auth JSON fetch helpers now owned
+ * by `@nimbus-dev/sdk/connector-kit`.
+ *
+ * These helpers originated here and were upstreamed to the SDK in 1.11.0. The
+ * SDK is now the single owner; this module stays as the connector-facing import
+ * path so the ~99 connectors keep their existing relative imports.
+ *
+ * Named re-exports, deliberately not `export *` — see the note in
+ * `mcp-tool-kit.ts`.
+ *
+ * `resolveUrlWithBase` remains the SSRF chokepoint that refuses a cross-origin
+ * absolute URL before a credential-bearing fetch; that behaviour now lives in
+ * the SDK and is covered by `fetch-bearer-json.test.ts` through this re-export.
  */
-export function resolveUrlWithBase(baseUrl: string, pathOrUrl: string): string {
-  if (!pathOrUrl.startsWith("http")) {
-    return `${baseUrl}${pathOrUrl}`;
-  }
-  const target = new URL(pathOrUrl);
-  const base = new URL(baseUrl);
-  if (target.origin !== base.origin) {
-    throw new Error(
-      `resolveUrlWithBase: refusing to fetch cross-origin URL (got ${target.origin}, expected ${base.origin})`,
-    );
-  }
-  return pathOrUrl;
-}
 
-export async function fetchBearerAuthorizedJson(
-  url: string,
-  token: string,
-  init?: RequestInit,
-  defaultHeaders?: Record<string, string>,
-): Promise<BearerJsonFetchResult> {
-  const mergedHeaders = new Headers({
-    Authorization: `Bearer ${token}`,
-    ...defaultHeaders,
-  });
-  if (init?.headers !== undefined) {
-    const extra = new Headers(init.headers);
-    for (const [k, v] of extra) {
-      mergedHeaders.set(k, v);
-    }
-  }
-  const res = await fetch(url, {
-    ...init,
-    headers: mergedHeaders,
-  });
-  const text = await res.text();
-  let json: unknown;
-  try {
-    json = JSON.parse(text) as unknown;
-  } catch {
-    json = null;
-  }
-  return { ok: res.ok, status: res.status, json, text };
-}
+export type { BearerJsonFetchResult } from "@nimbus-dev/sdk/connector-kit";
+export { fetchBearerAuthorizedJson, resolveUrlWithBase } from "@nimbus-dev/sdk/connector-kit";
