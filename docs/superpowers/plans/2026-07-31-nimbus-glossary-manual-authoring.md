@@ -807,6 +807,36 @@ test("keys outside the two blocks are ignored", () => {
   expect(cfg.terms).toHaveLength(1);
 });
 
+test("a duplicate alias takes the last and warns", () => {
+  const raw = [
+    "[glossary.terms]",
+    'CDR = "Our append-only audit row."',
+    'CDX = "Something else."',
+    "[glossary.synonyms]",
+    '"change data record" = "CDR"',
+    '"change data record" = "CDX"',
+  ].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.synonyms.get("change data record")).toBe("cdx");
+  expect(cfg.skipped.some((s) => s.reason.includes("duplicate alias"))).toBe(true);
+});
+
+test("a dotted key under [glossary] is reported, not silently ignored", () => {
+  // `[glossary]` + `terms.CDR = "..."` is valid TOML that this line parser
+  // cannot see. Silence would leave the user with a term that never appears
+  // and no explanation.
+  const raw = ["[glossary]", 'terms.CDR = "Our append-only audit row."'].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms).toEqual([]);
+  expect(cfg.skipped[0]?.entry).toBe("terms.CDR");
+  expect(cfg.skipped[0]?.reason).toContain("[glossary.terms]");
+});
+
+test("an ordinary [glossary] key is not mistaken for a misplaced term", () => {
+  const cfg = loadedOrThrow(parseGlossaryManualToml("[glossary]\nmin_doc_freq = 9"));
+  expect(cfg.skipped).toEqual([]);
+});
+
 test("a missing config file yields loaded:false, NOT an empty config", () => {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-cfg-"));
   expect(loadGlossaryManualFromConfigDir(dir)).toEqual({ loaded: false });
@@ -872,6 +902,7 @@ export type GlossaryManualConfig =
       skipped: ManualSkip[];
     };
 
+const GLOSSARY_HEADER = "[glossary]";
 const TERMS_HEADER = "[glossary.terms]";
 const SYNONYMS_HEADER = "[glossary.synonyms]";
 
@@ -883,20 +914,47 @@ type RawEntry = { key: string; value: string };
  * A dedicated loop rather than `forEachSectionEntry` because this parser must
  * report WHY an entry was rejected, and that helper deliberately discards the
  * distinction between "no `=` on the line" and "not in this section".
+ *
+ * `misplaced` catches the one *valid TOML* shape this line parser cannot see:
+ * a dotted key under the parent table (`[glossary]` + `terms.CDR = "…"`).
+ * Full TOML compliance is out of scope — the parser is deliberately
+ * dependency-free — but silently ignoring a correctly-written term is the
+ * silent-failure class this whole slice exists to remove, so it is reported
+ * through the same `skipped` channel as any other rejected entry.
  */
-function collectBlocks(raw: string): { terms: RawEntry[]; synonyms: RawEntry[] } {
+function collectBlocks(raw: string): {
+  terms: RawEntry[];
+  synonyms: RawEntry[];
+  misplaced: ManualSkip[];
+} {
   const terms: RawEntry[] = [];
   const synonyms: RawEntry[] = [];
+  const misplaced: ManualSkip[] = [];
   let target: RawEntry[] | null = null;
+  let inGlossaryRoot = false;
 
   for (const line of raw.split(/\r?\n/)) {
     if (hasUnterminatedString(line)) continue;
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
+      inGlossaryRoot = trimmed === GLOSSARY_HEADER;
       if (trimmed === TERMS_HEADER) target = terms;
       else if (trimmed === SYNONYMS_HEADER) target = synonyms;
       else target = null;
+      continue;
+    }
+    if (inGlossaryRoot) {
+      const kv = splitKeyValue(trimmed);
+      const key = kv?.key.trim() ?? "";
+      if (key.startsWith("terms.") || key.startsWith("synonyms.")) {
+        misplaced.push({
+          entry: key,
+          reason:
+            "dotted keys under [glossary] are not read — move it under [glossary.terms] " +
+            "or [glossary.synonyms]",
+        });
+      }
       continue;
     }
     if (target === null) continue;
@@ -905,7 +963,7 @@ function collectBlocks(raw: string): { terms: RawEntry[]; synonyms: RawEntry[] }
       target.push({ key: parseString(kv.key), value: parseString(kv.valRaw) });
     }
   }
-  return { terms, synonyms };
+  return { terms, synonyms, misplaced };
 }
 
 function buildTerms(raw: RawEntry[], skipped: ManualSkip[]): ManualTerm[] {
@@ -956,6 +1014,12 @@ function buildSynonyms(
       skipped.push({ entry: key, reason: `no authored term "${value}" to alias` });
       continue;
     }
+    if (out.has(alias)) {
+      // Last-wins, matching `buildTerms` and every other section of this
+      // parser — but reported, because two aliases for the same phrase
+      // pointing at different terms is a mistake, not an override.
+      skipped.push({ entry: key, reason: `duplicate alias definition for "${key}"` });
+    }
     out.set(alias, target);
   }
   return out;
@@ -963,7 +1027,7 @@ function buildSynonyms(
 
 export function parseGlossaryManualToml(raw: string): GlossaryManualConfig {
   const blocks = collectBlocks(raw);
-  const skipped: ManualSkip[] = [];
+  const skipped: ManualSkip[] = [...blocks.misplaced];
   const terms = buildTerms(blocks.terms, skipped);
   const synonyms = buildSynonyms(blocks.synonyms, terms, skipped);
   return { loaded: true, terms, synonyms, skipped };
@@ -1182,6 +1246,44 @@ test("an edited display form replaces the stored one", () => {
   expect(getTerm(db, "cdr")?.displayTerm).toBe("CDRs");
 });
 
+test("an unchanged term is not rewritten on a later pass", () => {
+  const conf = cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]);
+  applyManualTerms(db, conf, { nowMs: 5000 });
+
+  const second = applyManualTerms(db, conf, { nowMs: 6000 });
+
+  expect(second.added).toBe(0);
+  // `updated_at` is the tell: an unchanged term must not be touched at all,
+  // because touching it means recomputing its statistics (2 FTS queries) on
+  // every pass, after every connector sync, forever.
+  expect(getTerm(db, "cdr")?.updatedAt).toBe(5000);
+});
+
+test("a changed definition IS rewritten even when the display form matches", () => {
+  // Guards the unchanged-check against being too eager. Separate fixtures for
+  // each field, so a check that compares only one of them cannot pass.
+  applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "First." }]), {
+    nowMs: 5000,
+  });
+  const second = applyManualTerms(
+    db,
+    cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Second." }]),
+    { nowMs: 6000 },
+  );
+  expect(second.added).toBe(1);
+  expect(getTerm(db, "cdr")?.definition).toBe("Second.");
+});
+
+test("a changed synonym set IS rewritten even when the definition matches", () => {
+  const term = { termKey: "cdr", displayTerm: "CDR", definition: "Audit row." };
+  applyManualTerms(db, cfg([term]), { nowMs: 5000 });
+  const second = applyManualTerms(db, cfg([term], [["change data record", "cdr"]]), {
+    nowMs: 6000,
+  });
+  expect(second.added).toBe(1);
+  expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
+});
+
 test("removal demotes the row and deletes its projected item", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
@@ -1329,8 +1431,13 @@ Create `packages/gateway/src/glossary/glossary-manual.ts`:
 ```ts
 import type { Database } from "bun:sqlite";
 
-import type { GlossaryManualConfig, ManualSkip } from "../config/nimbus-toml-glossary-terms.ts";
+import type {
+  GlossaryManualConfig,
+  ManualSkip,
+  ManualTerm,
+} from "../config/nimbus-toml-glossary-terms.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
+import type { GlossaryTerm } from "./glossary-types.ts";
 import {
   computeTermStats,
   demoteTerm,
@@ -1346,6 +1453,29 @@ export type ManualPassSummary = { added: number; removed: number; skipped: Manua
 
 /** Mirrors `agents/glossary.ts` and `glossary-extract.ts`. */
 const NEAR_MISS_POOL = 500;
+
+/**
+ * True when the stored row already matches what the author wrote.
+ *
+ * Compares only AUTHORED content — definition, display form, synonyms — and
+ * deliberately not statistics: those move on their own as the index changes,
+ * and treating them as a difference would re-write every row every pass, which
+ * is the cost this check exists to avoid. A row that is not `manual` is never
+ * "unchanged": that is a mined row being taken over by an authored one.
+ */
+function isUnchanged(
+  existing: GlossaryTerm | null,
+  term: ManualTerm,
+  aliases: readonly string[],
+): boolean {
+  return (
+    existing !== null &&
+    existing.definitionSource === "manual" &&
+    existing.definition === term.definition &&
+    existing.displayTerm === term.displayTerm &&
+    existing.synonyms.join(" ") === aliases.join(" ")
+  );
+}
 
 /**
  * The authoring pre-pass. Runs at the head of every glossary pass.
@@ -1383,14 +1513,40 @@ export function applyManualTerms(
   let added = 0;
 
   for (const term of cfg.terms) {
+    // Skip a term whose authored content has not changed.
+    //
+    // Without this, every pass recomputes statistics for every authored term —
+    // 2 FTS queries each, on a pass that fires after EVERY connector sync. A
+    // team checking a 500-term glossary into nimbus.toml would spend 1000 FTS
+    // queries per sync re-deriving values that did not move. It is the same
+    // waste `reconcilePass`'s `stats_recheck_cooldown_ms` exists to prevent,
+    // and the fix is the same: let the sweep refresh statistics on its own
+    // round-robin schedule (it now sweeps manual rows — see
+    // `glossary-reconcile.ts`) and touch a row here only when the AUTHOR
+    // changed something.
+    const existing = getTerm(db, term.termKey);
+    if (isUnchanged(existing, term, aliasesFor.get(term.termKey) ?? [])) continue;
+
     // Measured, but EXEMPT from `min_doc_freq` — a human may define a term the
     // sources never mention. doc_freq is still recorded because it is what
     // discriminates the two removal cases above.
     const stats = computeTermStats(db, term.termKey);
-    // One transaction: a crash between the row write and the projection would
-    // strand a `consolidated` row with no searchable item, and the
-    // reconciliation sweep only re-verifies rows that are already
-    // consolidated, so nothing would ever repair it.
+    // One transaction PER TERM, not one for the whole pre-pass.
+    //
+    // The unit of atomicity is deliberately the term, matching
+    // `consolidatePhase`, which wraps each term for the same reason: a crash
+    // between the row write and the projection would strand a `consolidated`
+    // row with no searchable item, and the reconciliation sweep only
+    // re-verifies rows that are already consolidated, so nothing would repair
+    // it.
+    //
+    // Batching the whole loop into one transaction was considered and
+    // rejected. It would make a single failing entry discard every OTHER
+    // authored term's update — and this reads a file a human is actively
+    // editing, where a bad entry is the expected case rather than the
+    // exceptional one. The commit-count cost that would motivate batching is
+    // removed by the unchanged-skip above, which makes the steady-state pass
+    // write nothing at all.
     db.transaction(() => {
       upsertManualTerm(db, {
         termKey: term.termKey,
@@ -1443,6 +1599,8 @@ Expected: `EXIT=0`, 9 pass.
 Temporarily delete the `if (!cfg.loaded)` early return (replace with `if (!cfg.loaded) cfg = { loaded: true, terms: [], synonyms: new Map(), skipped: [] };` — you will need a `let` binding). Re-run: the unreadable-config test must fail on `expect(getTerm(db, "cdr")?.status).toBe("consolidated")`, i.e. it must report `Received: "pending"`. That proves the test detects deletion rather than merely detecting a throw. Restore.
 
 Then temporarily remove `unprojectTerm(db, key)` from the removal transaction. Re-run: the removal test must fail on `expect(projectedExists("cdr")).toBe(false)` while its status assertions still pass — proving the projection assertion is load-bearing and not redundant with the status one. Restore, confirm green.
+
+Then red-prove the unchanged-skip in both directions. First delete the `if (isUnchanged(...)) continue;` line — the unchanged test must fail on `expect(...updatedAt).toBe(5000)`, showing `6000`. Restore. Then weaken `isUnchanged` to compare only `existing.definition === term.definition` — the changed-synonym test must fail on `second.added`, showing `0`. This is what proves the per-field fixtures separate; a single fixture varying everything at once would pass against either version.
 
 - [ ] **Step 7: Commit**
 
@@ -2363,7 +2521,7 @@ Also qualify the near-miss bullet: authored terms now sort ahead of mined ones a
 
 `docs/roadmap.md` — tick the Wave 5 manual-authoring item.
 
-`docs/cli-reference.md` — document `[glossary.terms]` / `[glossary.synonyms]` and the edit-then-`--refresh` loop under `nimbus glossary`.
+`docs/cli-reference.md` — document `[glossary.terms]` / `[glossary.synonyms]` and the edit-then-`--refresh` loop under `nimbus glossary`. State explicitly that entries must sit under those two flat headers: `[glossary]` with a dotted `terms.CDR = "…"` key is valid TOML that this parser does not read. It is now reported rather than ignored (Task 4), but the documentation must not leave a reader to discover that from a warning.
 
 - [ ] **Step 3: Grep for every citation, then read around the hits**
 

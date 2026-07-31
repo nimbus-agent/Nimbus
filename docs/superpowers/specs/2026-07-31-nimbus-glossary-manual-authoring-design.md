@@ -557,6 +557,15 @@ Stated here rather than discovered later.
   decoding, because the same primitive carries Windows paths.
 - **A single-quoted config value still truncates at `#`** (§3.1). TOML literal strings were never
   supported by this parser.
+- **Entries must sit under the flat `[glossary.terms]` / `[glossary.synonyms]` headers.** A dotted
+  key under the parent table — `[glossary]` with `terms.CDR = "…"` — is valid TOML that this
+  line-based parser cannot see. It is **reported** as a skipped entry rather than silently ignored,
+  but it is not read. Full TOML compliance would mean replacing the parser, not extending it.
+- **Statistics for an authored term refresh on the sweep's schedule, not every pass.** The pre-pass
+  skips a term whose authored content is unchanged, so it does not recompute `doc_freq` /
+  `top_sources` on every connector sync — the same reasoning as
+  `stats_recheck_cooldown_ms`. A newly-indexed mention therefore reaches an authored term's
+  statistics within the sweep's round-robin window rather than immediately.
 - **An alias cannot shadow a mined term of the same name** (§4.1) — exact match beats synonym, by
   design, and the collision is with the index rather than the config so it cannot be caught at
   parse time.
