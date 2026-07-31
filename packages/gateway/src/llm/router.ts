@@ -30,6 +30,20 @@ export type LlmTaskStatus = {
 };
 
 const LOCAL_PROVIDER_IDS: ReadonlySet<LlmProviderKind> = new Set(["ollama", "llamacpp"]);
+
+/**
+ * Whether a provider kind runs on this machine.
+ *
+ * Exported so a caller can enforce local-only routing BEFORE dispatching a
+ * prompt. `selectProvider(_, { preferLocal: true })` only expresses a
+ * preference — it falls through to `remote` when no local provider answers —
+ * so a surface that promises no egress must check the kind itself. The set
+ * stays module-private; only the predicate is exported.
+ */
+export function isLocalProviderKind(id: LlmProviderKind): boolean {
+  return LOCAL_PROVIDER_IDS.has(id);
+}
+
 const CONTEXT_OVERFLOW_THRESHOLD = 0.85;
 const TOKENS_PER_CHAR = 4;
 

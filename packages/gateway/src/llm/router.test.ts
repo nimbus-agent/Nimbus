@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
+import { isLocalProviderKind, LlmRouter, type LlmRouterConfig, midTruncate } from "./router.ts";
 import type { LlmProvider } from "./types.ts";
 
 function makeFakeProvider(id: "ollama" | "llamacpp" | "remote", available: boolean): LlmProvider {
@@ -380,5 +380,13 @@ describe("midTruncate", () => {
     expect(result).toContain("[...truncated...]");
     expect(result.startsWith("A".repeat(10))).toBe(true);
     expect(result.endsWith("B".repeat(10))).toBe(true);
+  });
+});
+
+describe("isLocalProviderKind", () => {
+  test("classifies ollama and llamacpp as local, remote as not", () => {
+    expect(isLocalProviderKind("ollama")).toBe(true);
+    expect(isLocalProviderKind("llamacpp")).toBe(true);
+    expect(isLocalProviderKind("remote")).toBe(false);
   });
 });
