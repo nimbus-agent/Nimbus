@@ -14,7 +14,8 @@ export type MinedCandidate = {
 
 export type GlossaryStatus = "pending" | "consolidated" | "vetoed";
 
-export type DefinitionSource = "llm" | "snippet";
+/** `manual` rows are authored in `[glossary.terms]`; see spec §4. */
+export type DefinitionSource = "llm" | "snippet" | "manual";
 
 /** One of the (max 5) most-cited items that evidence a term. */
 export type GlossarySource = {

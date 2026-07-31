@@ -17,7 +17,7 @@ export type GlossarySourceRef = {
 export type GlossaryEntry = {
   term: string;
   definition: string | null;
-  definitionSource: "llm" | "snippet" | null;
+  definitionSource: "llm" | "snippet" | "manual" | null;
   docFreq: number;
   serviceSpread: number;
   firstSeenAt: number;
