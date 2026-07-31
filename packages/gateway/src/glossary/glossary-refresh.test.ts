@@ -235,6 +235,17 @@ describe("runNow", () => {
   });
 
   it("rejects a concurrent call instead of awaiting the running pass", async () => {
+    // Only the FIRST invocation blocks on `gate`. This makes a missing
+    // `running` guard fail FAST with a wrong VALUE (the second call resolves
+    // with SUMMARY instead of rejecting) rather than deadlocking: if the
+    // guard were gone, the second `runNow()` would reach `runPass` too, and
+    // since `calls` is already 2 by then it would skip the gate and resolve
+    // immediately — so `rejects.toThrow(...)` fails right away with "promise
+    // resolved instead of rejecting", not a hang. A shared unconditional gate
+    // would instead deadlock (the second call and the un-reached `release()`
+    // line below would wait on each other forever), which is a liveness
+    // failure a future engineer would misread as a flake, not a value bug.
+    let calls = 0;
     let release: (() => void) | undefined;
     const gate = new Promise<void>((res) => {
       release = res;
@@ -243,7 +254,8 @@ describe("runNow", () => {
       enabled: true,
       debounceMs: 1,
       runPass: async () => {
-        await gate;
+        calls += 1;
+        if (calls === 1) await gate;
         return SUMMARY;
       },
     });
@@ -264,6 +276,7 @@ describe("runNow", () => {
     });
     expect(r.status()).toBe("disabled");
     await expect(r.runNow({ rebuild: false })).rejects.toThrow("ERR_GLOSSARY_DISABLED");
+    r.stop();
   });
 
   it("rejects after stop()", async () => {
