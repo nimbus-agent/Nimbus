@@ -28,6 +28,21 @@ function emptyEnvOverrides(): Record<string, string> {
 describe("nimbus glossary e2e (no-Gateway smoke)", () => {
   const cliEntry = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 
+  async function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    const proc = Bun.spawn({
+      cmd: [process.execPath, "run", cliEntry, ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...emptyEnvOverrides() },
+    });
+    const code = await proc.exited;
+    return {
+      code,
+      stdout: await new Response(proc.stdout).text(),
+      stderr: await new Response(proc.stderr).text(),
+    };
+  }
+
   test("glossary exits non-zero with 'Gateway is not running' on stderr when no gateway", async () => {
     const proc = Bun.spawn({
       cmd: [process.execPath, "run", cliEntry, "glossary", "CDR"],
@@ -41,21 +56,30 @@ describe("nimbus glossary e2e (no-Gateway smoke)", () => {
     expect(stderr).toContain("Gateway is not running");
   });
 
-  test("--rebuild fails with an explicit not-implemented error, not a silent query", async () => {
-    // Rejected during argument parsing, so this is deterministic without a
-    // gateway — and it is the whole point of the flag change: the user must
-    // never be told nothing when their requested operation did not run.
-    const proc = Bun.spawn({
-      cmd: [process.execPath, "run", cliEntry, "glossary", "--rebuild"],
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...emptyEnvOverrides() },
-    });
-    const code = await proc.exited;
-    const stderr = await new Response(proc.stderr).text();
-    expect(code).not.toBe(0);
-    expect(stderr).toContain("--rebuild is not implemented yet");
-    expect(stderr).toContain("Nothing was rebuilt");
+  test("--rebuild without --yes fails only for want of a gateway, not for being unwired", async () => {
+    // No gateway in the smoke env: --rebuild without --yes takes the preview
+    // path (`withGatewayIpc` -> `readRebuildPreview`), which throws "Gateway
+    // is not running" and the command's catch does `process.exit(2)` — the
+    // same exit code `runAgentBriefCli`'s catch uses, per the comment in
+    // `runGlossaryCommand`. The negative assertion is the point: it is what
+    // the old, unwired CLI could never satisfy (it printed "not implemented").
+    const out = await runCli(["glossary", "--rebuild"]);
+    expect(out.code).toBe(2);
+    expect(out.stderr).toContain("Gateway is not running");
+    expect(out.stderr).not.toContain("not implemented");
+  });
+
+  test("--refresh and --rebuild appear in the usage line", async () => {
+    const out = await runCli(["glossary", "--help"]);
+    const text = out.stdout + out.stderr;
+    expect(text).toContain("--refresh");
+    expect(text).toContain("--rebuild");
+  });
+
+  test("rejects --refresh combined with --rebuild before reaching the gateway", async () => {
+    const out = await runCli(["glossary", "--refresh", "--rebuild"]);
+    expect(out.stderr).toContain("cannot be combined");
+    expect(out.stderr).not.toContain("Gateway is not running");
   });
 
   test("help text mentions 'glossary' subcommand", async () => {
