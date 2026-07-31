@@ -223,10 +223,19 @@ constant following the `NEAR_MISS_POOL` / `MAX_SYNONYMS` precedent rather than a
 Both queues are over-fetched to the full budget, then allocated:
 
 ```ts
-const reserve   = llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+const reserve   = llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
 const upgrades  = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
 const pending   = Math.min(pendingAll.length, budget - upgrades);
 ```
+
+The reserve is clamped to **half** the budget rather than to the budget. `min(UPGRADE_RESERVE,
+budget)` — the originally specified form — lets the floor swallow a small configured budget
+entirely: at `max_new_terms_per_pass = 4` with any snippet backlog, upgrades take all 4 slots and
+new-term mining gets none, which contradicts this section's own claim that new terms win the
+contested case. That is not a hypothetical setting; `[glossary]`'s config docstring frames lowering
+the budget as the way to spare a laptop LLM calls. Halving leaves the default budget of 25
+untouched (`min(5, 12) = 5`) and every corner in the table below unaffected. Found by the Task 5
+review, 2026-07-31.
 
 | Outstanding | Pending run | Upgrades run | Budget used |
 | --- | --- | --- | --- |

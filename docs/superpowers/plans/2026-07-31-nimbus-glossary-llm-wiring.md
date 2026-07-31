@@ -959,7 +959,13 @@ async function consolidatePhase(
   // Over-fetching both queues to the full budget and allocating afterwards is
   // correct in every corner and costs at most `budget` extra indexed rows.
   const budget = opts.maxNewTermsPerPass;
-  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+  // Clamped to HALF the budget, not to the budget: `min(UPGRADE_RESERVE, budget)`
+  // lets the reserve swallow a small configured budget whole, starving new-term
+  // mining outright at `max_new_terms_per_pass <= 5` — a realistic setting, since
+  // the config docstring frames lowering it as the way to spare a laptop LLM
+  // calls. Unchanged (5) at the default budget of 25.
+  const reserve =
+    opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
   const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,

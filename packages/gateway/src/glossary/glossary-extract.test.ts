@@ -13,6 +13,7 @@ import { dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
+import { projectTerm } from "./glossary-project.ts";
 import {
   clearGlossary,
   getTerm,
@@ -21,6 +22,7 @@ import {
   readPassState,
   upsertCandidate,
 } from "./glossary-store.ts";
+import type { GlossaryPassProgress } from "./glossary-types.ts";
 
 let db: Database;
 
@@ -378,12 +380,9 @@ test("stored near-misses draw from consolidated keys only, not pending or vetoed
 
 // --- snippet upgrades -------------------------------------------------
 
-function llmReturning(json: string, calls: string[] = []): ConsolidatorLlm {
+function llmReturning(json: string): ConsolidatorLlm {
   return {
-    generateJson: (prompt: string) => {
-      calls.push(prompt);
-      return Promise.resolve(json);
-    },
+    generateJson: () => Promise.resolve(json),
   };
 }
 
@@ -488,6 +487,20 @@ test("leaves the snippet definition intact when the upgrade fails", async () => 
 
 test("vetoes an upgraded term, unprojects it, and names it in the summary", async () => {
   seedSnippetTerm("cdr", "slack:1", 10);
+  // `seedSnippetTerm` inserts the `glossary_term` row directly via raw SQL and
+  // never projects it, so without this the `item` row this test checks for
+  // never existed in the first place and the count-goes-to-0 assertion below
+  // would pass whether or not `unprojectTerm` actually ran. Projecting it
+  // here first makes the assertion mean something: a real, user-visible
+  // "glossary:cdr" search hit that the veto must remove.
+  const seeded = getTerm(db, "cdr");
+  if (seeded === null) throw new Error("seedSnippetTerm did not create the row");
+  projectTerm(db, seeded, 1);
+  const before = db
+    .query("SELECT COUNT(*) AS n FROM item WHERE external_id = 'glossary:cdr'")
+    .get() as { n: number };
+  expect(before.n).toBe(1);
+
   const summary = await runGlossaryPass(db, {
     ...PASS_OPTS,
     llm: llmReturning('{"isDomainTerm":false,"definition":"","alsoKnownAs":[]}'),
@@ -498,16 +511,16 @@ test("vetoes an upgraded term, unprojects it, and names it in the summary", asyn
     status: string;
   };
   expect(status.status).toBe("vetoed");
-  const item = db
+  const after = db
     .query("SELECT COUNT(*) AS n FROM item WHERE external_id = 'glossary:cdr'")
     .get() as { n: number };
-  expect(item.n).toBe(0);
+  expect(after.n).toBe(0);
 });
 
-// Budget allocation — all four corners. UPGRADE_RESERVE is a FLOOR, not a
-// ceiling, and neither queue may leave budget idle while the other has work.
-// Assert BOTH numbers in every case: `upgraded` alone passes under several
-// wrong allocations.
+// Budget allocation corners. UPGRADE_RESERVE is a FLOOR, not a ceiling, and
+// neither queue may leave budget idle while the other has work. Assert BOTH
+// numbers in every case: `upgraded` alone passes under several wrong
+// allocations.
 test("reserves upgrade slots when the pending queue exceeds the budget", async () => {
   for (let i = 0; i < 30; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
   for (let i = 0; i < 8; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 5);
@@ -554,6 +567,76 @@ test("lets upgrades absorb the slack of a partially-filled pending queue", async
   });
   expect(summary.consolidated).toBe(3);
   expect(summary.upgraded).toBe(22);
+});
+
+// Completeness corner: both queues non-empty but together under budget —
+// nothing should be left behind or arbitrarily truncated.
+test("processes both queues fully when their combined size is under budget", async () => {
+  for (let i = 0; i < 3; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  for (let i = 0; i < 4; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 50 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(3);
+  expect(summary.upgraded).toBe(4);
+});
+
+// `UPGRADE_RESERVE` (5) clamps to half the budget at small budgets so it can
+// never starve pending outright: at budget 4 a naive `min(5, 4)` reserve
+// would hand upgrades the ENTIRE budget. Half-budget clamping keeps both
+// queues represented even when the configured pass is tiny (a real setting —
+// `max_new_terms_per_pass` is how a laptop-class local LLM is throttled).
+test("halves the reserve at a small budget instead of letting it consume the whole pass", async () => {
+  for (let i = 0; i < 10; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  for (let i = 0; i < 10; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 50 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 4,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(2);
+  expect(summary.upgraded).toBe(2);
+});
+
+// Pins VETOED_TERMS_REPORTED (10) and proves `upgradesVetoed` and
+// `vetoedTerms.length` are independent counters — nothing distinguishes the
+// cap from an unconditional push, or from a much larger cap, without this.
+test("caps the reported vetoed-term names while still counting every veto", async () => {
+  for (let i = 0; i < 12; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 100 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":false,"definition":"","alsoKnownAs":[]}'),
+  });
+  expect(summary.upgradesVetoed).toBe(12);
+  expect(summary.vetoedTerms.length).toBe(10);
+});
+
+test("onProgress reports per-term counts across both queues and finishes done === total", async () => {
+  for (let i = 0; i < 3; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  for (let i = 0; i < 4; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 50 - i);
+  const events: GlossaryPassProgress[] = [];
+  await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+    onProgress: (p) => events.push(p),
+  });
+  // 3 pending + 4 upgrades = 7 units of work — `total` must count BOTH
+  // queues, not just the one `onProgress` happened to have been introduced
+  // alongside. A regression back to `total: batch.length` (pending only)
+  // would report `total: 3` instead.
+  expect(events.length).toBe(7);
+  expect(events.at(-1)).toEqual({
+    done: 7,
+    total: 7,
+    consolidated: 3,
+    upgraded: 4,
+    vetoed: 0,
+    retried: 0,
+  });
 });
 
 test("reports llmConfigured and llmProduced separately", async () => {

@@ -52,7 +52,11 @@ export type GlossaryPassSummary = {
   upgraded: number;
   /** Previously-consolidated snippet terms the model rejected — they LEFT the glossary. */
   upgradesVetoed: number;
-  /** Which ones, capped at `VETOED_TERMS_REPORTED`, so the CLI can name them. */
+  /**
+   * Upgrade vetoes only (never a first-time pending veto), capped at
+   * `VETOED_TERMS_REPORTED`, so the CLI can name a bounded list of terms that
+   * were visible yesterday and are gone today.
+   */
   vetoedTerms: string[];
   /** An adapter was supplied (i.e. `[glossary].use_llm` is on and one was built). */
   llmConfigured: boolean;
@@ -66,13 +70,21 @@ const SCAN_BATCH_LIMIT = 5000;
 const NEAR_MISS_POOL = 500;
 
 /**
- * Upgrade slots held back from `maxNewTermsPerPass`.
+ * Upgrade slots held back from `maxNewTermsPerPass`, clamped to at most half
+ * the budget.
  *
  * Without a floor, a pending queue that stays above the budget starves snippet
  * upgrades indefinitely — a term consolidated without a model would never
- * improve for as long as first-time mining continues. New terminology still
- * wins the other 20 of 25 slots; only the unbounded half of the starvation is
- * removed. A module constant rather than a config key, matching
+ * improve for as long as first-time mining continues. At the default budget
+ * of 25 this reserves 5, leaving new terminology the other 20 of 25 slots.
+ *
+ * The half-budget clamp exists because `maxNewTermsPerPass` is a real,
+ * user-facing throttle (the way a laptop-class local LLM spares itself calls
+ * per pass), so small values are not a corner case: an UNCLAMPED `min(5,
+ * budget)` reserve at `budget = 4` computes `reserve = 4` — the entire pass —
+ * and pending is starved OUTRIGHT, the opposite of what the floor exists to
+ * prevent. `Math.floor(budget / 2)` guarantees pending always keeps at least
+ * half the pass. A module constant rather than a config key, matching
  * `NEAR_MISS_POOL` / `MAX_SYNONYMS`.
  */
 const UPGRADE_RESERVE = 5;
@@ -221,7 +233,7 @@ async function consolidatePhase(
   // Over-fetching both queues to the full budget and allocating afterwards is
   // correct in every corner and costs at most `budget` extra indexed rows.
   const budget = opts.maxNewTermsPerPass;
-  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
   const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
