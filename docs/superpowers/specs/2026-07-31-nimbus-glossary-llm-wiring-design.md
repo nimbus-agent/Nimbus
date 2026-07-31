@@ -214,20 +214,45 @@ re-derive the same snippet from the same sources and is pure waste.
 
 ### 3.2 Five decisions inside that query
 
-**Shared budget, new terms first, with a reserved floor for upgrades.** The pass budget stays
-`maxNewTermsPerPass` — worst-case latency is unchanged at 25 calls — but it is not allocated purely
-first-come. The upgrade batch is queried first with `LIMIT UPGRADE_RESERVE` (a module constant, 5,
-following the `NEAR_MISS_POOL` / `MAX_SYNONYMS` precedent rather than adding a config knob); if it
-returns `k` rows, the pending batch takes `maxNewTermsPerPass - k`. With no upgrades outstanding,
-`k = 0` and new terms get the entire budget. Execution order is still pending-then-upgrades.
+**Shared budget; `UPGRADE_RESERVE` is a floor on upgrade slots, never a ceiling.** The pass budget
+stays `maxNewTermsPerPass`, so worst-case latency is unchanged at 25 calls. Allocation is not
+first-come in either direction: **each queue absorbs the other's slack, and upgrades are guaranteed
+at least `UPGRADE_RESERVE` (5) slots whenever they have work.** `UPGRADE_RESERVE` is a module
+constant following the `NEAR_MISS_POOL` / `MAX_SYNONYMS` precedent rather than a config knob.
+
+Both queues are over-fetched to the full budget, then allocated:
+
+```ts
+const reserve   = llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+const upgrades  = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
+const pending   = Math.min(pendingAll.length, budget - upgrades);
+```
+
+| Outstanding | Pending run | Upgrades run | Budget used |
+| --- | --- | --- | --- |
+| 30 pending, 8 snippets | 20 | 5 | 25 |
+| 0 pending, 100 snippets | 0 | 25 | 25 |
+| 30 pending, 0 snippets | 25 | 0 | 25 |
+| 3 pending, 100 snippets | 3 | 22 | 25 |
+| 2 pending, 2 snippets | 2 | 2 | 4 (all work) |
+
+**Two earlier formulations were wrong, each in a mirror-image way**, and both are recorded because
+the failure is easy to reintroduce. *Upgrades queried first, capped at the reserve, pending takes
+the remainder* wastes 20 slots when the pending queue is empty and snippets are plentiful — the
+reserve becomes a ceiling. *Pending queried first, capped at `budget − reserve`, upgrades take the
+remainder* has the opposite hole: with no snippets outstanding, pending is permanently capped at
+20 of 25, a 20% throughput loss on initial mining that never resolves — and that is the **common**
+case, since a machine that has always had a model never accumulates a snippet row. Only the
+slack-absorbing form above is correct in all four corners; the over-fetch costs at most 25 extra
+indexed rows per queue.
 
 This is a **change from the originally approved design**, which gave upgrades only the leftover
 `maxNewTermsPerPass - pendingBatch.length` and accepted indefinite starvation as a recorded limit.
-The pushback was right: "never, for as long as the queue stays full" is a bad property to design
-in when four lines remove it. The original reasoning still holds for the *majority* of the budget —
-a saturated queue means a large index being mined for the first time, where new terminology is the
-better spend — so 20 of 25 slots still go to new terms first. What changes is that the starvation
-is now bounded rather than unbounded, and §7 loses a limit instead of documenting one.
+The pushback was right: "never, for as long as the queue stays full" is a bad property to design in
+when a few lines remove it. New terminology still wins the contested case — 20 of 25 slots when
+both queues are full — because a saturated pending queue means a large index being mined for the
+first time. What changes is that starvation is bounded, and §7 loses a limit instead of documenting
+one.
 
 **No new column, no migration.** V45 shipped in `v1.13.0`, so the base spec's precedent of editing
 it in place is gone; any column would now need a V46. Round-robin fairness comes from

@@ -250,6 +250,17 @@ import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
  * `fitPromptOrFallback` can route an oversized prompt to a remote provider.
  * The glossary prompt is bounded (<=5 sources x ~512 chars) so no truncation
  * path is needed.
+ *
+ * LIMIT — `signal` bounds the WAIT, not the request. `LlmGenerateOptions` has
+ * no signal field and both providers hardcode `AbortSignal.timeout(120_000)`
+ * on their own fetch, so an aborted pass stops waiting while the model keeps
+ * generating until the provider's timeout or process exit. Reachable at most
+ * once per process today: the refresher builds ONE AbortController and
+ * `stop()` is terminal, so the single abort happens at shutdown, immediately
+ * before the socket closes. Whoever adds a `signal` field to
+ * `LlmGenerateOptions` should thread it through here via `AbortSignal.any`;
+ * whoever adds a per-pass controller (a `--force` cancel) MUST do that first,
+ * because per-pass cancellation is what makes repeated aborts reachable.
  */
 export function createGlossaryLlm(router: LlmRouter): ConsolidatorLlm {
   return {
@@ -485,7 +496,7 @@ Task 5 consumes it.
 
 **Two traps:**
 
-1. **`LIMIT -1` means NO LIMIT in SQLite.** Task 5 computes `limit` by subtraction, so a negative value must return `[]` rather than the entire table. Guard explicitly.
+1. **`LIMIT -1` means NO LIMIT in SQLite** — not "no rows". Task 5's final allocation always passes a positive budget, so this guard is defence-in-depth rather than load-bearing; keep it anyway, because the natural way to write a caller *is* by subtraction and the failure mode (consolidating the entire snippet population in one pass) is silent and expensive.
 2. `markConsolidated` must now stamp `last_attempt_at`, which makes the existing schema comment ("last consolidation attempt, success or failure") true and lets `ORDER BY last_attempt_at ASC` rotate fairly.
 
 - [ ] **Step 1: Write the failing tests**
@@ -548,7 +559,8 @@ describe("selectSnippetUpgradeBatch", () => {
     expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
   });
 
-  // SQLite treats LIMIT -1 as unlimited; Task 5 derives the limit by subtraction.
+  // SQLite treats LIMIT -1 as UNLIMITED, so a subtraction-derived caller that
+  // goes negative would silently select the whole snippet population.
   it("returns nothing for a zero or negative limit", () => {
     seedConsolidated("cdr", { source: "snippet", score: 10 });
     expect(selectSnippetUpgradeBatch(db, 0, OPTS)).toEqual([]);
@@ -608,10 +620,11 @@ In `glossary-store.ts`, after `selectPendingBatch`:
  * of the curve — keeps a repeatedly-failing term to one attempt per 24 h
  * instead of letting it hold a reserved slot every pass.
  *
- * The `limit <= 0` guard is load-bearing, not defensive noise: the caller
- * derives the limit by subtraction, and SQLite treats `LIMIT -1` as UNLIMITED,
- * so a negative value would consolidate the entire snippet population in one
- * pass.
+ * The `limit <= 0` guard exists because SQLite treats `LIMIT -1` as UNLIMITED,
+ * not as "no rows". The current caller always passes a positive budget, so this
+ * is defence-in-depth — but the natural way to write a caller is by
+ * subtraction, and the failure it prevents (consolidating the entire snippet
+ * population in one pass) is silent and expensive.
  */
 export function selectSnippetUpgradeBatch(
   db: Database,
@@ -791,8 +804,11 @@ describe("snippet upgrades", () => {
     expect(item.n).toBe(0);
   });
 
-  // The Q2.1 guarantee: a saturated pending queue must NOT starve upgrades.
-  it("reserves upgrade slots even when the pending queue exceeds the budget", async () => {
+  // Budget allocation — all four corners. UPGRADE_RESERVE is a FLOOR, not a
+  // ceiling, and neither queue may leave budget idle while the other has work.
+  // Assert BOTH numbers in every case: `upgraded` alone passes under several
+  // wrong allocations.
+  it("reserves upgrade slots when the pending queue exceeds the budget", async () => {
     for (let i = 0; i < 30; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
     for (let i = 0; i < 8; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 5);
     const summary = await runGlossaryPass(db, {
@@ -800,8 +816,8 @@ describe("snippet upgrades", () => {
       maxNewTermsPerPass: 25,
       llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
     });
-    expect(summary.upgraded).toBe(5);
     expect(summary.consolidated).toBe(20);
+    expect(summary.upgraded).toBe(5);
   });
 
   it("gives pending the whole budget when no upgrades are outstanding", async () => {
@@ -813,6 +829,31 @@ describe("snippet upgrades", () => {
     });
     expect(summary.consolidated).toBe(25);
     expect(summary.upgraded).toBe(0);
+  });
+
+  // The reserve must not become a CEILING: with nothing pending, upgrades take
+  // the whole budget rather than stopping at 5 and idling 20 slots.
+  it("gives upgrades the whole budget when nothing is pending", async () => {
+    for (let i = 0; i < 40; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 100 - i);
+    const summary = await runGlossaryPass(db, {
+      ...PASS_OPTS,
+      maxNewTermsPerPass: 25,
+      llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+    });
+    expect(summary.consolidated).toBe(0);
+    expect(summary.upgraded).toBe(25);
+  });
+
+  it("lets upgrades absorb the slack of a partially-filled pending queue", async () => {
+    for (let i = 0; i < 3; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+    for (let i = 0; i < 40; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 50 - i);
+    const summary = await runGlossaryPass(db, {
+      ...PASS_OPTS,
+      maxNewTermsPerPass: 25,
+      llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+    });
+    expect(summary.consolidated).toBe(3);
+    expect(summary.upgraded).toBe(22);
   });
 
   it("reports llmConfigured and llmProduced separately", async () => {
@@ -908,21 +949,35 @@ async function consolidatePhase(
   llmProduced: boolean;
   aborted: boolean;
 }> {
-  // Upgrades are queried FIRST so their reserved slots come off the top; the
-  // pending batch takes what is left. With nothing to upgrade, `k` is 0 and new
-  // terms get the entire budget.
-  const upgradeBatch =
-    opts.llm === undefined
-      ? []
-      : selectSnippetUpgradeBatch(db, Math.min(UPGRADE_RESERVE, opts.maxNewTermsPerPass), {
-          nowMs: opts.nowMs,
-          retryBaseCooldownMs: opts.retryBaseCooldownMs,
-        });
-  const batch = selectPendingBatch(db, opts.maxNewTermsPerPass - upgradeBatch.length, {
+  // Budget allocation. `UPGRADE_RESERVE` is a FLOOR on upgrade slots, never a
+  // ceiling, and each queue absorbs the other's slack — both one-sided
+  // formulations waste budget in a corner:
+  //   * upgrades capped at the reserve  -> 20 slots idle when pending is empty
+  //   * pending capped at budget-reserve -> 5 slots idle whenever NO snippet
+  //     rows exist, which is the common case on a machine that always had a
+  //     model, so it would be a permanent 20% throughput loss on mining.
+  // Over-fetching both queues to the full budget and allocating afterwards is
+  // correct in every corner and costs at most `budget` extra indexed rows.
+  const budget = opts.maxNewTermsPerPass;
+  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+  const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
     minDocFreq: opts.minDocFreq,
   });
+  const upgradeAll =
+    reserve === 0
+      ? []
+      : selectSnippetUpgradeBatch(db, budget, {
+          nowMs: opts.nowMs,
+          retryBaseCooldownMs: opts.retryBaseCooldownMs,
+        });
+  const upgradeTake = Math.min(
+    upgradeAll.length,
+    Math.max(reserve, budget - pendingAll.length),
+  );
+  const batch = pendingAll.slice(0, Math.min(pendingAll.length, budget - upgradeTake));
+  const upgradeBatch = upgradeAll.slice(0, upgradeTake);
   const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
 
   const work: Array<{ term: GlossaryTerm; isUpgrade: boolean }> = [
@@ -1039,9 +1094,26 @@ bun test packages/gateway/src/glossary > /tmp/t5.log 2>&1; echo "EXIT=$?"; tail 
 
 The pre-existing `glossary-resume.test.ts` and `glossary-reconcile.test.ts` must stay green.
 
-- [ ] **Step 6: Red-prove the reserve**
+- [ ] **Step 6: Red-prove the allocation — three separate mutations**
 
-Change the upgrade limit to `Math.min(UPGRADE_RESERVE, opts.maxNewTermsPerPass - batch.length)` computed AFTER the pending batch (i.e. revert to the leftover allocation), re-run. Expected: "reserves upgrade slots even when the pending queue exceeds the budget" FAILS with `upgraded === 0`, `consolidated === 25`. Restore, re-run green.
+Each mutation must fail a *different* test. If one mutation reddens all four allocation tests, it is too coarse to prove anything.
+
+1. **Leftover allocation (the originally approved design).** Replace the block with
+   `const batch = selectPendingBatch(db, budget, …)` then
+   `selectSnippetUpgradeBatch(db, budget - batch.length, …)`.
+   Expected: "reserves upgrade slots when the pending queue exceeds the budget" FAILS
+   (`consolidated 25`, `upgraded 0`). The other three still pass.
+2. **Reserve as a ceiling.** Change `upgradeTake` to `Math.min(upgradeAll.length, reserve)`.
+   Expected: "gives upgrades the whole budget when nothing is pending" FAILS
+   (`upgraded 5`, not 25) and "lets upgrades absorb the slack" FAILS (`upgraded 5`, not 22).
+   "reserves upgrade slots…" still passes — which is exactly why the ceiling bug survived the
+   first draft of this plan.
+3. **Pending capped at `budget - reserve`.** Change the `batch` slice to
+   `pendingAll.slice(0, budget - reserve)`.
+   Expected: "gives pending the whole budget when no upgrades are outstanding" FAILS
+   (`consolidated 20`, not 25).
+
+Restore after each; re-run green.
 
 Then red-prove the veto reporting: delete the `if (vetoedTerms.length < …) vetoedTerms.push(…)` line. Expected: the veto test FAILS on `vetoedTerms`. Restore.
 
@@ -1841,6 +1913,19 @@ describe("renderPassOutcome", () => {
   });
 });
 
+describe("progressLine", () => {
+  it("clears to end of line so a shorter update cannot leave stale characters", () => {
+    const long = progressLine(9, 100);
+    const short = progressLine(1, 2);
+    expect(long.startsWith("\r\x1b[K")).toBe(true);
+    expect(short.startsWith("\r\x1b[K")).toBe(true);
+    expect(short).toContain("1/2");
+    // No trailing newline: the line is rewritten in place, and awaitPass emits
+    // the single closing newline once the pass ends.
+    expect(short.endsWith("\n")).toBe(false);
+  });
+});
+
 describe("renderRebuildPreview", () => {
   it("lists a sample and the remainder", () => {
     const out = renderRebuildPreview(
@@ -1897,6 +1982,15 @@ export type GlossaryPassSummaryLike = {
 const REBUILD_SAMPLE = 10;
 
 /**
+ * One in-place progress line. `\r` returns to column 0 and `\x1b[K` clears to
+ * end of line, so a shorter line never leaves stale characters from a longer
+ * one. Pure and exported so the escape sequence is testable without a TTY.
+ */
+export function progressLine(done: number, total: number): string {
+  return `\r\x1b[K  consolidating ${String(done)}/${String(total)}`;
+}
+
+/**
  * Post-pass lines.
  *
  * The warning fires only on `llmConfigured && !llmProduced`: "no model
@@ -1943,19 +2037,36 @@ Drive the pass from `runGlossaryCommand` via `beforeCall`:
 ```ts
 function awaitPass(client: IPCClient, method: string): Promise<GlossaryPassSummaryLike> {
   return new Promise((resolve, reject) => {
+    // In-place progress only on a TTY. `\r` rewrites the line, `\x1b[K` clears
+    // the tail so a shorter line cannot leave stale characters behind, and the
+    // closing `\n` stops the summary printing onto the progress line. Piped or
+    // redirected output gets NO progress at all rather than a stream of escape
+    // codes in a log file — the summary still prints either way.
+    const tty = process.stderr.isTTY === true;
+    let wrote = false;
+    const endProgress = (): void => {
+      if (wrote) process.stderr.write("\n");
+    };
+    client.onNotification("glossary.passProgress", (n: unknown) => {
+      if (!tty) return;
+      const p = n as { done: number; total: number };
+      process.stderr.write(progressLine(p.done, p.total));
+      wrote = true;
+    });
     // Single-flight in the gateway guarantees at most one job, so there is no
     // jobId to filter on — and filtering would race the `{ jobId }` reply.
-    client.onNotification("glossary.passProgress", (n: unknown) => {
-      const p = n as { done: number; total: number };
-      process.stderr.write(`  consolidating ${String(p.done)}/${String(p.total)}\r`);
-    });
     client.onNotification("glossary.passDone", (n: unknown) => {
+      endProgress();
       resolve(n as GlossaryPassSummaryLike);
     });
     client.onNotification("glossary.passError", (n: unknown) => {
+      endProgress();
       reject(new Error((n as { message: string }).message));
     });
-    client.call<{ jobId: string }>(method, {}).catch(reject);
+    client.call<{ jobId: string }>(method, {}).catch((err: unknown) => {
+      endProgress();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
   });
 }
 ```
@@ -2203,5 +2314,19 @@ Never `git add -A` — `.claude/settings.local.json` is git-tracked in this repo
 | §8 acceptance | 13 |
 
 **Type consistency:** `GlossaryPassSummary` gains exactly `upgraded`, `upgradesVetoed`, `vetoedTerms`, `llmConfigured`, `llmProduced` in Task 5 and is consumed with those names in Tasks 7, 8, 10, 11. `GlossaryRunOptions { rebuild; onProgress? }` is defined in Task 7 and used identically in Task 8. `GlossaryPassProgress` is defined in Task 5 and consumed in 7, 8, 10. `createGlossaryLlm` / `isLocalProviderKind` are defined in Task 1 and consumed in Task 3.
+
+## Review Dispositions
+
+Reviewed against
+[`2026-07-31-nimbus-glossary-llm-wiring-review.md`](./2026-07-31-nimbus-glossary-llm-wiring-review.md)
+on 2026-07-31. All three accepted; one required correcting the proposed fix.
+
+| Item | Disposition | Where |
+| --- | --- | --- |
+| 1. Reserve acted as a ceiling — 20 slots idle when pending is empty | **Accepted; fix corrected.** The proposed "cap pending at `budget − reserve`" fixes this corner but creates the mirror one (5 slots permanently idle whenever no snippet rows exist — the common case). Replaced with slack-absorbing allocation, correct in all four corners. Spec §3.2 rewritten to match. | Task 5, spec §3.2 |
+| 2. `\r` progress leaves stale characters and collides with the summary | **Accepted**, with a TTY gate added: `\x1b[K` clears the tail, a closing `\n` precedes the summary, and non-TTY output gets no progress at all rather than escape codes in a log file | Task 10 |
+| 3. Un-cancellable provider requests are undocumented in code | **Accepted, as a docstring not a `// TODO`** — the gateway source contains zero `// TODO` markers; limits are documented in prose. The note also names the ordering constraint: a per-pass controller must not land before signal propagation | Task 1 |
+
+Item 1 also invalidated Task 4's stated justification for its `limit <= 0` guard ("the caller derives the limit by subtraction"). The guard is kept and still tested, but is now correctly described as defence-in-depth.
 
 **Known gap, deliberate:** Task 3 has no dedicated unit test — `createSchedulerWithMesh` needs a full platform to construct, and a test asserting only "the option is passed through" would be a tautology. Its behaviour is covered by Task 5's integration tests (which exercise `runGlossaryPass` with a real `llm`) plus `tsc` and the grep verification in Task 3 Step 4. Flagged rather than papered over.
