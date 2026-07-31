@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
 import type { IPCClient } from "../ipc-client/index.ts";
+import type { AgentBriefCliSpec } from "./_agent-brief-cli.ts";
 import {
   isGlossaryBriefLike,
   parseGlossaryArgs,
@@ -8,6 +8,7 @@ import {
   readRebuildPreview,
   renderPassOutcome,
   renderRebuildPreview,
+  runGlossaryCommand,
 } from "./glossary.ts";
 
 interface RecordedCall {
@@ -239,6 +240,13 @@ describe("renderRebuildPreview", () => {
     expect(out).toContain("0 consolidated terms and 0 pending candidates");
     expect(out).toContain("Re-run with --yes to confirm.");
   });
+
+  test("shows the remainder line even with an empty sample", () => {
+    // sample.length === 0 (no sample line) but remainder = 5 - 0 > 0 (the
+    // remainder line still fires) — a distinct branch from both tests above.
+    const out = renderRebuildPreview({ total: 5, pending: 0 }, []);
+    expect(out).toContain("... and 5 more");
+  });
 });
 
 describe("readRebuildPreview", () => {
@@ -267,10 +275,10 @@ describe("readRebuildPreview", () => {
     await expect(resultPromise).rejects.toThrow("boom");
   });
 
-  test("rejects on a malformed glossary.briefReady payload", async () => {
+  test("rejects on a malformed glossary.briefReady payload (total mistyped)", async () => {
     const { client, fire } = makeFakeIpcClient();
     const resultPromise = readRebuildPreview(client);
-    fire("glossary.briefReady", { findings: { stats: { total: "no" }, entries: [] } });
+    fire("glossary.briefReady", { findings: { stats: { total: "no", pending: 0 }, entries: [] } });
     await expect(resultPromise).rejects.toThrow("Malformed glossary.briefReady payload");
   });
 
@@ -291,5 +299,142 @@ describe("readRebuildPreview", () => {
   test("propagates a rejected agents.glossary call", async () => {
     const { client } = makeFakeIpcClient(() => Promise.reject(new Error("no gateway")));
     await expect(readRebuildPreview(client)).rejects.toThrow("no gateway");
+  });
+
+  test("normalises a non-Error rejection from agents.glossary into an Error", async () => {
+    // Deliberately a raw string rejection (not `new Error(...)`), to prove
+    // `settleReject` normalises it the same way `awaitPass` does.
+    const { client } = makeFakeIpcClient(() => Promise.reject("boom-string"));
+    await expect(readRebuildPreview(client)).rejects.toThrow("boom-string");
+  });
+
+  test("times out if neither briefReady nor briefError ever arrives", async () => {
+    const { client } = makeFakeIpcClient();
+    await expect(readRebuildPreview(client, 5)).rejects.toThrow("Agent timed out after 0 s");
+  });
+
+  describe("isGlossaryPreviewLike branch coverage (via readRebuildPreview)", () => {
+    test("rejects when stats is null", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", { findings: { stats: null, entries: [] } });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+
+    test("rejects when stats is not an object", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", { findings: { stats: "nope", entries: [] } });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+
+    test("rejects when stats.pending (not just stats.total) is mistyped", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", {
+        findings: { stats: { total: 1, pending: "no" }, entries: [] },
+      });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+
+    test("rejects when entries is not an array", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", {
+        findings: { stats: { total: 1, pending: 0 }, entries: "nope" },
+      });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+
+    test("rejects when an entry has no string term", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", {
+        findings: { stats: { total: 1, pending: 0 }, entries: [{ term: 1 }] },
+      });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+  });
+});
+
+describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
+  test("['--rebuild'] touches nothing and never reaches runAgentBriefCli", async () => {
+    const { client, calls, fire } = makeFakeIpcClient();
+    let briefCliCalled = false;
+    let stdoutBuf = "";
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string): boolean => {
+      stdoutBuf += chunk;
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const resultPromise = runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async (fn) => fn(client),
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {
+          briefCliCalled = true;
+        },
+      });
+      fire("glossary.briefReady", {
+        findings: { stats: { total: 5, pending: 1 }, entries: [{ term: "CDR" }] },
+      });
+      await resultPromise;
+    } finally {
+      process.stdout.write = origStdoutWrite;
+    }
+    // The headline safety property: assert on the IPC call log, not merely on
+    // stdout. `runAgentBriefCli` — the only place `glossary.refresh` /
+    // `glossary.rebuild` are ever invoked — was never reached at all.
+    expect(briefCliCalled).toBe(false);
+    expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 10 } }]);
+    expect(calls.some((c) => c.method === "glossary.rebuild")).toBe(false);
+    expect(calls.some((c) => c.method === "glossary.refresh")).toBe(false);
+    expect(stdoutBuf).toContain("5 consolidated terms");
+  });
+
+  test("['--refresh', '--json'] keeps stdout JSON-only; the pass summary goes to stderr", async () => {
+    const { client, calls, fire } = makeFakeIpcClient();
+    let stdoutBuf = "";
+    let stderrBuf = "";
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string): boolean => {
+      stdoutBuf += chunk;
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await runGlossaryCommand(["--refresh", "--json"], {
+        withGatewayIpc: async () => {
+          throw new Error("withGatewayIpc should not be used on the --refresh path");
+        },
+        runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+          if (spec.beforeCall !== undefined) {
+            const beforeCallPromise = spec.beforeCall(client);
+            // `awaitPass` registers its handlers synchronously before this
+            // point returns control here, so firing immediately is safe.
+            fire("glossary.passDone", {
+              consolidated: 3,
+              upgraded: 1,
+              upgradesVetoed: 0,
+              vetoedTerms: [],
+              llmConfigured: false,
+              llmProduced: false,
+            });
+            await beforeCallPromise;
+          }
+          if (spec.json) process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+        },
+      });
+    } finally {
+      process.stdout.write = origStdoutWrite;
+      process.stderr.write = origStderrWrite;
+    }
+    expect(calls.some((c) => c.method === "glossary.refresh")).toBe(true);
+    expect(() => JSON.parse(stdoutBuf.trim())).not.toThrow();
+    expect(stdoutBuf).not.toContain("Pass complete");
+    expect(stderrBuf).toContain("Pass complete");
   });
 });

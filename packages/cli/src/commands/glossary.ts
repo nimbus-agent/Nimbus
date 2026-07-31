@@ -1,6 +1,6 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
-import { flagValue, runAgentBriefCli } from "./_agent-brief-cli.ts";
+import { flagValue, runAgentBriefCli, TIMEOUT_MS } from "./_agent-brief-cli.ts";
 
 export type GlossaryCliArgs = {
   term?: string;
@@ -214,36 +214,79 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
  * called for the preview. Exported so a test can assert on the exact set of
  * IPC calls made (never `glossary.rebuild` / `glossary.refresh`) without
  * standing up a gateway.
+ *
+ * Bounded by the same `TIMEOUT_MS` discipline `awaitBrief` uses: a wedged or
+ * crashed gateway that never emits `glossary.briefReady`/`briefError` must
+ * fail closed with the same "Agent timed out after N s" shape, not hang
+ * forever. `timeoutMs` is overridable so tests can force the timeout branch
+ * without a real 30s wait.
  */
 export function readRebuildPreview(
   client: IPCClient,
+  timeoutMs: number = TIMEOUT_MS,
 ): Promise<{ counts: { total: number; pending: number }; sample: string[] }> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Agent timed out after ${Math.round(timeoutMs / 1000)} s`));
+    }, timeoutMs);
+    const settleResolve = (v: {
+      counts: { total: number; pending: number };
+      sample: string[];
+    }): void => {
+      clearTimeout(timeout);
+      resolve(v);
+    };
+    // Normalises a non-Error rejection the same way `awaitPass` does, so both
+    // paths surface a consistent `Error` shape to the top-level CLI catch.
+    const settleReject = (err: unknown): void => {
+      clearTimeout(timeout);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
     client.onNotification("glossary.briefReady", (params: unknown) => {
       if (params === null || typeof params !== "object") {
-        reject(new Error("Malformed glossary.briefReady payload"));
+        settleReject(new Error("Malformed glossary.briefReady payload"));
         return;
       }
       const p = params as { findings?: unknown };
       if (!isGlossaryPreviewLike(p.findings)) {
-        reject(new Error("Malformed glossary.briefReady payload"));
+        settleReject(new Error("Malformed glossary.briefReady payload"));
         return;
       }
-      resolve({ counts: p.findings.stats, sample: p.findings.entries.map((e) => e.term) });
+      settleResolve({ counts: p.findings.stats, sample: p.findings.entries.map((e) => e.term) });
     });
     client.onNotification("glossary.briefError", (params: unknown) => {
       const p = params === null || typeof params !== "object" ? {} : (params as { error?: string });
-      reject(new Error(p.error ?? "Agent failed"));
+      settleReject(new Error(p.error ?? "Agent failed"));
     });
-    client.call<{ sessionId: string }>("agents.glossary", { limit: REBUILD_SAMPLE }).catch(reject);
+    client
+      .call<{ sessionId: string }>("agents.glossary", { limit: REBUILD_SAMPLE })
+      .catch(settleReject);
   });
 }
 
-export async function runGlossaryCommand(args: string[]): Promise<void> {
+/**
+ * Testability seam: both members default to the real implementations, so
+ * every real caller (`registry.ts`) is unaffected. Tests override one or
+ * both to drive `runGlossaryCommand` end-to-end with a fake IPC client and no
+ * `mock.module` — e.g. asserting `runAgentBriefCli` is never reached on the
+ * `--rebuild`-without-`--yes` path, or that the pass-outcome write never
+ * lands on stdout under `--json`.
+ */
+export type GlossaryCommandDeps = {
+  withGatewayIpc: typeof withGatewayIpc;
+  runAgentBriefCli: typeof runAgentBriefCli;
+};
+
+const defaultGlossaryDeps: GlossaryCommandDeps = { withGatewayIpc, runAgentBriefCli };
+
+export async function runGlossaryCommand(
+  args: string[],
+  deps: GlossaryCommandDeps = defaultGlossaryDeps,
+): Promise<void> {
   const parsed = parseGlossaryArgs(args);
 
   if (parsed.rebuild && !parsed.yes) {
-    const { counts, sample } = await withGatewayIpc((client) => readRebuildPreview(client));
+    const { counts, sample } = await deps.withGatewayIpc((client) => readRebuildPreview(client));
     process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
     return;
   }
@@ -251,7 +294,7 @@ export async function runGlossaryCommand(args: string[]): Promise<void> {
   const runsPass = parsed.refresh || parsed.rebuild;
   const passMethod = parsed.rebuild ? "glossary.rebuild" : "glossary.refresh";
 
-  await runAgentBriefCli<GlossaryBriefLike>({
+  await deps.runAgentBriefCli<GlossaryBriefLike>({
     kind: "glossary",
     guard: isGlossaryBriefLike,
     json: parsed.json,
@@ -263,7 +306,10 @@ export async function runGlossaryCommand(args: string[]): Promise<void> {
       ? {
           beforeCall: async (client: IPCClient) => {
             const summary = await awaitPass(client, passMethod);
-            process.stdout.write(`${renderPassOutcome(summary).join("\n")}\n`);
+            // stderr, not stdout: `--json` promises stdout carries JSON only,
+            // and this human-readable summary must not land on the same
+            // stream as the machine-readable findings that follow it.
+            process.stderr.write(`${renderPassOutcome(summary).join("\n")}\n`);
           },
         }
       : {}),
