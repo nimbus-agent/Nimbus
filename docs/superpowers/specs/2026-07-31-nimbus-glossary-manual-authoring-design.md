@@ -8,8 +8,8 @@
 > Brain)**.
 >
 > This document does not restate the base design — read §5, §6 and §12 of the original first. It
-> implements the seam §12's last bullet names, and **corrects two claims in that bullet** (§9 below
-> lists every statement that becomes false on landing).
+> implements the seam §12's last bullet names, and **corrects two claims in that bullet** (§13
+> below lists every statement that becomes false on landing).
 
 ## 1. Why now
 
@@ -76,6 +76,66 @@ human's authority and the user has no reason to re-read a line they typed correc
 A `#` in a definition is not exotic — "tracks the # of open PRs", "the #general channel", "issue
 \#432" are ordinary glossary prose. So the fix lands **with this slice**, not after it.
 
+### 3.1 The repair, specified
+
+`stripComment` is the highest-blast-radius edit in the slice, so the algorithm is pinned here
+rather than left to implementation taste.
+
+**A single left-to-right character scan**, not a regex. Track one boolean, `inString`, toggled by an
+unescaped `"`. A `#` seen while `inString === false` ends the line; a `#` seen inside a string is
+content. A backslash inside a string consumes the next character unconditionally, so `\"` does not
+close the string.
+
+A scan is preferred over the regex form `/"([^"\\]|\\.)*"|(#.*)/g` for two reasons: it is directly
+readable against the rule above, and it needs no argument about backtracking. (That particular
+regex is in fact safe — its two alternatives are disjoint on their first character, so there is no
+ambiguity to backtrack through — but "safe after analysis" is a worse property than "trivially
+linear" for a primitive on every config read path.)
+
+**Unterminated quote.** A line whose string never closes — `key = "unterminated # comment` — is
+**malformed, and the entry is skipped with a warning**, not silently truncated. Today it yields the
+value `"unterminated` (leading quote attached), which is the same silent-corruption class as the
+`#` bug. Skipping is the fail-closed choice: no definition beats a mangled one.
+
+**Escape convention.** `stripComment` and `parseString` must agree on what a backslash does, or a
+line can strip as though `\"` were an escape and then unquote as though it were not. Both treat
+backslash as escaping exactly the next character inside a double-quoted string.
+
+**Single-quoted strings are not supported and stay unsupported.** `parseString` unquotes only
+double-quoted values, so a TOML literal string `x = 'a # b'` is already returned with its quotes
+attached. The scanner therefore tracks double quotes only, and a `#` inside a single-quoted value
+still truncates. Making the scanner single-quote aware without making `parseString` unquote them
+would be worse than either — the comment would survive while the quotes did too.
+
+### 3.2 A second copy of both defects
+
+`config/filesystem-toml.ts` carries its **own private `stripComment` and `parseString`**, textually
+identical to the shared ones and carrying both bugs. `[[filesystem.roots]]` is a path surface, and a
+directory named `#inbox` or `C:\notes\#archive` is entirely ordinary — so the truncation bug is
+arguably more reachable there than in the glossary.
+
+Repairing only `toml-primitives.ts` would leave a known-identical bug live in a sibling file that
+was edited in the same breath. So `filesystem-toml.ts` **drops its private copies and imports the
+shared primitives**. Both helpers are textually identical to the shared versions today, so this is a
+deduplication that inherits the fix rather than a second repair, and it removes the drift source
+that produced two copies in the first place. It gets its own test — a root path containing `#` must
+survive.
+
+### 3.3 What is deliberately NOT fixed: escape decoding
+
+`parseString` gains `\"` → `"` and nothing else. It does **not** learn `\n`, `\t`, `\r` or `\\`.
+
+This is not conservatism, it is a correctness requirement. The shared `parseString` feeds
+path-valued config keys — `llamacpp_server_path`, `piper_path`, `piper_model`, `whisper_path`,
+`whisper_model`, `wake_word_whisper_model`, `classifier_model` — and on Windows those are ordinary
+backslash paths. A full TOML escape decoder would read `C:\tools\new\table.onnx` as `C:` + TAB +
+`ools` + NEWLINE + `ew` + TAB + `able.onnx`, silently breaking every Windows install that points at
+a local Piper or llama.cpp binary. `\"` is safe to decode because no plausible path contains it.
+
+The cost is that an authored definition cannot embed a newline (§4.2 already limits it to one
+line). The correct fix for that is a real TOML parser, not a partial escape decoder bolted to a
+primitive that path values also flow through.
+
 **Blast radius, stated rather than minimised.** `stripComment` is shared by `forEachSectionEntry`
 and two other section loops, so it is on the read path of roughly twenty config sections. The
 change is nonetheless a strict repair rather than a behaviour swap: a `#` outside quotes still
@@ -131,7 +191,9 @@ rather than half-built.
   collides with an authored term key, since a term cannot be its own alias and the definition must
   win.
 - A duplicate key takes the last occurrence, matching the existing parser's behaviour for every
-  other section.
+  other section. **Two *different* raw keys that normalize to the same `term_key`** — `CDR` and
+  `Cdr` on separate lines — are also last-wins, but unlike a literal duplicate this is almost
+  certainly a mistake rather than an intentional override, so it warns.
 
 **One resolution subtlety, stated rather than discovered later.** If an alias normalizes to the key
 of an existing *mined* term, `resolveTerm` still returns the mined term: it tries `getTerm` (exact)
@@ -250,6 +312,16 @@ Authored rows are written **straight to `consolidated`**. There is nothing to co
 human already supplied the definition — so they never enter the pending queue, never consume a slot
 of `max_new_terms_per_pass`, and never cost a model call. This is what makes §6.3 work.
 
+**The two upserts have deliberately opposite `display_term` policies, and that must stay visible.**
+The pre-pass upsert sets `display_term = excluded.display_term` **unconditionally** — an author who
+changes `CDR` to `CDRs` in config is explicitly restyling the term, and the same normalized key must
+pick that up. The mining upsert does the opposite (§6.2). Written as one rule: *the authored surface
+form wins over a mined one, and the most recent authored form wins over an older authored one.*
+
+These are two different SQL statements in two different modules with contradictory-looking clauses,
+which is exactly the shape a later cleanup collapses into one shared helper. Both carry a comment
+pointing at the other, and the §10 fixtures pin both directions.
+
 Removal, per §5, and only when `cfg.loaded === true`.
 
 ### 6.2 Two interactions with the existing pass
@@ -359,6 +431,14 @@ and would silently clobber it.
 - `renderRebuildPreview` is corrected per §6.3: mined deletions and authored terms are reported
   separately, and the sample filters on `definitionSource`, which `GlossaryEntry` already carries —
   so no new IPC surface is needed for it.
+- **`--refresh` reports skipped config entries.** A config entry rejected by §4.1 — empty
+  definition, unresolvable alias, normalized-key collision — is otherwise invisible: the user edits
+  `nimbus.toml`, sees a successful pass, and finds their term missing with no explanation. The
+  pre-pass already returns `skipped`; it is carried on `GlossaryPassSummary` alongside the existing
+  counters and rendered by `renderPassOutcome`, which is already the home for exactly this kind of
+  post-pass warning (it prints the no-model-answered warning and the vetoed-terms list today). Each
+  skipped entry is named with its reason, capped like `VETOED_TERMS_REPORTED` — a notification, not
+  an audit trail.
 
 **No new CLI subcommand, and no new IPC method.** The authoring loop is: edit `nimbus.toml`, run
 `nimbus glossary --refresh`. Adding `nimbus glossary define` was considered and rejected — it would
@@ -426,7 +506,20 @@ been enough here.
   `selectSnippetUpgradeBatch`, against a fixture where it would otherwise qualify on every other
   predicate.
 - **`stripComment`** gets a table-driven test: `#` inside quotes, `#` outside quotes, `#` in a key,
-  an escaped quote, a value that is only `#`, and a value with no `#` at all.
+  an escaped quote, a value that is only `#`, a value with no `#` at all, and an unterminated quote
+  (which must skip, per §3.1, not truncate).
+- **A Windows-style path value survives** — `piper_path = "C:\tools\new\table.onnx"` round-trips
+  byte-identical. This is the regression guard for §3.3: it fails the moment someone "completes"
+  `parseString` into a full escape decoder.
+- **`[[filesystem.roots]]` inherits the repair** — a root path containing `#` survives §3.2's
+  deduplication.
+- **`display_term` is pinned in both directions**, since the two upserts hold opposite policies
+  (§6.1, §6.2): a mined sighting must not overwrite an authored surface form, *and* an edited
+  authored surface form must overwrite the stored one. A test for either alone passes against the
+  wrong implementation of the other.
+- **Skipped config entries reach `--refresh` output** for each §4.1 rejection reason, asserted on
+  the rendered lines rather than on the counter alone — a count proves the entry was rejected, not
+  that the user was told why.
 - **V46** gets `runner-v46.test.ts` on the `runner-v45.test.ts` precedent, asserting that a row with
   `definition_source='manual'` is rejected before the migration and accepted after, and that
   pre-existing rows and all four indexes survive the rebuild.
@@ -444,7 +537,49 @@ already has. Stated explicitly so a later audit does not read the absence as an 
 Worth noting for completeness: authored text goes into the index but never into a model prompt.
 Consolidation is skipped entirely for manual rows, so `wrapToolOutput` / I11 is not on this path.
 
-## 12. Claims that become false on landing
+## 12. Known limits and deliberate deferrals
+
+Stated here rather than discovered later.
+
+- **Definitions are single-line** (§4.2), and §3.3 forecloses the obvious workaround: no `\n`
+  decoding, because the same primitive carries Windows paths.
+- **A single-quoted config value still truncates at `#`** (§3.1). TOML literal strings were never
+  supported by this parser.
+- **An alias cannot shadow a mined term of the same name** (§4.1) — exact match beats synonym, by
+  design, and the collision is with the index rather than the config so it cannot be caught at
+  parse time.
+- **Aliases resolve only to authored terms** (§4) — aliasing a mined term would pull a mined row
+  into §5's desired-state reconciliation, which is a separate decision.
+- **Removal leaves an inert tombstone.** A demoted authored term with no mined evidence sits
+  `pending` at `doc_freq = 0` forever: below the floor, never selected, never projected, never
+  suggested. `--rebuild` clears it (`clearGlossary` truncates unconditionally), and the volume is
+  one row per add-then-remove cycle, so storage is not the concern.
+
+  A **purge** was considered and rejected, because no predicate can express it. The obvious one —
+  `status='pending' AND doc_freq=0 AND definition_source IS NULL` — also matches every *mined* term
+  the §5.5 sweep demoted after its evidence vanished entirely: `demoteTerm` nulls
+  `definition_source` for both populations, so after demotion nothing distinguishes them. A purge
+  written that way would silently change §5.5's documented "sits pending below the floor" behaviour
+  as a side effect. Distinguishing them would need a column recording that a row was once authored,
+  which is real schema surface for no user-visible gain.
+
+  The tombstone's one real symptom is **pre-existing and worth recording**: `buildGaps` reports
+  `counts.pending` as "candidate term(s) still awaiting consolidation" with the remediation "later
+  passes will consolidate them", which is false for any below-floor row. Sweep-demoted mined terms
+  already inflate that count today; this slice adds authored removals to the same population, so it
+  makes an existing over-count marginally worse rather than introducing it. Fixing it means teaching
+  `countByStatus` the `min_doc_freq` floor, which changes mined reporting too and belongs in its own
+  change.
+- **Skipped config entries surface only on the pass that skipped them** (§8). A user who edits
+  `nimbus.toml` and waits for the debounced sync — rather than running `--refresh` — never sees the
+  warning. Surfacing it persistently would mean recording pass diagnostics in
+  `glossary_pass_state` so `agents/glossary.ts` could raise a `GapNote` from stored state, since the
+  agent does not read config. That is a new capability rather than a wiring change, and the person
+  editing config is overwhelmingly the person who runs `--refresh` to test the edit. Deferred, with
+  the seam named: a `last_pass_skipped` column and a gap note, if real use shows the warning is
+  being missed.
+
+## 13. Claims that become false on landing
 
 Corrected in the same commit as the code, per the triple rule:
 
@@ -470,7 +605,7 @@ Grep targets before claiming this list is complete: `definition_source`, `'llm',
 the matched line — three of the ten false doc claims corrected in this feature's history were found
 only by reading around the grep hit.
 
-## 13. Delivery
+## 14. Delivery
 
 One PR. The parser repair (§3) and the migration (§9) are the two pieces with blast radius beyond
 the glossary, and both are load-bearing for the feature, so splitting them into a precursor PR
@@ -480,7 +615,7 @@ Before pushing: `bun run preflight:fast`, the gateway and CLI glossary suites, t
 (§3's blast radius), and the Docker coverage floor — new source files land under
 `packages/gateway/src`.
 
-## 14. Acceptance
+## 15. Acceptance
 
 - [ ] A term defined in `[glossary.terms]` is returned by `nimbus glossary <term>` after
       `--refresh`, labelled as authored, with no model call made for it.
