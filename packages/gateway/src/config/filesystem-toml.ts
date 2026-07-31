@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { parseString, stripComment } from "./toml-primitives.ts";
+
 export type NimbusFilesystemRootToml = {
   path: string;
   gitAware: boolean;
@@ -9,14 +11,6 @@ export type NimbusFilesystemRootToml = {
   dependencyGraph: boolean;
   exclude: string[];
 };
-
-function stripComment(line: string): string {
-  const hash = line.indexOf("#");
-  if (hash < 0) {
-    return line;
-  }
-  return line.slice(0, hash);
-}
 
 function parseBool(raw: string): boolean | undefined {
   const s = raw.trim().toLowerCase();
@@ -34,14 +28,6 @@ function applyOptionalBool(valRaw: string, set: (b: boolean) => void): void {
   if (b !== undefined) {
     set(b);
   }
-}
-
-function parseString(raw: string): string {
-  const t = raw.trim();
-  if (t.startsWith('"') && t.endsWith('"') && t.length >= 2) {
-    return t.slice(1, -1).replaceAll(String.raw`\\"`, '"');
-  }
-  return t;
 }
 
 function expandPath(p: string): string {
