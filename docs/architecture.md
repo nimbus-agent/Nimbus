@@ -1074,7 +1074,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | 6b | `janitor` | `nimbus janitor <resource-ref> [--idle-days N] [--cleanup <action.type>] [--allow-gaps] [--json]` | `agents.janitor` | ✅ Shipped 2026-06-12 — flags idle cloud resources from the federated action-request surface and proposes a HITL-gated cleanup action; read-only until the owner approves |
 | 6b | `preflight` | `nimbus preflight <ref> --namespace <ns> [--strict] [--json]` | `agents.preflight` | ✅ Shipped 2026-06-12 — blast-radius preflight over a peer namespace before a change lands (`nimbus preflight approve <request-id>` responds to a federated request); read-only |
 | S1 | `why` | `nimbus why <ref> [--line <n>] [--peek] [--json]` | `agents.why` / `agents.whyPeek` | ✅ Shipped 2026-07-24 — six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, plus a sub-300ms `--peek` one-liner; on-demand root-fenced cached single-line `git blame` (not a connector call); emits `why.briefReady` |
-| S1 | `glossary` | `nimbus glossary [<term>] [--limit <n>] [--json]` | `agents.glossary` | ✅ Shipped 2026-07-30 — two-lane brief over a materialized `glossary_term` table (V45): term resolution (exact → synonym → near-miss) and coverage stats; the extraction pass mining/consolidating terms runs off the connector-sync seam, not this command; emits `glossary.briefReady` |
+| S1 | `glossary` | `nimbus glossary [<term>] [--limit <n>] [--json] [--refresh \| --rebuild [--yes]]` | `agents.glossary` (read); `glossary.refresh` / `glossary.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-07-30, LLM wiring + `--refresh`/`--rebuild` 2026-07-31 — two-lane brief over a materialized `glossary_term` table (V45): term resolution (exact → synonym → near-miss) and coverage stats; the extraction pass consolidates via a local LLM when configured and available, runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; emits `glossary.briefReady` |
 | 7 | `excellence` | `nimbus excellence [--service \| --team]` | `agents.excellence` | Planned — parallel sub-agents over service catalog, DORA, feature flags, recent activity |
 | 8 | `security` | `nimbus security <repo\|service>` | `agents.security` | Planned — vulns, CVEs, secrets, IaC misconfigs, license issues for a repo or service |
 | 8 | `posture` | `nimbus posture <cloud-account\|cluster>` | `agents.posture` | Planned — CSPM findings + IaC drift + over-privileged identities + exposure ranked by exploitability × blast radius |
@@ -1285,11 +1285,19 @@ const streamReq: JSONRPCRequest = {
 //   (not a connector dispatch, no I29 row) via `ensureBlameLine` / `git_blame_line`.
 //
 // Phase 6 S1 surfaces — glossary agent (implicit-knowledge terminology; V45 `glossary_term` / `glossary_pass_state`):
-// agents.glossary — async, returns { sessionId } immediately, emits glossary.briefReady / glossary.briefError;
-//   renderer-exposed (Tauri count 102). Reads only `term` / `limit` from params — `refresh` / `rebuild` are
-//   accepted-but-ignored by the handler (the CLI forwards them; the extraction pass itself is triggered only
-//   by the debounced post-connector-sync hook in `platform/assemble.ts`, never by this RPC).
+// agents.glossary   — async, returns { sessionId } immediately, emits glossary.briefReady / glossary.briefError;
+//   renderer-exposed (Tauri count 102). Reads only `term` / `limit` from params.
 //   Read-only, never HITL, never `connectors.dispatch` — zero `egress_ledger` rows.
+// glossary.refresh  — drives an on-demand extraction pass now (`nimbus glossary --refresh`); long-running job
+//   via LongRunningJobRegistry, returns { jobId } and emits glossary.passProgress / glossary.passDone /
+//   glossary.passError. Fails fast with ERR_GLOSSARY_PASS_RUNNING if a pass (scheduled or on-demand) is
+//   already in flight — shares the single-flight guard with the debounced post-sync trigger.
+// glossary.rebuild  — same job shape as glossary.refresh, but truncates `glossary_term` +
+//   `glossary_pass_state`, deletes every projected item, and re-mines from a zero watermark
+//   (`nimbus glossary --rebuild [--yes]`; the CLI previews the delete count without `--yes`).
+//   Both glossary.refresh / glossary.rebuild: write-class (rebuild is destructive), so the whole
+//   `glossary` namespace is LAN-forbidden (I5) and NEITHER is in Tauri's ALLOWED_METHODS (I7) —
+//   local/CLI-only, unlike the read-only agents.glossary above.
 ```
 
 ### AbortController scope in `engine.cancelStream`

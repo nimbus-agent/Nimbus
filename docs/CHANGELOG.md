@@ -8,6 +8,31 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-31 — `nimbus glossary` — LLM wiring, snippet upgrades, and `--refresh`/`--rebuild`.**
+  Three follow-ups to the 2026-07-30 glossary delivery below. (1) A `ConsolidatorLlm` adapter over
+  the existing `LlmRouter` — hard-rejecting any non-local provider before generation, not after —
+  is now injected into the scheduler-triggered pass and gated on a new `[glossary].use_llm`
+  (default `true`); an unattended pass on a machine with a running local model now consolidates
+  through it instead of always falling back to a verbatim snippet. (2) Existing
+  `definition_source='snippet'` terms are no longer permanent: `consolidatePhase` runs a second
+  batch each pass selecting consolidated-but-snippet-sourced rows, guaranteed a reserved floor of
+  slots (`UPGRADE_RESERVE`, clamped to half the per-pass budget) so a large pending backlog can
+  slow upgrades but never starve them. (3) `nimbus glossary --refresh` and `--rebuild [--yes]` are
+  wired end-to-end through a new `glossary.*` IPC namespace (`glossary.refresh` / `glossary.rebuild`,
+  long-running jobs emitting `glossary.passProgress` / `glossary.passDone` / `glossary.passError`),
+  replacing the explicit-rejection error the flags returned before; both methods are LAN-forbidden
+  (I5) and not Tauri-exposed (I7), so `ALLOWED_METHODS` stays at 102.
+  **Surprising consequence, worth reading before enabling:** turning the LLM on can make terms
+  *disappear* from the glossary. Snippet mode has no veto path, so a glossary built without a model
+  accumulates terms nothing has ever judged; the upgrade path in (2) runs those same terms through a
+  real veto check, and a term that fails it is removed from the glossary (row survives as `vetoed`,
+  and returns to the searchable index only if a later `--rebuild` re-derives it). `--refresh` names
+  every term vetoed this way in its stderr summary so a disappearance is never silent. Known limit
+  added: the abort signal used at gateway shutdown does not propagate into the LLM provider's
+  underlying HTTP request, which keeps running until the provider's own 120s timeout or process
+  exit. Spec: `docs/superpowers/specs/2026-07-31-nimbus-glossary-llm-wiring-design.md`; plan:
+  `docs/superpowers/plans/2026-07-31-nimbus-glossary-llm-wiring.md`.
+
 - **2026-07-30 — `nimbus glossary` — implicit-knowledge glossary.**
   A tenth built-in read-only agent plus a background extraction pass that mines domain
   terminology from the already-indexed graph. Mining is scoped to an explicit **`service:type`**
