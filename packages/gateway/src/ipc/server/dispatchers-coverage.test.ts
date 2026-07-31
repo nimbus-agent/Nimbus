@@ -50,6 +50,7 @@ import {
   tryDispatchDeploymentRpc,
   tryDispatchDiagnosticsRpc,
   tryDispatchFederationRpc,
+  tryDispatchGlossaryRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexReembedRpc,
   tryDispatchIndexRegraphRpc,
@@ -758,6 +759,70 @@ describe("tryDispatchIndexRegraphRpc — error remapping", () => {
     const ctx = makeCtx({ localIndex });
     const out = await tryDispatchIndexRegraphRpc(ctx, "index.regraph", {});
     expect(out).toMatchObject({ scanned: 0, graphed: 0, skipped: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Glossary RPC (Task 8) — skip / hit / error-remapping.
+// tryDispatchGlossaryRpc has three branches: (1) ctx.options.glossaryRefresher
+// unset → phase4RpcSkipped, (2) a successful dispatch → the "hit" value,
+// (3) a GlossaryRpcError thrown by the inner dispatch (e.g. a concurrent-pass
+// rejection) → remapped to RpcMethodError carrying the SAME rpcCode. (3) is the
+// security-relevant one: it is what turns an internal error into the RPC error
+// code a caller actually sees.
+// ---------------------------------------------------------------------------
+describe("tryDispatchGlossaryRpc — skip / hit / error remapping", () => {
+  const SUMMARY = {
+    scanned: 0,
+    discovered: 0,
+    demoted: 0,
+    consolidated: 0,
+    upgraded: 0,
+    vetoed: 0,
+    upgradesVetoed: 0,
+    vetoedTerms: [] as string[],
+    retried: 0,
+    llmConfigured: false,
+    llmProduced: false,
+    aborted: false,
+  };
+
+  function fakeGlossaryRefresher(
+    over: Partial<NonNullable<ServerCtx["options"]["glossaryRefresher"]>> = {},
+  ): NonNullable<ServerCtx["options"]["glossaryRefresher"]> {
+    return {
+      trigger: () => undefined,
+      stop: () => undefined,
+      status: () => "idle",
+      runNow: () => Promise.resolve(SUMMARY),
+      ...over,
+    };
+  }
+
+  test("glossaryRefresher unset → phase4RpcSkipped", async () => {
+    const ctx = makeCtx({});
+    const out = await tryDispatchGlossaryRpc(ctx, "glossary.refresh", {});
+    expect(out).toBe(phase4RpcSkipped);
+  });
+
+  test("glossary.refresh with wiring present → returns the hit { jobId } value", async () => {
+    const ctx = makeCtx({ glossaryRefresher: fakeGlossaryRefresher() });
+    const out = await tryDispatchGlossaryRpc(ctx, "glossary.refresh", {});
+    expect((out as { jobId: string }).jobId).toStartWith("glossary_refresh_");
+  });
+
+  test("GlossaryRpcError from a concurrent pass remaps to RpcMethodError with rpcCode -32000", async () => {
+    const ctx = makeCtx({
+      glossaryRefresher: fakeGlossaryRefresher({ status: () => "running" }),
+    });
+    let caught: unknown;
+    try {
+      await tryDispatchGlossaryRpc(ctx, "glossary.refresh", {});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(RpcMethodError);
+    expect((caught as RpcMethodError).rpcCode).toBe(-32000);
   });
 });
 

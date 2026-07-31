@@ -112,6 +112,17 @@ describe("dispatchGlossaryRpc", () => {
     );
   });
 
+  // Reachable shutdown state: GlossaryRefresher.status() returns "stopped" after
+  // stop() runs (glossary-refresh.ts). A write-class RPC must fail closed here too,
+  // not merely for "running"/"disabled" — a copy-paste or inverted-comparison bug in
+  // this specific branch would not be caught by the other two branches' tests.
+  it("rejects when the gateway is shutting down (status stopped)", async () => {
+    const ctx = { refresher: fakeRefresher({ status: () => "stopped" }), notify: () => undefined };
+    await expect(dispatchGlossaryRpc("glossary.refresh", {}, ctx)).rejects.toThrow(
+      "ERR_GLOSSARY_STOPPED",
+    );
+  });
+
   it("emits passError when the pass throws", async () => {
     const c = collector();
     const ctx = {
