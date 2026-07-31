@@ -301,12 +301,15 @@ nimbus why src/billing/retry.ts --line 42 --json
 
 Turn terminology the team already uses — but has never written down — into a queryable glossary, extracted entirely from the local index. `nimbus glossary` with no argument prints terms sorted by frequency; `nimbus glossary <term>` prints the team's consolidated definition, resolved against an exact term match, then a known synonym, then (on a miss) a "did you mean" list of near-misses. Candidates are mined deterministically from indexed titles/bodies (5 surface-form families — acronyms, backticked tokens, PascalCase identifiers, hyphenated compounds, capitalized phrases) and require evidence across at least `min_doc_freq` (default 3) source items before a term is considered; a local LLM then consolidates or vetoes each candidate.
 
-Extraction itself is **not** triggered by this command — it runs as a background pass, debounced after a successful connector sync (`[glossary]` in `nimbus.toml`, default on). `nimbus glossary` only reads the already-materialized `glossary_term` table.
+Extraction normally runs as a background pass, debounced after a successful connector sync (`[glossary]` in `nimbus.toml`, default on); `nimbus glossary` with no mutating flag only reads the already-materialized `glossary_term` table. `--refresh` and `--rebuild` drive an on-demand pass instead of waiting for the next sync.
 
 ```bash
 nimbus glossary
 nimbus glossary CDR
 nimbus glossary --limit 50 --json
+nimbus glossary --refresh
+nimbus glossary --rebuild
+nimbus glossary --rebuild --yes
 ```
 
 **Options:**
@@ -315,8 +318,11 @@ nimbus glossary --limit 50 --json
 |---|---|
 | `--limit <n>` | Cap the number of terms/entries returned |
 | `--json` | Machine-readable JSON output (otherwise Markdown) |
+| `--refresh` | Run an on-demand incremental pass now, then print the (possibly updated) brief. Fails with `ERR_GLOSSARY_PASS_RUNNING` if a pass is already in flight. |
+| `--rebuild` | Truncate every consolidated/pending glossary term and re-derive from scratch. Without `--yes`, prints a count of what would be deleted plus a sample of the highest-scoring terms and exits without touching anything. |
+| `--yes` | Required alongside `--rebuild` to actually run the destructive rebuild. |
 
-`--refresh` and `--rebuild` are **not implemented** and are **rejected with an error**. The gateway's `agents.glossary` handler reads only `term` and `limit`, so neither ever triggered a pass; they previously parsed and forwarded silently, which meant `nimbus glossary --rebuild` printed an ordinary listing while looking like it had re-derived the glossary. Extraction is driven solely by the post-sync background trigger.
+`--refresh` and `--rebuild` are mutually exclusive. A pass can take several minutes (up to `max_new_terms_per_pass * consolidate_timeout_ms`, ~12.5 minutes at defaults); on a TTY, progress prints in place as `consolidating <done>/<total>` and is suppressed for piped/redirected output. On completion, a one-line summary reports new/upgraded term counts, warns if a local LLM was configured but never answered (Ollama not running), and names any previously snippet-defined term vetoed during an upgrade.
 
 **Output (Markdown):** with no argument, a frequency-sorted term list with coverage stats (how many terms are consolidated vs. still pending). With `<term>`, the consolidated definition, first-seen / last-seen dates, up to 5 top sources, and known synonyms/near-misses; gap notes explain an empty or partially-built glossary (no pass has run yet, every candidate fell below the frequency floor, consolidation is still in progress) rather than looking broken.
 

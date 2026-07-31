@@ -34,6 +34,12 @@ export type AgentBriefCliSpec<TFindings> = {
   timeoutMs?: number;
   /** Invoked with the typed findings before output — lets a command set its own exit code. */
   onResult?: (findings: TFindings) => void;
+  /**
+   * Runs after connect, BEFORE the brief-notification timer is armed. Used by
+   * `glossary --refresh` to drive a pass that can take minutes; arming the 30 s
+   * brief timeout first would kill it.
+   */
+  beforeCall?: (client: IPCClient) => Promise<void>;
 };
 
 function awaitBrief<TFindings>(
@@ -87,6 +93,7 @@ export async function runAgentBriefCli<TFindings>(
   try {
     await client.connect();
     registerInteractiveCliIpcHandlers(client);
+    if (spec.beforeCall !== undefined) await spec.beforeCall(client);
     const briefPromise = awaitBrief(client, spec, (t) => {
       timeout = t;
     });
