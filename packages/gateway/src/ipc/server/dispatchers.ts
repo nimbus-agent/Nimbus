@@ -27,6 +27,7 @@ import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.
 import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
 import { dispatchFederationRpc, FederationRpcError } from "../federation-rpc.ts";
 import { dispatchFilesystemRpc, FilesystemRpcError } from "../filesystem-rpc.ts";
+import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
@@ -929,6 +930,27 @@ export async function tryDispatchEgressRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchGlossaryRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("glossary.")) return phase4RpcSkipped;
+  const refresher = ctx.options.glossaryRefresher;
+  if (refresher === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchGlossaryRpc(method, params, {
+      refresher,
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof GlossaryRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 /** Owner-HITL approval for `egress.prune`, gated through the calling client's consent channel. */
 function makePruneApproval(
   ctx: ServerCtx,
@@ -1027,7 +1049,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1056,6 +1078,8 @@ async function dispatchPhase4PlatformGroup(
   if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
   const egressOutcome = await tryDispatchEgressRpc(ctx, method, params, clientId);
   if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
+  const glossaryOutcome = await tryDispatchGlossaryRpc(ctx, method, params);
+  if (glossaryOutcome !== phase4RpcSkipped) return glossaryOutcome;
   const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
   if (clipOutcome !== phase4RpcSkipped) return clipOutcome;
   return tryDispatchAdminRpc(ctx, method, params);

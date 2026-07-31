@@ -39,6 +39,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.remove",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
+  // Glossary on-demand passes are write-class and local-only: refresh spends the
+  // owner's local model, rebuild TRUNCATES both glossary tables and deletes every
+  // projected item. The denylist is default-allow, so omitting this would leave a
+  // paired peer able to wipe the glossary. The read-only `agents.glossary` stays
+  // admitted, like every other agent.
+  "glossary",
   // Zero-config onboarding — `nimbus init`'s local demo hint (a file:line from
   // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
   // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).

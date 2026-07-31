@@ -209,3 +209,13 @@ describe("federation over LAN (I5 + I17)", () => {
     expect(() => checkLanMethodAllowed("federation.shareReceive", peer)).not.toThrow();
   });
 });
+
+describe("glossary over LAN (I5 — on-demand passes are write-class and local-only)", () => {
+  test("forbids the glossary namespace over LAN", () => {
+    const peer = { peerId: "p1", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("glossary.refresh", peer)).toThrow("not callable over LAN");
+    expect(() => checkLanMethodAllowed("glossary.rebuild", peer)).toThrow("not callable over LAN");
+    // The read-only agent stays reachable, like the other nine agents.
+    expect(() => checkLanMethodAllowed("agents.glossary", peer)).not.toThrow();
+  });
+});

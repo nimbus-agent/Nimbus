@@ -11,6 +11,7 @@ import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts"
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
+import type { GlossaryRefresher } from "../../glossary/glossary-refresh.ts";
 import type { IdentityStore } from "../../identity/identity-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
@@ -125,6 +126,12 @@ export type CreateIpcServerOptions = {
   // Present only when assembled at boot; the dispatcher skips cleanly when unset. egress.prune is
   // NOT Tauri-exposed (I7 — mutation/RCE-class surface); only the 4 read verbs are renderer-callable.
   egressRpcCtx?: EgressRpcCtx;
+  // Glossary (S1 Local Brain). The dependency seam behind the glossary.* IPC namespace
+  // (refresh, rebuild — both long-running jobs, see ipc/glossary-rpc.ts). Present only
+  // when [glossary].enabled at boot; the dispatcher skips cleanly when unset. Both
+  // methods are LAN-forbidden (I5) — refresh spends the owner's local model, rebuild
+  // truncates both glossary tables. Not Tauri-exposed (I7 — no desktop glossary surface).
+  glossaryRefresher?: GlossaryRefresher;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
   // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).
