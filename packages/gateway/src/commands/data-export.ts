@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest } from "../db/backup-manifest.ts";
@@ -42,62 +42,75 @@ export async function runDataExport(input: RunDataExportInput): Promise<RunDataE
   const seed = await ensureRecoverySeed(input.vault);
   const stage = mkdtempSync(join(tmpdir(), "nimbus-export-stage-"));
 
-  const vaultPlaintext = await collectVaultManifestPlaintext(input.vault);
-  const encrypted = await encryptVaultManifest({
-    plaintext: vaultPlaintext,
-    passphrase: input.passphrase,
-    seed: seed.mnemonic,
-    ...(input.kdfParams === undefined ? {} : { kdfParams: input.kdfParams }),
-  });
-  const vaultPath = join(stage, "vault-manifest.json.enc");
-  writeFileSync(vaultPath, JSON.stringify(encrypted));
+  // The staging tree holds a second copy of everything being exported: the audit chain in
+  // plaintext, the encrypted vault manifest, and the watcher/workflow/extension/profile
+  // files. Once packBundle has written the archive it serves no further purpose, but it
+  // lives in the OS temp directory, so leaving it behind means every export silently
+  // accumulates another copy of the user's exported data with no expiry.
+  //
+  // Removed in `finally` rather than after packBundle: a failure part-way through is
+  // exactly when a half-written copy of vault and audit data should not be the thing left
+  // on disk.
+  try {
+    const vaultPlaintext = await collectVaultManifestPlaintext(input.vault);
+    const encrypted = await encryptVaultManifest({
+      plaintext: vaultPlaintext,
+      passphrase: input.passphrase,
+      seed: seed.mnemonic,
+      ...(input.kdfParams === undefined ? {} : { kdfParams: input.kdfParams }),
+    });
+    const vaultPath = join(stage, "vault-manifest.json.enc");
+    writeFileSync(vaultPath, JSON.stringify(encrypted));
 
-  const watchersPath = join(stage, "watchers.json");
-  writeFileSync(watchersPath, "[]");
-  const workflowsPath = join(stage, "workflows.json");
-  writeFileSync(workflowsPath, "[]");
-  const extensionsPath = join(stage, "extensions.json");
-  writeFileSync(extensionsPath, "[]");
-  const profilesPath = join(stage, "profiles.json");
-  writeFileSync(profilesPath, "[]");
-  const auditPath = join(stage, "audit-chain.json");
-  writeFileSync(auditPath, JSON.stringify(input.index.listAuditWithChain(10_000)));
+    const watchersPath = join(stage, "watchers.json");
+    writeFileSync(watchersPath, "[]");
+    const workflowsPath = join(stage, "workflows.json");
+    writeFileSync(workflowsPath, "[]");
+    const extensionsPath = join(stage, "extensions.json");
+    writeFileSync(extensionsPath, "[]");
+    const profilesPath = join(stage, "profiles.json");
+    writeFileSync(profilesPath, "[]");
+    const auditPath = join(stage, "audit-chain.json");
+    writeFileSync(auditPath, JSON.stringify(input.index.listAuditWithChain(10_000)));
 
-  const files: Record<string, string> = {
-    "vault-manifest.json.enc": vaultPath,
-    "watchers.json": watchersPath,
-    "workflows.json": workflowsPath,
-    "extensions.json": extensionsPath,
-    "profiles.json": profilesPath,
-    "audit-chain.json": auditPath,
-  };
+    const files: Record<string, string> = {
+      "vault-manifest.json.enc": vaultPath,
+      "watchers.json": watchersPath,
+      "workflows.json": workflowsPath,
+      "extensions.json": extensionsPath,
+      "profiles.json": profilesPath,
+      "audit-chain.json": auditPath,
+    };
 
-  const parsedVault = JSON.parse(vaultPlaintext) as Array<unknown>;
-  const manifest = await buildManifest({
-    bundleDir: stage,
-    nimbusVersion: input.nimbusVersion,
-    schemaVersion: input.schemaVersion,
-    platform: input.platform,
-    contents: {
-      index_rows: 0,
-      vault_entries: parsedVault.length,
-      watchers: 0,
-      workflows: 0,
-      extensions: 0,
-      profiles: 0,
-    },
-    files,
-    indexIncluded: input.includeIndex,
-  });
-  writeFileSync(join(stage, "manifest.json"), JSON.stringify(manifest, null, 2));
+    const parsedVault = JSON.parse(vaultPlaintext) as Array<unknown>;
+    const manifest = await buildManifest({
+      bundleDir: stage,
+      nimbusVersion: input.nimbusVersion,
+      schemaVersion: input.schemaVersion,
+      platform: input.platform,
+      contents: {
+        index_rows: 0,
+        vault_entries: parsedVault.length,
+        watchers: 0,
+        workflows: 0,
+        extensions: 0,
+        profiles: 0,
+      },
+      files,
+      indexIncluded: input.includeIndex,
+    });
+    writeFileSync(join(stage, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-  mkdirSync(join(input.output, ".."), { recursive: true });
-  await packBundle(stage, input.output);
+    mkdirSync(join(input.output, ".."), { recursive: true });
+    await packBundle(stage, input.output);
 
-  return {
-    outputPath: input.output,
-    recoverySeed: seed.generated ? seed.mnemonic : "",
-    recoverySeedGenerated: seed.generated,
-    itemsExported: parsedVault.length,
-  };
+    return {
+      outputPath: input.output,
+      recoverySeed: seed.generated ? seed.mnemonic : "",
+      recoverySeedGenerated: seed.generated,
+      itemsExported: parsedVault.length,
+    };
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
 }

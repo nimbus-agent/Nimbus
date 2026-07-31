@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { memVault, newIndex } from "../../test/fixtures/data-test-helpers.ts";
@@ -229,5 +229,51 @@ describe("data export", () => {
     expect(result.itemsExported).toBe(1);
     expect(result.recoverySeedGenerated).toBe(true);
     expect(result.outputPath).toBe(outPath);
+  });
+});
+
+describe("data export staging directory", () => {
+  const stageDirs = (): string[] =>
+    readdirSync(tmpdir()).filter((n) => n.startsWith("nimbus-export-stage-"));
+
+  const exportInput = (output: string) => ({
+    output,
+    includeIndex: false,
+    passphrase: "passphrase",
+    vault: memVault(),
+    index: newIndex(),
+    platform: "linux" as const,
+    nimbusVersion: "0.1.0",
+    schemaVersion: 21,
+    kdfParams: { t: 1, m: 1024, p: 1 },
+  });
+
+  test("is removed after a successful export", async () => {
+    const before = new Set(stageDirs());
+
+    await runDataExport(
+      exportInput(join(mkdtempSync(join(tmpdir(), "nimbus-export-cleanup-")), "backup.tar.gz")),
+    );
+
+    // The staging tree holds a full copy of the exported data — the audit chain among it,
+    // in plaintext — so leaving it in the OS temp directory means every export accumulates
+    // another copy that nothing ever removes.
+    expect(stageDirs().filter((n) => !before.has(n))).toEqual([]);
+  });
+
+  test("is removed even when the export fails part-way through", async () => {
+    const before = new Set(stageDirs());
+
+    // Output nested under a *file*, so mkdirSync fails with ENOTDIR after the staging tree
+    // is already populated. That is precisely when a half-written copy of vault and audit
+    // data must not be the thing left behind.
+    const blocker = join(mkdtempSync(join(tmpdir(), "nimbus-export-cleanup-")), "not-a-dir");
+    writeFileSync(blocker, "");
+
+    await expect(
+      runDataExport(exportInput(join(blocker, "sub", "backup.tar.gz"))),
+    ).rejects.toThrow();
+
+    expect(stageDirs().filter((n) => !before.has(n))).toEqual([]);
   });
 });
