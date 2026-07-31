@@ -512,3 +512,81 @@ export function clearGlossary(db: Database): void {
   dbRun(db, "DELETE FROM glossary_term", []);
   dbRun(db, "DELETE FROM glossary_pass_state", []);
 }
+
+/**
+ * Writes an authored term straight to `consolidated`.
+ *
+ * There is nothing to consolidate — the human supplied the definition — so
+ * these rows never enter the pending queue, never consume a slot of
+ * `max_new_terms_per_pass`, and never cost a model call.
+ *
+ * `display_term = excluded.display_term` is UNCONDITIONAL here, which is the
+ * exact opposite of `upsertCandidate`'s policy for a manual row. That is
+ * deliberate and the two must not be unified: an author who restyles `CDR` to
+ * `CDRs` in config is explicitly changing the surface form, while a mined
+ * sighting must never overwrite it. One rule: the authored form beats a mined
+ * one, and the newest authored form beats an older authored one.
+ */
+export function upsertManualTerm(
+  db: Database,
+  p: {
+    termKey: string;
+    displayTerm: string;
+    definition: string;
+    synonyms: string[];
+    nearMisses: string[];
+    stats: TermStats;
+    score: number;
+    nowMs: number;
+  },
+): void {
+  dbRun(
+    db,
+    `INSERT INTO glossary_term (
+       term_key, display_term, status, definition, definition_source,
+       doc_freq, service_spread, score, first_seen_at, last_seen_at,
+       top_sources, synonyms, near_misses, consolidated_at,
+       stats_verified_at, updated_at
+     ) VALUES (?, ?, 'consolidated', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(term_key) DO UPDATE SET
+       display_term = excluded.display_term,
+       status = 'consolidated',
+       definition = excluded.definition,
+       definition_source = 'manual',
+       doc_freq = excluded.doc_freq,
+       service_spread = excluded.service_spread,
+       score = excluded.score,
+       first_seen_at = excluded.first_seen_at,
+       last_seen_at = excluded.last_seen_at,
+       top_sources = excluded.top_sources,
+       synonyms = excluded.synonyms,
+       near_misses = excluded.near_misses,
+       consolidated_at = excluded.consolidated_at,
+       stats_verified_at = excluded.stats_verified_at,
+       updated_at = excluded.updated_at`,
+    [
+      p.termKey,
+      p.displayTerm,
+      p.definition,
+      p.stats.docFreq,
+      p.stats.serviceSpread,
+      p.score,
+      p.stats.firstSeenAt,
+      p.stats.lastSeenAt,
+      JSON.stringify(p.stats.topSources),
+      JSON.stringify(p.synonyms),
+      JSON.stringify(p.nearMisses),
+      p.nowMs,
+      p.nowMs,
+      p.nowMs,
+    ],
+  );
+}
+
+/** Every row currently sourced from `[glossary.terms]`. */
+export function listManualKeys(db: Database): string[] {
+  const rows = db
+    .query("SELECT term_key FROM glossary_term WHERE definition_source = 'manual'")
+    .all() as Array<{ term_key: string }>;
+  return rows.map((r) => r.term_key);
+}
