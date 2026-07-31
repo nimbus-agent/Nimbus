@@ -2096,6 +2096,8 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   };
   ipcOpts.egressRpcCtx = egressRpcCtx;
 
+  ipcOpts.glossaryRefresher = glossaryRefresher;
+
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 
   const ipc = createIpcServer(ipcOpts);
