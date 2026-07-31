@@ -92,10 +92,22 @@ regex is in fact safe — its two alternatives are disjoint on their first chara
 ambiguity to backtrack through — but "safe after analysis" is a worse property than "trivially
 linear" for a primitive on every config read path.)
 
-**Unterminated quote.** A line whose string never closes — `key = "unterminated # comment` — is
-**malformed, and the entry is skipped with a warning**, not silently truncated. Today it yields the
-value `"unterminated` (leading quote attached), which is the same silent-corruption class as the
-`#` bug. Skipping is the fail-closed choice: no definition beats a mangled one.
+**The scan runs twice, and this is load-bearing.** Escape-aware scanning is right for
+`"he said \"hi\""` but wrong for `path = "C:\dev\"` — there the trailing backslash escapes the
+closing quote, so the scan ends inside a string and the line looks malformed. That form is not
+strictly valid TOML (which needs `"C:\\dev\\"`), but this parser has always accepted it, and
+`[[filesystem.roots]]` — a Windows directory surface, see §3.2 — is exactly where it appears.
+Silently dropping a filesystem root silently drops a whole indexed tree.
+
+So: scan once treating `\` as an escape; if that ends inside a string, scan again treating `\` as a
+literal character. Both forms survive. Found while making the implementation concrete, 2026-07-31;
+a single-pass scanner passes every glossary test and regresses Windows path configs.
+
+**Unterminated quote.** A line whose string never closes **under both scans** —
+`key = "unterminated # comment` — is malformed, and the entry is **skipped**, not silently
+truncated. Today it yields the value `"unterminated` (leading quote attached), which is the same
+silent-corruption class as the `#` bug. Skipping is the fail-closed choice: no definition beats a
+mangled one.
 
 **Escape convention.** `stripComment` and `parseString` must agree on what a backslash does, or a
 line can strip as though `\"` were an escape and then unquote as though it were not. Both treat
