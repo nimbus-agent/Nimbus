@@ -34,6 +34,16 @@ export type TermStats = {
   topSources: GlossarySource[];
 };
 
+/** Per-term progress emitted during phase B, for on-demand passes. */
+export type GlossaryPassProgress = {
+  done: number;
+  total: number;
+  consolidated: number;
+  upgraded: number;
+  vetoed: number;
+  retried: number;
+};
+
 /** A `glossary_term` row in domain shape. */
 export type GlossaryTerm = {
   termKey: string;

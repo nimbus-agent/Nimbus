@@ -9,6 +9,7 @@ function runMigrations(db: Database): void {
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 }
 
+import { dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
@@ -32,6 +33,23 @@ const OPTS = {
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
 };
+
+/**
+ * Disables the phase-A reconcile sweep for the snippet-upgrade tests below.
+ *
+ * Those tests seed `glossary_term` rows directly via raw SQL rather than
+ * through `markConsolidated`/`upsertCandidate`, so `stats_verified_at` is left
+ * at its schema default of 0. With `OPTS.statsRecheckCooldownMs` at 0,
+ * `reconcilePass` (which runs unconditionally at the top of every
+ * `runGlossaryPass` call) would treat every one of those rows as stale,
+ * recompute its FTS doc frequency against the throwaway backing item text
+ * (which never mentions the synthetic term keys), find 0 < `minDocFreq`, and
+ * demote the row back to `pending` with its definition cleared — before
+ * `consolidatePhase` (the thing under test) ever runs. `statsRecheckPerPass: 0`
+ * makes that sweep select zero rows, so the tests exercise only the
+ * allocation logic they name.
+ */
+const PASS_OPTS = { ...OPTS, statsRecheckPerPass: 0 };
 
 function definingLlm(): ConsolidatorLlm {
   return {
@@ -356,4 +374,198 @@ test("stored near-misses draw from consolidated keys only, not pending or vetoed
   const t = getTerm(db, "cdr");
   expect(t?.nearMisses).toContain("cdz");
   expect(t?.nearMisses).not.toContain("cdq");
+});
+
+// --- snippet upgrades -------------------------------------------------
+
+function llmReturning(json: string, calls: string[] = []): ConsolidatorLlm {
+  return {
+    generateJson: (prompt: string) => {
+      calls.push(prompt);
+      return Promise.resolve(json);
+    },
+  };
+}
+
+/**
+ * Backs a `top_sources` reference with a real `item` row so `snippetsFor`
+ * does not short-circuit `consolidateTerm` into a `retry` for every term.
+ * Idempotent (`upsertIndexedItem` upserts), so many terms can share one item.
+ */
+function seedBackingItem(itemId: string): void {
+  const sep = itemId.indexOf(":");
+  const service = sep === -1 ? "slack" : itemId.slice(0, sep);
+  const externalId = sep === -1 ? itemId : itemId.slice(sep + 1);
+  upsertIndexedItem(db, {
+    service,
+    type: "message",
+    externalId,
+    title: "t",
+    bodyPreview: "t",
+    modifiedAt: 2,
+    syncedAt: 2,
+  });
+}
+
+function seedSnippetTerm(key: string, itemId: string, score: number): void {
+  seedBackingItem(itemId);
+  dbRun(
+    db,
+    `INSERT INTO glossary_term
+       (term_key, display_term, status, definition, definition_source, doc_freq,
+        service_spread, score, form, first_seen_at, last_seen_at, top_sources,
+        attempts, last_attempt_at, updated_at)
+     VALUES (?, ?, 'consolidated', 'old snippet text', 'snippet', 5, 2, ?, 'acronym',
+             1, 2, ?, 0, 0, 1)`,
+    [
+      key,
+      key.toUpperCase(),
+      score,
+      JSON.stringify([{ itemId, title: "t", url: null, service: "slack", modifiedAt: 2 }]),
+    ],
+  );
+}
+
+function seedPendingTerm(key: string, score: number): void {
+  seedBackingItem("slack:1");
+  dbRun(
+    db,
+    `INSERT INTO glossary_term
+       (term_key, display_term, status, doc_freq, service_spread, score, form,
+        first_seen_at, last_seen_at, top_sources, attempts, last_attempt_at, updated_at)
+     VALUES (?, ?, 'pending', 5, 2, ?, 'acronym', 1, 2, ?, 0, 0, 1)`,
+    [
+      key,
+      key.toUpperCase(),
+      score,
+      JSON.stringify([
+        { itemId: "slack:1", title: "t", url: null, service: "slack", modifiedAt: 2 },
+      ]),
+    ],
+  );
+}
+
+test("does not run upgrades when no LLM is configured", async () => {
+  seedSnippetTerm("cdr", "slack:1", 10);
+  const summary = await runGlossaryPass(db, { ...PASS_OPTS });
+  expect(summary.upgraded).toBe(0);
+  const row = db
+    .query("SELECT definition_source FROM glossary_term WHERE term_key='cdr'")
+    .get() as {
+    definition_source: string;
+  };
+  expect(row.definition_source).toBe("snippet");
+});
+
+test("upgrades a snippet definition in place and re-sources it as llm", async () => {
+  seedSnippetTerm("cdr", "slack:1", 10);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"model definition","alsoKnownAs":[]}'),
+  });
+  expect(summary.upgraded).toBe(1);
+  const row = db
+    .query("SELECT definition, definition_source FROM glossary_term WHERE term_key='cdr'")
+    .get() as { definition: string; definition_source: string };
+  expect(row.definition).toBe("model definition");
+  expect(row.definition_source).toBe("llm");
+});
+
+test("leaves the snippet definition intact when the upgrade fails", async () => {
+  seedSnippetTerm("cdr", "slack:1", 10);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    llm: { generateJson: () => Promise.resolve("not json") },
+  });
+  expect(summary.upgraded).toBe(0);
+  const row = db
+    .query("SELECT definition, definition_source, attempts FROM glossary_term WHERE term_key='cdr'")
+    .get() as { definition: string; definition_source: string; attempts: number };
+  expect(row.definition).toBe("old snippet text");
+  expect(row.definition_source).toBe("snippet");
+  expect(row.attempts).toBe(1);
+});
+
+test("vetoes an upgraded term, unprojects it, and names it in the summary", async () => {
+  seedSnippetTerm("cdr", "slack:1", 10);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    llm: llmReturning('{"isDomainTerm":false,"definition":"","alsoKnownAs":[]}'),
+  });
+  expect(summary.upgradesVetoed).toBe(1);
+  expect(summary.vetoedTerms).toEqual(["cdr"]);
+  const status = db.query("SELECT status FROM glossary_term WHERE term_key='cdr'").get() as {
+    status: string;
+  };
+  expect(status.status).toBe("vetoed");
+  const item = db
+    .query("SELECT COUNT(*) AS n FROM item WHERE external_id = 'glossary:cdr'")
+    .get() as { n: number };
+  expect(item.n).toBe(0);
+});
+
+// Budget allocation — all four corners. UPGRADE_RESERVE is a FLOOR, not a
+// ceiling, and neither queue may leave budget idle while the other has work.
+// Assert BOTH numbers in every case: `upgraded` alone passes under several
+// wrong allocations.
+test("reserves upgrade slots when the pending queue exceeds the budget", async () => {
+  for (let i = 0; i < 30; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  for (let i = 0; i < 8; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 5);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(20);
+  expect(summary.upgraded).toBe(5);
+});
+
+test("gives pending the whole budget when no upgrades are outstanding", async () => {
+  for (let i = 0; i < 30; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(25);
+  expect(summary.upgraded).toBe(0);
+});
+
+// The reserve must not become a CEILING: with nothing pending, upgrades take
+// the whole budget rather than stopping at 5 and idling 20 slots.
+test("gives upgrades the whole budget when nothing is pending", async () => {
+  for (let i = 0; i < 40; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 100 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(0);
+  expect(summary.upgraded).toBe(25);
+});
+
+test("lets upgrades absorb the slack of a partially-filled pending queue", async () => {
+  for (let i = 0; i < 3; i++) seedPendingTerm(`pending${String(i)}`, 100 - i);
+  for (let i = 0; i < 40; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 50 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 25,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(3);
+  expect(summary.upgraded).toBe(22);
+});
+
+test("reports llmConfigured and llmProduced separately", async () => {
+  seedPendingTerm("cdr", 10);
+  const none = await runGlossaryPass(db, { ...PASS_OPTS });
+  expect(none.llmConfigured).toBe(false);
+  expect(none.llmProduced).toBe(false);
+
+  const dead = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    llm: { generateJson: () => Promise.resolve(null) },
+  });
+  expect(dead.llmConfigured).toBe(true);
+  expect(dead.llmProduced).toBe(false);
 });

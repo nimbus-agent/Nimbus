@@ -15,9 +15,11 @@ import {
   readPassState,
   recordAttempt,
   selectPendingBatch,
+  selectSnippetUpgradeBatch,
   upsertCandidate,
   writePassState,
 } from "./glossary-store.ts";
+import type { GlossaryPassProgress, GlossaryTerm } from "./glossary-types.ts";
 import { findNearMisses } from "./near-miss.ts";
 import { mineTerms } from "./term-mining.ts";
 import { scoreTerm } from "./term-scoring.ts";
@@ -34,6 +36,8 @@ export type GlossaryPassOptions = {
   llm?: ConsolidatorLlm;
   nowMs: number;
   signal?: AbortSignal;
+  /** Per-term progress, for on-demand passes driven by `nimbus glossary --refresh`. */
+  onProgress?: (p: GlossaryPassProgress) => void;
 };
 
 export type GlossaryPassSummary = {
@@ -44,12 +48,37 @@ export type GlossaryPassSummary = {
   retried: number;
   demoted: number;
   aborted: boolean;
+  /** Snippet definitions re-consolidated by the model this pass. */
+  upgraded: number;
+  /** Previously-consolidated snippet terms the model rejected — they LEFT the glossary. */
+  upgradesVetoed: number;
+  /** Which ones, capped at `VETOED_TERMS_REPORTED`, so the CLI can name them. */
+  vetoedTerms: string[];
+  /** An adapter was supplied (i.e. `[glossary].use_llm` is on and one was built). */
+  llmConfigured: boolean;
+  /** The model actually answered at least once — a definition or a veto. */
+  llmProduced: boolean;
 };
 
 const SCAN_BATCH_LIMIT = 5000;
 
 /** How many consolidated terms to consider as near-miss candidates — mirrors `agents/glossary.ts`. */
 const NEAR_MISS_POOL = 500;
+
+/**
+ * Upgrade slots held back from `maxNewTermsPerPass`.
+ *
+ * Without a floor, a pending queue that stays above the budget starves snippet
+ * upgrades indefinitely — a term consolidated without a model would never
+ * improve for as long as first-time mining continues. New terminology still
+ * wins the other 20 of 25 slots; only the unbounded half of the starvation is
+ * removed. A module constant rather than a config key, matching
+ * `NEAR_MISS_POOL` / `MAX_SYNONYMS`.
+ */
+const UPGRADE_RESERVE = 5;
+
+/** Cap on `vetoedTerms` — this is a user notification, not an audit trail. */
+const VETOED_TERMS_REPORTED = 10;
 
 type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
 
@@ -172,25 +201,74 @@ function discoverPhase(
 async function consolidatePhase(
   db: Database,
   opts: GlossaryPassOptions,
-): Promise<{ consolidated: number; vetoed: number; retried: number; aborted: boolean }> {
-  const batch = selectPendingBatch(db, opts.maxNewTermsPerPass, {
+): Promise<{
+  consolidated: number;
+  upgraded: number;
+  vetoed: number;
+  upgradesVetoed: number;
+  vetoedTerms: string[];
+  retried: number;
+  llmProduced: boolean;
+  aborted: boolean;
+}> {
+  // Budget allocation. `UPGRADE_RESERVE` is a FLOOR on upgrade slots, never a
+  // ceiling, and each queue absorbs the other's slack — both one-sided
+  // formulations waste budget in a corner:
+  //   * upgrades capped at the reserve  -> 20 slots idle when pending is empty
+  //   * pending capped at budget-reserve -> 5 slots idle whenever NO snippet
+  //     rows exist, which is the common case on a machine that always had a
+  //     model, so it would be a permanent 20% throughput loss on mining.
+  // Over-fetching both queues to the full budget and allocating afterwards is
+  // correct in every corner and costs at most `budget` extra indexed rows.
+  const budget = opts.maxNewTermsPerPass;
+  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, budget);
+  const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
     minDocFreq: opts.minDocFreq,
   });
+  const upgradeAll =
+    reserve === 0
+      ? []
+      : selectSnippetUpgradeBatch(db, budget, {
+          nowMs: opts.nowMs,
+          retryBaseCooldownMs: opts.retryBaseCooldownMs,
+        });
+  const upgradeTake = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
+  const batch = pendingAll.slice(0, Math.min(pendingAll.length, budget - upgradeTake));
+  const upgradeBatch = upgradeAll.slice(0, upgradeTake);
   // Consolidated keys only — mirrors the agent's near-miss lane. Drawing from
   // every status (via `listAllKeys`) let a `pending` or `vetoed` key surface
   // as a stored "Easily confused with:" suggestion, which either points at a
   // term with no definition yet or one deliberately rejected.
   const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
 
-  let consolidated = 0;
-  let vetoed = 0;
-  let retried = 0;
+  const work: Array<{ term: GlossaryTerm; isUpgrade: boolean }> = [
+    ...batch.map((term) => ({ term, isUpgrade: false })),
+    ...upgradeBatch.map((term) => ({ term, isUpgrade: true })),
+  ];
 
-  for (const term of batch) {
+  let consolidated = 0;
+  let upgraded = 0;
+  let vetoed = 0;
+  let upgradesVetoed = 0;
+  let retried = 0;
+  let llmProduced = false;
+  const vetoedTerms: string[] = [];
+  let done = 0;
+
+  for (const { term, isUpgrade } of work) {
     if (opts.signal?.aborted === true) {
-      return { consolidated, vetoed, retried, aborted: true };
+      return {
+        consolidated,
+        upgraded,
+        vetoed,
+        upgradesVetoed,
+        vetoedTerms,
+        retried,
+        llmProduced,
+        aborted: true,
+      };
     }
 
     const snippets = snippetsFor(
@@ -204,54 +282,91 @@ async function consolidatePhase(
     });
 
     if (outcome.kind === "vetoed") {
+      // Only a model can veto, so this proves the model answered.
+      llmProduced = true;
       unprojectTerm(db, term.termKey);
       markVetoed(db, term.termKey, opts.nowMs);
       vetoed += 1;
-      continue;
-    }
-    if (outcome.kind === "retry") {
-      // Stamp the attempt so the backoff in `selectPendingBatch` lets
-      // lower-scoring terms through on the next pass. Without this the
-      // top-scoring failures would monopolise every batch forever.
+      if (isUpgrade) {
+        upgradesVetoed += 1;
+        // A term the user could see yesterday and cannot see today. Named so
+        // `--refresh` can report it rather than letting it vanish silently.
+        if (vetoedTerms.length < VETOED_TERMS_REPORTED) vetoedTerms.push(term.termKey);
+      }
+    } else if (outcome.kind === "retry") {
+      // Stamps the attempt for BOTH queues' backoff — a failing upgrade steps
+      // aside from its reserved slot exactly like a failing pending term.
       recordAttempt(db, term.termKey, opts.nowMs);
       retried += 1;
-      continue;
+    } else {
+      if (outcome.source === "llm") llmProduced = true;
+      // One transaction: a crash between markConsolidated and projectTerm would
+      // otherwise strand the term `consolidated` with no projected item row —
+      // invisible in search, and (per the reconciliation sweep's own contract)
+      // never self-healed, since the sweep only re-verifies rows already
+      // `consolidated` and this row genuinely is. `db.transaction` nests safely
+      // via savepoints, so this composes with any outer transaction.
+      db.transaction(() => {
+        markConsolidated(db, {
+          termKey: term.termKey,
+          definition: outcome.definition,
+          definitionSource: outcome.source,
+          synonyms: outcome.synonyms,
+          nearMisses: findNearMisses(term.termKey, knownKeys),
+          nowMs: opts.nowMs,
+        });
+        const stored = getTerm(db, term.termKey);
+        if (stored !== null) projectTerm(db, stored, opts.nowMs);
+      })();
+      if (isUpgrade) upgraded += 1;
+      else consolidated += 1;
     }
 
-    // One transaction: a crash between markConsolidated and projectTerm would
-    // otherwise strand the term `consolidated` with no projected item row —
-    // invisible in search, and (per the reconciliation sweep's own contract)
-    // never self-healed, since the sweep only re-verifies rows already
-    // `consolidated` and this row genuinely is. `db.transaction` nests safely
-    // via savepoints, so this composes with any outer transaction.
-    db.transaction(() => {
-      markConsolidated(db, {
-        termKey: term.termKey,
-        definition: outcome.definition,
-        definitionSource: outcome.source,
-        synonyms: outcome.synonyms,
-        nearMisses: findNearMisses(term.termKey, knownKeys),
-        nowMs: opts.nowMs,
-      });
-      const stored = getTerm(db, term.termKey);
-      if (stored !== null) projectTerm(db, stored, opts.nowMs);
-    })();
-    consolidated += 1;
+    done += 1;
+    opts.onProgress?.({
+      done,
+      total: work.length,
+      consolidated,
+      upgraded,
+      vetoed,
+      retried,
+    });
   }
 
-  return { consolidated, vetoed, retried, aborted: opts.signal?.aborted === true };
+  return {
+    consolidated,
+    upgraded,
+    vetoed,
+    upgradesVetoed,
+    vetoedTerms,
+    retried,
+    llmProduced,
+    aborted: opts.signal?.aborted === true,
+  };
 }
 
 export async function runGlossaryPass(
   db: Database,
   opts: GlossaryPassOptions,
 ): Promise<GlossaryPassSummary> {
+  const llmConfigured = opts.llm !== undefined;
   const a = discoverPhase(db, opts);
   if (opts.signal?.aborted === true) {
-    return { ...a, consolidated: 0, vetoed: 0, retried: 0, aborted: true };
+    return {
+      ...a,
+      consolidated: 0,
+      upgraded: 0,
+      vetoed: 0,
+      upgradesVetoed: 0,
+      vetoedTerms: [],
+      retried: 0,
+      llmConfigured,
+      llmProduced: false,
+      aborted: true,
+    };
   }
   const b = await consolidatePhase(db, opts);
-  return { ...a, ...b };
+  return { ...a, ...b, llmConfigured };
 }
 
 /** Wipes every glossary row and projection, then re-mines from watermark zero. */
