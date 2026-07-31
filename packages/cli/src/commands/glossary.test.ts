@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { AgentBriefCliSpec } from "./_agent-brief-cli.ts";
 import {
@@ -436,5 +436,84 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
     expect(() => JSON.parse(stdoutBuf.trim())).not.toThrow();
     expect(stdoutBuf).not.toContain("Pass complete");
     expect(stderrBuf).toContain("Pass complete");
+  });
+});
+
+describe("runGlossaryCommand — rebuild-preview error exit code", () => {
+  // `process.exit()` really terminates the process — even inside a test —
+  // so it must be stubbed to throw instead of firing for real. The stub
+  // replaces `process.exit` entirely (never calling through to the real
+  // one) and is restored in `afterEach`, so it can never leak into another
+  // test file in the combined `bun test packages/cli/src` run. This test
+  // never touches `process.exitCode` (the documented leak vector — a test
+  // that sets it must reset it in `afterEach`); it only intercepts the
+  // `process.exit` function reference itself, so there is nothing to reset
+  // there, but `process.exitCode` is defensively zeroed anyway as a
+  // second line of defence against any other code path that might set it.
+  let originalExit: typeof process.exit;
+
+  afterEach(() => {
+    process.exit = originalExit;
+    process.exitCode = 0;
+  });
+
+  function stubExit(): { exitCalls: number[] } {
+    originalExit = process.exit;
+    const exitCalls: number[] = [];
+    process.exit = ((code?: number): never => {
+      exitCalls.push(code ?? -1);
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    return { exitCalls };
+  }
+
+  test("a readRebuildPreview timeout exits 2 with the sibling error shape", async () => {
+    const { exitCalls } = stubExit();
+    const { client } = makeFakeIpcClient();
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await expect(
+        runGlossaryCommand(["--rebuild"], {
+          withGatewayIpc: async (fn) => fn(client),
+          runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+          // Force the real timeout branch inside readRebuildPreview without a
+          // real 30s wait — no notification is ever fired, so this genuinely
+          // drives the timer to expiry, not a compile-only check.
+          rebuildPreviewTimeoutMs: 5,
+        }),
+      ).rejects.toThrow("process.exit(2)");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+    expect(exitCalls).toEqual([2]);
+    expect(stderrBuf).toContain("Agent timed out after 0 s");
+  });
+
+  test("a malformed agents.glossary response exits 2 with the sibling error shape", async () => {
+    const { exitCalls } = stubExit();
+    const { client, fire } = makeFakeIpcClient();
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const resultPromise = runGlossaryCommand(["--rebuild"], {
+        withGatewayIpc: async (fn) => fn(client),
+        runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+      });
+      fire("glossary.briefReady", { findings: { stats: { total: 1 }, entries: [] } });
+      await expect(resultPromise).rejects.toThrow("process.exit(2)");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+    expect(exitCalls).toEqual([2]);
+    expect(stderrBuf).toContain("Malformed glossary.briefReady payload");
   });
 });

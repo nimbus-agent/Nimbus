@@ -275,6 +275,13 @@ export function readRebuildPreview(
 export type GlossaryCommandDeps = {
   withGatewayIpc: typeof withGatewayIpc;
   runAgentBriefCli: typeof runAgentBriefCli;
+  /**
+   * Overridable only so a test can force `readRebuildPreview`'s timeout
+   * branch without a real 30s wait. Always `TIMEOUT_MS` in production —
+   * `defaultGlossaryDeps` below omits it, so `readRebuildPreview`'s own
+   * default parameter applies.
+   */
+  rebuildPreviewTimeoutMs?: number;
 };
 
 const defaultGlossaryDeps: GlossaryCommandDeps = { withGatewayIpc, runAgentBriefCli };
@@ -286,8 +293,20 @@ export async function runGlossaryCommand(
   const parsed = parseGlossaryArgs(args);
 
   if (parsed.rebuild && !parsed.yes) {
-    const { counts, sample } = await deps.withGatewayIpc((client) => readRebuildPreview(client));
-    process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
+    try {
+      const { counts, sample } = await deps.withGatewayIpc((client) =>
+        readRebuildPreview(client, deps.rebuildPreviewTimeoutMs),
+      );
+      process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
+    } catch (err) {
+      // Same shape + exit code as `runAgentBriefCli`'s catch (`_agent-brief-cli.ts`):
+      // a timeout or a malformed `agents.glossary` response is an agent error,
+      // not a "gateway not running" precondition failure, so it exits 2 — not
+      // the bare `process.exitCode = 1` a generic thrown error would otherwise
+      // get from `index.ts`'s top-level catch.
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(2);
+    }
     return;
   }
 
