@@ -36,7 +36,13 @@ export function reconcilePass(
 
   for (const term of stale) {
     const stats = computeTermStats(db, term.termKey);
-    if (stats.docFreq < opts.minDocFreq) {
+    // A human assertion outranks a doc-frequency floor, so an authored term is
+    // never demoted — but it IS still swept. Skipping it entirely (the literal
+    // reading of the base spec's §12) would freeze its `top_sources` forever,
+    // so an authored term would keep citing threads the user deleted months
+    // ago: precisely the failure this sweep exists to prevent.
+    const isManual = term.definitionSource === "manual";
+    if (!isManual && stats.docFreq < opts.minDocFreq) {
       // Below the floor: the evidence is gone. Drop it from the searchable
       // index first — a stale definition surfacing in search after its
       // sources vanished is worse than no glossary at all.

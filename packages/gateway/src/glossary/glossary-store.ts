@@ -175,6 +175,12 @@ export function upsertCandidate(
   // ON CONFLICT deliberately leaves `status` untouched: a consolidated or
   // vetoed row must never be silently returned to the pending queue by a
   // later sighting of the same term.
+  //
+  // `display_term` is guarded for the same class of reason. Refreshing a
+  // manual row's STATISTICS from a mined sighting is wanted; overwriting the
+  // author's chosen surface form is not. The opposite policy lives in
+  // `upsertManualTerm`, where the newest authored form must win — the two are
+  // deliberately asymmetric and must not be unified into one helper.
   dbRun(
     db,
     `INSERT INTO glossary_term (
@@ -182,7 +188,9 @@ export function upsertCandidate(
        first_seen_at, last_seen_at, top_sources, updated_at
      ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(term_key) DO UPDATE SET
-       display_term = excluded.display_term, doc_freq = excluded.doc_freq,
+       display_term = CASE WHEN definition_source = 'manual'
+                           THEN display_term ELSE excluded.display_term END,
+       doc_freq = excluded.doc_freq,
        service_spread = excluded.service_spread, score = excluded.score,
        form = excluded.form, first_seen_at = excluded.first_seen_at,
        last_seen_at = excluded.last_seen_at, top_sources = excluded.top_sources,

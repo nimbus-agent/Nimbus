@@ -30,6 +30,7 @@ import {
   selectSnippetUpgradeBatch,
   selectStaleForRecheck,
   upsertCandidate,
+  upsertManualTerm,
   writePassState,
 } from "./glossary-store.ts";
 
@@ -472,4 +473,82 @@ test("markConsolidated stamps last_attempt_at", () => {
     .query("SELECT last_attempt_at FROM glossary_term WHERE term_key = 'cdr'")
     .get() as { last_attempt_at: number };
   expect(row.last_attempt_at).toBe(777);
+});
+
+test("a mined sighting refreshes a manual row's stats but not its display form", () => {
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "Authored.",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1000,
+  });
+
+  upsertCandidate(db, {
+    key: "cdr",
+    surface: "cdr",
+    form: "acronym",
+    stats: { docFreq: 7, serviceSpread: 2, firstSeenAt: 10, lastSeenAt: 20, topSources: [] },
+    score: 9,
+    nowMs: 2000,
+  });
+
+  const t = getTerm(db, "cdr");
+  expect(t?.displayTerm).toBe("CDR"); // authored form survives
+  expect(t?.docFreq).toBe(7); // statistics DO refresh
+  expect(t?.definition).toBe("Authored.");
+  expect(t?.status).toBe("consolidated");
+});
+
+test("a mined sighting still updates a mined row's display form", () => {
+  // The other direction of the same CASE expression. A test for either alone
+  // passes against the wrong implementation of the other.
+  upsertCandidate(db, {
+    key: "widget",
+    surface: "widget",
+    form: "phrase",
+    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 1,
+    nowMs: 1000,
+  });
+  upsertCandidate(db, {
+    key: "widget",
+    surface: "Widget",
+    form: "phrase",
+    stats: { docFreq: 4, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 2,
+    nowMs: 2000,
+  });
+  expect(getTerm(db, "widget")?.displayTerm).toBe("Widget");
+});
+
+test("a manual row is selected by neither consolidation batch", () => {
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "Authored.",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 9, serviceSpread: 3, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 99,
+    nowMs: 1000,
+  });
+
+  // High score, zero attempts, well above the floor — it qualifies on every
+  // predicate except the ones that structurally exclude it.
+  const pending = selectPendingBatch(db, 10, {
+    nowMs: 9_000_000,
+    retryBaseCooldownMs: 1,
+    minDocFreq: 3,
+  });
+  const upgrades = selectSnippetUpgradeBatch(db, 10, {
+    nowMs: 9_000_000,
+    retryBaseCooldownMs: 1,
+  });
+
+  expect(pending.map((t) => t.termKey)).not.toContain("cdr");
+  expect(upgrades.map((t) => t.termKey)).not.toContain("cdr");
 });

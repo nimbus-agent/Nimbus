@@ -12,7 +12,7 @@ function runMigrations(db: Database): void {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { projectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
-import { getTerm, markConsolidated, upsertCandidate } from "./glossary-store.ts";
+import { getTerm, markConsolidated, upsertCandidate, upsertManualTerm } from "./glossary-store.ts";
 
 let db: Database;
 
@@ -195,4 +195,34 @@ test("demotion is atomic — a failure between the writes rolls all three back",
   expect(db.query("SELECT COUNT(*) AS c FROM item WHERE type = 'glossary_term'").get()).toEqual({
     c: 1,
   });
+});
+
+test("the sweep refreshes a manual row's stats but never demotes it", () => {
+  // doc_freq is genuinely below the floor: no item in the index mentions it.
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "Authored.",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 5, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 5,
+    nowMs: 0,
+  });
+
+  const summary = reconcilePass(db, {
+    limit: 50,
+    minDocFreq: 3,
+    nowMs: 1_000_000,
+    cooldownMs: 0,
+  });
+
+  expect(summary.demoted).not.toContain("cdr");
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("consolidated");
+  expect(t?.definition).toBe("Authored.");
+  expect(t?.definitionSource).toBe("manual");
+  // Stats WERE re-measured — the stale 5 is corrected down to the real 0.
+  expect(t?.docFreq).toBe(0);
+  expect(t?.statsVerifiedAt).toBe(1_000_000);
 });
