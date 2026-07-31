@@ -101,13 +101,23 @@ already aborted, but **cannot propagate it to the provider**: `LlmGenerateOption
 field, and both providers hardcode their own `AbortSignal.timeout(120_000)` on the underlying
 `fetch`.
 
-Not widening `LlmGenerateOptions` is a deliberate call. Doing so touches `llm/types.ts`, both
-provider implementations and both provider test suites, to gain cancellation of an HTTP request
-that dies with the exiting process anyway — and `withTimeout` in `glossary-consolidate.ts` already
-races the abort, so the *wait* is bounded and shutdown is already responsive. That function's
-existing docstring states the residual precisely: "if the provider ignores its signal the request
-may keep running in the background". This design leaves that sentence true rather than making it
-false in a new place.
+Not widening `LlmGenerateOptions` is a deliberate call, and the cost is small enough to state
+exactly rather than hand-wave: one optional field in `llm/types.ts`, three `fetch` call sites
+(`ollama-provider.ts` `generateBatch` + `generateStream`, `llamacpp-provider.ts` `generate`, each
+currently `signal: AbortSignal.timeout(120_000)` and each becoming an `AbortSignal.any([...])`),
+plus both provider test suites. Roughly fifteen lines.
+
+It is deferred anyway because **the failure it would prevent is not reachable**. The worry is
+cancelled passes stacking orphaned model runs, which requires repeated cancellation. The refresher
+constructs exactly one `AbortController` for its lifetime (`glossary-refresh.ts:37`), `stop()`
+aborts it and sets `stopped = true`, and `fire()` returns early forever after. So there is at most
+**one abort per process, at shutdown, immediately before exit** — at which point the socket closes
+and the provider's generation is torn down anyway. `withTimeout` in `glossary-consolidate.ts`
+already races the abort, so the *wait* is bounded and shutdown is already responsive.
+
+This is coupled to the `--force` cancellation deferred in §4.2: adding a way to cancel a running
+pass mid-life is precisely what would make repeated aborts reachable, so the two must land
+together or not at all.
 
 ### 2.4 Wiring
 
@@ -150,12 +160,31 @@ Updated block:
 [glossary]
 enabled = true                 # local-only, no egress
 use_llm = true                 # consolidate via a LOCAL model; false keeps the snippet path
-max_new_terms_per_pass = 25    # shared budget: new terms first, snippet upgrades take the remainder
+max_new_terms_per_pass = 25    # shared budget; up to 5 slots reserved for snippet upgrades (§3.2)
 stats_recheck_per_pass = 50
 min_doc_freq = 3
 debounce_ms = 60000
 consolidate_timeout_ms = 30000
 ```
+
+### 2.6 Making the snippet fallback visible
+
+`use_llm = true` is the default, so the common failure is silent: Ollama is not running, or its
+model was never pulled, and the user gets a glossary of raw snippets while believing a model
+consolidated them.
+
+Per-term labelling already exists — `agents/_lib/render.ts:295` marks a `definitionSource ===
+"snippet"` entry in the brief. What is missing is the aggregate signal. Two additions:
+
+- **A gap note in the brief** when consolidated terms are predominantly snippet-sourced. This is
+  computed from the table (`COUNT(*) GROUP BY definition_source`), not from probing a provider, so
+  it reports what actually produced the definitions the user is looking at rather than what is
+  available right now. It reuses `category: "missing_connector"` because `GapCategory` is a closed
+  union in the published `@nimbus-dev/sdk` and a new value would need an SDK release — the same
+  slightly-off-label reuse the three existing glossary gap notes already make.
+- **A `--refresh` warning.** `GlossaryPassSummary` gains `llmAvailable: boolean`, and the CLI prints
+  `Warning: no local LLM provider was available — terms were consolidated from raw snippets.` when
+  a pass consolidated anything with no model.
 
 ## 3. Snippet → LLM upgrade path
 
@@ -177,15 +206,22 @@ LIMIT ?
 Called from `consolidatePhase` only when an `llm` is present — with no LLM, an "upgrade" would
 re-derive the same snippet from the same sources and is pure waste.
 
-### 3.2 Four decisions inside that query
+### 3.2 Five decisions inside that query
 
-**Shared budget, new terms first.** The upgrade batch takes
-`maxNewTermsPerPass - pendingBatch.length`, not a second cap. Worst-case pass latency is therefore
-unchanged at 25 calls, and newly-discovered terminology outranks polishing definitions that already
-exist. The cost is real and is recorded as a limit in §7: under a permanently-saturated pending
-queue, upgrades never run. In steady state the queue drains — each pass consolidates or vetoes up
-to 25 terms — so the saturated case means a large index still being mined for the first time, where
-new terms are genuinely the better use of the budget.
+**Shared budget, new terms first, with a reserved floor for upgrades.** The pass budget stays
+`maxNewTermsPerPass` — worst-case latency is unchanged at 25 calls — but it is not allocated purely
+first-come. The upgrade batch is queried first with `LIMIT UPGRADE_RESERVE` (a module constant, 5,
+following the `NEAR_MISS_POOL` / `MAX_SYNONYMS` precedent rather than adding a config knob); if it
+returns `k` rows, the pending batch takes `maxNewTermsPerPass - k`. With no upgrades outstanding,
+`k = 0` and new terms get the entire budget. Execution order is still pending-then-upgrades.
+
+This is a **change from the originally approved design**, which gave upgrades only the leftover
+`maxNewTermsPerPass - pendingBatch.length` and accepted indefinite starvation as a recorded limit.
+The pushback was right: "never, for as long as the queue stays full" is a bad property to design
+in when four lines remove it. The original reasoning still holds for the *majority* of the budget —
+a saturated queue means a large index being mined for the first time, where new terminology is the
+better spend — so 20 of 25 slots still go to new terms first. What changes is that the starvation
+is now bounded rather than unbounded, and §7 loses a limit instead of documenting one.
 
 **No new column, no migration.** V45 shipped in `v1.13.0`, so the base spec's precedent of editing
 it in place is gone; any column would now need a V46. Round-robin fairness comes from
@@ -210,6 +246,21 @@ The consequence must be stated plainly in user-facing docs, because it is surpri
 LLM on can remove terms that were previously in the glossary.** It is not data loss — the term
 returns to the searchable index if a later rebuild re-derives it, and the row survives as `vetoed`.
 
+Documentation is not enough on its own, though: a term silently vanishing between two runs reads as
+a bug regardless of what a doc says. So the veto is **reported at the moment it happens**.
+`GlossaryPassSummary` gains `upgradesVetoed: number` and `vetoedTerms: string[]` (capped at 10 —
+this is a notification, not an audit trail), and `--refresh` prints e.g.
+`Vetoed 3 previously snippet-defined terms: shard_key, backfill, retry (no longer in the glossary).`
+Without this the only way to discover what disappeared is to diff two listings by hand.
+
+**No terminal give-up after N failed upgrades** — considered and declined. A permanently-failing
+upgrade retries at most once per 24 h (the backoff cap), and `ORDER BY last_attempt_at ASC` sorts a
+just-failed term behind every other candidate, so it cannot monopolise the reserve. Against that,
+`selectPendingBatch` has no attempt ceiling either, so adding one here would be an inconsistency
+between two sibling queries; and the common cause of repeated failure is a missing or misconfigured
+model — machine-wide and transient — where permanently marking terms unupgradable is the worse
+error. `--rebuild` remains the reset.
+
 ### 3.3 Ordering within the pass
 
 `consolidatePhase` runs the pending batch first, then the upgrade batch, both inside the same
@@ -218,8 +269,15 @@ indistinguishable from a first consolidation from `consolidateTerm`'s point of v
 same snippets, the same guards (including the empty-snippets guard that Task 11's integration
 review added) and the same `MAX_SYNONYMS` cap.
 
-`GlossaryPassSummary` gains `upgraded: number`, distinct from `consolidated`, so a pass summary
-does not conflate "learned a new term" with "improved an old one".
+`GlossaryPassSummary` gains four fields, all of them feeding user-visible output rather than
+telemetry for its own sake:
+
+| Field | Why |
+| --- | --- |
+| `upgraded: number` | Distinct from `consolidated` — do not conflate "learned a new term" with "improved an old one" |
+| `upgradesVetoed: number` | §3.2 — the disappearing-terms signal |
+| `vetoedTerms: string[]` | §3.2 — *which* terms disappeared, capped at 10 |
+| `llmAvailable: boolean` | §2.6 — drives the silent-snippet-fallback warning |
 
 ## 4. `--refresh` and `--rebuild`
 
@@ -258,6 +316,15 @@ is aborted by shutdown exactly like a scheduled one.
 `policy-rpc.ts` and `lan-rpc.ts` convention. Codes in the `-32001…-32009` band are unused here and
 inventing one would be drift.
 
+**No `--force` to cancel a running pass, and no progress readout for someone else's pass.**
+Deferred for a structural reason, not just scope: the refresher's `AbortController` is created once
+and `stop()` is terminal (`stopped = true`, and `fire()` returns early forever after). Cancelling a
+scheduled pass with today's object would permanently disable the refresher for the process
+lifetime. Supporting `--force` means moving to a per-pass controller — and doing so is exactly what
+makes the repeated-abort scenario in §2.3 reachable, which would then require the provider signal
+propagation deferred there. The two are one change, not two. Meanwhile a rejected `--refresh` costs
+the user a retry, and the scheduled pass it collided with is doing the same work anyway.
+
 `runPass` in `GlossaryRefresherDeps` changes shape to
 `(signal, opts: { rebuild: boolean }) => Promise<GlossaryPassSummary>`, so the refresher stays
 Database-free and testable without SQLite.
@@ -294,12 +361,23 @@ nimbus glossary --rebuild            # preview only: prints what would be delete
 nimbus glossary --rebuild --yes      # wipe, re-mine from watermark zero, then print
 ```
 
-**`--rebuild` without `--yes` touches nothing.** It calls the existing `countByStatus()` read and
-prints, e.g., `47 consolidated terms and 12 pending candidates would be deleted. Re-run with --yes
-to confirm.`, then exits 0. This follows `nimbus clip delete --all`, which previews a count and
-requires `--yes`, rather than `nimbus db repair --yes`, which rejects outright — the preview is a
-real read the user can act on, and rebuilding costs a full LLM pass, so an accidental invocation is
-expensive rather than merely annoying.
+**`--rebuild` without `--yes` touches nothing.** It calls the existing `countByStatus()` and
+`listConsolidated()` reads and prints a count *plus a sample*:
+
+```text
+47 consolidated terms and 12 pending candidates would be deleted.
+  CDR, shard_key, write-behind, Shadow Traffic, RetryBudget,
+  backfill, SLO, blue-green, RetryBudget, hot partition
+  ... and 37 more
+Re-run with --yes to confirm.
+```
+
+This follows `nimbus clip delete --all`, which previews and requires `--yes`, rather than
+`nimbus db repair --yes`, which rejects outright. The sample matters more here than the count: a
+bare number tells the user how much they are about to lose but nothing about *what*, and rebuilding
+costs a full LLM pass, so an accidental invocation is expensive rather than merely annoying.
+`listConsolidated` orders by score descending, so the sample is the terms the user is most likely
+to recognise — which is exactly what makes the preview a real check rather than a formality.
 
 ### 4.5 Two security surfaces this opens
 
@@ -326,13 +404,23 @@ one that desynced SQL parameter binding and failed all 19 tests.
 | Unit | `glossary-llm-adapter.test.ts` | local provider selected; **remote-only → `null`** (the §2.1 guarantee); no provider → `null`; already-aborted signal → `null`; raw text returned |
 | Unit | `llm/router.test.ts` | `isLocalProviderKind` for all three kinds |
 | Unit | `glossary-store.test.ts` | `selectSnippetUpgradeBatch`: excludes `llm`-sourced and non-consolidated rows; backoff withholds a recent failure; `last_attempt_at ASC` round-robin |
-| Integration | `glossary-extract.test.ts` | upgrade batch runs only with an LLM; **shared budget** — a full pending batch leaves zero upgrade slots; `upgraded` counted separately; a retried upgrade leaves definition + source + projected item untouched; a vetoed upgrade unprojects |
+| Integration | `glossary-extract.test.ts` | upgrade batch runs only with an LLM; **reserved floor** — a saturated pending queue still yields exactly `UPGRADE_RESERVE` upgrade slots, and zero upgrades outstanding gives pending the full budget; `upgraded` counted separately; a retried upgrade leaves definition + source + projected item untouched; a vetoed upgrade unprojects and lands in `vetoedTerms` |
 | Unit | `glossary-refresh.test.ts` | `runNow` bypasses the debounce; **concurrent call rejects** rather than awaiting; disabled config rejects; `stop()` aborts an on-demand pass |
+| Unit | `agents/glossary.test.ts` | the snippet-fallback gap note fires on a predominantly-snippet glossary and is **absent** on an LLM-sourced one |
 | Unit | `ipc/glossary-rpc.test.ts` | both methods return `{ jobId }`; `passDone` / `passError` emitted; param validation |
 | Unit | `ipc/lan-rpc.test.ts` | `glossary.refresh` and `glossary.rebuild` forbidden over LAN |
-| Unit | `commands/glossary.test.ts` | flags parse; `--rebuild` without `--yes` calls **no** mutating method; `--yes` does — **DI, not `mock.module`** |
+| Unit | `commands/glossary.test.ts` | flags parse; `--rebuild` without `--yes` calls **no** mutating method; `--yes` does; the no-LLM warning and the vetoed-terms line render — **DI, not `mock.module`** |
 | E2E | `cli/test/e2e/glossary.smoke.e2e.test.ts` | `--rebuild` preview path against a real subprocess (replacing the current rejection assertion) |
 | Invariant | `security-invariants.test.ts` | `ALLOWED_METHODS` count unchanged at 102 |
+
+**On the static audit (review Q4.1).** `scripts/structure-audit/check-nimbus-invariants.ts` was
+checked directly: it carries no rule keyed on the `glossary/` directory or on `ipc/*-rpc.ts` as a
+pattern — the only `ipc/` entries are D21's explicit confinement of `share-rpc.ts` and
+`federation-rpc.ts`. A new `ipc/glossary-rpc.ts` therefore trips nothing, and **that is the
+problem**: nothing static would notice if the LAN denylist entry were dropped. The
+`ipc/lan-rpc.test.ts` row above is the only thing standing behind that guarantee, so it is a
+required test rather than a nice-to-have. D12 (I14) does apply and is satisfied: the new store
+function is a `SELECT`, and every write still goes through the existing `dbRun` helpers.
 
 Two traps this branch must not re-trip, both from the base slice's ledger:
 
@@ -371,8 +459,7 @@ Each item below is a specific claim this change invalidates.
   no-LLM-configured degradation itself is unchanged and still correct.
 - §7 — the config block and the two paragraphs on flag behaviour.
 - §12 Known Limits — the `--refresh`/`--rebuild` entry and the veto-stickiness entry that depends
-  on it. **Add** two: upgrade starvation under a saturated pending queue (§3.2), and the
-  un-propagated abort signal (§2.3).
+  on it. **Add** the un-propagated abort signal (§2.3).
 - §14 — both scoped acceptance criteria. The LLM criterion is no longer scoped away from the
   scheduler path.
 
@@ -386,12 +473,16 @@ that discipline is what turned up the `agents/glossary.ts` gap note above.
 
 ## 7. Known limits
 
-- **Upgrades starve under a saturated pending queue.** The shared budget gives new terms priority
-  absolutely, so a machine whose pending queue never drops below `max_new_terms_per_pass` never
-  upgrades a snippet definition. Self-resolving as the initial mining completes. §3.2.
+- **Upgrades are slowed, not starved, by a saturated pending queue.** `UPGRADE_RESERVE` guarantees
+  5 of 25 slots, so the worst case is upgrading at 5 terms per pass instead of 25 while initial
+  mining runs. The unbounded-starvation version of this limit was removed by the §3.2 reserve.
 - **The abort signal does not reach the provider.** Shutdown stops waiting on an in-flight model
   call but cannot cancel the HTTP request, which runs until the provider's own 120 s timeout or
-  process exit. §2.3.
+  process exit. Bounded by there being at most one abort per process, at shutdown — see §2.3, and
+  note it becomes materially worse if `--force` (§4.2) is ever added without also propagating the
+  signal.
+- **A permanently-failing upgrade retries forever**, once per 24 h, occupying one reserved slot.
+  Declined a terminal give-up state for the consistency and transient-cause reasons in §3.2.
 - **Local-only is enforced at selection, not at the provider.** A provider registered under a local
   `LlmProviderKind` that internally proxies to a cloud endpoint would pass the check. Not reachable
   today — `OllamaProvider` and `LlamaCppProvider` are the only two, both pointed at loopback by
@@ -419,8 +510,31 @@ that discipline is what turned up the `agents/glossary.ts` gap note above.
       no remote provider is ever selected.
 - [ ] An existing `definition_source='snippet'` term is upgraded in place on a later pass, and a
       failed upgrade leaves its definition, source and projected item unchanged.
+- [ ] A saturated pending queue still leaves `UPGRADE_RESERVE` upgrade slots — upgrades are never
+      starved indefinitely.
+- [ ] A pass that consolidates with no model available reports it: the brief carries the
+      snippet-fallback gap note, and `--refresh` prints the warning.
+- [ ] A term vetoed during an upgrade is named in the `--refresh` output, not silently dropped.
 - [ ] `nimbus glossary --refresh` runs a pass and prints the updated listing; a concurrent request
       fails rather than double-running.
-- [ ] `nimbus glossary --rebuild` without `--yes` deletes nothing and reports what it would delete.
+- [ ] `nimbus glossary --rebuild` without `--yes` deletes nothing and reports both the count and a
+      sample of the terms it would delete.
 - [ ] `glossary.refresh` and `glossary.rebuild` are rejected over LAN; `ALLOWED_METHODS` stays 102.
 - [ ] Zero HITL actions fire; zero `egress_ledger` rows are appended.
+
+## 9. Review dispositions
+
+Reviewed against
+[`2026-07-31-nimbus-glossary-llm-wiring-design-review.md`](./2026-07-31-nimbus-glossary-llm-wiring-design-review.md)
+on 2026-07-31. Five items accepted, three deferred with reasons recorded above.
+
+| Item | Disposition | Where |
+| --- | --- | --- |
+| Q1.1 snippet-fallback invisible | **Accepted** — gap note + `--refresh` warning | §2.6 |
+| Q1.2 abort not propagated to providers | **Deferred** — cost measured (~15 lines); failure unreachable (one abort per process) | §2.3, §7 |
+| Q2.1 upgrade starvation | **Accepted, design changed** — `UPGRADE_RESERVE` floor replaces pure leftover allocation | §3.2 |
+| Q2.2 vetoed terms vanish silently | **Accepted** — `upgradesVetoed` + `vetoedTerms` reported by `--refresh` | §3.2, §3.3 |
+| Q2.3 no max-attempts ceiling | **Deferred** — backoff + `last_attempt_at ASC` already bound it; a cap `selectPendingBatch` lacks would be drift | §3.2, §7 |
+| Q3.1 rebuild preview is count-only | **Accepted** — sample of highest-scoring terms | §4.4 |
+| Q3.2 `--force` cancel / live progress | **Deferred** — terminal `AbortController`; would make Q1.2 reachable, so the two are one change | §4.2 |
+| Q4.1 verify static audit + LAN block | **Accepted as test coverage** — audit confirmed insensitive, which makes the LAN test load-bearing | §5 |
