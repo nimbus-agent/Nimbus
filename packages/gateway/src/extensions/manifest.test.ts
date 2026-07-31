@@ -188,6 +188,32 @@ describe("parseExtensionManifestJson — updateChannel + changelog (T2 PR 3)", (
   });
 });
 
+describe("parseExtensionManifestForRegistry — entry / entrypoint fallback (Task 9)", () => {
+  test("accepts entrypoint as a fallback when entry is absent", () => {
+    const m = parseExtensionManifestJson(
+      JSON.stringify({ id: "x", version: "1.0.0", entrypoint: "dist/server.js" }),
+    );
+    expect(m.entry).toBe("dist/server.js");
+  });
+
+  test("prefers entry when both entry and entrypoint are present", () => {
+    const m = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        entry: "dist/from-entry.js",
+        entrypoint: "dist/from-entrypoint.js",
+      }),
+    );
+    expect(m.entry).toBe("dist/from-entry.js");
+  });
+
+  test("leaves entry undefined when neither entry nor entrypoint is present", () => {
+    const m = parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0" }));
+    expect(m.entry).toBeUndefined();
+  });
+});
+
 describe("parseExtensionManifestJson — dependsOn (T2 PR 4)", () => {
   test("accepts manifest with valid dependsOn ranges", () => {
     const m = parseExtensionManifestJson(
