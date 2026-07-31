@@ -119,7 +119,7 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
 import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
-import { runGlossaryPass } from "../glossary/glossary-extract.ts";
+import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
 import { createGlossaryLlm } from "../glossary/glossary-llm-adapter.ts";
 import { createGlossaryRefresher, type GlossaryRefresher } from "../glossary/glossary-refresh.ts";
 import { buildIdentityBoot } from "../identity/identity-boot.ts";
@@ -448,18 +448,22 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const glossaryRefresher = createGlossaryRefresher({
     enabled: glossaryCfg.enabled,
     debounceMs: glossaryCfg.debounceMs,
-    runPass: async (signal) => {
-      await runGlossaryPass(db, {
+    runPass: async (signal, runOpts) => {
+      const passOpts = {
         maxNewTermsPerPass: glossaryCfg.maxNewTermsPerPass,
         statsRecheckPerPass: glossaryCfg.statsRecheckPerPass,
         statsRecheckCooldownMs: glossaryCfg.statsRecheckCooldownMs,
         minDocFreq: glossaryCfg.minDocFreq,
         consolidateTimeoutMs: glossaryCfg.consolidateTimeoutMs,
         retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
+        ...(consolidationLlm === undefined ? {} : { llm: consolidationLlm }),
+        ...(runOpts.onProgress === undefined ? {} : { onProgress: runOpts.onProgress }),
         nowMs: Date.now(),
         signal,
-        ...(consolidationLlm === undefined ? {} : { llm: consolidationLlm }),
-      });
+      };
+      return runOpts.rebuild
+        ? await rebuildGlossary(db, passOpts)
+        : await runGlossaryPass(db, passOpts);
     },
     onError: (err) => {
       syncLogger.warn({ err }, "glossary extraction pass failed");
