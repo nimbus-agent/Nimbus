@@ -262,6 +262,46 @@ export function selectPendingBatch(
   return rows.map(toTerm);
 }
 
+/**
+ * Consolidated terms whose definition is a verbatim snippet, due for an
+ * LLM re-consolidation.
+ *
+ * Selected only when an LLM is available — with none, an "upgrade" would
+ * re-derive the same snippet from the same sources.
+ *
+ * `ORDER BY last_attempt_at ASC` rotates round-robin so a large snippet
+ * population drains fairly, and the backoff clause — the same shape
+ * `selectPendingBatch` uses, so `retryCooldownMs` stays the single definition
+ * of the curve — keeps a repeatedly-failing term to one attempt per 24 h
+ * instead of letting it hold a reserved slot every pass.
+ *
+ * The `limit <= 0` guard exists because SQLite treats `LIMIT -1` as UNLIMITED,
+ * not as "no rows". The current caller always passes a positive budget, so this
+ * is defence-in-depth — but the natural way to write a caller is by
+ * subtraction, and the failure it prevents (consolidating the entire snippet
+ * population in one pass) is silent and expensive.
+ */
+export function selectSnippetUpgradeBatch(
+  db: Database,
+  limit: number,
+  opts: { nowMs: number; retryBaseCooldownMs: number },
+): GlossaryTerm[] {
+  if (limit <= 0) return [];
+  const rows = db
+    .query(
+      `SELECT * FROM glossary_term
+       WHERE status = 'consolidated' AND definition_source = 'snippet'
+         AND (
+           attempts = 0
+           OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
+         )
+       ORDER BY last_attempt_at ASC, score DESC
+       LIMIT ?`,
+    )
+    .all(opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
+  return rows.map(toTerm);
+}
+
 /** Records a failed consolidation so the backoff above takes effect. */
 export function recordAttempt(db: Database, termKey: string, nowMs: number): void {
   dbRun(
@@ -325,13 +365,14 @@ export function markConsolidated(
     `UPDATE glossary_term
      SET status = 'consolidated', definition = ?, definition_source = ?,
          synonyms = ?, near_misses = ?, consolidated_at = ?,
-         stats_verified_at = ?, updated_at = ?
+         stats_verified_at = ?, last_attempt_at = ?, updated_at = ?
      WHERE term_key = ?`,
     [
       p.definition,
       p.definitionSource,
       JSON.stringify(p.synonyms),
       JSON.stringify(p.nearMisses),
+      p.nowMs,
       p.nowMs,
       p.nowMs,
       p.nowMs,

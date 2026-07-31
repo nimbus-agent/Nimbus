@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
+import { dbRun } from "../db/write.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 
@@ -26,6 +27,7 @@ import {
   recordAttempt,
   retryCooldownMs,
   selectPendingBatch,
+  selectSnippetUpgradeBatch,
   selectStaleForRecheck,
   upsertCandidate,
   writePassState,
@@ -369,4 +371,91 @@ test("listAllKeys and clearGlossary", () => {
   clearGlossary(db);
   expect(listAllKeys(db)).toEqual([]);
   expect(readPassState(db).watermarkMs).toBe(0);
+});
+
+describe("selectSnippetUpgradeBatch", () => {
+  const OPTS = { nowMs: 1_000_000, retryBaseCooldownMs: 60_000 };
+
+  function seedConsolidated(
+    key: string,
+    p: { source: "llm" | "snippet"; score: number; attempts?: number; lastAttemptAt?: number },
+  ): void {
+    dbRun(
+      db,
+      `INSERT INTO glossary_term
+         (term_key, display_term, status, definition, definition_source, doc_freq,
+          service_spread, score, form, first_seen_at, last_seen_at, attempts,
+          last_attempt_at, updated_at)
+       VALUES (?, ?, 'consolidated', 'def', ?, 5, 2, ?, 'acronym', 1, 2, ?, ?, 1)`,
+      [key, key.toUpperCase(), p.source, p.score, p.attempts ?? 0, p.lastAttemptAt ?? 0],
+    );
+  }
+
+  test("selects only consolidated snippet-sourced rows", () => {
+    seedConsolidated("cdr", { source: "snippet", score: 10 });
+    seedConsolidated("slo", { source: "llm", score: 99 });
+    dbRun(
+      db,
+      `INSERT INTO glossary_term
+         (term_key, display_term, status, doc_freq, service_spread, score, form,
+          first_seen_at, last_seen_at, updated_at)
+       VALUES ('pend', 'PEND', 'pending', 5, 2, 50, 'acronym', 1, 2, 1)`,
+      [],
+    );
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+  });
+
+  // Ordering, not count: a count-only assertion passes under either ordering.
+  test("rotates round-robin by last_attempt_at ascending", () => {
+    seedConsolidated("recent", { source: "snippet", score: 99, lastAttemptAt: 900_000 });
+    seedConsolidated("never", { source: "snippet", score: 1, lastAttemptAt: 0 });
+    seedConsolidated("middle", { source: "snippet", score: 50, lastAttemptAt: 400_000 });
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual([
+      "never",
+      "middle",
+      "recent",
+    ]);
+  });
+
+  test("withholds a term still inside its exponential backoff", () => {
+    // attempts=1 -> cooldown 60_000; last attempt at 999_000 -> due at 1_059_000 > now.
+    seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 999_000 });
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS)).toEqual([]);
+  });
+
+  test("admits a term whose backoff has elapsed", () => {
+    seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 100_000 });
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+  });
+
+  // SQLite treats LIMIT -1 as UNLIMITED, so a subtraction-derived caller that
+  // goes negative would silently select the whole snippet population.
+  test("returns nothing for a zero or negative limit", () => {
+    seedConsolidated("cdr", { source: "snippet", score: 10 });
+    expect(selectSnippetUpgradeBatch(db, 0, OPTS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, -1, OPTS)).toEqual([]);
+  });
+});
+
+test("markConsolidated stamps last_attempt_at", () => {
+  dbRun(
+    db,
+    `INSERT INTO glossary_term
+       (term_key, display_term, status, doc_freq, service_spread, score, form,
+        first_seen_at, last_seen_at, updated_at)
+     VALUES ('cdr', 'CDR', 'pending', 5, 2, 10, 'acronym', 1, 2, 1)`,
+    [],
+  );
+  markConsolidated(db, {
+    termKey: "cdr",
+    definition: "d",
+    definitionSource: "llm",
+    synonyms: [],
+    nearMisses: [],
+    nowMs: 777,
+  });
+  const row = db
+    .query("SELECT last_attempt_at FROM glossary_term WHERE term_key = 'cdr'")
+    .get() as { last_attempt_at: number };
+  expect(row.last_attempt_at).toBe(777);
 });
