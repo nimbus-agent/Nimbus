@@ -176,15 +176,21 @@ consolidated them.
 Per-term labelling already exists — `agents/_lib/render.ts:295` marks a `definitionSource ===
 "snippet"` entry in the brief. What is missing is the aggregate signal. Two additions:
 
-- **A gap note in the brief** when consolidated terms are predominantly snippet-sourced. This is
-  computed from the table (`COUNT(*) GROUP BY definition_source`), not from probing a provider, so
-  it reports what actually produced the definitions the user is looking at rather than what is
-  available right now. It reuses `category: "missing_connector"` because `GapCategory` is a closed
-  union in the published `@nimbus-dev/sdk` and a new value would need an SDK release — the same
-  slightly-off-label reuse the three existing glossary gap notes already make.
-- **A `--refresh` warning.** `GlossaryPassSummary` gains `llmAvailable: boolean`, and the CLI prints
-  `Warning: no local LLM provider was available — terms were consolidated from raw snippets.` when
-  a pass consolidated anything with no model.
+- **A gap note in the brief** whenever any consolidated term is snippet-sourced, carrying the exact
+  ratio: `12 of 47 definitions are verbatim snippets rather than model-consolidated.` Reporting the
+  numbers rather than tripping at a "predominantly" threshold avoids inventing a cutoff nobody can
+  justify, and is informative at any ratio. It is computed from the table
+  (`COUNT(*) … GROUP BY definition_source`), not by probing a provider, so it reports what actually
+  produced the definitions on screen rather than what happens to be running now. It reuses
+  `category: "missing_connector"` because `GapCategory` is a closed union in the published
+  `@nimbus-dev/sdk` and a new value would need an SDK release — the same slightly-off-label reuse
+  the three existing glossary gap notes already make.
+- **A `--refresh` warning.** `GlossaryPassSummary` gains two booleans rather than one
+  `llmAvailable`, because "configured" and "actually worked" are different failures and the warning
+  must only fire for the second: `llmConfigured` (an adapter was supplied) and `llmProduced` (at
+  least one outcome this pass came from the model — a definition or a veto; only a model can veto).
+  The CLI warns when `llmConfigured && !llmProduced && consolidated + upgraded > 0`, which is
+  exactly the Ollama-not-running case and not the no-LLM-by-choice case.
 
 ## 3. Snippet → LLM upgrade path
 
@@ -277,7 +283,8 @@ telemetry for its own sake:
 | `upgraded: number` | Distinct from `consolidated` — do not conflate "learned a new term" with "improved an old one" |
 | `upgradesVetoed: number` | §3.2 — the disappearing-terms signal |
 | `vetoedTerms: string[]` | §3.2 — *which* terms disappeared, capped at 10 |
-| `llmAvailable: boolean` | §2.6 — drives the silent-snippet-fallback warning |
+| `llmConfigured: boolean` | §2.6 — an adapter was supplied |
+| `llmProduced: boolean` | §2.6 — the model actually returned something; the two together drive the warning |
 
 ## 4. `--refresh` and `--rebuild`
 
