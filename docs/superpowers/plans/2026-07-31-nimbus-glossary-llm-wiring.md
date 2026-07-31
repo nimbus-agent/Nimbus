@@ -1189,7 +1189,34 @@ bun test packages/gateway/src/agents/glossary.test.ts > /tmp/t6.log 2>&1; echo "
 
 - [ ] **Step 3: Implement**
 
-In `buildGaps`, after the `counts.pending > 0` block and before `return gaps;`:
+First add the read to `glossary-store.ts`, beside its sibling `countByStatus` — every other
+count/state read in `buildGaps` goes through the store, and inlining raw SQL in the agent breaks
+that separation:
+
+```ts
+/**
+ * Consolidated terms whose definition is a verbatim snippet rather than a
+ * model consolidation.
+ *
+ * No `?? 0` fallback: `COUNT(*)` without `GROUP BY` always returns exactly one
+ * row, and `COUNT` never yields NULL even over zero matching rows. The sibling
+ * `countByStatus` DOES need its fallback — `SUM(CASE …)` returns NULL on an
+ * empty table — but that precedent must not be copied here, where it would be a
+ * permanently uncovered branch against the ≥80% floor.
+ */
+export function countSnippetSourced(db: Database): number {
+  return (
+    db
+      .query(
+        `SELECT COUNT(*) AS n FROM glossary_term
+         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+      )
+      .get() as { n: number }
+  ).n;
+}
+```
+
+Then in `buildGaps`, after the `counts.pending > 0` block and before `return gaps;`:
 
 ```ts
   // Snippet-sourced definitions are verbatim quotes, not consolidations. They
@@ -1197,14 +1224,7 @@ In `buildGaps`, after the `counts.pending > 0` block and before `return gaps;`:
   // simply not running has no way to notice the pattern — the glossary looks
   // built, just oddly worded. Report the ratio rather than picking a
   // "predominantly" threshold nobody can justify.
-  const snippetCount = (
-    db
-      .query(
-        `SELECT COUNT(*) AS n FROM glossary_term
-         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
-      )
-      .get() as { n: number } | null
-  )?.n ?? 0;
+  const snippetCount = countSnippetSourced(db);
   if (snippetCount > 0) {
     gaps.push({
       category: "missing_connector",
