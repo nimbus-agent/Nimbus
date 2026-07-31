@@ -4,7 +4,14 @@
  * The key is what collapses "SLO", "SLOs" and "slo" into a single glossary
  * entry, so it must be stable across every mining family. Depluralization is
  * deliberately conservative: stripping `s` from short words or `ss`/`us`
- * endings would merge unrelated terms ("class" -> "clas").
+ * endings would merge unrelated terms ("class" -> "clas"). The same
+ * conservatism exempts a word carrying an internal `.` — an identifier or
+ * filename ("node.js", "next.js", "d3.js"), never an English plural — since
+ * the naive rule would otherwise read the "s" in ".js" as a plural suffix and
+ * truncate it to "node.j". Known remaining wart: "https" -> "http" is still
+ * wrong (it needs an acronym allowlist, not this exemption) — accepted
+ * because a general consonant+s exemption would break the headline case
+ * ("SLOs" -> "slo").
  */
 
 /** Leading/trailing punctuation that clings to a term in prose. */
@@ -20,6 +27,10 @@ function depluralize(word: string): string {
   if (word.length <= MIN_DEPLURAL_LENGTH) return word;
   if (!word.endsWith("s")) return word;
   if (word.endsWith("ss") || word.endsWith("us") || word.endsWith("is")) return word;
+  // A leading or trailing `.` is already stripped by EDGE_PUNCT before this
+  // runs, so any `.` still present here is internal — the word is an
+  // identifier or filename ("node.js"), not a plural.
+  if (word.includes(".")) return word;
   return word.slice(0, -1);
 }
 

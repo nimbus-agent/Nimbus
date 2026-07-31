@@ -53,3 +53,24 @@ test("strips curly quotes as well as straight ones", () => {
 test("does not strip s from words ending in is", () => {
   expect(normalizeTerm("axis")).toBe("axis");
 });
+
+test("does not strip s from a word carrying an internal dot", () => {
+  expect(normalizeTerm("node.js")).toBe("node.js");
+  expect(normalizeTerm("next.js")).toBe("next.js");
+  expect(normalizeTerm("d3.js")).toBe("d3.js");
+});
+
+// Regression pins: the internal-dot exemption must not weaken the ordinary
+// plural rule for undotted words. These are the headline cases the function
+// exists for — a fix for the dotted-identifier case that broadens the rule
+// (e.g. "any consonant + s") would break these silently.
+test("still strips a trailing plural s from ordinary words", () => {
+  expect(normalizeTerm("SLOs")).toBe("slo");
+  expect(normalizeTerm("docs")).toBe("doc");
+});
+
+test("still keeps ss/us/is endings intact with no internal dot", () => {
+  expect(normalizeTerm("class")).toBe("class");
+  expect(normalizeTerm("bus")).toBe("bus");
+  expect(normalizeTerm("analysis")).toBe("analysis");
+});
