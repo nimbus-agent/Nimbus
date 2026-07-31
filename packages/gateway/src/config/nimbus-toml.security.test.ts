@@ -43,4 +43,20 @@ describe("parseNimbusSecurityToml", () => {
     const raw = '[other]\nfingerprint = "nope"\n';
     expect(parseNimbusSecurityToml(raw).allowlistFingerprints).toEqual([]);
   });
+
+  test("skips a fingerprint line with a genuinely unterminated quoted value", () => {
+    // Without the guard, parseString returns the unterminated fragment with
+    // its leading quote still attached (`"oops`), and since that string is
+    // non-empty it gets accepted into the array — the exact "acting on a
+    // mangled value" bug this guard prevents.
+    const raw = [
+      "[[security.allowlist]]",
+      'fingerprint = "aaaa1111"',
+      "[[security.allowlist]]",
+      'fingerprint = "oops',
+      "[[security.allowlist]]",
+      'fingerprint = "bbbb2222"',
+    ].join("\n");
+    expect(parseNimbusSecurityToml(raw).allowlistFingerprints).toEqual(["aaaa1111", "bbbb2222"]);
+  });
 });

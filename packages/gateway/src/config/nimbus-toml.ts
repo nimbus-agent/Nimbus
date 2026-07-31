@@ -729,6 +729,10 @@ function parseNimbusTomlSecuritySection(source: string): Partial<NimbusSecurityT
   let inAllow = false;
   for (const line of source.split(/\r?\n/)) {
     const t = stripComment(line).trim();
+    // A line whose quoted value never closes is malformed. Skipping beats
+    // acting on the mangled value the old parser produced (a leading `"` plus
+    // a truncated fragment) — no value is better than a wrong one.
+    if (hasUnterminatedString(line)) continue;
     if (t === "") continue;
     if (isTableHeader(t)) {
       inAllow = t === "[[security.allowlist]]";
@@ -1004,6 +1008,10 @@ function collectQuorumKvSections(source: string): Map<string, Record<string, str
 
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
+    // A line whose quoted value never closes is malformed. Skipping beats
+    // acting on the mangled value the old parser produced (a leading `"` plus
+    // a truncated fragment) — no value is better than a wrong one.
+    if (hasUnterminatedString(line)) continue;
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
       currentId = beginQuorumTable(accum, trimmed);
@@ -1187,6 +1195,10 @@ function collectPreflightKvSections(source: string): Map<string, Record<string, 
 
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
+    // A line whose quoted value never closes is malformed. Skipping beats
+    // acting on the mangled value the old parser produced (a leading `"` plus
+    // a truncated fragment) — no value is better than a wrong one.
+    if (hasUnterminatedString(line)) continue;
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
       currentId = beginPreflightTable(accum, trimmed);

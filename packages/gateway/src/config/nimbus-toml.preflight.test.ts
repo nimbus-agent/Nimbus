@@ -39,3 +39,17 @@ timeout_seconds = 0
 test("absent section → empty map", () => {
   expect(parsePreflightConfig("[federation]\nenabled = true\n").size).toBe(0);
 });
+
+test("skips a command line with a genuinely unterminated quoted value — a forgotten closing quote on a Windows path", () => {
+  // Without the guard, parseString returns the unterminated fragment with
+  // its leading quote still attached (`"C:\tools\build`), and since that
+  // string is non-empty toPreflightCommandConfig accepts it — I24 says the
+  // command is "resolved from local config only", so a corrupted command
+  // string silently registering here is exactly the class of bug the guard
+  // must close.
+  const cfg = parsePreflightConfig(`
+[federation.preflight."ns"]
+command = "C:\\tools\\build
+`);
+  expect(cfg.has("ns")).toBe(false);
+});

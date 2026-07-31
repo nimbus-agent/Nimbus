@@ -46,4 +46,13 @@ describe("[hitl.quorum] config", () => {
     const raw = ["[other.section]", "approvers = 2", "window_seconds = 300"].join("\n");
     expect(parseQuorumConfig(raw).size).toBe(0);
   });
+
+  it("skips a window_seconds line with a genuinely unterminated quoted value, instead of accepting its leading numeric prefix", () => {
+    // Without the guard, the raw value "300 \"typo is stored unparsed, and
+    // Number.parseInt tolerates trailing garbage after a valid numeric
+    // prefix — so window_seconds silently becomes 300 from a malformed
+    // line. The guard drops the whole line, so the rule never registers.
+    const raw = ['[hitl.quorum."x.y"]', "approvers = 2", 'window_seconds = 300 "typo'].join("\n");
+    expect(parseQuorumConfig(raw).has("x.y")).toBe(false);
+  });
 });
