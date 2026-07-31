@@ -26,22 +26,49 @@ function makeFakeIpcClient(callImpl?: (method: string, params: unknown) => Promi
   client: IPCClient;
   calls: RecordedCall[];
   fire: (method: string, params: unknown) => void;
+  fireClose: (err: Error) => void;
+  liveHandlers: () => number;
 } {
   const calls: RecordedCall[] = [];
-  const handlers = new Map<string, (params: unknown) => void>();
+  // Sets, not a single handler per method — the real `IPCClient` keeps a Set,
+  // and a fake that silently replaced a second registration would hide exactly
+  // the leak `liveHandlers` exists to catch.
+  const handlers = new Map<string, Set<(params: unknown) => void>>();
+  const closeHandlers = new Set<(err: Error) => void>();
   const fake = {
     call: async (method: string, params: unknown): Promise<unknown> => {
       calls.push({ method, params });
       return callImpl === undefined ? { sessionId: "s1" } : callImpl(method, params);
     },
     onNotification: (method: string, handler: (params: unknown) => void): void => {
-      handlers.set(method, handler);
+      const set = handlers.get(method) ?? new Set<(params: unknown) => void>();
+      set.add(handler);
+      handlers.set(method, set);
+    },
+    offNotification: (method: string, handler: (params: unknown) => void): void => {
+      handlers.get(method)?.delete(handler);
+    },
+    onClose: (handler: (err: Error) => void): void => {
+      closeHandlers.add(handler);
+    },
+    offClose: (handler: (err: Error) => void): void => {
+      closeHandlers.delete(handler);
     },
   };
   const fire = (method: string, params: unknown): void => {
-    handlers.get(method)?.(params);
+    for (const handler of [...(handlers.get(method) ?? [])]) handler(params);
   };
-  return { client: fake as unknown as IPCClient, calls, fire };
+  /** Simulate the transport dying — what `IPCClient.onClose` reports. */
+  const fireClose = (err: Error): void => {
+    for (const handler of [...closeHandlers]) handler(err);
+  };
+  /** Total live handlers, so a test can prove teardown actually removed them. */
+  const liveHandlers = (): number => {
+    let n = closeHandlers.size;
+    for (const set of handlers.values()) n += set.size;
+    return n;
+  };
+  return { client: fake as unknown as IPCClient, calls, fire, fireClose, liveHandlers };
 }
 
 test("no arguments yields a list request", () => {
@@ -588,5 +615,79 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
     }
     expect(exitCalls).toEqual([2]);
     expect(stderrBuf).toContain("Malformed glossary.briefReady payload");
+  });
+});
+
+describe("awaitPass — transport death", () => {
+  const DONE_SUMMARY = {
+    consolidated: 1,
+    upgraded: 0,
+    upgradesVetoed: 0,
+    vetoedTerms: [] as string[],
+    retried: 0,
+    llmConfigured: false,
+    llmProduced: false,
+  };
+
+  /**
+   * The failure this closes: `--refresh` starts a pass whose result arrives as
+   * a NOTIFICATION, so the `call()` that started it has already resolved and
+   * the client's `requestTimeoutMs` no longer protects anything. Before
+   * `@nimbus-dev/client` 0.15.0 exposed `onClose`, a gateway dying here left the
+   * CLI waiting forever — no pending call to reject, no notification ever
+   * coming. There is deliberately no timeout instead, because a pass
+   * legitimately runs minutes; only the transport closing is a reliable signal.
+   */
+  test("a gateway death mid-pass rejects instead of hanging forever", async () => {
+    const { client, fireClose } = makeFakeIpcClient();
+    const deps = {
+      withGatewayIpc: async <T>(fn: (c: IPCClient) => Promise<T>): Promise<T> => fn(client),
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        if (spec.beforeCall === undefined) return;
+        const passWait = spec.beforeCall(client);
+        // `awaitPass` registers its handlers synchronously before yielding, so
+        // the transport can die right here.
+        fireClose(new Error("IPC connection closed"));
+        // Raced against a short deadline on purpose. Without the `onClose`
+        // wiring this wait never settles, and an unraced `await` would express
+        // that as a suite TIMEOUT — a slow, generic failure a future reader
+        // could easily mistake for flake. The race turns the regression into a
+        // fast assertion that names itself.
+        await Promise.race([
+          passWait,
+          Bun.sleep(250).then(() => {
+            throw new Error("awaitPass never settled after the transport closed — it hung");
+          }),
+        ]);
+      },
+    };
+
+    await expect(runGlossaryCommand(["--refresh"], deps)).rejects.toThrow(
+      "gateway connection closed during the pass",
+    );
+  });
+
+  test("removes every handler once the pass settles", async () => {
+    const { client, fire, liveHandlers } = makeFakeIpcClient();
+    let liveDuringPass = 0;
+    const deps = {
+      withGatewayIpc: async <T>(fn: (c: IPCClient) => Promise<T>): Promise<T> => fn(client),
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        if (spec.beforeCall === undefined) return;
+        const passWait = spec.beforeCall(client);
+        liveDuringPass = liveHandlers();
+        fire("glossary.passDone", DONE_SUMMARY);
+        await passWait;
+      },
+    };
+
+    await runGlossaryCommand(["--refresh"], deps);
+
+    expect(liveDuringPass).toBeGreaterThan(0);
+    // `runAgentBriefCli` reuses this same client for the brief that runs
+    // immediately afterwards, so a leaked handler is a live cross-phase
+    // listener rather than merely untidy — which is why the client documents
+    // pairing every `on*` with its `off*`.
+    expect(liveHandlers()).toBe(0);
   });
 });

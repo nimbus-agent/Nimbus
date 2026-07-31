@@ -184,25 +184,60 @@ function awaitPass(client: IPCClient, method: string): Promise<GlossaryPassSumma
     const endProgress = (): void => {
       if (wrote) process.stderr.write("\n");
     };
-    client.onNotification("glossary.passProgress", (n: unknown) => {
+
+    const onProgress = (n: unknown): void => {
       if (!tty) return;
       const p = n as { done: number; total: number };
       process.stderr.write(progressLine(p.done, p.total));
       wrote = true;
-    });
+    };
     // Single-flight in the gateway guarantees at most one job, so there is no
     // jobId to filter on — and filtering would race the `{ jobId }` reply.
-    client.onNotification("glossary.passDone", (n: unknown) => {
+    const onDone = (n: unknown): void => {
+      settleResolve(n as GlossaryPassSummaryLike);
+    };
+    const onError = (n: unknown): void => {
+      settleReject(new Error((n as { message: string }).message));
+    };
+    /**
+     * A pass legitimately runs minutes, so this wait deliberately has NO
+     * timeout — the client's `requestTimeoutMs` bounds the `call()` below, but
+     * that resolves immediately with a job id and the RESULT arrives later as a
+     * notification. Nothing was left to detect a gateway that died in between:
+     * no pending call for the transport to reject, and no notification ever
+     * coming, so the CLI hung forever. `onClose` (added in @nimbus-dev/client
+     * 0.15.0 for exactly this) turns that into a fast, explicit failure.
+     */
+    const onClose = (err: Error): void => {
+      settleReject(new Error(`gateway connection closed during the pass: ${err.message}`));
+    };
+
+    // Every handler is removed on the first settle. The client documents this
+    // as a rule ("leaking handlers keeps dead streams firing") and it is not
+    // theoretical here: `runAgentBriefCli` reuses this same client for the
+    // brief that runs immediately afterwards.
+    const teardown = (): void => {
+      client.offNotification("glossary.passProgress", onProgress);
+      client.offNotification("glossary.passDone", onDone);
+      client.offNotification("glossary.passError", onError);
+      client.offClose(onClose);
       endProgress();
-      resolve(n as GlossaryPassSummaryLike);
-    });
-    client.onNotification("glossary.passError", (n: unknown) => {
-      endProgress();
-      reject(new Error((n as { message: string }).message));
-    });
+    };
+    function settleResolve(v: GlossaryPassSummaryLike): void {
+      teardown();
+      resolve(v);
+    }
+    function settleReject(e: Error): void {
+      teardown();
+      reject(e);
+    }
+
+    client.onNotification("glossary.passProgress", onProgress);
+    client.onNotification("glossary.passDone", onDone);
+    client.onNotification("glossary.passError", onError);
+    client.onClose(onClose);
     client.call<{ jobId: string }>(method, {}).catch((err: unknown) => {
-      endProgress();
-      reject(err instanceof Error ? err : new Error(String(err)));
+      settleReject(err instanceof Error ? err : new Error(String(err)));
     });
   });
 }

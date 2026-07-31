@@ -8,6 +8,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-07-31 — `nimbus glossary --refresh` no longer hangs when the gateway dies mid-pass.**
+  `@nimbus-dev/client` bumped `^0.14.0` → `^0.15.0` for its new `IPCClient.onClose`, and
+  `awaitPass` now uses it. The gap this closes is specific to notification-delivered results:
+  `call()` is bounded by the client's `requestTimeoutMs`, but the call that *starts* a pass
+  resolves immediately with a job id and the result arrives later as a notification — so a gateway
+  that died in between left no pending call for the transport to reject and no notification ever
+  coming, and the CLI waited forever. There is deliberately still **no timeout** on that wait,
+  because a pass legitimately runs minutes at default config; the transport closing is the signal,
+  not a clock. A mid-pass death now fails fast with
+  `gateway connection closed during the pass: …` and exit code 2.
+  The same change pairs every notification handler with its removal on settle — `runAgentBriefCli`
+  reuses one client for the brief that runs straight afterwards, so a leaked handler was a live
+  cross-phase listener, not merely untidy. Client-side change:
+  [nimbus-client#48](https://github.com/nimbus-agent/nimbus-client/pull/48) (released as
+  `@nimbus-dev/client` 0.15.0).
+
 - **2026-07-31 — `nimbus glossary` — LLM wiring, snippet upgrades, and `--refresh`/`--rebuild`.**
   Three follow-ups to the 2026-07-30 glossary delivery below. (1) A `ConsolidatorLlm` adapter over
   the existing `LlmRouter` — hard-rejecting any non-local provider before generation, not after —
