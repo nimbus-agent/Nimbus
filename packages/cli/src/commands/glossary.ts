@@ -98,6 +98,7 @@ export type GlossaryPassSummaryLike = {
   upgraded: number;
   upgradesVetoed: number;
   vetoedTerms: string[];
+  retried: number;
   llmConfigured: boolean;
   llmProduced: boolean;
 };
@@ -116,21 +117,34 @@ export function progressLine(done: number, total: number): string {
 /**
  * Post-pass lines.
  *
- * The warning fires only on `llmConfigured && !llmProduced`: "no model
- * configured" is a choice, "a model was configured and never answered" is
- * Ollama not running — and only the second is worth interrupting the user for.
+ * The warning fires only on `llmConfigured && !llmProduced && retried > 0`:
+ * "no model configured" is a choice, and a model that never answered but also
+ * never had anything deferred to it (`retried === 0`) has nothing to warn
+ * about either. `consolidated + upgraded > 0` is NOT a substitute for
+ * `retried > 0` — when `llmConfigured` is true, `consolidateTerm` labels
+ * every `defined` outcome `source: "llm"` and sets `llmProduced`, so
+ * `llmConfigured && !llmProduced` already implies `consolidated + upgraded
+ * === 0`; gating on that sum made the warning unreachable. A model configured
+ * but unreachable (e.g. Ollama stopped) instead defers every term it touches
+ * to a `retry`, which is exactly what `retried` counts.
  */
 export function renderPassOutcome(s: GlossaryPassSummaryLike): string[] {
   const lines = [`Pass complete: ${String(s.consolidated)} new, ${String(s.upgraded)} upgraded.`];
-  if (s.llmConfigured && !s.llmProduced && s.consolidated + s.upgraded > 0) {
+  if (s.llmConfigured && !s.llmProduced && s.retried > 0) {
     lines.push(
-      "Warning: no local LLM provider was available — terms were consolidated from raw snippets.",
+      `Warning: no local LLM provider answered — ${String(s.retried)} term(s) were deferred to ` +
+        "a later pass. Is Ollama running?",
     );
   }
   if (s.upgradesVetoed > 0) {
+    const overflow = s.upgradesVetoed - s.vetoedTerms.length;
+    const named =
+      overflow > 0
+        ? `${s.vetoedTerms.join(", ")}, and ${String(overflow)} more`
+        : s.vetoedTerms.join(", ");
     lines.push(
       `Vetoed ${String(s.upgradesVetoed)} previously snippet-defined term(s): ` +
-        `${s.vetoedTerms.join(", ")} (no longer in the glossary).`,
+        `${named} (no longer in the glossary).`,
     );
   }
   return lines;
@@ -151,6 +165,9 @@ export function renderRebuildPreview(
   if (sample.length > 0) lines.push(`  ${sample.join(", ")}`);
   const remainder = counts.total - sample.length;
   if (remainder > 0) lines.push(`  ... and ${String(remainder)} more`);
+  lines.push(
+    "Rebuilding re-mines incrementally; the full glossary returns over subsequent passes.",
+  );
   lines.push("Re-run with --yes to confirm.");
   return lines.join("\n");
 }

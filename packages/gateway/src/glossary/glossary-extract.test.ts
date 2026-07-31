@@ -446,14 +446,38 @@ function seedPendingTerm(key: string, score: number): void {
 
 test("does not run upgrades when no LLM is configured", async () => {
   seedSnippetTerm("cdr", "slack:1", 10);
+  // `seedBackingItem` (called by `seedSnippetTerm`) writes generic `"t"` /
+  // `"t"` text that never mentions the term, so `pickSnippetDefinition`
+  // could never match regardless of whether the `hasLlm` gate ran — making
+  // this test pass even with the gate deleted. Overwriting the same backing
+  // item (`upsertIndexedItem` upserts by service+externalId) with text that
+  // actually mentions "CDR" means a gate-free query WOULD pick this term up
+  // and re-derive its definition via `pickSnippetDefinition`, so the
+  // assertions below are only true when the gate is intact.
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "1",
+    title: "t",
+    bodyPreview: "The CDR is a change envelope.",
+    modifiedAt: 2,
+    syncedAt: 2,
+  });
   const summary = await runGlossaryPass(db, { ...PASS_OPTS });
   expect(summary.upgraded).toBe(0);
   const row = db
-    .query("SELECT definition_source FROM glossary_term WHERE term_key='cdr'")
+    .query("SELECT definition_source, definition, attempts FROM glossary_term WHERE term_key='cdr'")
     .get() as {
     definition_source: string;
+    definition: string;
+    attempts: number;
   };
   expect(row.definition_source).toBe("snippet");
+  // Untouched entirely, not merely re-labelled the same: the gate keeps the
+  // upgrade query from running at all, so neither the definition text nor
+  // the attempt counter moves.
+  expect(row.definition).toBe("old snippet text");
+  expect(row.attempts).toBe(0);
 });
 
 test("upgrades a snippet definition in place and re-sources it as llm", async () => {
@@ -506,7 +530,9 @@ test("vetoes an upgraded term, unprojects it, and names it in the summary", asyn
     llm: llmReturning('{"isDomainTerm":false,"definition":"","alsoKnownAs":[]}'),
   });
   expect(summary.upgradesVetoed).toBe(1);
-  expect(summary.vetoedTerms).toEqual(["cdr"]);
+  // `displayTerm` ("CDR"), not the lowercased `termKey` ("cdr") — the rebuild
+  // preview shows the display form, and this list must match it.
+  expect(summary.vetoedTerms).toEqual(["CDR"]);
   const status = db.query("SELECT status FROM glossary_term WHERE term_key='cdr'").get() as {
     status: string;
   };

@@ -27,7 +27,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   accumulates terms nothing has ever judged; the upgrade path in (2) runs those same terms through a
   real veto check, and a term that fails it is removed from the glossary (row survives as `vetoed`,
   and returns to the searchable index only if a later `--rebuild` re-derives it). `--refresh` names
-  every term vetoed this way in its stderr summary so a disappearance is never silent. Known limit
+  up to 10 terms vetoed this way in its stderr summary (plus a count of any remainder), so a
+  disappearance is never silent even past that cap. Known limit
   added: the abort signal used at gateway shutdown does not propagate into the LLM provider's
   underlying HTTP request, which keeps running until the provider's own 120s timeout or process
   exit. Spec: `docs/superpowers/specs/2026-07-31-nimbus-glossary-llm-wiring-design.md`; plan:

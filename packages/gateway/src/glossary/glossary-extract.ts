@@ -325,7 +325,10 @@ async function consolidatePhase(
         upgradesVetoed += 1;
         // A term the user could see yesterday and cannot see today. Named so
         // `--refresh` can report it rather than letting it vanish silently.
-        if (vetoedTerms.length < VETOED_TERMS_REPORTED) vetoedTerms.push(term.termKey);
+        // `displayTerm`, not `termKey`: the rebuild preview (via
+        // `agents.glossary`) shows the display form (e.g. "CDR"), and this
+        // list must read the same way, not as the lowercased normalized key.
+        if (vetoedTerms.length < VETOED_TERMS_REPORTED) vetoedTerms.push(term.displayTerm);
       }
     } else if (outcome.kind === "retry") {
       // Stamps the attempt for BOTH queues' backoff — a failing upgrade steps

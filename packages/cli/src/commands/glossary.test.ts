@@ -153,11 +153,19 @@ describe("glossary flag parsing", () => {
 });
 
 describe("renderPassOutcome", () => {
+  // `consolidated`/`upgraded` default to 0: when `llmConfigured` is true,
+  // `consolidateTerm` labels every `defined` outcome `source: "llm"` and sets
+  // `llmProduced` one line above incrementing either counter
+  // (`glossary-extract.ts`), so `llmConfigured && !llmProduced && (consolidated
+  // > 0 || upgraded > 0)` is a summary shape the gateway can never actually
+  // emit. Tests that need a positive `consolidated`/`upgraded` override it
+  // alongside `llmProduced: true` (or leave `llmConfigured: false`) so the
+  // fixture always stays a summary `runGlossaryPass` could really produce.
   const BASE = {
     scanned: 0,
     discovered: 0,
     demoted: 0,
-    consolidated: 2,
+    consolidated: 0,
     upgraded: 0,
     vetoed: 0,
     upgradesVetoed: 0,
@@ -168,9 +176,18 @@ describe("renderPassOutcome", () => {
     aborted: false,
   };
 
-  test("warns when a model was configured but produced nothing", () => {
-    const lines = renderPassOutcome({ ...BASE, llmConfigured: true, llmProduced: false });
-    expect(lines.join("\n")).toContain("no local LLM provider was available");
+  test("warns on the dead-model shape: configured, never answered, terms deferred to retry", () => {
+    // The realistic "Ollama stopped" summary: nothing was consolidated or
+    // upgraded (a model that never answers can't produce either), and every
+    // term touched this pass fell through to `retry`.
+    const lines = renderPassOutcome({
+      ...BASE,
+      retried: 2,
+      llmConfigured: true,
+      llmProduced: false,
+    });
+    expect(lines.join("\n")).toContain("no local LLM provider answered");
+    expect(lines.join("\n")).toContain("2 term(s) were deferred");
   });
 
   test("does not warn when no model was configured at all", () => {
@@ -178,7 +195,12 @@ describe("renderPassOutcome", () => {
   });
 
   test("does not warn when the model produced definitions", () => {
-    const lines = renderPassOutcome({ ...BASE, llmConfigured: true, llmProduced: true });
+    const lines = renderPassOutcome({
+      ...BASE,
+      consolidated: 2,
+      llmConfigured: true,
+      llmProduced: true,
+    });
     expect(lines.join("\n")).not.toContain("no local LLM provider");
   });
 
@@ -186,19 +208,27 @@ describe("renderPassOutcome", () => {
     const lines = renderPassOutcome({
       ...BASE,
       upgradesVetoed: 2,
-      vetoedTerms: ["cdr", "slo"],
+      vetoedTerms: ["CDR", "SLO"],
     });
-    expect(lines.join("\n")).toContain("cdr, slo");
+    expect(lines.join("\n")).toContain("CDR, SLO");
     expect(lines.join("\n")).toContain("no longer in the glossary");
   });
 
-  test("does not warn when the model was configured but nothing changed this pass", () => {
-    // llmConfigured && !llmProduced is true, but consolidated + upgraded === 0:
-    // there is nothing the LLM could have failed to define.
+  test("names the veto overflow when more terms were vetoed than reported by name", () => {
     const lines = renderPassOutcome({
       ...BASE,
-      consolidated: 0,
-      upgraded: 0,
+      upgradesVetoed: 12,
+      vetoedTerms: Array.from({ length: 10 }, (_, i) => `TERM${String(i)}`),
+    });
+    expect(lines.join("\n")).toContain("and 2 more");
+  });
+
+  test("does not warn when the model was configured but nothing was deferred to retry", () => {
+    // llmConfigured && !llmProduced is true, but retried === 0: the model
+    // never answered because it was never asked to (nothing landed in the
+    // upgrade/pending queues this pass), not because it failed to.
+    const lines = renderPassOutcome({
+      ...BASE,
       llmConfigured: true,
       llmProduced: false,
     });
@@ -229,6 +259,16 @@ describe("renderRebuildPreview", () => {
     expect(out).toContain("47 consolidated terms and 12 pending candidates");
     expect(out).toContain("CDR, shard_key, write-behind");
     expect(out).toContain("--yes");
+  });
+
+  test("warns that a rebuild only re-mines incrementally, not all at once", () => {
+    // A confirmed --rebuild truncates immediately but re-derives via the
+    // ordinary bounded pass (SCAN_BATCH_LIMIT / maxNewTermsPerPass), so the
+    // confirm prompt must say so up front rather than let the user believe
+    // "Pass complete" means the whole glossary came back.
+    const out = renderRebuildPreview({ total: 47, pending: 12 }, ["CDR"]);
+    expect(out).toContain("Rebuilding re-mines incrementally");
+    expect(out).toContain("the full glossary returns over subsequent passes");
   });
 
   test("omits the remainder line when the sample covers everything", () => {
@@ -421,6 +461,7 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
               upgraded: 1,
               upgradesVetoed: 0,
               vetoedTerms: [],
+              retried: 0,
               llmConfigured: false,
               llmProduced: false,
             });

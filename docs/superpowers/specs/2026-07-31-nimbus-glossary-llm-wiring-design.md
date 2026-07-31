@@ -189,8 +189,13 @@ Per-term labelling already exists — `agents/_lib/render.ts:295` marks a `defin
   `llmAvailable`, because "configured" and "actually worked" are different failures and the warning
   must only fire for the second: `llmConfigured` (an adapter was supplied) and `llmProduced` (at
   least one outcome this pass came from the model — a definition or a veto; only a model can veto).
-  The CLI warns when `llmConfigured && !llmProduced && consolidated + upgraded > 0`, which is
-  exactly the Ollama-not-running case and not the no-LLM-by-choice case.
+  **Corrected post-review (2026-07-31 fix wave):** the CLI warns when
+  `llmConfigured && !llmProduced && retried > 0`, not `consolidated + upgraded > 0` as originally
+  drafted here — that conjunction is unsatisfiable, because whenever `llmConfigured` is true every
+  `defined` outcome this pass is sourced `"llm"` and sets `llmProduced` one line above incrementing
+  `consolidated`/`upgraded`, so `llmConfigured && !llmProduced` already implies
+  `consolidated + upgraded === 0`. The Ollama-not-running case instead defers every term it touches
+  to `retry`, which `retried` counts directly.
 
 ## 3. Snippet → LLM upgrade path
 
