@@ -402,6 +402,20 @@ describe("selectSnippetUpgradeBatch", () => {
        VALUES ('pend', 'PEND', 'pending', 5, 2, 50, 'acronym', 1, 2, 1)`,
       [],
     );
+    // A pending row with definition_source already set to 'snippet' — e.g. a
+    // demoted-then-not-yet-reconsolidated term. Without the `status =
+    // 'consolidated'` half of the WHERE clause, this row alone would prove
+    // nothing wrong: it is the only fixture row that makes that half
+    // load-bearing (dropping it, `slo` is still excluded by its 'llm' source
+    // and `pend` by its NULL source).
+    dbRun(
+      db,
+      `INSERT INTO glossary_term
+         (term_key, display_term, status, definition_source, doc_freq, service_spread,
+          score, form, first_seen_at, last_seen_at, updated_at)
+       VALUES ('pend_snip', 'PEND_SNIP', 'pending', 'snippet', 5, 2, 75, 'acronym', 1, 2, 1)`,
+      [],
+    );
     expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
   });
 

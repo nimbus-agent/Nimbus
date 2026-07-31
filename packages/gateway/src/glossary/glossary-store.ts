@@ -266,8 +266,11 @@ export function selectPendingBatch(
  * Consolidated terms whose definition is a verbatim snippet, due for an
  * LLM re-consolidation.
  *
- * Selected only when an LLM is available — with none, an "upgrade" would
- * re-derive the same snippet from the same sources.
+ * This function returns matching rows unconditionally — it has no
+ * LLM-availability check. Gating the call on LLM availability is the
+ * caller's responsibility: with no LLM configured, an "upgrade" would just
+ * re-derive the same snippet from the same sources, so a caller must not
+ * invoke this batch (or must no-op on its results) when no LLM is available.
  *
  * `ORDER BY last_attempt_at ASC` rotates round-robin so a large snippet
  * population drains fairly, and the backoff clause — the same shape
