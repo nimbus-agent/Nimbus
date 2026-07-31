@@ -116,23 +116,57 @@ export function applyManualTerms(
     // exceptional one. The commit-count cost that would motivate batching is
     // removed by the unchanged-skip above, which makes the steady-state pass
     // write nothing at all.
+    const synonyms = aliasesFor.get(term.termKey) ?? [];
+    const nearMisses = findNearMisses(term.termKey, knownKeys);
+    const score = scoreTerm({
+      docFreq: stats.docFreq,
+      serviceSpread: stats.serviceSpread,
+      form: "phrase",
+    });
     db.transaction(() => {
       upsertManualTerm(db, {
         termKey: term.termKey,
         displayTerm: term.displayTerm,
         definition: term.definition,
-        synonyms: aliasesFor.get(term.termKey) ?? [],
-        nearMisses: findNearMisses(term.termKey, knownKeys),
+        synonyms,
+        nearMisses,
         stats,
-        score: scoreTerm({
-          docFreq: stats.docFreq,
-          serviceSpread: stats.serviceSpread,
-          form: "phrase",
-        }),
+        score,
         nowMs: opts.nowMs,
       });
-      const stored = getTerm(db, term.termKey);
-      if (stored !== null) projectTerm(db, stored, opts.nowMs);
+      // `upsertManualTerm` just wrote exactly this row. Reading it back out
+      // via `getTerm` would only reconstruct what is already in hand, and it
+      // would leave a `stored === null` branch that no test could ever force
+      // (the write above always either applies or the transaction never
+      // reaches here) — a permanently-uncoverable branch the coverage floor
+      // cannot be satisfied against. Project directly from what was just
+      // written instead; `form` is the one field `upsertManualTerm` does not
+      // touch, so it is carried over from `existing` (or the table's
+      // 'phrase' default for a brand-new row) — `projectTerm` does not read
+      // it, but the value must still be a real `CandidateForm` to type-check.
+      projectTerm(
+        db,
+        {
+          termKey: term.termKey,
+          displayTerm: term.displayTerm,
+          status: "consolidated",
+          definition: term.definition,
+          definitionSource: "manual",
+          docFreq: stats.docFreq,
+          serviceSpread: stats.serviceSpread,
+          score,
+          form: existing?.form ?? "phrase",
+          firstSeenAt: stats.firstSeenAt,
+          lastSeenAt: stats.lastSeenAt,
+          topSources: stats.topSources,
+          synonyms,
+          nearMisses,
+          consolidatedAt: opts.nowMs,
+          statsVerifiedAt: opts.nowMs,
+          updatedAt: opts.nowMs,
+        },
+        opts.nowMs,
+      );
     })();
     added += 1;
   }

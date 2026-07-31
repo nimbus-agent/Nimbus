@@ -209,3 +209,83 @@ test("removal leaves a mined term's own row alone", () => {
   expect(mined?.status).toBe("consolidated");
   expect(mined?.definition).toBe("mined");
 });
+
+test("the upsert is atomic — a crash between the row write and the projection rolls both back", () => {
+  // Mirrors glossary-extract.test.ts's "consolidation is atomic" and
+  // glossary-reconcile.test.ts's "demotion is atomic": a DB-level trigger
+  // fires exactly on projectTerm's INSERT into `item`, so upsertManualTerm's
+  // write has genuinely already run (not merely "about to run") before the
+  // failure. This is NOT wrapped in an outer transaction, so it exercises
+  // applyManualTerms's own `db.transaction()` and nothing else's.
+  db.run(
+    `CREATE TRIGGER simulated_crash_before_project
+     BEFORE INSERT ON item
+     WHEN NEW.type = 'glossary_term'
+     BEGIN SELECT RAISE(ABORT, 'simulated crash before projectTerm'); END`,
+  );
+
+  expect(() =>
+    applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
+      nowMs: 5000,
+    }),
+  ).toThrow();
+
+  db.run("DROP TRIGGER simulated_crash_before_project");
+
+  // Had upsertManualTerm's write not been rolled back with the projection,
+  // "cdr" would be sitting `consolidated` with no searchable item — the
+  // exact stranded state the transaction exists to prevent.
+  expect(getTerm(db, "cdr")).toBeNull();
+  expect(projectedExists("cdr")).toBe(false);
+});
+
+test("the removal is atomic — a crash between unproject and demote rolls both back", () => {
+  applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
+    nowMs: 5000,
+  });
+  expect(projectedExists("cdr")).toBe(true);
+
+  // Fires exactly on demoteTerm's UPDATE, after unprojectTerm's DELETE has
+  // already run, so the same "already-applied first write, not merely
+  // about-to-run" property holds as the upsert-atomicity test above.
+  db.run(
+    `CREATE TRIGGER simulated_crash_before_demote
+     BEFORE UPDATE OF status ON glossary_term
+     WHEN NEW.status = 'pending' AND OLD.definition_source = 'manual'
+     BEGIN SELECT RAISE(ABORT, 'simulated crash before demoteTerm'); END`,
+  );
+
+  expect(() => applyManualTerms(db, cfg([]), { nowMs: 6000 })).toThrow();
+
+  db.run("DROP TRIGGER simulated_crash_before_demote");
+
+  // Had unprojectTerm's DELETE not been rolled back with demoteTerm's UPDATE,
+  // "cdr" would have lost its searchable item while still reporting
+  // `consolidated` with a `manual` definition — a stale-but-plausible-looking
+  // state, worse than either committed outcome.
+  expect(projectedExists("cdr")).toBe(true);
+  expect(getTerm(db, "cdr")?.status).toBe("consolidated");
+});
+
+test("a mined row is taken over when an authored entry exactly matches its stored content", () => {
+  // The isUnchanged guard treats a non-manual row as never "unchanged", even
+  // when every AUTHORED field it compares — definition, display form,
+  // synonyms — already matches verbatim. Without that guard this row would
+  // look unchanged and the mined row would never be taken over by the
+  // authored one, contradicting "config is desired state for the manual
+  // subspace" (an authored key is always upserted, mined-or-not).
+  db.run(
+    `INSERT INTO glossary_term
+       (term_key, display_term, status, definition, definition_source,
+        doc_freq, first_seen_at, last_seen_at, synonyms, updated_at)
+     VALUES ('cdr', 'CDR', 'consolidated', 'Audit row.', 'llm', 4, 1, 2, '[]', 1000)`,
+  );
+
+  applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
+    nowMs: 5000,
+  });
+
+  const t = getTerm(db, "cdr");
+  expect(t?.definitionSource).toBe("manual");
+  expect(t?.updatedAt).toBe(5000);
+});
