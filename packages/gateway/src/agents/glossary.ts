@@ -109,10 +109,7 @@ function buildGaps(
     gaps.push({
       category: "missing_connector",
       detail: "The glossary extraction pass has not run yet.",
-      // Deliberately does NOT name `--refresh`: that flag is not wired, and the
-      // CLI rejects it. Pointing a user at a command that errors is worse than
-      // telling them to wait for the trigger that actually drives the pass.
-      remediation: "It runs automatically after the next connector sync.",
+      remediation: "Run `nimbus glossary --refresh`, or wait for the next connector sync.",
     });
     return gaps;
   }
@@ -128,6 +125,31 @@ function buildGaps(
       category: "missing_connector",
       detail: `${String(counts.pending)} candidate term(s) are still awaiting consolidation.`,
       remediation: "The glossary fills in progressively — later passes will consolidate them.",
+    });
+  }
+  // Snippet-sourced definitions are verbatim quotes, not consolidations. They
+  // are labelled per-entry by the renderer, but a user whose local model is
+  // simply not running has no way to notice the pattern — the glossary looks
+  // built, just oddly worded. Report the ratio rather than picking a
+  // "predominantly" threshold nobody can justify.
+  const snippetCount =
+    (
+      db
+        .query(
+          `SELECT COUNT(*) AS n FROM glossary_term
+         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+        )
+        .get() as { n: number } | null
+    )?.n ?? 0;
+  if (snippetCount > 0) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        `${String(snippetCount)} of ${String(counts.total)} definition(s) are verbatim snippets ` +
+        "rather than model-consolidated.",
+      remediation:
+        "Start a local model (Ollama or llama.cpp) and run `nimbus glossary --refresh`; " +
+        "snippet definitions are re-consolidated automatically on later passes.",
     });
   }
   return gaps;
