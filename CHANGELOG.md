@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.13.0](https://github.com/nimbus-agent/Nimbus/compare/v1.12.1...v1.13.0) (2026-07-31)
+
+
+### Features
+
+* **glossary:** nimbus glossary — implicit-knowledge terminology agent ([#981](https://github.com/nimbus-agent/Nimbus/issues/981)) ([bb0069c](https://github.com/nimbus-agent/Nimbus/commit/bb0069c06b411ede044cacb135dac66f65982483))
+
 ## [1.12.1](https://github.com/nimbus-agent/Nimbus/compare/v1.12.0...v1.12.1) (2026-07-30)
 
 
