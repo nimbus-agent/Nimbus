@@ -600,6 +600,37 @@ test("halves the reserve at a small budget instead of letting it consume the who
   expect(summary.upgraded).toBe(2);
 });
 
+// At `budget = 1` the reserve floor is 0 (`Math.floor(1 / 2) = 0`), but the
+// upgrade QUERY must still run when an LLM is configured — otherwise, with
+// nothing pending and real snippet work outstanding, the pass does nothing
+// at all with a full slot of budget idle. This is the regression the
+// hasLlm/reserve split (as opposed to gating the query on `reserve === 0`)
+// exists to prevent.
+test("gives the single slot to upgrades at budget 1 when nothing is pending", async () => {
+  for (let i = 0; i < 2; i++) seedSnippetTerm(`snip${String(i)}`, "slack:1", 100 - i);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 1,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(0);
+  expect(summary.upgraded).toBe(1);
+});
+
+// Pins the contested-slot rule at budget 1: with BOTH queues populated and no
+// guaranteed reserve, the single slot goes to pending, not upgrades.
+test("gives the single slot to pending at budget 1 when both queues are populated", async () => {
+  seedPendingTerm("pending0", 100);
+  seedSnippetTerm("snip0", "slack:1", 100);
+  const summary = await runGlossaryPass(db, {
+    ...PASS_OPTS,
+    maxNewTermsPerPass: 1,
+    llm: llmReturning('{"isDomainTerm":true,"definition":"d","alsoKnownAs":[]}'),
+  });
+  expect(summary.consolidated).toBe(1);
+  expect(summary.upgraded).toBe(0);
+});
+
 // Pins VETOED_TERMS_REPORTED (10) and proves `upgradesVetoed` and
 // `vetoedTerms.length` are independent counters — nothing distinguishes the
 // cap from an unconditional push, or from a much larger cap, without this.

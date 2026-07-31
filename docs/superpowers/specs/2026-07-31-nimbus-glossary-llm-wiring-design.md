@@ -223,10 +223,18 @@ constant following the `NEAR_MISS_POOL` / `MAX_SYNONYMS` precedent rather than a
 Both queues are over-fetched to the full budget, then allocated:
 
 ```ts
-const reserve   = llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
+const hasLlm    = llm !== undefined;                 // gates the QUERY
+const reserve   = hasLlm ? Math.min(UPGRADE_RESERVE, Math.floor(budget / 2)) : 0;  // gates the FLOOR
 const upgrades  = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
 const pending   = Math.min(pendingAll.length, budget - upgrades);
 ```
+
+`hasLlm` and `reserve` are deliberately separate sentinels. An earlier revision skipped the upgrade
+query on `reserve === 0`, which was sound only while that condition implied "no model configured".
+The half-budget clamp breaks the implication: at `budget <= 1` the floor is legitimately 0 *with* a
+model, and reusing it to skip the query idles the entire pass while upgrade work waits. Found by the
+Task 5 fix-round re-review, 2026-07-31 — the clamp fixed one starvation and, through an overloaded
+sentinel, created another.
 
 The reserve is clamped to **half** the budget rather than to the budget. `min(UPGRADE_RESERVE,
 budget)` — the originally specified form — lets the floor swallow a small configured budget

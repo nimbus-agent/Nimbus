@@ -86,6 +86,15 @@ const NEAR_MISS_POOL = 500;
  * prevent. `Math.floor(budget / 2)` guarantees pending always keeps at least
  * half the pass. A module constant rather than a config key, matching
  * `NEAR_MISS_POOL` / `MAX_SYNONYMS`.
+ *
+ * At `budget <= 1` the floor itself is 0 — `Math.floor(1 / 2) = 0` — so
+ * nothing is GUARANTEED to upgrades. That is correct, not a gap: a floor of
+ * 0 just means neither queue is entitled to the single slot, and the
+ * allocation below still hands it to whichever queue actually has work
+ * (pending first, since the two `slice` calls always favor `pendingAll`
+ * before spilling into `upgradeAll`'s slack). The query that FEEDS the
+ * reserve is a separate decision — see `hasLlm` below — so a 0 floor never
+ * means the upgrade queue goes unqueried.
  */
 const UPGRADE_RESERVE = 5;
 
@@ -233,19 +242,32 @@ async function consolidatePhase(
   // Over-fetching both queues to the full budget and allocating afterwards is
   // correct in every corner and costs at most `budget` extra indexed rows.
   const budget = opts.maxNewTermsPerPass;
-  const reserve = opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
+  // Two DIFFERENT questions, deliberately NOT the same sentinel:
+  //   * hasLlm gates whether the upgrade QUERY runs at all — with no model,
+  //     an "upgrade" would just re-derive the same snippet from the same
+  //     sources, so the query must not run.
+  //   * reserve gates the FLOOR only, and can legitimately be 0 even with a
+  //     model configured — `Math.floor(budget / 2)` is 0 at budget <= 1.
+  // Collapsing them (as `reserve === 0 ? [] : selectSnippetUpgradeBatch(...)`)
+  // meant that at budget 1 the upgrade query never ran even with a model
+  // configured and real snippet work outstanding: reserve=0, so upgradeAll
+  // was forced to `[]`, pendingAll was also empty, and the pass did nothing
+  // with a full slot of budget sitting idle — the exact defect this
+  // allocation exists to prevent, reintroduced at the boundary the clamp
+  // itself created.
+  const hasLlm = opts.llm !== undefined;
+  const reserve = hasLlm ? Math.min(UPGRADE_RESERVE, Math.floor(budget / 2)) : 0;
   const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
     minDocFreq: opts.minDocFreq,
   });
-  const upgradeAll =
-    reserve === 0
-      ? []
-      : selectSnippetUpgradeBatch(db, budget, {
-          nowMs: opts.nowMs,
-          retryBaseCooldownMs: opts.retryBaseCooldownMs,
-        });
+  const upgradeAll = hasLlm
+    ? selectSnippetUpgradeBatch(db, budget, {
+        nowMs: opts.nowMs,
+        retryBaseCooldownMs: opts.retryBaseCooldownMs,
+      })
+    : [];
   const upgradeTake = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
   const batch = pendingAll.slice(0, Math.min(pendingAll.length, budget - upgradeTake));
   const upgradeBatch = upgradeAll.slice(0, upgradeTake);

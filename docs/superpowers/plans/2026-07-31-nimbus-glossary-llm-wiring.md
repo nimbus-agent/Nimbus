@@ -959,25 +959,31 @@ async function consolidatePhase(
   // Over-fetching both queues to the full budget and allocating afterwards is
   // correct in every corner and costs at most `budget` extra indexed rows.
   const budget = opts.maxNewTermsPerPass;
+  // `hasLlm` gates the QUERY; `reserve` gates the FLOOR. They must stay separate
+  // sentinels: `reserve === 0` used to imply "no LLM", but the half-budget clamp
+  // below makes `reserve` legitimately 0 at `budget <= 1` WITH a model, and
+  // reusing it to skip the query then idles the whole pass while upgrade work
+  // waits.
+  const hasLlm = opts.llm !== undefined;
   // Clamped to HALF the budget, not to the budget: `min(UPGRADE_RESERVE, budget)`
   // lets the reserve swallow a small configured budget whole, starving new-term
   // mining outright at `max_new_terms_per_pass <= 5` — a realistic setting, since
   // the config docstring frames lowering it as the way to spare a laptop LLM
-  // calls. Unchanged (5) at the default budget of 25.
-  const reserve =
-    opts.llm === undefined ? 0 : Math.min(UPGRADE_RESERVE, Math.floor(budget / 2));
+  // calls. Unchanged (5) at the default budget of 25. At `budget <= 1` the floor
+  // is 0: no slot can be guaranteed to either queue, so the single slot goes to
+  // whichever has work, pending first.
+  const reserve = hasLlm ? Math.min(UPGRADE_RESERVE, Math.floor(budget / 2)) : 0;
   const pendingAll = selectPendingBatch(db, budget, {
     nowMs: opts.nowMs,
     retryBaseCooldownMs: opts.retryBaseCooldownMs,
     minDocFreq: opts.minDocFreq,
   });
-  const upgradeAll =
-    reserve === 0
-      ? []
-      : selectSnippetUpgradeBatch(db, budget, {
-          nowMs: opts.nowMs,
-          retryBaseCooldownMs: opts.retryBaseCooldownMs,
-        });
+  const upgradeAll = hasLlm
+    ? selectSnippetUpgradeBatch(db, budget, {
+        nowMs: opts.nowMs,
+        retryBaseCooldownMs: opts.retryBaseCooldownMs,
+      })
+    : [];
   const upgradeTake = Math.min(
     upgradeAll.length,
     Math.max(reserve, budget - pendingAll.length),
