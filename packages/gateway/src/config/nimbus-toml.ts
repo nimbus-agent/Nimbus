@@ -5,6 +5,7 @@ import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import { parseNimbusCiServiceToml, parseNimbusDoraToml } from "./service-config-toml.ts";
 import {
+  hasUnterminatedString,
   isTableHeader,
   parseIntDec,
   parseString,
@@ -68,6 +69,12 @@ function forEachSectionEntry(
   let inSection = false;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
+    // A line whose quoted value never closes is malformed. Skipping beats
+    // acting on the mangled value the old parser produced (a leading `"` plus
+    // a truncated fragment) — no value is better than a wrong one.
+    if (hasUnterminatedString(line)) {
+      continue;
+    }
     if (trimmed === "") {
       continue;
     }
