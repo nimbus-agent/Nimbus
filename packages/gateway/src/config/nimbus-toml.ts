@@ -1492,6 +1492,12 @@ export type NimbusGlossaryToml = {
    * glossary opens nothing — it reads the local index and writes local rows.
    */
   enabled: boolean;
+  /**
+   * Consolidate via a LOCAL model. Default on, but separable from `enabled`:
+   * turning this off keeps the cheap snippet glossary while sparing a laptop
+   * up to `max_new_terms_per_pass` sequential local-model calls per sync burst.
+   */
+  useLlm: boolean;
   /** LLM calls per pass (sequential). */
   maxNewTermsPerPass: number;
   /** Reconciliation sweep width — pure SQL, no LLM cost. */
@@ -1507,6 +1513,7 @@ export type NimbusGlossaryToml = {
 
 export const DEFAULT_NIMBUS_GLOSSARY_TOML: NimbusGlossaryToml = {
   enabled: true,
+  useLlm: true,
   maxNewTermsPerPass: 25,
   statsRecheckPerPass: 50,
   statsRecheckCooldownMs: 12 * 60 * 60 * 1000,
@@ -1524,6 +1531,11 @@ function applyNimbusGlossaryKey(
   if (key === "enabled") {
     const b = parseBool(valRaw);
     if (b !== undefined) out.enabled = b;
+    return;
+  }
+  if (key === "use_llm") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.useLlm = b;
     return;
   }
   const n = parseIntDec(valRaw);

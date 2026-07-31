@@ -48,3 +48,19 @@ test("non-positive numbers are rejected in favour of the default", () => {
 test("an unknown key is ignored", () => {
   expect(() => parseNimbusGlossaryToml("[glossary]\nbogus = 1\n")).not.toThrow();
 });
+
+test("defaults use_llm to true", () => {
+  expect(parseNimbusGlossaryToml("").useLlm).toBe(true);
+});
+
+test("parses use_llm = false", () => {
+  expect(parseNimbusGlossaryToml("[glossary]\nuse_llm = false\n").useLlm).toBe(false);
+});
+
+// Regression: use_llm must be parsed as a BOOL. The int branch below it turns
+// `true` into undefined and drops the key silently.
+test("parses use_llm independently of enabled", () => {
+  const cfg = parseNimbusGlossaryToml("[glossary]\nenabled = true\nuse_llm = false\n");
+  expect(cfg.enabled).toBe(true);
+  expect(cfg.useLlm).toBe(false);
+});
