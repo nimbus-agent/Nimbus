@@ -58,13 +58,17 @@ describe("nimbus glossary e2e (no-Gateway smoke)", () => {
 
   test("--rebuild without --yes fails only for want of a gateway, not for being unwired", async () => {
     // No gateway in the smoke env: --rebuild without --yes takes the preview
-    // path (`withGatewayIpc` -> `readRebuildPreview`), which throws "Gateway
-    // is not running" and the command's catch does `process.exit(2)` — the
-    // same exit code `runAgentBriefCli`'s catch uses, per the comment in
-    // `runGlossaryCommand`. The negative assertion is the point: it is what
-    // the old, unwired CLI could never satisfy (it printed "not implemented").
+    // path (`withGatewayIpc` -> `readRebuildPreview`), which throws
+    // `GatewayNotRunningError`. `runGlossaryCommand`'s catch branches on
+    // `instanceof GatewayNotRunningError` and exits 1 — the same code every
+    // other command uses for "gateway not running" (`docs/cli-reference.md`:
+    // "1 = gateway not running"), not the 2 reserved for a genuine agent-call
+    // failure (timeout / malformed payload). Asserting the EXACT code, not
+    // just `not.toBe(0)`, is deliberate: `not.toBe(0)` would also pass against
+    // the old unwired CLI AND against the exit-2 regression this fix corrects
+    // — only `toBe(1)` turns red if the split collapses back to one code.
     const out = await runCli(["glossary", "--rebuild"]);
-    expect(out.code).toBe(2);
+    expect(out.code).toBe(1);
     expect(out.stderr).toContain("Gateway is not running");
     expect(out.stderr).not.toContain("not implemented");
   });

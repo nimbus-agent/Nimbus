@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { GatewayNotRunningError } from "../lib/with-gateway-ipc.ts";
 import type { AgentBriefCliSpec } from "./_agent-brief-cli.ts";
 import {
   isGlossaryBriefLike,
@@ -466,6 +467,37 @@ describe("runGlossaryCommand — rebuild-preview error exit code", () => {
     }) as typeof process.exit;
     return { exitCalls };
   }
+
+  test("a GatewayNotRunningError from withGatewayIpc exits 1, not 2", async () => {
+    // Pins the other half of the split this task's e2e regression test caught:
+    // a gateway-not-running precondition failure must exit 1 (matching every
+    // other command's "gateway not running" code, `docs/cli-reference.md`),
+    // while the tests below pin that a genuine agent-call failure (timeout /
+    // malformed payload) still exits 2. Without both sides pinned, a later
+    // "simplification" collapsing the two exit codes back into one would only
+    // be caught by whichever side happens to still have a test.
+    const { exitCalls } = stubExit();
+    let stderrBuf = "";
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string): boolean => {
+      stderrBuf += chunk;
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await expect(
+        runGlossaryCommand(["--rebuild"], {
+          withGatewayIpc: async () => {
+            throw new GatewayNotRunningError();
+          },
+          runAgentBriefCli: async <T>(_spec: AgentBriefCliSpec<T>): Promise<void> => {},
+        }),
+      ).rejects.toThrow("process.exit(1)");
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
+    expect(exitCalls).toEqual([1]);
+    expect(stderrBuf).toContain("Gateway is not running");
+  });
 
   test("a readRebuildPreview timeout exits 2 with the sibling error shape", async () => {
     const { exitCalls } = stubExit();

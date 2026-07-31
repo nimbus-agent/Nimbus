@@ -1,5 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
-import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { GatewayNotRunningError, withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { flagValue, runAgentBriefCli, TIMEOUT_MS } from "./_agent-brief-cli.ts";
 
 export type GlossaryCliArgs = {
@@ -299,13 +299,16 @@ export async function runGlossaryCommand(
       );
       process.stdout.write(`${renderRebuildPreview(counts, sample)}\n`);
     } catch (err) {
-      // Same shape + exit code as `runAgentBriefCli`'s catch (`_agent-brief-cli.ts`):
-      // a timeout or a malformed `agents.glossary` response is an agent error,
-      // not a "gateway not running" precondition failure, so it exits 2 — not
-      // the bare `process.exitCode = 1` a generic thrown error would otherwise
-      // get from `index.ts`'s top-level catch.
       process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      process.exit(2);
+      // A gateway-not-running precondition failure gets the same exit code
+      // every other command uses for it (`_agent-brief-cli.ts`'s own
+      // `readGatewayState` check, documented in `docs/cli-reference.md` as
+      // `1 = gateway not running`) — regardless of which flag reached this
+      // preview path. A timeout or a malformed `agents.glossary` response is
+      // a genuine agent-call failure, not a precondition failure, so it keeps
+      // exit 2 — the same shape `runAgentBriefCli`'s catch uses for the same
+      // distinction.
+      process.exit(err instanceof GatewayNotRunningError ? 1 : 2);
     }
     return;
   }
