@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.16.0](https://github.com/nimbus-agent/Nimbus/compare/v1.15.1...v1.16.0) (2026-08-01)
+
+
+### Features
+
+* **cli:** implement --json on the six commands that documented it ([#1011](https://github.com/nimbus-agent/Nimbus/issues/1011)) ([d3d252e](https://github.com/nimbus-agent/Nimbus/commit/d3d252e8c6ea3342fb5b9b80391eb056d952ff3c))
+
+
+### Bug Fixes
+
+* **release:** prune the yum channel, keeping the newest N and the published release ([#1010](https://github.com/nimbus-agent/Nimbus/issues/1010)) ([7dc717a](https://github.com/nimbus-agent/Nimbus/commit/7dc717a0fc0f8b8138a3e62bf3fdde867c44b06a))
+
 ## [1.15.1](https://github.com/nimbus-agent/Nimbus/compare/v1.15.0...v1.15.1) (2026-08-01)
 
 
