@@ -149,7 +149,7 @@ nimbus search "flaky test" --keyword-only            # BM25 only, no vector rank
 | Flag | Description |
 |---|---|
 | `--service <name>`, `-s` | Filter by connector (e.g. `github`, `google_drive`, `slack`) |
-| `--type <type>`, `-t` | Item type (`pr`, `issue`, `file`, `email`, `message`, `pipeline_run`, …) |
+| `--type <type>`, `-t` | Item type (`pr`, `issue`, `file`, `email`, `message`, `ci_run`, `web_clip`, …). `pipeline_run` is a `graph_entity` type, not an item type — it matches nothing here. |
 | `--semantic` | *(default)* Vector/semantic ranking — already on, so passing this changes nothing |
 | `--no-semantic`, `--keyword-only` | Turn semantic ranking off; keyword (BM25) results only |
 | `--limit <n>`, `-n` | Maximum results (1–500, default: 20) |

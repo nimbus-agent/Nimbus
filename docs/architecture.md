@@ -84,7 +84,7 @@ Starting in Phase 5, Nimbus also serves as a unified metadata layer for the data
 
 ## Cross-Platform Architecture
 
-Nimbus treats Windows 10+, macOS 13+, and Ubuntu 22.04+ as equally supported, first-class targets. Every PR runs a full gate on Ubuntu (`pr-quality`: typecheck, Biome, build, tests, Vitest, Rust fmt/clippy for Tauri). Every push to `main`/`develop` runs the same suite on all three platforms in parallel. Optional PR desktop E2E (Tauri + Playwright) runs when the PR has the `ci:e2e-desktop` label. Platform-specific code never leaks into business logic.
+Nimbus treats Windows 10+, macOS 13+, and Ubuntu 22.04+ as equally supported, first-class targets. Every PR runs a full gate on Ubuntu (`pr-quality`: typecheck, Biome, build, tests, Vitest; the Rust fmt/clippy leg runs only when `packages/ui/src-tauri/` changes). Every push to `main`/`develop` runs the same suite on all three platforms in parallel. Optional PR desktop E2E (Tauri + Playwright) runs when the PR has the `ci:e2e-desktop` label **and** touches `packages/ui/`. Platform-specific code never leaks into business logic.
 
 ### Platform Abstraction Layer (PAL)
 
@@ -1406,8 +1406,8 @@ PRs that drop below threshold are blocked when checks are required.
 
 **CI breakdown:**
 
-- **PR (five parallel jobs, aggregated by `pr-quality-required`):** `pr-quality-ts` (ubuntu-24.04 — typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (ubuntu-24.04 — Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when Rust files change); `pr-quality-cross-platform` (macos-15 + windows-2025, matrix narrowed by the `filter` job); `pr-quality-duplication` (jscpd token scan); `pr-quality-structure` (`_structure.yml`).
-- **PR opt-in:** E2E Desktop (Playwright + Tauri WebDriver) when the PR carries the `ci:e2e-desktop` label and UI/SDK files changed.
+- **PR (five parallel jobs, aggregated by `pr-quality-required`):** `pr-quality-ts` (ubuntu-24.04 — typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (ubuntu-24.04 — Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when a file under `packages/ui/src-tauri/` changes); `pr-quality-cross-platform` (macos-15 + windows-2025, matrix narrowed by the `filter` job); `pr-quality-duplication` (jscpd token scan); `pr-quality-structure` (`_structure.yml`).
+- **PR opt-in:** E2E Desktop (Playwright + Tauri WebDriver) when the PR carries the `ci:e2e-desktop` label **and** a file under `packages/ui/` changed.
 - **Push to `main`/`develop` (full 3-platform matrix):** `ci-ts` and `ci-rust` run the same suites on `ubuntu-24.04`, `macos-15`, `windows-2025` in parallel.
 - **Push to `main` only:** E2E Desktop on the full 3-platform matrix, after `ci-ts` and `ci-rust` succeed.
 - **Reusable workflows under `.github/workflows/`:** `_test-suite.yml` (unit + coverage + integration + e2e + UI, parameterized by runner), `_perf.yml` / `_perf-reference.yml` (B2 perf benches), `_structure.yml` (boundaries + any-count + Nimbus invariants — wired into `ci.yml` as `pr-quality-structure` on PRs and `ci-structure` on pushes).
