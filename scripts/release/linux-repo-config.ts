@@ -176,7 +176,11 @@ export interface YumRetentionInput {
 }
 
 export interface YumRetentionPlan {
-  /** RPMs that stay, newest first. */
+  /**
+   * RPMs that stay, newest first: the newest {@link YumRetentionPlan.retain}
+   * releases, plus the release being published when it is not already among
+   * them — so this can hold `retain + 1` entries on a re-publish of an old tag.
+   */
   keep: string[];
   /** RPMs to delete, newest first. Disjoint from {@link YumRetentionPlan.keep}. */
   remove: string[];
@@ -199,9 +203,20 @@ function normalizeRetain(retain: number | undefined): number {
  * slightly larger repo, never a broken channel):
  * - only entries matching {@link RPM_ASSET_PATTERN} with a semver version are
  *   ever candidates; anything else is untouched and absent from both lists;
- * - the version being published is always kept, even when older tags sort above
- *   it (a re-publish of an older tag must not delete the RPM just staged);
- * - the newest `retain` releases (counting the current one) are kept.
+ * - the newest `retain` releases are kept;
+ * - the version being published is kept as well, even when older tags sort
+ *   above it (a re-publish of an older tag must not delete the RPM just
+ *   staged).
+ *
+ * The last two are a UNION, not a priority order, and that is the whole point:
+ * seeding the keep-set with the current release first and then filling up to
+ * `retain` made the current release CROWD OUT the newest ones, so a
+ * `workflow_dispatch` re-publish of an old tag at a low retain deleted every
+ * newer RPM in the channel (entries 1.0.0/2.0.0/2.1.0/2.2.0 at
+ * `currentVersion=1.0.0, retain=1` kept 1.0.0 alone). Keeping the union means
+ * `retain` is the floor on how many newest releases survive and the plan can
+ * hold at most one extra entry (the republished tag) — a slightly larger repo,
+ * which is the safe direction.
  */
 export function planYumRetention(input: YumRetentionInput): YumRetentionPlan {
   const retain = normalizeRetain(input.retain);
@@ -214,11 +229,13 @@ export function planYumRetention(input: YumRetentionInput): YumRetentionPlan {
     .sort((a, b) => orderVersions(b.version, a.version) || a.file.localeCompare(b.file));
 
   const keep = new Set<string>();
-  if (candidates.some((c) => c.file === currentRpm)) keep.add(currentRpm);
   for (const { file } of candidates) {
     if (keep.size >= retain) break;
     keep.add(file);
   }
+  // Added AFTER the newest-N pass, never before it: the release being published
+  // joins the keep-set, it never takes a slot away from a newer release.
+  if (candidates.some((c) => c.file === currentRpm)) keep.add(currentRpm);
 
   return {
     keep: candidates.filter((c) => keep.has(c.file)).map((c) => c.file),
@@ -252,11 +269,29 @@ function parseArg(flag: string): string | undefined {
   return idx >= 0 ? process.argv[idx + 1] : undefined;
 }
 
+/**
+ * The retention override, or `undefined` for "not configured".
+ *
+ * Absent/blank is the only silent fall-back: an unset `vars.*` repo variable
+ * arrives as `""` (and a whitespace-only value is the same accident), which
+ * must mean the default rather than parse to `NaN`. Anything else that is not
+ * an integer literal — `five`, `3.5`, `1,000` — is a MISCONFIGURED override and
+ * throws. Swallowing it would silently prune to
+ * {@link DEFAULT_RETAINED_RELEASES} while the operator believes the repo
+ * variable they set is in force, and the only evidence would be the deleted
+ * RPMs. Out-of-range integers still clamp in {@link normalizeRetain}; this
+ * guard is about values that are not numbers at all.
+ */
 function parseRetainArg(): number | undefined {
-  // An unset repo variable arrives as "", which must fall back to the default
-  // rather than parse to NaN and look like an explicit setting.
   const raw = parseArg("--retain") ?? process.env["NIMBUS_LINUX_REPO_RETAIN"];
-  return raw ? Number(raw) : undefined;
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return undefined;
+  if (!/^[+-]?\d+$/.test(trimmed)) {
+    throw new Error(
+      `linux-repo-config: retention override must be an integer, got ${JSON.stringify(raw)} (--retain / NIMBUS_LINUX_REPO_RETAIN)`,
+    );
+  }
+  return Number(trimmed);
 }
 
 /** Default mode: render the apt/yum config files + echo the verified checksums. */
@@ -302,7 +337,15 @@ if (import.meta.main) {
       );
       process.exit(1);
     }
-    runYumPrune(pruneDir, version, parseRetainArg());
+    let retain: number | undefined;
+    try {
+      retain = parseRetainArg();
+    } catch (err) {
+      // Fail the publish rather than prune with a retention nobody chose.
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+    runYumPrune(pruneDir, version, retain);
   } else {
     runConfigGeneration(version);
   }

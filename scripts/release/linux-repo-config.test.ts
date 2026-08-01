@@ -147,9 +147,28 @@ describe("planYumRetention", () => {
     });
     expect(plan.keep).toContain(rpmAssetName("1.0.0"));
     expect(plan.remove).not.toContain(rpmAssetName("1.0.0"));
-    // The current release counts against the budget, so N stays a hard cap.
-    expect(plan.keep).toHaveLength(2);
+    // UNION of "newest 2" and "the one being published" -> 3 entries, not 2.
+    // The republished tag is an EXTRA, so retain is a floor on how many newest
+    // releases survive rather than a cap the old tag can eat into.
+    expect(plan.keep).toEqual(rpms("2.2.0", "2.1.0", "1.0.0"));
+    expect(plan.remove).toEqual(rpms("2.0.0"));
+  });
+
+  test("a re-publish of an old tag at retain=1 still keeps the newest release", () => {
+    // Regression, and the sharpest form of it: with the current release seeded
+    // into the keep-set BEFORE the newest-N pass, retain=1 filled the single
+    // slot with 1.0.0 and planned the deletion of every newer RPM in the
+    // channel — keep=[1.0.0], remove=[2.2.0, 2.1.0, 2.0.0]. One
+    // workflow_dispatch of an old tag would have taken `dnf install
+    // nimbus-headless` back two majors.
+    const plan = planYumRetention({
+      entries: rpms("1.0.0", "2.0.0", "2.1.0", "2.2.0"),
+      currentVersion: "1.0.0",
+      retain: 1,
+    });
     expect(plan.keep).toEqual(rpms("2.2.0", "1.0.0"));
+    expect(plan.remove).toEqual(rpms("2.1.0", "2.0.0"));
+    expect(plan.remove).not.toContain(rpmAssetName("2.2.0"));
   });
 
   test("is a no-op when the tree already holds N or fewer releases", () => {
@@ -256,6 +275,58 @@ describe("--prune-yum CLI", () => {
       );
       expect(run.status).toBe(0);
       expect(readdirSync(dir)).toEqual([rpmAssetName("1.2.0")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ["the --retain flag", ["--retain", "five"], {}],
+    ["the NIMBUS_LINUX_REPO_RETAIN variable", [], { NIMBUS_LINUX_REPO_RETAIN: "five" }],
+    ["a non-integer retain", ["--retain", "3.5"], {}],
+  ])("fails loud on a malformed retention override via %s", (_label, args, env) => {
+    // A misconfigured override must NOT silently fall back to the default and
+    // prune with a retention nobody chose: the operator would believe the value
+    // they set was in force, and the only evidence would be the deleted RPMs.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-yum-"));
+    try {
+      for (const v of ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]) {
+        writeFileSync(join(dir, rpmAssetName(v)), v, "utf8");
+      }
+      const run = spawnSync(
+        process.execPath,
+        [SCRIPT, "--prune-yum", dir, "--version", "1.3.0", ...args],
+        { encoding: "utf8", env: { ...process.env, NIMBUS_LINUX_REPO_RETAIN: "", ...env } },
+      );
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("must be an integer");
+      // Fail-closed: nothing is deleted on the way out.
+      expect(readdirSync(dir).sort()).toEqual(
+        ["1.0.0", "1.1.0", "1.2.0", "1.3.0"].map(rpmAssetName).sort(),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ["an unset", ""],
+    ["a whitespace-only", "  "],
+  ])("treats %s NIMBUS_LINUX_REPO_RETAIN as not configured, not as a value", (_label, value) => {
+    // An unset repo variable arrives as "" — the one blank that must keep
+    // meaning "use the default" rather than erroring or (worse, pre-fix)
+    // parsing to 0 and clamping the whole channel down to a single release.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-yum-"));
+    try {
+      for (const v of ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]) {
+        writeFileSync(join(dir, rpmAssetName(v)), v, "utf8");
+      }
+      const run = spawnSync(process.execPath, [SCRIPT, "--prune-yum", dir, "--version", "1.3.0"], {
+        encoding: "utf8",
+        env: { ...process.env, NIMBUS_LINUX_REPO_RETAIN: value },
+      });
+      expect(run.status).toBe(0);
+      expect(readdirSync(dir).sort()).toEqual(["1.1.0", "1.2.0", "1.3.0"].map(rpmAssetName).sort());
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

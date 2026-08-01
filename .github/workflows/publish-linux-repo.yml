@@ -156,6 +156,9 @@ jobs:
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
           # Optional override for the retention count; unset falls back to
           # DEFAULT_RETAINED_RELEASES in scripts/release/linux-repo-config.ts.
+          # An unset repo variable expands to "" and means "default"; a value
+          # that is not an integer FAILS the publish rather than quietly pruning
+          # with a retention nobody chose.
           NIMBUS_LINUX_REPO_RETAIN: ${{ vars.NIMBUS_LINUX_REPO_RETAIN }}
         run: |
           set -euo pipefail
