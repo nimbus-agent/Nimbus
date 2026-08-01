@@ -163,6 +163,50 @@ test("a changed synonym set IS rewritten even when the definition matches", () =
   expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
 });
 
+test("splitting one alias into two IS rewritten, even though the joined text matches", () => {
+  // Aliases legitimately contain spaces, so a naive `.join(" ")` comparison
+  // sees ["change data record"] and ["change data", "record"] as the SAME
+  // string ("change data record") and would wrongly call this unchanged. An
+  // author splitting or merging alias lines must not get a silent no-op.
+  const term = { termKey: "cdr", displayTerm: "CDR", definition: "Audit row." };
+  applyManualTerms(db, cfg([term], [["change data record", "cdr"]]), { nowMs: 5000 });
+  expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
+
+  const second = applyManualTerms(
+    db,
+    cfg(
+      [term],
+      [
+        ["change data", "cdr"],
+        ["record", "cdr"],
+      ],
+    ),
+    { nowMs: 6000 },
+  );
+
+  expect(second.added).toBe(1);
+  expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data", "record"]);
+  expect(getTerm(db, "cdr")?.updatedAt).toBe(6000);
+});
+
+test("an unchanged multi-alias set is still skipped on a later pass", () => {
+  // The inverse direction of the split/merge case above: a genuinely
+  // unchanged alias SET (not just its joined text) must still hit the
+  // unchanged-skip, or every pass would recompute statistics for every
+  // authored term after every connector sync.
+  const term = { termKey: "cdr", displayTerm: "CDR", definition: "Audit row." };
+  const synonyms: Array<[string, string]> = [
+    ["change data", "cdr"],
+    ["record", "cdr"],
+  ];
+  applyManualTerms(db, cfg([term], synonyms), { nowMs: 5000 });
+
+  const second = applyManualTerms(db, cfg([term], synonyms), { nowMs: 6000 });
+
+  expect(second.added).toBe(0);
+  expect(getTerm(db, "cdr")?.updatedAt).toBe(5000);
+});
+
 test("removal demotes the row and deletes its projected item", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,

@@ -567,6 +567,14 @@ export function clearGlossary(db: Database): void {
  * `CDRs` in config is explicitly changing the surface form, while a mined
  * sighting must never overwrite it. One rule: the authored form beats a mined
  * one, and the newest authored form beats an older authored one.
+ *
+ * `status = 'consolidated'` is likewise UNCONDITIONAL, so authoring a key
+ * that collides with a `vetoed` row takes it over — author intent wins. This
+ * is correct, not merely tolerated: a manual row can never itself *become*
+ * vetoed (`markVetoed` is reachable only from batches that structurally
+ * exclude manual rows — see `glossary-extract.ts`), so there is no case where
+ * this upsert needs to preserve a prior veto the way `upsertCandidate` guards
+ * `display_term`.
  */
 export function upsertManualTerm(
   db: Database,

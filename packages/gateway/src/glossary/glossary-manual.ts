@@ -31,6 +31,14 @@ const NEAR_MISS_POOL = 500;
  * and treating them as a difference would re-write every row every pass, which
  * is the cost this check exists to avoid. A row that is not `manual` is never
  * "unchanged": that is a mined row being taken over by an authored one.
+ *
+ * The alias comparison is `JSON.stringify`, matching how `synonyms` is both
+ * stored (`upsertManualTerm`) and decoded (`toTerm`'s `parseJsonArray`) — NOT
+ * a `.join(" ")` string compare. Aliases legitimately contain spaces (that is
+ * their whole point), so `["change data", "record"]` and
+ * `["change data record"]` join to the identical string and would otherwise
+ * compare equal, silently skipping a genuine alias-set change until some
+ * other field happened to move.
  */
 function isUnchanged(
   existing: GlossaryTerm | null,
@@ -42,7 +50,7 @@ function isUnchanged(
     existing.definitionSource === "manual" &&
     existing.definition === term.definition &&
     existing.displayTerm === term.displayTerm &&
-    existing.synonyms.join(" ") === aliases.join(" ")
+    JSON.stringify(existing.synonyms) === JSON.stringify(aliases)
   );
 }
 
@@ -118,10 +126,16 @@ export function applyManualTerms(
     // write nothing at all.
     const synonyms = aliasesFor.get(term.termKey) ?? [];
     const nearMisses = findNearMisses(term.termKey, knownKeys);
+    // Carried over from `existing` (or 'phrase' for a brand-new row) — the
+    // same expression `projectTerm`'s call below uses. Hardcoding "phrase"
+    // here diverged from that: an authored takeover of a mined acronym row
+    // (`form: "acronym"`) would score as a phrase the FIRST time this pass
+    // touches it, then never reconcile, because `isUnchanged` does not
+    // compare `form` (score is a derived statistic, not authored content).
     const score = scoreTerm({
       docFreq: stats.docFreq,
       serviceSpread: stats.serviceSpread,
-      form: "phrase",
+      form: existing?.form ?? "phrase",
     });
     db.transaction(() => {
       upsertManualTerm(db, {
