@@ -1592,6 +1592,40 @@ test("detects an ADR page sharing most of its tokens with the statement", () => 
   expect(hasAdrEvidence(ev)).toBe(true);
 });
 
+test("ADR candidate selection is deterministic under the cap", () => {
+  seedItem("src", "slack", "message", "thread", DECIDED_AT);
+  for (let i = 0; i < 5; i++) {
+    seedItem(`adr${i}`, "notion", "page", `ADR: move billing to Postgres v${i}`, DECIDED_AT + i);
+  }
+  const first = corroborate(db, {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+  });
+  const second = corroborate(db, {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+  });
+  expect(first.filter((e) => e.kind === "adr").map((e) => e.label)).toEqual(
+    second.filter((e) => e.kind === "adr").map((e) => e.label),
+  );
+});
+
+test("a page whose title carries no ADR shape is never considered", () => {
+  seedItem("src", "slack", "message", "thread", DECIDED_AT);
+  seedItem("p1", "notion", "page", "move billing to Postgres", DECIDED_AT);
+  const ev = corroborate(db, {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+  });
+  expect(hasAdrEvidence(ev)).toBe(false);
+});
+
 test("an unrelated ADR page is not matched", () => {
   seedItem("src", "slack", "message", "thread", DECIDED_AT);
   seedItem("adr1", "notion", "page", "ADR: retire the legacy cron runner", DECIDED_AT);
@@ -1758,11 +1792,23 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
 
   // ADR: a long-form doc whose title looks like an ADR and shares most of its
   // significant tokens with the statement.
+  //
+  // The title shape is filtered in SQL, not in JS. An earlier draft selected an
+  // unordered `LIMIT 500` and filtered afterwards, which is a silent-truncation
+  // bug rather than a slow one: with more long-form pages than the cap, SQLite
+  // returns an ARBITRARY 500 and a real ADR simply never gets considered — with
+  // no way for the caller to know. Pushing the shape test down means the cap is
+  // reached only by pages that already look like ADRs, and `ORDER BY` makes
+  // which ones deterministic.
   const adrs = db
     .query(
       `SELECT id, title, url, modified_at FROM item
         WHERE (service || ':' || type) IN ('notion:page','confluence:page','obsidian:obsidian_note')
-        LIMIT 500`,
+          AND (LOWER(title) LIKE '%adr%'
+            OR LOWER(title) LIKE '%decision%'
+            OR title GLOB '[0-9]*')
+        ORDER BY modified_at DESC, id ASC
+        LIMIT 200`,
     )
     .all() as Array<{ id: string; title: string; url: string | null; modified_at: number }>;
   for (const a of adrs) {
@@ -1793,7 +1839,7 @@ export function hasAdrEvidence(ev: readonly DecisionEvidence[]): boolean {
 bun test packages/gateway/src/decisions/decision-corroborate.test.ts
 ```
 
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 If the `graph_entity` / `graph_relation` column names in the seed helper do not match this repo's schema, read `packages/gateway/src/index/schema-sql.ts` for the real ones and fix **the test seed**, not the query — `why.ts` is the reference for what those tables actually look like.
 
@@ -2969,22 +3015,22 @@ beforeEach(() => {
   runMigrations(db);
 });
 
-function prEvidence(entityId: string): DecisionEvidence[] {
-  return [{ kind: "pr", entityId, itemId: null, label: "#412", url: null, occurredAt: null }];
+function prEvidence(itemId: string): DecisionEvidence[] {
+  return [{ kind: "pr", entityId: null, itemId, label: "#412", url: null, occurredAt: null }];
 }
 
-function seedPrInRepo(prEntityId: string, repoLabel: string): void {
-  db.run(`INSERT INTO graph_entity (id, type, external_id, label) VALUES (?, 'pr', ?, '#412')`, [
-    prEntityId,
-    "gh:412",
-  ]);
-  db.run(`INSERT INTO graph_entity (id, type, external_id, label) VALUES ('r1', 'repository', ?, ?)`, [
-    repoLabel,
-    repoLabel,
-  ]);
-  db.run(`INSERT INTO graph_relation (from_id, to_id, type) VALUES (?, 'r1', 'belongs_to')`, [
-    prEntityId,
-  ]);
+/**
+ * Seeds a PR the way `github-sync.ts:201` actually writes one: `external_id` is
+ * `owner/repo#number`. Do NOT hand-build a `repository` graph entity here — no
+ * populator emits one, so a test that seeds it would pass while production
+ * matched nothing.
+ */
+function seedPrItem(itemId: string, externalId: string, metadata: string | null): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES (?, 'github', 'pr', ?, 'Move billing to Postgres', ?, 1, 1, 0)`,
+    [itemId, externalId, metadata],
+  );
 }
 
 function seedTicket(itemId: string, service: string, metadata: string): void {
@@ -2995,11 +3041,32 @@ function seedTicket(itemId: string, service: string, metadata: string): void {
   );
 }
 
-test("matches by repository through a corroborating PR", () => {
-  seedPrInRepo("p1", "billing");
+test("matches by repository via the PR item external_id", () => {
+  seedPrItem("pr1", "acme/billing#412", null);
   expect(
-    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("p1"), service: "billing" }),
+    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("pr1"), service: "billing" }),
   ).toBe("repo");
+});
+
+test("matches the full owner/repo form as well as the bare name", () => {
+  seedPrItem("pr1", "acme/billing#412", null);
+  expect(
+    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("pr1"), service: "acme/billing" }),
+  ).toBe("repo");
+});
+
+test("prefers metadata.repo over the external_id prefix", () => {
+  seedPrItem("pr1", "acme/wrong#412", JSON.stringify({ repo: "acme/billing" }));
+  expect(
+    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("pr1"), service: "billing" }),
+  ).toBe("repo");
+});
+
+test("does not match a different repository", () => {
+  seedPrItem("pr1", "acme/payments#412", null);
+  expect(
+    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("pr1"), service: "billing" }),
+  ).toBeNull();
 });
 
 test("matches a Jira ticket by its project key", () => {
@@ -3036,9 +3103,9 @@ test("never matches a Slack channel id", () => {
 });
 
 test("matching is case-insensitive", () => {
-  seedPrInRepo("p1", "Billing");
+  seedPrItem("pr1", "acme/Billing#412", null);
   expect(
-    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("p1"), service: "BILLING" }),
+    matchesService(db, { sourceItemId: "s1", evidence: prEvidence("pr1"), service: "BILLING" }),
   ).toBe("repo");
 });
 ```
@@ -3082,24 +3149,64 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/gu, "");
 }
 
-function matchesRepo(db: Database, evidence: readonly DecisionEvidence[], service: string): boolean {
-  const entityIds = evidence
-    .filter((e) => (e.kind === "pr" || e.kind === "commit") && e.entityId !== null)
-    .map((e) => e.entityId as string);
-  if (entityIds.length === 0) return false;
+/**
+ * Resolves the repository of a corroborating PR/commit from the ITEM, not from
+ * a graph edge.
+ *
+ * There is no `pr -> repository` edge to traverse. Verified in the tree:
+ * `in_repo` is emitted only for `commit -> workspace` and `file -> workspace`
+ * (`graph/graph-populator.ts:342,453`), the entity type is `repo` rather than
+ * `repository`, and `agents/impact.ts` — the existing precedent — resolves
+ * repos by LABEL lookup (`repoIdsForRepoLabel`, `type = 'repo'`), never by
+ * walking an edge from a PR.
+ *
+ * So read what the connector actually wrote: `github-sync.ts:201` stores
+ * `external_id` as `owner/repo#123`, and `graph-populator.ts:67` reads
+ * `metadata.repo` / `metadata.project`. Prefer the metadata field, fall back to
+ * the external-id prefix.
+ */
+function repoOfItem(db: Database, itemId: string): string | null {
+  const row = db.query("SELECT external_id, metadata FROM item WHERE id = ?").get(itemId) as
+    | { external_id: string; metadata: string | null }
+    | null;
+  if (row === null) return null;
 
-  const ph = entityIds.map(() => "?").join(", ");
-  const rows = db
-    .query(
-      `SELECT repo.label AS label
-         FROM graph_relation r
-         JOIN graph_entity repo ON repo.id = r.to_id AND repo.type = 'repository'
-        WHERE r.from_id IN (${ph})`,
-    )
-    .all(...entityIds) as Array<{ label: string }>;
+  if (row.metadata !== null) {
+    try {
+      const m: unknown = JSON.parse(row.metadata);
+      if (m !== null && typeof m === "object") {
+        const rec = m as { repo?: unknown; project?: unknown };
+        const v = typeof rec.repo === "string" ? rec.repo : rec.project;
+        if (typeof v === "string" && v.length > 0) return v;
+      }
+    } catch {
+      // fall through to the external-id form
+    }
+  }
 
+  const hash = row.external_id.indexOf("#");
+  return hash > 0 ? row.external_id.slice(0, hash) : null;
+}
+
+/** `--service billing` must match `acme/billing`, so compare the last segment too. */
+function repoMatches(repoFull: string, service: string): boolean {
   const want = normalize(service);
-  return rows.some((r) => normalize(r.label) === want);
+  if (normalize(repoFull) === want) return true;
+  const segment = repoFull.slice(repoFull.lastIndexOf("/") + 1);
+  return normalize(segment) === want;
+}
+
+function matchesRepo(db: Database, evidence: readonly DecisionEvidence[], service: string): boolean {
+  const itemIds = evidence
+    .filter((e) => (e.kind === "pr" || e.kind === "commit") && e.itemId !== null)
+    .map((e) => e.itemId as string);
+  if (itemIds.length === 0) return false;
+
+  for (const id of itemIds) {
+    const repoFull = repoOfItem(db, id);
+    if (repoFull !== null && repoMatches(repoFull, service)) return true;
+  }
+  return false;
 }
 
 /** Jira stores `metadata.key`, Linear `metadata.identifier`; both look like `BILLING-123`. */
@@ -3146,9 +3253,9 @@ export function matchesService(
 bun test packages/gateway/src/decisions/decision-service-scope.test.ts
 ```
 
-Expected: PASS, 7 tests.
+Expected: PASS, 10 tests.
 
-If the repository-edge test fails, the relation type may not be `belongs_to` in this schema — read `packages/gateway/src/graph/` for the edge the populator actually emits between a `pr` and its `repository`, and fix **both** the query and the test seed to match reality.
+Do **not** "fix" a failure here by seeding a `repository` graph entity and traversing an edge to it. That path does not exist: `in_repo` is emitted only for `commit -> workspace` and `file -> workspace` (`graph-populator.ts:342,453`), the repo entity type is `repo`, and no populator emits any `pr -> repo` edge at all. Route 1 resolves through the item, by design.
 
 - [ ] **Step 5: Commit**
 
