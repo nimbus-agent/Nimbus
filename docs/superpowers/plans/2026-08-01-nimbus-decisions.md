@@ -584,7 +584,12 @@ Expected: FAIL — module not found.
 Create `packages/gateway/src/decisions/cue-mining.ts`:
 
 ```typescript
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
 import type { CueTier } from "./decision-types.ts";
+
+const encoder = new TextEncoder();
 
 export interface CueHit {
   readonly sentence: string;
@@ -662,11 +667,9 @@ export function mineCues(text: string): CueHit[] {
  * model is asked again about candidates it already rejected.
  */
 export function decisionRowId(sourceItemId: string, normalizedSentence: string): string {
-  const h = new Bun.CryptoHasher("blake3");
-  h.update(sourceItemId);
-  h.update(" ");
-  h.update(normalizedSentence);
-  return h.digest("hex").slice(0, 32);
+  return bytesToHex(
+    blake3(encoder.encode(`${sourceItemId} ${normalizedSentence}`)),
+  ).slice(0, 32);
 }
 ```
 
