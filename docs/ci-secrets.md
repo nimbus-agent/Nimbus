@@ -242,6 +242,17 @@ holding a leaked token would produce, on the exact repos `brew install` and
 commit server-side, so it lands **Verified**, which is the prerequisite for
 adding `required_signatures` to those two repos' rulesets.
 
+The publish **asserts** that rather than assuming it: the mutation selects the
+created commit's `signature { isValid state wasSignedByGitHub }`, and the step
+fails (non-zero, with an `::error::` annotation) unless GitHub answers
+`isValid: true` + `state: VALID`. A null signature — what GitHub returns for an
+unsigned commit — is a failure, not a shrug. So "the last publish was green"
+means "the last publish produced a Verified commit", which is exactly the
+precondition `required_signatures` needs. **Do not enable
+`required_signatures` on these two rulesets until a real release has run this
+step green**; the assertion proves the mechanism, but only an actual publish
+proves it against the live API.
+
 `publish-linux-repo.yml` deliberately still uses `git push`: the mutation
 carries the whole commit as one base64 request body, which cannot fit a
 `.deb` + `.rpm` publish. **Do not add `required_signatures` to the

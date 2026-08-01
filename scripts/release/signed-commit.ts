@@ -18,6 +18,14 @@
  * rulesets — which is a SEPARATE, LATER change. Turning on `required_signatures`
  * before every publisher has moved to this path breaks the next publish.
  *
+ * SELF-PROVING. "The commit is signed" is not taken on faith. The mutation asks
+ * for the created commit's `signature { isValid state wasSignedByGitHub }` and
+ * the publish ABORTS unless it comes back `isValid: true` + `state: VALID` —
+ * see `readCommitVerification` / `assertCommitVerified`. Without that assertion
+ * a silent regression (GitHub stops signing, the selection set drifts, someone
+ * reverts to a runner-side commit) would look exactly like success right up
+ * until `required_signatures` is enabled and every publish starts failing.
+ *
  * WHAT IT DOES NOT CHANGE. The file contents published are byte-for-byte what
  * the caller passes; only the mechanism that creates the commit differs.
  *
@@ -255,24 +263,130 @@ export function isStaleHeadError(errors: readonly GraphQLError[]): boolean {
   );
 }
 
-export type MutationOutcome =
-  | { readonly kind: "ok"; readonly oid: string }
-  | { readonly kind: "stale"; readonly message: string }
-  | { readonly kind: "error"; readonly message: string };
-
-function commitOidOf(data: unknown): string | null {
+function commitNodeOf(data: unknown): Record<string, unknown> | null {
   if (!isRecord(data)) return null;
   const mutation = data["createCommitOnBranch"];
   if (!isRecord(mutation)) return null;
   const commit = mutation["commit"];
-  if (!isRecord(commit)) return null;
+  return isRecord(commit) ? commit : null;
+}
+
+function commitOidOf(data: unknown): string | null {
+  const commit = commitNodeOf(data);
+  if (commit === null) return null;
   const oid = commit["oid"];
   return typeof oid === "string" ? oid : null;
 }
 
+// ---------------------------------------------------------------------------
+// Signature verification — the assertion that makes this workflow self-proving
+// ---------------------------------------------------------------------------
+
+/** The one `GitSignatureState` that means "GitHub shows this commit as Verified". */
+export const VERIFIED_SIGNATURE_STATE = "VALID";
+
+/**
+ * What the mutation told us about the created commit's signature.
+ *
+ * Every field is nullable on purpose: this describes an UNTRUSTED response, and
+ * "we could not read it" must be representable so it can be reported as
+ * unverified rather than silently coerced into a boolean.
+ */
+export interface CommitVerification {
+  /** The only field callers should gate on. False whenever anything is off. */
+  readonly verified: boolean;
+  /** `GitSignatureState`, or null when absent/not a string. */
+  readonly state: string | null;
+  readonly isValid: boolean | null;
+  /**
+   * Informational, deliberately NOT gated on: it reports WHICH key signed, not
+   * whether the signature verifies. `createCommitOnBranch` cannot be made to
+   * emit a non-GitHub signature, so gating on it would add no security while
+   * coupling every release to GitHub's key-attribution reporting.
+   */
+  readonly wasSignedByGitHub: boolean | null;
+  /** Human-readable reason, always populated — this is what lands in the log. */
+  readonly detail: string;
+}
+
+function unverified(detail: string): CommitVerification {
+  return { verified: false, state: null, isValid: null, wasSignedByGitHub: null, detail };
+}
+
+/**
+ * Read the signature block out of a `createCommitOnBranch` response `data`.
+ *
+ * FAIL-CLOSED IN EVERY DIRECTION. A null signature is what GitHub returns for an
+ * unsigned commit (confirmed against a real runner-pushed commit), so null is
+ * "not verified" — never "no data, assume fine". A MISSING `signature` key means
+ * the mutation's selection set drifted and is treated the same way, because a
+ * silently-unasserted publish is the exact regression this guards.
+ */
+export function readCommitVerification(data: unknown): CommitVerification {
+  const commit = commitNodeOf(data);
+  if (commit === null) return unverified("the response carried no commit node");
+  if (!("signature" in commit)) {
+    return unverified(
+      "the response carried no `signature` field — CREATE_COMMIT_MUTATION no longer requests it",
+    );
+  }
+  const signature = commit["signature"];
+  if (signature === null || signature === undefined) {
+    return unverified("`signature` was null — GitHub recorded this commit as UNSIGNED");
+  }
+  if (!isRecord(signature)) return unverified("`signature` was not an object");
+
+  const rawIsValid = signature["isValid"];
+  const rawState = signature["state"];
+  const rawByGitHub = signature["wasSignedByGitHub"];
+  const isValid = typeof rawIsValid === "boolean" ? rawIsValid : null;
+  const state = typeof rawState === "string" ? rawState : null;
+  const wasSignedByGitHub = typeof rawByGitHub === "boolean" ? rawByGitHub : null;
+  const verified = isValid === true && state === VERIFIED_SIGNATURE_STATE;
+  return {
+    verified,
+    state,
+    isValid,
+    wasSignedByGitHub,
+    detail:
+      `signature state=${state ?? "<missing>"} isValid=${isValid === null ? "<missing>" : String(isValid)} ` +
+      `wasSignedByGitHub=${wasSignedByGitHub === null ? "<missing>" : String(wasSignedByGitHub)}`,
+  };
+}
+
+/**
+ * Stop the publish unless GitHub signed the commit it just created.
+ *
+ * Loud on purpose. The commit has already landed by the time we can look at it,
+ * so this cannot prevent it — what it prevents is a release that QUIETLY stops
+ * producing Verified commits, which would only surface later as a hard publish
+ * failure once `required_signatures` is on the ruleset.
+ */
+export function assertCommitVerified(
+  verification: CommitVerification,
+  ctx: { readonly repo: string; readonly oid: string },
+): void {
+  if (verification.verified) return;
+  throw new Error(
+    `signed-commit: ${ctx.repo} commit ${ctx.oid} is NOT GitHub-verified — ${verification.detail}. ` +
+      "createCommitOnBranch is supposed to build and sign the commit server-side, so this means " +
+      "either the commit was not created through that mutation, GitHub did not sign it, or the " +
+      "mutation's signature selection drifted. Do NOT enable required_signatures on this repo's " +
+      "ruleset until a publish reports a verified commit; investigate the commit above first.",
+  );
+}
+
+export type MutationOutcome =
+  | { readonly kind: "ok"; readonly oid: string; readonly verification: CommitVerification }
+  | { readonly kind: "stale"; readonly message: string }
+  | { readonly kind: "error"; readonly message: string };
+
 /**
  * Classify a mutation response into commit / retry / fail. Pure: this is the
  * stale-head retry DECISION, separated from the network so it can be tested.
+ *
+ * `ok` means "a commit exists", NOT "the commit is acceptable" — the signature
+ * verdict rides along and is enforced by the caller via `assertCommitVerified`.
  */
 export function classifyMutationResult(res: GraphQLResponse): MutationOutcome {
   const errors = res.errors ?? [];
@@ -287,7 +401,7 @@ export function classifyMutationResult(res: GraphQLResponse): MutationOutcome {
       message: "createCommitOnBranch returned no commit oid (unexpected response shape)",
     };
   }
-  return { kind: "ok", oid };
+  return { kind: "ok", oid, verification: readCommitVerification(res.data) };
 }
 
 /** Split `owner/name` into its parts. Throws on anything else. */
@@ -323,8 +437,21 @@ const NAMED_BRANCH_QUERY = `query($owner:String!,$name:String!,$qn:String!){
   repository(owner:$owner,name:$name){ ref(qualifiedName:$qn){ name target{ oid } } }
 }`;
 
+/**
+ * The publish mutation. The `signature` selection is what makes this workflow
+ * self-proving — do NOT drop it to "simplify" the document.
+ *
+ * `Commit.signature` is a nullable `GitSignature` interface; `isValid`, `state`
+ * and `wasSignedByGitHub` are declared on the interface itself, so no inline
+ * fragment is needed (verified against the live GitHub schema — the concrete
+ * types are GpgSignature / SmimeSignature / SshSignature / UnknownSignature).
+ * A commit GitHub built and signed answers `{isValid:true,state:VALID,
+ * wasSignedByGitHub:true}`; an unsigned commit answers `signature: null`.
+ */
 export const CREATE_COMMIT_MUTATION = `mutation($input:CreateCommitOnBranchInput!){
-  createCommitOnBranch(input:$input){ commit{ oid url } }
+  createCommitOnBranch(input:$input){
+    commit{ oid url signature{ isValid state wasSignedByGitHub } }
+  }
 }`;
 
 export interface BlobQuery {
@@ -509,7 +636,13 @@ export interface PublishOptions {
 
 export type PublishResult =
   | { readonly status: "unchanged"; readonly attempts: number }
-  | { readonly status: "committed"; readonly oid: string; readonly attempts: number };
+  | {
+      readonly status: "committed";
+      readonly oid: string;
+      readonly attempts: number;
+      /** Always `verified: true` — an unverified commit throws instead of returning. */
+      readonly verification: CommitVerification;
+    };
 
 /**
  * Read → plan → commit, retrying from a fresh read when the branch head moved.
@@ -549,8 +682,19 @@ export async function publishSignedCommit(opts: PublishOptions): Promise<Publish
       await opts.client.request(CREATE_COMMIT_MUTATION, { input }),
     );
     if (outcome.kind === "ok") {
-      log(`${opts.repo}@${head.branchName}: created signed commit ${outcome.oid}`);
-      return { status: "committed", oid: outcome.oid, attempts: attempt };
+      // Prove it, do not assume it: throws unless GitHub reports the commit as
+      // Verified. Deliberately BEFORE the success log, so a failed publish can
+      // never leave a "created signed commit …" line behind to be believed.
+      assertCommitVerified(outcome.verification, { repo: opts.repo, oid: outcome.oid });
+      log(
+        `${opts.repo}@${head.branchName}: created VERIFIED commit ${outcome.oid} (${outcome.verification.detail})`,
+      );
+      return {
+        status: "committed",
+        oid: outcome.oid,
+        attempts: attempt,
+        verification: outcome.verification,
+      };
     }
     if (outcome.kind === "error") {
       throw new Error(`signed-commit: createCommitOnBranch failed — ${outcome.message}`);
@@ -645,17 +789,26 @@ if (import.meta.main) {
     console.error(`${err instanceof Error ? err.message : String(err)}\n\n${USAGE}`);
     process.exit(2);
   }
-  const result = await publishSignedCommit({
-    client: createGraphQLClient({ token }),
-    repo: args.repo,
-    branch: args.branch,
-    message: {
-      headline: args.headline,
-      ...(args.body !== undefined ? { body: args.body } : {}),
-    },
-    files: args.adds.map((a) => ({ path: a.repoPath, contents: readFileSync(a.localPath) })),
-    deletions: args.deletes,
-  });
+  // Any failure — including "the commit GitHub created is not Verified" — must
+  // surface as a red step with an Actions annotation, never a stack trace that
+  // scrolls past. A verification failure is not a warning: it exits non-zero.
+  let result: PublishResult;
+  try {
+    result = await publishSignedCommit({
+      client: createGraphQLClient({ token }),
+      repo: args.repo,
+      branch: args.branch,
+      message: {
+        headline: args.headline,
+        ...(args.body !== undefined ? { body: args.body } : {}),
+      },
+      files: args.adds.map((a) => ({ path: a.repoPath, contents: readFileSync(a.localPath) })),
+      deletions: args.deletes,
+    });
+  } catch (err) {
+    console.error(`::error::${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
   if (result.status === "unchanged") process.exit(0);
-  console.log(`::notice::signed commit ${result.oid} on ${args.repo}`);
+  console.log(`::notice::verified signed commit ${result.oid} on ${args.repo}`);
 }

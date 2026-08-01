@@ -115,6 +115,14 @@ jobs:
       # to these repos' rulesets — a separate, later change. Enabling the ruleset
       # before this publisher moved would break the next publish.
       #
+      # SELF-PROVING: the helper does not assume the commit came out signed, it
+      # ASKS. The mutation selects the created commit's
+      # `signature { isValid state wasSignedByGitHub }` and the step FAILS (non-zero,
+      # with an ::error:: annotation) unless GitHub answers isValid:true + state:VALID
+      # — a null signature, which is exactly what an unsigned commit returns, is a
+      # failure, not a warning. So a green run here is evidence, not a hope, and
+      # that is the property the later `required_signatures` step depends on.
+      #
       # What is published is unchanged (the same generated manifest bytes); only the
       # commit mechanism differs. The helper is a no-op when the manifest already
       # matches (it compares git blob oids), replacing the old `git diff --cached`

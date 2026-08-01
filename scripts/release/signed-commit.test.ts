@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  assertCommitVerified,
   assertPayloadWithinLimit,
   buildBlobQuery,
   buildCommitInput,
+  CREATE_COMMIT_MUTATION,
   classifyMutationResult,
   createGraphQLClient,
   type DesiredFile,
@@ -20,10 +22,22 @@ import {
   planFileChanges,
   publishSignedCommit,
   qualifyBranch,
+  readCommitVerification,
   toRepoPath,
 } from "./signed-commit.ts";
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+/**
+ * The signature block GitHub returns for a commit IT built and signed, copied
+ * from a live `gh api graphql` read of a real createCommitOnBranch commit.
+ */
+const GITHUB_SIGNED = { isValid: true, state: "VALID", wasSignedByGitHub: true } as const;
+
+/** A successful mutation response whose commit is properly signed. */
+const signedCommitResponse = (oid: string): GraphQLResponse => ({
+  data: { createCommitOnBranch: { commit: { oid, url: "u", signature: GITHUB_SIGNED } } },
+});
 
 /** Blob oids verified against `git hash-object --stdin` on a real git. */
 const OID_EMPTY = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
@@ -179,11 +193,20 @@ describe("isStaleHeadError / classifyMutationResult", () => {
     expect(isStaleHeadError([{ message: "Resource not accessible by integration" }])).toBe(false);
   });
 
-  test("classifies a successful mutation as ok with the commit oid", () => {
-    const res: GraphQLResponse = {
-      data: { createCommitOnBranch: { commit: { oid: "deadbeef", url: "u" } } },
-    };
-    expect(classifyMutationResult(res)).toEqual({ kind: "ok", oid: "deadbeef" });
+  test("classifies a successful mutation as ok with the commit oid + signature verdict", () => {
+    const out = classifyMutationResult(signedCommitResponse("deadbeef"));
+    expect(out.kind).toBe("ok");
+    expect(out).toMatchObject({ kind: "ok", oid: "deadbeef", verification: { verified: true } });
+  });
+
+  test("still reports ok (a commit exists) when it is unsigned — the verdict rides along", () => {
+    // Separation of concerns: classify answers "did a commit happen?", the
+    // verification gate answers "is it acceptable?". Conflating them would make
+    // an unsigned commit look like a retryable API failure.
+    const out = classifyMutationResult({
+      data: { createCommitOnBranch: { commit: { oid: "abc", signature: null } } },
+    });
+    expect(out).toMatchObject({ kind: "ok", oid: "abc", verification: { verified: false } });
   });
   test("classifies a stale-head failure as retryable", () => {
     const out = classifyMutationResult({ errors: [{ message: "x", type: "STALE_DATA" }] });
@@ -197,6 +220,119 @@ describe("isStaleHeadError / classifyMutationResult", () => {
   });
   test("classifies a missing commit oid as fatal rather than silently succeeding", () => {
     expect(classifyMutationResult({ data: { createCommitOnBranch: null } }).kind).toBe("error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Signature verification. The whole point of createCommitOnBranch is that the
+// commit comes out GitHub-Verified; these are the tests that make the workflow
+// assert that rather than assume it.
+// ---------------------------------------------------------------------------
+
+describe("CREATE_COMMIT_MUTATION", () => {
+  test("requests the signature fields the assertion reads", () => {
+    // Drift guard: dropping any of these from the document would make every
+    // response look like the "missing field" case forever.
+    expect(CREATE_COMMIT_MUTATION).toContain("signature{");
+    expect(CREATE_COMMIT_MUTATION).toContain("isValid");
+    expect(CREATE_COMMIT_MUTATION).toContain("state");
+    expect(CREATE_COMMIT_MUTATION).toContain("wasSignedByGitHub");
+  });
+});
+
+describe("readCommitVerification", () => {
+  const wrap = (commit: unknown): unknown => ({ createCommitOnBranch: { commit } });
+
+  test("verified: the exact shape GitHub returns for a commit it signed", () => {
+    const v = readCommitVerification(wrap({ oid: "abc", signature: GITHUB_SIGNED }));
+    expect(v.verified).toBe(true);
+    expect(v.state).toBe("VALID");
+    expect(v.isValid).toBe(true);
+    expect(v.wasSignedByGitHub).toBe(true);
+  });
+
+  test("null signature is UNVERIFIED — this is what a runner-pushed commit returns", () => {
+    // Read live from an existing unsigned nimbus-agent/homebrew-tap commit:
+    // `signature` comes back literally null. Treating null as "no data, assume
+    // fine" would defeat the entire change.
+    const v = readCommitVerification(wrap({ oid: "abc", signature: null }));
+    expect(v.verified).toBe(false);
+    expect(v.detail).toContain("UNSIGNED");
+  });
+
+  test("a MISSING signature field is unverified, and says the selection set drifted", () => {
+    const v = readCommitVerification(wrap({ oid: "abc" }));
+    expect(v.verified).toBe(false);
+    expect(v.detail).toContain("CREATE_COMMIT_MUTATION");
+  });
+
+  test("isValid:false is unverified even when a signature object exists", () => {
+    const v = readCommitVerification(
+      wrap({ oid: "abc", signature: { isValid: false, state: "VALID", wasSignedByGitHub: true } }),
+    );
+    expect(v.verified).toBe(false);
+  });
+
+  test("a non-VALID GitSignatureState is unverified", () => {
+    for (const state of ["UNSIGNED", "INVALID", "UNKNOWN_KEY", "EXPIRED_KEY", "BAD_CERT"]) {
+      const v = readCommitVerification(
+        wrap({ oid: "abc", signature: { isValid: true, state, wasSignedByGitHub: true } }),
+      );
+      expect(v.verified).toBe(false);
+      expect(v.state).toBe(state);
+    }
+  });
+
+  test("does not gate on wasSignedByGitHub (it reports which key, not validity)", () => {
+    const v = readCommitVerification(
+      wrap({ oid: "abc", signature: { isValid: true, state: "VALID", wasSignedByGitHub: false } }),
+    );
+    expect(v.verified).toBe(true);
+    expect(v.wasSignedByGitHub).toBe(false);
+  });
+
+  test("wrong-typed fields read as missing rather than being coerced true", () => {
+    const v = readCommitVerification(
+      wrap({ oid: "abc", signature: { isValid: "true", state: 1, wasSignedByGitHub: "yes" } }),
+    );
+    expect(v.verified).toBe(false);
+    expect(v.isValid).toBeNull();
+    expect(v.state).toBeNull();
+    expect(v.detail).toContain("<missing>");
+  });
+
+  test("an absent commit node, a non-object signature, and junk data are unverified", () => {
+    expect(readCommitVerification({ createCommitOnBranch: null }).verified).toBe(false);
+    expect(readCommitVerification(undefined).verified).toBe(false);
+    expect(readCommitVerification(wrap({ oid: "a", signature: "VALID" })).verified).toBe(false);
+    expect(readCommitVerification(wrap({ oid: "a", signature: [] })).verified).toBe(false);
+  });
+
+  test("always reports a non-empty reason, whatever the shape", () => {
+    for (const commit of [null, {}, { signature: null }, { signature: 7 }]) {
+      expect(readCommitVerification(wrap(commit)).detail.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("assertCommitVerified", () => {
+  const ctx = { repo: "nimbus-agent/homebrew-tap", oid: "abc123" };
+
+  test("passes a verified commit", () => {
+    const v = readCommitVerification({
+      createCommitOnBranch: { commit: { oid: "abc123", signature: GITHUB_SIGNED } },
+    });
+    expect(() => assertCommitVerified(v, ctx)).not.toThrow();
+  });
+
+  test("throws with the repo, the oid, the reason, and the required_signatures warning", () => {
+    const v = readCommitVerification({
+      createCommitOnBranch: { commit: { oid: "abc123", signature: null } },
+    });
+    expect(() => assertCommitVerified(v, ctx)).toThrow(/nimbus-agent\/homebrew-tap/);
+    expect(() => assertCommitVerified(v, ctx)).toThrow(/abc123/);
+    expect(() => assertCommitVerified(v, ctx)).toThrow(/NOT GitHub-verified/);
+    expect(() => assertCommitVerified(v, ctx)).toThrow(/required_signatures/);
   });
 });
 
@@ -327,7 +463,7 @@ describe("publishSignedCommit", () => {
     const client = scriptedClient({
       heads: ["head1"],
       blobOids: [null],
-      mutationResults: [{ data: { createCommitOnBranch: { commit: { oid: "new1" } } } }],
+      mutationResults: [signedCommitResponse("new1")],
       calls,
     });
     const result = await publishSignedCommit({
@@ -337,7 +473,7 @@ describe("publishSignedCommit", () => {
       files: [file],
       log: () => {},
     });
-    expect(result).toEqual({ status: "committed", oid: "new1", attempts: 1 });
+    expect(result).toMatchObject({ status: "committed", oid: "new1", attempts: 1 });
     const mutation = calls.find((c) => c.query.includes("createCommitOnBranch"));
     const input = mutation?.variables["input"] as { expectedHeadOid: string; branch: unknown };
     expect(input.expectedHeadOid).toBe("head1");
@@ -373,7 +509,7 @@ describe("publishSignedCommit", () => {
       blobOids: [null, null],
       mutationResults: [
         { errors: [{ message: 'Expected branch to point to "head1" but it did not.' }] },
-        { data: { createCommitOnBranch: { commit: { oid: "new2" } } } },
+        signedCommitResponse("new2"),
       ],
       calls,
     });
@@ -384,7 +520,7 @@ describe("publishSignedCommit", () => {
       files: [file],
       log: () => {},
     });
-    expect(result).toEqual({ status: "committed", oid: "new2", attempts: 2 });
+    expect(result).toMatchObject({ status: "committed", oid: "new2", attempts: 2 });
     const oids = calls
       .filter((c) => c.query.includes("createCommitOnBranch"))
       .map((c) => (c.variables["input"] as { expectedHeadOid: string }).expectedHeadOid);
@@ -446,6 +582,47 @@ describe("publishSignedCommit", () => {
         log: () => {},
       }),
     ).rejects.toThrow(/Resource not accessible by integration/);
+  });
+
+  test("aborts the publish when the created commit came back UNSIGNED", async () => {
+    const logged: string[] = [];
+    const client = scriptedClient({
+      heads: ["head1"],
+      blobOids: [null],
+      mutationResults: [
+        { data: { createCommitOnBranch: { commit: { oid: "unsigned1", signature: null } } } },
+      ],
+      calls: [],
+    });
+    await expect(
+      publishSignedCommit({
+        client,
+        repo: "nimbus-agent/homebrew-tap",
+        message: { headline: "nimbus 1.5.0" },
+        files: [file],
+        log: (line) => logged.push(line),
+      }),
+    ).rejects.toThrow(/NOT GitHub-verified/);
+    // It must not have claimed success on the way out.
+    expect(logged.join("\n")).not.toContain("VERIFIED");
+  });
+
+  test("aborts when the mutation response omits the signature field entirely", async () => {
+    const client = scriptedClient({
+      heads: ["head1"],
+      blobOids: [null],
+      mutationResults: [{ data: { createCommitOnBranch: { commit: { oid: "nosig" } } } }],
+      calls: [],
+    });
+    await expect(
+      publishSignedCommit({
+        client,
+        repo: "nimbus-agent/scoop-bucket",
+        message: { headline: "m" },
+        files: [file],
+        log: () => {},
+      }),
+    ).rejects.toThrow(/NOT GitHub-verified/);
   });
 
   test("refuses an oversized payload before it reaches the API", async () => {
