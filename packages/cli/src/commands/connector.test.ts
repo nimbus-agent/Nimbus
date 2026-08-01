@@ -2,7 +2,12 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import os from "node:os";
 import path from "node:path";
 
-import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
+import {
+  CLACK_CANCEL,
+  clearFixture,
+  FAKE_SOCKET_PATH,
+  setFixture,
+} from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
@@ -387,14 +392,36 @@ describe("runConnector reindex", () => {
 });
 
 describe("runConnector remove", () => {
+  // `connector remove` is irreversible, so it prompts unless --yes. The prompt is only
+  // offered on an interactive shell (stdin AND stdout are TTYs, as in src/index.ts), so
+  // these tests drive both descriptors and restore them afterwards.
+  const origStdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const origStdoutTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+
+  function setTty(value: boolean): void {
+    Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
+    Object.defineProperty(process.stdout, "isTTY", { value, configurable: true });
+  }
+
   beforeEach(() => {
     out.reset();
+    setTty(false);
   });
   afterEach(() => {
     clearFixture();
+    if (origStdinTty === undefined) {
+      delete (process.stdin as unknown as { isTTY?: boolean }).isTTY;
+    } else {
+      Object.defineProperty(process.stdin, "isTTY", origStdinTty);
+    }
+    if (origStdoutTty === undefined) {
+      delete (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", origStdoutTty);
+    }
   });
 
-  it("dispatches connector.remove and prints summary", async () => {
+  it("dispatches connector.remove and prints summary with --yes", async () => {
     const ipc = createMockIpcClient([
       { ok: true, itemsDeleted: 12, vaultKeysRemoved: ["github.pat"] },
     ]);
@@ -406,13 +433,30 @@ describe("runConnector remove", () => {
         disconnect: () => {},
       },
     });
-    await runConnector(["remove", "github"]);
+    await runConnector(["remove", "github", "--yes"]);
     expect(ipc.calls[0]).toEqual({
       method: "connector.remove",
       params: { serviceId: "github" },
     });
     expect(out.stdout).toContain("Removed index rows: 12");
     expect(out.stdout).toContain("github.pat");
+  });
+
+  it("accepts the -y short flag before the service name", async () => {
+    const ipc = createMockIpcClient([{ ok: true, itemsDeleted: 1, vaultKeysRemoved: [] }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await runConnector(["remove", "-y", "github"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.remove",
+      params: { serviceId: "github" },
+    });
   });
 
   it("omits the vault-keys line when none were removed", async () => {
@@ -425,14 +469,91 @@ describe("runConnector remove", () => {
         disconnect: () => {},
       },
     });
-    await runConnector(["remove", "github"]);
+    await runConnector(["remove", "github", "--yes"]);
     expect(out.stdout).toContain("Removed index rows: 0");
     expect(out.stdout).not.toContain("Cleared vault keys:");
+  });
+
+  it("refuses without --yes when there is no TTY to prompt on", async () => {
+    const ipc = createMockIpcClient([]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await expect(runConnector(["remove", "github"])).rejects.toThrow(
+      "Refusing to remove without confirmation in non-TTY mode. Pass --yes to proceed.",
+    );
+    expect(ipc.calls).toHaveLength(0);
+  });
+
+  it("dispatches when the interactive confirmation is accepted", async () => {
+    setTty(true);
+    const ipc = createMockIpcClient([{ ok: true, itemsDeleted: 3, vaultKeysRemoved: [] }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: true,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await runConnector(["remove", "github"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.remove",
+      params: { serviceId: "github" },
+    });
+    expect(out.stdout).toContain("Removed index rows: 3");
+  });
+
+  it("aborts without dispatching when the confirmation is declined", async () => {
+    setTty(true);
+    const ipc = createMockIpcClient([]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: false,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await runConnector(["remove", "github"]);
+    expect(ipc.calls).toHaveLength(0);
+    expect(out.stdout).toContain("Cancelled.");
+  });
+
+  it("aborts without dispatching when the prompt is cancelled (Ctrl-C)", async () => {
+    setTty(true);
+    const ipc = createMockIpcClient([]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      clackAnswer: CLACK_CANCEL,
+      ipcClient: {
+        call: ipc.client.call,
+        connect: () => {},
+        disconnect: () => {},
+      },
+    });
+    await runConnector(["remove", "github"]);
+    expect(ipc.calls).toHaveLength(0);
+    expect(out.stdout).toContain("Cancelled.");
   });
 
   it("remove throws when service is missing", async () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await expect(runConnector(["remove"])).rejects.toThrow("Usage: nimbus connector remove");
+  });
+
+  it("remove throws when only the --yes flag is given", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runConnector(["remove", "--yes"])).rejects.toThrow(
+      "Usage: nimbus connector remove",
+    );
   });
 });
 

@@ -1,3 +1,5 @@
+import { confirm, isCancel } from "@clack/prompts";
+
 import { IPCClient } from "../ipc-client/index.ts";
 import {
   GOOGLE_OAUTH_CLIENT_ID_HELP,
@@ -1074,10 +1076,41 @@ async function runConnectorAddMcp(tail: string[]): Promise<void> {
   console.log(`Registered user MCP connector: ${id}`);
 }
 
+const REMOVE_YES_FLAGS: ReadonlySet<string> = new Set(["--yes", "-y"]);
+
+/**
+ * `nimbus connector remove` is irreversible (Vault entries + index rows are deleted
+ * atomically), so it is gated the same way `nimbus extension remove` is: an interactive
+ * confirmation, `--yes`/`-y` to skip it for scripts, and a fail-closed refusal rather
+ * than a hanging prompt when there is no TTY to prompt on.
+ *
+ * This is NOT redundant with the Gateway-side HITL gate. `connector.remove` is in the
+ * executor's frozen HITL set, so the Gateway pushes a `consent.request` notification and
+ * blocks until a `consent.respond` arrives — but `withIpc` above builds a bare `IPCClient`
+ * with no consent handler registered (unlike `data.ts`, which calls
+ * `selectConsentHandler`), so nothing ever answers and the call dies on the client's 30s
+ * request timeout. Until that is wired, this prompt is the only confirmation the user sees.
+ */
 async function runConnectorRemove(tail: string[]): Promise<void> {
-  const service = tail[0];
+  const accept = tail.some((a) => REMOVE_YES_FLAGS.has(a));
+  const service = tail.find((a) => !REMOVE_YES_FLAGS.has(a));
   if (service === undefined) {
-    throw new Error("Usage: nimbus connector remove <service>");
+    throw new Error("Usage: nimbus connector remove <service> [--yes]");
+  }
+  if (!accept) {
+    const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+    if (!interactive) {
+      throw new Error(
+        "Refusing to remove without confirmation in non-TTY mode. Pass --yes to proceed.",
+      );
+    }
+    const ok = await confirm({
+      message: `Remove connector "${service}"? This deletes its Vault credentials and index rows. This cannot be undone.`,
+    });
+    if (isCancel(ok) || ok !== true) {
+      console.log("Cancelled.");
+      return;
+    }
   }
   const res = await withIpc((c) =>
     c.call<{ ok: boolean; itemsDeleted: number; vaultKeysRemoved: string[] }>("connector.remove", {
@@ -1198,7 +1231,7 @@ Usage:
   nimbus connector pause <service>
   nimbus connector resume <service>
   nimbus connector set-interval <service> <duration>
-  nimbus connector remove <service>
+  nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes
 
 Services (examples): google_drive, gmail, google_photos, onedrive, outlook, teams, github, gitlab, linear, jira, notion, confluence, jenkins, circleci, pagerduty, kubernetes
 

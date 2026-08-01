@@ -947,10 +947,15 @@ Output is always JSON.
 Remove a connector: deletes all associated Vault entries and index rows atomically.
 
 ```bash
-nimbus connector remove github
+nimbus connector remove github          # Prompts: y/n
+nimbus connector remove github --yes    # Skip confirmation (-y also works)
 ```
 
-> **Irreversible and unprompted.** There is no confirmation step and no `--yes` flag — the command sends `connector.remove` as soon as it is invoked, and prints the number of index rows deleted plus the Vault keys it cleared. Take a snapshot first (`nimbus db snapshot`) if you may want the index rows back.
+> **Irreversible.** On success the command prints the number of index rows deleted plus the Vault keys it cleared, and nothing restores them. Take a snapshot first (`nimbus db snapshot`) if you may want the index rows back.
+
+The CLI asks for confirmation before it sends `connector.remove`. Declining the prompt (or cancelling it with Ctrl-C) prints `Cancelled.` and sends nothing. Outside an interactive shell — piped, or run from a script — there is no prompt to answer, so the command refuses with a non-zero exit rather than waiting for input; pass `--yes` or `-y` to proceed non-interactively.
+
+`connector.remove` is also a HITL action on the Gateway side, so the Gateway asks the owner to approve it a second time over the IPC consent channel. `nimbus connector remove` does not currently answer that request, so the call times out after 30s and nothing is removed. Until that is fixed, use [`nimbus data delete --service <name>`](#nimbus-data-delete---service-name), which purges the same index rows and Vault credentials and does answer the consent prompt.
 
 ---
 
