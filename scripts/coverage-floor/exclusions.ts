@@ -238,6 +238,32 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
 ]);
 
 /**
+ * A `Set` whose mutators throw. `Object.freeze(new Set(...))` does NOT make a Set immutable — its
+ * contents live in internal slots rather than own properties, so `add`/`delete`/`clear` keep
+ * working on a frozen Set and `ReadonlySet<T>` is a compile-time promise only. Overriding the three
+ * mutators makes the guarantee real while leaving every read path (`has`, iteration, `size`, and
+ * the set-algebra methods) genuine `Set` behaviour.
+ *
+ * The constructor populates through `Set.prototype.add` directly: `new Set(iterable)` dispatches to
+ * `this.add`, which here would throw before a single entry landed.
+ */
+class ImmutableSet<T> extends Set<T> {
+  constructor(values: Iterable<T>) {
+    super();
+    for (const v of values) Set.prototype.add.call(this, v);
+  }
+  override add(_value: T): never {
+    throw new TypeError("NEVER_EXEMPT is immutable: add() is not supported");
+  }
+  override delete(_value: T): never {
+    throw new TypeError("NEVER_EXEMPT is immutable: delete() is not supported");
+  }
+  override clear(): never {
+    throw new TypeError("NEVER_EXEMPT is immutable: clear() is not supported");
+  }
+}
+
+/**
  * Carve-outs: files that a BROAD pattern in `EXCLUSIONS` would otherwise swallow, but which carry
  * real runtime logic and must stay gated. Checked BEFORE the pattern list, so a name-shaped
  * exemption (the `types.ts` / `-types.ts` basename regexes) can never silently claim them.
@@ -245,15 +271,22 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
  * Only add a path here — never widen it into a pattern. The point is that each entry is a file
  * somebody read and confirmed has executable logic; a regex would defeat that.
  */
+const NEVER_EXEMPT_PATHS: readonly string[] = [
+  // Six runtime declarations / 23 executable lines, incl. the OIDC `parseTokenResponse` and
+  // `parseDeviceAuthResponse` wire parsers that feed the I18 token verifier.
+  "packages/gateway/src/identity/types.ts",
+  // Four runtime declarations / 20 executable lines: `retryAfterDateFromHeader` (Retry-After
+  // header parsing), `RateLimitError`, `UnauthenticatedError`, `syncNoopResult`.
+  "packages/gateway/src/sync/types.ts",
+];
+
+/**
+ * The carve-out list, immutable at runtime as well as in the type system: a caller who casts this
+ * back to `Set<string>` gets a `TypeError` instead of silently editing the list and flipping
+ * `isExempt` results for a file somebody deliberately kept gated.
+ */
 export const NEVER_EXEMPT: ReadonlySet<string> = Object.freeze(
-  new Set<string>([
-    // Six runtime declarations / 23 executable lines, incl. the OIDC `parseTokenResponse` and
-    // `parseDeviceAuthResponse` wire parsers that feed the I18 token verifier.
-    "packages/gateway/src/identity/types.ts",
-    // Four runtime declarations / 20 executable lines: `retryAfterDateFromHeader` (Retry-After
-    // header parsing), `RateLimitError`, `UnauthenticatedError`, `syncNoopResult`.
-    "packages/gateway/src/sync/types.ts",
-  ]),
+  new ImmutableSet<string>(NEVER_EXEMPT_PATHS),
 );
 
 export function isExempt(relPath: string): boolean {

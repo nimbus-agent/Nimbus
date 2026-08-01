@@ -130,6 +130,36 @@ describe("NEVER_EXEMPT — a name-shaped exemption cannot swallow real runtime l
       expect(p.startsWith("packages/")).toBe(true);
     }
   });
+
+  test("the carve-out is immutable at RUNTIME, not merely in the type system", () => {
+    // `Object.freeze(new Set(...))` is not enough on its own: a Set's contents sit in internal
+    // slots rather than own properties, so add/delete/clear keep working on a frozen Set and
+    // `ReadonlySet` is a compile-time promise only. Casting back to `Set<string>` is exactly how a
+    // caller would defeat that, so drive each mutator through the cast and prove it throws.
+    const asMutable = NEVER_EXEMPT as unknown as Set<string>;
+    const before = [...NEVER_EXEMPT];
+    expect(() => asMutable.add("packages/gateway/src/engine/executor.ts")).toThrow(TypeError);
+    expect(() => asMutable.delete("packages/gateway/src/identity/types.ts")).toThrow(TypeError);
+    expect(() => asMutable.clear()).toThrow(TypeError);
+    expect([...NEVER_EXEMPT]).toEqual(before);
+    // …and isExempt still answers exactly as it did before the attempted mutation: the carve-out
+    // entry stays gated, and a path that was never in the list did not sneak in.
+    expect(isExempt("packages/gateway/src/identity/types.ts")).toBe(false);
+    expect(NEVER_EXEMPT.has("packages/gateway/src/engine/executor.ts")).toBe(false);
+  });
+
+  test("the read surface still behaves like a Set", () => {
+    // The mutator overrides must not cost the read paths isExempt and the audit script rely on.
+    expect([...NEVER_EXEMPT.keys()]).toEqual([...NEVER_EXEMPT.values()]);
+    expect([...NEVER_EXEMPT.entries()]).toEqual([...NEVER_EXEMPT].map((p) => [p, p]));
+    const seen: string[] = [];
+    // biome-ignore lint/complexity/noForEach: forEach IS the read-surface method under test here
+    NEVER_EXEMPT.forEach((v) => {
+      seen.push(v);
+    });
+    expect(seen).toEqual([...NEVER_EXEMPT]);
+    expect(NEVER_EXEMPT.size).toBe(seen.length);
+  });
 });
 
 describe("isExempt — retired CLI / env-gated exemptions stay retired", () => {

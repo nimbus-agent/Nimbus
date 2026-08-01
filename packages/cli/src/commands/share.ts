@@ -125,7 +125,12 @@ export function parseShareArgs(argv: readonly string[]): ShareCommand {
   switch (sub) {
     case "create": {
       const create = parseShareCreateArgs(rest);
-      if (create.sessionId.length === 0) throw new Error(CREATE_USAGE);
+      // The session id is positional, so `nimbus share create --out f.json` would otherwise bind
+      // `--out` as the id, clear the `length === 0` check, and open an IPC connection with a bogus
+      // session. Reject a flag-shaped positional the way parseApprovalArgs/parseForwardArgs do.
+      if (create.sessionId.length === 0 || create.sessionId.startsWith("--")) {
+        throw new Error(CREATE_USAGE);
+      }
       return { kind: "create", create };
     }
     case "list":

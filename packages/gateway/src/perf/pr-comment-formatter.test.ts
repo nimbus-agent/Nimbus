@@ -180,18 +180,18 @@ describe("formatPrComment", () => {
   test("a baseline artifact whose metric is not a number degrades to an em dash", () => {
     // `readBaseline` in bench-ci.ts does an unvalidated `JSON.parse(last) as HistoryLine`
     // on a downloaded artifact, so a legacy/corrupt line can carry a non-number here.
-    const previous = JSON.parse(
-      JSON.stringify({
-        schema_version: 2,
-        run_id: "old-1",
-        timestamp: "2026-04-01T00:00:00Z",
-        runner: "gha-ubuntu",
-        os_version: "ubuntu-24.04.1",
-        nimbus_git_sha: "cafef00d",
-        bun_version: "1.3.11",
-        surfaces: { S1: { samples_count: 100, p95_ms: "n/a" } },
-      }),
-    ) as HistoryLine;
+    // A literal cast through `unknown` — not `JSON.parse`, whose `any` return would erase the
+    // deliberately non-numeric `p95_ms` from the type checker (the repo forbids `any`).
+    const previous = {
+      schema_version: 2,
+      run_id: "old-1",
+      timestamp: "2026-04-01T00:00:00Z",
+      runner: "gha-ubuntu",
+      os_version: "ubuntu-24.04.1",
+      nimbus_git_sha: "cafef00d",
+      bun_version: "1.3.11",
+      surfaces: { S1: { samples_count: 100, p95_ms: "n/a" } },
+    } as unknown as HistoryLine;
     const current: HistoryLine = {
       ...fakeLine("gha-ubuntu"),
       surfaces: { S1: { samples_count: 100, p95_ms: 80 } },

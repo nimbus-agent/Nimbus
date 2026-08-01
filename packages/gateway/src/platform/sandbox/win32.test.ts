@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,8 +16,13 @@ import { capabilitiesForManifest, createWin32SandboxRunner, profileNameFor } fro
 // calls into Windows (i.e. when the CreateProcessAsUserW FFI binding lands).
 
 // Real, unique temp root for the fake spawn cwd (S5443). `spawn` throws before
-// touching the filesystem — this path is never written to.
+// touching the filesystem — this path is never written to. It is still removed in
+// afterAll: mkdtempSync creates the directory for real, and a suite that never
+// reclaims it leaves one behind per run (see the temp-dir leak audit, #972/#973).
 const TMP_ROOT = mkdtempSync(join(tmpdir(), "nimbus-sandbox-win32-test-"));
+afterAll(() => {
+  rmSync(TMP_ROOT, { recursive: true, force: true });
+});
 
 function manifest(perms: Partial<ExtensionManifest["permissions"]> = {}): ExtensionManifest {
   return {

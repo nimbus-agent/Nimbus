@@ -135,7 +135,10 @@ describe("spawnAndTimeToMarker", () => {
 
   test("marker mode: a later match on the other stream does not overwrite the first timing", async () => {
     // The gateway mirrors its ready banner onto stderr; the bench must report the
-    // FIRST sighting, not whichever stream happens to match last.
+    // FIRST sighting, not whichever stream happens to match last. The two sightings are
+    // 250 ms apart and the assertion sits at 150 ms, well inside that gap: a scheduler
+    // pause has to exceed 150 ms to flake, but a regression that reported the stderr
+    // timing would land at ~250 ms and still fail.
     const elapsed = await spawnAndTimeToMarker({
       cmd: "fake",
       args: [],
@@ -145,14 +148,14 @@ describe("spawnAndTimeToMarker", () => {
       spawn: ((..._args: unknown[]) => {
         const proc: FakeSubprocess = {
           stdout: streamFrom(["[gateway] ready\n"]),
-          stderr: streamFrom(["[gateway] ready\n"], 100),
-          exited: new Promise<number>((r) => setTimeout(() => r(0), 150)),
+          stderr: streamFrom(["[gateway] ready\n"], 250),
+          exited: new Promise<number>((r) => setTimeout(() => r(0), 300)),
           kill: () => undefined,
         };
         return proc as unknown as ReturnType<typeof Bun.spawn>;
       }) as unknown as typeof Bun.spawn,
     });
-    expect(elapsed).toBeLessThan(60);
+    expect(elapsed).toBeLessThan(150);
   });
 
   test("marker mode: a silent, non-exiting child rejects from the timeout timer", async () => {

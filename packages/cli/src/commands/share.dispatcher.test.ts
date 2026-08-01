@@ -72,6 +72,22 @@ describe("parseShareArgs", () => {
     expect(() => parseShareArgs(["create", "s-1", "--out"])).toThrow("--out requires a value");
   });
 
+  test("create rejects a flag-shaped session id instead of dialing the gateway with it", () => {
+    // The session id is positional: with the id omitted, `--out`/`--http`/`--to-peer` would each
+    // be bound as the session id and pass a bare `length === 0` check, so `runShare` would open an
+    // IPC connection and call share.create with a bogus session. Each must hit CREATE_USAGE.
+    for (const argv of [
+      ["create", "--out", "f.json"],
+      ["create", "--http"],
+      ["create", "--to-peer", "peer-1"],
+      ["create", "--as-recipe"],
+    ]) {
+      expect(() => parseShareArgs(argv)).toThrow(
+        "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]",
+      );
+    }
+  });
+
   test("list / inbox pick up --all", () => {
     expect(parseShareArgs(["list"])).toEqual({ kind: "list", all: false });
     expect(parseShareArgs(["list", "--all"])).toEqual({ kind: "list", all: true });
@@ -304,6 +320,19 @@ describe("runShare argument-error path", () => {
   test("a malformed create option is reported, not thrown as an unhandled rejection", async () => {
     await runShare(["create", "s-1", "--redact"]);
     expect(out.stderr).toContain("--redact requires a value");
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("an omitted session id is caught in parse, so withIpc is never entered", async () => {
+    // Regression guard: `--out` used to bind as the session id, so this argv sailed past the
+    // `length === 0` check and reached withIpc() — which either dials a live gateway with a bogus
+    // session or rejects with "Gateway is not running" OUTSIDE the parse try/catch. Either way the
+    // usage text below never appears. The whole point is that the failure stops before any IPC.
+    await runShare(["create", "--out", "f.json"]);
+    expect(out.stderr).toContain(
+      "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]",
+    );
+    expect(out.stderr).not.toContain("Gateway is not running");
     expect(process.exitCode).toBe(1);
   });
 });

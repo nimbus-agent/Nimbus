@@ -191,7 +191,14 @@ describe("runWorkerBench", () => {
       }),
     });
     expect(terminatedWithDoneAlreadyPosted).toEqual([false]);
+    // `collectResults` still awaits donePromise after the terminate, so the late `done` frame is
+    // folded in rather than dropped or mis-reported as an error. Pin the whole shape: a timed-out
+    // worker must not silently degrade to zeroed writes or a bogus throughput.
     expect(result.perWorker).toHaveLength(1);
+    expect(result.perWorker[0]?.writes).toBe(10);
+    expect(result.perWorker[0]?.busyRetries).toBe(0);
+    expect(result.perWorker[0]?.throughputPerSec).toBe(200); // 10 writes / (50 ms / 1000)
+    expect(result.errors).toEqual([]);
   });
 
   test("with no WorkerCtor override it drives real Workers over the message protocol", async () => {
