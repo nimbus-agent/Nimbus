@@ -24,6 +24,9 @@ const SUMMARY: GlossaryPassSummary = {
   llmConfigured: false,
   llmProduced: false,
   aborted: false,
+  manualAdded: 0,
+  manualRemoved: 0,
+  manualSkipped: [],
 };
 
 test("a trigger runs the pass after the debounce window", async () => {

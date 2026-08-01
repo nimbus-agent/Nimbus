@@ -785,6 +785,9 @@ describe("tryDispatchGlossaryRpc — skip / hit / error remapping", () => {
     llmConfigured: false,
     llmProduced: false,
     aborted: false,
+    manualAdded: 0,
+    manualRemoved: 0,
+    manualSkipped: [] as { entry: string; reason: string }[],
   };
 
   function fakeGlossaryRefresher(

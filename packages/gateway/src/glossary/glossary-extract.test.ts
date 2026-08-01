@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -21,6 +24,7 @@ import {
   markConsolidated,
   readPassState,
   upsertCandidate,
+  upsertManualTerm,
 } from "./glossary-store.ts";
 import type { GlossaryPassProgress } from "./glossary-types.ts";
 
@@ -708,4 +712,90 @@ test("reports llmConfigured and llmProduced separately", async () => {
   });
   expect(dead.llmConfigured).toBe(true);
   expect(dead.llmProduced).toBe(false);
+});
+
+test("a pass upserts authored terms from config", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-pass-"));
+  writeFileSync(
+    join(dir, "nimbus.toml"),
+    '[glossary.terms]\nCDR = "Our append-only audit row."\n',
+    "utf8",
+  );
+
+  await runGlossaryPass(db, { ...PASS_OPTS, configDir: dir });
+
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("consolidated");
+  expect(t?.definitionSource).toBe("manual");
+});
+
+test("a rebuild restores authored terms from config", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-pass-"));
+  writeFileSync(join(dir, "nimbus.toml"), '[glossary.terms]\nCDR = "Authored."\n', "utf8");
+  await runGlossaryPass(db, { ...PASS_OPTS, configDir: dir });
+  expect(getTerm(db, "cdr")?.definitionSource).toBe("manual");
+
+  const summary = await rebuildGlossary(db, { ...PASS_OPTS, configDir: dir });
+
+  const t = getTerm(db, "cdr");
+  expect(t?.definitionSource).toBe("manual");
+  expect(t?.definition).toBe("Authored.");
+  expect(summary.manualAdded).toBe(1);
+});
+
+test("a rebuild whose pre-pass fails does not commit the truncation", async () => {
+  // This is the ATOMICITY assertion, and it is the only honest way to make
+  // one here. Sampling a second connection before and after `rebuildGlossary`
+  // proves nothing: both reads land after the call is awaited, so they return
+  // the same value whether or not the transaction exists. Forcing the pre-pass
+  // to throw is what actually distinguishes the two implementations — with the
+  // wrapper, the truncation rolls back; without it, the rows are gone.
+  //
+  // Mechanism: a DB-level trigger firing on projectTerm's INSERT into `item`,
+  // matching the atomicity tests in glossary-manual.test.ts,
+  // glossary-reconcile.test.ts and this same file ("consolidation is atomic").
+  // Chosen over the brief's suggested `ALTER TABLE item RENAME TO
+  // item_stashed`: that would fail from deep inside `dbRun`'s generic "no such
+  // table: item" error the moment ANY write touches `item` — not specifically
+  // from `projectTerm`'s own INSERT — and it requires renaming the table back
+  // by hand on every path out of the test, including a thrown assertion. The
+  // trigger is the precise, already-proven tool: it fires exactly on the
+  // authoring pre-pass's `item` INSERT, after `upsertManualTerm`'s row write
+  // has already happened, which is the exact "already-applied first write"
+  // window the sibling tests target, and `DROP TRIGGER` cleans up
+  // unconditionally right after the `expect(...).rejects` settles.
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-pass-"));
+  writeFileSync(join(dir, "nimbus.toml"), '[glossary.terms]\nCDR = "Authored."\n', "utf8");
+  await runGlossaryPass(db, { ...PASS_OPTS, configDir: dir });
+  const before = listAllKeys(db).length;
+  expect(before).toBeGreaterThan(0);
+
+  db.run(
+    `CREATE TRIGGER simulated_crash_before_project
+     BEFORE INSERT ON item
+     WHEN NEW.type = 'glossary_term'
+     BEGIN SELECT RAISE(ABORT, 'simulated crash before projectTerm'); END`,
+  );
+
+  await expect(rebuildGlossary(db, { ...PASS_OPTS, configDir: dir })).rejects.toThrow();
+
+  db.run("DROP TRIGGER simulated_crash_before_project");
+  expect(listAllKeys(db).length).toBe(before);
+});
+
+test("a pass with no configDir touches no authored rows", async () => {
+  // Tests and degraded boots pass no configDir; that must be inert, not a
+  // desired-state wipe.
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "Authored.",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1,
+  });
+  await runGlossaryPass(db, PASS_OPTS);
+  expect(getTerm(db, "cdr")?.status).toBe("consolidated");
 });

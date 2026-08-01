@@ -17,6 +17,9 @@ const SUMMARY: GlossaryPassSummary = {
   llmConfigured: true,
   llmProduced: true,
   aborted: false,
+  manualAdded: 0,
+  manualRemoved: 0,
+  manualSkipped: [],
 };
 
 function fakeRefresher(over: Partial<GlossaryRefresher> = {}): GlossaryRefresher {

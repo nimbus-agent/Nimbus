@@ -456,6 +456,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         minDocFreq: glossaryCfg.minDocFreq,
         consolidateTimeoutMs: glossaryCfg.consolidateTimeoutMs,
         retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
+        // Re-read every pass, unlike the numeric knobs above: authored terms
+        // are content a user actively edits, so `--refresh` must apply an edit
+        // without a gateway restart.
+        configDir: paths.configDir,
         ...(consolidationLlm === undefined ? {} : { llm: consolidationLlm }),
         ...(runOpts.onProgress === undefined ? {} : { onProgress: runOpts.onProgress }),
         nowMs: Date.now(),

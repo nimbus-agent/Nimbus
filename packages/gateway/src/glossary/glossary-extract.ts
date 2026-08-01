@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
 
+import type { ManualSkip } from "../config/nimbus-toml-glossary-terms.ts";
+import {
+  type GlossaryManualConfig,
+  loadGlossaryManualFromConfigDir,
+} from "../config/nimbus-toml-glossary-terms.ts";
 import { type ConsolidatorLlm, consolidateTerm } from "./glossary-consolidate.ts";
+import { applyManualTerms } from "./glossary-manual.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
 import { glossarySourceFilter } from "./glossary-source-types.ts";
@@ -38,6 +44,17 @@ export type GlossaryPassOptions = {
   signal?: AbortSignal;
   /** Per-term progress, for on-demand passes driven by `nimbus glossary --refresh`. */
   onProgress?: (p: GlossaryPassProgress) => void;
+  /**
+   * Config directory holding `nimbus.toml`, re-read EVERY pass so
+   * `nimbus glossary --refresh` applies an edit without a gateway restart.
+   * `assemble.ts` loads the numeric `[glossary]` knobs once at startup, but
+   * authored content is what a user actively edits.
+   *
+   * Optional: a pass without it (tests, a degraded boot) reads no config, and
+   * `applyManualTerms` treats that as `loaded: false` — inert, never a
+   * desired-state wipe.
+   */
+  configDir?: string;
 };
 
 export type GlossaryPassSummary = {
@@ -62,6 +79,12 @@ export type GlossaryPassSummary = {
   llmConfigured: boolean;
   /** The model actually answered at least once — a definition or a veto. */
   llmProduced: boolean;
+  /** Authored terms upserted from `[glossary.terms]` this pass. */
+  manualAdded: number;
+  /** Authored rows demoted because their config entry was removed. */
+  manualRemoved: number;
+  /** Config entries rejected by validation, for `--refresh` to report. */
+  manualSkipped: ManualSkip[];
 };
 
 const SCAN_BATCH_LIMIT = 5000;
@@ -382,15 +405,31 @@ async function consolidatePhase(
   };
 }
 
+function readManualConfig(opts: GlossaryPassOptions): GlossaryManualConfig {
+  return opts.configDir === undefined
+    ? { loaded: false }
+    : loadGlossaryManualFromConfigDir(opts.configDir);
+}
+
 export async function runGlossaryPass(
   db: Database,
   opts: GlossaryPassOptions,
 ): Promise<GlossaryPassSummary> {
   const llmConfigured = opts.llm !== undefined;
+  // The authoring pre-pass runs FIRST, so `discoverPhase`'s `upsertCandidate`
+  // refreshes an authored row's statistics in the same pass (its display_term
+  // guard keeps the authored surface form).
+  const m = applyManualTerms(db, readManualConfig(opts), { nowMs: opts.nowMs });
+  const manual = {
+    manualAdded: m.added,
+    manualRemoved: m.removed,
+    manualSkipped: m.skipped,
+  };
   const a = discoverPhase(db, opts);
   if (opts.signal?.aborted === true) {
     return {
       ...a,
+      ...manual,
       consolidated: 0,
       upgraded: 0,
       vetoed: 0,
@@ -403,15 +442,32 @@ export async function runGlossaryPass(
     };
   }
   const b = await consolidatePhase(db, opts);
-  return { ...a, ...b, llmConfigured };
+  return { ...a, ...manual, ...b, llmConfigured };
 }
 
-/** Wipes every glossary row and projection, then re-mines from watermark zero. */
+/**
+ * Wipes every glossary row and projection, then re-mines from watermark zero.
+ *
+ * The unproject + truncate + authoring pre-pass run in ONE transaction, so the
+ * state in which an authored term is absent is never committed and therefore
+ * unobservable to any reader. Correctness comes from the pre-pass being
+ * unconditional and model-free — authored rows need no consolidation, so they
+ * never wait on the bounded per-pass budget.
+ */
 export async function rebuildGlossary(
   db: Database,
   opts: GlossaryPassOptions,
 ): Promise<GlossaryPassSummary> {
-  for (const key of listAllKeys(db)) unprojectTerm(db, key);
-  clearGlossary(db);
-  return runGlossaryPass(db, opts);
+  const cfg = readManualConfig(opts);
+  let restored: ReturnType<typeof applyManualTerms> = { added: 0, removed: 0, skipped: [] };
+  db.transaction(() => {
+    for (const key of listAllKeys(db)) unprojectTerm(db, key);
+    clearGlossary(db);
+    restored = applyManualTerms(db, cfg, { nowMs: opts.nowMs });
+  })();
+
+  // The pass below re-runs the pre-pass, which is idempotent: every authored
+  // key is already present, so it upserts the same values and removes nothing.
+  const summary = await runGlossaryPass(db, opts);
+  return { ...summary, manualAdded: restored.added, manualRemoved: restored.removed };
 }
