@@ -114,7 +114,7 @@ nimbus connector sync github
 nimbus ask "what PRs did I open in the last 7 days?"
 ```
 
-(OAuth services — Google Drive, Gmail, Slack, … — use `nimbus connector add <service>`, which opens your browser. See [Connect a service](https://nimbus-agent.dev/user-guide/connect-service/).)
+(OAuth services — Google Drive, Gmail, Slack, … — use `nimbus connector auth <service>`, which opens your browser. See [Connect a service](https://nimbus-agent.dev/user-guide/connect-service/).)
 
 ## How it works
 

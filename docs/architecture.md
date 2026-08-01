@@ -118,9 +118,9 @@ export async function createPlatformServices(): Promise<PlatformServices> {
 |---|---|---|---|
 | **IPC transport** | Named Pipe (`\\.\pipe\nimbus-gateway`) | Unix Domain Socket | Unix Domain Socket |
 | **Secrets** | Windows DPAPI (`CryptProtectData`) | Keychain Services | Secret Service API (libsecret) |
-| **Autostart** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | `~/Library/LaunchAgents/dev.nimbus.plist` | systemd user unit / XDG autostart |
+| **Autostart** | Not implemented — `AutostartManager` is a no-op stub | Not implemented — same stub | Not implemented — same stub |
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/Application Support/Nimbus` | `~/.config/nimbus` (XDG Base Dir) |
-| **Data dir** | `%LOCALAPPDATA%\Nimbus\data` | `~/Library/Application Support/Nimbus/data` | `~/.local/share/nimbus` |
+| **Data dir** | `%LOCALAPPDATA%\Nimbus\data` | `~/Library/Application Support/Nimbus` (shares the config root; no `/data` segment) | `~/.local/share/nimbus` |
 | **Extensions dir** | `%LOCALAPPDATA%\Nimbus\extensions` | `~/Library/Application Support/Nimbus/extensions` | `~/.local/share/nimbus/extensions` |
 | **Notifications** | Win32 Toast API (via Tauri plugin) | `NSUserNotification` (via Tauri plugin) | `libnotify` via D-Bus |
 | **Shell setup** | PowerShell profile + `$PATH` | `~/.zshrc` / `~/.bashrc` | `~/.bashrc` / `~/.zshrc` / fish config |
@@ -409,9 +409,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Monitoring & incidents
   "alert.acknowledge", "alert.silence",
   "incident.escalate", "incident.resolve",
-  // Planned data-stack / ML / data-quality action types (warehouse.* / dbt.* /
-  // bi.* / ml.* / dq.*) are added to the real set only when their connectors
-  // land — see roadmap.md § Planned. The list above is the currently-wired set.
+  // Abridged for readability — the live set has 110 entries, including the
+  // warehouse/BI and GitOps/ML write types (e.g. "snowflake.tag.set",
+  // "argocd.app.sync"), "share.publish" and "egress.prune".
+  // `engine/executor.ts` is authoritative.
 ]);
 
 // Frozen façade — `has`, iteration, and `forEach`; mutators are absent or throw.
@@ -453,7 +454,7 @@ export class ToolExecutor {
 
 ### Script Execution Mode
 
-`nimbus run <path>` executes a YAML script file as a single session. The execution engine is identical to interactive execution — same intent router, same planner, same HITL gate — with two additions: context accumulates across all steps in a single session, and a mandatory preview phase precedes execution.
+`nimbus run <path>` executes a YAML script file as a single session. The execution engine is identical to interactive execution — same intent router, same planner, same HITL gate — with one addition: context accumulates across all steps in a single session. A preview phase is available but **not** mandatory; it is requested with `--dry-run` or `--no-ttv`.
 
 **Script format:**
 
@@ -475,45 +476,46 @@ steps:
     continue-on-error: false    # default false — abort script on step failure
 ```
 
-**Two-phase execution:**
+**Execution is single-phase by default; the preview is opt-in.**
 
-*Phase 1 — Preview.* The engine routes and plans all steps without executing any tool calls. Every step that would trigger HITL is identified. A structured plan is shown and the user must confirm before Phase 2 begins:
+*Execution.* A plain `nimbus run <file>` / `nimbus workflow run <name>` goes straight to `runWorkflowExecution` with `dryRun: false`. Steps run sequentially, session context accumulates across steps, and when a HITL gate is reached execution pauses for inline consent. This is the same gate as interactive mode — it is not bypassed. There is no plan-then-confirm interstitial: nothing prompts `Proceed? [y/n]` before the first step.
 
-```text
-Script: weekly-cleanup (4 steps)
+*Preview (`--dry-run`).* `runWorkflowExecution` short-circuits into `executeDryRun`: the run row is recorded with status `preview`, **no** step is routed, planned, or executed, and each step comes back as `{ label, status: "preview", output: <step text>, hitlActions }`. `hitlActions` is a static regex classification of the step's text, not a plan — so it names the HITL action types a step *would* be likely to trigger, and the client prints the JSON result:
 
-  Step 1  Find PDFs not opened in 90 days       READ — no approval needed
-  Step 2  Summarize by project folder            READ — no approval needed
-  Step 3  Move 12 files to /Archive/2025         ⚠ REQUIRES APPROVAL at runtime
-  Step 4  Send summary email to you@company.com  ⚠ REQUIRES APPROVAL at runtime
-
-Proceed? [y/n]:
-```
-
-*Phase 2 — Execution.* Steps run sequentially. Session context accumulates across steps. When a HITL gate is reached, execution pauses for inline consent. This is the same gate as interactive mode — it is not bypassed.
-
-**No-TTY behaviour:**
-
-```typescript
-// packages/gateway/src/engine/script-runner.ts
-if (!process.stdin.isTTY && plan.hitlRequiredSteps.length > 0) {
-  throw new ScriptHITLError({
-    code: "HITL_REQUIRED_NO_TTY",
-    message:
-      "Script contains steps requiring consent but no interactive terminal is attached.",
-    steps: plan.hitlRequiredSteps.map(s => s.index),
-  });
+```json
+{
+  "runId": "…",
+  "dryRun": true,
+  "stepResults": [
+    { "label": "step-1", "status": "preview", "output": "Find PDFs not opened in 90 days", "hitlActions": [] },
+    { "label": "step-3", "status": "preview", "output": "Move 12 files to /Archive/2025", "hitlActions": ["file.move", "file.rename"] }
+  ]
 }
 ```
 
-Scripts containing only read-only steps run without a TTY — safe for automation, CI pipelines, and scheduled tasks.
+**Unattended behaviour (`--no-ttv`):** there is no TTY auto-detection. Unattended safety is opt-in via the `--no-ttv` flag, which runs the preview first and aborts if any step is flagged as HITL-requiring:
+
+```typescript
+// packages/cli/src/commands/run-workflow.ts
+if (opts.noTtv && !opts.dryRun) {
+  const preview = await client.call("workflow.run", { name, stream: false, dryRun: true });
+  const flagged = (preview.stepResults ?? []).filter((s) => (s.hitlActions?.length ?? 0) > 0);
+  if (flagged.length > 0) {
+    throw new Error(
+      "Workflow steps may require human approval (HITL). Omit --no-ttv to run, or use --dry-run to inspect hitlActions.",
+    );
+  }
+}
+```
+
+The `hitlActions` flags come from `previewHitlActionsForStepText`, defined in `packages/gateway/src/automation/workflow-hitl-preview.ts` and imported by `workflow-runner.ts`. Run with `--no-ttv` for automation, CI pipelines, and scheduled tasks: a workflow whose preview flags nothing proceeds, one that flags a step aborts instead of blocking on consent.
 
 **Relationship to workflow pipelines:**
 
-`nimbus run <path>` and `nimbus workflow run <name>` share the same execution engine. The distinction is entry point only: `run` accepts a file path for ad-hoc execution; `workflow run` resolves a saved named pipeline from `~/.config/nimbus/workflows/`.
+`nimbus run <path>` and `nimbus workflow run <name>` share the same execution engine. The distinction is entry point only: `run` accepts a file path for ad-hoc execution; `workflow run` resolves a saved named pipeline from the local index's `workflow` table (V9), saved via `nimbus workflow save`.
 
 ```bash
-nimbus workflow save ./weekly-cleanup.yml --name weekly-cleanup
+nimbus workflow save weekly-cleanup --file ./weekly-cleanup.yml
 ```
 
 ### Memory Layer
@@ -999,7 +1001,7 @@ The multi-agent system extends the single-agent cognitive loop with a **Coordina
 | Max sub-agent recursion depth | `NIMBUS_MAX_AGENT_DEPTH` | `3` |
 | Max total tool calls per session | `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | `20` |
 
-Exceeding either limit emits the `agent.gasLimitReached` IPC notification and halts further decomposition. In-flight sub-agents complete their current step before halting.
+Both limits are checked in `AgentCoordinator.run` *before* any sub-task is dispatched: exceeding either throws (`Agent depth limit reached: …` / `Tool call limit reached: …`) and halts decomposition, so no sub-agent for that batch starts. The `agent.gasLimitReached` IPC notification is reserved and not yet emitted by any code path.
 
 ### Voice Interface and Rich TUI
 
@@ -1048,7 +1050,7 @@ The feature is gated by `[automation].graph_conditions = true` in `nimbus.toml`
 
 - **Read-only** — no write tools in scope. The HITL gate exists in the executor regardless, but a built-in agent never reaches it because its tool scope contains no write actions.
 - **Local-first** — runs entirely from indexed data; no live API calls during a request, no remote LLM dependency for the deterministic fallback path.
-- **Parallel decomposition** — uses `AgentCoordinator.executeAll` to fan out to independent sub-agents, each with an isolated tool scope. Tool-scope restriction is enforced at the dispatcher; sub-agents cannot call tools outside their declared scope.
+- **Parallel decomposition** — uses `AgentCoordinator.run` to fan out to independent sub-agents, each with an isolated tool scope. Tool-scope restriction is enforced at the dispatcher; sub-agents cannot call tools outside their declared scope.
 - **HITL-free** — if a sub-agent encounters a HITL-required tool it skips it and notes the omission in output. Built-in agents never wait on consent.
 - **Notification contract** — each agent emits exactly one `<agentName>.briefReady { sessionId, brief: string }` IPC notification on completion. `brief` is always Markdown.
 - **CLI surface** — every agent has a matching command in `packages/cli/src/commands/` that streams the `briefReady` notification and renders to stdout, respecting `NO_COLOR`.
@@ -1089,7 +1091,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 
 The phases beyond Phase 5 each introduce subsystems that **extend, not replace**, the Phase 4 multi-agent + connector-mesh foundation: no new Gateway IPC transport, no new process model. New work surfaces as new item types + new connectors + new built-in agents that follow the existing patterns ([Built-in Agents Pattern](#built-in-agents-pattern), [Connector Tool Contract](#connector-tool-contract)).
 
-Phase 6 (Team) is ✅ complete (2026-06-18); its subsystems live under `packages/gateway/src/`: **federation + identity** (Slices 1 & 3, shipped 2026-06-05), **team-vault + quorum HITL** (Slice 2, shipped 2026-06-07), **org policy + admin console + observability + GDPR purge** (Slice 4, shipped 2026-06-07), **chatops** (Slice 5, shipped 2026-06-09), **cross-colleague intelligence — ghost/conflicts/huddle agents + V38 known-namespaces cache** (Slice 6a, shipped 2026-06-11), **federated action requests — cloud janitor + blast-radius preflight** (Slice 6b, shipped 2026-06-12; invariant `I24` / static `D18`, `federation/preflight-gate.ts`), and **tribal-knowledge extraction — repeat-question detection + owner-HITL KB capture** (Slice 6c, shipped 2026-06-12; invariant `I25` / static `D19`, `tribal/tribal-write-gate.ts`, V39 `tribal_clusters` ledger), and **data-warehouse/BI connectors + cross-warehouse lineage** (Slice 7 Wave 7a, shipped 2026-06-13; Snowflake/Tableau/Looker/Power BI/Monte Carlo/Bigeye read-only connectors feeding V40 `graph_relation_type` lineage edges — `derived_from`/`upstream_refs`/`monitors`), and **share & virality** (Slice 8, shipped 2026-06-15 → 2026-06-18): an outbound share leaves the machine only through `share/share-gate.ts` `createShare()` — default + caller redaction applied, the LOCAL owner approves the exact redacted preview via the `share.publish` HITL action, the body is signed with the Vault-only `share.signing.privkey` keypair (`share/share-keypair.ts`), and the record is persisted to the V41 `share_records` ledger (invariant `I27` / static `D21`); Slice 8b adds declarative-recipe shares (`--as-recipe`) backed by the V42 `tool_call_log.params_json` column, Slice 8c adds read-only local replay (`nimbus verify-share --replay`), and Slice 8d adds peer-to-peer forwarding with an immutable provenance hop-chain into the inert V43 `share_inbox` (`share/share-forward.ts`, `D21` extended). **Slice 9** (the deferred-from-Phase-5 backlog, 2026-06-14 → 2026-07-19) added the Mendeley, Workday, and Apple Mail/iCloud-Calendar connectors, the HITL-gated ArgoCD/Flux/MLflow writes (`I26`/`D20`), and the web-clipper surface under `clips/` (invariant `I30`). Post-phase, the always-on **egress ledger** (`egress/`, invariant `I29` / static `D22`, V44 `egress_ledger`) opened Spine slot S1, joined by **research briefs** (`briefs/`) — an owner-triggered multi-source research pass over the local index: in-memory-only run state (`BriefRunController`; source bodies never touch disk, a restart drops in-flight runs), citation-validated synthesis (`brief-synthesis.ts` + `quote-verify.ts`, typed `synthesis: { model, remote, disclosure? }` provenance), and saved reports as `nimbus:research_brief` items (joining `PROSE_HEAVY_TYPES`); default-off via `[briefs]` in `nimbus.toml`, no new invariant, no migration — see [`roadmap.md`](./roadmap.md#active). The **`teamvault/`** subsystem owns the team-scoped credential storage and access control (`TeamVaultStore`, `team-vault-keys.ts`, `federation/invoke-gate.ts`); the **`chatops/`** subsystem owns the bidirectional Slack/Teams `@nimbus` bot surfaces (`identity-mapper.ts`, `command-parser.ts`, `reply-dispatcher.ts`, transports). The **`policy/`** subsystem owns the signed `nimbus.policy.toml` lifecycle — schema+parser, Ed25519 sign/verify over canonical bytes, the `PolicyStore`, and the `PolicyGate` that resolves a monotonic-stricter `EnforcedPolicy` (tighten-only, fail-closed to the last-valid/baseline; invariant `I22`, static `D16`) feeding connector-allowlist / retention-floor / quorum-HITL enforcement, peer distribution (`federation.policy` serve + pubkey pinning + `nimbus policy trust`), the audit-log shipper, and GDPR purge (orchestration + HITL-gated `federation.purge` serve + signed deletion records). The **`status/`** subsystem produces a `GatewayStatus` snapshot and its Prometheus exposition (`GET /metrics`), surfaced through the dependency-free static admin console in **`packages/admin-console`** (served at `/admin/*`). The Phase 6 breakdown and its acceptance criteria live in **[`roadmap.md` § Phase 6 — Team](./roadmap.md#phase-6-team)**; the per-phase breakdown and links to each canonical design spec for forward-looking phases live in **[`roadmap.md` § Planned](./roadmap.md#planned)** (Phases 7–17) — that's the single source of truth for forward-looking scope, so it isn't duplicated here. In brief: Phase 7 (Engineering Excellence — service catalog, DORA, `nimbus excellence`), 8 (Security Engineering — `security_finding` / `posture_finding` / four agents), 9 (AI Engineering Loop — `llm_trace` / `ml_model` / `vector_index`), 10 (Autonomous Agent — standing approvals, scheduled workflows), 11 (Sovereign Mesh), 12 (Enterprise), 13 (Desktop Distribution), 14 (Agent Evolution / AI v2 — multimodal + code-exec sandbox), 15 (Cross-Organizational Federation), 16 (The Platform Layer — fleet config-as-code, paved roads, lead's-eye intelligence), 17 (The On-Call Copilot — predict/understand/mitigate/coordinate). Plus cross-phase North-Star capabilities + a near-term First-Run/Time-to-Wow initiative (incl. `nimbus demo`) + the killer-demo milestone.
+Phase 6 (Team) is ✅ complete (2026-06-18); its subsystems live under `packages/gateway/src/`: **federation + identity** (Slices 1 & 3, shipped 2026-06-05), **team-vault + quorum HITL** (Slice 2, shipped 2026-06-07), **org policy + admin console + observability + GDPR purge** (Slice 4, shipped 2026-06-07), **chatops** (Slice 5, shipped 2026-06-09), **cross-colleague intelligence — ghost/conflicts/huddle agents + V38 known-namespaces cache** (Slice 6a, shipped 2026-06-11), **federated action requests — cloud janitor + blast-radius preflight** (Slice 6b, shipped 2026-06-12; invariant `I24` / static `D18`, `federation/preflight-gate.ts`), and **tribal-knowledge extraction — repeat-question detection + owner-HITL KB capture** (Slice 6c, shipped 2026-06-12; invariant `I25` / static `D19`, `tribal/tribal-write-gate.ts`, V39 `tribal_clusters` ledger), and **data-warehouse/BI connectors + cross-warehouse lineage** (Slice 7 Wave 7a, shipped 2026-06-13; Snowflake/Tableau/Looker/Power BI/Monte Carlo/Bigeye read-only connectors feeding V40 `graph_relation_type` lineage edges — `derived_from`/`upstream_refs`/`monitors`), and **share & virality** (Slice 8, shipped 2026-06-15 → 2026-06-18): an outbound share leaves the machine only through `share/share-gate.ts` `createShare()` — default + caller redaction applied, the LOCAL owner approves the exact redacted preview via the `share.publish` HITL action, the body is signed with the Vault-only `share.signing.privkey` keypair (`share/share-keypair.ts`), and the record is persisted to the V41 `share_records` ledger (invariant `I27` / static `D21`); Slice 8b adds declarative-recipe shares (`--as-recipe`) backed by the V42 `tool_call_log.params_json` column, Slice 8c adds read-only local replay (`nimbus verify-share --replay`), and Slice 8d adds peer-to-peer forwarding with an immutable provenance hop-chain into the inert V43 `share_inbox` (`share/share-forward.ts`, `D21` extended). **Slice 9** (the deferred-from-Phase-5 backlog, 2026-06-14 → 2026-07-19) added the Mendeley, Workday, and Apple Mail/iCloud-Calendar connectors, the HITL-gated ArgoCD/Flux/MLflow writes (`I26`/`D20`), and the web-clipper surface under `clips/` (invariant `I30`). Post-phase, the always-on **egress ledger** (`egress/`, invariant `I29` / static `D22`, V44 `egress_ledger`) opened Spine slot S1, joined by **research briefs** (`briefs/`) — an owner-triggered multi-source research pass over the local index: in-memory-only run state (`BriefRunController`; source bodies never touch disk, a restart drops in-flight runs), citation-validated synthesis (`brief-synthesis.ts` + `quote-verify.ts`, typed `synthesis: { model, remote, disclosure? }` provenance), and saved reports as `nimbus:research_brief` items (joining `PROSE_HEAVY_TYPES`); default-off via `[briefs]` in `nimbus.toml`, no new invariant, no migration — see [`roadmap.md`](./roadmap.md#active). The **`teamvault/`** subsystem owns the team-scoped credential storage and access control (`TeamVaultStore`, `team-vault-keys.ts`, `federation/invoke-gate.ts`); the **`chatops/`** subsystem owns the bidirectional Slack/Teams `@nimbus` bot surfaces (`identity-mapper.ts`, `command-parser.ts`, `reply-dispatcher.ts`, transports). The **`policy/`** subsystem owns the signed `nimbus.policy.toml` lifecycle — schema+parser, Ed25519 sign/verify over canonical bytes, the `PolicyStore`, and the `PolicyGate` that resolves a monotonic-stricter `EnforcedPolicy` (tighten-only, fail-closed to the last-valid/baseline; invariant `I22`, static `D16`) feeding connector-allowlist / retention-floor / quorum-HITL enforcement, peer distribution (`federation.policy` serve + pubkey pinning + `nimbus policy trust`), the audit-log shipper, and GDPR purge (orchestration + HITL-gated `federation.purge` serve + signed deletion records). The **`status/`** subsystem produces a `GatewayStatus` snapshot and its Prometheus exposition (`GET /metrics`), surfaced through the dependency-free static admin console in **`packages/admin-console`** (served at `/admin/*`). The Phase 6 breakdown and its acceptance criteria live in **[`roadmap.md` § Phase 6 — Team](./roadmap.md#phase-6-team)**; the per-phase breakdown and links to each canonical design spec for forward-looking phases live in **[`roadmap.md` § Planned](./roadmap.md#planned)** (Phases 7–27) — that's the single source of truth for forward-looking scope, so it isn't duplicated here. In brief: Phase 7 (Engineering Excellence — service catalog, DORA, `nimbus excellence`), 8 (Security Engineering — `security_finding` / `posture_finding` / four agents), 9 (AI Engineering Loop — `llm_trace` / `ml_model` / `vector_index`), 10 (Autonomous Agent — standing approvals, scheduled workflows), 11 (Sovereign Mesh), 12 (Enterprise), 13 (Desktop Distribution), 14 (Agent Evolution / AI v2 — multimodal + code-exec sandbox), 15 (Cross-Organizational Federation), 16 (The Platform Layer — fleet config-as-code, paved roads, lead's-eye intelligence), 17 (The On-Call Copilot — predict/understand/mitigate/coordinate), 18 (Vertical Personas), 19 (Ambient Surfaces), 20 (Personal & Household Federation), 21 (Sovereign Trust Substrate), 22 (The Proof Layer — verifiable negatives), 23 (Inert to Injection — the unexfiltratable agent), 24 (Agent Archaeology), 25 (Confidential Mesh Compute), 26 (Provable Governance), 27 (The Agent Society). Plus cross-phase North-Star capabilities + a near-term First-Run/Time-to-Wow initiative (incl. `nimbus demo`) + the killer-demo milestone.
 
 ---
 
@@ -1242,9 +1244,9 @@ const streamReq: JSONRPCRequest = {
 //   federation.auditExport (audit-log shipper), federation.purge (HITL-gated serve + signed deletion record)
 //
 // Phase 6 Slice 2 surfaces — Team Vault + Quorum HITL:
-// team.vault.{put,delete,grant,revoke,list} — team-scoped credentials (put/delete HITL-gated, grant/revoke/list; I19); local-only (I5)
-// team.{invoke, askInvoke, quorumRespond, approvalRespond, delegate, delegations, approve, deny} — federated invoke + HITL (I20, I21)
-// hitl.* — quorum/delegation management (local-only; I5)
+// teamvault.{put,delete,grant,revoke,list} — team-scoped credentials (put/delete HITL-gated, grant/revoke/list; I19); local-only (I5)
+// federation.{invoke, askInvoke, quorumRespond, approvalRespond, requestApproval} — federated invoke + HITL (I20, I21)
+// hitl.{delegate, revokeDelegation, listDelegations, pendingQueue} — quorum/delegation management (local-only; I5)
 //
 // Phase 6 Slice 5 surfaces — ChatOps (Slack/Teams bot):
 // chatops.{status, start, stop, test} — bidirectional `@nimbus` bot (I23; CLI-only for start/stop/test; status only renderer-readable)
@@ -1260,7 +1262,7 @@ const streamReq: JSONRPCRequest = {
 // share.get          — retrieve a single share record (read; renderer-exposed)
 // share.pubkey       — return the gateway's share signing pubkey (read; renderer-exposed)
 // share.prune        — prune expired share records (CLI-only; FORBIDDEN_OVER_LAN)
-// share.approvalRespond — owner HITL response for share.publish (local; renderer-exposed)
+// share.approvalRespond — owner HITL response for share.publish (local/CLI-only; FORBIDDEN_OVER_LAN, NOT in Tauri ALLOWED_METHODS)
 // share.replay       — re-run a share's read-only tool calls locally; divergence report (8c)
 // share.inbox        — list inbound forwarded shares from share_inbox (read; renderer-exposed; 8d)
 // federation.shareForward  — asker-side trigger to forward a share to a peer (local-only; FORBIDDEN_OVER_LAN; 8d)
@@ -1397,7 +1399,6 @@ Embedding storage is the dominant on-disk cost at scale: each item contributes o
 | Updater state machine *(Phase 4 WS4)* | ≥80% |
 | LAN server + crypto *(Phase 4 WS4)* | ≥80% |
 | Perf bench harness *(Phase 4 B2)* | ≥80% |
-| `@nimbus-dev/sdk` | ≥80% |
 | UI (Vitest, separate runner) *(Phase 4 WS5-A)* | ≥80% lines / ≥75% branches |
 | Built-in agents (`agents/`) *(Phase 5 T3)* | ≥80% |
 
@@ -1405,11 +1406,11 @@ PRs that drop below threshold are blocked when checks are required.
 
 **CI breakdown:**
 
-- **PR (Ubuntu only, three parallel jobs):** `pr-quality-ts` (typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when Rust files change); `pr-quality-duplication` (jscpd token scan).
+- **PR (five parallel jobs, aggregated by `pr-quality-required`):** `pr-quality-ts` (ubuntu-24.04 — typecheck → Biome → build → unit + integration + e2e + coverage gates → Vitest UI, via reusable `_test-suite.yml`); `pr-quality-rust` (ubuntu-24.04 — Rust fmt/clippy/build for `packages/ui/src-tauri`, runs only when Rust files change); `pr-quality-cross-platform` (macos-15 + windows-2025, matrix narrowed by the `filter` job); `pr-quality-duplication` (jscpd token scan); `pr-quality-structure` (`_structure.yml`).
 - **PR opt-in:** E2E Desktop (Playwright + Tauri WebDriver) when the PR carries the `ci:e2e-desktop` label and UI/SDK files changed.
 - **Push to `main`/`develop` (full 3-platform matrix):** `ci-ts` and `ci-rust` run the same suites on `ubuntu-24.04`, `macos-15`, `windows-2025` in parallel.
 - **Push to `main` only:** E2E Desktop on the full 3-platform matrix, after `ci-ts` and `ci-rust` succeed.
-- **Reusable workflows under `.github/workflows/`:** `_test-suite.yml` (unit + coverage + integration + e2e + UI, parameterized by runner), `_perf.yml` / `_perf-reference.yml` (B2 perf benches), `_structure.yml` (boundaries + any-count + Nimbus invariants — not yet wired into `ci.yml`; see CLAUDE.md).
+- **Reusable workflows under `.github/workflows/`:** `_test-suite.yml` (unit + coverage + integration + e2e + UI, parameterized by runner), `_perf.yml` / `_perf-reference.yml` (B2 perf benches), `_structure.yml` (boundaries + any-count + Nimbus invariants — wired into `ci.yml` as `pr-quality-structure` on PRs and `ci-structure` on pushes).
 
 **Security scans:** `bun audit` + `trivy` on every PR and nightly; `CodeQL` static analysis; Dependabot for dependency updates. HIGH/CRITICAL findings block merges.
 
@@ -1423,7 +1424,7 @@ Every structural defense Nimbus relies on is documented as a **security invarian
 
 This pairing exists because the B1 audit (Phase 4 internal audit, 2026-04-25) found that several defenses (`extensionProcessEnv`, `checkLanMethodAllowed`, the `<tool_output>` envelope) were **defined in code but had zero production callers** — orphaned helpers that documentation continued to claim as active. The invariants file + enforcement test are how that gap is prevented from recurring: if a defense has no caller, the test fails.
 
-B1 produced 78 unique findings (no Critical) across 8 trust surfaces; all High and Medium items have been closed. Three Low findings remain scoped to Phase 4 as pre-`v0.1.0` blockers — Tauri-native file picker for `data.import` (S4-F6), profile-switch broadcast refactor (S4-F8), and updater production wiring (S6-F1) — and are tracked in [`docs/roadmap.md`](./roadmap.md#security-audit-follow-ups-b1). The audit summary, Vault threat surface, LAN trust model, and acknowledged residual risks live in [`docs/SECURITY.md`](./SECURITY.md#security-audits).
+B1 produced 78 unique findings (no Critical) across 8 trust surfaces; all High and Medium items have been closed. Two Low findings remain — Tauri-native file picker for `data.import` (S4-F6) and the profile-switch broadcast refactor (S4-F8) — deferred to Phase 13 alongside the desktop release vehicle; the third (updater production wiring, S6-F1) closed in `v0.1.0`. They are tracked in [`docs/roadmap.md`](./roadmap.md#security-audit-follow-ups-b1). The audit summary, Vault threat surface, LAN trust model, and acknowledged residual risks live in [`docs/SECURITY.md`](./SECURITY.md#security-audits).
 
 A new structural defense lands as a *triple*: the production wiring, an entry in the invariants file, and an assertion in the test. If any of the three is missing, the defense is not yet real.
 
@@ -1461,7 +1462,7 @@ nimbus/
 │   ├── gateway/
 │   │   └── src/
 │   │       ├── platform/       ← PAL: win32.ts, darwin.ts, linux.ts
-│   │       ├── engine/         ← Mastra agent, router, planner, HITL gate, script runner,
+│   │       ├── engine/         ← Mastra agent, router, planner, HITL gate,
 │   │       │                      coordinator (parallel sub-agent dispatch), sub-agent
 │   │       ├── agents/         ← Built-in read-only agents: expert/impact/catchup (Phase 5 T3),
 │   │       │                      ghost/conflicts/huddle (Phase 6 Slice 6a), janitor/preflight
@@ -1493,9 +1494,15 @@ nimbus/
 │   │
 │   ├── cli/
 │   │   └── src/
-│   │       ├── commands/       ← ask, search, query, config, profile, diag, doctor,
-│   │       │                      db, telemetry, connector, extension, workflow, status, serve, docs,
-│   │       │                      data, audit, lan, update, bench, tui, repl, expert (Phase 5 T3)
+│   │       ├── commands/       ← the `COMMAND_NAMES` registry (registry.ts): admin, ask, audit,
+│   │       │                      bench, catchup, chatops, clip, config, conflicts, connector,
+│   │       │                      data, db, deploy, diag, doctor, egress, expert, extension,
+│   │       │                      ghost, glossary, help, huddle, identity, impact, index, init,
+│   │       │                      janitor, lan, llm, mcp-server, metrics, people, policy,
+│   │       │                      preflight, profile, prove, query, repl, run, scaffold, scim,
+│   │       │                      search, security, serve, session, share, start, status, stop,
+│   │       │                      team, telemetry, test, tribal, tui, update, vault, verify-share,
+│   │       │                      watch, why, workflow
 │   │       ├── tui/            ← Ink-based rich TUI (Phase 4 WS6)
 │   │       └── ipc-client/     ← JSON-RPC client + consent channel (terminal)
 │   │                              (re-exports IPCClient/MockClient/NimbusClient from
@@ -1514,9 +1521,12 @@ nimbus/
 │   ├── ui/                     ← Tauri 2.0 desktop app (Phase 4)
 │   │   ├── src-tauri/          ← Rust shell
 │   │   └── src/
-│   │       ├── components/     ← ConsentDialog, ConnectorCard, ExtensionMarketplace, …
+│   │       ├── components/     ← chrome/, dashboard/, hitl/, settings/, updater/, watchers/,
+│   │       │                      workflows/ + GatewayOfflineBanner, HotkeyFailedBanner,
+│   │       │                      PendingUpdates
 │   │       ├── ipc/            ← Gateway IPC client for WebView
-│   │       └── pages/          ← Dashboard, Search, Marketplace, Settings, AuditLog
+│   │       └── pages/          ← Dashboard, HitlPopup, Marketplace, Onboarding, QuickQuery,
+│   │                              Settings, Watchers, Workflows
 │   │
 │   │   (the VS Code / Open VSX extension was extracted to its own repo,
 │   │    nimbus-agent/nimbus-vscode — it consumes the published
@@ -1554,15 +1564,19 @@ nimbus/
 │   │   ├── newrelic/
 │   │   └── datadog/
 │   │
-│   └── sdk/                    ← @nimbus-dev/sdk (npm, MIT-licensed)
-│       └── src/
-│           ├── server.ts       ← NimbusExtensionServer
-│           ├── types.ts        ← NimbusItem, NimbusVault, permission types
-│           └── testing/        ← MockGateway for extension unit tests
+│   │   (@nimbus-dev/sdk — NimbusExtensionServer, NimbusItem/NimbusVault types,
+│   │    MockGateway testing helpers — was extracted to its own repo,
+│   │    nimbus-agent/nimbus-sdk (npm, MIT). mcp-connectors/* consume it as a
+│   │    published npm dependency; it releases independently of the Gateway.)
+│   │
+│   ├── admin-console/          ← dependency-free static admin console (served at /admin/*)
+│   └── github-actions/         ← first-party GitHub Actions (annotate-action, preflight-query);
+│                                  tracked, intentionally NOT workspace members
 │
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml              ← PR (ts + rust + duplication) + push (3-OS matrix) + E2E Desktop
+│   │   ├── ci.yml              ← PR (ts + rust + cross-platform + duplication + structure)
+│   │   │                          + push (3-OS matrix) + E2E Desktop
 │   │   ├── _test-suite.yml     ← reusable: unit + coverage gates + integration + e2e + UI
 │   │   ├── _perf.yml           ← reusable: B2 perf benches (matrix runners)
 │   │   ├── _perf-reference.yml ← reusable: reference-machine perf bench

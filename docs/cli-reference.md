@@ -12,14 +12,14 @@ Complete reference for all `nimbus` commands. For installation see [`README.md`]
 
 ## Global Flags
 
-These flags are accepted by every command.
+These flags are accepted by most commands, which silently ignore any dash-argument they do not define. Five surfaces are the exception and hard-reject an unrecognised flag: `nimbus search` (throws on any argument starting with `-`), `nimbus glossary`, `nimbus update` (which rejects anything other than `--check` / `--yes` / `-y`), `nimbus deploy annotate`, and `nimbus tribal capture`.
 
 | Flag | Description |
 |---|---|
 | `--help`, `-h` | Print command help and exit |
 | `--version`, `-v` | Print Nimbus version and exit |
-| `--no-color` | Disable ANSI colour output |
-| `--json` | Machine-readable JSON output (where supported) |
+| `NO_COLOR` (env var, not a flag) | Disable ANSI colour output. There is no `--no-color` flag. |
+| `--json` | Machine-readable JSON output — **per-command**, not global. Only the commands whose Options table lists it change their output; anywhere else it is silently ignored (top level, `--json` only suppresses the interactive banner). |
 
 ---
 
@@ -100,8 +100,9 @@ Show Gateway status and connector health.
 nimbus status
 nimbus status --verbose         # Per-connector item counts, p95 query latency, health lines
 nimbus status --drift           # Include IaC drift hints alongside status
-nimbus status --json
 ```
+
+`nimbus status` reads only `--verbose` and `--drift`; there is no JSON output mode.
 
 **Output includes:** Gateway PID, uptime, active profile, total indexed items, agent limits (`depth=N  tool-calls/session=N`), connector list with health state (`healthy` / `degraded` / `error` / `rate_limited` / `unauthenticated` / `paused`).
 
@@ -134,30 +135,28 @@ For a richer interactive experience — live connector health, sub-task progress
 
 ### `nimbus search`
 
-Fast structured search over the local index. Answers come from the SQLite metadata index — no cloud call is made unless `--live` is passed.
+Fast structured search over the local index. Answers always come from the SQLite metadata index — no cloud call is ever made. The query is positional; results are printed as JSON.
 
 ```bash
-nimbus search --service google_drive --type pdf --since 30d
-nimbus search --service github --type pr --state open
-nimbus search --service slack --query "payment-service incident" --since 7d
-nimbus search --semantic "quarterly review documents"    # Semantic/vector search
-nimbus search --service linear --type issue --assignee me
+nimbus search "quarterly review documents"
+nimbus search "payment-service incident" --service slack --limit 50
+nimbus search "design doc" --service google_drive --type pdf
+nimbus search "flaky test" --keyword-only            # BM25 only, no vector ranking
 ```
 
 **Options:**
 
 | Flag | Description |
 |---|---|
-| `--service <name>` | Filter by connector (e.g. `github`, `google_drive`, `slack`) |
-| `--type <type>` | Item type (`pr`, `issue`, `file`, `email`, `message`, `pipeline_run`, …) |
-| `--since <duration>` | Time filter — e.g. `7d`, `2w`, `1m`, `2026-01-01` |
-| `--until <duration>` | Upper time bound |
-| `--state <state>` | Item state (e.g. `open`, `closed`, `merged`) |
-| `--assignee <handle>` | Filter by assignee handle or `me` |
-| `--query <text>` | Full-text search term |
-| `--semantic <text>` | Vector/semantic search (uses local embedding model) |
-| `--limit <n>` | Maximum results (default: 20) |
-| `--json` | JSON output |
+| `--service <name>`, `-s` | Filter by connector (e.g. `github`, `google_drive`, `slack`) |
+| `--type <type>`, `-t` | Item type (`pr`, `issue`, `file`, `email`, `message`, `pipeline_run`, …) |
+| `--semantic` | *(default)* Vector/semantic ranking — already on, so passing this changes nothing |
+| `--no-semantic`, `--keyword-only` | Turn semantic ranking off; keyword (BM25) results only |
+| `--limit <n>`, `-n` | Maximum results (1–500, default: 20) |
+
+> **No other flags are accepted.** `nimbus search` throws `Unknown flag: <arg>` on any argument starting with `-` that is not in the table above — including `--help`, `--json`, `--since` and `--state`. (It is not alone: `nimbus glossary`, `nimbus update`, `nimbus deploy annotate` and `nimbus tribal capture` reject unknown flags too. Most other commands ignore them.) Time, state and assignee filtering are not available here; use [`nimbus query`](#nimbus-query) for `--since`, or raw SQL via `nimbus query --sql`.
+>
+> If the embedding model is still warming up, a semantic search falls back to keyword-only for that call and prints a note on stderr.
 
 ---
 
@@ -168,7 +167,7 @@ Structured index query with explicit filters or raw SQL. Intended for scripting 
 ```bash
 nimbus query --service github --type pr --since 7d
 nimbus query --service linear --type issue --since 14d --json
-nimbus query --sql "SELECT title, url FROM items WHERE pinned = 1" --pretty
+nimbus query --sql "SELECT title, url FROM item WHERE pinned = 1" --pretty
 nimbus query --service pagerduty --type alert --since 1d --json | jq '.[] | .title'
 ```
 
@@ -178,26 +177,31 @@ nimbus query --service pagerduty --type alert --since 1d --json | jq '.[] | .tit
 |---|---|
 | `--service <name>` | Filter by connector |
 | `--type <type>` | Item type |
-| `--since <duration>` | Lower time bound |
-| `--until <duration>` | Upper time bound |
-| `--pinned` | Only pinned items |
+| `--since <duration>` | Lower time bound (`7d`, `24h`, `30m`, `2w`, …) |
 | `--sql <query>` | Raw read-only SQL (SELECT only; DML is blocked) |
 | `--pretty` | Pretty-print table output |
 | `--json` | JSON array output |
-| `--limit <n>` | Max rows (default: 50) |
+| `--limit <n>` | Max rows (default: 50, capped at 1000) |
 
+`--service` is required unless `--sql` is used.
+
+> **Unknown flags are ignored, not rejected.** `nimbus query` scans for the flags above and ignores anything else it finds, so a typo or an invented filter fails silently rather than erroring. (`nimbus search` behaves the opposite way — it throws on any flag it does not define.)
+>
 > **Security note:** `--sql` is guarded — only `SELECT` statements are allowed. Any `INSERT`, `UPDATE`, `DELETE`, or DDL is rejected before execution.
 
 ---
 
 ### `nimbus run`
 
-Execute a YAML script file as a single agent session. All steps use the same engine as `nimbus ask`. Steps requiring HITL are identified in a preview before any execution begins.
+Execute a YAML script file as a single agent session. All steps use the same engine as `nimbus ask`. A plain `nimbus run` executes straight away — there is no preview step and no "proceed?" confirmation; HITL gates fire inline as each step reaches them. A preview is opt-in via `--dry-run` or `--no-ttv`.
 
 ```bash
 nimbus run ./weekly-cleanup.yml
-nimbus run ./deploy.yml --no-ttv          # Dry-run / preview only, no consent prompts
+nimbus run ./deploy.yml --dry-run         # Preview only — no step executes
+nimbus run ./deploy.yml --no-ttv          # Preview first, abort if any step is flagged HITL; otherwise run
 ```
+
+`--no-ttv` is the unattended-safety flag, not a dry run: the CLI asks for a dry-run preview, and if any step's `hitlActions` is non-empty it throws `Workflow steps may require human approval (HITL). …` and nothing executes. If nothing is flagged, the workflow runs for real. `--agent nimbus|devops|research` selects the agent profile.
 
 **Script format:**
 
@@ -590,7 +594,7 @@ nimbus deploy annotate \
 | `--job-id <id>` | CI job identifier within the run |
 | `--json` | Machine-readable JSON output |
 
-**HTTP write surface:** internally this routes through `POST /v1/deployments` on the local HTTP API, which is the **only** write route the HTTP server accepts (invariant `I13`). Bearer auth, an 8 KiB body cap, and per-token rate limiting all apply; every rejection is recorded as a `deployment.annotation_rejected` audit row.
+**HTTP write surface:** internally this routes through `POST /v1/deployments` on the local HTTP API — one of the twelve routes on the compile-time `WRITE_ROUTE_ALLOWLIST` (invariant `I13`: allowlist + bearer auth + per-token rate limit + audit-on-rejection). Any write to a non-allowlisted route is rejected. For this route an 8 KiB body cap applies, and every rejection is recorded as a `deployment.annotation_rejected` audit row.
 
 **Required vault key:**
 
@@ -873,7 +877,6 @@ List all connectors and their current health state.
 
 ```bash
 nimbus connector list
-nimbus connector list --json
 ```
 
 **Health states:** `healthy` · `degraded` · `error` · `rate_limited` · `unauthenticated` · `paused`
@@ -886,8 +889,10 @@ Show detailed status for a single connector.
 
 ```bash
 nimbus connector status github
-nimbus connector status github --json
+nimbus connector status github --stats   # Attach the 15 most recent sync-telemetry rows
 ```
+
+Output is always JSON; `--stats` is the only flag read.
 
 ---
 
@@ -913,12 +918,13 @@ nimbus connector resume github
 
 ---
 
-### `nimbus connector set-interval <name> <seconds>`
+### `nimbus connector set-interval <name> <duration>`
 
-Override the sync interval for a connector.
+Override the sync interval for a connector. The duration is unit-suffixed (`ms`, `s`, `m`, `h`) — a bare number is rejected with `Invalid duration "300" (use e.g. 5m, 1h, 30s)`.
 
 ```bash
-nimbus connector set-interval github 300
+nimbus connector set-interval github 5m
+nimbus connector set-interval google_drive 1h
 ```
 
 ---
@@ -930,19 +936,21 @@ Show the health transition history for a connector — useful for diagnosing fla
 ```bash
 nimbus connector history github
 nimbus connector history github --limit 50
-nimbus connector history github --json
 ```
+
+Output is always JSON.
 
 ---
 
 ### `nimbus connector remove <name>`
 
-Remove a connector: deletes all associated Vault entries and index rows atomically. Irreversible — requires confirmation.
+Remove a connector: deletes all associated Vault entries and index rows atomically.
 
 ```bash
 nimbus connector remove github
-nimbus connector remove github --yes    # Skip confirmation
 ```
+
+> **Irreversible and unprompted.** There is no confirmation step and no `--yes` flag — the command sends `connector.remove` as soon as it is invoked, and prints the number of index rows deleted plus the Vault keys it cleared. Take a snapshot first (`nimbus db snapshot`) if you may want the index rows back.
 
 ---
 
@@ -976,10 +984,11 @@ Output reports the resolved mode and the number of items affected. The depth is 
 Read a single configuration value.
 
 ```bash
-nimbus config get sync.intervalSeconds
 nimbus config get telemetry.enabled
 nimbus config get llm.remote_model
 ```
+
+There is no TOML key for sync cadence — per-connector intervals are set with `nimbus connector set-interval <service> <duration>`, which writes to the index, not to `nimbus.toml`.
 
 ---
 
@@ -988,7 +997,6 @@ nimbus config get llm.remote_model
 Set a configuration value. Changes take effect on the next Gateway restart for Gateway-owned keys; CLI-only keys take effect immediately.
 
 ```bash
-nimbus config set sync.intervalSeconds 300
 nimbus config set telemetry.enabled false
 nimbus config set llm.remote_model      claude-sonnet-4-6
 nimbus config set llm.classifier_model  claude-haiku-4-5-20251001
@@ -1002,11 +1010,10 @@ The provider is inferred from the model id: `claude-*` → Anthropic, `gpt-*` / 
 
 ### `nimbus config list`
 
-List all configuration keys with their current values, source (`file` / `env` / `default`), and documentation.
+Print the config file path, then a per-key line for whichever of the five env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`, `llm.remote_model`, `llm.classifier_model`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
-nimbus config list --json
 ```
 
 ---
@@ -1620,7 +1627,7 @@ The first positional non-flag argument is the query; flags may appear in any pos
 
 | Flag | Effect |
 | --- | --- |
-| `--since <dur>` | Restrict the report to events newer than the duration (`24h` / `30m` / `7d` — same grammar as `nimbus audit --since`). |
+| `--since <dur>` | Restrict the report to events newer than the duration (`24h` / `30m` / `7d` — the shared `--since` grammar, same as `nimbus query --since`; `nimbus audit` has no `--since`). |
 | `--json` | Emit the full result (rows, completeness, verify status, receipt) as JSON. |
 | `--sign` | Attach a signed attestation receipt to the report. |
 
@@ -1829,9 +1836,19 @@ nimbus serve --port 7474        # Default port: 7474
 | `GET /v1/people` | List people graph entries |
 | `GET /v1/people/:id` | Get a single person record |
 | `GET /v1/preflight/deploy` | Pre-deploy check: active P1 incidents, failing CI, merge conflicts |
-| `POST /v1/deployments` | Record a deployment annotation (bearer-auth required via `http_api.deployment_token`) |
 
-All read endpoints are `localhost`-only and use `SQLITE_OPEN_READONLY`. The `POST /v1/deployments` write surface requires bearer authentication and is rate-limited (60 req/min). There is no authentication required for read endpoints because the socket is owner-only at the OS level.
+**Write endpoints** — the complete `WRITE_ROUTE_ALLOWLIST` (invariant `I13`); every write not on this list is rejected:
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/deployments` | Record a deployment annotation (bearer `http_api.deployment_token`) |
+| `POST /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `DELETE /scim/v2/Users/{id}` | SCIM v2 provisioning (bearer `identity.scim.bearer`) |
+| `PUT /v1/admin/policy` | Admin-console org-policy write (admin bearer; signed with the Vault-only anchor key) |
+| `POST /v1/messaging/teams/events` | ChatOps Teams inbound (Bot Framework JWT validated in-route) |
+| `POST /v1/clips`, `POST /v1/clips/pair/confirm` | Web-clipper ingest and pairing confirm (invariant `I30`) |
+| `POST /v1/briefs`, `POST /v1/briefs/{id}/sources`, `POST /v1/briefs/{id}/run`, `POST /v1/briefs/{id}/save` | Research-brief create / feed source / synthesize / save (labeled clipper token) |
+
+All read endpoints are `localhost`-only and use `SQLITE_OPEN_READONLY`. Every write route carries bearer (or in-route) authentication, a per-route body cap, per-token rate limiting (60 req/min by default; `POST /v1/clips` tightens to 20), and audit-on-rejection. There is no authentication required for read endpoints because the socket is owner-only at the OS level.
 
 ---
 
@@ -1843,7 +1860,6 @@ Run non-destructive integrity checks on the local index. Safe to run at any time
 
 ```bash
 nimbus db verify
-nimbus db verify --json
 ```
 
 **Checks:** SQLite `integrity_check`, FTS5 consistency, `vec_items_384` rowid alignment, orphaned sync tokens, schema version match, foreign key integrity.
@@ -1854,12 +1870,10 @@ nimbus db verify --json
 
 ### `nimbus db repair`
 
-Run targeted recovery actions for any findings reported by `nimbus db verify`. Requires confirmation unless `--yes` is passed. Writes a structured repair report to the audit log.
+Run targeted recovery actions for any findings reported by `nimbus db verify`. Writes a structured repair report to the audit log. `--yes` is **mandatory**, not a confirmation skip: there is no interactive prompt, and without the flag the command exits with `Usage: nimbus db repair --yes`.
 
 ```bash
-nimbus db repair
-nimbus db repair --yes          # Skip confirmation
-nimbus db repair --json
+nimbus db repair --yes
 ```
 
 **Repair actions:** Delete orphaned vec rows + re-queue resync, FTS5 rebuild, delete unrecoverable rows, remove orphaned sync tokens.
@@ -1872,20 +1886,20 @@ Create a manual snapshot of the local index database.
 
 ```bash
 nimbus db snapshot
-nimbus db snapshot --label "before-migration"
 ```
 
-Snapshots are stored under `<dataDir>/backups/`.
+The command takes no arguments and prints the path of the snapshot it wrote. Snapshots are stored under `<dataDir>/snapshots/`, named `nimbus-<epoch-ms>.db.gz`. (`<dataDir>/backups/` is a different directory — it holds the automatic pre-migration backups listed by `nimbus db backups list`.)
 
 ---
 
 ### `nimbus db restore <snapshot>`
 
-Restore the index from a named snapshot. The Gateway must be stopped first.
+Restore the index from a snapshot. The Gateway must be stopped first — the command refuses to run while a live Gateway process is detected. `<snapshot>` is a `.db.gz` **path**, resolved relative to the current directory and not looked up inside the snapshots directory, so paste the path column from `nimbus db snapshots list`. `--yes` is required to actually overwrite `nimbus.db`: without it the command prints the exact `--yes` invocation and exits `0` having changed nothing.
 
 ```bash
 nimbus stop
-nimbus db restore 2026-04-15T10-30-00.snapshot
+nimbus db snapshots list
+nimbus db restore <dataDir>/snapshots/nimbus-1776249000000.db.gz --yes
 ```
 
 ---
@@ -1901,13 +1915,13 @@ nimbus db backups list
 
 ---
 
-### `nimbus db prune`
+### `nimbus db snapshots prune`
 
-Remove old snapshots and backups beyond the configured retention window. Requires confirmation unless `--yes` is passed.
+Delete old snapshots, keeping the most recent `--keep-last N` (default 7, clamped to 1–100). `--yes` is mandatory — without it the command exits with the usage line, and there is no interactive prompt. There is no `nimbus db prune`; it exits with `Unknown db subcommand: prune`. Pre-migration backups (`nimbus db backups list`) are not touched.
 
 ```bash
-nimbus db prune
-nimbus db prune --yes
+nimbus db snapshots prune --yes
+nimbus db snapshots prune --yes --keep-last 10
 ```
 
 ---
@@ -2135,10 +2149,10 @@ nimbus extension sync --json
 
 ### `nimbus scaffold extension`
 
-Scaffold a new extension package from the `@nimbus-dev/sdk` template.
+Scaffold a new extension package from the `@nimbus-dev/sdk` template. The extension id is positional and the package is always created at `./<id>/` in the current working directory — there is no `--name` or `--output` flag (`--name` would be taken as the id and create a directory literally called `--name`).
 
 ```bash
-nimbus scaffold extension --name my-connector --output ./nimbus-my-connector
+nimbus scaffold extension my-connector    # creates ./my-connector/
 ```
 
 ---
@@ -2156,13 +2170,16 @@ nimbus test ./nimbus-my-connector
 
 ## Workflows
 
-### `nimbus workflow save <path>`
+### `nimbus workflow save <name> --file <path>`
 
-Save a YAML script as a named reusable workflow pipeline.
+Save a YAML script as a named reusable workflow pipeline. The **name is positional** and the file comes from the required `--file` flag; there is no `--name` flag. If the YAML declares a different `name:`, the CLI warns and saves under the name you passed.
 
 ```bash
-nimbus workflow save ./weekly-cleanup.yml --name weekly-cleanup
+nimbus workflow save weekly-cleanup --file ./weekly-cleanup.yml
+nimbus workflow save weekly-cleanup --file ./weekly-cleanup.yml --description "Friday tidy-up"
 ```
+
+`--description <text>` overrides the description parsed from the file.
 
 ---
 
@@ -2178,11 +2195,12 @@ nimbus workflow list
 
 ### `nimbus workflow run <name>`
 
-Run a named workflow pipeline. Same engine as `nimbus run` — two-phase preview then execution; HITL gated.
+Run a named workflow pipeline. Same engine and same flags as [`nimbus run`](#nimbus-run) — it executes immediately unless a preview is asked for; HITL gated.
 
 ```bash
 nimbus workflow run weekly-cleanup
-nimbus workflow run weekly-cleanup --no-ttv     # Preview only
+nimbus workflow run weekly-cleanup --dry-run    # Preview only
+nimbus workflow run weekly-cleanup --no-ttv     # Preview first, abort if any step is flagged HITL; otherwise run
 ```
 
 ---
@@ -2393,8 +2411,10 @@ List Vault key names (never values). Keys are scoped per connector and per profi
 
 ```bash
 nimbus vault list
-nimbus vault list --profile work
+nimbus vault list github          # Only keys starting with "github"
 ```
+
+The single positional argument is the prefix filter — there is no `--profile` flag (passing one would be read as the prefix and match nothing). Profile scoping comes from `NIMBUS_PROFILE` or `nimbus profile switch`.
 
 ---
 
@@ -2417,12 +2437,11 @@ Show the local audit log. Every action the agent takes — including every HITL 
 ```bash
 nimbus audit
 nimbus audit --limit 100
-nimbus audit --service github
-nimbus audit --since 7d
-nimbus audit --json
 ```
 
-**Columns:** `timestamp`, `action`, `service`, `payload_summary`, `hitl_status` (`approved` / `rejected` / `not_required`), `result`.
+`--limit` (default 50) is the only flag parsed. There is no `--service`, `--since` or `--json` filtering here — such arguments are silently ignored, and the most recent `--limit` rows are printed as a plain table regardless.
+
+**Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required`), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
 
 ---
 
@@ -2433,8 +2452,9 @@ Verify the BLAKE3 chain integrity of the audit log. Each row stores `row_hash = 
 ```bash
 nimbus audit verify              # Verify chain since the last successful checkpoint
 nimbus audit verify --full       # Verify the entire chain from row 1
-nimbus audit verify --since 1000 # Verify forward from a specific row id
 ```
+
+`--full` is the only flag `audit verify` reads; there is no `--since` / row-id start.
 
 **Exit codes:** `0` = chain intact, `1` = break detected (output names the first broken row id and the reason — e.g. `prev_hash mismatch`, `row_hash mismatch`, `missing predecessor`).
 
@@ -2793,11 +2813,9 @@ nimbus lan remove abc123
 | `NIMBUS_AGENT_MODEL` | Override `[llm].remote_model` — model id for the conversational agent (default: `claude-sonnet-4-6`). Bare ids work; provider is inferred from `claude-*` / `gpt-*` / `o1-*` / `o3-*` / `o4-*` prefix. |
 | `NIMBUS_CLASSIFIER_MODEL` | Override `[llm].classifier_model` — Anthropic model used by the intent classifier (default: `claude-haiku-4-5-20251001`). |
 | `NIMBUS_OPENAI_CLASSIFIER_MODEL` | OpenAI model used by the classifier when only `OPENAI_API_KEY` is set (default: `gpt-4o-mini`). |
-| `NIMBUS_SYNC_INTERVAL_SECONDS` | Override `[sync].intervalSeconds` |
 | `NIMBUS_TELEMETRY_ENABLED` | Override `[telemetry].enabled` |
 | `NIMBUS_TELEMETRY_ENDPOINT` | Override `[telemetry].endpoint` |
-| `NIMBUS_DATA_DIR` | Override the platform data directory |
-| `NIMBUS_CONFIG_DIR` | Override the platform config directory |
+| `NIMBUS_CONFIG_DIR` | Override the platform config directory — **config only**. There is no data-directory override: the data directory is not relocatable by any `NIMBUS_*` variable (on Linux it follows `XDG_DATA_HOME`). |
 | `NIMBUS_PROFILE` | Set the active profile at launch |
 | `NIMBUS_EMBEDDING_MODEL_DIR` | Path to pre-downloaded MiniLM model weights (headless bundle) |
 | `NIMBUS_EMBEDDINGS` | Set to `false` to disable background embedding generation after index upserts |
@@ -2822,8 +2840,8 @@ nimbus lan remove abc123
 | Platform | IPC Socket | Config Dir | Data Dir |
 |---|---|---|---|
 | Windows 10+ | `\\.\pipe\nimbus-gateway` | `%APPDATA%\Nimbus` | `%LOCALAPPDATA%\Nimbus\data` |
-| macOS 13+ | `~/Library/Application Support/Nimbus/gateway.sock` | `~/Library/Application Support/Nimbus` | `~/Library/Application Support/Nimbus/data` |
-| Ubuntu 22.04+ | `~/.local/share/nimbus/gateway.sock` | `~/.config/nimbus` | `~/.local/share/nimbus` |
+| macOS 13+ | `$TMPDIR/nimbus-gateway.sock` | `~/Library/Application Support/Nimbus` | `~/Library/Application Support/Nimbus` (same root as the config dir — there is no `/data` segment) |
+| Ubuntu 22.04+ | `$XDG_RUNTIME_DIR/nimbus-gateway.sock` (falls back to the OS temp dir) | `~/.config/nimbus` | `~/.local/share/nimbus` |
 
 ---
 
