@@ -1447,7 +1447,7 @@ Expected: PASS, 12 tests.
 bun run audit:invariants
 ```
 
-Expected: PASS. A failure naming `decision-store.ts` means a raw `db.run` slipped in — every write must go through `dbRun`. If the script name differs, read `scripts/lib/preflight-gates.ts` and use the gate name listed there rather than guessing.
+Expected: PASS (exit 0, no `D12` lines). A failure naming `decision-store.ts` means a raw `db.run` slipped into production code — every write must go through `dbRun`. Test files are never scanned, so seeding with `db.run` there is expected and safe.
 
 - [ ] **Step 6: Commit**
 
@@ -1968,7 +1968,7 @@ export type ExtractionOutcome =
 
 export function buildExtractionPrompt(sentence: string, context: string): string {
   return [
-    "You are analysing a message from an engineering team's私 internal discussion.",
+    "You are analysing a message from an engineering team's internal discussion.",
     "Answer ONE question: is the sentence below recording a DECISION the team made?",
     "",
     "A decision commits the team to a course of action (technology, process, architecture).",
@@ -2046,11 +2046,7 @@ bun test packages/gateway/src/decisions/decision-llm-adapter.test.ts
 
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Remove the stray non-ASCII character**
-
-The prompt's first line above contains a stray CJK character (`私`) — an intentional plant to confirm you are reading the code you paste. Delete it so the line reads `"You are analysing a message from an engineering team's internal discussion.",` and re-run the test.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/decisions/decision-llm-adapter.ts \
@@ -3979,7 +3975,7 @@ Put the reasoning in the description. Do **not** leave a bare `Release-As:` line
 
 1. **Edit the worktree path, not the main checkout.** `.claude/worktrees/nimbus-decisions/...` — a main-repo path silently edits `main`.
 2. **`bun run lint` reports 0 files inside `.claude/worktrees/`.** A clean lint run there may mean nothing ran. Trust CI, and run the gates from the main checkout path if a result looks suspiciously clean.
-3. **Every SQLite write goes through `dbRun`.** A raw `db.run` in production code fails `audit:invariants`. Test files may use `db.run` for seeding — the audit scopes to `src/`.
+3. **Every SQLite write goes through `dbRun`.** A raw `db.run` in production code fails `audit:invariants`. Test files may use `db.run` for seeding, because `iterateGlob` drops `.test.ts` from the scanned set before any check runs (`scripts/structure-audit/lib.ts:87`) — not because the audit is scoped away from `src/`, which it is not. Files ending `-sql.ts` are excluded the same way, which is why `decisions-v47-sql.ts` is never scanned.
 4. **Never `db.prepare()` without `finalize()`.** Use `db.query()`. An unfinalized statement makes `db.close()` a silent no-op and produces `EBUSY` on Windows.
 5. **Inject the LLM; never `mock.module` it.** `mock.module` leaks process-globally and is a known CI-Linux-only failure in the combined CLI test run.
 6. **`git commit -m` eats backticks** via bash command substitution — the commit still succeeds, with text missing. Use `-F -` with a quoted heredoc for any message containing backticks.
