@@ -2624,7 +2624,7 @@ Create `packages/gateway/src/config/nimbus-toml-decisions.test.ts`:
 ```typescript
 import { expect, test } from "bun:test";
 
-import { parseNimbusDecisionsToml } from "./nimbus-toml-decisions.ts";
+import { parseNimbusDecisionsToml } from "./nimbus-toml.ts";
 
 test("defaults enabled and useLlm to true", () => {
   const cfg = parseNimbusDecisionsToml("");
@@ -2670,7 +2670,17 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 4: Implement, following the glossary shape**
 
-Create `nimbus-toml-decisions.ts` exporting the type, the `DEFAULT_NIMBUS_DECISIONS_TOML` literal, an `applyNimbusDecisionsKey(out, key, valRaw)` and `parseNimbusDecisionsToml`. Use the same value-coercion helpers `applyNimbusGlossaryKey` uses (bool before int — the glossary file carries a regression comment about `use_llm` being parsed as an int when the bool branch came second; do not reintroduce that bug).
+Add the whole `[decisions]` block INSIDE `packages/gateway/src/config/nimbus-toml.ts`, immediately after the `[glossary]` block (which ends with `loadNimbusGlossaryFromConfigDir`, ~line 1604). Five items:
+
+1. `export type NimbusDecisionsToml`
+2. `export const DEFAULT_NIMBUS_DECISIONS_TOML`
+3. module-private `applyNimbusDecisionsKey(out, key, valRaw)`
+4. `export function parseNimbusDecisionsToml(raw, defaults = DEFAULT_NIMBUS_DECISIONS_TOML)` — uses the file-local `forEachSectionEntry(raw, "[decisions]", ...)`
+5. `export function loadNimbusDecisionsFromConfigDir(configDir)` — mirrors `loadNimbusGlossaryFromConfigDir` via `loadTomlSection`. **Required by Task 10**, which wires the refresher in `assemble.ts` alongside `loadNimbusGlossaryFromConfigDir(paths.configDir)`.
+
+**Do not create a separate module.** `parseBool` (line 53) and `forEachSectionEntry` (line 64) are declared FILE-LOCAL in `nimbus-toml.ts` and are not exported, so a separate file cannot reach them — and exporting or duplicating them to work around that breaks the file. Every config section lives here.
+
+**Two ordering traps, not one.** Both `use_llm` AND `min_confidence` must be parsed BEFORE any integer branch. For `use_llm` the glossary file carries a regression comment about the int branch swallowing the bool. For `min_confidence`, `parseIntDec("0.7")` truncates to `0`, and an `n <= 0` guard in the int branch discards `-2` before the clamp can map it to `0` — failing the clamp test's negative case.
 
 Defaults: `enabled: true`, `useLlm: true`, `minConfidence: 0.3`, `maxLlmCallsPerPass: 25`, `debounceMs: 30_000`, `retryCooldownMs: 60_000`.
 
