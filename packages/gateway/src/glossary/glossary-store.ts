@@ -80,7 +80,7 @@ function toTerm(r: Row): GlossaryTerm {
  * asserts the ACTUAL behaviour so nobody "fixes" it into a false ideal.
  */
 function ftsQuery(termKey: string): string {
-  return `"${termKey.replace(/"/g, '""')}"`;
+  return `"${termKey.replaceAll('"', '""')}"`;
 }
 
 /**

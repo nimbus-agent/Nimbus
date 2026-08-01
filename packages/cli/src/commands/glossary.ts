@@ -202,8 +202,8 @@ export function renderRebuildPreview(
   }
   lines.push(
     "Rebuilding re-mines incrementally; the full glossary returns over subsequent passes.",
+    "Re-run with --yes to confirm.",
   );
-  lines.push("Re-run with --yes to confirm.");
   return lines.join("\n");
 }
 

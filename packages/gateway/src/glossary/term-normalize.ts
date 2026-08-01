@@ -49,7 +49,7 @@ export function normalizeTerm(surface: string): string {
   if (words.length === 0) return "";
 
   const lowered = words.map((w) => w.toLowerCase());
-  const last = lowered[lowered.length - 1];
+  const last = lowered.at(-1);
   if (last === undefined) return "";
   lowered[lowered.length - 1] = depluralize(last);
 

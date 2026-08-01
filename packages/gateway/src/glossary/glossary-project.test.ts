@@ -75,13 +75,13 @@ test("buildProjectedBody omits the synonym line when there are none", () => {
 test("projection is idempotent — re-projecting updates in place", () => {
   projectTerm(db, term(), 1000);
   projectTerm(db, term({ definition: "updated definition" }), 2000);
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(1);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(1);
 });
 
 test("unprojectTerm removes the item row", () => {
   projectTerm(db, term(), 1000);
   unprojectTerm(db, "cdr");
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
 
 test("unprojectTerm is safe when nothing is projected", () => {

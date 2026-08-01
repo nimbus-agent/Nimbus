@@ -65,7 +65,7 @@ test("a term whose sources vanished is demoted and unprojected", () => {
 
   expect(out.demoted).toEqual(["cdr"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
 
 test("a term still above the floor keeps its definition and is re-stamped", () => {
@@ -113,7 +113,7 @@ test("a retained term's projected item is re-projected with its refreshed topSou
     metadata: string;
   } | null;
   const topSources = JSON.parse(after?.metadata ?? "{}").topSources as unknown[];
-  expect(topSources.length).toBe(3);
+  expect(topSources).toHaveLength(3);
 });
 
 test("the sweep honours its limit", () => {

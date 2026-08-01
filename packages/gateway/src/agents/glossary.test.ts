@@ -137,7 +137,7 @@ test("the limit is honoured", async () => {
   seed("slo", { score: 5 });
   seed("rpo", { score: 1 });
   const brief = await runGlossary({ limit: 2 }, ctx());
-  expect(brief.entries.length).toBe(2);
+  expect(brief.entries).toHaveLength(2);
 });
 
 test("the brief carries latency and a version", async () => {

@@ -174,7 +174,7 @@ Every tool your on-call rotation depends on, unified in one local index. Cross-s
 
 **Phase 3 (shipped):** Jenkins, GitHub Actions, CircleCI, GitLab CI, AWS, Azure, GCP, Kubernetes, Terraform/Pulumi/CloudFormation, Datadog, Grafana, Sentry, PagerDuty, New Relic
 
-**Phase 5 (✅ complete):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Remaining:** Tier-4 email (generic IMAP, Fastmail JMAP, ProtonMail Bridge) and Tier-5 local (DB schema indexing, filesystem-v2 profiling, Storybook). Local data-file profiling (Parquet / CSV / JSONL — header / footer / line counts only, never cell values) lands with Tier 5.
+**Phase 5 (✅ complete):** Wave A + Wave B connectors shipped (Obsidian, OpenAPI / AsyncAPI spec indexer, Snyk, Bitrise, SonarQube / SonarCloud, Semgrep, Wiz, LaunchDarkly, Flagsmith, ArgoCD, Flux, dbt Cloud, Metabase, Superset, Databricks, MLflow, Vercel, Netlify, Stripe, Mercury, Readwise, Raindrop, Intercom, Zendesk, Lever, Greenhouse, Pipedrive, Stack Overflow, Zoom). **Connector Tiers 1–3 shipped:** Zotero, OWASP Dependency-Track, Ramp, Apache Airflow, Prefect, Dagster (Tier 1); HubSpot, Miro, Canva, Figma, Salesforce, Google Meet (Tier 2 — 3-legged OAuth); BigQuery, AWS Athena, CloudWatch Logs, GCP Cloud Logging, Kibana / Elasticsearch, SageMaker, Vertex AI, Great Expectations (Tier 3 — "no-row-data" warehouse / logging / ML: schema & metadata only, never cell values, enforced by a contract test asserting no row-fetch tool on the connector surface). **Tiers 4–5 shipped:** generic IMAP, Fastmail (JMAP), ProtonMail (Bridge) (Tier 4 — email: headers, a capped preview and attachment metadata only); local DB schema indexing, Storybook, and local data-file profiling (Tier 5 — Parquet / CSV / JSONL / JSON schema only, never cell values).
 
 **Phase 6 (Team tier, ✅ complete):** Federation Core, Team Vault + Quorum HITL, Identity/SSO/SCIM, Org Policy + Admin + Observability, ChatOps, and cross-colleague intelligence shipped (Slices 1–6). The warehouse, BI, and data-quality connectors (Snowflake, Tableau, Looker, PowerBI, Monte Carlo, Bigeye) shipped 2026-06-13 with a cross-warehouse lineage graph (Slice 7 / Wave 7a), followed by their team-shared credentials and HITL-gated writes (Waves 7b–7c). Share & Virality (Slice 8 — the signed, redacted, owner-gated outbound `nimbus share` behind invariant `I27`, plus declarative recipes, replay, and sovereign-mesh forwarding) shipped 2026-06-15 → 2026-06-18 (Waves 8a–8d). The deferred Phase 5 items (Slice 9) landed across 2026-06-14 → 2026-07-19: the Mendeley connector (06-14); Workday, the Apple Mail / iCloud Calendar connector, and the HITL-gated ArgoCD / Flux / MLflow writes (06-21); and the web clipper — the gateway surface behind invariant `I30` (06-22) plus its Chrome/Firefox MV3 browser extension in the satellite repo [`nimbus-agent/nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper) (`v0.1.0`, 07-19). SageMaker / Vertex AI writes and paid extensions stay deferred. **The build order from here is the Phase 7+ Sequencing Spine overlay — the current slot is S1 (Local Brain), whose egress-ledger + `nimbus prove` primitive shipped 2026-06-20.**
 
@@ -204,7 +204,7 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 - **Voice interface** — `voice.transcribe` / `voice.speak` IPC, opt-in wake-word loop; `whisper-cli` for STT, native TTS per platform; audio never leaves the machine
 - **Data sovereignty** — `nimbus data export / import / delete`, BLAKE3-chained audit log with `nimbus audit verify / export`, per-connector reindex with depth control
 - **Auto-update** — `nimbus update --check` / `nimbus update`; Ed25519-signed binary manifest verified before install
-- **Encrypted LAN remote access** — `nimbus lan enable / pair / grant-write`; NaCl-box-sealed RPC, no relay, disabled by default
+- **Encrypted LAN remote access** — `nimbus lan open / peers / grant` (pairing-window open/close, peer listing, per-peer write grant); NaCl-box-sealed RPC, no relay, disabled by default
 - **Rich TUI** — `nimbus tui` with five-pane Ink layout, inline mid-stream HITL, fallback to `nimbus repl` on unsuitable terminals
 - **VS Code extension** — `@nimbus-dev/client`-based; commands, status bar, and HITL via VS Code notifications; published to VS Code Marketplace + Open VSX
 - **Per-connector OAuth vault keys** — Google and Microsoft sub-services own their own keys; eliminates scope-collision between connectors
@@ -229,8 +229,8 @@ See the [roadmap](./roadmap.md) for depth and remaining gaps per connector.
 *CI/CD data layer (T4, 2026-05-12 → 2026-05-16):*
 
 - **`nimbus metrics dora`** — four DORA metrics (deployment frequency, lead time, change failure rate, MTTR) computed locally from indexed deploys, PRs, and PagerDuty incidents. T4 PR 2 (2026-05-12).
-- **`nimbus deploy preflight`** / `nimbus-dev/query-action` — pre-deploy index check: counts active P1 incidents, failing CI on target ref, and open PR conflicts. T4 PR 3a (2026-05-13).
-- **`nimbus deploy annotate`** / `nimbus-dev/annotate-action` — post-deploy annotation via `POST /v1/deployments`, the only HTTP write route Nimbus accepts (invariant `I13`: compile-time allowlist + bearer auth + per-token rate limit + audit-on-rejection). T4 PR 3b (2026-05-14).
+- **`nimbus deploy preflight`** / `nimbus-agent/query-action` — pre-deploy index check: counts active P1 incidents, failing CI on target ref, and open PR conflicts. T4 PR 3a (2026-05-13).
+- **`nimbus deploy annotate`** / `nimbus-agent/annotate-action` — post-deploy annotation via `POST /v1/deployments`, one of the routes on the compile-time `WRITE_ROUTE_ALLOWLIST` (invariant `I13`: allowlist + bearer auth + per-token rate limit + audit-on-rejection; every write to a non-allowlisted route is rejected). T4 PR 3b (2026-05-14).
 - **PagerDuty enrichment + pagination + `severity_p1_aliases`** — T4 wrap-up (2026-05-14, 2026-05-16). DORA CFR/MTTR and Preflight active-P1 now compute against real PagerDuty data; org-specific severity strings (`"Critical"`, `"SEV-1"`) opt in via config.
 
 *B1 hardening + semantic layer prep (T6, 2026-05-14 → 2026-05-16):*
@@ -457,10 +457,10 @@ The first time the Gateway starts it creates a default `nimbus.toml` in the plat
 | Platform | Config (`nimbus.toml`) | Data (`index.db`, `audit.db`, `backups/`, `logs/`) |
 |---|---|---|
 | Windows | `%APPDATA%\Nimbus\nimbus.toml` | `%LOCALAPPDATA%\Nimbus\data` |
-| macOS | `~/Library/Application Support/Nimbus/nimbus.toml` | `~/Library/Application Support/Nimbus/data` |
+| macOS | `~/Library/Application Support/Nimbus/nimbus.toml` | `~/Library/Application Support/Nimbus` |
 | Linux | `~/.config/nimbus/nimbus.toml` | `~/.local/share/nimbus` |
 
-Override either with `NIMBUS_CONFIG_DIR` / `NIMBUS_DATA_DIR` if you need separate trees per profile or per environment. Most TOML keys also have a corresponding `NIMBUS_`-prefixed env var override that wins over the file (e.g. `NIMBUS_AGENT_MODEL`, `NIMBUS_CLASSIFIER_MODEL`, `NIMBUS_TELEMETRY_ENABLED`) — see [`cli-reference.md`](./cli-reference.md#environment-variables).
+`NIMBUS_CONFIG_DIR` moves the config directory only — it deliberately does not move the data directory, and there is no data-directory override (on Linux the data root follows `XDG_DATA_HOME`). Most TOML keys also have a corresponding `NIMBUS_`-prefixed env var override that wins over the file (e.g. `NIMBUS_AGENT_MODEL`, `NIMBUS_CLASSIFIER_MODEL`, `NIMBUS_TELEMETRY_ENABLED`) — see [`cli-reference.md`](./cli-reference.md#environment-variables).
 
 Pick an LLM before running your first `nimbus ask` — without one, the agent has no reasoning surface. Remote model ids are inferred from the model id: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI. Local model ids are passed to Ollama or llama.cpp through `[llm].local_model`.
 
@@ -512,7 +512,7 @@ nimbus connector sync github       # Manually trigger a sync cycle
 nimbus ask "Find all PDFs I received by email last month that I haven't opened"
 nimbus ask "Which of my open PRs mention payment-service?"
 nimbus ask "What Linear issues am I assigned this week?"
-nimbus search --service google_drive --type pdf --since 30d
+nimbus search "quarterly review" --service google_drive --type pdf --limit 20
 ```
 
 ### Observe and Debug
@@ -657,8 +657,8 @@ nimbus extension list
 Writing a new connector takes an afternoon, not a sprint. The `@nimbus-dev/sdk` handles scaffolding; the Gateway handles OAuth, credential storage, sync scheduling, and HITL enforcement. You write the service API integration.
 
 ```bash
-nimbus scaffold extension --name my-connector --output ./nimbus-my-connector
-cd nimbus-my-connector && bun install && bun run build
+nimbus scaffold extension my-connector   # always created at ./my-connector/ in the cwd
+cd my-connector && bun test              # scaffolded package.json defines only `test`; dist/index.js is written for you
 
 nimbus extension install .          # Test locally
 nimbus ask "search my-connector for quarterly review"
@@ -708,15 +708,17 @@ nimbus/
 │   │                         # db, telemetry, connector, extension, workflow, status
 │   ├── ui/                   # Tauri 2.0 desktop app (Phase 4)
 │   │   └── src/
-│   │       ├── components/   # ConsentDialog, ExtensionMarketplace, …
-│   │       └── pages/        # Dashboard, Search, Marketplace, Settings
+│   │       ├── components/   # chrome/, dashboard/, hitl/, settings/, updater/, watchers/, workflows/
+│   │       └── pages/        # Dashboard, HitlPopup, Marketplace, Onboarding,
+│   │                         # QuickQuery, Settings, Watchers, Workflows
 │   ├── docs/                 # Astro Starlight documentation site
 │   ├── mcp-connectors/       # First-party MCP servers
 │   │   ├── google-drive/
 │   │   ├── gmail/
 │   │   ├── github/
 │   │   └── …                 # (all 15+ shipped connectors)
-│   └── sdk/                  # @nimbus-dev/sdk (published to npm, MIT)
+│   ├── admin-console/        # Static admin console served at /admin/*
+│   └── github-actions/       # First-party GitHub Actions (not workspace members)
 ├── docs/
 │   ├── README.md             # this file
 │   ├── architecture.md       # subsystem design
@@ -741,7 +743,10 @@ nimbus/
 `@nimbus-dev/client` — the typed IPC wrapper consumed by `packages/cli` and the
 VS Code extension — lives in its own repo,
 [nimbus-agent/nimbus-client](https://github.com/nimbus-agent/nimbus-client)
-(npm, MIT), published independently of this monorepo.
+(npm, MIT), published independently of this monorepo. So does the extension SDK
+`@nimbus-dev/sdk` —
+[nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk)
+(npm, MIT); this repo consumes it as a published dependency.
 
 ---
 

@@ -124,7 +124,7 @@ test("computeTermStats returns at most five top sources", () => {
   for (let i = 0; i < 8; i++) {
     seedItem({ externalId: `i${String(i)}`, title: "CDR", body: "CDR here", modifiedAt: 100 + i });
   }
-  expect(computeTermStats(db, "cdr").topSources.length).toBe(5);
+  expect(computeTermStats(db, "cdr").topSources).toHaveLength(5);
 });
 
 test("computeTermStats is zero for an absent term", () => {
@@ -211,7 +211,7 @@ test("markVetoed is sticky and keeps the row out of the pending batch", () => {
   seedCandidate("cdr");
   markVetoed(db, "cdr", 2000);
   expect(getTerm(db, "cdr")?.status).toBe("vetoed");
-  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
 });
 
 test("selectPendingBatch orders by score descending and honours the limit", () => {
@@ -251,11 +251,11 @@ test("backoff grows with repeated failures", () => {
   recordAttempt(db, "high", 0);
   // attempts=3 -> base * 2^2 = 4000 ms
   expect(
-    selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 }).length,
-  ).toBe(0);
+    selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+  ).toHaveLength(0);
   expect(
-    selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 }).length,
-  ).toBe(1);
+    selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+  ).toHaveLength(1);
 });
 
 test("selectPendingBatch excludes a term demoted below the floor", () => {
@@ -304,15 +304,15 @@ test("selectStaleForRecheck returns consolidated rows oldest-verified first", ()
 test("selectStaleForRecheck skips terms verified after the cutoff", () => {
   seedCandidate("a");
   consolidate("a", 5000);
-  expect(selectStaleForRecheck(db, 10, 4000).length).toBe(0);
-  expect(selectStaleForRecheck(db, 10, 6000).length).toBe(1);
+  expect(selectStaleForRecheck(db, 10, 4000)).toHaveLength(0);
+  expect(selectStaleForRecheck(db, 10, 6000)).toHaveLength(1);
 });
 
 test("findBySynonym resolves the canonical term", () => {
   seedCandidate("cdr");
   consolidate("cdr", 2000, ["change data record"]);
   expect(findBySynonym(db, "change data record")?.termKey).toBe("cdr");
-  expect(findBySynonym(db, "nope")).toBe(null);
+  expect(findBySynonym(db, "nope")).toBeNull();
 });
 
 test("demoteTerm returns a consolidated row to pending and clears its definition", () => {
@@ -321,7 +321,7 @@ test("demoteTerm returns a consolidated row to pending and clears its definition
   demoteTerm(db, "cdr", 3000);
   const t = getTerm(db, "cdr");
   expect(t?.status).toBe("pending");
-  expect(t?.definition).toBe(null);
+  expect(t?.definition).toBeNull();
 });
 
 test("countByStatus reports totals", () => {

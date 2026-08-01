@@ -6,6 +6,9 @@ export type GlossaryInput = {
   limit?: number;
 };
 
+/** How a queried term was resolved; `null` when nothing matched. */
+export type GlossaryMatchedVia = "exact" | "synonym" | null;
+
 export type GlossarySourceRef = {
   itemId: string;
   title: string;
@@ -38,7 +41,7 @@ export type GlossaryBrief = {
   /** `term` = resolved; `miss` = unknown term with suggestions; `list` = no argument. */
   mode: "list" | "term" | "miss";
   entries: GlossaryEntry[];
-  matchedVia: "exact" | "synonym" | null;
+  matchedVia: GlossaryMatchedVia;
   suggestions: string[];
   stats: {
     total: number;

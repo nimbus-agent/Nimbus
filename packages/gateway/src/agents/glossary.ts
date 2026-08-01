@@ -14,7 +14,12 @@ import { findNearMisses } from "../glossary/near-miss.ts";
 import { normalizeTerm } from "../glossary/term-normalize.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
-import type { GlossaryBrief, GlossaryEntry, GlossaryInput } from "./_lib/glossary-types.ts";
+import type {
+  GlossaryBrief,
+  GlossaryEntry,
+  GlossaryInput,
+  GlossaryMatchedVia,
+} from "./_lib/glossary-types.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type GlossaryContext = {
@@ -72,7 +77,7 @@ function decode<T>(text: string | undefined, fallback: T): T {
 function resolveTerm(
   db: Database,
   raw: string,
-): { term: GlossaryTerm | null; matchedVia: "exact" | "synonym" | null } {
+): { term: GlossaryTerm | null; matchedVia: GlossaryMatchedVia } {
   const key = normalizeTerm(raw);
   if (key === "") return { term: null, matchedVia: null };
 
@@ -168,7 +173,7 @@ export async function runGlossary(
 
   let mode: GlossaryBrief["mode"];
   let entries: GlossaryEntry[] = [];
-  let matchedVia: "exact" | "synonym" | null = null;
+  let matchedVia: GlossaryMatchedVia = null;
   let suggestions: string[] = [];
 
   if (rawTerm === "") {
@@ -219,7 +224,7 @@ export async function runGlossary(
   ];
   const results = await coordinator.run(tasks);
 
-  const resolved = decode<{ term: GlossaryTerm | null; matchedVia: "exact" | "synonym" | null }>(
+  const resolved = decode<{ term: GlossaryTerm | null; matchedVia: GlossaryMatchedVia }>(
     results[0]?.text,
     { term: null, matchedVia: null },
   );
