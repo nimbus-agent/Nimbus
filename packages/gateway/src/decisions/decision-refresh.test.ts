@@ -8,7 +8,15 @@ test("debounces bursts of triggers into a single run", async () => {
     debounceMs: 5,
     runPass: async () => {
       runs++;
-      return { scanned: 0, discovered: 0, extracted: 0, vetoed: 0, upgraded: 0, failed: 0 };
+      return {
+        scanned: 0,
+        discovered: 0,
+        extracted: 0,
+        vetoed: 0,
+        upgraded: 0,
+        failed: 0,
+        noModel: 0,
+      };
     },
   });
   r.trigger();
@@ -25,7 +33,15 @@ test("stop() prevents a pending debounced run", async () => {
     debounceMs: 20,
     runPass: async () => {
       runs++;
-      return { scanned: 0, discovered: 0, extracted: 0, vetoed: 0, upgraded: 0, failed: 0 };
+      return {
+        scanned: 0,
+        discovered: 0,
+        extracted: 0,
+        vetoed: 0,
+        upgraded: 0,
+        failed: 0,
+        noModel: 0,
+      };
     },
   });
   r.trigger();
@@ -44,6 +60,7 @@ test("run() surfaces the summary to the caller", async () => {
       vetoed: 1,
       upgraded: 0,
       failed: 0,
+      noModel: 0,
     }),
   });
   expect((await r.run()).extracted).toBe(1);
@@ -57,7 +74,15 @@ test("a failing pass does not wedge the refresher", async () => {
     runPass: async () => {
       calls++;
       if (calls === 1) throw new Error("boom");
-      return { scanned: 0, discovered: 0, extracted: 0, vetoed: 0, upgraded: 0, failed: 0 };
+      return {
+        scanned: 0,
+        discovered: 0,
+        extracted: 0,
+        vetoed: 0,
+        upgraded: 0,
+        failed: 0,
+        noModel: 0,
+      };
     },
   });
   await expect(r.run()).rejects.toThrow("boom");

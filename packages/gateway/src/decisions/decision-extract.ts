@@ -50,6 +50,12 @@ export interface DecisionPassSummary {
   readonly vetoed: number;
   readonly upgraded: number;
   readonly failed: number;
+  /**
+   * Rows extracted via the snippet fallback because no local model was
+   * available at call time (`extractDecision` returned `null`) — distinct
+   * from `failed`, which means the model replied with unparseable output.
+   */
+  readonly noModel: number;
 }
 
 type ScanRow = {
@@ -219,10 +225,20 @@ async function extractOne(
   row: DecisionRecord,
   llm: DecisionLlm,
   opts: DecisionPassOptions,
-): Promise<"extracted" | "vetoed" | "failed"> {
+): Promise<"extracted" | "vetoed" | "failed" | "no-model"> {
   const sentence = sentenceFor(db, row);
   try {
     const outcome = await extractDecision(llm, sentence, sentenceContext(db, row.sourceItemId));
+    if (outcome === null) {
+      // No local model was available for this call — NOT a failure. The row
+      // is left untouched here and falls back to the snippet path, so it
+      // stays (or becomes) pending/snippet-sourced and is picked up again by
+      // the upgrade reserve once a model is available. No `recordAttempt`:
+      // that would apply backoff to a row that never actually got a model
+      // opinion.
+      extractAsSnippet(db, row, opts);
+      return "no-model";
+    }
     if (outcome.kind === "veto") {
       markVetoed(db, row.id, opts.nowMs);
       return "vetoed";
@@ -259,6 +275,7 @@ export async function runDecisionPass(
   let vetoed = 0;
   let upgraded = 0;
   let failed = 0;
+  let noModel = 0;
 
   const cooldownBefore = opts.nowMs - opts.retryCooldownMs;
 
@@ -288,13 +305,25 @@ export async function runDecisionPass(
     for (const row of pendingAll.slice(0, pendingTake)) {
       const r = await extractOne(db, row, llm, opts);
       if (r === "extracted") extracted++;
-      else if (r === "vetoed") vetoed++;
+      else if (r === "no-model") {
+        // No model was available for this call; extractOne already fell back
+        // to the snippet path, so the row IS extracted this pass — just not
+        // via a model. Counted in both so `extracted` stays a true "rows
+        // extracted this pass" total while `noModel` breaks out how many of
+        // those took the fallback.
+        extracted++;
+        noModel++;
+      } else if (r === "vetoed") vetoed++;
       else failed++;
     }
     for (const row of upgradeAll.slice(0, upgradeTake)) {
       const r = await extractOne(db, row, llm, opts);
       if (r === "extracted") upgraded++;
-      else if (r === "vetoed") vetoed++;
+      else if (r === "no-model") {
+        // Still no model available — the row stays snippet-sourced, so this
+        // is NOT a real upgrade. Only the breakdown counter moves.
+        noModel++;
+      } else if (r === "vetoed") vetoed++;
       else failed++;
     }
   } else {
@@ -304,7 +333,7 @@ export async function runDecisionPass(
     }
   }
 
-  return { scanned, discovered, extracted, vetoed, upgraded, failed };
+  return { scanned, discovered, extracted, vetoed, upgraded, failed, noModel };
 }
 
 /**

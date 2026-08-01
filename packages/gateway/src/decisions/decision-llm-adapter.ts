@@ -1,5 +1,7 @@
+import { isLocalProviderKind, type LlmRouter } from "../llm/router.ts";
+
 export type DecisionLlm = {
-  complete(prompt: string): Promise<string>;
+  complete(prompt: string): Promise<string | null>;
 };
 
 export type ExtractionOutcome =
@@ -78,10 +80,44 @@ export function parseExtraction(raw: string): ExtractionOutcome {
   };
 }
 
+/**
+ * Returns `null` when no local model is available (`complete` returned
+ * `null`) — that is "no model → snippet", not a failure. `parseExtraction`
+ * still throws on malformed non-null output; that distinction matters to the
+ * caller: `null` falls back to the snippet path silently, while a throw is a
+ * real failure that records an attempt and retries with backoff.
+ */
 export async function extractDecision(
   llm: DecisionLlm,
   sentence: string,
   context: string,
-): Promise<ExtractionOutcome> {
-  return parseExtraction(await llm.complete(buildExtractionPrompt(sentence, context)));
+): Promise<ExtractionOutcome | null> {
+  const raw = await llm.complete(buildExtractionPrompt(sentence, context));
+  if (raw === null) return null;
+  return parseExtraction(raw);
+}
+
+/**
+ * Production `DecisionLlm` over the existing router — LOCAL PROVIDERS ONLY.
+ * Mirrors `glossary/glossary-llm-adapter.ts` `createGlossaryLlm` exactly: a
+ * local model may be absent at CALL time (not just at wire time), so `null`
+ * means "no model available now" and the caller falls back to snippet
+ * extraction rather than treating it as a failure. See that file's doc
+ * comment for the full rationale (local-only gate, "summarisation" task,
+ * direct `provider.generate` call, and the abort-signal limitation).
+ */
+export function createDecisionLlm(router: LlmRouter): DecisionLlm {
+  return {
+    async complete(prompt: string): Promise<string | null> {
+      const provider = await router.selectProvider("summarisation", { preferLocal: true });
+      if (provider === undefined) return null;
+      if (!isLocalProviderKind(provider.providerId)) return null;
+      const result = await provider.generate({
+        task: "summarisation",
+        prompt,
+        temperature: 0,
+      });
+      return result.text;
+    },
+  };
 }

@@ -91,6 +91,7 @@ import {
 } from "../db/tool-call-log-retention.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { runDecisionPass } from "../decisions/decision-extract.ts";
+import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
@@ -414,6 +415,11 @@ interface SchedulerWithMeshOpts {
    * degraded boots keep the snippet path. Gated below on `[glossary].use_llm`.
    */
   glossaryLlm?: ConsolidatorLlm;
+  /**
+   * Local-only extraction model for the decisions pass. Optional so tests and
+   * degraded boots keep the snippet path. Gated below on `[decisions].use_llm`.
+   */
+  decisionLlm?: DecisionLlm;
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -432,6 +438,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     syncLogger,
     isConnectorAllowed,
     glossaryLlm,
+    decisionLlm,
   } = opts;
   const syncAnomaly = new AnomalyDetectorStub({
     windowSize: 64,
@@ -482,6 +489,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // glossaryRefresher, which is always constructed and gates internally — so a disabled decisions
   // pass leaves `decisionsRefresher` unset rather than idling.
   const decisionsCfg = loadNimbusDecisionsFromConfigDir(paths.configDir);
+  // Gate at the point of use, so the single config read stays single.
+  const extractionLlm = decisionsCfg.useLlm ? decisionLlm : undefined;
   const decisionsRefresher = decisionsCfg.enabled
     ? createDecisionRefresher({
         debounceMs: decisionsCfg.debounceMs,
@@ -492,6 +501,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
             minConfidence: decisionsCfg.minConfidence,
             retryCooldownMs: decisionsCfg.retryCooldownMs,
+            ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
           }),
         onError: (err) => {
           syncLogger.warn({ err }, "decision extraction pass failed");
@@ -1811,6 +1821,7 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
       syncLogger,
       isConnectorAllowed,
       glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
+      decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
     });
   sidecarStops.push(() => glossaryRefresher.stop());
   if (decisionsRefresher !== undefined) {

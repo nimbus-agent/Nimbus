@@ -235,5 +235,39 @@ test("maxLlmCalls: 0 makes no LLM call and still returns a well-formed summary",
     vetoed: 0,
     upgraded: 0,
     failed: 0,
+    noModel: 0,
   });
+});
+
+// The whole point of this fix: `[decisions].use_llm = true` with no model
+// available at call time must NOT be treated as failure or veto — it falls
+// back to the snippet path, same as `useLlm: false`, and is picked up again
+// by the upgrade reserve once a real model answers.
+test("a pass with an LLM that has no model available produces snippet rows, not failures or vetoes", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  const noModelLlm: DecisionLlm = { complete: async () => null };
+  const summary = await runDecisionPass(db, { ...OPTS, llm: noModelLlm });
+  expect(summary.extracted).toBe(1);
+  expect(summary.noModel).toBe(1);
+  expect(summary.failed).toBe(0);
+  expect(summary.vetoed).toBe(0);
+  expect(countByStatus(db).vetoed).toBe(0);
+  expect(countByStatus(db).pending).toBe(0);
+  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(row?.extractionSource).toBe("snippet");
+});
+
+test("a later pass with a working LLM upgrades rows that previously had no model available", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  const noModelLlm: DecisionLlm = { complete: async () => null };
+  await runDecisionPass(db, { ...OPTS, llm: noModelLlm });
+
+  const llm = scriptedLlm(
+    { billing: '{"is_decision":true,"statement":"Move billing to Postgres","rationale":"pool"}' },
+    '{"is_decision":false}',
+  );
+  const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, llm });
+  expect(summary.upgraded).toBe(1);
+  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(row?.extractionSource).toBe("llm");
 });
