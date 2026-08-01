@@ -1604,6 +1604,104 @@ export function loadNimbusGlossaryFromConfigDir(configDir: string): NimbusGlossa
 }
 
 // ---------------------------------------------------------------------------
+// [decisions] — implicit decision extraction (Spine S1)
+// ---------------------------------------------------------------------------
+
+export type NimbusDecisionsToml = {
+  /**
+   * Default ON, like [glossary] and unlike [briefs]: extraction opens no
+   * network surface — it reads the local index and writes local rows.
+   */
+  enabled: boolean;
+  /**
+   * Extract via a LOCAL model. Default on, but separable from `enabled`:
+   * turning this off keeps the cheap heuristic pass while sparing a laptop up
+   * to `max_llm_calls_per_pass` sequential local-model calls per sync burst.
+   */
+  useLlm: boolean;
+  /** Drop any candidate scoring below this. Clamped into 0..1. */
+  minConfidence: number;
+  /** LLM calls per pass (sequential). */
+  maxLlmCallsPerPass: number;
+  debounceMs: number;
+  /** Cooldown before a failed extraction is retried (prevents starvation). */
+  retryCooldownMs: number;
+};
+
+export const DEFAULT_NIMBUS_DECISIONS_TOML: NimbusDecisionsToml = {
+  enabled: true,
+  useLlm: true,
+  minConfidence: 0.3,
+  maxLlmCallsPerPass: 25,
+  debounceMs: 30_000,
+  retryCooldownMs: 60_000,
+};
+
+function applyNimbusDecisionsKey(
+  out: Partial<NimbusDecisionsToml>,
+  key: string,
+  valRaw: string,
+): void {
+  // Bool keys MUST come before the integer branch below — same regression the
+  // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
+  // is silently dropped and the section reads as if it were never set.
+  if (key === "enabled") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.enabled = b;
+    return;
+  }
+  if (key === "use_llm") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.useLlm = b;
+    return;
+  }
+  // `min_confidence` is the one FLOAT key, so it must precede the integer
+  // branch too: that branch would truncate 0.7 to 0, and its `n <= 0` guard
+  // would discard a negative before the clamp below ever saw it.
+  if (key === "min_confidence") {
+    const f = Number(valRaw.trim());
+    if (valRaw.trim() !== "" && Number.isFinite(f)) {
+      out.minConfidence = Math.min(1, Math.max(0, f));
+    }
+    return;
+  }
+  const n = parseIntDec(valRaw);
+  if (n === undefined || n <= 0) return;
+  switch (key) {
+    case "max_llm_calls_per_pass":
+      out.maxLlmCallsPerPass = n;
+      break;
+    case "debounce_ms":
+      out.debounceMs = n;
+      break;
+    case "retry_cooldown_ms":
+      out.retryCooldownMs = n;
+      break;
+    default:
+      break;
+  }
+}
+
+export function parseNimbusDecisionsToml(
+  raw: string,
+  defaults: NimbusDecisionsToml = DEFAULT_NIMBUS_DECISIONS_TOML,
+): NimbusDecisionsToml {
+  const out: Partial<NimbusDecisionsToml> = {};
+  forEachSectionEntry(raw, "[decisions]", (key, valRaw) =>
+    applyNimbusDecisionsKey(out, key, valRaw),
+  );
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusDecisionsFromConfigDir(configDir: string): NimbusDecisionsToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_DECISIONS_TOML,
+    parseNimbusDecisionsToml,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
