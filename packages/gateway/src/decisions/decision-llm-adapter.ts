@@ -58,7 +58,10 @@ export function parseExtraction(raw: string): ExtractionOutcome {
     rationale?: unknown;
     alternatives?: unknown;
   };
-  if (o.is_decision !== true) return { kind: "veto" };
+  if (typeof o.is_decision !== "boolean") {
+    throw new Error("model output had a non-boolean is_decision");
+  }
+  if (!o.is_decision) return { kind: "veto" };
 
   if (typeof o.statement !== "string" || o.statement.trim().length === 0) {
     throw new Error("model claimed a decision but gave no statement");

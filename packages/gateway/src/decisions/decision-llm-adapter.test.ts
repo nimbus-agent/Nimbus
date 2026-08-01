@@ -51,6 +51,18 @@ test("throws when is_decision is true but no statement is given", () => {
   expect(() => parseExtraction('{"is_decision":true}')).toThrow();
 });
 
+test('throws when is_decision is the string "true" rather than a boolean', () => {
+  expect(() => parseExtraction('{"is_decision":"true","statement":"X"}')).toThrow();
+});
+
+test("throws when is_decision is absent", () => {
+  expect(() => parseExtraction('{"statement":"X"}')).toThrow();
+});
+
+test("throws when is_decision is a number", () => {
+  expect(() => parseExtraction('{"is_decision":1,"statement":"X"}')).toThrow();
+});
+
 test("a non-array alternatives field degrades to an empty list", () => {
   const out = parseExtraction('{"is_decision":true,"statement":"X","alternatives":"nope"}');
   expect(out).toEqual({ kind: "decision", statement: "X", rationale: null, alternatives: [] });
