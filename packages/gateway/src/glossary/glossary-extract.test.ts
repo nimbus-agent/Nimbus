@@ -95,7 +95,7 @@ test("discovers, consolidates and projects a qualifying term", async () => {
 test("a term below the frequency floor is never stored", async () => {
   seedTermItems(2, "the CDR pipeline runs nightly");
   await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
-  expect(getTerm(db, "cdr")).toBe(null);
+  expect(getTerm(db, "cdr")).toBeNull();
 });
 
 test("running the pass twice converges on identical statistics", async () => {
@@ -139,7 +139,7 @@ test("a vetoed term is stored vetoed and never projected", async () => {
   await runGlossaryPass(db, { ...OPTS, llm: vetoing });
 
   expect(getTerm(db, "cdr")?.status).toBe("vetoed");
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
 
 test("with no LLM the definition is snippet-sourced", async () => {
@@ -168,7 +168,7 @@ test("the scan skips a non-allowlisted service even when its bare type is allowl
   const out = await runGlossaryPass(db, { ...OPTS, llm: definingLlm() });
   expect(out.scanned).toBe(0);
   expect(out.discovered).toBe(0);
-  expect(getTerm(db, "cdr")).toBe(null);
+  expect(getTerm(db, "cdr")).toBeNull();
 });
 
 test("the watermark advances past the scanned items", async () => {
@@ -286,9 +286,9 @@ test("a term whose row vanishes mid-consolidation (concurrent rebuild) still cou
   const out = await runGlossaryPass(db, { ...OPTS, llm: clearingLlm });
 
   expect(out.consolidated).toBe(1);
-  expect(getTerm(db, "cdr")).toBe(null);
+  expect(getTerm(db, "cdr")).toBeNull();
   // projectTerm must have been skipped — no dangling glossary_term item.
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
 
 test("a pending term whose stored sources were wiped retries instead of fabricating a definition", async () => {
@@ -340,8 +340,8 @@ test("consolidation is atomic — a crash between markConsolidated and projectTe
 
   const t = getTerm(db, "cdr");
   expect(t?.status).toBe("pending");
-  expect(t?.definition).toBe(null);
-  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all().length).toBe(0);
+  expect(t?.definition).toBeNull();
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
 
 test("stored near-misses draw from consolidated keys only, not pending or vetoed ones", async () => {
@@ -672,7 +672,7 @@ test("caps the reported vetoed-term names while still counting every veto", asyn
     llm: llmReturning('{"isDomainTerm":false,"definition":"","alsoKnownAs":[]}'),
   });
   expect(summary.upgradesVetoed).toBe(12);
-  expect(summary.vetoedTerms.length).toBe(10);
+  expect(summary.vetoedTerms).toHaveLength(10);
 });
 
 test("onProgress reports per-term counts across both queues and finishes done === total", async () => {
@@ -689,7 +689,7 @@ test("onProgress reports per-term counts across both queues and finishes done ==
   // queues, not just the one `onProgress` happened to have been introduced
   // alongside. A regression back to `total: batch.length` (pending only)
   // would report `total: 3` instead.
-  expect(events.length).toBe(7);
+  expect(events).toHaveLength(7);
   expect(events.at(-1)).toEqual({
     done: 7,
     total: 7,
@@ -807,7 +807,7 @@ test("a rebuild whose pre-pass fails does not commit the truncation", async () =
   await expect(rebuildGlossary(db, { ...PASS_OPTS, configDir: dir })).rejects.toThrow();
 
   db.run("DROP TRIGGER simulated_crash_before_project");
-  expect(listAllKeys(db).length).toBe(before);
+  expect(listAllKeys(db)).toHaveLength(before);
 });
 
 test("a pass with no configDir touches no authored rows", async () => {

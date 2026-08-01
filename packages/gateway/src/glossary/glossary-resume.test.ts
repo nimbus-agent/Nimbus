@@ -82,7 +82,7 @@ test("the next pass completes candidates stranded by an abort", async () => {
   };
   await runGlossaryPass(db, { ...BASE, llm: goodLlm, nowMs: 6000 });
 
-  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
 });
 
 test("a candidate stranded by the cap is reached by a later pass", async () => {
@@ -97,7 +97,7 @@ test("a candidate stranded by the cap is reached by a later pass", async () => {
   // No new items — the batch must still be selected globally, not from this
   // pass's (empty) discoveries.
   await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 10, llm, nowMs: 6000 });
-  expect(selectPendingBatch(db, 10, QUEUE).length).toBe(0);
+  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
 });
 
 test("a retry outcome leaves the term pending rather than vetoed", async () => {

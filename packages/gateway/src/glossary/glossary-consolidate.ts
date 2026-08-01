@@ -51,7 +51,7 @@ function sentences(text: string): string[] {
 
 /** Escapes regex metacharacters — mined terms can contain `.`, `(`, `+`, etc. */
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /** Word-boundary containment check — a plain substring match misfires on

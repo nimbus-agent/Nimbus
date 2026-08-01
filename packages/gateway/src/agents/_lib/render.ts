@@ -15,7 +15,7 @@ import type {
   PreflightBrief,
   PreflightDownstream,
 } from "./findings.ts";
-import type { GlossaryBrief } from "./glossary-types.ts";
+import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
 
 function renderGaps(gaps: GapNote[]): string {
@@ -270,51 +270,76 @@ function isoDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function renderGlossary(brief: GlossaryBrief): string {
-  const lines: string[] = ["# Glossary"];
-
-  if (brief.mode === "miss") {
-    lines.push(`\n_No glossary entry for \`${brief.query.term ?? ""}\`._`);
-    if (brief.suggestions.length > 0) {
-      lines.push(`\n**Did you mean:** ${brief.suggestions.join(", ")}`);
-    }
-  } else if (brief.mode === "term") {
-    const e = brief.entries[0];
-    if (e !== undefined) {
-      lines.push(`\n## ${e.term}`);
-      if (brief.matchedVia === "synonym") {
-        lines.push(`_Matched via synonym "${brief.query.term ?? ""}"._`);
-      }
-      lines.push(`\n${e.definition ?? "_No definition yet._"}`);
-      lines.push(
-        `\n- Seen in ${String(e.docFreq)} item(s) across ${String(e.serviceSpread)} service(s)`,
-      );
-      lines.push(`- First seen ${isoDay(e.firstSeenAt)}, last seen ${isoDay(e.lastSeenAt)}`);
-      if (e.synonyms.length > 0) lines.push(`- Also known as: ${e.synonyms.join(", ")}`);
-      if (e.nearMisses.length > 0) lines.push(`- Easily confused with: ${e.nearMisses.join(", ")}`);
-      if (e.definitionSource === "snippet") {
-        lines.push("- _Definition quoted verbatim from a source; no LLM configured._");
-      } else if (e.definitionSource === "manual") {
-        lines.push("- _Authored in `nimbus.toml`; not derived from indexed sources._");
-      }
-      if (e.topSources.length > 0) {
-        lines.push("\n### Sources");
-        for (const s of e.topSources) {
-          const head = s.url === null ? s.title : `[${s.title}](${s.url})`;
-          lines.push(`- ${head} — ${s.service}, ${isoDay(s.modifiedAt)}`);
-        }
-      }
-    }
-  } else if (brief.entries.length === 0) {
-    lines.push("\n_No terms extracted yet._");
-  } else {
-    lines.push("");
-    for (const e of brief.entries) {
-      const suffix = e.definitionSource === "manual" ? " — authored" : "";
-      lines.push(`- **${e.term}** — ${String(e.docFreq)} mention(s)${suffix}`);
-    }
+/** `miss` mode: the term is unknown, so all we can offer are near-miss suggestions. */
+function renderGlossaryMiss(brief: GlossaryBrief): string[] {
+  const lines = [`\n_No glossary entry for \`${brief.query.term ?? ""}\`._`];
+  if (brief.suggestions.length > 0) {
+    lines.push(`\n**Did you mean:** ${brief.suggestions.join(", ")}`);
   }
+  return lines;
+}
 
+/** Labels a definition that was not synthesized by an LLM, so the reader can weigh it. */
+function renderGlossaryProvenance(source: GlossaryEntry["definitionSource"]): string[] {
+  if (source === "snippet") {
+    return ["- _Definition quoted verbatim from a source; no LLM configured._"];
+  }
+  if (source === "manual") {
+    return ["- _Authored in `nimbus.toml`; not derived from indexed sources._"];
+  }
+  return [];
+}
+
+function renderGlossarySources(sources: GlossaryEntry["topSources"]): string[] {
+  if (sources.length === 0) return [];
+  const rows = sources.map((s) => {
+    const head = s.url === null ? s.title : `[${s.title}](${s.url})`;
+    return `- ${head} — ${s.service}, ${isoDay(s.modifiedAt)}`;
+  });
+  return ["\n### Sources", ...rows];
+}
+
+/** `term` mode: the full record for a single resolved entry. */
+function renderGlossaryEntry(brief: GlossaryBrief, e: GlossaryEntry): string[] {
+  const lines = [`\n## ${e.term}`];
+  if (brief.matchedVia === "synonym") {
+    lines.push(`_Matched via synonym "${brief.query.term ?? ""}"._`);
+  }
+  lines.push(
+    `\n${e.definition ?? "_No definition yet._"}`,
+    `\n- Seen in ${String(e.docFreq)} item(s) across ${String(e.serviceSpread)} service(s)`,
+    `- First seen ${isoDay(e.firstSeenAt)}, last seen ${isoDay(e.lastSeenAt)}`,
+  );
+  if (e.synonyms.length > 0) lines.push(`- Also known as: ${e.synonyms.join(", ")}`);
+  if (e.nearMisses.length > 0) lines.push(`- Easily confused with: ${e.nearMisses.join(", ")}`);
+  lines.push(
+    ...renderGlossaryProvenance(e.definitionSource),
+    ...renderGlossarySources(e.topSources),
+  );
+  return lines;
+}
+
+/** `list` mode: one bullet per term, ranked by the caller. */
+function renderGlossaryList(entries: GlossaryEntry[]): string[] {
+  if (entries.length === 0) return ["\n_No terms extracted yet._"];
+  const rows = entries.map((e) => {
+    const suffix = e.definitionSource === "manual" ? " — authored" : "";
+    return `- **${e.term}** — ${String(e.docFreq)} mention(s)${suffix}`;
+  });
+  return ["", ...rows];
+}
+
+function renderGlossaryBody(brief: GlossaryBrief): string[] {
+  if (brief.mode === "miss") return renderGlossaryMiss(brief);
+  if (brief.mode === "term") {
+    const e = brief.entries[0];
+    return e === undefined ? [] : renderGlossaryEntry(brief, e);
+  }
+  return renderGlossaryList(brief.entries);
+}
+
+export function renderGlossary(brief: GlossaryBrief): string {
+  const lines: string[] = ["# Glossary", ...renderGlossaryBody(brief)];
   const gaps = renderGaps(brief.gaps);
   if (gaps !== "") lines.push(gaps);
   lines.push(renderLatency(brief.latencyMs));

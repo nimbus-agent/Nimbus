@@ -1,11 +1,15 @@
 import type { Database } from "bun:sqlite";
 
-import type { ManualSkip } from "../config/nimbus-toml-glossary-terms.ts";
 import {
   type GlossaryManualConfig,
   loadGlossaryManualFromConfigDir,
+  type ManualSkip,
 } from "../config/nimbus-toml-glossary-terms.ts";
-import { type ConsolidatorLlm, consolidateTerm } from "./glossary-consolidate.ts";
+import {
+  type ConsolidationOutcome,
+  type ConsolidatorLlm,
+  consolidateTerm,
+} from "./glossary-consolidate.ts";
 import { applyManualTerms } from "./glossary-manual.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
@@ -236,17 +240,11 @@ function discoverPhase(
   return { scanned: rows.length, discovered, demoted: reconciled.demoted.length };
 }
 
-/**
- * Phase B — consolidate. One transaction per term, sequential.
- *
- * Sequential is deliberate: parallel requests multiply resident model memory on
- * a local Ollama, and nothing user-facing waits on this pass (reads hit the
- * materialized table).
- */
-async function consolidatePhase(
-  db: Database,
-  opts: GlossaryPassOptions,
-): Promise<{
+/** One unit of Phase B work: a term, plus whether it came from the upgrade queue. */
+type ConsolidationUnit = { term: GlossaryTerm; isUpgrade: boolean };
+
+/** Running counters for one consolidate phase; mutated by the per-outcome helpers. */
+type ConsolidationTally = {
   consolidated: number;
   upgraded: number;
   vetoed: number;
@@ -254,8 +252,13 @@ async function consolidatePhase(
   vetoedTerms: string[];
   retried: number;
   llmProduced: boolean;
-  aborted: boolean;
-}> {
+};
+
+/**
+ * Splits the per-pass budget between the pending queue and the snippet-upgrade
+ * queue, and returns the flattened work list in execution order.
+ */
+function selectConsolidationWork(db: Database, opts: GlossaryPassOptions): ConsolidationUnit[] {
   // Budget allocation. `UPGRADE_RESERVE` is a FLOOR on upgrade slots, never a
   // ceiling, and each queue absorbs the other's slack — both one-sided
   // formulations waste budget in a corner:
@@ -295,115 +298,143 @@ async function consolidatePhase(
   const upgradeTake = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
   const batch = pendingAll.slice(0, Math.min(pendingAll.length, budget - upgradeTake));
   const upgradeBatch = upgradeAll.slice(0, upgradeTake);
+
+  return [
+    ...batch.map((term) => ({ term, isUpgrade: false })),
+    ...upgradeBatch.map((term) => ({ term, isUpgrade: true })),
+  ];
+}
+
+/** Only a model can veto, so reaching here proves the model answered. */
+function applyVetoedOutcome(
+  db: Database,
+  unit: ConsolidationUnit,
+  nowMs: number,
+  tally: ConsolidationTally,
+): void {
+  tally.llmProduced = true;
+  unprojectTerm(db, unit.term.termKey);
+  markVetoed(db, unit.term.termKey, nowMs);
+  tally.vetoed += 1;
+  if (!unit.isUpgrade) return;
+  tally.upgradesVetoed += 1;
+  // A term the user could see yesterday and cannot see today. Named so
+  // `--refresh` can report it rather than letting it vanish silently.
+  // `displayTerm`, not `termKey`: the rebuild preview (via
+  // `agents.glossary`) shows the display form (e.g. "CDR"), and this
+  // list must read the same way, not as the lowercased normalized key.
+  if (tally.vetoedTerms.length < VETOED_TERMS_REPORTED) {
+    tally.vetoedTerms.push(unit.term.displayTerm);
+  }
+}
+
+function applyDefinedOutcome(
+  db: Database,
+  unit: ConsolidationUnit,
+  outcome: Extract<ConsolidationOutcome, { kind: "defined" }>,
+  ctx: { knownKeys: string[]; nowMs: number },
+  tally: ConsolidationTally,
+): void {
+  if (outcome.source === "llm") tally.llmProduced = true;
+  // One transaction: a crash between markConsolidated and projectTerm would
+  // otherwise strand the term `consolidated` with no projected item row —
+  // invisible in search, and (per the reconciliation sweep's own contract)
+  // never self-healed, since the sweep only re-verifies rows already
+  // `consolidated` and this row genuinely is. `db.transaction` nests safely
+  // via savepoints, so this composes with any outer transaction.
+  db.transaction(() => {
+    markConsolidated(db, {
+      termKey: unit.term.termKey,
+      definition: outcome.definition,
+      definitionSource: outcome.source,
+      synonyms: outcome.synonyms,
+      nearMisses: findNearMisses(unit.term.termKey, ctx.knownKeys),
+      nowMs: ctx.nowMs,
+    });
+    const stored = getTerm(db, unit.term.termKey);
+    if (stored !== null) projectTerm(db, stored, ctx.nowMs);
+  })();
+  if (unit.isUpgrade) tally.upgraded += 1;
+  else tally.consolidated += 1;
+}
+
+function applyConsolidationOutcome(
+  db: Database,
+  unit: ConsolidationUnit,
+  outcome: ConsolidationOutcome,
+  ctx: { knownKeys: string[]; nowMs: number },
+  tally: ConsolidationTally,
+): void {
+  if (outcome.kind === "vetoed") {
+    applyVetoedOutcome(db, unit, ctx.nowMs, tally);
+    return;
+  }
+  if (outcome.kind === "retry") {
+    // Stamps the attempt for BOTH queues' backoff — a failing upgrade steps
+    // aside from its reserved slot exactly like a failing pending term.
+    recordAttempt(db, unit.term.termKey, ctx.nowMs);
+    tally.retried += 1;
+    return;
+  }
+  applyDefinedOutcome(db, unit, outcome, ctx, tally);
+}
+
+/**
+ * Phase B — consolidate. One transaction per term, sequential.
+ *
+ * Sequential is deliberate: parallel requests multiply resident model memory on
+ * a local Ollama, and nothing user-facing waits on this pass (reads hit the
+ * materialized table).
+ */
+async function consolidatePhase(
+  db: Database,
+  opts: GlossaryPassOptions,
+): Promise<ConsolidationTally & { aborted: boolean }> {
+  const work = selectConsolidationWork(db, opts);
   // Consolidated keys only — mirrors the agent's near-miss lane. Drawing from
   // every status (via `listAllKeys`) let a `pending` or `vetoed` key surface
   // as a stored "Easily confused with:" suggestion, which either points at a
   // term with no definition yet or one deliberately rejected.
   const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
 
-  const work: Array<{ term: GlossaryTerm; isUpgrade: boolean }> = [
-    ...batch.map((term) => ({ term, isUpgrade: false })),
-    ...upgradeBatch.map((term) => ({ term, isUpgrade: true })),
-  ];
-
-  let consolidated = 0;
-  let upgraded = 0;
-  let vetoed = 0;
-  let upgradesVetoed = 0;
-  let retried = 0;
-  let llmProduced = false;
-  const vetoedTerms: string[] = [];
+  const tally: ConsolidationTally = {
+    consolidated: 0,
+    upgraded: 0,
+    vetoed: 0,
+    upgradesVetoed: 0,
+    vetoedTerms: [],
+    retried: 0,
+    llmProduced: false,
+  };
   let done = 0;
 
-  for (const { term, isUpgrade } of work) {
-    if (opts.signal?.aborted === true) {
-      return {
-        consolidated,
-        upgraded,
-        vetoed,
-        upgradesVetoed,
-        vetoedTerms,
-        retried,
-        llmProduced,
-        aborted: true,
-      };
-    }
+  for (const unit of work) {
+    if (opts.signal?.aborted === true) return { ...tally, aborted: true };
 
     const snippets = snippetsFor(
       db,
-      term.topSources.map((s) => s.itemId),
+      unit.term.topSources.map((s) => s.itemId),
     );
-    const outcome = await consolidateTerm(term, snippets, {
+    const outcome = await consolidateTerm(unit.term, snippets, {
       ...(opts.llm === undefined ? {} : { llm: opts.llm }),
       timeoutMs: opts.consolidateTimeoutMs,
       ...(opts.signal === undefined ? {} : { signal: opts.signal }),
     });
 
-    if (outcome.kind === "vetoed") {
-      // Only a model can veto, so this proves the model answered.
-      llmProduced = true;
-      unprojectTerm(db, term.termKey);
-      markVetoed(db, term.termKey, opts.nowMs);
-      vetoed += 1;
-      if (isUpgrade) {
-        upgradesVetoed += 1;
-        // A term the user could see yesterday and cannot see today. Named so
-        // `--refresh` can report it rather than letting it vanish silently.
-        // `displayTerm`, not `termKey`: the rebuild preview (via
-        // `agents.glossary`) shows the display form (e.g. "CDR"), and this
-        // list must read the same way, not as the lowercased normalized key.
-        if (vetoedTerms.length < VETOED_TERMS_REPORTED) vetoedTerms.push(term.displayTerm);
-      }
-    } else if (outcome.kind === "retry") {
-      // Stamps the attempt for BOTH queues' backoff — a failing upgrade steps
-      // aside from its reserved slot exactly like a failing pending term.
-      recordAttempt(db, term.termKey, opts.nowMs);
-      retried += 1;
-    } else {
-      if (outcome.source === "llm") llmProduced = true;
-      // One transaction: a crash between markConsolidated and projectTerm would
-      // otherwise strand the term `consolidated` with no projected item row —
-      // invisible in search, and (per the reconciliation sweep's own contract)
-      // never self-healed, since the sweep only re-verifies rows already
-      // `consolidated` and this row genuinely is. `db.transaction` nests safely
-      // via savepoints, so this composes with any outer transaction.
-      db.transaction(() => {
-        markConsolidated(db, {
-          termKey: term.termKey,
-          definition: outcome.definition,
-          definitionSource: outcome.source,
-          synonyms: outcome.synonyms,
-          nearMisses: findNearMisses(term.termKey, knownKeys),
-          nowMs: opts.nowMs,
-        });
-        const stored = getTerm(db, term.termKey);
-        if (stored !== null) projectTerm(db, stored, opts.nowMs);
-      })();
-      if (isUpgrade) upgraded += 1;
-      else consolidated += 1;
-    }
+    applyConsolidationOutcome(db, unit, outcome, { knownKeys, nowMs: opts.nowMs }, tally);
 
     done += 1;
     opts.onProgress?.({
       done,
       total: work.length,
-      consolidated,
-      upgraded,
-      vetoed,
-      retried,
+      consolidated: tally.consolidated,
+      upgraded: tally.upgraded,
+      vetoed: tally.vetoed,
+      retried: tally.retried,
     });
   }
 
-  return {
-    consolidated,
-    upgraded,
-    vetoed,
-    upgradesVetoed,
-    vetoedTerms,
-    retried,
-    llmProduced,
-    aborted: opts.signal?.aborted === true,
-  };
+  return { ...tally, aborted: opts.signal?.aborted === true };
 }
 
 function readManualConfig(opts: GlossaryPassOptions): GlossaryManualConfig {

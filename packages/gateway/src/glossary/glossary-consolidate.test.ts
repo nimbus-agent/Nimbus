@@ -167,14 +167,14 @@ test("pickSnippetDefinition returns the sentence containing the term", () => {
 });
 
 test("pickSnippetDefinition returns null when the term is absent", () => {
-  expect(pickSnippetDefinition("CDR", [{ text: "no mention" }])).toBe(null);
+  expect(pickSnippetDefinition("CDR", [{ text: "no mention" }])).toBeNull();
 });
 
 test("pickSnippetDefinition does not substring-match a short acronym inside a longer word", () => {
   expect(
     pickSnippetDefinition("AI", [{ text: "Please explain the billing cycle to the customer." }]),
-  ).toBe(null);
-  expect(pickSnippetDefinition("ML", [{ text: "The HTML template renders the page." }])).toBe(null);
+  ).toBeNull();
+  expect(pickSnippetDefinition("ML", [{ text: "The HTML template renders the page." }])).toBeNull();
 });
 
 test("pickSnippetDefinition still matches a whole-word acronym", () => {
@@ -260,5 +260,5 @@ test("the synonym cap keeps verified expansions over model-invented ones", async
   const out = await consolidateTerm(term(), SNIPPETS, { llm, timeoutMs: 1000 });
   if (out.kind !== "defined") throw new Error("expected defined");
   expect(out.synonyms).toContain("Change Data Record");
-  expect(out.synonyms.length).toBe(10);
+  expect(out.synonyms).toHaveLength(10);
 });

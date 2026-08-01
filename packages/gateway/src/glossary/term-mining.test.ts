@@ -77,7 +77,7 @@ test("stopwords are excluded", () => {
 
 test("deduplicates repeated terms by key", () => {
   const found = mineTerms("CDR and CDR and CDRs").filter((c) => c.key === "cdr");
-  expect(found.length).toBe(1);
+  expect(found).toHaveLength(1);
 });
 
 test("empty and whitespace input yields no candidates", () => {

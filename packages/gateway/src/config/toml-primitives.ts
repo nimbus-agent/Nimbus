@@ -68,7 +68,7 @@ export function hasUnterminatedString(line: string): boolean {
 export function parseString(raw: string): string {
   const t = raw.trim();
   if (t.startsWith('"') && t.endsWith('"') && t.length >= 2) {
-    return t.slice(1, -1).replaceAll('\\"', '"');
+    return t.slice(1, -1).replaceAll(String.raw`\"`, '"');
   }
   return t;
 }

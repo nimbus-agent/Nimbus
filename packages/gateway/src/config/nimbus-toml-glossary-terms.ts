@@ -43,6 +43,70 @@ const SYNONYMS_HEADER = "[glossary.synonyms]";
 
 type RawEntry = { key: string; value: string };
 
+/** Mutable cursor for the single line-by-line scan performed by `collectBlocks`. */
+type BlockScan = {
+  terms: RawEntry[];
+  synonyms: RawEntry[];
+  preSkipped: ManualSkip[];
+  /** The block currently being filled, or `null` outside both blocks. */
+  target: RawEntry[] | null;
+  inGlossaryRoot: boolean;
+};
+
+/** Reported only inside one of the two blocks — elsewhere it is not this parser's business. */
+function noteUnterminatedString(scan: BlockScan, line: string): void {
+  if (scan.target === null) return;
+  const trimmedLine = line.trim();
+  const kv = splitKeyValue(trimmedLine);
+  scan.preSkipped.push({
+    entry: kv !== undefined ? parseString(kv.key) : trimmedLine,
+    reason: "unterminated quoted value — definitions must be a single line",
+  });
+}
+
+/** Retargets the scan on a `[table]` line. */
+function enterTable(scan: BlockScan, header: string): void {
+  scan.inGlossaryRoot = header === GLOSSARY_HEADER;
+  if (header === TERMS_HEADER) scan.target = scan.terms;
+  else if (header === SYNONYMS_HEADER) scan.target = scan.synonyms;
+  else scan.target = null;
+}
+
+/** Reports a dotted key written under the parent `[glossary]` table. */
+function noteDottedGlossaryKey(scan: BlockScan, trimmed: string): void {
+  const kv = splitKeyValue(trimmed);
+  const key = kv?.key.trim() ?? "";
+  if (!key.startsWith("terms.") && !key.startsWith("synonyms.")) return;
+  scan.preSkipped.push({
+    entry: key,
+    reason:
+      "dotted keys under [glossary] are not read — move it under [glossary.terms] " +
+      "or [glossary.synonyms]",
+  });
+}
+
+function scanBlockLine(scan: BlockScan, line: string): void {
+  if (hasUnterminatedString(line)) {
+    noteUnterminatedString(scan, line);
+    return;
+  }
+  const trimmed = stripComment(line).trim();
+  if (trimmed === "") return;
+  if (isTableHeader(trimmed)) {
+    enterTable(scan, trimmed);
+    return;
+  }
+  if (scan.inGlossaryRoot) {
+    noteDottedGlossaryKey(scan, trimmed);
+    return;
+  }
+  if (scan.target === null) return;
+  const kv = splitKeyValue(trimmed);
+  if (kv !== undefined) {
+    scan.target.push({ key: parseString(kv.key), value: parseString(kv.valRaw) });
+  }
+}
+
 /**
  * Collects the raw entries of both blocks in one pass.
  *
@@ -72,53 +136,15 @@ function collectBlocks(raw: string): {
   synonyms: RawEntry[];
   preSkipped: ManualSkip[];
 } {
-  const terms: RawEntry[] = [];
-  const synonyms: RawEntry[] = [];
-  const preSkipped: ManualSkip[] = [];
-  let target: RawEntry[] | null = null;
-  let inGlossaryRoot = false;
-
-  for (const line of raw.split(/\r?\n/)) {
-    if (hasUnterminatedString(line)) {
-      if (target !== null) {
-        const trimmedLine = line.trim();
-        const kv = splitKeyValue(trimmedLine);
-        preSkipped.push({
-          entry: kv !== undefined ? parseString(kv.key) : trimmedLine,
-          reason: "unterminated quoted value — definitions must be a single line",
-        });
-      }
-      continue;
-    }
-    const trimmed = stripComment(line).trim();
-    if (trimmed === "") continue;
-    if (isTableHeader(trimmed)) {
-      inGlossaryRoot = trimmed === GLOSSARY_HEADER;
-      if (trimmed === TERMS_HEADER) target = terms;
-      else if (trimmed === SYNONYMS_HEADER) target = synonyms;
-      else target = null;
-      continue;
-    }
-    if (inGlossaryRoot) {
-      const kv = splitKeyValue(trimmed);
-      const key = kv?.key.trim() ?? "";
-      if (key.startsWith("terms.") || key.startsWith("synonyms.")) {
-        preSkipped.push({
-          entry: key,
-          reason:
-            "dotted keys under [glossary] are not read — move it under [glossary.terms] " +
-            "or [glossary.synonyms]",
-        });
-      }
-      continue;
-    }
-    if (target === null) continue;
-    const kv = splitKeyValue(trimmed);
-    if (kv !== undefined) {
-      target.push({ key: parseString(kv.key), value: parseString(kv.valRaw) });
-    }
-  }
-  return { terms, synonyms, preSkipped };
+  const scan: BlockScan = {
+    terms: [],
+    synonyms: [],
+    preSkipped: [],
+    target: null,
+    inGlossaryRoot: false,
+  };
+  for (const line of raw.split(/\r?\n/)) scanBlockLine(scan, line);
+  return { terms: scan.terms, synonyms: scan.synonyms, preSkipped: scan.preSkipped };
 }
 
 function buildTerms(raw: RawEntry[], skipped: ManualSkip[]): ManualTerm[] {

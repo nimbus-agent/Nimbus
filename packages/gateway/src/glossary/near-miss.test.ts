@@ -29,7 +29,7 @@ test("excludes keys beyond edit distance two", () => {
 
 test("respects the limit", () => {
   const out = findNearMisses("cdr", ["cdc", "cdx", "cdq", "cds"], 2);
-  expect(out.length).toBe(2);
+  expect(out).toHaveLength(2);
 });
 
 test("handles an empty known list", () => {
