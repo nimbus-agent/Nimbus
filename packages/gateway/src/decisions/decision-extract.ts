@@ -23,10 +23,14 @@ import type { DecisionRecord } from "./decision-types.ts";
 const SCAN_BATCH_LIMIT = 5000;
 
 /**
- * Slots reserved for upgrading snippet rows, mirroring `glossary`'s
- * UPGRADE_RESERVE. A RESERVE, not leftover capacity: spending only what new
- * candidates leave behind means a busy index — exactly when the snippet backlog
- * grows — upgrades nothing, ever.
+ * A CAP on upgrade slots per pass, mirroring `glossary`'s UPGRADE_RESERVE —
+ * not a fixed carve-out of the budget. `runDecisionPass` over-fetches both the
+ * pending and snippet-upgrade queues to the full per-pass budget, then hands
+ * upgrades `min(UPGRADE_RESERVE, upgradeCandidates)` slots: it yields the rest
+ * to pending when there are fewer real upgrade candidates than the cap (so a
+ * reserve with no work to do never idles), and it absorbs the whole budget
+ * when there are no pending candidates at all (so a pass with only upgrade
+ * work outstanding still does something, even at `maxLlmCalls: 1`).
  */
 export const UPGRADE_RESERVE = 5;
 
@@ -260,16 +264,34 @@ export async function runDecisionPass(
 
   if (opts.useLlm && opts.llm !== undefined) {
     const llm = opts.llm;
-    const upgradeBudget = Math.min(UPGRADE_RESERVE, Math.max(0, opts.maxLlmCalls - 1));
-    const pendingBudget = Math.max(0, opts.maxLlmCalls - upgradeBudget);
+    // Adaptive allocation, not a static split: over-fetch BOTH queues at the
+    // full budget, then let either absorb the other's slack. A static split
+    // (e.g. `min(RESERVE, budget-1)` upgrade / remainder pending) wastes
+    // slots in either corner — a reserve bigger than the real upgrade
+    // backlog leaves slots idle instead of falling back to pending, and a
+    // reserve computed before the pending backlog is known can starve
+    // pending even when upgrades have nothing to do. Mirrors
+    // `glossary-extract.ts`'s `selectConsolidationWork`.
+    const budget = Number.isFinite(opts.maxLlmCalls)
+      ? Math.max(0, Math.trunc(opts.maxLlmCalls))
+      : 0;
+    const pendingAll = selectPendingByPriority(db, budget, cooldownBefore);
+    const upgradeAll = selectSnippetUpgrades(db, budget);
 
-    for (const row of selectPendingByPriority(db, pendingBudget, cooldownBefore)) {
+    // Reserve only as many upgrade slots as there are real upgrade
+    // candidates, so a reserve with no work to do falls back to pending
+    // instead of idling.
+    const reserve = Math.min(UPGRADE_RESERVE, upgradeAll.length);
+    const pendingTake = Math.min(pendingAll.length, Math.max(0, budget - reserve));
+    const upgradeTake = Math.min(upgradeAll.length, budget - pendingTake);
+
+    for (const row of pendingAll.slice(0, pendingTake)) {
       const r = await extractOne(db, row, llm, opts);
       if (r === "extracted") extracted++;
       else if (r === "vetoed") vetoed++;
       else failed++;
     }
-    for (const row of selectSnippetUpgrades(db, upgradeBudget)) {
+    for (const row of upgradeAll.slice(0, upgradeTake)) {
       const r = await extractOne(db, row, llm, opts);
       if (r === "extracted") upgraded++;
       else if (r === "vetoed") vetoed++;

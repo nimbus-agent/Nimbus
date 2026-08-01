@@ -166,3 +166,74 @@ test("items outside the source allowlist are never scanned", async () => {
   const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
   expect(summary.discovered).toBe(0);
 });
+
+// Fix-round-1 regression pair, mirroring glossary's
+// "gives upgrades the whole budget when nothing is pending" /
+// "gives pending the whole budget when no upgrades are outstanding".
+
+test("maxLlmCalls: 1 with only an upgrade candidate outstanding still performs the upgrade", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  await runDecisionPass(db, { ...OPTS, useLlm: false });
+
+  const llm = scriptedLlm(
+    { billing: '{"is_decision":true,"statement":"Move billing to Postgres"}' },
+    '{"is_decision":false}',
+  );
+  const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, maxLlmCalls: 1, llm });
+  expect(summary.upgraded).toBe(1);
+});
+
+test("maxLlmCalls: 5 with 20 pending and 1 upgrade candidate makes exactly 5 LLM calls", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  await runDecisionPass(db, { ...OPTS, useLlm: false });
+
+  for (let i = 0; i < 20; i++) {
+    seed(`n${i}`, "slack", "message", "t", `We decided on thing ${i}.`, 6_000 + i);
+  }
+  let calls = 0;
+  const llm: DecisionLlm = {
+    complete: async () => {
+      calls++;
+      return '{"is_decision":true,"statement":"x"}';
+    },
+  };
+  await runDecisionPass(db, { ...OPTS, nowMs: 20_000, maxLlmCalls: 5, llm });
+  expect(calls).toBe(5); // not 2 — no slot goes idle
+});
+
+test("maxLlmCalls: 5 with pending candidates and no upgrades sends all 5 slots to pending", async () => {
+  for (let i = 0; i < 6; i++) {
+    seed(`p${i}`, "slack", "message", "t", `We decided on thing ${i}.`, 1_000 + i);
+  }
+  let calls = 0;
+  const llm: DecisionLlm = {
+    complete: async () => {
+      calls++;
+      return '{"is_decision":true,"statement":"x"}';
+    },
+  };
+  const summary = await runDecisionPass(db, { ...OPTS, maxLlmCalls: 5, llm });
+  expect(calls).toBe(5);
+  expect(summary.upgraded).toBe(0);
+});
+
+test("maxLlmCalls: 0 makes no LLM call and still returns a well-formed summary", async () => {
+  seed("s1", "slack", "message", "t", "We decided to ship it.", 5_000);
+  let calls = 0;
+  const llm: DecisionLlm = {
+    complete: async () => {
+      calls++;
+      return '{"is_decision":true,"statement":"x"}';
+    },
+  };
+  const summary = await runDecisionPass(db, { ...OPTS, maxLlmCalls: 0, llm });
+  expect(calls).toBe(0);
+  expect(summary).toEqual({
+    scanned: 1,
+    discovered: 1,
+    extracted: 0,
+    vetoed: 0,
+    upgraded: 0,
+    failed: 0,
+  });
+});
