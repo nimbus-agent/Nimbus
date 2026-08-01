@@ -56,6 +56,13 @@ const DBUS_SEND_LOCKED_FALSE =
 const DBUS_SEND_SERVICE_UNKNOWN =
   "Error org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files\n";
 
+/** busctl exiting non-zero for a reason neither stderr pattern recognises. */
+const BUSCTL_CALL_TIMED_OUT = "Call failed: Connection timed out\n";
+
+/** busctl speaking JSON (`--json=short`): exit 0, but no `o "<path>"` token. */
+const BUSCTL_JSON_ALIAS = '{"type":"o","data":["/org/freedesktop/secrets/collection/login"]}\n';
+const BUSCTL_JSON_LOCKED = '{"type":"b","data":false}\n';
+
 const SECRET_TOOL_PATH = "/usr/bin/secret-tool";
 
 interface FakeExecOptions {
@@ -173,6 +180,34 @@ describe("probeLinuxVault — transport fallbacks", () => {
 
   it("reports unverified when the Locked property cannot be read", () => {
     expect(stateOf({ locked: { code: 1, stdout: "", stderr: "boom" } })).toBe("unverified");
+  });
+
+  it("reports unverified — not ok — when ReadAlias fails for an unrecognised reason", () => {
+    // stderr matches neither the no-session-bus nor the no-provider pattern, so
+    // the state is genuinely unknown; the raw diagnostic must still be surfaced.
+    const probe = probeLinuxVault(
+      makeExec({ alias: { code: 1, stdout: "", stderr: BUSCTL_CALL_TIMED_OUT } }).exec,
+    );
+    expect(probe.state).toBe("unverified");
+    expect(probe.detail).toBe(BUSCTL_CALL_TIMED_OUT.trim());
+  });
+
+  it("reports unverified — not ok — when the ReadAlias reply cannot be parsed", () => {
+    // A busctl that emits JSON (e.g. `--json=short` wired in via an alias) exits 0
+    // but carries no `o "<path>"` token; guessing `ok` here would be a false green.
+    const probe = probeLinuxVault(makeExec({ alias: ok(BUSCTL_JSON_ALIAS) }).exec);
+    expect(probe.state).toBe("unverified");
+    expect(probe.detail).toContain("unparseable ReadAlias reply");
+    expect(probe.detail).toContain(BUSCTL_JSON_ALIAS.trim());
+  });
+
+  it("reports unverified — not ok — when the Locked reply cannot be parsed", () => {
+    const probe = probeLinuxVault(
+      makeExec({ alias: ok(BUSCTL_ALIAS_LOGIN), locked: ok(BUSCTL_JSON_LOCKED) }).exec,
+    );
+    expect(probe.state).toBe("unverified");
+    expect(probe.detail).toContain("unparseable Locked reply");
+    expect(probe.detail).toContain(BUSCTL_JSON_LOCKED.trim());
   });
 });
 

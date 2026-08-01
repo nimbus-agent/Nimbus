@@ -132,4 +132,72 @@ describe("spawnAndTimeToMarker", () => {
       }),
     ).rejects.toThrow(/g or y flag/i);
   });
+
+  test("marker mode: a later match on the other stream does not overwrite the first timing", async () => {
+    // The gateway mirrors its ready banner onto stderr; the bench must report the
+    // FIRST sighting, not whichever stream happens to match last.
+    const elapsed = await spawnAndTimeToMarker({
+      cmd: "fake",
+      args: [],
+      mode: "marker",
+      marker: /\[gateway\] ready/,
+      timeoutMs: 5_000,
+      spawn: ((..._args: unknown[]) => {
+        const proc: FakeSubprocess = {
+          stdout: streamFrom(["[gateway] ready\n"]),
+          stderr: streamFrom(["[gateway] ready\n"], 100),
+          exited: new Promise<number>((r) => setTimeout(() => r(0), 150)),
+          kill: () => undefined,
+        };
+        return proc as unknown as ReturnType<typeof Bun.spawn>;
+      }) as unknown as typeof Bun.spawn,
+    });
+    expect(elapsed).toBeLessThan(60);
+  });
+
+  test("marker mode: a silent, non-exiting child rejects from the timeout timer", async () => {
+    // Neither stream ever emits or closes and the child never exits on its own,
+    // so the deadline timer — not the exit racer — must produce the rejection.
+    let resolveExited!: (code: number) => void;
+    const exited = new Promise<number>((r) => {
+      resolveExited = r;
+    });
+    const silent = (): ReadableStream<Uint8Array> =>
+      new ReadableStream<Uint8Array>({
+        start() {
+          /* never enqueues, never closes */
+        },
+      });
+    await expect(
+      spawnAndTimeToMarker({
+        cmd: "fake",
+        args: [],
+        mode: "marker",
+        marker: /\[gateway\] ready/,
+        timeoutMs: 25,
+        spawn: ((..._args: unknown[]) => {
+          const proc: FakeSubprocess = {
+            stdout: silent(),
+            stderr: silent(),
+            exited,
+            kill: () => resolveExited(0),
+          };
+          return proc as unknown as ReturnType<typeof Bun.spawn>;
+        }) as unknown as typeof Bun.spawn,
+      }),
+    ).rejects.toThrow("spawn-and-time timeout after 25ms");
+  });
+
+  test("exit mode: with no spawn injected it drives the real Bun.spawn", async () => {
+    // Covers the production default (`Bun.spawn`) end to end, including exit-code
+    // propagation from a genuine child process.
+    await expect(
+      spawnAndTimeToMarker({
+        cmd: process.execPath,
+        args: ["-e", "process.exit(3)"],
+        mode: "exit",
+        timeoutMs: 20_000,
+      }),
+    ).rejects.toThrow("child exited with code 3");
+  });
 });

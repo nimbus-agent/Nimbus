@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { runWorkerBench } from "./worker-bench.ts";
 
@@ -9,12 +13,17 @@ interface FakeWorkerOpts {
   busyRetries?: number;
   errorBeforeReady?: { message: string; stack?: string };
   hangPastStop?: boolean;
+  /** Emit a message whose `kind` the coordinator does not know, just before `done`. */
+  noiseKind?: string;
+  /** Observe terminate(), told whether the worker had already reported `done`. */
+  onTerminate?: (donePosted: boolean) => void;
 }
 
 function makeFakeWorker(opts: FakeWorkerOpts): typeof Worker {
   return class FakeWorker {
     onmessage: ((e: MessageEvent<unknown>) => void) | null = null;
     onerror: ((e: ErrorEvent) => void) | null = null;
+    donePosted = false;
     constructor(_url: URL) {
       queueMicrotask(() => {
         if (opts.errorBeforeReady !== undefined) {
@@ -33,6 +42,10 @@ function makeFakeWorker(opts: FakeWorkerOpts): typeof Worker {
       if (m.kind === "start") {
         const after = opts.postWritesAfterMs ?? 5;
         setTimeout(() => {
+          if (opts.noiseKind !== undefined) {
+            this.onmessage?.({ data: { kind: opts.noiseKind } } as MessageEvent<unknown>);
+          }
+          this.donePosted = true;
           this.onmessage?.({
             data: {
               kind: "done",
@@ -47,10 +60,15 @@ function makeFakeWorker(opts: FakeWorkerOpts): typeof Worker {
       }
     }
     terminate(): void {
-      /* test stub: never inspects state, so no-op */
+      opts.onTerminate?.(this.donePosted);
     }
   } as unknown as typeof Worker;
 }
+
+const realWorkerDir = mkdtempSync(join(tmpdir(), "worker-bench-real-"));
+afterAll(() => {
+  rmSync(realWorkerDir, { recursive: true, force: true });
+});
 
 describe("runWorkerBench", () => {
   test("aggregates throughput across Workers (happy path)", async () => {
@@ -127,5 +145,80 @@ describe("runWorkerBench", () => {
     expect(result.perWorker).toHaveLength(1);
     expect(result.totalBusyRetries).toBe(1);
     expect(result.totalThroughputPerSec).toBeGreaterThan(0);
+  });
+
+  test("a message of an unknown kind is ignored, not mistaken for an error", async () => {
+    // Forward-compat: a newer worker build may emit extra frames (e.g. progress).
+    // They must not fall through into the error arm and zero out the run.
+    const result = await runWorkerBench({
+      workers: [{ name: "sync", url: new URL("file:///fake.ts"), config: {} }],
+      durationMs: 100,
+      sharedDbPath: "/fake/db",
+      WorkerCtor: makeFakeWorker({ noiseKind: "progress", writes: 250, busyRetries: 4 }),
+    });
+    expect(result.errors).toHaveLength(0);
+    expect(result.perWorker).toHaveLength(1);
+    expect(result.perWorker[0]?.writes).toBe(250);
+    expect(result.totalBusyRetries).toBe(4);
+  });
+
+  test("a zero-length run reports 0 throughput rather than Infinity", async () => {
+    const result = await runWorkerBench({
+      workers: [{ name: "sync", url: new URL("file:///fake.ts"), config: {} }],
+      durationMs: 0,
+      sharedDbPath: "/fake/db",
+      WorkerCtor: makeFakeWorker({ writes: 42 }),
+    });
+    expect(result.perWorker[0]?.writes).toBe(42);
+    expect(result.perWorker[0]?.throughputPerSec).toBe(0);
+    expect(Number.isFinite(result.totalThroughputPerSec)).toBe(true);
+    expect(result.totalThroughputPerSec).toBe(0);
+  });
+
+  test("on timeout the Workers are terminated while still running, without a drain wait", async () => {
+    // The deadline wins the race well before the worker reports `done`, so the
+    // coordinator must terminate immediately instead of draining donePromise.
+    const terminatedWithDoneAlreadyPosted: boolean[] = [];
+    const result = await runWorkerBench({
+      workers: [{ name: "sync", url: new URL("file:///fake.ts"), config: {} }],
+      durationMs: 50,
+      sharedDbPath: "/fake/db",
+      timeoutMs: 5,
+      WorkerCtor: makeFakeWorker({
+        writes: 10,
+        postWritesAfterMs: 150,
+        onTerminate: (donePosted) => terminatedWithDoneAlreadyPosted.push(donePosted),
+      }),
+    });
+    expect(terminatedWithDoneAlreadyPosted).toEqual([false]);
+    expect(result.perWorker).toHaveLength(1);
+  });
+
+  test("with no WorkerCtor override it drives real Workers over the message protocol", async () => {
+    // Exercises the production default (the global `Worker`) against a real
+    // thread speaking the init/ready/start/done contract.
+    const script = [
+      "self.onmessage = (e) => {",
+      "  const msg = e.data;",
+      '  if (msg.kind === "init") { self.postMessage({ kind: "ready" }); }',
+      '  else if (msg.kind === "start") {',
+      '    self.postMessage({ kind: "done", writes: 7, busyRetries: 2 });',
+      "  }",
+      "};",
+    ].join("\n");
+    writeFileSync(join(realWorkerDir, "w.js"), script, "utf8");
+    const result = await runWorkerBench({
+      workers: [
+        { name: "sync", url: pathToFileURL(join(realWorkerDir, "w.js")), config: { a: 1 } },
+      ],
+      durationMs: 100,
+      sharedDbPath: join(realWorkerDir, "db.sqlite"),
+      timeoutMs: 10_000,
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.perWorker).toHaveLength(1);
+    expect(result.perWorker[0]?.writes).toBe(7);
+    expect(result.totalBusyRetries).toBe(2);
+    expect(result.totalThroughputPerSec).toBeCloseTo(70, 5);
   });
 });
