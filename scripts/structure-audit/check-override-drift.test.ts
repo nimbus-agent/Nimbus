@@ -182,6 +182,60 @@ describe("workspaceManifests", () => {
 
     expect(workspaceManifests(root)).toEqual(["package.json", "packages/gateway/package.json"]);
   });
+
+  test("a negated entry subtracts the member a positive glob pulled in", () => {
+    write("package.json", { workspaces: ["packages/*", "!packages/template"] });
+    write("packages/one/package.json", {});
+    write("packages/template/package.json", {});
+
+    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
+      "package.json",
+      "packages/one/package.json",
+    ]);
+  });
+
+  test("a negated GLOB subtracts every member it matches", () => {
+    write("package.json", { workspaces: ["packages/*", "!packages/legacy-*"] });
+    write("packages/keep/package.json", {});
+    write("packages/legacy-a/package.json", {});
+    write("packages/legacy-b/package.json", {});
+
+    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
+      "package.json",
+      "packages/keep/package.json",
+    ]);
+  });
+
+  test("exclusions apply regardless of entry order", () => {
+    write("package.json", { workspaces: ["!packages/template", "packages/*"] });
+    write("packages/one/package.json", {});
+    write("packages/template/package.json", {});
+
+    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
+      "package.json",
+      "packages/one/package.json",
+    ]);
+  });
+
+  test("the root manifest is never excludable", () => {
+    write("package.json", { workspaces: ["!."] });
+
+    expect(workspaceManifests(root)).toEqual(["package.json"]);
+  });
+
+  test("an excluded member's declarations are out of scope for the audit", () => {
+    // The failure this guards: `packages/template` is NOT installed by bun, so a
+    // range it declares is not a lie about the tree. Reading it anyway would
+    // manufacture a finding.
+    write("package.json", {
+      overrides: { "js-yaml": "4.3.1" },
+      workspaces: ["packages/*", "!packages/template"],
+    });
+    write("packages/one/package.json", { dependencies: { "js-yaml": "^4.3.1" } });
+    write("packages/template/package.json", { dependencies: { "js-yaml": "^5.2.2" } });
+
+    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+  });
 });
 
 describe("collectPins / collectDeclarations", () => {

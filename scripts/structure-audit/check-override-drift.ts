@@ -104,27 +104,54 @@ function stringRecord(value: unknown): Record<string, string> {
 }
 
 /**
+ * Resolve one workspace entry (already stripped of any `!`) to the manifest
+ * paths it names. A literal entry is taken at its word; a glob is expanded.
+ */
+function manifestsForPattern(repoRoot: string, pattern: string): string[] {
+  const normalized = pattern.replace(/\\/g, "/");
+  if (normalized.length === 0) return [];
+  if (!normalized.includes("*")) return [`${normalized}/package.json`];
+  const out: string[] = [];
+  for (const hit of new Glob(`${normalized}/package.json`).scanSync({ cwd: repoRoot })) {
+    out.push(hit.replace(/\\/g, "/"));
+  }
+  return out;
+}
+
+/**
  * Every manifest root `overrides` actually governs: the root manifest plus each
  * workspace member. Workspace entries may be globs, so a literal path and a
  * `packages/*` pattern both resolve correctly — Nimbus lists ~100 literal paths
  * today, but a future glob must not silently shrink this gate's scope.
+ *
+ * Bun also honours NEGATED entries (`"!packages/legacy-thing"`), and they have to
+ * be subtracted rather than pushed. Treating `!x` as a path name is harmless
+ * only by accident — the phantom `!x/package.json` does not exist, so it drops
+ * out later — while the member it was meant to EXCLUDE stays in scope. This gate
+ * would then read a manifest bun never installs and can report drift against a
+ * declaration root `overrides` does not govern: a false finding, in the one gate
+ * whose whole purpose is to catch a manifest lying about the tree. Exclusions are
+ * therefore collected separately and subtracted from the final set, so they apply
+ * regardless of the order entries appear in. The root manifest is never
+ * excludable — root `overrides` always governs root's own declarations.
  */
 export function workspaceManifests(repoRoot: string): string[] {
   const root = readJson(join(repoRoot, "package.json"));
   const files = ["package.json"];
   const workspaces = root?.["workspaces"];
   if (!Array.isArray(workspaces)) return files;
+  const excluded = new Set<string>();
   for (const entry of workspaces) {
     if (typeof entry !== "string") continue;
-    if (!entry.includes("*")) {
-      files.push(`${entry.replace(/\\/g, "/")}/package.json`);
-      continue;
-    }
-    for (const hit of new Glob(`${entry}/package.json`).scanSync({ cwd: repoRoot })) {
-      files.push(hit.replace(/\\/g, "/"));
+    const negated = entry.startsWith("!");
+    const resolved = manifestsForPattern(repoRoot, negated ? entry.slice(1) : entry);
+    if (negated) {
+      for (const rel of resolved) excluded.add(rel);
+    } else {
+      files.push(...resolved);
     }
   }
-  return [...new Set(files)];
+  return [...new Set(files)].filter((rel) => rel === "package.json" || !excluded.has(rel));
 }
 
 /** Every declared range for `name` across the given manifests, protocols excluded. */

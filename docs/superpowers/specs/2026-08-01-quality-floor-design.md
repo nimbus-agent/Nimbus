@@ -82,10 +82,18 @@ is computed differently; that value evaporates if the local gate and Sonar are t
 | `coverage-floor` `discoverSourceFiles()` (gateway + cli `.ts`/`.tsx` + mcp-connectors) | 1113 | 7 | 32 | 50 | 81 |
 | All `packages/*/src` incl. `ui` and `.tsx` | 1197 | 7 | 33 | — | — |
 
-The headline "7 over 1000, 32 over 500" is stable across every set. **The file *total* is not** —
-it moves by ~100 depending on whether `.tsx`, `packages/ui`, `-sql.ts` and `scripts/` are in scope,
-and `scripts/` alone adds 125 more non-test modules. The commonly-quoted figure of ~1251 does not
-correspond to any of the three sets above.
+**"7 over 1000" is the only headline stable across every set.** The **> 500 count is not**: 32 in
+the `coverage-floor` set, 33 in the other two. Measured, the difference is exactly one file —
+`packages/ui/src/ipc/client.ts`, the only >500-line file the `coverage-floor` globs never reach —
+and the three sets are otherwise identical above 500. So **32 is the `coverage-floor` figure and
+must be quoted as such**; that is the set this gate is pinned to (§7.1), which is why §5 and §6 are
+all in it.
+
+**The file *total* is not stable either** — it moves by ~100 depending on whether `.tsx`,
+`packages/ui`, `-sql.ts` and `scripts/` are in scope, and `scripts/` alone adds 126 more non-test
+modules (125 on `main`; this branch's own `check-override-drift.ts` is the 126th, which is itself a
+small demonstration of why a count belongs to a scan set *and* a commit). The commonly-quoted figure
+of ~1251 does not correspond to any of the three sets above.
 
 That is not a nitpick, it is a requirement: **the gate must pin its scan set in code and state it in
 its own error output**, or two people will disagree about whether a file is even gated. §7.1 pins
@@ -233,10 +241,41 @@ question, and it is the question that decides whether G4a earns its keep or is a
 `packages/cli/src/commands/**` that references `IPCClient` or `withIpc` must also:
 
 1. export an interface named `*Ipc`, and
-2. export an async `run*Command` whose **first parameter is typed as that interface**.
+2. export an async `run*Command` whose **first parameter is typed as that interface**, and
+3. **actually use that parameter on the dispatcher path.** Inside the body of `run*Command` — and
+   inside any same-module function it calls — the parameter identifier must be referenced at least
+   once, and there must be **no** `withIpc(...)` call and no `new IPCClient(...)`. Acquiring a real
+   client is the job of the thin `runX(args)` wrapper that sits *outside* the dispatcher.
 
-The type check is load-bearing. Rule 1 alone is satisfiable by declaring an interface nobody
-injects.
+**All three rules are load-bearing, and rule 3 is the one that makes the gate mean anything.**
+Rule 1 alone is satisfiable by declaring an interface nobody injects. **Rules 1 + 2 alone are
+satisfiable by accepting the parameter and then ignoring it** — a `run*Command(ipc: XIpc, …)` whose
+body calls `withIpc()` and talks to the real client passes a declaration-only check while remaining
+*exactly* as untestable as `share.ts` was, which is the failure this gate exists to catch. A
+declaration-shaped gate would have reported `share.ts` as fixed the moment someone added a
+parameter, which is worse than not having the gate: it converts a real defect into a green check.
+
+Verified against the seven compliant modules today: in every one of them the client acquisition
+(`new IPCClient(state.socketPath)`, or `share.ts`'s module-local `withIpc` helper) sits in the
+`runX` wrapper, **never** inside `run*Command`. Rule 3 therefore costs the current population
+nothing — it is a fence around the shape they already have, not a new demand.
+
+The negative fixture that PR 4 must ship, red-proved before the rule is written:
+
+```ts
+// commands/__fixtures__/g4b-unused-param.ts — MUST FAIL G4b on rule 3
+export interface WidgetIpc {
+  listWidgets(): Promise<string[]>;
+}
+export async function runWidgetCommand(_ipc: WidgetIpc, cmd: WidgetCommand): Promise<void> {
+  // Declares the seam, ignores it, acquires a real client anyway.
+  await withIpc((c) => c.request("widget.list", cmd));
+}
+```
+
+Its positive twin is the same file with the body changed to `await _ipc.listWidgets()` and the
+`withIpc` import deleted; the pair must be asserted together, so the fixture proves the rule fires
+*for the stated reason* rather than because of an unrelated parse difference.
 
 **Measured: 33 command modules talk IPC; 7 comply** — `admin.ts`, `chatops.ts`, `identity.ts`,
 `policy.ts`, `scim.ts`, `share.ts`, `tribal.ts`. The 26 that do not: `_agent-brief-cli.ts`,
@@ -321,7 +360,10 @@ was raised ahead of branch.
 | G1 file LOC | **1000** | 7 | 500 | 32 |
 | G2 longest function | **200** | 7 | 80 | 48 |
 | G3 file cognitive complexity | **200** | 2 | 100 | 11 |
-| G4a/G4b | binary — no threshold | 2 + 26 | — | — |
+| G4a/G4b | binary — no threshold | 2 + 26 † | — | — |
+
+† `packages/`-only, and therefore provisional: G4a's population is not settled until §13's first
+open question is (§7.1). Including `scripts/` raises the G4a half from 2 to at least 8.
 
 The landing ceilings are chosen so each gate's initial debt list is **7, 7, 2** files — small enough
 that every entry can be read and understood by one person in one sitting, which is the property that
@@ -331,10 +373,16 @@ their current value and are green (§6); the ceilings bite on *new* files immedi
 The targets are aspirational and **live in the spec, not in code**, until a separate decision moves
 them. Precedent: line coverage sat at 80 for months with 85 written down before `FLOOR_PCT` changed.
 
-**Why not tighter on day one:** a 500-line ceiling means 32 seeded entries, a 80-line-function
-ceiling means 48, and a 100 file-CC ceiling means 11 — 91 baseline rows total, which is a list
-nobody reads. The ratchet's value comes from each entry being individually retirable and
-individually understood; that property is the first thing lost by seeding aggressively.
+**Why not tighter on day one:** a 500-line ceiling fires on 32 files, an 80-line-function ceiling on
+48, and a 100 file-CC ceiling on 11 — **up to 91 metric findings**, which is a list nobody reads.
+
+That "91" is a sum of **per-metric exceedances, not of baseline rows.** The baseline stores one row
+per file with a watermark per axis (§6.1), so a file over two ceilings is two findings and one row;
+the three sets are not disjoint and the row count is strictly smaller. It is quoted here as the
+upper bound on *review load*, which is the quantity this paragraph is actually about — the exact
+row count falls out of seeding and belongs in the seeding PR, not in a spec that would have to
+guess at the intersection. The ratchet's value comes from each entry being individually retirable
+and individually understood; that property is the first thing lost by seeding aggressively.
 
 **Why not looser:** a ceiling above every existing file (say LOC 2500) makes the gate a no-op that
 nobody notices is broken. Seven entries proves the plumbing works against real files on day one.
@@ -343,8 +391,34 @@ nobody notices is broken. Seven entries proves the plumbing works against real f
 
 Structurally identical to `scripts/coverage-floor/`, with the comparison inverted: coverage
 ratchets **up** toward a floor, quality ratchets **down** toward a ceiling. Where this section says
-"the same as coverage", it means literally the same algorithm — `computeBaselineDiff` and
-`computeUpdatedBaseline` transliterate with `<` and `>` swapped and `Math.max` → `Math.min`.
+"the same as coverage", it means literally the same algorithm with `<` and `>` swapped — but **the
+`Math.max` → `Math.min` flip is not uniform**, and applying it uniformly is a live bug rather than a
+typo. `computeUpdatedBaseline` has two independent terms, and only one of them flips:
+
+```ts
+// coverage-floor/check.ts (higher is better):
+const storeLine = line >= FLOOR_PCT ? FLOOR_PCT : Math.max(existing?.line ?? 0, line);
+// quality-floor (lower is better):
+const storeLoc = loc <= LOC_CEILING ? LOC_CEILING : Math.min(existing?.loc ?? Infinity, loc);
+```
+
+- **The pin** — `line >= FLOOR ? FLOOR` inverts to `value <= CEILING ? CEILING`. A satisfied axis
+  stores **the ceiling**, never the actual. Writing `Math.min(actual, ceiling)` here is the bug: a
+  file at 80 against a ceiling of 100 would store 80, and a later — still perfectly compliant — 90
+  would then be reported as a `regression`. Stated without reference to either function:
+  **a value at or under the ceiling stores the ceiling; a value above the ceiling keeps its actual
+  value.** §6.1's `max_file_cc` bullet is exactly this rule, and the two must not drift apart.
+- **The watermark** — `Math.max(existing, actual)` ("keep the best seen; `--update-baseline` may
+  never relax a watermark") inverts to `Math.min(existing, actual)`, because for a lower-is-better
+  metric the better number is the smaller one. This is the **only** `Math.max` → `Math.min` in the
+  transliteration, and it applies only on the above-ceiling branch, where a watermark exists at all.
+
+`computeBaselineDiff` inverts by comparison alone, with no `Math.*` involved: `actual < watermark`
+(regression) becomes `actual > watermark`, and the `floor.line < FLOOR_PCT && lineActual > floor.line`
+must-raise guard becomes `watermark > CEILING && actual < watermark` (`must_lower`). That guard's
+purpose survives the inversion unchanged and is the same bug seen from the other side — an axis
+pinned *at* the ceiling must never produce `must_lower`, or every mixed file loops forever, which is
+the failure `baseline.ts:186-193` documents having actually shipped.
 
 ### 6.1 Baseline shape
 
@@ -354,6 +428,7 @@ ratchets **up** toward a floor, quality ratchets **down** toward a ceiling. Wher
 {
   "version": 1,
   "generated_at": "2026-08-01T00:00:00.000Z",
+  "gates": ["g1", "g2", "g3", "g4a", "g4b"],
   "files": {
     "packages/gateway/src/platform/assemble.ts": {
       "max_loc": 2202,
@@ -378,10 +453,21 @@ ratchets **up** toward a floor, quality ratchets **down** toward a ceiling. Wher
 - **No `targets` section in v1.** The coverage baseline's hand-curated 100% ceilings exist because
   two security-core files must never regress. There is no equivalent claim to make about file
   length yet. Adding one later is additive; inventing one now is speculative.
+- **Every metric key and both G4 arrays are optional, and the shape above is the *complete* one.**
+  The staged rollout (§11) lands the gates one at a time, so PR 1's baseline has `max_loc` and
+  nothing else. **Absent means "no gate wrote this"** — a third state, distinct from
+  present-at-the-ceiling ("the gate ran and this axis is satisfied") and from an absent file
+  ("every gate that ran found it clean"). A gate never reads a key it did not write. §11 specifies
+  the upgrade path.
+- **`gates`** — a top-level array (`"gates": ["g1"]`) naming which gates this baseline was written
+  by. It is what makes "absent" readable: without it, a G1-only baseline and a four-gate baseline
+  over a repo with no long functions are the same document, and §10.2's "an empty baseline is not a
+  clean baseline" trap comes back one level up.
 
-### 6.2 The four violation kinds
+### 6.2 The violation kinds
 
-Same taxonomy as `check.ts`'s `Violation` union:
+Same taxonomy as `check.ts`'s `Violation` union, in two groups. **The numeric kinds** — every one of
+them presupposes a metric *and* a watermark, which is precisely why G4 cannot reuse them:
 
 | Kind | Condition | Message |
 | --- | --- | --- |
@@ -390,8 +476,32 @@ Same taxonomy as `check.ts`'s `Violation` union:
 | `must_lower` | file in baseline, metric strictly better than watermark on a still-above-ceiling axis | *"…improved; run `bun run audit:quality-floor:update-baseline`"* |
 | `must_remove` | file in baseline, now clears **every** ceiling | *"…now clears all ceilings; remove its baseline entry"* |
 
-`must_lower` and `must_remove` are why this is a ratchet and not a snapshot: **improvement without
-updating the baseline fails the build.** The precedent is `count-any-usage.ts`, which fails on
+**The G4 kinds.** G4's rules are binary and its debt lists are path arrays with no watermark, so
+"above ceiling", "regressed from" and "improved to" are all unsayable about them. A new
+side-effecting module and a command missing its seam get their own kinds and their own messages:
+
+| Kind | Condition | Message |
+| --- | --- | --- |
+| `side_effect` | module **not** in `side_effect_modules`, G4a finds a top-level effect | *"…performs `writeFileSync` at module scope, so importing it does it; move it into a function or guard it with `if (import.meta.main)`. This list is hand-edited — `--update-baseline` will not add you (§6.4)"* |
+| `missing_seam` | `commands/**` module **not** in `seamless_commands`, references `IPCClient`/`withIpc`, and fails G4b rule 1, 2 or 3 | *"…acquires its own client inside `runFooCommand`; export `interface FooIpc`, take it as the first parameter, and use it — see `policy.ts` (§4.4 G4b)"* |
+| `seam_resolved` | path listed in `seamless_commands` whose G4b rules now all pass | *"…now has a working seam; run `bun run audit:quality-floor:update-baseline` to drop it from `seamless_commands`"* |
+| `side_effect_resolved` | path listed in `side_effect_modules` that G4a now finds clean | *"…is now importable without side effects; run `…:update-baseline` to drop it from `side_effect_modules`"* |
+
+`side_effect` and `missing_seam` name the *specific* failing rule in their message, not just the
+file: "fails G4b" is unactionable when three rules can produce it.
+
+**A G4 finding is retired per rule, never per file.** The two `*_resolved` kinds are evaluated
+entirely independently of `files` and of each other, because there is no watermark to couple them
+to: a module that gains its seam is dropped from `seamless_commands` by the next
+`--update-baseline` **even though it is still 1300 lines and still sits in `files` at its LOC
+watermark**, and a module that stops writing at import time leaves `side_effect_modules` while its
+`seamless_commands` entry stays put. One file may legitimately appear in `files`,
+`seamless_commands` and `side_effect_modules` at once, and each of the three exits on its own
+condition alone. §6.4's asymmetry is only about *addition*.
+
+`must_lower`, `must_remove` and the two `*_resolved` kinds are why this is a ratchet and not a
+snapshot: **improvement without updating the baseline fails the build.** The precedent is
+`count-any-usage.ts`, which fails on
 `total < baseline.count` with an explicit "then commit the baseline in the same PR" instruction.
 Without it, a file quietly improves, the watermark stays loose, and the next regression up to the
 old watermark passes silently.
@@ -423,10 +533,17 @@ exclusion.
 
 ### 6.5 Seeding
 
-The initial baseline is generated once, committed in the landing PR, and **read in review**. Sixteen
-numeric entries (7 + 7 + 2) and 28 G4 paths is a reviewable diff. If the seeded list is
-surprising, that is a finding, not a formality — the coverage baseline's own history shows five
-entries retired on 2026-08-01 alone once someone actually read their rationales.
+The initial baseline is generated once, committed in the landing PR, and **read in review**. Up to
+16 numeric findings (7 + 7 + 2) plus the G4 paths is a reviewable diff.
+
+Both of those are ranges rather than counts, deliberately. The 16 is again per-metric exceedances,
+not rows: §4.5 already shows `assemble.ts` over both the LOC and the longest-function ceiling and
+`dispatchers.ts` over both the LOC and the file-CC ceiling, so those 16 findings land in **at most
+14 rows**. The G4 figure is 28 (2 + 26) **only if G4a is scoped to `packages/` alone** — §7.1 and
+§13's first open question can move it, and PR 3 recomputes it against whichever set is chosen.
+
+If the seeded list is surprising, that is a finding, not a formality — the coverage baseline's own
+history shows five entries retired on 2026-08-01 alone once someone actually read their rationales.
 
 ## 7. Where the data comes from
 
@@ -451,10 +568,48 @@ export function measureFile(relPath: string, source: string): FileQuality;
 the whole thing unit-testable against inline fixtures, which matters more here than in most gates:
 a quality gate that is itself untestable would be self-refuting.
 
-The scan set is pinned to **`coverage-floor`'s `discoverSourceFiles()`** (gateway + cli `.ts`/
-`.tsx` + `mcp-connectors/*/src`, minus `.test.*`, `.d.ts`, `__fixtures__`, `test/fixtures`,
-`testing/`) — 1113 files — so that a file is either gated by both floors or by neither, and there is
-one answer to "is this file gated". §13 records the two files-in-question sets that this excludes.
+The scan set matches **`coverage-floor`'s `discoverSourceFiles()`** (gateway + cli `.ts`/`.tsx` +
+`mcp-connectors/*/src`, minus `.test.*`, `.d.ts`, `__fixtures__`, `test/fixtures`, `testing/`) —
+1113 files — so that a file is either gated by both floors or by neither, and there is one answer to
+"is this file gated". §13 records the two files-in-question sets that this excludes.
+
+**But "matches" is not "calls", and the difference is the whole point.** Importing
+`discoverSourceFiles()` freezes nothing: the next time someone changes the coverage floor's scope —
+adds `packages/ui`, drops a connector, stops excluding `testing/` — this gate's population, its
+baseline and every number in this document move silently, from a PR that never mentions quality.
+That is the same class of defect as an exclusion whose rationale went stale unnoticed (§9), and the
+countermeasure is the same: make it a **stated contract that fails loudly when it drifts.**
+
+So the set is declared **as its own versioned constant** — `QUALITY_SCAN_SET_V1` in
+`scripts/quality-floor/scan-set.ts`, holding the glob and exclusion lists **literally**, with a
+comment recording that it was copied from `coverage-floor` on 2026-08-01 and that re-reconciling is
+a decision, not a refresh. Two tests hold it up:
+
+1. **Membership.** `QUALITY_SCAN_SET_V1` resolves to a non-zero count (§10.5) and contains/excludes
+   a fixed handful of named files — `packages/gateway/src/platform/assemble.ts` in;
+   `packages/ui/src/ipc/client.ts`, `*.test.ts`, `*.d.ts`, `__fixtures__/` out. Named files, not a
+   total, so the test survives ordinary file churn and still fails on a scope change.
+2. **Drift.** It asserts `QUALITY_SCAN_SET_V1` and `discoverSourceFiles()` still yield the same set
+   and **fails when they diverge**, naming the added and removed paths. Divergence is then a
+   decision someone makes — adopt it by bumping to `_V2` and reseeding, or keep the pin — rather
+   than a population change nobody sees.
+
+**The gates do not all share one set, and pretending otherwise is where the counts go wrong.**
+Three sets, stated:
+
+| Gate | Scan set | Population |
+| --- | --- | --- |
+| G1 / G2 / G3 | `QUALITY_SCAN_SET_V1` | 1113 files (measured) |
+| G4a | `QUALITY_SCAN_SET_V1`, plus the `scripts/` tree if §13.1 resolves that way | 1113, or 1239 with `scripts/` (+126 non-test modules, measured) |
+| G4b | `packages/cli/src/commands/**` — a subset by construction | 33 modules that talk IPC (measured) |
+
+The G4a row is why **"2 + 26" and "28 G4 paths" are provisional, not final.** They are the
+`packages/`-only figures. If `scripts/` is in scope the G4a debt is at least the 6 module-scope
+`process.argv` readers of §4.4 — and probably more, because a module-scope `process.env` read is
+arguably the same defect and there are three further modules doing that today
+(`package-linux-installers.ts`, `test-preload/hermetic-credentials.ts`,
+`coverage-floor/build-lcov.ts`, measured). The exact number depends on the final G4a predicate and
+is computed in PR 3, which is where the decision lands; §5.2 and §6.5 carry the caveat.
 
 ### 7.2 Computing cognitive complexity locally
 
@@ -681,10 +836,10 @@ Four PRs, smallest blast radius first.
 
 | PR | Contents | Why here |
 | --- | --- | --- |
-| **1** | The ratchet engine (`baseline.ts` / `check.ts` / `exclusions.ts`), seeded with **G1 only**. Wired to `preflight` FAST + `pr-quality`. | G1's measurement already exists (`rawLoc`), so this PR is *entirely* ratchet plumbing with a metric that cannot be wrong. It proves seeding, the four violation kinds, the CI annotation format and the manifest drift test against 7 real files, with zero new analysis code to argue about. |
-| **2** | The AST pass (`measure.ts`) + **G2 + G3**. Adds 7 + 2 baseline entries. | One parse, two metrics, one PR — splitting them would parse the tree twice or land a parser with one consumer. The scoring convention (§7.2) gets its own tests and a Sonar cross-check in the PR body. |
-| **3** | **G4a** (importable without side effects), across the pinned scan set. | Small debt in `packages/` (2 files). The PR's real content is the §13 decision about `scripts/`. |
-| **4** | **G4b** (injected-client seam) + the first tranche of seam adoptions. | The largest debt (26 files) and the largest payoff. Landing it last means the ratchet is proven and uncontroversial before the gate that asks for the most work arrives. |
+| **1** | The ratchet engine (`baseline.ts` / `check.ts` / `exclusions.ts` / `scan-set.ts`), seeded with **G1 only** (`"gates": ["g1"]`, §11.1). Wired to `preflight` FAST + `pr-quality`. | G1's measurement already exists (`rawLoc`), so this PR is *entirely* ratchet plumbing with a metric that cannot be wrong. It proves seeding, the four numeric violation kinds, the scan-set contract (§7.1), the CI annotation format and the manifest drift test against 7 real files, with zero new analysis code to argue about. |
+| **2** | The AST pass (`measure.ts`) + **G2 + G3**. Adds 7 + 2 findings, and the first `gates` upgrade. | One parse, two metrics, one PR — splitting them would parse the tree twice or land a parser with one consumer. The scoring convention (§7.2) gets its own tests and a Sonar cross-check in the PR body. |
+| **3** | **G4a** (importable without side effects) + the `side_effect` / `side_effect_resolved` kinds. | Small debt in `packages/` (2 files). The PR's real content is the §13 decision about `scripts/`, which sets G4a's scan set and therefore its count (§7.1). |
+| **4** | **G4b** (injected-client seam, all three rules) + the `missing_seam` / `seam_resolved` kinds + the §4.4 negative fixture + the first tranche of seam adoptions. | The largest debt (26 files) and the largest payoff. Landing it last means the ratchet is proven and uncontroversial before the gate that asks for the most work arrives. |
 
 **The counter-argument, recorded rather than dismissed:** G4 has by far the strongest evidence —
 two independent proofs today, one of them a measured 28% → 93% coverage swing — and G1 has the
@@ -696,6 +851,41 @@ command module? does `_agent-brief-cli.ts` count? is `repl.ts` exempt?), and a d
 would block the *ratchet mechanism* if they land together. Shipping the mechanism first on an
 uncontentious metric means the G4b discussion is about G4b alone. If PR 1 lands cleanly and quickly,
 reordering 3 and 4 ahead of 2 is cheap.
+
+### 11.1 Baseline compatibility across the four PRs
+
+The rollout and the baseline shape have to agree, and as first drafted they did not: PR 1 is
+G1-only, but §6.1's shape already carries `max_fn_lines`, `max_file_cc`, `seamless_commands` and
+`side_effect_modules` — none of which PR 1 can populate, because the measurement passes that
+produce them do not exist until PRs 2–4. A baseline that PR 1 physically cannot write is not a
+schema.
+
+The resolution is **one format with optional, gate-scoped sections** — not four formats, and not a
+migration per PR:
+
+- **`gates` is the authority.** `"gates": ["g1"]` after PR 1; `["g1","g2","g3"]` after PR 2. A gate
+  whose name is absent **does not run** and its keys are not read; a gate whose name is present
+  **must** find its section, or `check.ts` exits 2 with the §10.2 "run seeding first" message,
+  per gate rather than per file. That is what stops a half-seeded baseline from passing vacuously.
+- **Enabling a gate is one reviewed command, in the PR that adds it.** `--update-baseline` under a
+  binary that knows about G2 appends `"g2"` to `gates` and fills `max_fn_lines` for every file it
+  seeds. It is not automatic and it is not CI's to run (§10.1).
+- **The check is fail-closed on the gap between "wired" and "seeded".** A gate wired into `check.ts`
+  but missing from `gates` fails the build with *"g2 is not in this baseline's `gates`; run
+  `bun run audit:quality-floor:update-baseline` and commit the result in this PR"* — never a silent
+  skip. An un-seeded gate must be loud, because a silently-skipped gate is §10.4's false PASS with
+  extra steps.
+- **`version` stays `1` throughout.** The shape does not change across the rollout; only which
+  optional parts are populated does, and `gates` already records that. `version` bumps only when a
+  key's *meaning* changes — which is what a reader will assume it means, so it must not be spent on
+  anything else.
+
+The upgrade is where this can go wrong quietly, so PR 2 owns an explicit test for it: **a G1-only
+baseline (`"gates": ["g1"]`, no `max_fn_lines` anywhere) run through `--update-baseline` under the
+G1+G2+G3 binary must produce `"gates": ["g1","g2","g3"]`, add the two new keys, and leave every
+existing `max_loc` watermark byte-identical.** That last clause is the one to red-prove: an upgrade
+that silently re-derives LOC watermarks from the current tree would relax every entry that has
+improved since seeding, turning a schema migration into an unreviewed ratchet reset.
 
 ## 12. Security invariants
 
@@ -714,11 +904,14 @@ exists for defenses, and a quality gate is not one.
 Honest, and none of them blocking PR 1.
 
 1. **Is `scripts/` in scope?** The evidence motivating G4a comes from a `scripts/` directory in a
-   satellite repo, and this repo's own `scripts/` has 6 module-scope `process.argv` reads and 125
-   non-test modules — none currently gated by any floor. Including it makes G4a meaningful and
-   expands every gate's population by ~12%. Excluding it means G4a lands with 2 findings and looks
-   like a formality. **Leaning: include `scripts/` for G4a only**, since `scripts/` modules are
-   exactly the population whose testability is decided by their shape. Unresolved.
+   satellite repo, and this repo's own `scripts/` has 6 module-scope `process.argv` reads (plus 3
+   module-scope `process.env` reads, if those count — the predicate is part of the question) and
+   126 non-test modules, none currently gated by any floor. Including it makes G4a meaningful and
+   expands G4a's population by ~11% (1113 → 1239, measured). Excluding it means G4a lands with 2
+   findings and looks like a formality. **Leaning: include `scripts/` for G4a only**, since
+   `scripts/` modules are exactly the population whose testability is decided by their shape.
+   Unresolved — and until it is, the "2 + 26" of §5.2 and the "28 G4 paths" of §6.5 are the
+   `packages/`-only lower bound, per the per-gate scan-set table in §7.1.
 2. **`packages/ui` and `packages/admin-console`.** Both are outside the coverage floor's scan set
    (admin-console by explicit exclusion; `ui` by never being globbed). `ui` is `.tsx` React and
    would need JSX-aware span rules that mean something. **Leaning: out of scope for v1**, recorded
@@ -789,4 +982,25 @@ Grep targets before claiming this list complete: `measure-file-loc`, `file-loc.j
       *direction* on a deliberately-complex probe file, and the discrepancy is written into the PR
       body rather than left for someone to discover.
 - [ ] A `commands/**` module that references `IPCClient` without exporting an `*Ipc`-typed
-      `run*Command` fails G4b, and one that only type-imports it does not.
+      `run*Command` fails G4b as `missing_seam`, and one that only type-imports it does not.
+- [ ] **The unused-parameter fixture (§4.4).** A module that exports an `*Ipc` interface *and* an
+      async `run*Command` whose first parameter is typed as it, but whose body ignores that
+      parameter and calls `withIpc()` to acquire a real client, fails G4b on **rule 3** — and the
+      message names rule 3, not "G4b". Its positive twin, identical except that the body uses the
+      parameter, passes. Both are asserted in the same test, so the fixture cannot go green for an
+      unrelated reason.
+- [ ] All seven modules listed as compliant in §4.4 still pass under rule 3 — the rule is a fence
+      around the shape they already have, and a run that reclassifies any of them is a bug in the
+      rule, not a finding.
+- [ ] A new module with a top-level `writeFileSync` fails as `side_effect`, naming the callee;
+      wrapping it in `if (import.meta.main)` clears it, and `--update-baseline` adds **nothing** to
+      `side_effect_modules` in either state (§6.4).
+- [ ] A `seamless_commands` entry that gains its seam fails as `seam_resolved` and is dropped by
+      `--update-baseline` **while the same file keeps its `files` row at its LOC watermark** — G4
+      retires per rule, not per file.
+- [ ] A G1-only baseline (`"gates": ["g1"]`) upgraded by `--update-baseline` under the G1+G2+G3
+      binary yields `"gates": ["g1","g2","g3"]`, adds `max_fn_lines`/`max_file_cc`, and leaves every
+      `max_loc` byte-identical; a gate wired but absent from `gates` fails the build rather than
+      skipping silently (§11.1).
+- [ ] The scan-set drift test (§7.1) fails when `QUALITY_SCAN_SET_V1` and `discoverSourceFiles()`
+      diverge, naming the added and removed paths — red-proved by adding one glob to a copy.
