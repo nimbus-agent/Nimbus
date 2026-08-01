@@ -55,7 +55,7 @@ test("a Windows path ending in a backslash is still accepted", () => {
   // backslash immediately before its closing backtick (the backslash
   // escapes the backtick, so the literal never terminates). Same value,
   // spelled with an ordinary escaped string instead.
-  expect(valueOfLine(line)).toBe("C:\\dev\\");
+  expect(valueOfLine(line)).toBe("C:\\dev\\"); // cross-platform-ok: TOML content under test, not a filesystem path
 });
 
 test("a genuinely unterminated string is reported", () => {
