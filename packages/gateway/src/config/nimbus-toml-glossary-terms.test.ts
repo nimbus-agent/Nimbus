@@ -132,6 +132,23 @@ test("an ordinary [glossary] key is not mistaken for a misplaced term", () => {
   expect(cfg.skipped).toEqual([]);
 });
 
+test("a triple-quoted block-string definition is reported, not silently dropped", () => {
+  // The obvious authoring mistake: a human reaches for a TOML `"""` block
+  // string for a multi-line definition. This parser is deliberately
+  // single-line, so without a report the term vanishes with zero explanation
+  // — exactly the silent-failure class this feature exists to remove.
+  const raw = [
+    "[glossary.terms]",
+    'CDR = """',
+    "Change Data Record — the durable event our pipeline emits.",
+    '"""',
+  ].join("\n");
+  const cfg = loadedOrThrow(parseGlossaryManualToml(raw));
+  expect(cfg.terms).toEqual([]);
+  const cdrSkip = cfg.skipped.find((s) => s.entry === "CDR");
+  expect(cdrSkip?.reason).toContain("single line");
+});
+
 test("a missing config file yields loaded:false, NOT an empty config", () => {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-glossary-cfg-"));
   expect(loadGlossaryManualFromConfigDir(dir)).toEqual({ loaded: false });

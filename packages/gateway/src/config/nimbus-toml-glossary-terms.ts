@@ -50,26 +50,46 @@ type RawEntry = { key: string; value: string };
  * report WHY an entry was rejected, and that helper deliberately discards the
  * distinction between "no `=` on the line" and "not in this section".
  *
- * `misplaced` catches the one *valid TOML* shape this line parser cannot see:
- * a dotted key under the parent table (`[glossary]` + `terms.CDR = "…"`).
- * Full TOML compliance is out of scope — the parser is deliberately
- * dependency-free — but silently ignoring a correctly-written term is the
- * silent-failure class this whole slice exists to remove, so it is reported
- * through the same `skipped` channel as any other rejected entry.
+ * `preSkipped` collects two kinds of rejection discovered during this scan,
+ * before `buildTerms`/`buildSynonyms` ever see a raw entry:
+ *
+ * - a dotted key under the parent table (`[glossary]` + `terms.CDR = "…"`) —
+ *   the one *valid TOML* shape this line parser cannot see. Full TOML
+ *   compliance is out of scope — the parser is deliberately dependency-free —
+ *   but silently ignoring a correctly-written term is the silent-failure
+ *   class this whole slice exists to remove.
+ * - an unterminated quoted value inside `[glossary.terms]` or
+ *   `[glossary.synonyms]` — most commonly a `"""` block-string definition,
+ *   which this single-line parser does not support (spec §3.3). Without this,
+ *   the obvious authoring mistake of a multi-line definition drops silently:
+ *   the opening line fails `hasUnterminatedString` and is skipped here, and
+ *   the continuation lines have no `=` and are dropped by the `target push`
+ *   below with no report at all. Reported only inside one of the two blocks
+ *   — an unterminated string elsewhere is not this parser's business.
  */
 function collectBlocks(raw: string): {
   terms: RawEntry[];
   synonyms: RawEntry[];
-  misplaced: ManualSkip[];
+  preSkipped: ManualSkip[];
 } {
   const terms: RawEntry[] = [];
   const synonyms: RawEntry[] = [];
-  const misplaced: ManualSkip[] = [];
+  const preSkipped: ManualSkip[] = [];
   let target: RawEntry[] | null = null;
   let inGlossaryRoot = false;
 
   for (const line of raw.split(/\r?\n/)) {
-    if (hasUnterminatedString(line)) continue;
+    if (hasUnterminatedString(line)) {
+      if (target !== null) {
+        const trimmedLine = line.trim();
+        const kv = splitKeyValue(trimmedLine);
+        preSkipped.push({
+          entry: kv !== undefined ? parseString(kv.key) : trimmedLine,
+          reason: "unterminated quoted value — definitions must be a single line",
+        });
+      }
+      continue;
+    }
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
@@ -83,7 +103,7 @@ function collectBlocks(raw: string): {
       const kv = splitKeyValue(trimmed);
       const key = kv?.key.trim() ?? "";
       if (key.startsWith("terms.") || key.startsWith("synonyms.")) {
-        misplaced.push({
+        preSkipped.push({
           entry: key,
           reason:
             "dotted keys under [glossary] are not read — move it under [glossary.terms] " +
@@ -98,7 +118,7 @@ function collectBlocks(raw: string): {
       target.push({ key: parseString(kv.key), value: parseString(kv.valRaw) });
     }
   }
-  return { terms, synonyms, misplaced };
+  return { terms, synonyms, preSkipped };
 }
 
 function buildTerms(raw: RawEntry[], skipped: ManualSkip[]): ManualTerm[] {
@@ -162,7 +182,7 @@ function buildSynonyms(
 
 export function parseGlossaryManualToml(raw: string): GlossaryManualConfig {
   const blocks = collectBlocks(raw);
-  const skipped: ManualSkip[] = [...blocks.misplaced];
+  const skipped: ManualSkip[] = [...blocks.preSkipped];
   const terms = buildTerms(blocks.terms, skipped);
   const synonyms = buildSynonyms(blocks.synonyms, terms, skipped);
   return { loaded: true, terms, synonyms, skipped };
