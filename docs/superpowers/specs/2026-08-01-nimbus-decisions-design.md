@@ -92,7 +92,7 @@ Elsewhere:
 
 ```sql
 CREATE TABLE IF NOT EXISTS decision_record (
-  id                TEXT PRIMARY KEY,        -- stable hash(source_item_id, cue_offset); see below
+  id                TEXT PRIMARY KEY,        -- hash(source_item_id, normalized cue sentence)
   source_item_id    TEXT NOT NULL,           -- no FK, deliberately (see below)
   status            TEXT NOT NULL CHECK(status IN ('pending','extracted','vetoed')),
   statement         TEXT,
