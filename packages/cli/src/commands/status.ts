@@ -93,20 +93,120 @@ function printDriftHints(lines: string[]): void {
   }
 }
 
-export async function runStatusImpl(
+type GatewayPing = {
+  version: string;
+  uptime: number;
+  embeddingBackfill?: { done: number; total: number } | null;
+  agentLimits?: { maxAgentDepth: number; maxToolCallsPerSession: number };
+  drift?: { lines: string[] };
+};
+
+type GatewayState = { pid?: number; socketPath: string; logPath?: string };
+
+/**
+ * The `nimbus status --json` document. Every key is always present — absent data is `null`, never
+ * a missing key — so `jq '.version'` never has to guard for existence. `running` means "the state
+ * file exists AND `gateway.ping` answered".
+ *
+ * There are two distinct not-running cases and only ONE of them produces a document:
+ *
+ * - **No state file** — `running: false`, `error: null`, everything else `null`, exit `0`.
+ * - **Connected, but `gateway.ping` failed** — `running: false` with the IPC message in `error`,
+ *   the JSON form of the human "state exists but IPC failed" line. This is the narrow case of a
+ *   gateway that is listening but wedged, or one that dies mid-call.
+ *
+ * A **stale state file whose socket has no listener** is neither: `runStatus` connects before it
+ * ever reaches this shape, so the connect rejection (`ENOENT` on a Windows named pipe,
+ * `ECONNREFUSED` on a Unix socket) propagates out of the command to the top-level handler in
+ * `index.ts`, which writes it to stderr and sets exit `1`. Nothing is written to stdout — no
+ * partial document, no `running: false`. That is `--json` honouring the documented contract that a
+ * command which *fails* emits no JSON at all, and it is indistinguishable from what plain
+ * `nimbus status` does with the same stale file — zero stdout bytes, the same stderr line, exit `1`
+ * — because the connect sits outside {@link runStatusImpl}'s try/catch on both paths. Callers must
+ * check the exit code before parsing stdout. Pinned by the two stale-state-file tests in the
+ * `nimbus status --json` suite.
+ */
+export type StatusJson = {
+  running: boolean;
+  pid: number | null;
+  socketPath: string | null;
+  logPath: string | null;
+  version: string | null;
+  uptimeMs: number | null;
+  agentLimits: { maxAgentDepth: number; maxToolCallsPerSession: number } | null;
+  embeddingBackfill: { done: number; total: number } | null;
+  drift: { lines: string[] } | null;
+  index: unknown;
+  connectorHealth: unknown;
+  error: string | null;
+};
+
+function baseStatusJson(state?: GatewayState): StatusJson {
+  return {
+    running: false,
+    pid: state?.pid ?? null,
+    socketPath: state?.socketPath ?? null,
+    logPath: state?.logPath === undefined || state.logPath === "" ? null : state.logPath,
+    version: null,
+    uptimeMs: null,
+    agentLimits: null,
+    embeddingBackfill: null,
+    drift: null,
+    index: null,
+    connectorHealth: null,
+    error: null,
+  };
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+async function runStatusJson(
   client: IPCClient,
-  state: { pid?: number; socketPath: string; logPath?: string },
+  state: GatewayState,
   opts: { wantDrift: boolean; verbose: boolean },
 ): Promise<void> {
-  const { wantDrift, verbose } = opts;
+  const payload = baseStatusJson(state);
   try {
-    const ping = await client.call<{
-      version: string;
-      uptime: number;
-      embeddingBackfill?: { done: number; total: number } | null;
-      agentLimits?: { maxAgentDepth: number; maxToolCallsPerSession: number };
-      drift?: { lines: string[] };
-    }>("gateway.ping", wantDrift ? { includeDrift: true } : {});
+    const ping = await client.call<GatewayPing>(
+      "gateway.ping",
+      opts.wantDrift ? { includeDrift: true } : {},
+    );
+    payload.running = true;
+    payload.version = ping.version;
+    payload.uptimeMs = ping.uptime;
+    payload.agentLimits = ping.agentLimits ?? null;
+    payload.embeddingBackfill = ping.embeddingBackfill ?? null;
+    if (opts.verbose) {
+      const snap = await client.call<DiagSnapshot>("diag.snapshot", {});
+      payload.index = snap.index ?? null;
+      payload.connectorHealth = snap.connectorHealth ?? null;
+    }
+    if (opts.wantDrift && ping.drift !== undefined && Array.isArray(ping.drift.lines)) {
+      payload.drift = { lines: ping.drift.lines };
+    }
+  } catch (e) {
+    payload.error = e instanceof Error ? e.message : String(e);
+  }
+  printJson(payload);
+}
+
+export async function runStatusImpl(
+  client: IPCClient,
+  state: GatewayState,
+  opts: { wantDrift: boolean; verbose: boolean; json?: boolean },
+): Promise<void> {
+  const { wantDrift, verbose } = opts;
+  if (opts.json === true) {
+    await runStatusJson(client, state, { wantDrift, verbose });
+    return;
+  }
+  try {
+    const ping = await client.call<GatewayPing>(
+      "gateway.ping",
+      wantDrift ? { includeDrift: true } : {},
+    );
     console.log(`Gateway: running (pid ${String(state.pid)})`);
     console.log(`Version: ${ping.version}`);
     console.log(`Uptime:  ${String(Math.round(ping.uptime / 1000))}s`);
@@ -139,9 +239,14 @@ export async function runStatusImpl(
 }
 
 export async function runStatus(args: string[]): Promise<void> {
+  const json = args.includes("--json");
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
+    if (json) {
+      printJson(baseStatusJson());
+      return;
+    }
     console.log("Gateway: not running (no state file)");
     return;
   }
@@ -152,7 +257,7 @@ export async function runStatus(args: string[]): Promise<void> {
   const client = new IPCClient(state.socketPath);
   try {
     await client.connect();
-    await runStatusImpl(client, state, { wantDrift, verbose });
+    await runStatusImpl(client, state, { wantDrift, verbose, json });
   } finally {
     await client.disconnect().catch(() => {});
   }

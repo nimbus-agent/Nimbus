@@ -8,6 +8,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-01 — `--json` implemented on the six commands that only documented it.** `nimbus status`,
+  `connector list`, `db verify`, `db repair`, `config list` and `audit` parsed no `--json` at all —
+  the flag reached only the top-level banner suppressor in `index.ts`, so a documented `| jq`
+  pipeline silently received human-rendered text. All six now emit machine-readable JSON, under one
+  written contract (documented in `docs/cli-reference.md` § Global Flags → "The `--json` contract"):
+  `--json` is **per-command, never global**; stdout carries exactly one pretty-printed JSON value and
+  nothing else (no banner, table, or empty-state hint); diagnostics go to stderr; exit codes are
+  unchanged by the flag, and a command that *fails* emits no JSON at all, so callers check the exit
+  code rather than the presence of output; and the shape is the gateway's own payload unwrapped —
+  no `{ ok, data }` envelope, matching the convention `nimbus query`/`extension list`/`egress`
+  already ship. Shapes: `status` is one always-fully-populated object (`null` for absent data, with
+  `running` meaning "state file exists **and** `gateway.ping` answered"; `error` carries the IPC
+  message in the narrow case where the socket **connected** but the ping then failed — a *stale*
+  state file whose socket has no listener never reaches that shape at all, because the connect
+  rejects first, so stdout stays empty and the process exits `1`, exactly as plain `nimbus status`
+  already did with the same file); `connector list` and `audit` are raw row arrays
+  (empty registry → `[]`, not the hint line; `actionJson` stays the stored string so a malformed
+  payload still appears); `db verify` is `{ clean, findings, exitCode }` and `db repair` the
+  `{ outcomes, repairedAt }` report, both dropping the gateway's pre-rendered `formatted` blob rather
+  than embedding it; `config list` is `{ path, exists, keys, raw }`. No gateway change was needed —
+  every payload was already structured behind the CLI's own formatting. No new IPC method, no new
+  invariant.
 - **2026-08-01 — `nimbus glossary` — manual term authoring.** Closes the "no manual authoring or
   correction" gap named in the base spec's §12: a `[glossary.terms]` / `[glossary.synonyms]` pair
   of flat TOML blocks in `nimbus.toml`, read by a dedicated parser that reports per-entry skip

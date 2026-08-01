@@ -282,3 +282,80 @@ describe("runAudit (dispatcher)", () => {
     expect(out.stdout).toContain(`wrote 1 audit rows to ${outPath}`);
   });
 });
+
+describe("nimbus audit --json", () => {
+  beforeEach(() => {
+    out.reset();
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  type AuditJsonRow = {
+    id: number;
+    actionType: string;
+    hitlStatus: string;
+    actionJson: string;
+    timestamp: number;
+  };
+
+  /** Parses the whole of stdout — proves the table header never reached stdout. */
+  function parseStdout(): AuditJsonRow[] {
+    return JSON.parse(out.stdout) as AuditJsonRow[];
+  }
+
+  it("emits the audit.list rows as a parseable array with no table on stdout", async () => {
+    const { client } = createMockIpcClient([
+      [
+        {
+          id: 1,
+          actionType: "file.delete",
+          hitlStatus: "rejected",
+          actionJson: '{"hitlRejectReason":"user-cancelled"}',
+          timestamp: 1_700_000_000_000,
+        },
+      ],
+    ]);
+    await runAuditList(client, 25, { json: true });
+
+    const rows = parseStdout();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(1);
+    expect(rows[0]?.actionType).toBe("file.delete");
+    expect(rows[0]?.hitlStatus).toBe("rejected");
+    expect(rows[0]?.timestamp).toBe(1_700_000_000_000);
+    // actionJson stays the stored string, malformed payloads included.
+    expect(rows[0]?.actionJson).toBe('{"hitlRejectReason":"user-cancelled"}');
+    expect(out.stdout).not.toContain("Timestamp");
+  });
+
+  it("keeps malformed actionJson verbatim instead of dropping the row", async () => {
+    const { client } = createMockIpcClient([
+      [
+        {
+          id: 2,
+          actionType: "file.move",
+          hitlStatus: "approved",
+          actionJson: "not-json",
+          timestamp: 1_700_000_000_001,
+        },
+      ],
+    ]);
+    await runAuditList(client, 50, { json: true });
+
+    expect(parseStdout()[0]?.actionJson).toBe("not-json");
+  });
+
+  it("is routed from the bare dispatcher path, honouring --limit alongside --json", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runAudit(["--limit", "7", "--json"]);
+
+    expect(ipc.calls[0]).toEqual({ method: "audit.list", params: { limit: 7 } });
+    expect(parseStdout()).toEqual([]);
+  });
+});

@@ -1202,3 +1202,70 @@ describe("runConnector — remaining dispatch + formatter edges", () => {
     expect(out.stdout).toContain("—");
   });
 });
+
+describe("nimbus connector list --json", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  type ConnectorRow = {
+    serviceId: string;
+    status: string;
+    itemCount: number;
+    healthState?: string;
+    lastError: string | null;
+  };
+
+  /** Parses the whole of stdout — proves the table never reached stdout alongside the JSON. */
+  function parseStdout(): ConnectorRow[] {
+    return JSON.parse(out.stdout) as ConnectorRow[];
+  }
+
+  it("emits the connector.listStatus rows as a parseable array", async () => {
+    const ipc = createMockIpcClient([
+      [
+        {
+          serviceId: "github",
+          status: "ok",
+          lastSyncAt: 1_700_000_000_000,
+          nextSyncAt: null,
+          intervalMs: 60_000,
+          itemCount: 12,
+          lastError: null,
+          consecutiveFailures: 0,
+          healthState: "healthy",
+          healthRetryAfterMs: null,
+        },
+      ],
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["list", "--json"]);
+
+    expect(ipc.calls[0]).toEqual({ method: "connector.listStatus", params: undefined });
+    const rows = parseStdout();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.serviceId).toBe("github");
+    expect(rows[0]?.itemCount).toBe(12);
+    expect(rows[0]?.healthState).toBe("healthy");
+    // No table header / decoration on stdout.
+    expect(out.stdout).not.toContain("SERVICE");
+  });
+
+  it("emits [] instead of the empty-state hint when no connectors are registered", async () => {
+    const ipc = createMockIpcClient([[]]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runConnector(["list", "--json"]);
+
+    expect(parseStdout()).toEqual([]);
+    expect(out.stdout).not.toContain("No connectors registered yet");
+  });
+});

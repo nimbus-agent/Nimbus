@@ -414,3 +414,93 @@ describe("runConfig (dispatcher)", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("nimbus config list --json", () => {
+  let tmp: string;
+  beforeEach(() => {
+    out.reset();
+    tmp = makeTmp();
+  });
+  afterEach(() => {
+    clearFixture();
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  });
+
+  type ConfigListDoc = {
+    path: string;
+    exists: boolean;
+    keys: Array<{ key: string; value: string; source: string; envVar: string | null }>;
+    raw: string | null;
+  };
+
+  /** Parses the whole of stdout — proves the legend/prose never reached stdout. */
+  function parseStdout(): ConfigListDoc {
+    return JSON.parse(out.stdout) as ConfigListDoc;
+  }
+
+  it("emits path/exists/keys/raw with the file body verbatim", () => {
+    const tomlPath = join(tmp, "nimbus.toml");
+    const body = "[telemetry]\nenabled = false\n";
+    writeFileSync(tomlPath, body, "utf8");
+    const savedEnv = process.env["NIMBUS_TELEMETRY_ENABLED"];
+    delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+    try {
+      runConfigList(tomlPath, { json: true });
+    } finally {
+      if (savedEnv !== undefined) {
+        process.env["NIMBUS_TELEMETRY_ENABLED"] = savedEnv;
+      }
+    }
+
+    const doc = parseStdout();
+    expect(doc.path).toBe(tomlPath);
+    expect(doc.exists).toBe(true);
+    expect(doc.raw).toBe(body);
+    const telemetry = doc.keys.find((k) => k.key === "telemetry.enabled");
+    expect(telemetry?.source).toBe("file");
+    expect(telemetry?.value).toBe("false");
+    expect(telemetry?.envVar).toBeNull();
+    // The prose env-override legend is human-only.
+    expect(out.stdout).not.toContain("NIMBUS_PROFILE");
+  });
+
+  it("marks env-sourced keys with source 'env' and the variable name", () => {
+    const tomlPath = join(tmp, "nimbus.toml");
+    const savedEnv = process.env["NIMBUS_TELEMETRY_ENABLED"];
+    process.env["NIMBUS_TELEMETRY_ENABLED"] = "true";
+    try {
+      runConfigList(tomlPath, { json: true });
+    } finally {
+      if (savedEnv === undefined) {
+        delete process.env["NIMBUS_TELEMETRY_ENABLED"];
+      } else {
+        process.env["NIMBUS_TELEMETRY_ENABLED"] = savedEnv;
+      }
+    }
+
+    const telemetry = parseStdout().keys.find((k) => k.key === "telemetry.enabled");
+    expect(telemetry?.source).toBe("env");
+    expect(telemetry?.envVar).toBe("NIMBUS_TELEMETRY_ENABLED");
+    expect(telemetry?.value).toBe("true");
+  });
+
+  it("reports exists:false and raw:null when the file is missing", () => {
+    const tomlPath = join(tmp, "nimbus.toml");
+    runConfigList(tomlPath, { json: true });
+
+    const doc = parseStdout();
+    expect(doc.exists).toBe(false);
+    expect(doc.raw).toBeNull();
+    expect(out.stdout).not.toContain("(file missing)");
+  });
+
+  it("is routed from the dispatcher when --json follows the subcommand", async () => {
+    await runConfig(["list", "--json"]);
+    expect(() => parseStdout()).not.toThrow();
+    expect(out.stdout).not.toContain("NIMBUS_PROFILE");
+  });
+});
