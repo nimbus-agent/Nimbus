@@ -194,6 +194,20 @@ jobs:
           # Disable Jekyll so Pages serves the apt/yum trees verbatim.
           touch repo/.nojekyll
 
+      # DELIBERATELY still `git commit` + `git push`, unlike the brew/scoop publisher.
+      #
+      # Those two moved to the GraphQL `createCommitOnBranch` mutation so their
+      # commits come out Verified (see publish-package-managers.yml). That mutation
+      # sends the ENTIRE commit as one base64 JSON request body, which is fine for a
+      # 1 KB formula and unworkable here: every publish adds a fresh .deb AND .rpm —
+      # each bundling both Bun-compiled binaries — plus regenerated apt/yum metadata,
+      # and base64 inflates that by a further ~4/3. It would fail at the API's request
+      # ceiling, not at anything we could tune.
+      #
+      # CONSEQUENCE FOR THE RULESET WORK: commits here stay unsigned, so
+      # `required_signatures` must NOT be added to the linux-repo ruleset — it would
+      # break the next apt/yum publish outright. Making these Verified needs a
+      # different mechanism (e.g. bot-side commit signing), tracked separately.
       - name: Commit + push to linux-repo
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

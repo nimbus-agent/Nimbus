@@ -101,44 +101,45 @@ jobs:
           echo "--- nimbus.rb ---"; cat out/nimbus.rb
           echo "--- nimbus.json ---"; cat out/nimbus.json
 
-      - name: Publish to homebrew-tap
+      # SIGNED commits, not `git clone` + `git push`.
+      #
+      # A commit pushed over HTTPS with an App installation token is UNSIGNED
+      # (`verification.verified = false`) — indistinguishable from one an attacker
+      # holding a leaked token would produce. homebrew-tap and scoop-bucket are what
+      # `brew install` and `scoop install` read, so that is the shortest path from a
+      # stolen token to code on a user's machine.
+      #
+      # The GraphQL `createCommitOnBranch` mutation moves commit construction
+      # server-side: GitHub builds the tree, writes the commit and signs it, so the
+      # result is Verified. That is the PREREQUISITE for adding `required_signatures`
+      # to these repos' rulesets — a separate, later change. Enabling the ruleset
+      # before this publisher moved would break the next publish.
+      #
+      # What is published is unchanged (the same generated manifest bytes); only the
+      # commit mechanism differs. The helper is a no-op when the manifest already
+      # matches (it compares git blob oids), replacing the old `git diff --cached`
+      # check, and it re-reads + rebuilds rather than forcing if the branch moved.
+      - name: Publish to homebrew-tap (signed commit)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
-          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/homebrew-tap.git" tap
-          mkdir -p tap/Formula
-          cp out/nimbus.rb tap/Formula/nimbus.rb
-          cd tap
-          git config user.name "nimbus-release-bot"
-          git config user.email "release-bot@nimbus-agent.invalid"
-          # Stage first: on the first publish Formula/nimbus.rb is untracked, and
-          # `git diff` ignores untracked files — staging then diffing --cached makes
-          # the no-op check see new files too, so first-time publication isn't skipped.
-          git add Formula/nimbus.rb
-          if git diff --cached --quiet; then echo "no formula change"; exit 0; fi
-          git commit -m "nimbus ${TAG#v}"
-          git push
+          bun scripts/release/signed-commit.ts \
+            --repo nimbus-agent/homebrew-tap \
+            --message "nimbus ${TAG#v}" \
+            --add "Formula/nimbus.rb=out/nimbus.rb"
 
-      - name: Publish to scoop-bucket
+      - name: Publish to scoop-bucket (signed commit)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
-          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/scoop-bucket.git" bucket
-          mkdir -p bucket/bucket
-          cp out/nimbus.json bucket/bucket/nimbus.json
-          cd bucket
-          git config user.name "nimbus-release-bot"
-          git config user.email "release-bot@nimbus-agent.invalid"
-          # Stage first (see homebrew-tap step): untracked bucket/nimbus.json would
-          # otherwise be invisible to `git diff` and skip the first publication.
-          git add bucket/nimbus.json
-          if git diff --cached --quiet; then echo "no manifest change"; exit 0; fi
-          git commit -m "nimbus ${TAG#v}"
-          git push
+          bun scripts/release/signed-commit.ts \
+            --repo nimbus-agent/scoop-bucket \
+            --message "nimbus ${TAG#v}" \
+            --add "bucket/nimbus.json=out/nimbus.json"
 
   winget:
     name: Submit winget manifest PR

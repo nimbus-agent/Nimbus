@@ -227,11 +227,25 @@ Seven secrets feed the per-arch `.pkg` build/sign/notarize step:
 
 ### Homebrew tap + Scoop bucket — Nimbus Release Bot
 
-Pushes the updated formula/manifest to `nimbus-agent/homebrew-tap` and
+Publishes the updated formula/manifest to `nimbus-agent/homebrew-tap` and
 `nimbus-agent/scoop-bucket`. Both repos are installed targets of the Nimbus
 Release Bot App (see above); the job mints a token scoped to both with
 `Contents: Read and write` and uses it in place of the retired
 `PACKAGE_MANAGER_PAT`.
+
+Those two commits are created through the GraphQL `createCommitOnBranch`
+mutation (`scripts/release/signed-commit.ts`), **not** `git push`. A commit
+pushed with an App installation token is unsigned
+(`verification.verified = false`) — indistinguishable from one an attacker
+holding a leaked token would produce, on the exact repos `brew install` and
+`scoop install` read. `createCommitOnBranch` has GitHub build and sign the
+commit server-side, so it lands **Verified**, which is the prerequisite for
+adding `required_signatures` to those two repos' rulesets.
+
+`publish-linux-repo.yml` deliberately still uses `git push`: the mutation
+carries the whole commit as one base64 request body, which cannot fit a
+`.deb` + `.rpm` publish. **Do not add `required_signatures` to the
+`linux-repo` ruleset** — it would break the next apt/yum publish.
 
 ### `WINGET_PAT` — winget submission — **stays a classic PAT, on purpose**
 
