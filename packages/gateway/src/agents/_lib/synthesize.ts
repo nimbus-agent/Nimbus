@@ -1,4 +1,5 @@
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
+import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
   CatchupBrief,
   ConflictBrief,
@@ -13,6 +14,7 @@ import type { GlossaryBrief } from "./glossary-types.ts";
 import {
   renderCatchup,
   renderConflict,
+  renderDecisions,
   renderExpert,
   renderGhost,
   renderGlossary,
@@ -53,7 +55,8 @@ type SynthInput =
   | JanitorBrief
   | PreflightBrief
   | WhyBrief
-  | GlossaryBrief;
+  | GlossaryBrief
+  | DecisionsBrief;
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
@@ -65,6 +68,7 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "preflight") return renderPreflight(brief);
   if (brief.kind === "why") return renderWhy(brief);
   if (brief.kind === "glossary") return renderGlossary(brief);
+  if (brief.kind === "decisions") return renderDecisions(brief);
   return renderHuddle(brief);
 }
 
@@ -78,6 +82,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "preflight") return "agents.preflight";
   if (brief.kind === "why") return "agents.why";
   if (brief.kind === "glossary") return "agents.glossary";
+  if (brief.kind === "decisions") return "agents.decisions";
   return "agents.huddle";
 }
 

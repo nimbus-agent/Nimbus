@@ -1,3 +1,5 @@
+import type { DecisionEvidence } from "../../decisions/decision-types.ts";
+import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
 import type {
   CatchupBrief,
   ConflictBrief,
@@ -344,4 +346,57 @@ export function renderGlossary(brief: GlossaryBrief): string {
   if (gaps !== "") lines.push(gaps);
   lines.push(renderLatency(brief.latencyMs));
   return lines.join("\n");
+}
+
+const DECISIONS_EVIDENCE_PREFIX: Readonly<Record<DecisionEvidence["kind"], string>> = Object.freeze(
+  {
+    source: "",
+    pr: "PR",
+    commit: "commit",
+    migration: "migration",
+    iac: "IaC",
+    adr: "ADR",
+  },
+);
+
+function renderDecisionsEvidenceItem(e: DecisionEvidence): string {
+  const prefix = DECISIONS_EVIDENCE_PREFIX[e.kind];
+  return prefix === "" ? e.label : `${prefix} ${e.label}`;
+}
+
+/** Days between the brief's generation time and the `--since` cutoff, for the heading. */
+function decisionsWindowDays(generatedAt: number, sinceMs: number): number {
+  return Math.max(0, Math.round((generatedAt - sinceMs) / 86_400_000));
+}
+
+function renderDecisionsExplain(e: DecisionsEntry): string[] {
+  if (e.explain.length === 0) return [];
+  const rows = e.explain.map((t) => `        - ${t.term} (${t.value.toFixed(2)}): ${t.detail}`);
+  return ["      confidence breakdown:", ...rows];
+}
+
+function renderDecisionsEntry(brief: DecisionsBrief, e: DecisionsEntry): string {
+  const lines = [`${e.confidence.toFixed(2)}  ${e.statement}  ${isoDay(e.decidedAt)}`];
+  if (!e.hasAdr) lines.push("      ⚠ no ADR found");
+  if (e.rationale !== null) lines.push(`      rationale     ${e.rationale}`);
+  if (e.alternatives.length > 0) {
+    lines.push(`      alternatives  ${e.alternatives.join(" · ")}`);
+  }
+  if (e.evidence.length > 0) {
+    lines.push(`      evidence      ${e.evidence.map(renderDecisionsEvidenceItem).join(" · ")}`);
+  }
+  if (brief.query.explain) lines.push(...renderDecisionsExplain(e));
+  return lines.join("\n");
+}
+
+export function renderDecisions(brief: DecisionsBrief): string {
+  const days = decisionsWindowDays(brief.generatedAt, brief.query.sinceMs);
+  const header = `## Decisions · ${String(days)}d · ${String(brief.entries.length)} found`;
+  const body =
+    brief.entries.length === 0
+      ? "_No decisions found._"
+      : brief.entries.map((e) => renderDecisionsEntry(brief, e)).join("\n\n");
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
 }

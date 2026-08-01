@@ -1,3 +1,4 @@
+import type { DecisionsBrief } from "./decisions-types.ts";
 import type {
   CatchupBrief,
   ConflictBrief,
@@ -22,7 +23,8 @@ type AnyBrief =
   | JanitorBrief
   | PreflightBrief
   | WhyBrief
-  | GlossaryBrief;
+  | GlossaryBrief
+  | DecisionsBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;
