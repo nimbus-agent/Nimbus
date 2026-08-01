@@ -28,6 +28,13 @@ These apply to **every** task. They are project non-negotiables, not preferences
 
 ---
 
+- **`runMigrations` is not exported by the migration runner.** The real export is
+  `runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION)`; every migration-touching test
+  wraps it in a local `runMigrations` helper, matching `runner-v45.test.ts`. The test code
+  in this plan already does this — keep it.
+- **`CURRENT_SCHEMA_VERSION` lives in `packages/gateway/src/index/local-index.ts`** and is now
+  `47`. The runner version-gates on it, so a new migration step does nothing until it is bumped.
+
 ## File Structure
 
 **New subsystem — `packages/gateway/src/decisions/`**
@@ -87,7 +94,12 @@ Create `packages/gateway/src/index/migrations/runner-v47.test.ts`. Model it on t
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { runMigrations } from "./runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
+import { runIndexedSchemaMigrations } from "./runner.ts";
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 function migrated(): Database {
   const db = new Database(":memory:");
@@ -936,7 +948,8 @@ Create `packages/gateway/src/decisions/decision-store.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   countByStatus,
   listDecisions,
@@ -953,6 +966,10 @@ import {
 } from "./decision-store.ts";
 
 let db: Database;
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -1480,7 +1497,8 @@ Create `packages/gateway/src/decisions/decision-corroborate.test.ts`. Seed the g
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   CORROBORATION_BACKWARD_MS,
   CORROBORATION_FORWARD_MS,
@@ -1490,6 +1508,10 @@ import {
 
 let db: Database;
 const DECIDED_AT = 1_000_000_000;
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -2079,12 +2101,17 @@ Create `packages/gateway/src/decisions/decision-extract.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { countByStatus, listDecisions, readPassState } from "./decision-store.ts";
 import { rebuildDecisions, runDecisionPass } from "./decision-extract.ts";
 import type { DecisionLlm } from "./decision-llm-adapter.ts";
 
 let db: Database;
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -3000,11 +3027,16 @@ Create `packages/gateway/src/decisions/decision-service-scope.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { matchesService } from "./decision-service-scope.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
 let db: Database;
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -3283,11 +3315,16 @@ Create `packages/gateway/src/agents/decisions.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 
-import { runMigrations } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { markExtracted, setConfidence, upsertCandidate, writePassState } from "../decisions/decision-store.ts";
 import { runDecisions } from "./decisions.ts";
 
 let db: Database;
+
+function runMigrations(db: Database): void {
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
