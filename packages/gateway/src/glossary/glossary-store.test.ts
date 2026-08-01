@@ -497,8 +497,15 @@ test("a mined sighting refreshes a manual row's stats but not its display form",
   });
 
   const t = getTerm(db, "cdr");
-  expect(t?.displayTerm).toBe("CDR"); // authored form survives
+  // Order is load-bearing: `bun:test` halts a test body at its first failing
+  // assertion. `docFreq` MUST run and pass before `displayTerm` is checked —
+  // otherwise, when the CASE guard regresses to the unconditional clobber,
+  // this test would fail on `displayTerm` without ever proving `docFreq`
+  // still refreshed, and the red-prove separation of the two ANDed
+  // behaviours (statistics DO refresh; display form does NOT change) would
+  // not be reproducible from a straight test run. Do not reorder this back.
   expect(t?.docFreq).toBe(7); // statistics DO refresh
+  expect(t?.displayTerm).toBe("CDR"); // authored form survives
   expect(t?.definition).toBe("Authored.");
   expect(t?.status).toBe("consolidated");
 });

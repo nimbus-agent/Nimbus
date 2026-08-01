@@ -217,9 +217,14 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
     cooldownMs: 0,
   });
 
-  expect(summary.demoted).not.toContain("cdr");
   const t = getTerm(db, "cdr");
+  // Order is load-bearing: `bun:test` halts a test body at its first failing
+  // assertion. `status` is checked before `demoted` so that reverting the
+  // `!isManual &&` guard surfaces the failure on the named assertion
+  // (`status` stays 'consolidated') rather than on `summary.demoted`, which
+  // would also fail under that mutation and mask it. Do not reorder this back.
   expect(t?.status).toBe("consolidated");
+  expect(summary.demoted).not.toContain("cdr");
   expect(t?.definition).toBe("Authored.");
   expect(t?.definitionSource).toBe("manual");
   // Stats WERE re-measured — the stale 5 is corrected down to the real 0.
