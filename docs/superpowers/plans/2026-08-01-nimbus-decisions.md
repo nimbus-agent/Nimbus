@@ -2044,7 +2044,14 @@ export function parseExtraction(raw: string): ExtractionOutcome {
     rationale?: unknown;
     alternatives?: unknown;
   };
-  if (o.is_decision !== true) return { kind: "veto" };
+  // Only a literal boolean `false` unambiguously means "not a decision". A
+  // missing field, null, a number, or the STRING "true" is a model formatting
+  // slip — and small local models coerce booleans routinely. Vetoes are
+  // permanent, so a slip must retry, not silently discard a real decision.
+  if (typeof o.is_decision !== "boolean") {
+    throw new Error("model output had a non-boolean is_decision");
+  }
+  if (!o.is_decision) return { kind: "veto" };
 
   if (typeof o.statement !== "string" || o.statement.trim().length === 0) {
     throw new Error("model claimed a decision but gave no statement");
