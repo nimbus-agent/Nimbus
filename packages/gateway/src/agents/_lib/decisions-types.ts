@@ -1,9 +1,6 @@
+import type { ServiceMatchRoute } from "../../decisions/decision-service-scope.ts";
 import type { DecisionEvidence, ExtractionSource } from "../../decisions/decision-types.ts";
 import type { GapNote } from "./findings.ts";
-
-// TODO(task-12): import ServiceMatchRoute from "../../decisions/decision-service-scope.ts"
-// once that module lands; it defines the same union.
-export type ServiceMatchRoute = "repo" | "ticket-key" | null;
 
 /** Request params — client-local, like every other agent's input type. */
 export interface DecisionsInput {
@@ -34,7 +31,7 @@ export interface DecisionsEntry {
   /** Populated only when `--explain` was requested; otherwise empty. */
   explain: DecisionsExplainTerm[];
   /** Which `--service` route matched, or null when no service filter applied. */
-  readonly matchedVia: ServiceMatchRoute;
+  readonly matchedVia: ServiceMatchRoute | null;
 }
 
 export interface DecisionsBrief {
