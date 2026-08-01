@@ -378,7 +378,10 @@ describe("readRebuildPreview", () => {
       counts: { total: 47, pending: 12, manual: 0 },
       sample: ["CDR", "SLO"],
     });
-    expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 10 } }]);
+    // Padded well past REBUILD_SAMPLE (10) — see REBUILD_SAMPLE_QUERY_LIMIT's
+    // docstring in glossary.ts: authored terms sort first, so an unpadded
+    // query starves the mined sample once there are >= 10 authored terms.
+    expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 100 } }]);
     expect(calls.some((c) => c.method === "glossary.rebuild")).toBe(false);
     expect(calls.some((c) => c.method === "glossary.refresh")).toBe(false);
   });
@@ -400,6 +403,53 @@ describe("readRebuildPreview", () => {
     });
     const result = await resultPromise;
     expect(result.sample).toEqual(["widget"]);
+  });
+
+  // The regression this guards: `listConsolidated` orders authored terms
+  // FIRST, so with >= REBUILD_SAMPLE (10) authored terms, requesting exactly
+  // REBUILD_SAMPLE entries and then filtering out manual ones leaves an
+  // EMPTY mined sample — the preview degrades to a bare count with no names
+  // at all, in exactly the configuration this feature creates. Padding the
+  // raw query (REBUILD_SAMPLE_QUERY_LIMIT) keeps mined terms in view.
+  //
+  // The fixture ties the fired payload to the LIMIT `readRebuildPreview`
+  // actually requested (`calls[0]`), mirroring `listConsolidated`'s
+  // manual-first-then-LIMIT truncation server-side — a fixture that always
+  // hands back both the manual and mined entries regardless of the requested
+  // limit would not exercise the bug at all.
+  test("still names mined terms when 10+ authored terms precede them", async () => {
+    const { client, calls, fire } = makeFakeIpcClient();
+    const resultPromise = readRebuildPreview(client);
+    const requestedLimit = (calls[0]?.params as { limit: number } | undefined)?.limit;
+    const manualEntries = Array.from({ length: 12 }, (_, i) => ({
+      term: `authored-${String(i)}`,
+      definitionSource: "manual",
+    }));
+    const minedEntries = [
+      { term: "widget", definitionSource: "llm" },
+      { term: "gadget", definitionSource: "snippet" },
+    ];
+    const truncatedEntries = [...manualEntries, ...minedEntries].slice(0, requestedLimit);
+    fire("glossary.briefReady", {
+      findings: { stats: { total: 15, pending: 1, manual: 12 }, entries: truncatedEntries },
+    });
+    const result = await resultPromise;
+    expect(result.sample).toEqual(["widget", "gadget"]);
+  });
+
+  test("the mined sample is still capped at REBUILD_SAMPLE (10) after filtering", async () => {
+    const { client, fire } = makeFakeIpcClient();
+    const resultPromise = readRebuildPreview(client);
+    const minedEntries = Array.from({ length: 15 }, (_, i) => ({
+      term: `mined-${String(i)}`,
+      definitionSource: "llm",
+    }));
+    fire("glossary.briefReady", {
+      findings: { stats: { total: 15, pending: 0, manual: 0 }, entries: minedEntries },
+    });
+    const result = await resultPromise;
+    expect(result.sample).toHaveLength(10);
+    expect(result.sample).toEqual(minedEntries.slice(0, 10).map((e) => e.term));
   });
 
   test("rejects on glossary.briefError", async () => {
@@ -528,7 +578,7 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
     // stdout. `runAgentBriefCli` — the only place `glossary.refresh` /
     // `glossary.rebuild` are ever invoked — was never reached at all.
     expect(briefCliCalled).toBe(false);
-    expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 10 } }]);
+    expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 100 } }]);
     expect(calls.some((c) => c.method === "glossary.rebuild")).toBe(false);
     expect(calls.some((c) => c.method === "glossary.refresh")).toBe(false);
     expect(stdoutBuf).toContain("5 mined terms");

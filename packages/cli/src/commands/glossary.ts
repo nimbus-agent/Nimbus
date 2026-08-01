@@ -107,6 +107,20 @@ export type GlossaryPassSummaryLike = {
 const REBUILD_SAMPLE = 10;
 
 /**
+ * How many entries `readRebuildPreview` actually asks `agents.glossary` for.
+ *
+ * `listConsolidated` (glossary-store.ts) orders authored terms FIRST, ahead
+ * of every mined term regardless of score. Asking for exactly
+ * `REBUILD_SAMPLE` and then filtering out manual entries would return an
+ * EMPTY mined sample once there are `REBUILD_SAMPLE` or more authored
+ * terms — exactly the configuration this feature creates. Padding the raw
+ * query and slicing to `REBUILD_SAMPLE` after filtering keeps the mined
+ * sample populated well past the common case; it is not a guarantee for an
+ * arbitrarily large authored glossary, but neither was the un-padded query.
+ */
+const REBUILD_SAMPLE_QUERY_LIMIT = 100;
+
+/**
  * One in-place progress line. `\r` returns to column 0 and `\x1b[K` clears to
  * end of line, so a shorter line never leaves stale characters from a longer
  * one. Pure and exported so the escape sequence is testable without a TTY.
@@ -299,6 +313,11 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
  * fail closed with the same "Agent timed out after N s" shape, not hang
  * forever. `timeoutMs` is overridable so tests can force the timeout branch
  * without a real 30s wait.
+ *
+ * Queries `REBUILD_SAMPLE_QUERY_LIMIT` entries, not `REBUILD_SAMPLE` — see
+ * that constant's docstring — then filters authored entries out and slices
+ * to `REBUILD_SAMPLE` afterward, so the displayed sample still names mined
+ * terms once there are `REBUILD_SAMPLE`-or-more authored ones.
  */
 export function readRebuildPreview(
   client: IPCClient,
@@ -333,7 +352,8 @@ export function readRebuildPreview(
       }
       const sample = p.findings.entries
         .filter((e) => e.definitionSource !== "manual")
-        .map((e) => e.term);
+        .map((e) => e.term)
+        .slice(0, REBUILD_SAMPLE);
       settleResolve({ counts: p.findings.stats, sample });
     });
     client.onNotification("glossary.briefError", (params: unknown) => {
@@ -341,7 +361,7 @@ export function readRebuildPreview(
       settleReject(new Error(p.error ?? "Agent failed"));
     });
     client
-      .call<{ sessionId: string }>("agents.glossary", { limit: REBUILD_SAMPLE })
+      .call<{ sessionId: string }>("agents.glossary", { limit: REBUILD_SAMPLE_QUERY_LIMIT })
       .catch(settleReject);
   });
 }
