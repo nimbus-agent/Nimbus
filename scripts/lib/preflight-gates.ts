@@ -17,6 +17,15 @@ const FAST: readonly Gate[] = [
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
   { name: "audit:any", cmd: ["bun", "run", "audit:any", "--check"], tier: "fast" },
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
+  {
+    // A root `overrides` pin outranks every declared range, so a divergence
+    // between the two is invisible: the Dependabot PR that bumps the declared
+    // range merges green and changes nothing in the installed tree. Offline and
+    // instant (pure manifest reads), so it belongs in the FAST tier.
+    name: "audit:override-drift",
+    cmd: ["bun", "run", "audit:override-drift"],
+    tier: "fast",
+  },
   { name: "audit:js-licenses", cmd: ["bun", "run", "audit:js-licenses"], tier: "fast" },
   { name: "audit:svg-assets", cmd: ["bun", "run", "audit:svg-assets"], tier: "fast" },
   { name: "audit:readme-cli", cmd: ["bun", "run", "audit:readme-cli"], tier: "fast" },
