@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.15.1](https://github.com/nimbus-agent/Nimbus/compare/v1.15.0...v1.15.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **cli:** stop share argument errors crashing, and retire seven false coverage exclusions ([#1004](https://github.com/nimbus-agent/Nimbus/issues/1004)) ([982b4d2](https://github.com/nimbus-agent/Nimbus/commit/982b4d2a2605338a539077db56d9d02c38ccbd01))
+
 ## [1.15.0](https://github.com/nimbus-agent/Nimbus/compare/v1.14.2...v1.15.0) (2026-08-01)
 
 
