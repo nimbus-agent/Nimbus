@@ -294,6 +294,8 @@ export function renderGlossary(brief: GlossaryBrief): string {
       if (e.nearMisses.length > 0) lines.push(`- Easily confused with: ${e.nearMisses.join(", ")}`);
       if (e.definitionSource === "snippet") {
         lines.push("- _Definition quoted verbatim from a source; no LLM configured._");
+      } else if (e.definitionSource === "manual") {
+        lines.push("- _Authored in `nimbus.toml`; not derived from indexed sources._");
       }
       if (e.topSources.length > 0) {
         lines.push("\n### Sources");
@@ -308,7 +310,8 @@ export function renderGlossary(brief: GlossaryBrief): string {
   } else {
     lines.push("");
     for (const e of brief.entries) {
-      lines.push(`- **${e.term}** — ${String(e.docFreq)} mention(s)`);
+      const suffix = e.definitionSource === "manual" ? " — authored" : "";
+      lines.push(`- **${e.term}** — ${String(e.docFreq)} mention(s)${suffix}`);
     }
   }
 

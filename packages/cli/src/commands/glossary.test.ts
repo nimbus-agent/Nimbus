@@ -261,6 +261,31 @@ describe("renderPassOutcome", () => {
     });
     expect(lines.join("\n")).not.toContain("no local LLM provider");
   });
+
+  test("omits the skipped-entries section when manualSkipped is absent or empty", () => {
+    expect(renderPassOutcome(BASE).join("\n")).not.toContain("[glossary.terms]");
+    expect(renderPassOutcome({ ...BASE, manualSkipped: [] }).join("\n")).not.toContain(
+      "[glossary.terms]",
+    );
+  });
+
+  test("the pass outcome names skipped config entries", () => {
+    // `vetoed` is deliberately omitted here: `GlossaryPassSummaryLike` (the
+    // CLI's structural stand-in) has no such field — only the gateway's
+    // `GlossaryPassSummary` does — and `renderPassOutcome` never reads it.
+    const lines = renderPassOutcome({
+      consolidated: 0,
+      upgraded: 0,
+      upgradesVetoed: 0,
+      vetoedTerms: [],
+      retried: 0,
+      llmConfigured: false,
+      llmProduced: false,
+      manualSkipped: [{ entry: "CDR", reason: "empty definition" }],
+    });
+    expect(lines.join("\n")).toContain("CDR");
+    expect(lines.join("\n")).toContain("empty definition");
+  });
 });
 
 describe("progressLine", () => {
@@ -278,12 +303,12 @@ describe("progressLine", () => {
 
 describe("renderRebuildPreview", () => {
   test("lists a sample and the remainder", () => {
-    const out = renderRebuildPreview({ total: 47, pending: 12 }, [
+    const out = renderRebuildPreview({ total: 47, pending: 12, manual: 0 }, [
       "CDR",
       "shard_key",
       "write-behind",
     ]);
-    expect(out).toContain("47 consolidated terms and 12 pending candidates");
+    expect(out).toContain("47 mined terms and 12 pending candidates");
     expect(out).toContain("CDR, shard_key, write-behind");
     expect(out).toContain("--yes");
   });
@@ -293,27 +318,43 @@ describe("renderRebuildPreview", () => {
     // ordinary bounded pass (SCAN_BATCH_LIMIT / maxNewTermsPerPass), so the
     // confirm prompt must say so up front rather than let the user believe
     // "Pass complete" means the whole glossary came back.
-    const out = renderRebuildPreview({ total: 47, pending: 12 }, ["CDR"]);
+    const out = renderRebuildPreview({ total: 47, pending: 12, manual: 0 }, ["CDR"]);
     expect(out).toContain("Rebuilding re-mines incrementally");
     expect(out).toContain("the full glossary returns over subsequent passes");
   });
 
   test("omits the remainder line when the sample covers everything", () => {
-    const out = renderRebuildPreview({ total: 2, pending: 0 }, ["CDR", "SLO"]);
+    const out = renderRebuildPreview({ total: 2, pending: 0, manual: 0 }, ["CDR", "SLO"]);
     expect(out).not.toContain("more");
   });
 
   test("omits the sample line when there is nothing to sample", () => {
-    const out = renderRebuildPreview({ total: 0, pending: 0 }, []);
-    expect(out).toContain("0 consolidated terms and 0 pending candidates");
+    const out = renderRebuildPreview({ total: 0, pending: 0, manual: 0 }, []);
+    expect(out).toContain("0 mined terms and 0 pending candidates");
     expect(out).toContain("Re-run with --yes to confirm.");
   });
 
   test("shows the remainder line even with an empty sample", () => {
     // sample.length === 0 (no sample line) but remainder = 5 - 0 > 0 (the
     // remainder line still fires) — a distinct branch from both tests above.
-    const out = renderRebuildPreview({ total: 5, pending: 0 }, []);
+    const out = renderRebuildPreview({ total: 5, pending: 0, manual: 0 }, []);
     expect(out).toContain("... and 5 more");
+  });
+
+  test("omits the authored-terms line when manual is 0", () => {
+    const out = renderRebuildPreview({ total: 5, pending: 0, manual: 0 }, []);
+    expect(out).not.toContain("authored term");
+  });
+
+  test("the rebuild preview does not claim authored terms will be deleted", () => {
+    const out = renderRebuildPreview({ total: 10, pending: 4, manual: 3 }, ["CDR", "widget"]);
+    // `startsWith`, not `toContain` — "7 mined terms" as a bare substring
+    // check would also match a mangled "-7 mined terms" (e.g. an inverted
+    // `manual - total` subtraction), which is exactly the arithmetic bug this
+    // test exists to catch. Anchoring at the start of the line rules that out.
+    expect(out.startsWith("7 mined terms")).toBe(true);
+    expect(out).toContain("3 authored term");
+    expect(out).toContain("nimbus.toml");
   });
 });
 
@@ -327,13 +368,38 @@ describe("readRebuildPreview", () => {
     const { client, calls, fire } = makeFakeIpcClient();
     const resultPromise = readRebuildPreview(client);
     fire("glossary.briefReady", {
-      findings: { stats: { total: 47, pending: 12 }, entries: [{ term: "CDR" }, { term: "SLO" }] },
+      findings: {
+        stats: { total: 47, pending: 12, manual: 0 },
+        entries: [{ term: "CDR" }, { term: "SLO" }],
+      },
     });
     const result = await resultPromise;
-    expect(result).toEqual({ counts: { total: 47, pending: 12 }, sample: ["CDR", "SLO"] });
+    expect(result).toEqual({
+      counts: { total: 47, pending: 12, manual: 0 },
+      sample: ["CDR", "SLO"],
+    });
     expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 10 } }]);
     expect(calls.some((c) => c.method === "glossary.rebuild")).toBe(false);
     expect(calls.some((c) => c.method === "glossary.refresh")).toBe(false);
+  });
+
+  // Authored terms sort first (glossary-store.ts), so without this filter
+  // they would head the "would be deleted" sample despite never actually
+  // being deleted.
+  test("filters authored entries out of the sample", async () => {
+    const { client, fire } = makeFakeIpcClient();
+    const resultPromise = readRebuildPreview(client);
+    fire("glossary.briefReady", {
+      findings: {
+        stats: { total: 2, pending: 0, manual: 1 },
+        entries: [
+          { term: "CDR", definitionSource: "manual" },
+          { term: "widget", definitionSource: "llm" },
+        ],
+      },
+    });
+    const result = await resultPromise;
+    expect(result.sample).toEqual(["widget"]);
   });
 
   test("rejects on glossary.briefError", async () => {
@@ -405,11 +471,20 @@ describe("readRebuildPreview", () => {
       await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
     });
 
+    test("rejects when stats.manual (not just total/pending) is mistyped", async () => {
+      const { client, fire } = makeFakeIpcClient();
+      const p = readRebuildPreview(client);
+      fire("glossary.briefReady", {
+        findings: { stats: { total: 1, pending: 0, manual: "no" }, entries: [] },
+      });
+      await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
+    });
+
     test("rejects when entries is not an array", async () => {
       const { client, fire } = makeFakeIpcClient();
       const p = readRebuildPreview(client);
       fire("glossary.briefReady", {
-        findings: { stats: { total: 1, pending: 0 }, entries: "nope" },
+        findings: { stats: { total: 1, pending: 0, manual: 0 }, entries: "nope" },
       });
       await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
     });
@@ -418,7 +493,7 @@ describe("readRebuildPreview", () => {
       const { client, fire } = makeFakeIpcClient();
       const p = readRebuildPreview(client);
       fire("glossary.briefReady", {
-        findings: { stats: { total: 1, pending: 0 }, entries: [{ term: 1 }] },
+        findings: { stats: { total: 1, pending: 0, manual: 0 }, entries: [{ term: 1 }] },
       });
       await expect(p).rejects.toThrow("Malformed glossary.briefReady payload");
     });
@@ -443,7 +518,7 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
         },
       });
       fire("glossary.briefReady", {
-        findings: { stats: { total: 5, pending: 1 }, entries: [{ term: "CDR" }] },
+        findings: { stats: { total: 5, pending: 1, manual: 0 }, entries: [{ term: "CDR" }] },
       });
       await resultPromise;
     } finally {
@@ -456,7 +531,7 @@ describe("runGlossaryCommand — dispatch (DI, no mock.module)", () => {
     expect(calls).toEqual([{ method: "agents.glossary", params: { limit: 10 } }]);
     expect(calls.some((c) => c.method === "glossary.rebuild")).toBe(false);
     expect(calls.some((c) => c.method === "glossary.refresh")).toBe(false);
-    expect(stdoutBuf).toContain("5 consolidated terms");
+    expect(stdoutBuf).toContain("5 mined terms");
   });
 
   test("['--refresh', '--json'] keeps stdout JSON-only; the pass summary goes to stderr", async () => {

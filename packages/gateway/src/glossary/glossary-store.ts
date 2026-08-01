@@ -348,9 +348,23 @@ export function selectStaleForRecheck(
   return rows.map(toTerm);
 }
 
+/**
+ * Consolidated terms, authored ones first.
+ *
+ * `score` keeps its single meaning — strength of MINED evidence — so an
+ * authored-but-unattested term legitimately scores 0. Ranking policy lives
+ * here instead, which fixes three readers at once: list mode, the agent's
+ * near-miss pool, and the extraction pass's near-miss pool. Without it an
+ * authored term would sort last and be the first dropped from the 500-term
+ * pool — the deliberately-authored term being the least likely to be
+ * suggested.
+ */
 export function listConsolidated(db: Database, limit: number): GlossaryTerm[] {
   const rows = db
-    .query("SELECT * FROM glossary_term WHERE status = 'consolidated' ORDER BY score DESC LIMIT ?")
+    .query(
+      `SELECT * FROM glossary_term WHERE status = 'consolidated'
+       ORDER BY (definition_source = 'manual') DESC, score DESC LIMIT ?`,
+    )
     .all(limit) as Row[];
   return rows.map(toTerm);
 }
@@ -437,17 +451,36 @@ export function applyStats(
   );
 }
 
-export function countByStatus(db: Database): { total: number; pending: number; vetoed: number } {
+export function countByStatus(db: Database): {
+  total: number;
+  pending: number;
+  vetoed: number;
+  manual: number;
+} {
   const r = db
     .query(
       `SELECT
          SUM(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END) AS total,
          SUM(CASE WHEN status = 'pending'      THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN status = 'vetoed'       THEN 1 ELSE 0 END) AS vetoed
+         SUM(CASE WHEN status = 'vetoed'       THEN 1 ELSE 0 END) AS vetoed,
+         SUM(CASE WHEN definition_source = 'manual' THEN 1 ELSE 0 END) AS manual
        FROM glossary_term`,
     )
-    .get() as { total: number | null; pending: number | null; vetoed: number | null } | null;
-  return { total: r?.total ?? 0, pending: r?.pending ?? 0, vetoed: r?.vetoed ?? 0 };
+    .get() as {
+    total: number | null;
+    pending: number | null;
+    vetoed: number | null;
+    manual: number | null;
+  } | null;
+  // `manual` is a SUBSET of `total`, not a fourth disjoint bucket: `total`
+  // counts consolidated rows, which now include authored ones. Mined count is
+  // `total - manual`.
+  return {
+    total: r?.total ?? 0,
+    pending: r?.pending ?? 0,
+    vetoed: r?.vetoed ?? 0,
+    manual: r?.manual ?? 0,
+  };
 }
 
 /**

@@ -101,6 +101,7 @@ export type GlossaryPassSummaryLike = {
   retried: number;
   llmConfigured: boolean;
   llmProduced: boolean;
+  manualSkipped?: Array<{ entry: string; reason: string }>;
 };
 
 const REBUILD_SAMPLE = 10;
@@ -147,24 +148,44 @@ export function renderPassOutcome(s: GlossaryPassSummaryLike): string[] {
         `${named} (no longer in the glossary).`,
     );
   }
+  const skipped = s.manualSkipped ?? [];
+  if (skipped.length > 0) {
+    // Otherwise a rejected config entry is invisible: the user edits
+    // nimbus.toml, sees a successful pass, and finds their term missing with
+    // no explanation.
+    lines.push(`Skipped ${String(skipped.length)} entry/entries in [glossary.terms]:`);
+    for (const s2 of skipped.slice(0, 10)) {
+      lines.push(`  ${s2.entry} — ${s2.reason}`);
+    }
+  }
   return lines;
 }
 
 /**
- * A count says how much is lost; the sample says WHAT. Sorted by score
- * upstream, so these are the terms most likely to be recognised.
+ * A count says how much is lost; the sample says WHAT.
+ *
+ * Authored terms are NOT lost: rebuild truncates them and the same pass
+ * re-reads them from `nimbus.toml` inside one transaction. Reporting them as
+ * deletions would be a false claim, and after the manual-first ordering change
+ * they head the sample — so the sample is filtered to mined terms too.
  */
 export function renderRebuildPreview(
-  counts: { total: number; pending: number },
+  counts: { total: number; pending: number; manual: number },
   sample: readonly string[],
 ): string {
+  const mined = counts.total - counts.manual;
   const lines = [
-    `${String(counts.total)} consolidated terms and ${String(counts.pending)} pending ` +
+    `${String(mined)} mined terms and ${String(counts.pending)} pending ` +
       "candidates would be deleted.",
   ];
   if (sample.length > 0) lines.push(`  ${sample.join(", ")}`);
-  const remainder = counts.total - sample.length;
+  const remainder = mined - sample.length;
   if (remainder > 0) lines.push(`  ... and ${String(remainder)} more`);
+  if (counts.manual > 0) {
+    lines.push(
+      `${String(counts.manual)} authored term(s) are re-read from nimbus.toml, not deleted.`,
+    );
+  }
   lines.push(
     "Rebuilding re-mines incrementally; the full glossary returns over subsequent passes.",
   );
@@ -243,16 +264,22 @@ function awaitPass(client: IPCClient, method: string): Promise<GlossaryPassSumma
 }
 
 type GlossaryPreviewLike = {
-  stats: { total: number; pending: number };
-  entries: Array<{ term: string }>;
+  stats: { total: number; pending: number; manual: number };
+  entries: Array<{ term: string; definitionSource?: string | null }>;
 };
 
 function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
   if (v === null || typeof v !== "object") return false;
   const b = v as { stats?: unknown; entries?: unknown };
   if (b.stats === null || typeof b.stats !== "object") return false;
-  const stats = b.stats as { total?: unknown; pending?: unknown };
-  if (typeof stats.total !== "number" || typeof stats.pending !== "number") return false;
+  const stats = b.stats as { total?: unknown; pending?: unknown; manual?: unknown };
+  if (
+    typeof stats.total !== "number" ||
+    typeof stats.pending !== "number" ||
+    typeof stats.manual !== "number"
+  ) {
+    return false;
+  }
   if (!Array.isArray(b.entries)) return false;
   return b.entries.every(
     (e: unknown) =>
@@ -276,13 +303,13 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
 export function readRebuildPreview(
   client: IPCClient,
   timeoutMs: number = TIMEOUT_MS,
-): Promise<{ counts: { total: number; pending: number }; sample: string[] }> {
+): Promise<{ counts: { total: number; pending: number; manual: number }; sample: string[] }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Agent timed out after ${Math.round(timeoutMs / 1000)} s`));
     }, timeoutMs);
     const settleResolve = (v: {
-      counts: { total: number; pending: number };
+      counts: { total: number; pending: number; manual: number };
       sample: string[];
     }): void => {
       clearTimeout(timeout);
@@ -304,7 +331,10 @@ export function readRebuildPreview(
         settleReject(new Error("Malformed glossary.briefReady payload"));
         return;
       }
-      settleResolve({ counts: p.findings.stats, sample: p.findings.entries.map((e) => e.term) });
+      const sample = p.findings.entries
+        .filter((e) => e.definitionSource !== "manual")
+        .map((e) => e.term);
+      settleResolve({ counts: p.findings.stats, sample });
     });
     client.onNotification("glossary.briefError", (params: unknown) => {
       const p = params === null || typeof params !== "object" ? {} : (params as { error?: string });

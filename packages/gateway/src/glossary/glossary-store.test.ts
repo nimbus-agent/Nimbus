@@ -559,3 +559,79 @@ test("a manual row is selected by neither consolidation batch", () => {
   expect(pending.map((t) => t.termKey)).not.toContain("cdr");
   expect(upgrades.map((t) => t.termKey)).not.toContain("cdr");
 });
+
+test("listConsolidated puts authored terms ahead of higher-scoring mined ones", () => {
+  upsertCandidate(db, {
+    key: "widget",
+    surface: "Widget",
+    form: "phrase",
+    stats: { docFreq: 50, serviceSpread: 5, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    score: 999,
+    nowMs: 1,
+  });
+  markConsolidated(db, {
+    termKey: "widget",
+    definition: "mined",
+    definitionSource: "llm",
+    synonyms: [],
+    nearMisses: [],
+    nowMs: 1,
+  });
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "authored",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1,
+  });
+
+  // Ordered, so assert the ORDER — a count would pass against ORDER BY score
+  // alone, which is exactly the bug this guards.
+  expect(listConsolidated(db, 10).map((t) => t.termKey)).toEqual(["cdr", "widget"]);
+});
+
+test("countByStatus reports manual as a subset of total", () => {
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "authored",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1,
+  });
+  const counts = countByStatus(db);
+  expect(counts.total).toBe(1);
+  expect(counts.manual).toBe(1);
+});
+
+// The fixture above (one manual row only) cannot distinguish "manual is a
+// SUBSET of total" from "manual is a disjoint fourth bucket that happens to
+// equal total" — both readings yield total===1 && manual===1 here. This
+// fixture adds a second, MINED consolidated row: a subset reading must count
+// it in `total` (2) but exclude it from `manual` (still 1); a disjoint-bucket
+// reading that only tallies rows sourced from config would also get this
+// right, so what this really pins is that `total` is NOT accidentally scoped
+// to `definition_source = 'manual'` — i.e. that `total` still means "every
+// consolidated row," authored or mined alike.
+test("countByStatus.total includes both a manual and a mined consolidated row", () => {
+  seedCandidate("widget");
+  consolidate("widget");
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "authored",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1,
+  });
+  const counts = countByStatus(db);
+  expect(counts.total).toBe(2);
+  expect(counts.manual).toBe(1);
+});

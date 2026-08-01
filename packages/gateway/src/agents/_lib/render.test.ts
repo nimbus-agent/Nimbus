@@ -9,11 +9,13 @@ import type {
   JanitorBrief,
   PreflightBrief,
 } from "./findings.ts";
+import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import {
   renderCatchup,
   renderConflict,
   renderExpert,
   renderGhost,
+  renderGlossary,
   renderHuddle,
   renderImpact,
   renderJanitor,
@@ -720,5 +722,68 @@ describe("renderPreflight", () => {
     expect(md).toContain("_no downstream owners reachable_");
     expect(md).toContain("## Gaps");
     expect(md).toContain("no paired peers");
+  });
+});
+
+const GLOSSARY_BASE: Pick<GlossaryBrief, BriefMetaKeys> = {
+  kind: "glossary",
+  agentVersion: 1,
+  generatedAt: 1_700_000_000_000,
+  latencyMs: 800,
+};
+
+/** A minimal but complete entry — every field render.ts might read is present. */
+function glossaryEntryFixture(overrides: Partial<GlossaryEntry> = {}): GlossaryEntry {
+  return {
+    term: "CDR",
+    definition: "Authored.",
+    definitionSource: "manual",
+    docFreq: 0,
+    serviceSpread: 0,
+    firstSeenAt: 0,
+    lastSeenAt: 0,
+    topSources: [],
+    synonyms: [],
+    nearMisses: [],
+    ...overrides,
+  };
+}
+
+describe("renderGlossary", () => {
+  test("an authored definition is labelled as authored, not as a snippet", () => {
+    const brief: GlossaryBrief = {
+      ...GLOSSARY_BASE,
+      gaps: [],
+      query: { term: "CDR", limit: 10 },
+      mode: "term",
+      entries: [glossaryEntryFixture({ term: "CDR", definition: "Authored." })],
+      matchedVia: null,
+      suggestions: [],
+      stats: { total: 1, pending: 0, vetoed: 0, manual: 1, lastPassAt: null },
+    };
+    const md = renderGlossary(brief);
+    expect(md).toContain("nimbus.toml");
+    expect(md).not.toContain("quoted verbatim");
+  });
+
+  test("list mode marks an authored entry with an '— authored' suffix", () => {
+    const brief: GlossaryBrief = {
+      ...GLOSSARY_BASE,
+      gaps: [],
+      query: { term: null, limit: 10 },
+      mode: "list",
+      entries: [
+        glossaryEntryFixture({ term: "CDR", docFreq: 0 }),
+        glossaryEntryFixture({ term: "widget", definitionSource: "llm", docFreq: 12 }),
+      ],
+      matchedVia: null,
+      suggestions: [],
+      stats: { total: 2, pending: 0, vetoed: 0, manual: 1, lastPassAt: null },
+    };
+    const md = renderGlossary(brief);
+    expect(md).toContain("**CDR** — 0 mention(s) — authored");
+    // A mined entry's line must NOT pick up the authored suffix.
+    expect(md).toContain("**widget** — 12 mention(s)");
+    expect(md).not.toContain("widget** — 12 mention(s) — authored");
   });
 });

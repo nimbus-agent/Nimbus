@@ -40,5 +40,12 @@ export type GlossaryBrief = {
   entries: GlossaryEntry[];
   matchedVia: "exact" | "synonym" | null;
   suggestions: string[];
-  stats: { total: number; pending: number; vetoed: number; lastPassAt: number | null };
+  stats: {
+    total: number;
+    pending: number;
+    vetoed: number;
+    /** Subset of `total` — authored in `[glossary.terms]`. */
+    manual: number;
+    lastPassAt: number | null;
+  };
 };
