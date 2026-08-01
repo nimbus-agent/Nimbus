@@ -64,7 +64,7 @@ These apply to **every** task. They are project non-negotiables, not preferences
 | `packages/gateway/src/index/decisions-v47-sql.ts` | Create — the migration SQL |
 | `packages/gateway/src/index/migrations/runner.ts` | Modify — register step 46→47 |
 | `packages/gateway/src/index/migrations/runner-v47.test.ts` | Create |
-| `packages/gateway/src/config/nimbus-toml-decisions.ts` | Create — `[decisions]` parsing |
+| `packages/gateway/src/config/nimbus-toml.ts` | Modify — add the `[decisions]` block beside `[glossary]` |
 | `packages/gateway/src/agents/_lib/decisions-types.ts` | Create — `DecisionsBrief` (local, following `glossary-types.ts`, **not** the SDK) |
 | `packages/gateway/src/agents/_lib/emit-brief.ts` | Modify — add to the `AnyBrief` union |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | Modify — 2 dispatch lines |
@@ -2604,9 +2604,10 @@ git commit -m "feat(decisions): add the three-phase extraction pass with an upgr
 ## Task 9: Config — `[decisions]`
 
 **Files:**
-- Create: `packages/gateway/src/config/nimbus-toml-decisions.ts`
-- Modify: `packages/gateway/src/config/nimbus-toml.ts` (add the section dispatch beside the `[glossary]` one, ~line 1594)
+- Modify: `packages/gateway/src/config/nimbus-toml.ts` — add the whole `[decisions]` block immediately after the `[glossary]` one (which ends ~line 1604)
 - Test: `packages/gateway/src/config/nimbus-toml-decisions.test.ts`
+
+**Do NOT create a separate config module.** `parseBool` and `forEachSectionEntry` are declared FILE-LOCAL in `nimbus-toml.ts` (lines 53 and 64) and are not exported. A separate file cannot reach them, and exporting or duplicating them to work around that is out of scope and breaks the file. Every other section lives in this file; `[decisions]` does too.
 
 **Interfaces:**
 - Consumes: `forEachSectionEntry` and the section-parsing helpers already used by `[glossary]` in `nimbus-toml.ts`.
