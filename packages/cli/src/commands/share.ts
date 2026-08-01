@@ -25,6 +25,26 @@ export interface ShareCreateArgs {
   readonly asRecipe: boolean;
 }
 
+/** Minimal client surface used by the share dispatcher — satisfied by IPCClient. */
+export interface ShareIpc {
+  call<T>(method: string, params?: unknown): Promise<T>;
+}
+
+export type ShareCommand =
+  | { kind: "create"; create: ShareCreateArgs }
+  | { kind: "list"; all: boolean }
+  | { kind: "prune" }
+  | { kind: "pubkey" }
+  | { kind: "approval"; approve: boolean; requestId: string }
+  | { kind: "forward"; contentHash: string; peerId: string }
+  | { kind: "inbox"; all: boolean };
+
+const SHARE_USAGE =
+  "Usage: nimbus share <create|list|prune|pubkey|approve|reject|forward|inbox> ...";
+const CREATE_USAGE =
+  "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]";
+const FORWARD_USAGE = "Usage: nimbus share forward <contentHash> --to-peer <peerId>";
+
 const DURATION = /^(\d+)([smhd])$/;
 function parseDuration(s: string): number | null {
   const m = DURATION.exec(s);
@@ -75,6 +95,57 @@ export function parseShareCreateArgs(args: readonly string[]): ShareCreateArgs {
   };
 }
 
+function parseApprovalArgs(sub: "approve" | "reject", rest: readonly string[]): ShareCommand {
+  const requestId = rest[0];
+  if (requestId === undefined || requestId.startsWith("--")) {
+    throw new Error(`Usage: nimbus share ${sub} <request-id>`);
+  }
+  return { kind: "approval", approve: sub === "approve", requestId };
+}
+
+function parseForwardArgs(rest: readonly string[]): ShareCommand {
+  const contentHash = rest[0];
+  if (contentHash === undefined || contentHash.startsWith("--")) {
+    throw new Error(FORWARD_USAGE);
+  }
+  const peerIdx = rest.indexOf("--to-peer");
+  const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
+  if (peerId === undefined || peerId.startsWith("--")) {
+    throw new Error(FORWARD_USAGE);
+  }
+  return { kind: "forward", contentHash, peerId };
+}
+
+/**
+ * Parse `nimbus share …` argv into a command. Throws with the exact usage text the user sees on
+ * stderr; the caller turns that into `exitCode = 1` without ever opening an IPC connection.
+ */
+export function parseShareArgs(argv: readonly string[]): ShareCommand {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "create": {
+      const create = parseShareCreateArgs(rest);
+      if (create.sessionId.length === 0) throw new Error(CREATE_USAGE);
+      return { kind: "create", create };
+    }
+    case "list":
+      return { kind: "list", all: rest.includes("--all") };
+    case "prune":
+      return { kind: "prune" };
+    case "pubkey":
+      return { kind: "pubkey" };
+    case "approve":
+    case "reject":
+      return parseApprovalArgs(sub, rest);
+    case "forward":
+      return parseForwardArgs(rest);
+    case "inbox":
+      return { kind: "inbox", all: rest.includes("--all") };
+    default:
+      throw new Error(SHARE_USAGE);
+  }
+}
+
 async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   const state = await readGatewayState(getCliPlatformPaths());
   if (state === undefined) {
@@ -95,128 +166,106 @@ interface ShareRecordRow {
   readonly createdAt: number;
 }
 
-async function runShareCreate(rest: string[]): Promise<void> {
-  const a = parseShareCreateArgs(rest);
-  if (a.sessionId.length === 0) {
-    console.error(
-      "Usage: nimbus share create <session-id> [--out <file> | --http | --to-peer <id>]",
-    );
+async function runShareCreate(c: ShareIpc, a: ShareCreateArgs): Promise<void> {
+  const r = await c.call<{ status: string; contentHash?: string }>("share.create", {
+    sessionId: a.sessionId,
+    kind: a.asRecipe ? "recipe" : "transcript",
+    sink: a.sink,
+    expiresMs: a.expiresMs,
+    redact: a.redact,
+  });
+  if (r.status === "ok") {
+    console.log(`Shared: ${r.contentHash ?? "(no content hash)"}`);
+  } else {
+    console.log(`Share ${r.status}`);
     process.exitCode = 1;
+  }
+}
+
+async function runShareList(c: ShareIpc, all: boolean): Promise<void> {
+  const { shares } = await c.call<{ shares: ShareRecordRow[] }>("share.list", {
+    includeExpired: all,
+  });
+  for (const row of shares) {
+    console.log(`${row.contentHash}  ${row.kind}  ${new Date(row.createdAt).toISOString()}`);
+  }
+}
+
+async function runSharePrune(c: ShareIpc): Promise<void> {
+  const r = await c.call<{ removed: number }>("share.prune", {});
+  console.log(`Pruned ${r.removed}`);
+}
+
+async function runSharePubkey(c: ShareIpc): Promise<void> {
+  const r = await c.call<{ pubkey: string }>("share.pubkey", {});
+  console.log(r.pubkey);
+}
+
+async function runShareApproval(c: ShareIpc, approve: boolean, requestId: string): Promise<void> {
+  const r = await c.call<{ matched: boolean }>("share.approvalRespond", {
+    requestId,
+    approved: approve,
+  });
+  const verb = approve ? "approved" : "rejected";
+  console.log(r.matched ? `${verb} ${requestId}` : "no pending share request with that id");
+}
+
+async function runShareForward(c: ShareIpc, contentHash: string, peerId: string): Promise<void> {
+  const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
+    contentHash,
+    recipient: peerId,
+  });
+  if (r.status === "rejected") {
+    console.log(`rejected ${contentHash} (owner did not approve the forward)`);
     return;
   }
-  await withIpc(async (c) => {
-    const r = await c.call<{ status: string; contentHash?: string }>("share.create", {
-      sessionId: a.sessionId,
-      kind: a.asRecipe ? "recipe" : "transcript",
-      sink: a.sink,
-      expiresMs: a.expiresMs,
-      redact: a.redact,
-    });
-    if (r.status === "ok") {
-      console.log(`Shared: ${r.contentHash ?? "(no content hash)"}`);
-    } else {
-      console.log(`Share ${r.status}`);
-      process.exitCode = 1;
-    }
-  });
+  console.log(
+    r.delivered
+      ? `delivered ${contentHash}`
+      : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
+  );
 }
 
-async function runShareList(rest: string[]): Promise<void> {
-  await withIpc(async (c) => {
-    const { shares } = await c.call<{ shares: ShareRecordRow[] }>("share.list", {
-      includeExpired: rest.includes("--all"),
-    });
-    for (const row of shares) {
-      console.log(`${row.contentHash}  ${row.kind}  ${new Date(row.createdAt).toISOString()}`);
-    }
-  });
-}
-
-async function runSharePrune(): Promise<void> {
-  await withIpc(async (c) => {
-    const r = await c.call<{ removed: number }>("share.prune", {});
-    console.log(`Pruned ${r.removed}`);
-  });
-}
-
-async function runSharePubkey(): Promise<void> {
-  await withIpc(async (c) => {
-    const r = await c.call<{ pubkey: string }>("share.pubkey", {});
-    console.log(r.pubkey);
-  });
-}
-
-async function runShareApproval(sub: "approve" | "reject", rest: string[]): Promise<void> {
-  const requestId = rest[0];
-  if (requestId === undefined || requestId.startsWith("--")) {
-    console.error(`Usage: nimbus share ${sub} <request-id>`);
-    process.exitCode = 1;
-    return;
+async function runShareInbox(c: ShareIpc, all: boolean): Promise<void> {
+  const { inbox } = await c.call<{
+    inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
+  }>("share.inbox", { all });
+  for (const row of inbox) {
+    const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
+    console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
   }
-  await withIpc(async (c) => {
-    const r = await c.call<{ matched: boolean }>("share.approvalRespond", {
-      requestId,
-      approved: sub === "approve",
-    });
-    const verb = sub === "approve" ? "approved" : "rejected";
-    console.log(r.matched ? `${verb} ${requestId}` : "no pending share request with that id");
-  });
 }
 
-async function runShareForward(rest: string[]): Promise<void> {
-  const contentHash = rest[0];
-  if (contentHash === undefined || contentHash.startsWith("--")) {
-    console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
-    process.exitCode = 1;
-    return;
+/** Execute a parsed share subcommand over an injected client (test entry point + runtime path). */
+export async function runShareCommand(client: ShareIpc, cmd: ShareCommand): Promise<void> {
+  switch (cmd.kind) {
+    case "create":
+      return runShareCreate(client, cmd.create);
+    case "list":
+      return runShareList(client, cmd.all);
+    case "prune":
+      return runSharePrune(client);
+    case "pubkey":
+      return runSharePubkey(client);
+    case "approval":
+      return runShareApproval(client, cmd.approve, cmd.requestId);
+    case "forward":
+      return runShareForward(client, cmd.contentHash, cmd.peerId);
+    case "inbox":
+      return runShareInbox(client, cmd.all);
   }
-  const peerIdx = rest.indexOf("--to-peer");
-  const peerId = peerIdx >= 0 ? rest[peerIdx + 1] : undefined;
-  if (peerId === undefined || peerId.startsWith("--")) {
-    console.error("Usage: nimbus share forward <contentHash> --to-peer <peerId>");
-    process.exitCode = 1;
-    return;
-  }
-  await withIpc(async (c) => {
-    const r = await c.call<{ status: string; delivered?: boolean }>("federation.shareForward", {
-      contentHash,
-      recipient: peerId,
-    });
-    if (r.status === "rejected") {
-      console.log(`rejected ${contentHash} (owner did not approve the forward)`);
-    } else {
-      console.log(
-        r.delivered
-          ? `delivered ${contentHash}`
-          : `queued ${contentHash} (recipient not yet paired — will deliver on first pair)`,
-      );
-    }
-  });
-}
-
-async function runShareInbox(rest: string[]): Promise<void> {
-  await withIpc(async (c) => {
-    const { inbox } = await c.call<{
-      inbox: Array<{ contentHash: string; kind: string; originLabel: string; hops: number }>;
-    }>("share.inbox", { all: rest.includes("--all") });
-    for (const row of inbox) {
-      const chip = formatAttributionChipInline({ originLabel: row.originLabel, hops: row.hops });
-      console.log(`${chip}  ${row.contentHash}  ${row.kind}`);
-    }
-  });
 }
 
 export async function runShare(args: string[]): Promise<void> {
-  const [sub, ...rest] = args;
-  if (sub === "create") return runShareCreate(rest);
-  if (sub === "list") return runShareList(rest);
-  if (sub === "prune") return runSharePrune();
-  if (sub === "pubkey") return runSharePubkey();
-  if (sub === "approve" || sub === "reject") return runShareApproval(sub, rest);
-  if (sub === "forward") return runShareForward(rest);
-  if (sub === "inbox") return runShareInbox(rest);
-  console.error("Usage: nimbus share <create|list|prune|pubkey|approve|reject|forward|inbox> ...");
-  process.exitCode = 1;
+  let cmd: ShareCommand;
+  try {
+    cmd = parseShareArgs(args);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exitCode = 1;
+    return;
+  }
+  await withIpc((c) => runShareCommand(c, cmd));
 }
 
 interface ReplayStepShape {
@@ -259,58 +308,85 @@ export function formatReplayReport(report: ReplayReportShape): string {
   return lines.join("\n");
 }
 
-export async function runVerifyShare(args: string[]): Promise<void> {
+export interface VerifyShareRequest {
+  readonly replay: boolean;
+  /** Either a passthrough URL (`share.verify` fetches it) or the base64 bytes of a local file. */
+  readonly params: { readonly input: string } | { readonly bytesB64: string };
+}
+
+/**
+ * Resolve `nimbus verify-share …` argv into a request for the gateway. A URL is passed through
+ * as-is; a local path is read up front with a friendly error (a missing/unreadable path otherwise
+ * crashes with an unhandled rejection). Returns `null` after printing the user-facing error and
+ * setting the exit code, so the caller never opens an IPC connection for an unusable input.
+ */
+export async function resolveVerifyShareRequest(
+  args: readonly string[],
+): Promise<VerifyShareRequest | null> {
   const replay = args.includes("--replay");
   const input = args.find((a) => !a.startsWith("--"));
   if (input === undefined) {
     console.error("Usage: nimbus verify-share <file|url> [--replay]");
     process.exitCode = 1;
+    return null;
+  }
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    return { replay, params: { input } };
+  }
+  try {
+    const bytesB64 = Buffer.from(await Bun.file(input).bytes()).toString("base64");
+    return { replay, params: { bytesB64 } };
+  } catch {
+    console.error(`Cannot read share file: ${input}`);
+    process.exitCode = 1;
+    return null;
+  }
+}
+
+interface VerifyOutcome {
+  readonly ok: boolean;
+  readonly signatureValid: boolean;
+  readonly expired: boolean;
+  readonly errors: string[];
+}
+
+function printSignatureLine(v: { signatureValid: boolean; expired: boolean }): void {
+  console.log(
+    `signature: ${v.signatureValid ? "VALID" : "INVALID"}${v.expired ? " (expired)" : ""}`,
+  );
+}
+
+/** Execute a resolved verify/replay request over an injected client. */
+export async function runVerifyShareCommand(
+  client: ShareIpc,
+  req: VerifyShareRequest,
+): Promise<void> {
+  if (req.replay) {
+    const r = await client.call<{ verify: VerifyOutcome; report: ReplayReportShape }>(
+      "share.replay",
+      req.params,
+    );
+    printSignatureLine(r.verify);
+    console.log(formatReplayReport(r.report));
+    if (!r.verify.ok) {
+      console.error(r.verify.errors.join("; ")); // surface why the share is invalid (tamper/expiry)
+      process.exitCode = 1;
+    }
     return;
   }
-  const isUrl = input.startsWith("http://") || input.startsWith("https://");
-  // Read the local file up front with a friendly error (a missing/unreadable path otherwise crashes
-  // with an unhandled rejection). Applies to both the verify and replay paths.
-  let params: { input: string } | { bytesB64: string };
-  if (isUrl) {
-    params = { input };
-  } else {
-    try {
-      params = { bytesB64: Buffer.from(await Bun.file(input).bytes()).toString("base64") };
-    } catch {
-      console.error(`Cannot read share file: ${input}`);
-      process.exitCode = 1;
-      return;
-    }
+  const r = await client.call<VerifyOutcome & { contentHashValid: boolean }>(
+    "share.verify",
+    req.params,
+  );
+  printSignatureLine(r);
+  if (!r.ok) {
+    console.error(r.errors.join("; "));
+    process.exitCode = 1;
   }
-  await withIpc(async (c) => {
-    if (replay) {
-      const r = await c.call<{
-        verify: { ok: boolean; signatureValid: boolean; expired: boolean; errors: string[] };
-        report: ReplayReportShape;
-      }>("share.replay", params);
-      console.log(
-        `signature: ${r.verify.signatureValid ? "VALID" : "INVALID"}${r.verify.expired ? " (expired)" : ""}`,
-      );
-      console.log(formatReplayReport(r.report));
-      if (!r.verify.ok) {
-        console.error(r.verify.errors.join("; ")); // surface why the share is invalid (tamper/expiry)
-        process.exitCode = 1;
-      }
-      return;
-    }
-    const r = await c.call<{
-      ok: boolean;
-      signatureValid: boolean;
-      contentHashValid: boolean;
-      expired: boolean;
-      errors: string[];
-    }>("share.verify", params);
-    console.log(
-      `signature: ${r.signatureValid ? "VALID" : "INVALID"}${r.expired ? " (expired)" : ""}`,
-    );
-    if (!r.ok) {
-      console.error(r.errors.join("; "));
-      process.exitCode = 1;
-    }
-  });
+}
+
+export async function runVerifyShare(args: string[]): Promise<void> {
+  const req = await resolveVerifyShareRequest(args);
+  if (req === null) return;
+  await withIpc((c) => runVerifyShareCommand(c, req));
 }
