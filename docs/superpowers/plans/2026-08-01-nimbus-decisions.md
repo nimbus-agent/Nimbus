@@ -17,6 +17,8 @@ These apply to **every** task. They are project non-negotiables, not preferences
 - **No `any`.** Use `unknown` for external data. TypeScript strict mode. External JSON is validated, never cast blind.
 - **All SQLite writes go through `dbRun` / `dbExec` / `dbStmtRun`** from `packages/gateway/src/db/write.ts` (invariant **I14**, statically enforced by `scripts/structure-audit/check-nimbus-invariants.ts`). A raw `db.run(...)` fails the preflight. Reads may use `db.query(...)`.
 - **Bound parameters only** (invariant **I9**). Never string-interpolate a value into SQL.
+- **`graph_relation.created_at` is `NOT NULL` with no default** (`index/graph-v7-sql.ts:24`).
+  Any test seeding that table must supply it or the insert throws.
 - **`Bun.CryptoHasher` does NOT support blake3.** For BLAKE3 use `@noble/hashes/blake3.js` +
   `@noble/hashes/utils.js` `bytesToHex`, matching `db/audit-chain.ts:2-3` and `egress/egress-ledger.ts`.
   `@noble/hashes` is already a declared gateway dependency — this adds nothing new.
@@ -1542,9 +1544,10 @@ function seedPrMentionedBy(sourceItemId: string, prItemId: string, occurredAt: n
     `INSERT INTO graph_entity (id, type, external_id, label) VALUES (?, 'message', ?, ?)`,
     [`e-${sourceItemId}`, sourceItemId, "thread"],
   );
+  // graph_relation.created_at is NOT NULL with no default (graph-v7-sql.ts:24).
   db.run(
-    `INSERT INTO graph_relation (from_id, to_id, type) VALUES (?, ?, 'mentions')`,
-    [`e-${sourceItemId}`, `e-${prItemId}`],
+    `INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'mentions', ?)`,
+    [`e-${sourceItemId}`, `e-${prItemId}`, occurredAt],
   );
 }
 
