@@ -403,6 +403,78 @@ describe("runConnector remove", () => {
     Object.defineProperty(process.stdout, "isTTY", { value, configurable: true });
   }
 
+  type RecordedCall = { method: string; params: unknown };
+
+  /**
+   * A fake Gateway that behaves like the real one for a HITL-gated method: `connector.remove`
+   * does NOT resolve until the `consent.request` notification it pushes has been answered with
+   * `consent.respond`. That mirrors `ipc/consent.ts`, whose `requestConsent` has no timer at all
+   * — it settles only on a response or on client disconnect.
+   *
+   * This is the seam the old stub executors never exercised: a CLI client that registers no
+   * `consent.request` handler fails here loudly, instead of silently burning the client's 30s
+   * request timeout in production and removing nothing.
+   */
+  function makeConsentAwareIpc(removeResult: unknown): {
+    readonly calls: RecordedCall[];
+    readonly ipcClient: {
+      call: (method: string, params: unknown) => Promise<unknown>;
+      connect: () => void;
+      disconnect: () => void;
+      onNotification: (event: string, handler: (params: unknown) => void | Promise<void>) => void;
+    };
+  } {
+    const calls: RecordedCall[] = [];
+    let consentHandler: ((params: unknown) => void | Promise<void>) | undefined;
+    return {
+      calls,
+      ipcClient: {
+        connect: (): void => {},
+        disconnect: (): void => {},
+        onNotification: (event, handler): void => {
+          if (event === "consent.request") {
+            consentHandler = handler;
+          }
+        },
+        call: async (method, params): Promise<unknown> => {
+          calls.push({ method, params });
+          if (method === "consent.respond") {
+            return { ok: true };
+          }
+          if (method !== "connector.remove") {
+            throw new Error(`Unexpected IPC call: ${method}`);
+          }
+          if (consentHandler === undefined) {
+            throw new Error(
+              "gateway is blocked on consent.request: the CLI registered no consent.request handler",
+            );
+          }
+          await consentHandler({
+            requestId: "req-remove-1",
+            prompt: 'Approve connector.remove for "github"?',
+          });
+          return removeResult;
+        },
+      },
+    };
+  }
+
+  /** Capture raw `process.stderr.write` (the auto-approve notice bypasses `console.*`). */
+  async function withCapturedStderr(fn: () => Promise<void>): Promise<string> {
+    let buf = "";
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown): boolean => {
+      buf += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await fn();
+    } finally {
+      process.stderr.write = orig;
+    }
+    return buf;
+  }
+
   beforeEach(() => {
     out.reset();
     setTty(false);
@@ -542,6 +614,67 @@ describe("runConnector remove", () => {
     await runConnector(["remove", "github"]);
     expect(ipc.calls).toHaveLength(0);
     expect(out.stdout).toContain("Cancelled.");
+  });
+
+  it("answers the Gateway's HITL consent gate so --yes actually removes", async () => {
+    const gw = makeConsentAwareIpc({
+      ok: true,
+      itemsDeleted: 7,
+      vaultKeysRemoved: ["github.pat"],
+    });
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: gw.ipcClient,
+    });
+    const stderr = await withCapturedStderr(() => runConnector(["remove", "github", "--yes"]));
+    expect(gw.calls).toEqual([
+      { method: "connector.remove", params: { serviceId: "github" } },
+      { method: "consent.respond", params: { requestId: "req-remove-1", approved: true } },
+    ]);
+    expect(stderr).toContain("[--yes] auto-approving HITL request");
+    expect(out.stdout).toContain("Removed index rows: 7");
+  });
+
+  it("answers the Gateway's consent gate with the interactive decision, prompting once", async () => {
+    setTty(true);
+    const gw = makeConsentAwareIpc({ ok: true, itemsDeleted: 4, vaultKeysRemoved: [] });
+    let promptCount = 0;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      // Getter, so every `confirm()` the mocked @clack/prompts serves is counted: the
+      // Gateway gate must be answered from THIS decision, not by asking the user again.
+      get clackAnswer(): boolean {
+        promptCount += 1;
+        return true;
+      },
+      ipcClient: gw.ipcClient,
+    });
+    const stderr = await withCapturedStderr(() => runConnector(["remove", "github"]));
+    expect(promptCount).toBe(1);
+    expect(gw.calls).toEqual([
+      { method: "connector.remove", params: { serviceId: "github" } },
+      { method: "consent.respond", params: { requestId: "req-remove-1", approved: true } },
+    ]);
+    expect(stderr).toContain("[confirmed] auto-approving HITL request");
+    expect(out.stdout).toContain("Removed index rows: 4");
+  });
+
+  it("fails loudly when the Gateway gate rejects instead of printing an undefined count", async () => {
+    const gw = makeConsentAwareIpc({ status: "rejected", reason: "User declined consent gate." });
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: gw.ipcClient,
+    });
+    let err: unknown;
+    const stderr = await withCapturedStderr(async () => {
+      await runConnector(["remove", "github", "--yes"]).catch((e: unknown) => {
+        err = e;
+      });
+    });
+    expect(stderr).toContain("auto-approving HITL request");
+    expect((err as Error).message).toContain('Gateway rejected the removal of "github"');
+    expect((err as Error).message).toContain("User declined consent gate.");
+    expect(out.stdout).not.toContain("Removed index rows:");
   });
 
   it("remove throws when service is missing", async () => {

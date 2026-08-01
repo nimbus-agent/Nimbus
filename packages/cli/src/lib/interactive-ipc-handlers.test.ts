@@ -303,6 +303,28 @@ describe("registerAutoApproveConsentHandler — prompt fallback branches", () =>
     expect(warning).not.toContain("prompt: ");
   });
 
+  test("echoes a caller-supplied source label instead of the --yes default", async () => {
+    const { client, fireConsent, calls } = makeFakeClient();
+    registerAutoApproveConsentHandler(client, "confirmed");
+
+    let warning = "";
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      warning += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await fireConsent({ requestId: "req-labelled", prompt: "Remove connector?" });
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(warning).toContain("[confirmed] auto-approving HITL request: Remove connector?");
+    expect(warning).not.toContain("[--yes]");
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "req-labelled", approved: true } },
+    ]);
+  });
+
   test("uses requestId as detail when prompt field is absent", async () => {
     const { client, fireConsent } = makeFakeClient();
     registerAutoApproveConsentHandler(client);

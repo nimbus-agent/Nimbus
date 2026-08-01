@@ -34,14 +34,25 @@ export function registerConsentPromptHandler(
   });
 }
 
-export function registerAutoApproveConsentHandler(client: IPCClient): void {
+/**
+ * Answer the Gateway's HITL `consent.request` with an approval the caller has ALREADY obtained
+ * from the user, so the same removal/export is never confirmed twice.
+ *
+ * `sourceLabel` names where that approval came from and is echoed on stderr so the transcript
+ * still shows an auto-approval happened: `--yes` (the default) for a flag-driven run, or e.g.
+ * `confirmed` when an interactive CLI-side prompt already asked the same question. Registering
+ * this handler on a client is what turns an otherwise-hanging HITL call into a completed one —
+ * without a `consent.request` handler the Gateway's gate never receives `consent.respond` and
+ * the request dies on the client's 30s timeout.
+ */
+export function registerAutoApproveConsentHandler(client: IPCClient, sourceLabel = "--yes"): void {
   client.onNotification("consent.request", async (params: unknown) => {
     const p = params as { requestId?: string; prompt?: string };
     if (typeof p.requestId !== "string") {
       return;
     }
     const detail = typeof p.prompt === "string" && p.prompt.length > 0 ? p.prompt : p.requestId;
-    process.stderr.write(`[--yes] auto-approving HITL request: ${detail}\n`);
+    process.stderr.write(`[${sourceLabel}] auto-approving HITL request: ${detail}\n`);
     await client.call("consent.respond", {
       requestId: p.requestId,
       approved: true,

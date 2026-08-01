@@ -955,7 +955,7 @@ nimbus connector remove github --yes    # Skip confirmation (-y also works)
 
 The CLI asks for confirmation before it sends `connector.remove`. Declining the prompt (or cancelling it with Ctrl-C) prints `Cancelled.` and sends nothing. Outside an interactive shell — piped, or run from a script — there is no prompt to answer, so the command refuses with a non-zero exit rather than waiting for input; pass `--yes` or `-y` to proceed non-interactively.
 
-`connector.remove` is also a HITL action on the Gateway side, so the Gateway asks the owner to approve it a second time over the IPC consent channel. `nimbus connector remove` does not currently answer that request, so the call times out after 30s and nothing is removed. Until that is fixed, use [`nimbus data delete --service <name>`](#nimbus-data-delete---service-name), which purges the same index rows and Vault credentials and does answer the consent prompt.
+`connector.remove` is also a HITL action on the Gateway side, but you are only asked once: the CLI confirmation *is* the consent decision, and the CLI answers the Gateway's consent request with it. A declined prompt never reaches the Gateway at all, and `--yes` covers both — the auto-approval is still noted on stderr (`[--yes] auto-approving HITL request: …`) so it shows up in a script's log. If the Gateway rejects the removal anyway (for example an org policy that forbids it), the command exits non-zero with the rejection reason and removes nothing.
 
 ---
 
