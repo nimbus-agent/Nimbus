@@ -43,8 +43,18 @@ async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   }
 }
 
-export async function runAuditList(client: IPCClient, limit: number): Promise<void> {
+export async function runAuditList(
+  client: IPCClient,
+  limit: number,
+  opts: { json?: boolean } = {},
+): Promise<void> {
   const rows = await client.call<AuditRow[]>("audit.list", { limit });
+  if (opts.json === true) {
+    // Raw `audit.list` rows, unwrapped. `actionJson` stays the string the chain stored — parsing it
+    // here would silently drop rows whose payload is malformed, which the human view tolerates.
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
   console.log(`${"Timestamp".padEnd(20)} ${"Action".padEnd(22)} ${"Status".padEnd(14)} Reason`);
   console.log("-".repeat(72));
   for (const r of rows) {
@@ -112,5 +122,6 @@ export async function runAudit(args: string[]): Promise<void> {
     return;
   }
   const limit = parseAuditListLimit(args);
-  await withIpc((c) => runAuditList(c, limit));
+  const json = args.includes("--json");
+  await withIpc((c) => runAuditList(c, limit, { json }));
 }

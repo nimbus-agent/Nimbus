@@ -937,8 +937,14 @@ function fmtHealthRetry(ms: number | null | undefined): string {
   return d.toISOString();
 }
 
-async function runConnectorList(): Promise<void> {
+async function runConnectorList(opts: { json?: boolean } = {}): Promise<void> {
   const rows = await withIpc((c) => c.call<SyncStatus[]>("connector.listStatus"));
+  if (opts.json === true) {
+    // Raw `connector.listStatus` array, unwrapped — the `nimbus query --json` convention. An empty
+    // registry is `[]`, never the human "No connectors registered yet" line.
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
   if (rows.length === 0) {
     console.log("No connectors registered yet. Use: nimbus connector auth <service>");
     return;
@@ -1158,7 +1164,7 @@ export async function runConnector(args: string[]): Promise<void> {
       throw new Error("Usage: nimbus connector add --mcp <mcp_id> <command...>");
     }
     case "list":
-      await runConnectorList();
+      await runConnectorList({ json: tail.includes("--json") });
       return;
     case "history":
       await runConnectorHistory(tail);
@@ -1191,7 +1197,7 @@ function printConnectorHelp(): void {
 Usage:
   nimbus connector auth <service> [--port <n>] [--scopes a,b] [--token <pat>] [--api-base <url>] [--help]
   nimbus connector add --mcp <mcp_id> <command...>   Register a user MCP server (id must be mcp_*)
-  nimbus connector list
+  nimbus connector list [--json]
   nimbus connector history <service> [--limit N]
   nimbus connector status <service> [--stats]
   nimbus connector sync <service> [--full | --force]

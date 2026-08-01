@@ -5,14 +5,14 @@ Usage:
   nimbus init [--no-sync]   Index the current git repo — no credentials, no LLM. Start here.
   nimbus start [--no-wizard] Start gateway (background); omit first-run hint with --no-wizard
   nimbus stop               Stop gateway
-  nimbus status [--verbose] [--drift]   Ping gateway; --verbose adds health + index metrics; --drift adds IaC/AWS index hints
-  nimbus db verify | repair --yes | snapshot | snapshots list | snapshots prune --yes | backups list | restore <snap> --yes
+  nimbus status [--verbose] [--drift] [--json]   Ping gateway; --verbose adds health + index metrics; --drift adds IaC/AWS index hints
+  nimbus db verify [--json] | repair --yes [--json] | snapshot | snapshots list | snapshots prune --yes | backups list | restore <snap> --yes
   nimbus diag [--json] | diag slow-queries [--limit N] [--since 7d]
   nimbus query --service <id> [--type <t>] [--since 7d] [--sql "SELECT …"] [--json | --pretty]
   nimbus telemetry show | disable
   nimbus tui                Rich Ink TUI (falls back to REPL on dumb terminals).
   nimbus doctor             Bun version, data dir, Linux vault (secret-tool), gateway state + IPC
-  nimbus config validate | list | edit
+  nimbus config validate | list [--json] | edit
   nimbus profile create|list|switch|delete
   nimbus serve [--port 7474]   Start gateway with NIMBUS_HTTP_PORT (read-only HTTP sidecar)
   nimbus test [dir]         Extension manifest contract + bun test when package.json has a test script
@@ -37,7 +37,7 @@ Usage:
   nimbus vault get <k>      Read a secret (prompts first)
   nimbus vault delete <k>    Remove a secret
   nimbus vault list [pfx]   List vault key names
-  nimbus audit [--limit N]  Recent HITL audit rows
+  nimbus audit [--limit N] [--json]  Recent HITL audit rows
   nimbus connector …       Register connectors, OAuth, user MCP (add --mcp), sync (see: nimbus connector help)
   nimbus extension …       Install/list/enable/disable/remove local extensions (needs gateway)
   nimbus people …          Cross-service people graph (list, search, get, items, link)

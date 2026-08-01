@@ -19,7 +19,19 @@ These flags are accepted by most commands, which silently ignore any dash-argume
 | `--help`, `-h` | Print command help and exit |
 | `--version`, `-v` | Print Nimbus version and exit |
 | `NO_COLOR` (env var, not a flag) | Disable ANSI colour output. There is no `--no-color` flag. |
-| `--json` | Machine-readable JSON output — **per-command**, not global. Only the commands whose Options table lists it change their output; anywhere else it is silently ignored (top level, `--json` only suppresses the interactive banner). |
+| `--json` | Machine-readable JSON output — **per-command**, not global. Only the commands whose Options table or examples list it change their output; anywhere else it is silently ignored (top level, `--json` only suppresses the interactive banner). |
+
+### The `--json` contract
+
+Every command that documents `--json` obeys the same four rules, so a script can rely on them without
+reading the command's implementation:
+
+1. **stdout is the document, and nothing else.** With `--json`, stdout carries exactly one JSON value
+   (pretty-printed, 2-space indent) — no banner, no table, no empty-state hint, no progress line. `nimbus <cmd> --json | jq` always works.
+2. **Diagnostics go to stderr.** Warnings, hints, and degradation notes are written to stderr, never
+   mixed into the document.
+3. **Exit codes are unchanged by `--json`.** A command that exits `1` on a finding (e.g. `nimbus db verify`) still does so. A command that *fails* prints its error to stderr, exits non-zero, and emits **no JSON at all** — check the exit code, not the presence of output. This covers failures raised before the command can build a document at all, including the one most likely to bite a monitoring script: `nimbus status --json` against a **stale state file** whose socket has no listener. Connecting to the socket throws (`connect ENOENT` / `ECONNREFUSED`) before any JSON exists, so stdout stays empty and the process exits `1` — exactly as `nimbus status` without `--json` does. Do not expect a `running: false` document there.
+4. **The shape is the gateway's own payload, unwrapped.** There is no `{ ok, data }` envelope: list commands emit a JSON array, single-result commands a JSON object, with the gateway's own field names. Pre-rendered human strings (the `formatted` blob some gateway methods return) are dropped rather than embedded.
 
 ---
 
@@ -100,11 +112,39 @@ Show Gateway status and connector health.
 nimbus status
 nimbus status --verbose         # Per-connector item counts, p95 query latency, health lines
 nimbus status --drift           # Include IaC drift hints alongside status
+nimbus status --json            # One JSON object; `--verbose` / `--drift` add keys to it
+nimbus status --json | jq -r '.version'
 ```
 
-`nimbus status` reads only `--verbose` and `--drift`; there is no JSON output mode.
+`nimbus status` reads exactly three flags — `--verbose`, `--drift`, and `--json`. Any other dash-argument is silently ignored.
 
 **Output includes:** Gateway PID, uptime, active profile, total indexed items, agent limits (`depth=N  tool-calls/session=N`), connector list with health state (`healthy` / `degraded` / `error` / `rate_limited` / `unauthenticated` / `paused`).
+
+**`--json` shape.** One object; **every key is always present**, using `null` for absent data, so `jq` never has to guard for existence:
+
+| Key | Type | Notes |
+|---|---|---|
+| `running` | boolean | `true` only when the state file exists **and** `gateway.ping` answered |
+| `pid` / `socketPath` / `logPath` | number / string / string, or `null` | Read from the gateway state file |
+| `version` | string \| null | Gateway version |
+| `uptimeMs` | number \| null | Milliseconds, not the rounded seconds the human view prints |
+| `agentLimits` | object \| null | `{ maxAgentDepth, maxToolCallsPerSession }` |
+| `embeddingBackfill` | object \| null | `{ done, total }` |
+| `drift` | object \| null | `{ lines: string[] }` — populated only with `--drift` |
+| `index` / `connectorHealth` | object / array, or `null` | The `diag.snapshot` payload — populated only with `--verbose` |
+| `error` | string \| null | Set when the socket **connected** but `gateway.ping` then failed — the JSON form of the human "state exists but IPC failed" line; `running` is `false`. A socket that cannot be connected to at all does not reach this field (see below) |
+
+Two "not running" cases, and they do **not** behave alike:
+
+- **No state file.** `running: false`, `error: null`, every other key `null`, exit `0`. Not an error.
+- **A stale state file whose socket has no listener.** The connect throws before the document can be
+  built, so **no JSON is emitted at all**: the connect error (`connect ENOENT` on a Windows named pipe,
+  `ECONNREFUSED` on a Unix socket) goes to stderr and the process exits `1`. This is `--json` obeying
+  rule 3 of the contract above, and it matches what plain `nimbus status` does with the same stale
+  file. `error` is populated only in the narrower case where the connection succeeded and the
+  subsequent `gateway.ping` failed — a gateway that is listening but wedged, or one that dies
+  mid-call. A script that must distinguish "gone" from "never started" should check the exit code
+  first and only parse stdout on `0`.
 
 ---
 
@@ -877,9 +917,13 @@ List all connectors and their current health state.
 
 ```bash
 nimbus connector list
+nimbus connector list --json
+nimbus connector list --json | jq -r '.[] | select(.healthState != "healthy") | .serviceId'
 ```
 
 **Health states:** `healthy` · `degraded` · `error` · `rate_limited` · `unauthenticated` · `paused`
+
+**`--json` shape.** A JSON array of the raw `connector.listStatus` rows — `serviceId`, `status`, `lastSyncAt`, `nextSyncAt`, `intervalMs`, `itemCount`, `lastError`, `consecutiveFailures`, `healthState`, `healthRetryAfterMs` (timestamps are epoch ms or `null`, not the relative "5m ago" strings the table renders). With no connectors registered the output is `[]`, not the human "No connectors registered yet" hint.
 
 ---
 
@@ -1014,7 +1058,20 @@ Print the config file path, then a per-key line for whichever of the five env-ov
 
 ```bash
 nimbus config list
+nimbus config list --json
+nimbus config list --json | jq -r '.keys[] | select(.source == "env") | .envVar'
 ```
+
+**`--json` shape.** One object:
+
+| Key | Type | Notes |
+|---|---|---|
+| `path` | string | Resolved `nimbus.toml` path |
+| `exists` | boolean | Whether that file is present |
+| `keys` | array | `{ key, value, source: "file" \| "env", envVar: string \| null }` — `envVar` is the overriding variable, `null` for file-sourced keys |
+| `raw` | string \| null | The file body verbatim; `null` when the file is missing |
+
+The prose "other `NIMBUS_*` overrides" legend the human view prints is static documentation, not data, and has no JSON counterpart.
 
 ---
 
@@ -1860,21 +1917,28 @@ Run non-destructive integrity checks on the local index. Safe to run at any time
 
 ```bash
 nimbus db verify
+nimbus db verify --json
+nimbus db verify --json | jq -r '.findings[] | select(.status == "fail") | .label'
 ```
 
 **Checks:** SQLite `integrity_check`, FTS5 consistency, `vec_items_384` rowid alignment, orphaned sync tokens, schema version match, foreign key integrity.
 
-**Exit codes:** `0` = all pass, `1` = at least one finding.
+**Exit codes:** `0` = all pass, `1` = at least one finding. `--json` does not change them.
+
+**`--json` shape.** `{ clean: boolean, findings: [{ label, status: "ok" | "fail", detail? }], exitCode: number }`. The gateway's pre-rendered human report is dropped, not embedded; `exitCode` is both reported in the document and applied to the process.
 
 ---
 
 ### `nimbus db repair`
 
-Run targeted recovery actions for any findings reported by `nimbus db verify`. Writes a structured repair report to the audit log. `--yes` is **mandatory**, not a confirmation skip: there is no interactive prompt, and without the flag the command exits with `Usage: nimbus db repair --yes`.
+Run targeted recovery actions for any findings reported by `nimbus db verify`. Writes a structured repair report to the audit log. `--yes` is **mandatory**, not a confirmation skip: there is no interactive prompt, and without the flag the command exits with `Usage: nimbus db repair --yes` — including under `--json`, which emits nothing in that case.
 
 ```bash
 nimbus db repair --yes
+nimbus db repair --yes --json
 ```
+
+**`--json` shape.** The structured repair report: `{ outcomes: [{ action, status: "applied" | "skipped" | "error", detail? }], repairedAt: string }`, where `action` is one of `vec_orphan_delete` / `fts5_rebuild` / `orphaned_sync_tokens_delete` / `foreign_key_cascade_delete` and `repairedAt` is an ISO timestamp. The pre-rendered human report is dropped, not embedded.
 
 **Repair actions:** Delete orphaned vec rows + re-queue resync, FTS5 rebuild, delete unrecoverable rows, remove orphaned sync tokens.
 
@@ -2437,11 +2501,15 @@ Show the local audit log. Every action the agent takes — including every HITL 
 ```bash
 nimbus audit
 nimbus audit --limit 100
+nimbus audit --json
+nimbus audit --limit 100 --json | jq -r '.[] | select(.hitlStatus == "rejected") | .actionType'
 ```
 
-`--limit` (default 50) is the only flag parsed. There is no `--service`, `--since` or `--json` filtering here — such arguments are silently ignored, and the most recent `--limit` rows are printed as a plain table regardless.
+`--limit` (default 50) and `--json` are the only flags parsed. There is no `--service` or `--since` **filtering** here — such arguments are silently ignored, and the most recent `--limit` rows are returned regardless; `--json` changes the rendering only, never the row set.
 
 **Columns:** `Timestamp`, `Action`, `Status` (`approved` / `rejected` / `not_required`), `Reason` (the HITL reject reason from `action_json`; `—` when absent).
+
+**`--json` shape.** A JSON array of the raw `audit.list` rows: `{ id, actionType, hitlStatus, actionJson, timestamp }`, newest first, honouring `--limit` (default 50). `actionJson` stays the **string** the chain stored — it is not parsed for you, so a row whose payload is malformed still appears rather than being dropped; the human table's "Reason" column is that string's `hitlRejectReason` field. `--json` applies to the listing only; `nimbus audit verify` and `nimbus audit export` have their own output contracts.
 
 ---
 

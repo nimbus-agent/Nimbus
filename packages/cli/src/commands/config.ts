@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import type { TomlKeySource } from "../lib/nimbus-toml-config.ts";
 import {
   getTomlValueFromFile,
   listTomlKeysWithEnv,
@@ -17,7 +18,7 @@ function printConfigHelp(): void {
 
 Usage:
   nimbus config validate   (requires Gateway — checks nimbus.toml in config dir)
-  nimbus config list       Print known keys with file vs env source + full file body
+  nimbus config list [--json]   Print known keys with file vs env source + full file body
   nimbus config get <section.key>   (e.g. telemetry.enabled) — env overrides file
   nimbus config set <section.key> <value>
   nimbus config edit       Open nimbus.toml in $EDITOR (default: notepad on Windows, vi elsewhere)
@@ -58,7 +59,36 @@ function printAdditionalEnvOverrideLegend(): void {
   );
 }
 
-export function runConfigList(tomlPath: string): void {
+/**
+ * The `nimbus config list --json` document: the resolved config path, whether the file exists, the
+ * known keys with their winning source, and the raw file body (`null` when the file is missing).
+ * The prose env-override legend the human view prints is static documentation, not data, so it has
+ * no JSON counterpart.
+ */
+export type ConfigListJson = {
+  path: string;
+  exists: boolean;
+  keys: Array<{ key: string; value: string; source: TomlKeySource; envVar: string | null }>;
+  raw: string | null;
+};
+
+export function runConfigList(tomlPath: string, opts: { json?: boolean } = {}): void {
+  const exists = existsSync(tomlPath);
+  if (opts.json === true) {
+    const payload: ConfigListJson = {
+      path: tomlPath,
+      exists,
+      keys: listTomlKeysWithEnv(tomlPath).map((r) => ({
+        key: r.key,
+        value: r.value,
+        source: r.source,
+        envVar: r.envVar ?? null,
+      })),
+      raw: exists ? readFileSync(tomlPath, "utf8") : null,
+    };
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
   console.log(tomlPath);
   const rows = listTomlKeysWithEnv(tomlPath);
   if (rows.length > 0) {
@@ -70,7 +100,7 @@ export function runConfigList(tomlPath: string): void {
     }
   }
   printAdditionalEnvOverrideLegend();
-  if (!existsSync(tomlPath)) {
+  if (!exists) {
     console.log("");
     console.log("(file missing)");
     return;
@@ -150,7 +180,7 @@ export async function runConfig(args: string[]): Promise<void> {
   }
 
   if (sub === "list") {
-    runConfigList(tomlPath);
+    runConfigList(tomlPath, { json: args.includes("--json") });
     return;
   }
 

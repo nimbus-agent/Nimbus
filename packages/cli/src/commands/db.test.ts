@@ -274,3 +274,100 @@ describe("runDb (unknown subcommand)", () => {
     await expect(runDb(["bogus"])).rejects.toThrow("Unknown db subcommand: bogus");
   });
 });
+
+describe("nimbus db verify --json / db repair --json", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    clearFixture();
+    process.exitCode = 0;
+  });
+
+  type VerifyJson = {
+    clean: boolean;
+    findings: Array<{ label: string; status: string; detail?: string }>;
+    exitCode: number;
+  };
+  type RepairJson = {
+    outcomes: Array<{ action: string; status: string; detail?: string }>;
+    repairedAt: string;
+  };
+
+  it("verify emits clean/findings/exitCode and no formatted text on stdout", async () => {
+    const ipc = createMockIpcClient([
+      {
+        clean: false,
+        findings: [
+          { label: "integrity_check", status: "ok" },
+          { label: "vec_rowid_mismatch", status: "fail", detail: "3 orphans" },
+        ],
+        formatted: "Issues found in the human report.",
+        exitCode: 1,
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runDb(["verify", "--json"]);
+
+    expect(ipc.calls[0]).toEqual({ method: "db.verify", params: {} });
+    const doc = JSON.parse(out.stdout) as VerifyJson;
+    expect(doc.clean).toBe(false);
+    expect(doc.exitCode).toBe(1);
+    expect(doc.findings).toHaveLength(2);
+    expect(doc.findings[1]).toEqual({
+      label: "vec_rowid_mismatch",
+      status: "fail",
+      detail: "3 orphans",
+    });
+    expect(out.stdout).not.toContain("Issues found in the human report.");
+  });
+
+  it("verify still propagates the gateway exit code under --json", async () => {
+    const ipc = createMockIpcClient([
+      { clean: false, findings: [], formatted: "Issues found.", exitCode: 1 },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runDb(["verify", "--json"]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("repair emits the structured report and no formatted text on stdout", async () => {
+    const ipc = createMockIpcClient([
+      {
+        report: {
+          outcomes: [
+            { action: "vec_orphan_delete", status: "applied", detail: "3 rows" },
+            { action: "fts5_rebuild", status: "skipped" },
+          ],
+          repairedAt: "2026-08-01T00:00:00.000Z",
+        },
+        formatted: "Repaired (human report).",
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runDb(["repair", "--yes", "--json"]);
+
+    expect(ipc.calls[0]).toEqual({ method: "db.repair", params: { confirm: true } });
+    const doc = JSON.parse(out.stdout) as RepairJson;
+    expect(doc.repairedAt).toBe("2026-08-01T00:00:00.000Z");
+    expect(doc.outcomes.map((o) => o.action)).toEqual(["vec_orphan_delete", "fts5_rebuild"]);
+    expect(doc.outcomes[0]?.status).toBe("applied");
+    expect(out.stdout).not.toContain("Repaired (human report).");
+  });
+
+  it("repair still requires --yes under --json", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runDb(["repair", "--json"])).rejects.toThrow("Usage: nimbus db repair --yes");
+    expect(out.stdout).toBe("");
+  });
+});

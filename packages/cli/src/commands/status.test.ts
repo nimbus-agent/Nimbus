@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { clearFixture, FAKE_SOCKET_PATH, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
+import type { StatusJson } from "./status.ts";
 
 const statusMod = await import("./status.ts");
 const { runStatus, runStatusImpl } = statusMod;
@@ -522,5 +523,191 @@ describe("runStatus (dispatcher)", () => {
     expect(ipc.calls[1]?.method).toBe("diag.snapshot");
     expect(out.stdout).toContain("Connector health");
     expect(out.stdout).toContain("slack");
+  });
+});
+
+describe("nimbus status --json", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  /** Parses the whole of stdout — proves nothing but the JSON document was written there. */
+  function parseStdout(): StatusJson {
+    return JSON.parse(out.stdout) as StatusJson;
+  }
+
+  it("emits a parseable status document and nothing else on stdout", async () => {
+    const ipc = createMockIpcClient([
+      {
+        version: "9.9",
+        uptime: 61_000,
+        agentLimits: { maxAgentDepth: 3, maxToolCallsPerSession: 20 },
+        embeddingBackfill: { done: 10, total: 100 },
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runStatus(["--json"]);
+
+    const doc = parseStdout();
+    expect(doc.running).toBe(true);
+    expect(doc.pid).toBe(42);
+    expect(doc.socketPath).toBe(FAKE_SOCKET_PATH);
+    expect(doc.version).toBe("9.9");
+    expect(doc.uptimeMs).toBe(61_000);
+    expect(doc.agentLimits).toEqual({ maxAgentDepth: 3, maxToolCallsPerSession: 20 });
+    expect(doc.embeddingBackfill).toEqual({ done: 10, total: 100 });
+    expect(doc.error).toBeNull();
+    // No human decoration leaked onto stdout.
+    expect(out.stdout).not.toContain("Gateway: running");
+    expect(out.stdout).not.toContain("Uptime:");
+  });
+
+  it("reports running:false with every key still present when no state file exists", async () => {
+    setFixture({});
+    await runStatus(["--json"]);
+
+    const doc = parseStdout();
+    expect(doc.running).toBe(false);
+    expect(doc.pid).toBeNull();
+    expect(doc.socketPath).toBeNull();
+    expect(doc.version).toBeNull();
+    expect(doc.uptimeMs).toBeNull();
+    expect(doc.error).toBeNull();
+    expect(Object.keys(doc).sort()).toEqual([
+      "agentLimits",
+      "connectorHealth",
+      "drift",
+      "embeddingBackfill",
+      "error",
+      "index",
+      "logPath",
+      "pid",
+      "running",
+      "socketPath",
+      "uptimeMs",
+      "version",
+    ]);
+    expect(out.stdout).not.toContain("not running (no state file)");
+  });
+
+  it("reports running:false and the IPC message in `error` when the socket connects but the ping fails", async () => {
+    const ipc = createMockIpcClient([new Error("socket closed")]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 7 },
+      // connect() RESOLVES — this is the wedged-but-listening gateway, the only
+      // shape that populates `error`. See the stale-state-file tests below for
+      // the case where connect() itself rejects.
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runStatus(["--json"]);
+
+    const doc = parseStdout();
+    expect(doc.running).toBe(false);
+    expect(doc.pid).toBe(7);
+    expect(doc.error).toBe("socket closed");
+  });
+
+  // ── stale state file: connect() itself rejects ────────────────────────────
+  //
+  // A state file left behind by a dead gateway points at a socket nothing is
+  // listening on. `runStatus` connects BEFORE it builds any document and the
+  // connect is outside `runStatusImpl`'s try/catch, so the rejection escapes the
+  // command entirely — `index.ts`'s top-level handler prints it to stderr and
+  // sets exit 1. There is no `running: false` document for this case, and these
+  // two tests exist to keep the docs from claiming otherwise again.
+
+  it("emits NO json at all and rejects when the state file is stale (connect fails)", async () => {
+    const connectError = new Error("connect ENOENT \\\\.\\pipe\\nimbus-gateway");
+    let called = false;
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 7 },
+      ipcClient: {
+        call: async (): Promise<never> => {
+          called = true;
+          throw new Error("unreachable: call() must never run after a failed connect");
+        },
+        connect: () => {
+          throw connectError;
+        },
+        disconnect: () => {},
+      },
+    });
+
+    await expect(runStatus(["--json"])).rejects.toThrow("connect ENOENT");
+    expect(called).toBe(false);
+    // Nothing on stdout — not a document, not a fragment, not a newline.
+    expect(out.stdout).toBe("");
+  });
+
+  it("fails identically without --json when the state file is stale", async () => {
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 7 },
+      ipcClient: {
+        call: async (): Promise<never> => {
+          throw new Error("unreachable");
+        },
+        connect: () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+        disconnect: () => {},
+      },
+    });
+
+    await expect(runStatus([])).rejects.toThrow("connect ECONNREFUSED");
+    expect(out.stdout).toBe("");
+    // The human "state exists but IPC failed" line belongs to the ping-failure
+    // case, NOT to a stale state file — it is not printed here.
+    expect(out.stdout).not.toContain("state exists but IPC failed");
+  });
+
+  it("includes drift lines under --drift --json", async () => {
+    const ipc = createMockIpcClient([
+      { version: "2.0", uptime: 2000, drift: { lines: ["hint-a", "hint-b"] } },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 7 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runStatus(["--drift", "--json"]);
+
+    expect(ipc.calls[0]).toEqual({ method: "gateway.ping", params: { includeDrift: true } });
+    expect(parseStdout().drift).toEqual({ lines: ["hint-a", "hint-b"] });
+  });
+
+  it("includes the diag snapshot under --verbose --json", async () => {
+    const ipc = createMockIpcClient([
+      { version: "2.0", uptime: 2000 },
+      {
+        connectorHealth: [{ connectorId: "slack", state: "healthy" }],
+        index: { totalItems: 20, queryLatencyP95Ms: 8 },
+      },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 7 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runStatus(["--verbose", "--json"]);
+
+    expect(ipc.calls[1]?.method).toBe("diag.snapshot");
+    const doc = parseStdout();
+    expect(doc.index).toEqual({ totalItems: 20, queryLatencyP95Ms: 8 });
+    expect(doc.connectorHealth).toEqual([{ connectorId: "slack", state: "healthy" }]);
+  });
+
+  it("leaves the human rendering untouched without --json", async () => {
+    const ipc = createMockIpcClient([{ version: "9.9", uptime: 1000 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH, pid: 42 },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runStatus([]);
+    expect(out.stdout).toContain("Gateway: running (pid 42)");
+    expect(() => JSON.parse(out.stdout)).toThrow();
   });
 });

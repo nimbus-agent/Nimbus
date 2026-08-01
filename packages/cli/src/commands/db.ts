@@ -14,11 +14,32 @@ function takeFlag(args: string[], flag: string): string | undefined {
   return args[i + 1];
 }
 
-async function dbCmdVerify(): Promise<void> {
+/** Mirrors the gateway's `VerifyFinding` (packages/gateway/src/db/verify.ts). */
+type VerifyFinding = { label: string; status: "ok" | "fail"; detail?: string };
+
+/** Mirrors the gateway's `RepairReport` (packages/gateway/src/db/repair.ts). */
+type RepairReport = {
+  outcomes: Array<{ action: string; status: "applied" | "skipped" | "error"; detail?: string }>;
+  repairedAt: string;
+};
+
+async function dbCmdVerify(tail: string[]): Promise<void> {
+  const json = tail.includes("--json");
   const r = await withGatewayIpc((c) =>
-    c.call<{ clean: boolean; formatted: string; exitCode: number }>("db.verify", {}),
+    c.call<{ clean: boolean; findings: VerifyFinding[]; formatted: string; exitCode: number }>(
+      "db.verify",
+      {},
+    ),
   );
-  console.log(r.formatted);
+  if (json) {
+    // `formatted` is the gateway's pre-rendered human report — dropped here so stdout carries only
+    // structured data. `exitCode` is kept in the document AND applied to the process.
+    console.log(
+      JSON.stringify({ clean: r.clean, findings: r.findings, exitCode: r.exitCode }, null, 2),
+    );
+  } else {
+    console.log(r.formatted);
+  }
   process.exitCode = r.exitCode;
 }
 
@@ -27,9 +48,15 @@ async function dbCmdRepair(tail: string[]): Promise<void> {
   if (!yes) {
     throw new Error("Usage: nimbus db repair --yes");
   }
+  const json = tail.includes("--json");
   const r = await withGatewayIpc((c) =>
-    c.call<{ formatted: string }>("db.repair", { confirm: true }),
+    c.call<{ report: RepairReport; formatted: string }>("db.repair", { confirm: true }),
   );
+  if (json) {
+    // The structured `report` only; `formatted` is its human rendering.
+    console.log(JSON.stringify(r.report, null, 2));
+    return;
+  }
   console.log(r.formatted);
 }
 
@@ -115,7 +142,7 @@ export async function runDb(args: string[]): Promise<void> {
   }
 
   if (sub === "verify") {
-    await dbCmdVerify();
+    await dbCmdVerify(tail);
     return;
   }
 
@@ -165,8 +192,8 @@ function printDbHelp(): void {
   console.log(`nimbus db — index integrity and snapshots (Gateway IPC)
 
 Usage:
-  nimbus db verify
-  nimbus db repair --yes
+  nimbus db verify [--json]
+  nimbus db repair --yes [--json]
   nimbus db snapshot
   nimbus db snapshots list
   nimbus db snapshots prune --yes [--keep-last N]
