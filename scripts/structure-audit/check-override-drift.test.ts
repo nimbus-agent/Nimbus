@@ -7,6 +7,7 @@ import {
   auditOverrideDrift,
   collectDeclarations,
   collectPins,
+  NegatedWorkspaceEntryError,
   workspaceManifests,
 } from "./check-override-drift.ts";
 
@@ -183,50 +184,52 @@ describe("workspaceManifests", () => {
     expect(workspaceManifests(root)).toEqual(["package.json", "packages/gateway/package.json"]);
   });
 
-  test("a negated entry subtracts the member a positive glob pulled in", () => {
+  test("a negated entry is refused, not modelled", () => {
     write("package.json", { workspaces: ["packages/*", "!packages/template"] });
     write("packages/one/package.json", {});
     write("packages/template/package.json", {});
 
-    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
-      "package.json",
-      "packages/one/package.json",
-    ]);
+    expect(() => workspaceManifests(root)).toThrow(NegatedWorkspaceEntryError);
+    expect(() => workspaceManifests(root)).toThrow("!packages/template");
   });
 
-  test("a negated GLOB subtracts every member it matches", () => {
+  test("a negated GLOB is refused too", () => {
     write("package.json", { workspaces: ["packages/*", "!packages/legacy-*"] });
     write("packages/keep/package.json", {});
     write("packages/legacy-a/package.json", {});
-    write("packages/legacy-b/package.json", {});
 
-    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
-      "package.json",
-      "packages/keep/package.json",
-    ]);
+    expect(() => workspaceManifests(root)).toThrow(NegatedWorkspaceEntryError);
   });
 
-  test("exclusions apply regardless of entry order", () => {
+  test("a negated entry is refused regardless of where it appears in the array", () => {
     write("package.json", { workspaces: ["!packages/template", "packages/*"] });
     write("packages/one/package.json", {});
     write("packages/template/package.json", {});
 
-    expect(workspaceManifests(root).sort((a, b) => a.localeCompare(b))).toEqual([
+    // Bun's own exclusion is order-dependent; this gate takes no position on the
+    // order at all, it just declines the whole manifest.
+    expect(() => workspaceManifests(root)).toThrow(NegatedWorkspaceEntryError);
+  });
+
+  test("negating the root is refused as well", () => {
+    write("package.json", { workspaces: ["!."] });
+
+    expect(() => workspaceManifests(root)).toThrow(NegatedWorkspaceEntryError);
+  });
+
+  test("the 99-literal-path reality still resolves", () => {
+    write("package.json", { workspaces: ["packages/gateway", "packages/cli"] });
+
+    expect(workspaceManifests(root)).toEqual([
       "package.json",
-      "packages/one/package.json",
+      "packages/gateway/package.json",
+      "packages/cli/package.json",
     ]);
   });
 
-  test("the root manifest is never excludable", () => {
-    write("package.json", { workspaces: ["!."] });
-
-    expect(workspaceManifests(root)).toEqual(["package.json"]);
-  });
-
-  test("an excluded member's declarations are out of scope for the audit", () => {
-    // The failure this guards: `packages/template` is NOT installed by bun, so a
-    // range it declares is not a lie about the tree. Reading it anyway would
-    // manufacture a finding.
+  test("a negated entry makes the AUDIT fail closed, naming the entry", () => {
+    // The failure this guards: the gate cannot compute bun's member set here, and
+    // an uncomputable workspace set must never read as a pass.
     write("package.json", {
       overrides: { "js-yaml": "4.3.1" },
       workspaces: ["packages/*", "!packages/template"],
@@ -234,7 +237,11 @@ describe("workspaceManifests", () => {
     write("packages/one/package.json", { dependencies: { "js-yaml": "^4.3.1" } });
     write("packages/template/package.json", { dependencies: { "js-yaml": "^5.2.2" } });
 
-    expect(auditOverrideDrift(root)).toEqual({ ok: true, errors: [] });
+    const result = auditOverrideDrift(root);
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('"!packages/template"');
+    expect(result.errors[0]).toContain("does not model negated workspace patterns");
   });
 });
 

@@ -260,6 +260,20 @@ Verified against the seven compliant modules today: in every one of them the cli
 `runX` wrapper, **never** inside `run*Command`. Rule 3 therefore costs the current population
 nothing — it is a fence around the shape they already have, not a new demand.
 
+**Rule 3's "no `withIpc(...)` and no `new IPCClient(...)`" clause is a textual predicate, and an
+import alias defeats it — not hypothetically, but in this tree today.**
+`packages/cli/src/commands/security.ts` does `import { IPCClient as RealIPCClient } from
+"../ipc-client/index.ts"` and then `new RealIPCClient(state.socketPath)`. A rule that matches the
+written identifier at the construction site does not see that. (`security.ts` is one of the 26
+non-compliant modules and would fail rule 1 anyway, so nothing is currently mis-classified — but
+the evasion is one alias away for any module that *does* comply, and it would be silent.) The rule
+still earns its place in this form, because it fences the shape the seven compliant modules already
+have; what it must not be described as is airtight. **Intended follow-up:** resolve the imported
+binding rather than match the identifier — walk the module's import declarations, map local names
+(including `as` aliases and `import * as ipc` member access) back to `IPCClient` / `withIpc` from
+`../ipc-client/index.ts`, and test the resolved binding. Recorded rather than fixed in-line because
+it changes rule 3's implementation cost and belongs to PR 4's scope decision.
+
 The negative fixture that PR 4 must ship, red-proved before the rule is written:
 
 ```ts
@@ -970,6 +984,12 @@ Grep targets before claiming this list complete: `measure-file-loc`, `file-loc.j
       fails as `must_lower`; both name the update command.
 - [ ] A file that drops below every ceiling fails as `must_remove`, and after
       `--update-baseline` its entry is gone from the baseline diff.
+- [ ] **The pin (§6).** For a file that is in the baseline for some *other* axis, an axis at or
+      under its ceiling stores **the ceiling**, never the actual: a file measured at LOC 800
+      against the 1000 ceiling stores `max_loc: 1000` — not 800 — and a later measurement of 900 on
+      that same file is **green**, not a `regression`. Asserted on `computeUpdatedBaseline`'s stored
+      value and on the subsequent `computeBaselineDiff`, so replacing the pin with
+      `Math.min(actual, ceiling)` red-proves both halves.
 - [ ] `--update-baseline` exits 2 under `CI=true`.
 - [ ] A missing baseline file exits 2 with "run seeding first" — never a vacuous pass.
 - [ ] A scan that matches zero files exits 2 (the worktree false-green guard), proven by running

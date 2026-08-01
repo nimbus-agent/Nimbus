@@ -119,39 +119,49 @@ function manifestsForPattern(repoRoot: string, pattern: string): string[] {
 }
 
 /**
+ * Raised when `workspaces` contains a negated entry. A distinct type so the
+ * audit can turn it into a finding instead of a stack trace, and so a test can
+ * assert the fail-closed path fired for this reason and not another.
+ */
+export class NegatedWorkspaceEntryError extends Error {
+  constructor(readonly entry: string) {
+    super(
+      `workspaces contains the negated entry "${entry}" — audit:override-drift does not model negated workspace patterns and refuses to guess at bun's resolution. Add support deliberately (with its own tests), or remove the entry.`,
+    );
+    this.name = "NegatedWorkspaceEntryError";
+  }
+}
+
+/**
  * Every manifest root `overrides` actually governs: the root manifest plus each
  * workspace member. Workspace entries may be globs, so a literal path and a
- * `packages/*` pattern both resolve correctly — Nimbus lists ~100 literal paths
+ * `packages/*` pattern both resolve correctly — Nimbus lists 99 literal paths
  * today, but a future glob must not silently shrink this gate's scope.
  *
- * Bun also honours NEGATED entries (`"!packages/legacy-thing"`), and they have to
- * be subtracted rather than pushed. Treating `!x` as a path name is harmless
- * only by accident — the phantom `!x/package.json` does not exist, so it drops
- * out later — while the member it was meant to EXCLUDE stays in scope. This gate
- * would then read a manifest bun never installs and can report drift against a
- * declaration root `overrides` does not govern: a false finding, in the one gate
- * whose whole purpose is to catch a manifest lying about the tree. Exclusions are
- * therefore collected separately and subtracted from the final set, so they apply
- * regardless of the order entries appear in. The root manifest is never
- * excludable — root `overrides` always governs root's own declarations.
+ * NEGATED entries (`"!packages/legacy-thing"`) are refused outright. Bun honours
+ * them, but its handling was measured to be ORDER-DEPENDENT (bun 1.3.14, clean
+ * temp workspaces and a fresh lockfile per case), while every straightforward
+ * static re-implementation — including the one this replaces — is
+ * order-INDEPENDENT. Such an implementation therefore computes a different member
+ * set than bun actually installs, and it would do so in the one gate whose entire
+ * job is catching a manifest that lies about the tree. This gate's value is that
+ * it cannot be wrong: an explicit "I cannot model this" is strictly better than a
+ * silently divergent answer. Supporting negation means replicating bun's ordering
+ * semantics deliberately, as its own change with its own tests — not as a
+ * side-effect of this one. Nothing in this repo is affected today: root
+ * `workspaces` is 99 literal paths with no negated entries and no globs.
  */
 export function workspaceManifests(repoRoot: string): string[] {
   const root = readJson(join(repoRoot, "package.json"));
   const files = ["package.json"];
   const workspaces = root?.["workspaces"];
   if (!Array.isArray(workspaces)) return files;
-  const excluded = new Set<string>();
   for (const entry of workspaces) {
     if (typeof entry !== "string") continue;
-    const negated = entry.startsWith("!");
-    const resolved = manifestsForPattern(repoRoot, negated ? entry.slice(1) : entry);
-    if (negated) {
-      for (const rel of resolved) excluded.add(rel);
-    } else {
-      files.push(...resolved);
-    }
+    if (entry.startsWith("!")) throw new NegatedWorkspaceEntryError(entry);
+    files.push(...manifestsForPattern(repoRoot, entry));
   }
-  return [...new Set(files)].filter((rel) => rel === "package.json" || !excluded.has(rel));
+  return [...new Set(files)];
 }
 
 /** Every declared range for `name` across the given manifests, protocols excluded. */
@@ -195,7 +205,14 @@ export function auditOverrideDrift(repoRoot: string): AuditResult {
   if (readJson(join(repoRoot, "package.json")) === null) {
     return { ok: false, errors: ["package.json not found or unparseable"] };
   }
-  const manifests = workspaceManifests(repoRoot);
+  let manifests: string[];
+  try {
+    manifests = workspaceManifests(repoRoot);
+  } catch (err) {
+    // Fail closed: a workspace set this gate cannot compute is not a pass.
+    if (err instanceof NegatedWorkspaceEntryError) return { ok: false, errors: [err.message] };
+    throw err;
+  }
 
   for (const [name, pin] of Object.entries(collectPins(repoRoot))) {
     const declarations = collectDeclarations(repoRoot, manifests, name);
