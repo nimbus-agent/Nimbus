@@ -135,6 +135,15 @@ function parseDependsOn(value: unknown): Readonly<Record<string, string>> | unde
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
+// All 94 mcp-connectors and `nimbus scaffold extension` declare `entrypoint`; this parser
+// read only `entry`, so every one of them fell back to "dist/index.js" while building
+// dist/server.js — an install recorded an empty entry hash and verification then failed
+// with "entry file missing". `entry` still wins where both are present.
+function parseEntry(o: Record<string, unknown>): string | undefined {
+  const raw = typeof o["entry"] === "string" ? o["entry"] : o["entrypoint"];
+  return typeof raw === "string" ? raw.trim().replaceAll("\\", "/") : undefined;
+}
+
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
   return parseExtensionManifestForRegistry(text).manifest;
 }
@@ -165,8 +174,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
     throw new Error("extension manifest requires non-empty id and version");
   }
   const name = typeof o["name"] === "string" ? o["name"].trim() : undefined;
-  const entry =
-    typeof o["entry"] === "string" ? o["entry"].trim().replaceAll("\\", "/") : undefined;
+  const entry = parseEntry(o);
   const publisher = parsePublisher(o["publisher"]);
   const signature = parseSignature(o["signature"]);
   if ((publisher === undefined) !== (signature === undefined)) {
