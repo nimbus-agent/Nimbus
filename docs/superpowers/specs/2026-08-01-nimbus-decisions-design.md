@@ -3,7 +3,8 @@
 **Date:** 2026-08-01
 **Slot:** Spine S1 (Local Brain) — third of the implicit-knowledge triad
 **Roadmap:** [Phase 7 Wave 5](../../roadmap.md#wave-5--implicit-knowledge-surfaces)
-**Status:** design approved, not yet implemented
+**Status:** in implementation on `dev/asafgolombek/nimbus-decisions`. Amended 2026-08-01 after
+implementation verified the corroboration design against the real graph populator — see Known Limits.
 
 ## Summary
 
@@ -31,7 +32,7 @@ That is the same leverage `glossary` exploits, and it is why this needs no new
 connector.
 
 A cloud agent structurally cannot do this: the threads are private, and the
-corroborating PRs and migrations are in a graph that never leaves the machine.
+corroborating PRs are in a graph that never leaves the machine.
 
 ## Architecture
 
@@ -75,7 +76,8 @@ New subsystem at `packages/gateway/src/decisions/`, mirroring `glossary/`:
 | `decision-extract.ts` | The pass: discover → extract → corroborate |
 | `decision-llm-adapter.ts` | Prompt construction + response parsing |
 | `decision-confidence.ts` | The deterministic composite scorer |
-| `decision-corroborate.ts` | Graph traversal to PR / commit / migration / IaC / ADR evidence |
+| `decision-service-scope.ts` | `--service` resolution: repository route + ticket-key route |
+| `decision-corroborate.ts` | Graph traversal to PR / commit / ADR evidence |
 | `decision-refresh.ts` | Debounced post-sync refresher |
 
 Elsewhere:
@@ -293,10 +295,17 @@ Graph traversal from the source item to downstream actions, writing
   requirement that a real `mentions`/`merged_as` edge exist — corroboration is
   never purely temporal — and it is a much smaller error than silently dropping
   every post-hoc decision.
-- `migration` — a corroborating commit touching a path segment `migrations/` or
-  matching `V<n>__` / `V<n>-` (Flyway and this repo's own `V<n>` convention)
-- `iac` — a corroborating commit touching `*.tf`, `*.tfvars`, `Pulumi.yaml`, or
-  a path segment `cloudformation/`
+- `pr` (issue-sourced) — via the **incoming** `resolves` edge. `resolves` runs
+  PR → issue, so from a ticket-sourced decision the implementing PR is reached by
+  walking that edge in reverse. This is the path that actually fires in practice:
+  `mentions` is emitted only from chat messages and only toward `issue` and
+  `commit` entities, never toward a `pr`.
+- `migration` / `iac` — **specified but not derivable today, and therefore not
+  emitted.** Both would be properties of a corroborating change's file paths, and
+  no connector indexes changed-file paths (`metadata.files` does not exist). The
+  `EvidenceKind` union and the V47 CHECK constraint still carry both values so the
+  schema need not change when a connector starts supplying them; nothing produces
+  them until then. Recorded in Known Limits rather than silently under-delivered.
 - `adr` — an indexed `obsidian:obsidian_note`, `notion:page` or
   `confluence:page` whose title both matches `/\bADR\b|^\d+[-.]|decision/i` and
   shares at least half its significant tokens with the decision statement, using
@@ -323,7 +332,7 @@ confidence = clamp(0..1,
 | Term | Basis |
 | --- | --- |
 | `cue_strength` | `heading` 1.0 · `explicit` 0.6 · `weak` 0.25 |
-| `corroboration` | PR or commit 0.6 · plus migration or IaC 1.0 · none 0.0 |
+| `corroboration` | PR or commit 0.6 · plus migration or IaC 1.0 · none 0.0. **In practice the 1.0 tier is currently unreachable** — see Known Limits — so the effective confidence ceiling is 0.86, not 1.0. |
 | `source_authority` | ADR / page 1.0 · ticket 0.6 · chat 0.3 |
 | `completeness` | rationale present 0.5 + alternatives named 0.5 |
 
@@ -382,7 +391,7 @@ callers are unaffected — and it ships with its own unit tests in
       ⚠ no ADR found
       rationale     connection-pool exhaustion under sustained load
       alternatives  stay on MySQL · shard by tenant
-      evidence      notion:page "Billing RFC" · PR #412 · migration V12
+      evidence      jira:issue BILL-42 · PR #412
 
 0.41  Adopt trunk-based development                   2026-04-02
       rationale     release branches kept drifting
@@ -470,6 +479,25 @@ connectors and a re-embed, and it shares a root cause with web-clipper issue
 **#1005**. When it lands, this pass picks the new material up on its next
 re-scan with no rework here.
 
+**Migration and IaC evidence are specified but unreachable.** Both were designed
+as properties of a corroborating change's file paths, and no connector indexes
+those paths — `metadata.files` is not written by anything. Verified against
+`graph/graph-populator.ts` during implementation, after the original design
+assumed it.
+
+The same verification found the corroboration design had a second, larger hole:
+`mentions` is emitted only from chat messages and only toward `issue`/`commit`
+entities, so a `pr` is never a `mentions` target, and `resolves` runs PR → issue
+rather than the reverse. As specified, PR evidence was unreachable from any
+decision source. The shipped design walks `resolves` in reverse for
+ticket-sourced decisions, which is where ADR-worthy decisions concentrate.
+Chat-sourced decisions still reach a `commit` only when the message contains a
+literal SHA.
+
+Net effect on scoring: the corroboration term tops out at 0.6 rather than 1.0,
+so the confidence ceiling is 0.86. This is stated in every brief rather than
+presented as a full-marks scale users can never reach.
+
 ## Out of scope
 
 - **ADR drafting.** The roadmap's "offers to draft one" composes with the Wave 4
@@ -542,10 +570,11 @@ the ≥80%/file coverage-floor ratchet, which is Docker-Linux-authoritative.
 1. `nimbus decisions --since 90d` returns a chronological list of decisions from
    the local index with no live API call, each carrying a confidence score,
    rationale, alternatives and at least one evidence link.
-2. A seeded thread stating "we decided to move billing to Postgres because the
+2. A seeded ticket stating "we decided to move billing to Postgres because the
    connection pool kept exhausting; we considered sharding" produces one
    `extracted` row whose `statement`, `rationale` and `alternatives` are all
-   populated, corroborated by the seeded PR and migration.
+   populated, corroborated by the seeded PR reached through the reverse
+   `resolves` edge.
 3. A seeded thread stating "we decided to grab lunch at noon" produces a
    `vetoed` row and does not appear in the brief; a second pass does not re-ask
    the model about it.
