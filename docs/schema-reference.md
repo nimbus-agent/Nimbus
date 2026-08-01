@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V45** (`glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V46** (full-table rebuild of `glossary_term` widening `definition_source` to `CHECK(... IN ('llm','snippet','manual'))` for manual term authoring — S1 "Local Brain"; V45 `glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -486,7 +486,7 @@ CREATE INDEX idx_egress_ledger_ts     ON egress_ledger(timestamp);
 CREATE INDEX idx_egress_ledger_source ON egress_ledger(source_type, source_id);
 CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
 
--- Implicit-knowledge glossary (S1 "Local Brain") — V45.
+-- Implicit-knowledge glossary (S1 "Local Brain") — V45, `definition_source` widened by V46.
 -- `glossary_term` is the SSoT for the extraction pass: it holds candidates in every status,
 -- including `pending` work not yet consolidated and `vetoed` rejections that must never be
 -- re-asked. Only `status='consolidated'` rows are projected into the searchable `item` table as
@@ -506,12 +506,19 @@ CREATE INDEX idx_egress_ledger_dest   ON egress_ledger(destination);
 -- incremental mining scan can never rediscover, since there is no surviving item to re-scan — is
 -- still revisited on a bounded cadence and demoted back to `pending` if it now falls below
 -- `min_doc_freq`. Every write goes through `dbRun` (I14); see `glossary/glossary-store.ts`.
+-- V46 (manual term authoring) widened `definition_source` to also allow `'manual'`: an authored
+-- row from `[glossary.terms]`/`[glossary.synonyms]` in `nimbus.toml`, upserted straight to
+-- `consolidated` by a pre-pass (`glossary/glossary-manual.ts`) with no LLM call. Manual rows are
+-- exempt from the reconciliation sweep's demotion and veto (a human assertion outranks the
+-- doc-frequency floor) but NOT from its statistics refresh — `top_sources` still self-heals as
+-- cited items are deleted or edited. SQLite cannot alter a CHECK constraint in place, so V46 is a
+-- full table rebuild (`glossary_term_v46` built, populated, swapped in), not an in-place edit.
 CREATE TABLE IF NOT EXISTS glossary_term (
     term_key          TEXT PRIMARY KEY,      -- normalized: casefold + de-pluralized + backticks stripped
     display_term      TEXT NOT NULL,         -- first surface form observed in the scan batch (overwritten each pass, not frequency-tracked)
     status            TEXT NOT NULL CHECK(status IN ('pending','consolidated','vetoed')),
     definition        TEXT,                  -- NULL until consolidated
-    definition_source TEXT CHECK(definition_source IN ('llm','snippet')),
+    definition_source TEXT CHECK(definition_source IN ('llm','snippet','manual')),  -- V46 widened to add 'manual'
     doc_freq          INTEGER NOT NULL DEFAULT 0,   -- recomputed from item_fts, never accumulated
     service_spread    INTEGER NOT NULL DEFAULT 0,   -- COUNT(DISTINCT service) among citing items
     score             REAL    NOT NULL DEFAULT 0,   -- log1p(doc_freq) * 1.6^(service_spread-1) * formBoost

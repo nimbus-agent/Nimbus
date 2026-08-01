@@ -8,6 +8,52 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-01 — `nimbus glossary` — manual term authoring.** Closes the "no manual authoring or
+  correction" gap named in the base spec's §12: a `[glossary.terms]` / `[glossary.synonyms]` pair
+  of flat TOML blocks in `nimbus.toml`, read by a dedicated parser that reports per-entry skip
+  reasons rather than silently dropping a malformed line (including the one valid-TOML shape it
+  cannot read — a dotted `terms.CDR = "…"` key under `[glossary]` itself, now reported instead of
+  ignored). A pre-pass runs at the head of every glossary pass (config re-read per pass, not
+  captured at gateway startup, so `--refresh` picks up an edit without a restart) and upserts
+  authored entries straight to `status='consolidated'` with `definition_source='manual'` — no
+  model call, no pending queue, no budget slot. Removing a config entry **demotes** the row rather
+  than deleting it: a term with real mined evidence falls back to ordinary mined status through the
+  existing `doc_freq` floor, and a pure invention sinks below it and disappears; hard deletion would
+  have lost the first case, since the incremental scan never re-discovers a term once it is gone.
+  On a `term_key` collision, the authored definition wins unconditionally over a mined one, and the
+  newest authored form wins over an older one. Two guards keep the two populations from bleeding
+  into each other: `upsertCandidate` no longer lets a mined sighting overwrite an authored
+  `display_term`, and `reconcilePass` sweeps manual-row statistics (so `top_sources` self-heals) but
+  never demotes or vetoes them — full exemption from the sweep was considered and rejected, since it
+  would freeze `top_sources` forever. `listConsolidated` now orders authored terms ahead of every
+  mined term regardless of score, which fixes three readers at once (list mode, and both near-miss
+  pools) and means an authored term can no longer be the dropped tail of the 500-term near-miss
+  pool. `countByStatus.manual` is a **subset** of `total`, not a fourth bucket — mined count is
+  `total - manual`. The CLI's `--rebuild` preview no longer claims authored terms will be deleted
+  (they are truncated and re-read from `nimbus.toml` inside the same transaction as the rest of the
+  rebuild), and `--refresh` now names any config entries it rejected in its stderr summary, which
+  were otherwise invisible. Schema **V46** (`glossary_term.definition_source` widened from
+  `CHECK(... IN ('llm','snippet'))` to `CHECK(... IN ('llm','snippet','manual'))` — a full table
+  rebuild, since SQLite cannot alter a CHECK in place and V45 shipped in v1.13.0); both
+  `DefinitionSource` unions (`glossary/glossary-types.ts` and the duplicated one in
+  `agents/_lib/glossary-types.ts`) widen together so a partial widening fails to compile. No new
+  invariant, no new HTTP route, no new connector.
+  **Two repairs shipped alongside this, both blocking the slice:** the shared TOML line parser's
+  `stripComment` truncated at a `#` inside a quoted value and `parseString` unescaped the wrong
+  sequence (TOML writes `\"`, the parser handled `\\"`), so an authored definition containing
+  ordinary prose was silently corrupted and then projected as authoritative; `filesystem-toml.ts`
+  carried byte-identical private copies of both functions and now imports the shared, repaired
+  ones instead of fixing the same bug twice. Separately, `depluralize()` in `term-normalize.ts` was
+  truncating dotted identifiers — `normalizeTerm("node.js")` produced `"node.j"` — because a `.js`/
+  `.es` suffix reads as an English plural; the fix is a narrow internal-punctuation exemption (a
+  word containing an internal `.` is treated as an identifier, never a plural), deliberately **not**
+  a general "consonant + s" rule, which was measured to break `"docs" → "doc"` and the function's own
+  headline example, `"SLOs" → "slo"`. `depluralize` still strips a trailing plural `s` outside that
+  narrow exemption, so `"https"` still normalizes to `"http"` and `"kubernetes"` to `"kubernete"` —
+  that needs an acronym allowlist, which is separate work, not attempted here. Spec:
+  `docs/superpowers/specs/2026-07-31-nimbus-glossary-manual-authoring-design.md`; plan:
+  `docs/superpowers/plans/2026-07-31-nimbus-glossary-manual-authoring.md`.
+
 - **2026-07-31 — `nimbus glossary --refresh` no longer hangs when the gateway dies mid-pass.**
   `@nimbus-dev/client` bumped `^0.14.0` → `^0.15.0` for its new `IPCClient.onClose`, and
   `awaitPass` now uses it. The gap this closes is specific to notification-delivered results:

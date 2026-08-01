@@ -602,6 +602,10 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   mean". It degrades to under-suggestion, never to a wrong answer — but the excluded tail is the
   rare, low-frequency jargon most likely to need the suggestion in the first place. Noted during
   the Task 13 re-review, 2026-07-30; raise `NEAR_MISS_POOL` if real glossaries outgrow it.
+  **Qualified 2026-08-01:** since the manual-authoring slice, `listConsolidated` sorts every
+  authored (`definition_source='manual'`) term ahead of every mined term regardless of score, so an
+  authored term can never be the dropped tail described above — only mined terms are at risk of
+  falling past the pool boundary.
 - **The abort signal does not reach the LLM provider.** `GlossaryRefresher.stop()` aborts the
   refresher's single `AbortSignal`, which the consolidation loop checks between terms — but
   `ConsolidatorLlm.generateJson` cannot propagate that signal into the underlying `fetch`, since
@@ -616,20 +620,38 @@ adds no HTTP route, and adds no connector. Existing invariants it must satisfy:
   watermark, rather than re-judging the existing row.
 - **Single-user scope.** Federation makes the glossary richer (Phase 6 primitives exist), but no
   federated fan-out ships in this slice.
-- **No manual authoring or correction — deferred, with the seam named.** Every term in this slice
-  is mined; a user cannot add a term the sources never mention, nor correct a definition the model
-  got wrong (`--rebuild` re-derives, it does not let you author). This is a real limitation: the
-  first thing a team does with a wrong definition is want to fix it.
+- **Manual authoring or correction.** ✅ Shipped 2026-08-01, correcting two claims made in this
+  bullet at design time. Originally deferred as: "every term in this slice is mined; a user cannot
+  add a term the sources never mention, nor correct a definition the model got wrong (`--rebuild`
+  re-derives, it does not let you author)."
 
-  The extension seam is a `[glossary.terms]` block in `nimbus.toml`, read by `glossary-extract.ts`
-  as a pre-pass that upserts entries with `definition_source='manual'`. Two rules make it compose
-  rather than conflict: manual rows are **exempt from the reconciliation sweep and from veto** (a
-  human assertion outranks a doc-frequency floor), and on `term_key` collision manual **wins** over
-  a mined definition. This deliberately keeps authored terminology out of the mined statistics
-  rather than blending the two. It does need ONE schema change: `glossary_term.definition_source`
-  carries `CHECK(definition_source IN ('llm','snippet'))`, so a `'manual'` row is rejected until a
-  follow-up migration widens the constraint (SQLite cannot alter a CHECK in place — the column, or
-  the table, must be rebuilt). Everything else is additive: no invariant and no read path changes.
+  The seam is a `[glossary.terms]` / `[glossary.synonyms]` pair of flat blocks in `nimbus.toml`,
+  read by a dedicated `glossary-manual.ts` pre-pass that runs at the head of every glossary pass
+  and upserts entries straight to `status='consolidated'` with `definition_source='manual'` — no
+  model call, no pending queue, no budget slot. On `term_key` collision, manual **wins**
+  unconditionally over a mined definition (`upsertManualTerm` overwrites `display_term`,
+  `definition`, and every statistic; the newest authored form also beats an older authored one).
+  A config entry that leaves `nimbus.toml` **demotes** the row rather than deleting it, so an
+  evidenced term falls back to ordinary mined status and a pure invention sinks below the
+  `min_doc_freq` floor and disappears.
+
+  Two claims in the original text were made false by the implementation:
+
+  - **"exempt from the reconciliation sweep"** is narrower than shipped: manual rows are exempt
+    from **demotion and veto only**. `reconcilePass` still refreshes their `doc_freq` /
+    `top_sources` statistics on the same round-robin schedule as mined terms — full exemption would
+    freeze `top_sources` forever, so an authored term would keep citing threads the user has since
+    deleted.
+  - **"Everything else is additive: no invariant and no read path changes"** — no new invariant, but
+    the read path *does* change: `listConsolidated` now orders authored terms ahead of every mined
+    term regardless of score, and both `DefinitionSource` unions (`glossary/glossary-types.ts` and
+    the duplicated one in `agents/_lib/glossary-types.ts`) widen to `'llm' | 'snippet' | 'manual'`.
+
+  The schema change this bullet anticipated shipped as **V46**: `glossary_term.definition_source`
+  widened from `CHECK(definition_source IN ('llm','snippet'))` to
+  `CHECK(definition_source IN ('llm','snippet','manual'))` — a full table rebuild, since SQLite
+  cannot alter a CHECK in place and V45 had already shipped in v1.13.0. Full delivery record:
+  `docs/CHANGELOG.md`.
 
 ## 13. Delivery
 
