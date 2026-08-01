@@ -5,6 +5,7 @@
 import type { PairingWindowController } from "../../clips/pairing-window.ts";
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { DecisionRefresher } from "../../decisions/decision-refresh.ts";
 import type { EmbeddingReadiness } from "../../embedding/embedding-readiness.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
@@ -134,6 +135,11 @@ export type CreateIpcServerOptions = {
   // model, rebuild truncates both glossary tables. Not Tauri-exposed (I7 — no desktop
   // glossary surface).
   glossaryRefresher?: GlossaryRefresher;
+  // Decisions (S1 Local Brain). The dependency seam behind a future decisions.* IPC namespace
+  // (post-sync debounced extraction pass — see decisions/decision-refresh.ts). Unlike
+  // glossaryRefresher, construction itself is gated on `[decisions].enabled`: absent when
+  // decisions are disabled, rather than always-present-but-internally-gated.
+  decisionsRefresher?: DecisionRefresher;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
   // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).
