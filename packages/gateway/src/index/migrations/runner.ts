@@ -11,6 +11,7 @@ import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
+import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
 import { EGRESS_LEDGER_V44_SQL } from "../egress-ledger-v44-sql.ts";
 import {
@@ -425,6 +426,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     46,
     "glossary_term.definition_source allows 'manual' (v46)",
     GLOSSARY_MANUAL_V46_SQL,
+  ),
+  simpleStep(
+    46,
+    47,
+    "decision_record + decision_evidence + decision_pass_state (implicit ADR extractor v47)",
+    DECISIONS_V47_SQL,
   ),
 ];
 
