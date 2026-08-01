@@ -17,6 +17,9 @@ These apply to **every** task. They are project non-negotiables, not preferences
 - **No `any`.** Use `unknown` for external data. TypeScript strict mode. External JSON is validated, never cast blind.
 - **All SQLite writes go through `dbRun` / `dbExec` / `dbStmtRun`** from `packages/gateway/src/db/write.ts` (invariant **I14**, statically enforced by `scripts/structure-audit/check-nimbus-invariants.ts`). A raw `db.run(...)` fails the preflight. Reads may use `db.query(...)`.
 - **Bound parameters only** (invariant **I9**). Never string-interpolate a value into SQL.
+- **`Bun.CryptoHasher` does NOT support blake3.** For BLAKE3 use `@noble/hashes/blake3.js` +
+  `@noble/hashes/utils.js` `bytesToHex`, matching `db/audit-chain.ts:2-3` and `egress/egress-ledger.ts`.
+  `@noble/hashes` is already a declared gateway dependency — this adds nothing new.
 - **Never call `db.prepare()`** without `finalize()` — an unfinalized statement makes `db.close()` a silent no-op and pins the file, producing `EBUSY` on Windows. Use `db.query()`, which is safe.
 - **The agent stays read-only.** `agents/decisions.ts` must not import `ToolExecutor` and must not reference `HITL_REQUIRED`. No `connectors.dispatch`. Task 16 asserts this structurally.
 - **Cross-platform paths** — `path.join()` / `os.tmpdir()`, never hardcoded separators.
