@@ -15,9 +15,6 @@ import type { DecisionEvidence } from "./decision-types.ts";
 export const CORROBORATION_BACKWARD_MS = 14 * 24 * 60 * 60 * 1000;
 export const CORROBORATION_FORWARD_MS = 90 * 24 * 60 * 60 * 1000;
 
-const MIGRATION_RE = /(^|\/)migrations\//iu;
-const MIGRATION_NAME_RE = /(^|\/)v\d+[-_]/iu;
-const IAC_RE = /\.tfvars?$|\.tf$|(^|\/)pulumi\.ya?ml$|(^|\/)cloudformation\//iu;
 const ADR_TITLE_RE = /\badr\b|^\d+[-.]|decision/iu;
 
 const STOP = new Set(["the", "a", "an", "to", "of", "for", "and", "or", "on", "in", "we"]);
@@ -36,13 +33,6 @@ function tokenOverlap(statement: string, title: string): boolean {
   const have = new Set(tokens(title));
   const hits = want.filter((t) => have.has(t)).length;
   return hits * 2 >= want.length;
-}
-
-function classifyPaths(paths: readonly string[]): Array<"migration" | "iac"> {
-  const kinds: Array<"migration" | "iac"> = [];
-  if (paths.some((p) => MIGRATION_RE.test(p) || MIGRATION_NAME_RE.test(p))) kinds.push("migration");
-  if (paths.some((p) => IAC_RE.test(p))) kinds.push("iac");
-  return kinds;
 }
 
 export interface CorroborateInput {
@@ -78,15 +68,19 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
 
   const lo = input.decidedAt - CORROBORATION_BACKWARD_MS;
   const hi = input.decidedAt + CORROBORATION_FORWARD_MS;
+  const seenEntityIds = new Set<string>();
 
-  // Code evidence: PRs and commits the source item references, via the graph
-  // edges the populator already emits. Both endpoints are type-scoped because
-  // `mentions` is polysemous.
+  // Code evidence, outgoing: PRs and commits the source item itself mentions,
+  // or that the source item (when it is itself a PR entity) was merged as.
+  // Both endpoints are type-scoped because `mentions` is polysemous. This is
+  // what makes `commit` evidence reachable for chat-sourced decisions — the
+  // graph populator only emits `mentions` from a message toward `issue`/
+  // `commit` targets, never toward a `pr` target, so `pr` evidence from this
+  // query alone would require the source item to literally be a PR.
   const code = db
     .query(
       `SELECT t.id AS entity_id, t.type AS entity_type, i.id AS item_id,
-              i.title AS title, i.url AS url, i.modified_at AS modified_at,
-              i.metadata AS metadata
+              i.title AS title, i.url AS url, i.modified_at AS modified_at
          FROM graph_relation r
          JOIN graph_entity s ON s.id = r.from_id
          JOIN graph_entity t ON t.id = r.to_id AND t.type IN ('pr','commit')
@@ -104,10 +98,11 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
     title: string | null;
     url: string | null;
     modified_at: number | null;
-    metadata: string | null;
   }>;
 
   for (const c of code) {
+    if (seenEntityIds.has(c.entity_id)) continue;
+    seenEntityIds.add(c.entity_id);
     out.push({
       kind: c.entity_type === "pr" ? "pr" : "commit",
       entityId: c.entity_id,
@@ -116,29 +111,51 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
       url: c.url,
       occurredAt: c.modified_at,
     });
+  }
 
-    // Migration / IaC are properties OF a corroborating change, not separate
-    // searches — a migration nobody linked to the decision proves nothing.
-    let paths: string[] = [];
-    if (c.metadata !== null) {
-      try {
-        const meta: unknown = JSON.parse(c.metadata);
-        const f = (meta as { files?: unknown }).files;
-        if (Array.isArray(f)) paths = f.filter((x): x is string => typeof x === "string");
-      } catch {
-        paths = [];
-      }
-    }
-    for (const kind of classifyPaths(paths)) {
-      out.push({
-        kind,
-        entityId: c.entity_id,
-        itemId: c.item_id,
-        label: `${kind} in ${c.title ?? c.entity_id}`,
-        url: c.url,
-        occurredAt: c.modified_at,
-      });
-    }
+  // Migration / IaC evidence is deliberately not derived here: it would read
+  // `metadata.files` on the corroborating PR/commit item, but no connector
+  // indexes changed-file paths yet, so both `EvidenceKind`s are unreachable
+  // from any live data. Reinstate once a connector populates that metadata.
+
+  // Code evidence, incoming: PRs that resolve the source item, for an
+  // issue-sourced decision. `resolves` edges run PR -> issue (the populator
+  // never emits the reverse), so from the issue's side this is an INCOMING
+  // edge and has to be walked from `to_id`, not `from_id`. Both endpoints are
+  // type-scoped because `resolves` is polysemous (also emitted
+  // person -> incident elsewhere in the graph).
+  const resolvedBy = db
+    .query(
+      `SELECT p.id AS entity_id, i.id AS item_id,
+              i.title AS title, i.url AS url, i.modified_at AS modified_at
+         FROM graph_relation r
+         JOIN graph_entity src ON src.id = r.to_id AND src.type = 'issue' AND src.external_id = ?
+         JOIN graph_entity p ON p.id = r.from_id AND p.type = 'pr'
+         LEFT JOIN item i ON i.id = p.external_id
+        WHERE r.type = 'resolves'
+          AND i.modified_at BETWEEN ? AND ?
+        ORDER BY i.modified_at ASC
+        LIMIT 20`,
+    )
+    .all(input.sourceItemId, lo, hi) as Array<{
+    entity_id: string;
+    item_id: string | null;
+    title: string | null;
+    url: string | null;
+    modified_at: number | null;
+  }>;
+
+  for (const r of resolvedBy) {
+    if (seenEntityIds.has(r.entity_id)) continue;
+    seenEntityIds.add(r.entity_id);
+    out.push({
+      kind: "pr",
+      entityId: r.entity_id,
+      itemId: r.item_id,
+      label: r.title ?? r.entity_id,
+      url: r.url,
+      occurredAt: r.modified_at,
+    });
   }
 
   // ADR: a long-form doc whose title looks like an ADR and shares most of its

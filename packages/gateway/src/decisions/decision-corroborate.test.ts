@@ -36,27 +36,34 @@ function seedItem(
   );
 }
 
-function seedPrMentionedBy(sourceItemId: string, prItemId: string, occurredAt: number): void {
+/**
+ * Realistic seed for the path that actually fires in production: an
+ * issue-sourced decision, with the PR reachable only via the INCOMING
+ * `resolves` edge the graph populator emits PR -> issue
+ * (`packages/gateway/src/graph/graph-populator.ts`). A message -> pr
+ * `mentions` edge, which the populator never emits, is not a valid fixture.
+ */
+function seedIssueResolvedByPr(sourceItemId: string, prItemId: string, occurredAt: number): void {
   seedItem(prItemId, "github", "pr", "Move billing to Postgres", occurredAt);
   db.run(`INSERT INTO graph_entity (id, type, external_id, label) VALUES (?, 'pr', ?, ?)`, [
     `e-${prItemId}`,
     prItemId,
     "#412",
   ]);
-  db.run(`INSERT INTO graph_entity (id, type, external_id, label) VALUES (?, 'message', ?, ?)`, [
+  db.run(`INSERT INTO graph_entity (id, type, external_id, label) VALUES (?, 'issue', ?, ?)`, [
     `e-${sourceItemId}`,
     sourceItemId,
-    "thread",
+    "ISSUE-1",
   ]);
   db.run(
-    `INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'mentions', ?)`,
-    [`e-${sourceItemId}`, `e-${prItemId}`, occurredAt],
+    `INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'resolves', ?)`,
+    [`e-${prItemId}`, `e-${sourceItemId}`, occurredAt],
   );
 }
 
-test("corroborates a PR mentioned by the source thread inside the forward window", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedPrMentionedBy("src", "pr1", DECIDED_AT + 3 * 24 * 3600 * 1000);
+test("corroborates a PR resolving the source issue inside the forward window", () => {
+  seedItem("src", "jira", "issue", "Move billing to Postgres", DECIDED_AT);
+  seedIssueResolvedByPr("src", "pr1", DECIDED_AT + 3 * 24 * 3600 * 1000);
   const ev = corroborate(db, {
     decisionId: "d1",
     sourceItemId: "src",
@@ -68,8 +75,8 @@ test("corroborates a PR mentioned by the source thread inside the forward window
 
 // The review's point 2: ship-then-write-it-up is the common case, not an edge.
 test("corroborates a PR that PREDATES the decision inside the backward window", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedPrMentionedBy("src", "pr1", DECIDED_AT - 7 * 24 * 3600 * 1000);
+  seedItem("src", "jira", "issue", "Move billing to Postgres", DECIDED_AT);
+  seedIssueResolvedByPr("src", "pr1", DECIDED_AT - 7 * 24 * 3600 * 1000);
   const ev = corroborate(db, {
     decisionId: "d1",
     sourceItemId: "src",
@@ -80,8 +87,8 @@ test("corroborates a PR that PREDATES the decision inside the backward window", 
 });
 
 test("does not corroborate a PR older than the backward window", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedPrMentionedBy("src", "pr1", DECIDED_AT - CORROBORATION_BACKWARD_MS - 1);
+  seedItem("src", "jira", "issue", "Move billing to Postgres", DECIDED_AT);
+  seedIssueResolvedByPr("src", "pr1", DECIDED_AT - CORROBORATION_BACKWARD_MS - 1);
   const ev = corroborate(db, {
     decisionId: "d1",
     sourceItemId: "src",
@@ -92,8 +99,8 @@ test("does not corroborate a PR older than the backward window", () => {
 });
 
 test("does not corroborate a PR beyond the forward window", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedPrMentionedBy("src", "pr1", DECIDED_AT + CORROBORATION_FORWARD_MS + 1);
+  seedItem("src", "jira", "issue", "Move billing to Postgres", DECIDED_AT);
+  seedIssueResolvedByPr("src", "pr1", DECIDED_AT + CORROBORATION_FORWARD_MS + 1);
   const ev = corroborate(db, {
     decisionId: "d1",
     sourceItemId: "src",
