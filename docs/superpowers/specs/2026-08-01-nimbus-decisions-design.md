@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS decision_record (
   extraction_source TEXT CHECK(extraction_source IN ('llm','snippet')),
   cue_tier          TEXT NOT NULL CHECK(cue_tier IN ('heading','explicit','weak')),
   cue_text          TEXT NOT NULL,
-  confidence        REAL NOT NULL DEFAULT 0,
+  priority          REAL NOT NULL DEFAULT 0,  -- extraction order, known pre-LLM
+  confidence        REAL NOT NULL DEFAULT 0,  -- final score, known post-LLM
   decided_at        INTEGER NOT NULL,        -- CONTENT date, not row time
   has_adr           INTEGER NOT NULL DEFAULT 0,
   stats_verified_at INTEGER NOT NULL DEFAULT 0,
@@ -112,8 +113,8 @@ CREATE TABLE IF NOT EXISTS decision_record (
 
 CREATE INDEX IF NOT EXISTS idx_decision_status_confidence
   ON decision_record(status, confidence DESC);
-CREATE INDEX IF NOT EXISTS idx_decision_pending_attempt
-  ON decision_record(status, last_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_decision_pending_priority
+  ON decision_record(status, priority DESC, last_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_decision_decided_at
   ON decision_record(status, decided_at DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_verified
@@ -145,15 +146,26 @@ CREATE TABLE IF NOT EXISTS decision_pass_state (
 
 ### Row identity
 
-`id` is a BLAKE3 hash of `source_item_id` plus `cue_offset`, where `cue_offset`
-is the zero-based character index of the matched cue within the scanned text —
-and the scanned text is exactly `title + ". " + body_preview`, the same
-concatenation `glossary` mines (`glossary-extract.ts` `snippetsFor`).
+`id` is a BLAKE3 hash of `source_item_id` plus the **normalized cue sentence** —
+the sentence containing the matched cue, lowercased, whitespace-collapsed and
+stripped of trailing punctuation, reusing `glossary`'s `normalizeTerm`
+normalisation. The scanned text is exactly `title + ". " + body_preview`, the
+same concatenation `glossary` mines (`glossary-extract.ts` `snippetsFor`).
 
-This makes re-scanning the same item idempotent: an unchanged item re-mines to
-the same ids and upserts rather than duplicating. It also means an edit that
-shifts a cue's position produces a new row and orphans the old one — which the
-reconciliation sweep demotes, the same way it handles a deleted source.
+**Identity is content-derived, never positional.** An earlier draft keyed on the
+character offset of the cue, which was wrong in a way that defeated the feature's
+own guarantees: fixing a typo in the first paragraph of an RFC shifts every
+subsequent offset, so every cue in the document re-hashes to a new id. That
+would re-queue candidates already extracted — burning the 25-call budget on
+unchanged text — and, far worse, would resurrect `vetoed` rows under new ids and
+re-ask the model about candidates it had already rejected. The durability of
+`vetoed` is the entire justification for this table having no foreign key, so
+positional identity would have quietly dismantled it.
+
+Hashing the sentence means an edit *outside* the sentence changes nothing, and an
+edit *inside* it produces a new row — correct, because the decision text itself
+changed. Two identical normalized sentences within one item collapse to one row
+deliberately: they are the same decision stated twice, not two decisions.
 
 ### Three schema decisions worth stating
 
@@ -219,15 +231,68 @@ what are the statement, the rationale and the alternatives?
 
 Capped at `max_llm_calls_per_pass` (default 25), matching `glossary`.
 
+#### Queue order
+
+Extraction is ordered by `priority`, **not** by `confidence` — confidence cannot
+exist yet, because two of its four terms (`corroboration`, `completeness`) are
+only knowable after extraction. Ordering the queue by a column that is still 0
+for every pending row would have made the order arbitrary, and a burst of `weak`
+cues would then saturate the 25-call budget while `heading` cues waited.
+
+`priority` is computed in Phase A from the two terms that *are* known without a
+model, on the same scale they carry in the final score:
+
+```
+priority = 0.25 * cue_strength + 0.20 * source_authority
+```
+
+so a `Decision:` heading on a Confluence page sorts above "going with" in a chat
+message. Ties break by `decided_at DESC` — fresh decisions first. The
+`attempts` / `last_attempt_at` backoff still applies on top, so a permanently
+unparseable high-priority candidate yields its slot rather than blocking the
+queue forever.
+
+Storing `priority` rather than recomputing it in the `ORDER BY` keeps the query
+indexable (`idx_decision_pending_priority`) and makes the ordering directly
+assertable in tests.
+
+#### Upgrading snippet-sourced rows
+
+A `snippet` row is already past the watermark, so the delta scan will never
+revisit it — "upgraded on a later pass" needs an explicit mechanism, not an
+assumption.
+
+Each pass therefore **reserves** slots from its budget for upgrades, selecting
+`status='extracted' AND extraction_source='snippet'` oldest-`last_attempt_at`
+first. This mirrors `glossary`'s `UPGRADE_RESERVE = 5`
+(`glossary-extract.ts:127`) and copies its reasoning: a reserve, not leftover
+capacity. Spending only what new candidates leave behind means a busy index —
+exactly the case where the snippet backlog grows — upgrades nothing, ever.
+Pending candidates still take precedence within the pass; the reserve only
+guarantees the upgrade queue is never starved to zero.
+
 ### Phase C — corroboration
 
 Graph traversal from the source item to downstream actions, writing
 `decision_evidence` rows:
 
-- `pr` / `commit` — via existing `mentions` and `merged_as` edges, within a
-  **90-day forward window** from `decided_at`. Forward-only: a PR that predates
-  the thread did not implement its decision. The window is a named constant
-  alongside `why`'s `DRIVER_WINDOW_MS`, not a magic number.
+- `pr` / `commit` — via existing `mentions` and `merged_as` edges, within an
+  **asymmetric window: `decided_at - 14d` to `decided_at + 90d`**. Named
+  constants alongside `why`'s `DRIVER_WINDOW_MS`, not magic numbers.
+
+  The backward half is not slack, it is the common case. Teams routinely ship
+  first and formalise after — a retro, a post-mortem write-up, a wiki page
+  updated the week following the merge. A forward-only window would treat every
+  one of those as an uncorroborated decision and dock it 0.35 confidence, which
+  is precisely backwards: the write-up-after-the-fact decision is *better*
+  evidenced than average, not worse.
+
+  The cost, stated plainly: a thread that references a recent PR as
+  contrast ("unlike #380, this time we'll…") can corroborate against it and gain
+  confidence it has not earned. That is bounded by the 14-day reach and by the
+  requirement that a real `mentions`/`merged_as` edge exist — corroboration is
+  never purely temporal — and it is a much smaller error than silently dropping
+  every post-hoc decision.
 - `migration` — a corroborating commit touching a path segment `migrations/` or
   matching `V<n>__` / `V<n>-` (Flyway and this repo's own `V<n>` convention)
 - `iac` — a corroborating commit touching `*.tf`, `*.tfvars`, `Pulumi.yaml`, or
@@ -282,10 +347,25 @@ fan-out would add coordinator overhead without adding parallelism.
 
 ```
 nimbus decisions [--since <duration>] [--service <name>]
-                 [--min-confidence <0..1>] [--explain] [--json] [--refresh]
+                 [--min-confidence <0..1>] [--explain] [--json]
+                 [--refresh] [--rebuild]
 ```
 
 `--refresh` runs a pass synchronously (`glossary` parity). `NO_COLOR` respected.
+
+`--rebuild` clears the store — including `vetoed` rows — resets the watermark
+and re-mines from scratch, mirroring `rebuildGlossary`
+(`glossary-extract.ts:495`). This is the escape hatch for the case `vetoed`
+durability otherwise creates: a veto is a judgement made by whatever local model
+was running at the time, and without a reset path an early or misconfigured
+model would poison the store permanently, with no way back short of deleting the
+database. Reusing `glossary`'s rebuild verb rather than inventing a narrower
+`--reset-vetoed` keeps one recovery concept across both agents.
+
+*Deferred, deliberately:* stamping each row with the model and prompt version so
+drift could be detected and re-extraction triggered automatically. It is the
+right long-term answer, it belongs to both agents rather than this one, and
+`--rebuild` covers the case manually in the meantime.
 
 `--since` uses the shared `parseDurationToMs`
 (`packages/cli/src/lib/parse-duration.ts`), which today accepts only
@@ -312,15 +392,39 @@ callers are unaffected — and it ships with its own unit tests in
 
 ### `--service` in this slice
 
-`--service` scopes by the repository a decision's corroborating PR or commit
-touches, resolved through the existing graph (`pr → repository`). It does *not*
-mean `service → team` ownership: the ownership graph is a separate, unbuilt S1
-item.
+`--service` matches on **either** of two routes, and `--explain` labels which
+one fired:
 
-A decision with no code evidence is therefore not matched by `--service`, and
-the brief says how many were excluded for that reason. When the ownership graph
-lands, this resolves through it instead — the flag's meaning narrows toward its
-roadmap definition rather than changing.
+1. **`repo`** — the repository a corroborating PR or commit touches, via the
+   existing graph (`pr → repository`).
+2. **`ticket-key`** — the project/team key of the source item, when the source
+   is a ticket: `metadata.key` on Jira items and `metadata.identifier` on Linear
+   items both carry `BILL-123`, whose prefix is the project key.
+
+Route 2 exists because route 1 alone silently drops process decisions. "Adopt
+trunk-based development" has no PR and never will, so a repo-only filter would
+exclude exactly the class of decision that is hardest to recover by other
+means — and the sample brief in this spec contains such a row, which a repo-only
+`--service` would have contradicted.
+
+Matching is on normalized tokens, not substrings, so `--service bill` does not
+match `billing`. This keeps the flag predictable rather than fuzzy.
+
+**Not buildable in this slice, and why.** The natural third route — matching a
+Slack channel name, Notion database or Confluence space — cannot be built today,
+because those connectors persist only opaque identifiers: `slack-sync.ts` stores
+`metadata.channel` as the channel *ID* (`state.ids`, never the name),
+`notion-sync.ts` stores `{ notionPageId }` and `confluence-sync.ts` stores
+`{ confluencePageId }`. Nothing human-readable is in the index to match against.
+Adding it means changing what those connectors persist and re-syncing — a
+connector-side slice, not an agent-side one. Until then a decision living only
+in `#billing-alerts` is reachable by `--since` but not by `--service`, and the
+brief says so.
+
+None of this is `service → team` ownership: the ownership graph is a separate,
+unbuilt S1 item. When it lands it becomes the primary route and these two become
+fallbacks — the flag's meaning narrows toward its roadmap definition rather than
+changing.
 
 ## Configuration
 
@@ -343,7 +447,7 @@ Every failure is a named gap note in the brief, never silence.
 | Pass never ran | "Run `nimbus decisions --refresh`, or wait for the next connector sync." |
 | LLM call failed | Row stays `pending`, `attempts++`, backoff applies. Never head-of-line blocks. |
 | Empty index | Reported **only** when also returning nothing — the brief must never claim an empty index while displaying rows. |
-| `--service` unresolvable | "N decision(s) have no linked repository and cannot be service-scoped until the ownership graph lands." |
+| `--service` unresolvable | "N decision(s) match neither a repository nor a ticket project key. Decisions recorded only in a chat channel or wiki page cannot be service-scoped until those connectors index a human-readable channel/space name." |
 | 512-char body cap | Permanent standing note (see Known Limits). |
 
 ## Known limits
@@ -375,6 +479,12 @@ re-scan with no rework here.
   auto-drafter consumes that signal for free when it lands.
 - **`service → team` resolution.** Belongs to the ownership-graph slice.
 - **Widening the 512-char body cap.** Its own slice, per Known Limits.
+- **Indexing human-readable channel / space names** so `--service` can match a
+  Slack channel or Notion database. Requires changing what `slack-sync`,
+  `notion-sync` and `confluence-sync` persist, plus a re-sync — connector-side
+  work, not agent-side.
+- **Model/prompt versioning on extracted rows** for automatic drift detection.
+  Belongs to `glossary` and `decisions` jointly; `--rebuild` covers it manually.
 
 ## Security posture
 
@@ -398,6 +508,13 @@ Because the agent never dispatches, it appends nothing to the `egress_ledger`
   proves nothing about precision
 - `decision-confidence` table-driven across all four terms and the clamp
 - `decision-store` CRUD, including that a `vetoed` row is never re-selected
+- **Identity stability:** editing text *before* a cue leaves its id unchanged;
+  editing the cue sentence itself produces a new id; the same normalized
+  sentence twice in one item yields one row
+- **Queue order:** a pool of `weak` candidates does not starve a `heading`
+  candidate out of the budget; ties break by `decided_at DESC`
+- **Upgrade reserve:** with the budget saturated by new pending candidates,
+  at least one `snippet` row is still upgraded
 - `decisionSourceFilter()` rejects `wiz:issue` and admits `jira:issue`
 - `parseDurationToMs` accepts `d` and `w`, still rejects `90x`, and every
   pre-existing `ms|s|m|h` case still returns the same value
@@ -433,11 +550,21 @@ the ≥80%/file coverage-floor ratchet, which is Docker-Linux-authoritative.
    `vetoed` row and does not appear in the brief; a second pass does not re-ask
    the model about it.
 4. `--explain` prints the four confidence terms with the matched cue text.
-5. `--service <name>` returns only decisions whose corroborating PR or commit
-   touches a matching repository, and the brief reports how many decisions were
-   excluded for having no code evidence.
+5. `--service <name>` returns decisions matched by either route — corroborating
+   repository, or source ticket project key — `--explain` labels which route
+   fired, and the brief reports how many decisions matched neither.
 6. With no local LLM running, a pass still produces `snippet`-sourced rows, the
    brief labels them, and a later pass with a model available upgrades them to
-   `llm`-sourced without manual intervention.
+   `llm`-sourced without manual intervention — including when new pending
+   candidates would otherwise consume the whole budget.
 7. The 512-character body cap is stated in every brief.
 8. The e2e test proves zero HITL actions fire.
+9. Editing an item's text *before* a decision's cue does not change that
+   decision's id, does not re-spend an LLM call on it, and does not resurrect
+   any `vetoed` row in the same item.
+10. A decision thread posted a week *after* the PR that implemented it is still
+    corroborated by that PR.
+11. A pool of `weak` candidates does not prevent a `heading` candidate from
+    being extracted in the same pass.
+12. `--rebuild` clears `vetoed` rows and re-mines; a candidate vetoed before the
+    rebuild is re-evaluated after it.
