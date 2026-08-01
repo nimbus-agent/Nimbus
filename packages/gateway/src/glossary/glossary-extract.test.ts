@@ -743,6 +743,33 @@ test("a rebuild restores authored terms from config", async () => {
   expect(summary.manualAdded).toBe(1);
 });
 
+test("a rebuild with an unreadable config and existing authored rows refuses to truncate", async () => {
+  // No `configDir` => `readManualConfig` returns `{ loaded: false }`.
+  // `applyManualTerms`'s own `loaded:false` fail-safe only protects a pass
+  // that never truncates (`runGlossaryPass`); `rebuildGlossary` truncates
+  // FIRST and then calls it, so without this guard the row below would be
+  // hard-deleted in the same committed transaction, with nothing left to
+  // restore it on a later pass.
+  upsertManualTerm(db, {
+    termKey: "cdr",
+    displayTerm: "CDR",
+    definition: "Authored.",
+    synonyms: [],
+    nearMisses: [],
+    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    score: 0,
+    nowMs: 1,
+  });
+
+  await expect(rebuildGlossary(db, PASS_OPTS)).rejects.toThrow(
+    "cannot rebuild: nimbus.toml is unreadable and authored terms would be lost",
+  );
+
+  // Not merely present — untouched by the truncation the guard prevented.
+  expect(getTerm(db, "cdr")?.definitionSource).toBe("manual");
+  expect(getTerm(db, "cdr")?.definition).toBe("Authored.");
+});
+
 test("a rebuild whose pre-pass fails does not commit the truncation", async () => {
   // This is the ATOMICITY assertion, and it is the only honest way to make
   // one here. Sampling a second connection before and after `rebuildGlossary`

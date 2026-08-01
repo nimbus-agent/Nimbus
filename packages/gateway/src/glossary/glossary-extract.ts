@@ -16,6 +16,7 @@ import {
   getTerm,
   listAllKeys,
   listConsolidated,
+  listManualKeys,
   markConsolidated,
   markVetoed,
   readPassState,
@@ -448,17 +449,26 @@ export async function runGlossaryPass(
 /**
  * Wipes every glossary row and projection, then re-mines from watermark zero.
  *
- * The unproject + truncate + authoring pre-pass run in ONE transaction, so the
- * state in which an authored term is absent is never committed and therefore
- * unobservable to any reader. Correctness comes from the pre-pass being
- * unconditional and model-free — authored rows need no consolidation, so they
- * never wait on the bounded per-pass budget.
+ * When the config IS readable, the unproject + truncate + authoring pre-pass
+ * run in ONE transaction, so the state in which an authored term is absent is
+ * never committed and therefore unobservable to any reader. Correctness comes
+ * from the pre-pass being unconditional and model-free — authored rows need
+ * no consolidation, so they never wait on the bounded per-pass budget.
+ *
+ * When the config is NOT readable and authored rows exist, that guarantee is
+ * unavailable — there is nothing to re-read from — so this throws instead of
+ * truncating. `applyManualTerms`'s `loaded:false` fail-safe only protects
+ * `runGlossaryPass`, which never truncates; it cannot restore a row this
+ * function already deleted.
  */
 export async function rebuildGlossary(
   db: Database,
   opts: GlossaryPassOptions,
 ): Promise<GlossaryPassSummary> {
   const cfg = readManualConfig(opts);
+  if (!cfg.loaded && listManualKeys(db).length > 0) {
+    throw new Error("cannot rebuild: nimbus.toml is unreadable and authored terms would be lost");
+  }
   let restored: ReturnType<typeof applyManualTerms> = { added: 0, removed: 0, skipped: [] };
   db.transaction(() => {
     for (const key of listAllKeys(db)) unprojectTerm(db, key);
