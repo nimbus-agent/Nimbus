@@ -154,6 +154,9 @@ jobs:
       - name: Build the apt repo (reprepro) + the yum repo (createrepo_c)
         env:
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
+          # Optional override for the retention count; unset falls back to
+          # DEFAULT_RETAINED_RELEASES in scripts/release/linux-repo-config.ts.
+          NIMBUS_LINUX_REPO_RETAIN: ${{ vars.NIMBUS_LINUX_REPO_RETAIN }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -165,13 +168,32 @@ jobs:
           cp staging/apt/conf/distributions repo/apt/conf/distributions
           # Drop any prior version first so re-running a tag (or bumping) never
           # trips reprepro's "already registered" guard. Tolerate "not present".
+          # This is also apt's retention: reprepro garbage-collects the pool file
+          # the removal left unreferenced, so apt/ holds only the newest release.
           reprepro -b repo/apt remove stable nimbus-headless 2>/dev/null || true
           reprepro -b repo/apt includedeb stable "$DEB"
 
           # --- yum (createrepo_c) ---
+          # ORDER IS LOAD-BEARING, and these three commands must stay in this
+          # order inside THIS step (`set -e` aborts the whole publish if any of
+          # them fails, before the later commit/push step can run):
+          #   1. stage the new RPM
+          #   2. prune old RPMs        <- deletes packages only, never metadata
+          #   3. createrepo_c          <- (re)builds metadata from what is left
+          # Generating metadata last is what makes the two halves of the danger
+          # impossible: the repodata is derived from the post-prune directory, so
+          # it cannot reference a deleted RPM, and nothing deletes anything after
+          # it is written, so no RPM it references can vanish. A prune that left
+          # stale repodata behind would break `yum install` outright — worse than
+          # the oversized channel this prune exists to fix.
           mkdir -p repo/yum
           cp "$RPM" repo/yum/
-          createrepo_c --update repo/yum
+          bun scripts/release/linux-repo-config.ts --prune-yum repo/yum --version "$VERSION"
+          # Full regeneration, NOT `--update`: `--update` treats the existing
+          # repodata as a cache, and after a delete we want the metadata built
+          # from nothing but the current directory listing. Re-checksumming a
+          # handful of retained RPMs costs seconds.
+          createrepo_c repo/yum
 
       - name: Sign apt Release + yum repomd (loopback gpg)
         env:

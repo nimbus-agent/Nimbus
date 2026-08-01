@@ -69,6 +69,11 @@ sudo dnf install nimbus-headless
 `apt upgrade` / `dnf upgrade` then keep Nimbus current. (Uses the modern `signed-by`
 keyring form — not the deprecated `apt-key add`.)
 
+Both channels are pruned on publish: apt carries the newest release, yum the newest
+few, so `dnf downgrade nimbus-headless` reaches back only a release or two. Older
+versions stay available on the [releases page](https://github.com/nimbus-agent/Nimbus/releases)
+as direct `.deb`/`.rpm` downloads.
+
 ## Direct downloads
 
 Every artifact — the native installers above, the raw `nimbus` / `nimbus-gateway`
