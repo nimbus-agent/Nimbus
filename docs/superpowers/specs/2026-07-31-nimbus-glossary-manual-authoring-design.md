@@ -213,8 +213,10 @@ before `findBySynonym`, and that order is deliberate in the base design. So an a
 a mined term of the same name — the alias is simply never reached for that query. This is the right
 precedence (an exact match beats an indirect one) but it means an author who expects an alias to
 redirect an existing term gets no effect and no warning, because the collision is with the *index*,
-not with the config. Detectable only at pass time, so it is reported in the pass's skipped count
-rather than at parse time.
+not with the config. Neither the parser nor the pre-pass has anything that detects it — `buildSynonyms`
+only checks an alias against the *config's own* authored-term set, and `applyManualTerms` never
+diffs an alias against `glossary_term` — so this is not reported anywhere, at parse time or pass
+time. See §12.
 
 ### 4.2 Known limit: definitions are single-line
 
@@ -546,8 +548,15 @@ and neither does one that makes a test hang instead of assert.
 The feature reads a local config file and writes local rows, which is the same posture `[glossary]`
 already has. Stated explicitly so a later audit does not read the absence as an omission.
 
-Worth noting for completeness: authored text goes into the index but never into a model prompt.
-Consolidation is skipped entirely for manual rows, so `wrapToolOutput` / I11 is not on this path.
+Worth noting for completeness: consolidation is skipped entirely for manual rows, so no authored
+text is ever assembled into a *consolidation* prompt — that specific path is not taken. But the
+security conclusion above does not rest on authored text staying out of a model prompt altogether:
+`applyManualTerms` calls the same `projectTerm` every consolidated term goes through, which writes
+the authored definition into `item` / `item_fts` like any other indexed item. `nimbus ask` can
+retrieve it from there and feed it to the model through the ordinary `wrapToolOutput` envelope
+(I11), exactly as it would a mined term. Authored text reaches a model only through that ordinary
+retrieval path, wrapped like any indexed item — not through a special unwrapped route, which is
+what would actually require a new invariant.
 
 ## 12. Known limits and deliberate deferrals
 
@@ -568,7 +577,8 @@ Stated here rather than discovered later.
   statistics within the sweep's round-robin window rather than immediately.
 - **An alias cannot shadow a mined term of the same name** (§4.1) — exact match beats synonym, by
   design, and the collision is with the index rather than the config so it cannot be caught at
-  parse time.
+  parse time. It is not reported at pass time either — nothing diffs an alias against
+  `glossary_term` — so this is a silent no-op, not a warning.
 - **Aliases resolve only to authored terms** (§4) — aliasing a mined term would pull a mined row
   into §5's desired-state reconciliation, which is a separate decision.
 - **Removal leaves an inert tombstone.** A demoted authored term with no mined evidence sits

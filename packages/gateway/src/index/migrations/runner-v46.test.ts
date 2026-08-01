@@ -67,7 +67,7 @@ test("V46 recreates every index dropped with the old table", () => {
   db.close();
 });
 
-test("V46 is idempotent across a second migration run", () => {
+test("the runner version-gates V46 and does not re-apply it on a second run", () => {
   const db = new Database(":memory:");
   runMigrations(db);
   runMigrations(db);
