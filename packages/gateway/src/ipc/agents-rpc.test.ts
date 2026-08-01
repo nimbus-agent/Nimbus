@@ -598,3 +598,32 @@ describe("agents.ghost / conflicts / huddle dispatch", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("dispatchAgentsRpc — agents.decisions", () => {
+  test("agents.decisions rejects a non-integer sinceMs", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.decisions", { sinceMs: 1.5 }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("sinceMs"),
+    });
+  });
+
+  test("agents.decisions rejects minConfidence outside 0..1", async () => {
+    await expect(
+      dispatchAgentsRpc("agents.decisions", { minConfidence: 2 }, makeCtx(freshDb())),
+    ).rejects.toMatchObject({
+      rpcCode: -32602,
+      message: expect.stringContaining("minConfidence"),
+    });
+  });
+
+  test("agents.decisions returns a sessionId for valid params", async () => {
+    const out = await dispatchAgentsRpc("agents.decisions", { sinceMs: 0 }, makeCtx(freshDb()));
+    expect(out.kind).toBe("hit");
+    if (out.kind === "hit") {
+      const v = out.value as { sessionId: string };
+      expect(v.sessionId).toMatch(/^decisions/);
+    }
+  });
+});
