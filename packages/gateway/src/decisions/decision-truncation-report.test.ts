@@ -46,7 +46,55 @@ test("candidate loading reports how many source bodies were truncated", () => {
 
   const loaded = loadDecisionCandidates(d, { sinceMs: 0 });
 
-  expect(loaded.rows).toHaveLength(2);
+  expect(loaded.total).toBe(2);
+  expect(loaded.truncatedSources).toBe(1);
+  d.close();
+});
+
+// The aggregate query must agree with a hand-counted mixed fixture: 2
+// complete, 1 truncated, 1 out of window (excluded from both counts).
+test("the SQL aggregate matches a hand-counted mixed fixture of complete and truncated sources", () => {
+  const d = freshDb();
+  upsertIndexedItem(d, {
+    service: "slack",
+    type: "message",
+    externalId: "complete-1",
+    title: "t1",
+    body: "we decided to move billing to Postgres because the pool kept exhausting",
+    modifiedAt: 10,
+    syncedAt: 1,
+  });
+  upsertIndexedItem(d, {
+    service: "slack",
+    type: "message",
+    externalId: "complete-2",
+    title: "t2",
+    body: "we agreed to keep Redis for session storage going forward",
+    modifiedAt: 20,
+    syncedAt: 1,
+  });
+  upsertIndexedItem(d, {
+    service: "slack",
+    type: "message",
+    externalId: "truncated-1",
+    title: "t3",
+    bodyPreview: "we decided to shard instead; alternatives were read replicas",
+    modifiedAt: 30,
+    syncedAt: 1,
+  });
+  // Out of window — must not be counted in either total or truncatedSources.
+  upsertIndexedItem(d, {
+    service: "slack",
+    type: "message",
+    externalId: "old-truncated",
+    title: "t4",
+    bodyPreview: "we decided long ago",
+    modifiedAt: 5,
+    syncedAt: 1,
+  });
+
+  const loaded = loadDecisionCandidates(d, { sinceMs: 10 });
+  expect(loaded.total).toBe(3);
   expect(loaded.truncatedSources).toBe(1);
   d.close();
 });
@@ -63,7 +111,7 @@ test("an item outside the source-type allowlist is not counted as a candidate", 
     syncedAt: 1,
   });
   const loaded = loadDecisionCandidates(d, { sinceMs: 0 });
-  expect(loaded.rows).toHaveLength(0);
+  expect(loaded.total).toBe(0);
   expect(loaded.truncatedSources).toBe(0);
 });
 
@@ -79,7 +127,7 @@ test("an item older than sinceMs is excluded from the candidate load", () => {
     syncedAt: 1,
   });
   const loaded = loadDecisionCandidates(d, { sinceMs: 200 });
-  expect(loaded.rows).toHaveLength(0);
+  expect(loaded.total).toBe(0);
 });
 
 // Guards the hidden-clamp pattern this feature hit twice already (Jira,

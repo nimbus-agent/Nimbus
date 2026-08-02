@@ -190,7 +190,7 @@ export async function runGlossary(
   // glossary has no `--since`, so this covers the whole corpus.
   const candidates = loadGlossaryCandidates(ctx.db, { sinceMs: 0 });
   const truncation = {
-    totalSources: candidates.rows.length,
+    totalSources: candidates.total,
     truncatedSources: candidates.truncatedSources,
   };
 

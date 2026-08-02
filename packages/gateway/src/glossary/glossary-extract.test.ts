@@ -852,7 +852,53 @@ test("loadGlossaryCandidates reports how many source bodies were truncated", () 
   });
 
   const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
-  expect(loaded.rows).toHaveLength(2);
+  expect(loaded.total).toBe(2);
+  expect(loaded.truncatedSources).toBe(1);
+});
+
+// The aggregate query must agree with a hand-counted mixed fixture: 2
+// complete, 1 truncated, 1 out of window (excluded from both counts).
+test("the SQL aggregate matches a hand-counted mixed fixture of complete and truncated sources", () => {
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "complete-1",
+    title: "t1",
+    body: "the CDR pipeline runs nightly",
+    modifiedAt: 10,
+    syncedAt: 1,
+  });
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "complete-2",
+    title: "t2",
+    body: "the CDR pipeline is monitored",
+    modifiedAt: 20,
+    syncedAt: 1,
+  });
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "truncated-1",
+    title: "t3",
+    bodyPreview: "the CDR pipeline failed last night",
+    modifiedAt: 30,
+    syncedAt: 1,
+  });
+  // Out of window — must not be counted in either total or truncatedSources.
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "old-truncated",
+    title: "t4",
+    bodyPreview: "the CDR pipeline was renamed long ago",
+    modifiedAt: 5,
+    syncedAt: 1,
+  });
+
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 10 });
+  expect(loaded.total).toBe(3);
   expect(loaded.truncatedSources).toBe(1);
 });
 
@@ -867,7 +913,7 @@ test("an item outside the glossary source-type allowlist is not a candidate", ()
     syncedAt: 1,
   });
   const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
-  expect(loaded.rows).toHaveLength(0);
+  expect(loaded.total).toBe(0);
 });
 
 // Guards the hidden-clamp pattern this feature hit twice already (Jira,

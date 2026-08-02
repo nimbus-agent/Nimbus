@@ -180,36 +180,38 @@ function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: st
 }
 
 /**
- * A read-only candidate load over the FULL glossary-source domain since
+ * A read-only candidate COUNT over the FULL glossary-source domain since
  * `sinceMs` — not the incremental delta `scanDelta` drains for mining. This
  * backs the brief's honesty count: "N source(s) considered, M truncated" (see
  * `agents/glossary.ts`), where "truncated" means `body_complete = 0` — either
  * a connector that has not declared a full body yet, or one that did but the
  * source exceeded its type's cap.
+ *
+ * Projects a SQL aggregate rather than materialising rows: the caller only
+ * ever needs the two counts, and a row-returning query would pull every
+ * matching item's full `body` (up to 16 KiB each, unbounded) across the
+ * `AgentCoordinator` JSON-stringify boundary just to discard it —
+ * particularly costly here since `agents/glossary.ts` calls this
+ * unconditionally on every invocation, list mode and single-term lookup
+ * alike. Uses the SAME `glossarySourceFilter()` predicate as `scanDelta` so
+ * the counted population always matches the mined population — that
+ * equivalence is what makes the reported number honest, so do not inline or
+ * re-derive it.
  */
-export type GlossaryCandidateRow = {
-  id: string;
-  title: string;
-  body: string | null;
-  body_complete: number;
-  modified_at: number;
-};
-
 export function loadGlossaryCandidates(
   db: Database,
   opts: { sinceMs: number },
-): { rows: GlossaryCandidateRow[]; truncatedSources: number } {
+): { total: number; truncatedSources: number } {
   const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
-  const rows = db
+  const row = db
     .query(
-      `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN i.body_complete = 0 THEN 1 ELSE 0 END), 0) AS truncated
          FROM item i
-        WHERE ${sourceFilter} AND i.modified_at >= ?
-        ORDER BY i.modified_at DESC, i.id ASC`,
+        WHERE ${sourceFilter} AND i.modified_at >= ?`,
     )
-    .all(...sourceKeys, opts.sinceMs) as GlossaryCandidateRow[];
-  const truncatedSources = rows.reduce((n, r) => n + (r.body_complete === 0 ? 1 : 0), 0);
-  return { rows, truncatedSources };
+    .get(...sourceKeys, opts.sinceMs) as { total: number; truncated: number } | null;
+  return { total: row?.total ?? 0, truncatedSources: row?.truncated ?? 0 };
 }
 
 /**

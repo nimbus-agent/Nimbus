@@ -220,11 +220,11 @@ export async function runDecisions(
   const rows = decode<DecisionRecord[]>(results[0]?.text, []);
   const counts = decode(results[1]?.text, { total: 0, pending: 0, extracted: 0, vetoed: 0 });
   const passState = decode<{ lastPassAt: number | null }>(results[2]?.text, { lastPassAt: null });
-  const candidates = decode<{ rows: unknown[]; truncatedSources: number }>(results[3]?.text, {
-    rows: [],
+  const candidates = decode<{ total: number; truncatedSources: number }>(results[3]?.text, {
+    total: 0,
     truncatedSources: 0,
   });
-  const totalSources = candidates.rows.length;
+  const totalSources = candidates.total;
   const truncatedSources = candidates.truncatedSources;
 
   let serviceUnmatched = 0;
