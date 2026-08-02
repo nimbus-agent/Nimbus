@@ -5,6 +5,7 @@ import { dbRun } from "../db/write.ts";
 import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
+import { BODY_MAX_DEFAULT, BODY_PREVIEW_MAX, bodyCapForItemType, clampBody } from "./body-caps.ts";
 import { RAW_META_MAX_BYTES } from "./constants.ts";
 import { itemPrimaryKey } from "./item-key.ts";
 
@@ -16,7 +17,9 @@ export type IndexedItemRow = {
   type: string;
   external_id: string;
   title: string;
+  body: string | null;
   body_preview: string | null;
+  body_complete: number;
   url: string | null;
   canonical_url: string | null;
   modified_at: number;
@@ -34,9 +37,23 @@ export function itemExternalIdFromInput(service: string, idOrExternal: string): 
   return idOrExternal;
 }
 
-function clipPreview(text: string): string {
-  return text.length <= 512 ? text : text.slice(0, 512);
-}
+/**
+ * A caller supplies EITHER a legacy `bodyPreview` (clamped to 512, never
+ * claims completeness) OR a declared-full `body` (clamped to the type's cap).
+ * Supplying both is a type error: they would be two sources of truth for one
+ * column pair.
+ *
+ * Do NOT relax this to `{ bodyPreview?: string; body?: string }` with a runtime
+ * check. The union was probed under `tsc --strict` against every real call
+ * shape — plain literal, object spread, the `{ ...row, url }` re-spread in
+ * `upsertNimbusItemIntoItemTable`, the `Parameters<typeof upsertIndexedItem>[1]`
+ * wrapper, and a `string | undefined` value — and all compile clean, while
+ * supplying both fields fails with TS2345. Relaxing it would trade a
+ * compile-time guarantee for a runtime one and gain nothing.
+ */
+export type IndexedItemBodyInput =
+  | { bodyPreview?: string; body?: undefined }
+  | { body: string; bodyPreview?: undefined };
 
 export function upsertIndexedItem(
   db: Database,
@@ -45,7 +62,6 @@ export function upsertIndexedItem(
     type: string;
     externalId: string;
     title: string;
-    bodyPreview?: string;
     url?: string | null;
     canonicalUrl?: string | null;
     modifiedAt: number;
@@ -53,7 +69,7 @@ export function upsertIndexedItem(
     metadata?: Record<string, unknown>;
     pinned?: boolean;
     syncedAt: number;
-  },
+  } & IndexedItemBodyInput,
   resolveServiceId?: ResolveServiceId,
 ): void {
   const id = itemPrimaryKey(row.service, row.externalId);
@@ -61,19 +77,26 @@ export function upsertIndexedItem(
   if (Buffer.byteLength(meta, "utf8") > RAW_META_MAX_BYTES) {
     throw new Error(`metadata for item "${id}" exceeds 64 KB limit`);
   }
-  const preview = clipPreview(row.bodyPreview ?? row.title);
+  const declaredFull = row.body !== undefined;
+  const cap = declaredFull ? bodyCapForItemType(row.service, row.type) : BODY_MAX_DEFAULT;
+  const raw = row.body ?? row.bodyPreview ?? row.title;
+  const body = clampBody(raw, cap);
+  const preview = clampBody(body, BODY_PREVIEW_MAX);
+  const bodyComplete = declaredFull && raw.length <= cap ? 1 : 0;
   dbRun(
     db,
     `INSERT INTO item (
-      id, service, type, external_id, title, body_preview, url, canonical_url,
-      modified_at, author_id, metadata, synced_at, pinned
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, service, type, external_id, title, body, body_preview, body_complete,
+      url, canonical_url, modified_at, author_id, metadata, synced_at, pinned
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       service = excluded.service,
       type = excluded.type,
       external_id = excluded.external_id,
       title = excluded.title,
+      body = excluded.body,
       body_preview = excluded.body_preview,
+      body_complete = excluded.body_complete,
       url = excluded.url,
       canonical_url = excluded.canonical_url,
       modified_at = excluded.modified_at,
@@ -87,7 +110,9 @@ export function upsertIndexedItem(
       row.type,
       row.externalId,
       row.title,
+      body,
       preview,
+      bodyComplete,
       row.url ?? null,
       row.canonicalUrl ?? null,
       row.modifiedAt,
@@ -104,6 +129,8 @@ export function upsertIndexedItem(
       service: row.service,
       type: row.type,
       title: row.title,
+      // Deliberately the 512-char preview, not `body`. Widening the graph
+      // populator's input is a separate change with its own measurement.
       bodyPreview: preview,
       authorId: row.authorId ?? null,
       metadata: row.metadata ?? {},
