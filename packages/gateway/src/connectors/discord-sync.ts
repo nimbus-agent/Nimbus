@@ -180,11 +180,12 @@ function upsertOneDiscordMessageIfValid(
     return false;
   }
   const authorSnowflake = stringField(author, "id");
-  const bodyPreview = content.length > 512 ? content.slice(0, 512) : content;
+  const full = content;
+  const preview = full.length > 512 ? full.slice(0, 512) : full;
   const titleBase =
-    bodyPreview.trim() === ""
+    preview.trim() === ""
       ? displayNameFromDiscordAuthor(author)
-      : bodyPreview.replaceAll(/\s+/g, " ").slice(0, 80);
+      : preview.replaceAll(/\s+/g, " ").slice(0, 80);
   const title = titleBase.length > 512 ? titleBase.slice(0, 512) : titleBase;
   const url = `https://discord.com/channels/${guildId}/${channelId}/${mid}`;
   const authorId =
@@ -199,7 +200,7 @@ function upsertOneDiscordMessageIfValid(
     type: "message",
     externalId: `${channelId}:${mid}`,
     title,
-    bodyPreview,
+    body: full,
     url,
     canonicalUrl: url,
     modifiedAt: now,

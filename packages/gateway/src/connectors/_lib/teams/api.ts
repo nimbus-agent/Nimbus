@@ -1,3 +1,4 @@
+import { BODY_MAX_PROSE } from "../../../index/body-caps.ts";
 import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
 import { resolvePersonForSync } from "../../../people/linker.ts";
 import { plainTextPreviewFromHtml } from "../../../string/html-plain-text.ts";
@@ -51,7 +52,8 @@ export function upsertChannelMessage(
   }
   const externalId = `${teamId}:${channelId}:${id}`;
   const content = m.body !== undefined && typeof m.body.content === "string" ? m.body.content : "";
-  const preview = plainTextPreviewFromHtml(content, 512);
+  const full = plainTextPreviewFromHtml(content, BODY_MAX_PROSE);
+  const preview = full.slice(0, 512);
   let fromName: string | null = null;
   const displayName = m.from?.user?.displayName;
   if (displayName !== undefined && displayName !== "") {
@@ -84,7 +86,7 @@ export function upsertChannelMessage(
     type: "message",
     externalId,
     title,
-    bodyPreview: preview,
+    body: full,
     url: null,
     canonicalUrl: null,
     modifiedAt: modified,
