@@ -23,6 +23,9 @@ Usage:
                                    (--depth is accepted but reserved for future recursive traversal)
   nimbus index reembed --model <id> [--item-type <key>] [--service <name>] [--limit N] [--batch-size N] [--dry-run] [--yes] [--json]
                             Selective re-embedding to a target model; required --yes for non-dry runs
+  nimbus index rebody [--service <name>] [--type <t>] [--limit N] [--dry-run] [--yes] [--json]
+                            Re-fetch full item bodies for services left with truncated legacy text;
+                            real outbound API traffic (can re-walk a WHOLE account); required --yes for non-dry runs
   nimbus catchup [--since 3d] [--json] [--service <id>]   Personalised retrospective digest weighted by your involvement
   nimbus glossary [<term>] [--limit N] [--json]   The team's own terminology, mined from the local index
   nimbus llm status [--json]   Show selected LLM provider/model per task type and availability
