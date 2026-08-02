@@ -10,6 +10,7 @@ export { runConflictsCli } from "./conflicts.ts";
 export { runConnector } from "./connector.ts";
 export { runData } from "./data.ts";
 export { runDb } from "./db.ts";
+export { runDecisionsCommand } from "./decisions.ts";
 export { runDeployCli } from "./deploy.ts";
 export { runDiag } from "./diag.ts";
 export { runDoctor } from "./doctor.ts";

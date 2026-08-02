@@ -1,8 +1,8 @@
 export function parseDurationToMs(raw: string): number {
   const s = raw.trim();
-  const m = /^(\d+)\s*(ms|s|m|h)$/i.exec(s);
+  const m = /^(\d+)\s*(ms|s|m|h|d|w)$/i.exec(s);
   if (m === null) {
-    throw new Error(`Invalid duration "${raw}" (use e.g. 5m, 1h, 30s)`);
+    throw new Error(`Invalid duration "${raw}" (use e.g. 5m, 1h, 90d)`);
   }
   const n = Number(m[1]);
   if (!Number.isFinite(n) || n < 0) {
@@ -18,6 +18,10 @@ export function parseDurationToMs(raw: string): number {
       return Math.floor(n * 60 * 1000);
     case "h":
       return Math.floor(n * 60 * 60 * 1000);
+    case "d":
+      return Math.floor(n * 24 * 60 * 60 * 1000);
+    case "w":
+      return Math.floor(n * 7 * 24 * 60 * 60 * 1000);
     default:
       throw new Error(`Invalid duration "${raw}"`);
   }

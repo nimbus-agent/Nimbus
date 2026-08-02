@@ -60,10 +60,20 @@ describe("parseDurationToMs", () => {
     expect(() => parseDurationToMs("-5s")).toThrow(/Invalid duration/);
   });
 
-  test("rejects unsupported units d and w", () => {
-    // 'd' and 'w' are not in the regex alternation
-    expect(() => parseDurationToMs("7d")).toThrow(/Invalid duration/);
-    expect(() => parseDurationToMs("2w")).toThrow(/Invalid duration/);
+  test("accepts day and week units", () => {
+    expect(parseDurationToMs("90d")).toBe(90 * 24 * 60 * 60 * 1000);
+    expect(parseDurationToMs("2w")).toBe(2 * 7 * 24 * 60 * 60 * 1000);
+  });
+
+  test("still rejects an unknown unit", () => {
+    expect(() => parseDurationToMs("90x")).toThrow();
+  });
+
+  test("pre-existing units are unchanged", () => {
+    expect(parseDurationToMs("30s")).toBe(30_000);
+    expect(parseDurationToMs("5m")).toBe(300_000);
+    expect(parseDurationToMs("1h")).toBe(3_600_000);
+    expect(parseDurationToMs("250ms")).toBe(250);
   });
 
   test("rejects input with only whitespace", () => {
