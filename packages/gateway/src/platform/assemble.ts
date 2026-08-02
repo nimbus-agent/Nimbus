@@ -499,7 +499,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             nowMs: Date.now(),
             useLlm: decisionsCfg.useLlm,
             maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
-            minConfidence: decisionsCfg.minConfidence,
+            // `decisionsCfg.minConfidence` is deliberately NOT passed: it is a
+            // read-path floor (`agents/decisions.ts`), not an extraction filter.
             retryCooldownMs: decisionsCfg.retryCooldownMs,
             ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
           };

@@ -4,6 +4,11 @@ import type { GapNote } from "./findings.ts";
 
 /** Request params — client-local, like every other agent's input type. */
 export interface DecisionsInput {
+  /**
+   * A DURATION in milliseconds looking back from now (`--since 30d` →
+   * `2_592_000_000`), matching every other agent's `sinceMs`. NOT an absolute
+   * epoch cutoff — the brief's `query.sinceMs` is the absolute one.
+   */
   readonly sinceMs?: number;
   readonly service?: string;
   readonly minConfidence?: number;
@@ -41,6 +46,11 @@ export interface DecisionsBrief {
   readonly latencyMs: number;
   readonly gaps: GapNote[];
   query: {
+    /**
+     * The resolved ABSOLUTE cutoff (`generatedAt - <requested duration>`), not
+     * the duration the caller sent. `renderDecisions` subtracts it from
+     * `generatedAt` to print the window in days.
+     */
     readonly sinceMs: number;
     readonly service: string | null;
     readonly minConfidence: number;

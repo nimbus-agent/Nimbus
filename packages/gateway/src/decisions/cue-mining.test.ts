@@ -39,6 +39,17 @@ test("emits one hit per sentence, not one per cue occurrence", () => {
   expect(mineCues("we decided we decided to move on")).toHaveLength(1);
 });
 
+// The joiner must be a character neither field can contain. Item ids are
+// `${service}:${externalId}` with a connector-supplied `externalId`, so a space
+// joiner made `("slack:a b", "c")` and `("slack:a", "b c")` hash identically —
+// two different decisions sharing one row id, one silently overwriting the
+// other.
+test("row id does not collide when the item id contains a space", () => {
+  const left = decisionRowId("slack:a b", "c");
+  const right = decisionRowId("slack:a", "b c");
+  expect(left).not.toBe(right);
+});
+
 test("row id is stable for the same normalized sentence and differs across items", () => {
   const a = decisionRowId("slack:1", normalizeSentence("We decided to ship."));
   const b = decisionRowId("slack:1", normalizeSentence("  we DECIDED to ship  "));

@@ -23,6 +23,15 @@ import type { DecisionRecord } from "./decision-types.ts";
 const SCAN_BATCH_LIMIT = 5000;
 
 /**
+ * Per-pass work budget. `maxLlmCalls` reaches here from config/IPC, so a
+ * non-finite or fractional value must be normalised BEFORE it becomes a SQL
+ * `LIMIT` — both branches of `runDecisionPass` use this, not just the LLM one.
+ */
+function passBudget(maxLlmCalls: number): number {
+  return Number.isFinite(maxLlmCalls) ? Math.max(0, Math.trunc(maxLlmCalls)) : 0;
+}
+
+/**
  * A CAP on upgrade slots per pass, mirroring `glossary`'s UPGRADE_RESERVE —
  * not a fixed carve-out of the budget. `runDecisionPass` over-fetches both the
  * pending and snippet-upgrade queues to the full per-pass budget, then hands
@@ -38,7 +47,10 @@ export interface DecisionPassOptions {
   readonly nowMs: number;
   readonly useLlm: boolean;
   readonly maxLlmCalls: number;
-  readonly minConfidence: number;
+  // No `minConfidence` here on purpose. Extraction stores every candidate with
+  // its computed score and filters nothing; `[decisions].min_confidence` is a
+  // READ-path floor applied in `agents/decisions.ts`, so changing it re-filters
+  // an existing store instead of requiring a `--rebuild`.
   readonly retryCooldownMs: number;
   readonly llm?: DecisionLlm;
 }
@@ -289,9 +301,7 @@ export async function runDecisionPass(
     // reserve computed before the pending backlog is known can starve
     // pending even when upgrades have nothing to do. Mirrors
     // `glossary-extract.ts`'s `selectConsolidationWork`.
-    const budget = Number.isFinite(opts.maxLlmCalls)
-      ? Math.max(0, Math.trunc(opts.maxLlmCalls))
-      : 0;
+    const budget = passBudget(opts.maxLlmCalls);
     const pendingAll = selectPendingByPriority(db, budget, cooldownBefore);
     const upgradeAll = selectSnippetUpgrades(db, budget);
 
@@ -327,9 +337,16 @@ export async function runDecisionPass(
       else failed++;
     }
   } else {
-    for (const row of selectPendingByPriority(db, opts.maxLlmCalls, cooldownBefore)) {
+    // `use_llm = false` (or no model wired). Every row here takes the snippet
+    // fallback, so each one is BOTH an extraction and a no-model extraction —
+    // the same both-counters convention the pending queue uses above. Counting
+    // only `extracted` produced the exact outcome `noModel` exists to prevent:
+    // `12 extracted, 0 upgraded, 0 no model`, from which a user concludes the
+    // LLM ran and never learns every statement is a verbatim snippet.
+    for (const row of selectPendingByPriority(db, passBudget(opts.maxLlmCalls), cooldownBefore)) {
       extractAsSnippet(db, row, opts);
       extracted++;
+      noModel++;
     }
   }
 

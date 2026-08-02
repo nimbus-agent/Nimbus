@@ -37,7 +37,6 @@ const OPTS = {
   nowMs: 10_000,
   useLlm: true,
   maxLlmCalls: 25,
-  minConfidence: 0,
   retryCooldownMs: 1_000,
 };
 
@@ -100,6 +99,34 @@ test("with no LLM the pass still produces snippet-sourced rows", async () => {
   expect(summary.extracted).toBe(1);
   const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
   expect(row?.extractionSource).toBe("snippet");
+});
+
+// `use_llm = false` reported `0 no model`, so `--refresh` printed
+// "12 extracted, 0 upgraded, 0 no model" — the exact reading (`the LLM ran`)
+// the counter exists to prevent. Every row on this branch IS a no-model
+// extraction.
+test("use_llm = false counts every row as noModel, not just extracted", async () => {
+  for (let i = 0; i < 3; i++) {
+    seed(`s${i}`, "slack", "message", "t", `We decided on thing ${i}.`, 5_000 + i);
+  }
+  const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
+  expect(summary.extracted).toBe(3);
+  expect(summary.noModel).toBe(3);
+  expect(summary.upgraded).toBe(0);
+  expect(summary.failed).toBe(0);
+});
+
+// The LLM branch normalises `maxLlmCalls` before it becomes a SQL LIMIT; the
+// snippet branch passed it raw, so a non-finite value reached `LIMIT ?`.
+test("use_llm = false normalises a non-finite maxLlmCalls instead of passing it to SQL", async () => {
+  seed("s1", "slack", "message", "t", "We decided on a thing.", 5_000);
+  const summary = await runDecisionPass(db, {
+    ...OPTS,
+    useLlm: false,
+    maxLlmCalls: Number.POSITIVE_INFINITY,
+  });
+  expect(summary.extracted).toBe(0);
+  expect(summary.noModel).toBe(0);
 });
 
 test("a later pass with an LLM upgrades a snippet row to llm-sourced", async () => {

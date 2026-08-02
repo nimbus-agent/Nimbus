@@ -80,3 +80,102 @@ test("explainConfidence returns one labelled row per term", () => {
   });
   expect(rows.map((r) => r.term)).toEqual(["cue", "corroboration", "authority", "completeness"]);
 });
+
+/**
+ * `--explain` prints `explainConfidence`'s four terms beside the score that
+ * `computeConfidence` produced. The two are separate code paths — the explainer
+ * sums UNCLAMPED, the scorer clamps — and they agree today only because the
+ * term ranges happen to bound the sum to [0.1225, 1.0]. Nothing enforced that,
+ * so a future weight or range change could ship a breakdown that contradicts
+ * the number printed next to it. This is that enforcement.
+ */
+const CONFIDENCE_FIXTURES: ReadonlyArray<{
+  readonly name: string;
+  readonly input: Parameters<typeof computeConfidence>[0];
+}> = [
+  {
+    name: "fully-evidenced heading on a page",
+    input: {
+      tier: "heading",
+      serviceType: "confluence:page",
+      evidenceKinds: ["pr", "migration"],
+      hasRationale: true,
+      hasAlternatives: true,
+    },
+  },
+  {
+    name: "weak chat cue, no evidence",
+    input: {
+      tier: "weak",
+      serviceType: "slack:message",
+      evidenceKinds: [],
+      hasRationale: false,
+      hasAlternatives: false,
+    },
+  },
+  {
+    name: "explicit ticket cue with PR corroboration",
+    input: {
+      tier: "explicit",
+      serviceType: "jira:issue",
+      evidenceKinds: ["pr"],
+      hasRationale: true,
+      hasAlternatives: false,
+    },
+  },
+  {
+    name: "every evidence kind at once",
+    input: {
+      tier: "heading",
+      serviceType: "notion:page",
+      evidenceKinds: ["source", "pr", "commit", "migration", "iac", "adr"],
+      hasRationale: true,
+      hasAlternatives: true,
+    },
+  },
+  {
+    name: "source-only evidence",
+    input: {
+      tier: "explicit",
+      serviceType: "slack:message",
+      evidenceKinds: ["source"],
+      hasRationale: false,
+      hasAlternatives: false,
+    },
+  },
+  {
+    name: "the reachable ceiling — PR/commit corroboration only",
+    input: {
+      tier: "heading",
+      serviceType: "notion:page",
+      evidenceKinds: ["pr", "commit"],
+      hasRationale: true,
+      hasAlternatives: true,
+    },
+  },
+];
+
+test("explainConfidence terms sum to exactly computeConfidence", () => {
+  // Named tuples, not bare numbers, so a failure says WHICH fixture diverged.
+  const rows = CONFIDENCE_FIXTURES.map(({ name, input }) => ({
+    name,
+    sum: explainConfidence(input).reduce((acc, t) => acc + t.value, 0),
+  }));
+  const expected = CONFIDENCE_FIXTURES.map(({ name, input }) => ({
+    name,
+    sum: computeConfidence(input),
+  }));
+  expect(rows).toEqual(expected);
+});
+
+// The ceiling the brief states as a standing honesty note (agents/decisions.ts).
+test("the reachable confidence ceiling is 0.86, not 1.0", () => {
+  const best = computeConfidence({
+    tier: "heading",
+    serviceType: "notion:page",
+    evidenceKinds: ["pr", "commit", "adr", "source"],
+    hasRationale: true,
+    hasAlternatives: true,
+  });
+  expect(best).toBeCloseTo(0.86, 5);
+});

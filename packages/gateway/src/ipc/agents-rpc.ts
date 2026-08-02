@@ -16,7 +16,10 @@ import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitWhyBrief } from "../agents/why.ts";
 import { runWhyPeek } from "../agents/why-peek.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
-import { loadNimbusUserFromConfigDir } from "../config/nimbus-toml.ts";
+import {
+  loadNimbusDecisionsFromConfigDir,
+  loadNimbusUserFromConfigDir,
+} from "../config/nimbus-toml.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -508,16 +511,31 @@ function requireDecisionsParams(params: unknown): DecisionsInput {
   };
 }
 
+/**
+ * `[decisions].min_confidence` as the read-path floor a caller gets when it
+ * sends no `minConfidence`. Read here rather than in `agents/decisions.ts` so
+ * the agent keeps no config-file dependency, and re-read per call (like the
+ * `[user]` block above) so an edit applies without a gateway restart. With no
+ * `configDir` — the test/embedded shape — the agent falls back to `0`.
+ */
+function decisionsMinConfidenceDefault(ctx: AgentsRpcContext): number | undefined {
+  return ctx.configDir === undefined
+    ? undefined
+    : loadNimbusDecisionsFromConfigDir(ctx.configDir).minConfidence;
+}
+
 async function handleDecisions(
   params: unknown,
   ctx: AgentsRpcContext,
 ): Promise<{ sessionId: string }> {
   const input = requireDecisionsParams(params);
+  const defaultMinConfidence = decisionsMinConfidenceDefault(ctx);
   return await emitDecisionsBrief(input, {
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("decisions"),
     ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(defaultMinConfidence === undefined ? {} : { defaultMinConfidence }),
   });
 }
 

@@ -15,6 +15,13 @@ export type DecisionsContext = {
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   llm?: SynthesizerLlm;
+  /**
+   * `[decisions].min_confidence` from `nimbus.toml`, resolved by the caller
+   * (`ipc/agents-rpc.ts`) so this module keeps no config-file dependency. Used
+   * ONLY when the request omits `minConfidence` — an explicit `--min-confidence`
+   * always wins, including an explicit `0`.
+   */
+  defaultMinConfidence?: number;
 };
 
 const DEFAULT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
@@ -139,6 +146,25 @@ function buildGaps(
       "document or thread is not visible to this pass. Recall is capped, not complete.",
   });
 
+  // Second standing honesty note, also unconditional: the score scale a reader
+  // sees is not the scale the pass can actually reach. The corroboration term
+  // reserves its full 1.0 for `migration`/`iac` evidence, but no connector
+  // indexes changed-file paths today, so that kind is specified and never
+  // emitted. Presenting a 0..1 score without saying 1.0 is unreachable would
+  // make every real decision look under-evidenced.
+  gaps.push({
+    category: "missing_relation_emit",
+    detail:
+      "Confidence tops out at 0.86, not 1.0. The corroboration term reserves its full score " +
+      "for migration/iac evidence — derived from a corroborating change's file paths — and no " +
+      "connector indexes changed-file paths, so that evidence is specified but never emitted. " +
+      "With only PR/commit corroboration reachable, corroboration caps at 0.6 and total " +
+      "confidence at 0.86.",
+    remediation:
+      "Read scores against a 0.86 ceiling, not a full-marks scale; a 0.86 decision is a " +
+      "maximally-corroborated one.",
+  });
+
   return gaps;
 }
 
@@ -148,8 +174,17 @@ export async function runDecisions(
 ): Promise<DecisionsBrief> {
   const start = performance.now();
   const now = Date.now();
-  const sinceMs = input.sinceMs ?? now - DEFAULT_WINDOW_MS;
-  const minConfidence = input.minConfidence ?? 0;
+  // `input.sinceMs` is a DURATION (the repo-wide convention every other agent
+  // follows — see `catchup.ts`'s `now - sinceMs` — and what the CLI's
+  // `parseDurationToMs("90d")` produces). Reading it as an absolute epoch
+  // cutoff made `--since` inert: `7d` filtered on `decided_at >= 604800000`
+  // (Jan 1970) and matched everything.
+  const windowMs = input.sinceMs ?? DEFAULT_WINDOW_MS;
+  // The store, by contrast, filters on an ABSOLUTE `decided_at` floor, and
+  // `query.sinceMs` carries that same absolute cutoff so `renderDecisions`'s
+  // `decisionsWindowDays(generatedAt, sinceMs)` recovers the window in days.
+  const cutoffMs = now - windowMs;
+  const minConfidence = input.minConfidence ?? ctx.defaultMinConfidence ?? 0;
   const limit = input.limit ?? DEFAULT_LIMIT;
   const explain = input.explain === true;
   const service = input.service ?? null;
@@ -162,7 +197,7 @@ export async function runDecisions(
   });
 
   const tasks: SubTask[] = [
-    subAgent(() => listDecisions(ctx.db, { sinceMs, minConfidence, limit })),
+    subAgent(() => listDecisions(ctx.db, { sinceMs: cutoffMs, minConfidence, limit })),
     subAgent(() => countByStatus(ctx.db)),
     subAgent(() => readPassState(ctx.db)),
   ];
@@ -206,7 +241,7 @@ export async function runDecisions(
       serviceUnmatched,
       snippetCount,
     ),
-    query: { sinceMs, service, minConfidence, explain },
+    query: { sinceMs: cutoffMs, service, minConfidence, explain },
     entries,
     stats: { ...counts, lastPassAt: passState.lastPassAt },
   };

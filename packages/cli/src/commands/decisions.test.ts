@@ -12,6 +12,12 @@ test("defaults to a 90-day window", () => {
   expect(parseDecisionsArgs([]).sinceMs).toBe(90 * 24 * 60 * 60 * 1000);
 });
 
+// The CLI half of the `--since` contract: `sinceMs` on the wire is a DURATION,
+// not an absolute cutoff. The gateway half — that this exact literal, fed to
+// `runDecisions`, keeps a 10-day-old decision and drops a 60-day-old one —
+// lives in `packages/gateway/src/agents/decisions.test.ts` as
+// `CLI_SINCE_30D_MS`, because neither package may import the other's source.
+// Change one side and the other's assertion fails.
 test("parses --since with a day unit", () => {
   expect(parseDecisionsArgs(["--since", "30d"]).sinceMs).toBe(30 * 24 * 60 * 60 * 1000);
 });

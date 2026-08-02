@@ -422,7 +422,7 @@ nimbus decisions --json
 |---|---|
 | `--since <duration>` | Only decisions decided on/after `now - <duration>` (`ms\|s\|m\|h\|d\|w`, e.g. `90d`, `2w`). Defaults to `90d`. |
 | `--service <name>` | Filter to decisions matched by either of two routes: the repository a corroborating PR/commit touches, or the source ticket's project key (Jira/Linear). Matching is on normalized tokens, not substrings — `--service bill` does not match `billing`. `--explain` labels which route fired; the brief reports how many decisions matched neither. |
-| `--min-confidence <0..1>` | Drop any decision scoring below this. No floor (`0`) when omitted. |
+| `--min-confidence <0..1>` | Drop any decision scoring below this. When omitted, the floor is `[decisions].min_confidence` (default `0.3`); an explicit value always wins, including `--min-confidence 0` for no floor at all. |
 | `--explain` | Print the four confidence terms (`cue_strength`, `corroboration`, `source_authority`, `completeness`) and the matched cue text for every decision. |
 | `--json` | Machine-readable JSON output (otherwise Markdown) |
 | `--refresh` | Run an on-demand pass now, then print the (possibly updated) brief. Fails with `ERR_DECISIONS_PASS_RUNNING` if a pass is already in flight. |
@@ -446,7 +446,7 @@ nimbus decisions --json
 |---|---|---|
 | `enabled` | `true` | Run the background extraction pass at all. Extraction opens no network surface — it reads the local index and writes local rows — so, like `[glossary]` and unlike `[briefs]`, it defaults on. |
 | `use_llm` | `true` | Extract via a local model (Ollama or llama.cpp). `false` keeps the cheap deterministic cue-mining pass but forces every candidate into snippet mode, sparing a laptop the sequential local-model calls. |
-| `min_confidence` | `0.3` | Threaded into the extraction pass's options. Not currently applied as the `nimbus decisions` read-path default — that default is `0` (no floor); use `--min-confidence` on the command itself to filter what is displayed. |
+| `min_confidence` | `0.3` | The `nimbus decisions` read-path floor when `--min-confidence` is omitted: decisions scoring below it are not listed. An explicit `--min-confidence` overrides it (pass `0` to see everything). Re-read per command, so an edit applies without restarting the gateway. Extraction itself is unfiltered — every candidate is stored with its score, so raising or lowering this changes what you see without re-running a pass. |
 | `max_llm_calls_per_pass` | `25` | LLM calls per pass (sequential), split between new pending candidates and snippet-row upgrades. |
 | `debounce_ms` | `30000` | How long a burst of connector syncs coalesces before triggering one pass. |
 | `retry_cooldown_ms` | `60000` | Cooldown before a failed (unparseable) extraction is retried, preventing a permanently-unparseable high-priority candidate from starving lower-priority ones. |

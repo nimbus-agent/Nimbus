@@ -71,6 +71,16 @@ export function mineCues(text: string): CueHit[] {
 }
 
 /**
+ * NUL joins the two id fields because neither can contain it. A space could:
+ * item ids are `${service}:${externalId}` with a connector-supplied
+ * `externalId`, so joining on one collides `("a b", "c")` with `("a", "b c")`
+ * — two different decisions sharing a row id, one silently overwriting the
+ * other. Changing this after release would re-hash every stored row and force
+ * a full `--rebuild`, so it is fixed pre-merge.
+ */
+const ID_FIELD_SEPARATOR = "\u0000";
+
+/**
  * Content-derived identity: hash(sourceItemId, normalized cue sentence).
  *
  * Deliberately NOT positional. Keying on the cue's character offset would mean
@@ -80,6 +90,7 @@ export function mineCues(text: string): CueHit[] {
  */
 export function decisionRowId(sourceItemId: string, normalizedSentence: string): string {
   const encoder = new TextEncoder();
-  const digest = bytesToHex(blake3(encoder.encode(`${sourceItemId} ${normalizedSentence}`)));
+  const joined = `${sourceItemId}${ID_FIELD_SEPARATOR}${normalizedSentence}`;
+  const digest = bytesToHex(blake3(encoder.encode(joined)));
   return digest.slice(0, 32);
 }

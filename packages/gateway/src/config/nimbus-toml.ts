@@ -1619,7 +1619,12 @@ export type NimbusDecisionsToml = {
    * to `max_llm_calls_per_pass` sequential local-model calls per sync burst.
    */
   useLlm: boolean;
-  /** Drop any candidate scoring below this. Clamped into 0..1. */
+  /**
+   * READ-path floor: `nimbus decisions` omits any stored decision scoring
+   * below this when `--min-confidence` is not given. Clamped into 0..1.
+   * Extraction stores everything regardless, so changing this re-filters an
+   * existing store rather than needing a `--rebuild`.
+   */
   minConfidence: number;
   /** LLM calls per pass (sequential). */
   maxLlmCallsPerPass: number;

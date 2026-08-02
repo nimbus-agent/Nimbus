@@ -47,9 +47,21 @@ function extracted(id: string, decidedAt: number, confidence: number): void {
 
 const ctx = () => ({ db, notify: () => {}, sessionId: "s1" });
 
-// Note: every test passes an explicit `sinceMs: 0`. The agent defaults to a
-// 90-day window, and these fixtures use small epoch timestamps (1970), so an
-// omitted `sinceMs` filters every row out and the assertions fail confusingly.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// `sinceMs` is a DURATION looking back from now, so a window wider than the
+// current epoch reaches these 1970-era fixtures. `sinceMs: 0` means "the last
+// zero milliseconds" — it excludes everything, which is exactly the ambiguity
+// that let the CLI↔agent unit mismatch survive.
+const ALL_TIME_MS = 4_000_000_000_000;
+
+/**
+ * Byte-for-byte what `packages/cli/src/commands/decisions.ts` sends for
+ * `--since 30d`: `parseDurationToMs("30d")`. The gateway cannot import CLI
+ * source (IPC-only rule), so the seam is pinned from both sides — the CLI's
+ * `parseDecisionsArgs` test asserts the same literal.
+ */
+const CLI_SINCE_30D_MS = 30 * 24 * 60 * 60 * 1000;
 
 test("returns extracted decisions newest first", async () => {
   extracted("a", 1_000, 0.9);
@@ -61,7 +73,7 @@ test("returns extracted decisions newest first", async () => {
     lastPassNew: 2,
     scannedItems: 2,
   });
-  const brief = await runDecisions({ sinceMs: 0 }, ctx());
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
   expect(brief.entries.map((e) => e.id)).toEqual(["b", "a"]);
 });
 
@@ -75,7 +87,7 @@ test("filters by minConfidence", async () => {
     lastPassNew: 2,
     scannedItems: 2,
   });
-  const brief = await runDecisions({ sinceMs: 0, minConfidence: 0.5 }, ctx());
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS, minConfidence: 0.5 }, ctx());
   expect(brief.entries.map((e) => e.id)).toEqual(["high"]);
 });
 
@@ -106,7 +118,7 @@ test("always reports the 512-character body cap", async () => {
     lastPassNew: 1,
     scannedItems: 1,
   });
-  const brief = await runDecisions({ sinceMs: 0 }, ctx());
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
   expect(brief.gaps.some((g) => g.detail.includes("512"))).toBe(true);
 });
 
@@ -120,7 +132,80 @@ test("includes the confidence breakdown only when explain is requested", async (
     scannedItems: 1,
   });
   expect(
-    (await runDecisions({ sinceMs: 0, explain: true }, ctx())).entries[0]?.explain.length,
+    (await runDecisions({ sinceMs: ALL_TIME_MS, explain: true }, ctx())).entries[0]?.explain.length,
   ).toBeGreaterThan(0);
-  expect((await runDecisions({ sinceMs: 0 }, ctx())).entries[0]?.explain).toEqual([]);
+  expect((await runDecisions({ sinceMs: ALL_TIME_MS }, ctx())).entries[0]?.explain).toEqual([]);
+});
+
+// The CLI↔agent seam, end to end. Every other test in this file pins one side
+// of it; this one feeds the CLI's own `--since 30d` value through the agent and
+// checks WHICH ROWS come back. Reading that duration as an absolute epoch
+// cutoff (the shipped bug) filtered on `decided_at >= 2_592_000_000` — 1970 —
+// so both fixtures returned and `--since` was inert.
+test("--since is a duration: a 30d window excludes a 60-day-old decision and keeps a 10-day-old one", async () => {
+  const now = Date.now();
+  extracted("old", now - 60 * DAY_MS, 0.9);
+  extracted("recent", now - 10 * DAY_MS, 0.9);
+  writePassState(db, {
+    watermarkMs: now,
+    watermarkId: "z",
+    lastPassAt: now,
+    lastPassNew: 2,
+    scannedItems: 2,
+  });
+
+  const brief = await runDecisions({ sinceMs: CLI_SINCE_30D_MS }, ctx());
+  expect(brief.entries.map((e) => e.id)).toEqual(["recent"]);
+});
+
+test("the brief's window header reports the requested window, not a 1970-derived one", async () => {
+  const brief = await runDecisions({ sinceMs: CLI_SINCE_30D_MS }, ctx());
+  // `renderDecisions` prints `Math.round((generatedAt - query.sinceMs) / 86_400_000)`.
+  expect(Math.round((brief.generatedAt - brief.query.sinceMs) / DAY_MS)).toBe(30);
+});
+
+test("an omitted --since defaults to a 90-day window", async () => {
+  const brief = await runDecisions({}, ctx());
+  expect(Math.round((brief.generatedAt - brief.query.sinceMs) / DAY_MS)).toBe(90);
+});
+
+// Finding 2: `[decisions].min_confidence` reaches the read path as the default
+// floor, resolved by `ipc/agents-rpc.ts` from `nimbus.toml`.
+test("the configured min_confidence is the default floor when the caller omits one", async () => {
+  extracted("low", 1_000, 0.1);
+  extracted("high", 2_000, 0.9);
+  const brief = await runDecisions(
+    { sinceMs: ALL_TIME_MS },
+    { ...ctx(), defaultMinConfidence: 0.3 },
+  );
+  expect(brief.entries.map((e) => e.id)).toEqual(["high"]);
+  expect(brief.query.minConfidence).toBe(0.3);
+});
+
+test("an explicit minConfidence overrides the configured default, including 0", async () => {
+  extracted("low", 1_000, 0.1);
+  extracted("high", 2_000, 0.9);
+  const brief = await runDecisions(
+    { sinceMs: ALL_TIME_MS, minConfidence: 0 },
+    { ...ctx(), defaultMinConfidence: 0.3 },
+  );
+  expect(brief.entries.map((e) => e.id)).toEqual(["high", "low"]);
+});
+
+// Finding 3: the 0.86 ceiling was claimed in the docs and the spec but emitted
+// nowhere. Unconditional, exactly like the 512-character note above it.
+test("always reports the 0.86 confidence ceiling", async () => {
+  extracted("a", 1_000, 0.9);
+  writePassState(db, {
+    watermarkMs: 1_000,
+    watermarkId: "z",
+    lastPassAt: 1_000,
+    lastPassNew: 1,
+    scannedItems: 1,
+  });
+  const withRows = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(withRows.gaps.some((g) => g.detail.includes("0.86"))).toBe(true);
+  // Also present on the empty brief — "every brief" means every brief.
+  const empty = await runDecisions({}, ctx());
+  expect(empty.gaps.some((g) => g.detail.includes("0.86"))).toBe(true);
 });
