@@ -1,23 +1,26 @@
 import { describe, expect, mock, test } from "bun:test";
 
-// Must be registered before `./slack-sync.ts` is imported (mirrors the pattern in
+// Must be registered before `slack-sync.ts` is imported (mirrors the pattern in
 // test/unit/connectors/slack-sync.test.ts) so the module-level import inside
 // slack-sync.ts resolves to this stub instead of hitting the real OAuth refresh flow.
-mock.module("../auth/slack-access-token.ts", () => ({
+mock.module("../../../src/auth/slack-access-token.ts", () => ({
   getValidSlackAccessToken: async (): Promise<string> => "slack-stub-token",
 }));
 
-import { createConnectorSyncFixture } from "../../test/helpers/connector-sync-harness.ts";
-import { createOAuthConnectorTestSetup, requestUrlString } from "../testing/bun-test-support.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
   syncTestContext,
   urlFromFetchInput,
-} from "./connector-sync-test-helpers.ts";
-import { createDiscordSyncable } from "./discord-sync.ts";
-import { createSlackSyncable } from "./slack-sync.ts";
-import { createTeamsSyncable } from "./teams-sync.ts";
+} from "../../../src/connectors/connector-sync-test-helpers.ts";
+import { createDiscordSyncable } from "../../../src/connectors/discord-sync.ts";
+import { createSlackSyncable } from "../../../src/connectors/slack-sync.ts";
+import { createTeamsSyncable } from "../../../src/connectors/teams-sync.ts";
+import {
+  createOAuthConnectorTestSetup,
+  requestUrlString,
+} from "../../../src/testing/bun-test-support.ts";
+import { createConnectorSyncFixture } from "../../helpers/connector-sync-harness.ts";
 
 /**
  * The hazard under test: all three chat connectors derive a short item TITLE
