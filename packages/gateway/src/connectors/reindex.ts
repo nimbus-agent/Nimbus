@@ -57,6 +57,22 @@ export async function reindexConnector(input: ReindexInput): Promise<ReindexResu
 
         dbRun(input.index.rawDb, `DELETE FROM embedding_chunk WHERE item_id = ?`, [item.id]);
 
+        // PRIMARY erasure mechanism (not the loop below): the `DELETE FROM
+        // embedding_chunk` above already fires the dims-aware
+        // `AFTER DELETE ON embedding_chunk` triggers —
+        // `embedding_chunk_ad_delete_vec384` (index/embedding-v6-sql.ts) and
+        // `embedding_chunk_ad_delete_vec1536` (index/vec-items-1536-v30-sql.ts)
+        // — which delete the matching vec row via `OLD.vec_rowid` for each
+        // chunk row just removed. By the time we reach the loop below, a
+        // healthy database has already erased every vector.
+        //
+        // The loop is deliberate defence-in-depth, not the erasure mechanism:
+        // it re-derives each chunk's own vec_rowid/dims (captured above,
+        // before the delete) and issues the same delete again in case a
+        // future migration alters or drops one of those triggers. In a
+        // healthy database every one of its deletes is an expected 0-row
+        // no-op. Do not "simplify" it away because it looks like it does
+        // nothing — and equally, do not treat it as what makes erasure work.
         for (const chunk of chunks) {
           if (chunk.vec_rowid === null || !SUPPORTED_EMBEDDING_DIMS.has(chunk.dims)) {
             continue;
