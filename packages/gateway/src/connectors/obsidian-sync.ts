@@ -72,7 +72,7 @@ function upsertNote(
     type: "obsidian_note",
     externalId: externalIdFor(note.vaultId, note.relPath),
     title: note.title,
-    bodyPreview: note.body.slice(0, 4096),
+    body: note.body,
     modifiedAt: note.mtimeMs,
     metadata: {
       vault_id: note.vaultId,

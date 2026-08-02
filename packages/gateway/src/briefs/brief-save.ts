@@ -66,7 +66,7 @@ export function saveBriefReport(
     type: "research_brief",
     externalId,
     title: run.brief.slice(0, TITLE_MAX),
-    bodyPreview: effective.summary,
+    body: effective.summary,
     url: null,
     canonicalUrl: null,
     modifiedAt: run.createdAtMs,

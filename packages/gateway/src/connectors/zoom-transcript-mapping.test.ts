@@ -190,46 +190,25 @@ describe("mapZoomTranscriptToItem", () => {
     });
     expect(row?.metadata["recording_start"]).toBe(Date.parse("2026-06-01T10:05:00Z"));
     expect(row?.metadata["transcript_text"]).toBe(PLAIN_TEXT);
-    expect(row?.bodyPreview.length).toBeLessThanOrEqual(280);
-    expect(row?.bodyPreview.startsWith("Welcome to the call.")).toBe(true);
+    // `body` is the declared-full transcript text, verbatim — the store (not
+    // this mapper) is now the single place that applies any length cap.
+    expect(row?.body).toBe(PLAIN_TEXT);
   });
 
-  it("bodyPreview clips at a word boundary when over 280 chars, ending in `…`", () => {
-    // Review point 1.2 — cutting mid-word looks bad in UI. Build a long
-    // string with plenty of spaces in the last 40 chars before the cut.
-    const longWord = "lorem ipsum dolor sit amet ".repeat(20); // ~540 chars
+  it("body carries the full plainText untruncated, even when very long", () => {
+    // Previously `clipTranscriptPreview` hard-capped this to 280 chars before
+    // it ever reached the store. That clamp is gone: the mapper now passes
+    // the complete text through via `body:`.
+    const longText = "lorem ipsum dolor sit amet ".repeat(200); // ~5400 chars
     const row = mapZoomTranscriptToItem({
       meeting: MEETING,
       recordingFile: RECORDING_FILE,
-      plainText: longWord,
+      plainText: longText,
       syncedAt: SYNCED_AT,
     });
     expect(row).not.toBeNull();
-    // Preview must NOT exceed the 280 limit; must end with the ellipsis;
-    // must NOT end in a partial word (the last non-ellipsis char must be
-    // the end of a complete word, i.e. preceded by no half-word).
-    expect(row?.bodyPreview.length).toBeLessThanOrEqual(281); // 280 + …
-    expect(row?.bodyPreview.endsWith("…")).toBe(true);
-    const beforeEllipsis = row?.bodyPreview.slice(0, -1) ?? "";
-    // The clip happened at a space — last char is 't' (end of 'amet') or
-    // similarly complete; the next char in the source is a space.
-    expect(beforeEllipsis.endsWith(" ")).toBe(false);
-    const nextCharInSource = longWord.charAt(beforeEllipsis.length);
-    expect(nextCharInSource === " " || nextCharInSource === "").toBe(true);
-  });
-
-  it("bodyPreview falls back to a hard clip + `…` when no space is near the limit", () => {
-    // Pathological: one huge word longer than the limit. The helper must
-    // not return an empty string — it returns the hard 280-char slice + `…`.
-    const oneBigWord = "x".repeat(500);
-    const row = mapZoomTranscriptToItem({
-      meeting: MEETING,
-      recordingFile: RECORDING_FILE,
-      plainText: oneBigWord,
-      syncedAt: SYNCED_AT,
-    });
-    expect(row?.bodyPreview).toHaveLength(281); // 280 + …
-    expect(row?.bodyPreview.endsWith("…")).toBe(true);
+    expect(row?.body).toBe(longText);
+    expect(row?.body.length).toBeGreaterThan(280);
   });
 
   it("title falls back to `Transcript <fileId>` when topic is missing", () => {
