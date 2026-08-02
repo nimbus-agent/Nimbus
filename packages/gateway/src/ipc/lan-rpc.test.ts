@@ -229,3 +229,31 @@ describe("decisions over LAN (I5 — on-demand passes are write-class and local-
     expect(() => checkLanMethodAllowed("agents.decisions", peer)).not.toThrow();
   });
 });
+
+describe("clip over LAN (I5 / I30 — pairing must stay owner-opened)", () => {
+  test("forbids the clip namespace over LAN regardless of grant-write", () => {
+    for (const peer of [
+      { peerId: "p1", writeAllowed: true },
+      { peerId: "p1", writeAllowed: false },
+    ]) {
+      // clip.pair opens the I30 pairing window and returns the one-time code; admitting it over
+      // LAN would let a paired peer mint its own clip token without the owner ever running
+      // `nimbus clip pair`. Proven on a second method too, to show the namespace entry is doing
+      // the work rather than a coincidental single-method match.
+      expect(() => checkLanMethodAllowed("clip.pair", peer)).toThrow(LanError);
+      expect(() => checkLanMethodAllowed("clip.status", peer)).toThrow(LanError);
+    }
+  });
+
+  test("clip.pair rejection is ERR_METHOD_NOT_ALLOWED (fully forbidden, not merely write-gated)", () => {
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("clip.pair", { peerId: "p", writeAllowed: true });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown).toBeInstanceOf(LanError);
+    expect(thrown?.rpcCode).toBe(-32601);
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+});
