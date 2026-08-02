@@ -291,10 +291,27 @@ const HANDLERS: RpcMethodHandlerMap<ShareRpcCtx> = {
     if (share === null) {
       throw new ShareRpcError(-32602, "ERR_INVALID_PARAMS: not a share file");
     }
-    const tools = await ctx.listReplayTools();
+    // Fail closed on an unverifiable share. Replay drives real outbound calls against the owner's
+    // live credentialed mesh, from a file a third party supplied — so verification must GATE it.
+    // It was previously computed here and then ignored: replay ran unconditionally and the CLI
+    // printed `signature: INVALID` only after the calls had already gone out.
+    if (!verify.ok && rec["allowUnsigned"] !== true) {
+      const why = verify.errors.length > 0 ? verify.errors.join("; ") : "verification failed";
+      throw new ShareRpcError(
+        -32602,
+        `ERR_UNVERIFIED_SHARE: refusing to replay (${why}). Pass allowUnsigned to override.`,
+      );
+    }
+    // Resolve the mesh LAZILY. `listReplayTools()` runs ensureCredentialConnectorsRunning +
+    // ensureUserMcpConnectorsRunning, so calling it eagerly let a share with zero replayable steps
+    // force-spawn every credential connector and every user-registered MCP server.
+    let toolsPromise: Promise<LazyMeshToolMap> | undefined;
     const report = await replayShare(share, {
       isReadOnly: isReadOnlyToolId,
-      run: (toolId, p) => runReplayTool(tools, toolId, p),
+      run: async (toolId, p) => {
+        toolsPromise ??= ctx.listReplayTools();
+        return runReplayTool(await toolsPromise, toolId, p);
+      },
     });
     return { verify, report };
   },

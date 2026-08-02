@@ -2838,7 +2838,7 @@ from bob (direct)                  sha256:def456  recipe
 
 ---
 
-### `nimbus verify-share <file|url> [--replay]`
+### `nimbus verify-share <file|url> [--replay] [--allow-unsigned]`
 
 Verify the Ed25519 signature and content hash of a share file or URL. With `--replay`, re-execute the session steps against the current local index and compare results.
 
@@ -2848,6 +2848,10 @@ nimbus verify-share https://example.com/share.json --replay
 ```
 
 Prints `signature: VALID` or `INVALID`, plus expiry status. With `--replay`, also prints a per-step divergence report and a summary.
+
+**Replay refuses an unverifiable share.** A share file is untrusted input: replay executes the tool calls it names against your live, credentialed connectors. So if the signature, content hash or expiry check fails, `--replay` aborts before any outbound call and exits non-zero. `--allow-unsigned` overrides that, and should be used only for a share you produced yourself.
+
+Two further limits apply to replay, both reported rather than silent: only tools whose id ends in a recognised read verb are executed (anything else is reported `skipped-non-read`), and no more than 256 steps run per replay — any excess is printed as "further step(s) were NOT executed".
 
 ---
 

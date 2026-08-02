@@ -291,6 +291,8 @@ interface ReplayReportShape {
     readonly missingConnector: number;
     readonly skippedNonRead: number;
     readonly error: number;
+    /** Steps beyond the gateway's per-replay ceiling that were not executed. */
+    readonly capped?: number;
   };
 }
 
@@ -310,13 +312,22 @@ export function formatReplayReport(report: ReplayReportShape): string {
   lines.push(
     `Summary: match ${m.match}, diverged ${m.diverged}, missing-connector ${m.missingConnector}, skipped-non-read ${m.skippedNonRead}, error ${m.error}`,
   );
+  // Never let a truncated replay read as a complete one.
+  if (m.capped !== undefined && m.capped > 0) {
+    lines.push(`  ${m.capped} further step(s) were NOT executed (per-replay ceiling reached).`);
+  }
   return lines.join("\n");
 }
 
 export interface VerifyShareRequest {
   readonly replay: boolean;
-  /** Either a passthrough URL (`share.verify` fetches it) or the base64 bytes of a local file. */
-  readonly params: { readonly input: string } | { readonly bytesB64: string };
+  /**
+   * Either a passthrough URL (`share.verify` fetches it) or the base64 bytes of a local file.
+   * `allowUnsigned` is present only when the caller explicitly opted out of verification gating.
+   */
+  readonly params:
+    | { readonly input: string; readonly allowUnsigned?: true }
+    | { readonly bytesB64: string; readonly allowUnsigned?: true };
 }
 
 /**
@@ -329,18 +340,22 @@ export async function resolveVerifyShareRequest(
   args: readonly string[],
 ): Promise<VerifyShareRequest | null> {
   const replay = args.includes("--replay");
+  // Replay refuses an unverifiable share by default; this makes that override reachable, and
+  // deliberately spells out what it means rather than hiding behind a terse flag name.
+  const allowUnsigned = args.includes("--allow-unsigned");
   const input = args.find((a) => !a.startsWith("--"));
   if (input === undefined) {
-    console.error("Usage: nimbus verify-share <file|url> [--replay]");
+    console.error("Usage: nimbus verify-share <file|url> [--replay] [--allow-unsigned]");
     process.exitCode = 1;
     return null;
   }
+  const extra: { allowUnsigned?: true } = allowUnsigned ? { allowUnsigned: true } : {};
   if (input.startsWith("http://") || input.startsWith("https://")) {
-    return { replay, params: { input } };
+    return { replay, params: { input, ...extra } };
   }
   try {
     const bytesB64 = Buffer.from(await Bun.file(input).bytes()).toString("base64");
-    return { replay, params: { bytesB64 } };
+    return { replay, params: { bytesB64, ...extra } };
   } catch {
     console.error(`Cannot read share file: ${input}`);
     process.exitCode = 1;

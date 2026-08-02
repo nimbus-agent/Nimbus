@@ -464,6 +464,151 @@ describe("share.replay", () => {
     expect(hit.value.report.summary.match).toBe(1); // gmail_get
     expect(hit.value.report.summary.skippedNonRead).toBe(1); // file_delete
   });
+
+  /** Build a signed one-read-step recipe share on disk; `tamper` corrupts the signature. */
+  async function replayFixture(opts: { tamper: boolean }): Promise<string> {
+    const seed = nacl.randomBytes(32);
+    const kp = nacl.sign.keyPair.fromSeed(seed);
+    const body = {
+      kind: "recipe" as const,
+      sessionId: "s1",
+      createdAt: 1,
+      expiresAt: null,
+      redactionSet: [],
+      origin: { label: "h", pubkey: encodeBase64(kp.publicKey) },
+      recipe: {
+        recipeVersion: 1,
+        sourceSessionId: "s1",
+        generatedAt: 1,
+        graphTraversals: [],
+        steps: [
+          {
+            stepId: "step-1",
+            tool: "gmail_get",
+            service: "gmail",
+            params: {},
+            status: "ok",
+            dependsOn: [],
+          },
+        ],
+      },
+    };
+    const share = buildShareFile(body, encodeBase64(seed), encodeBase64(kp.publicKey));
+    // Tamper the BODY, not the envelope: the file stays structurally a share (so it still parses)
+    // but no longer matches its signature — which is the realistic attacker artifact.
+    const onDisk = opts.tamper
+      ? { ...share, body: { ...share.body, sessionId: "tampered" } }
+      : share;
+    const dir = mkdtempSync(join(tmpdir(), "share-replay-"));
+    replayTmpDirs.push(dir);
+    const path = join(dir, "r.nimbus-share.json");
+    await Bun.write(path, JSON.stringify(onDisk));
+    return path;
+  }
+
+  // SECURITY-LOAD-BEARING: verification used to be computed and then ignored — replay ran
+  // unconditionally and the CLI printed "signature: INVALID" only AFTER the outbound calls had
+  // already happened.
+  test("refuses to replay a share whose signature does not verify", async () => {
+    const path = await replayFixture({ tamper: true });
+    let executed = 0;
+    await expect(
+      dispatchShareRpc(
+        "share.replay",
+        { input: path },
+        {
+          ...freshCtx(db),
+          listReplayTools: async () => ({
+            gmail_get: {
+              execute: async () => {
+                executed++;
+                return {};
+              },
+            },
+          }),
+        },
+      ),
+    ).rejects.toThrow(/ERR_UNVERIFIED_SHARE/);
+    expect(executed).toBe(0); // fail-closed: nothing left the machine
+  });
+
+  test("allowUnsigned replays an unverified share, as an explicit caller decision", async () => {
+    const path = await replayFixture({ tamper: true });
+    let executed = 0;
+    const out = (await dispatchShareRpc(
+      "share.replay",
+      { input: path, allowUnsigned: true },
+      {
+        ...freshCtx(db),
+        listReplayTools: async () => ({
+          gmail_get: {
+            execute: async () => {
+              executed++;
+              return {};
+            },
+          },
+        }),
+      },
+    )) as unknown as { kind: string; value: { verify: { ok: boolean } } };
+    expect(out.kind).toBe("hit");
+    expect(out.value.verify.ok).toBe(false); // reported, not hidden
+    expect(executed).toBe(1);
+  });
+
+  // Merely resolving the tool map runs ensureCredentialConnectorsRunning +
+  // ensureUserMcpConnectorsRunning, so a share with no replayable step must not reach it.
+  test("does not spawn the connector mesh when no step is replayable", async () => {
+    const seed = nacl.randomBytes(32);
+    const kp = nacl.sign.keyPair.fromSeed(seed);
+    const share = buildShareFile(
+      {
+        kind: "recipe" as const,
+        sessionId: "s1",
+        createdAt: 1,
+        expiresAt: null,
+        redactionSet: [],
+        origin: { label: "h", pubkey: encodeBase64(kp.publicKey) },
+        recipe: {
+          recipeVersion: 1,
+          sourceSessionId: "s1",
+          generatedAt: 1,
+          graphTraversals: [],
+          steps: [
+            {
+              stepId: "step-1",
+              tool: "file_delete",
+              service: "fs",
+              params: {},
+              status: "ok",
+              dependsOn: [],
+            },
+          ],
+        },
+      },
+      encodeBase64(seed),
+      encodeBase64(kp.publicKey),
+    );
+    const dir = mkdtempSync(join(tmpdir(), "share-replay-"));
+    replayTmpDirs.push(dir);
+    const path = join(dir, "r.nimbus-share.json");
+    await Bun.write(path, JSON.stringify(share));
+
+    let resolved = 0;
+    const out = (await dispatchShareRpc(
+      "share.replay",
+      { input: path },
+      {
+        ...freshCtx(db),
+        listReplayTools: async () => {
+          resolved++;
+          return {};
+        },
+      },
+    )) as unknown as { kind: string; value: { report: { summary: { skippedNonRead: number } } } };
+    expect(out.kind).toBe("hit");
+    expect(out.value.report.summary.skippedNonRead).toBe(1);
+    expect(resolved).toBe(0);
+  });
 });
 
 function inboxShare(label: string, hops: number): ShareFile {
