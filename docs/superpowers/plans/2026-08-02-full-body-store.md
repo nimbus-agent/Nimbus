@@ -316,6 +316,13 @@ Create `packages/gateway/src/index/body-store-v48-sql.ts`:
  * stored artefact — a body under 512 characters may be a Notion page that was
  * never fetched at all (`bodyPreview: ""`) or Gmail's ~200-character API
  * snippet, neither of which is complete.
+ *
+ * Do NOT "optimise" this to
+ * `body_complete = CASE WHEN length(body_preview) < 512 THEN 1 ELSE 0 END`.
+ * It has been proposed twice and rejected twice; the full reasoning is in the
+ * spec under "Rejected: inferring completeness from length at migration time".
+ * Length 0 would flag every title-only Notion and Confluence page as complete
+ * and exclude the worst-covered connectors in the index from backfill forever.
  */
 export const BODY_STORE_V48_SQL: readonly string[] = [
   "ALTER TABLE item ADD COLUMN body TEXT",
@@ -579,6 +586,14 @@ Add the input union above `upsertIndexedItem`:
  * claims completeness) OR a declared-full `body` (clamped to the type's cap).
  * Supplying both is a type error: they would be two sources of truth for one
  * column pair.
+ *
+ * Do NOT relax this to `{ bodyPreview?: string; body?: string }` with a runtime
+ * check. The union was probed under `tsc --strict` against every real call
+ * shape — plain literal, object spread, the `{ ...row, url }` re-spread in
+ * `upsertNimbusItemIntoItemTable`, the `Parameters<typeof upsertIndexedItem>[1]`
+ * wrapper, and a `string | undefined` value — and all compile clean, while
+ * supplying both fields fails with TS2345. Relaxing it would trade a
+ * compile-time guarantee for a runtime one and gain nothing.
  */
 export type IndexedItemBodyInput =
   | { bodyPreview?: string; body?: undefined }
@@ -1584,7 +1599,28 @@ WHERE body_complete = 0
 GROUP BY service
 ```
 
-There is deliberately **no `--only-truncated` mode.** A sync fetches by page and time window, not by item id, so the flag could suppress writes (free) while every API call still happened — a rate-limit optimisation that saves no requests. Record that in a file-header comment so it is not re-proposed.
+There is deliberately **no `--only-truncated` mode.** A sync fetches by page and time window, not by item id, so the flag could suppress writes (free) while every API call still happened — a rate-limit optimisation that saves no requests. Record that in a file-header comment so it is not re-proposed, together with the cost asymmetry and the condition that would change the answer:
+
+```ts
+/**
+ * `rebody` clears a watermark and lets the existing sync run. Cost is NOT
+ * uniform across connectors, and callers should know which kind they have:
+ *
+ *   - Delta-capable (Slack, Gmail via history ids): the re-sync walks a
+ *     bounded recent window.
+ *   - Full-scan (Notion, Confluence, Jira): clearing the watermark re-walks
+ *     EVERY page or ticket in the account. On a large workspace that is tens
+ *     of thousands of requests to recover bodies for a subset of items.
+ *
+ * There is no `--only-truncated` today because a sync cannot be asked for
+ * specific item ids: the flag would suppress writes (free) while every request
+ * still happened. If a per-item fetch is ever added to the connector contract
+ * — the same capability the browser client's resolve-miss path needs, see
+ * docs/roadmap.md "Client surfaces" — then `rebody` SHOULD be reworked to
+ * target `body_complete = 0` ids directly and skip the scan entirely. That is
+ * the condition that makes the flag meaningful; until then it is theatre.
+ */
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1632,6 +1668,16 @@ Expected: FAIL — unknown subcommand.
 - [ ] **Step 3: Add the subcommand**
 
 Mirror the existing `reembed` subcommand's argument parsing, progress rendering and cancellation handling in the same file. Add the `rebody` line to `help.ts`.
+
+`--dry-run` output must state the cost, not only the count, because the count alone understates it for full-scan connectors:
+
+```
+pending bodies: notion 4210, slack 122
+note: notion has no delta sync — rebody re-walks every page in the workspace,
+      not just the 4210 listed above. slack re-walks a bounded recent window.
+```
+
+Derive "has delta sync" from whether the connector's `Syncable` produces a resumable cursor, rather than hardcoding a service-name list that will drift.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
