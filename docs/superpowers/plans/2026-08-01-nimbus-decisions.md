@@ -560,6 +560,32 @@ test("emits one hit per sentence, not one per cue occurrence", () => {
   expect(mineCues("we decided we decided to move on")).toHaveLength(1);
 });
 
+// The hash input is length-prefixed (`<len>:<field><len>:<field>`) rather than
+// delimiter-joined, so it is injective for ANY field contents — no assumption
+// about what a connector can put in an `externalId` is load-bearing.
+//
+// This case is the one a space joiner demonstrably fails: item ids are
+// `${service}:${externalId}`, so `("slack:a b","c")` and `("slack:a","b c")`
+// both flatten to `slack:a b c` and hash identically — two different decisions
+// sharing one row id, one silently overwriting the other. It still fails under
+// the old encoding, which is what makes it a regression test rather than a
+// tautology.
+test("row id does not collide when the item id contains a space", () => {
+  const left = decisionRowId("slack:a b", "c");
+  const right = decisionRowId("slack:a", "b c");
+  expect(left).not.toBe(right);
+});
+
+// The general form of the same argument: a colon is the prefix's own delimiter
+// and a NUL is the encoding the length prefix replaced, so both must be inert
+// as field content. Neither can shift a boundary the prefix already fixed.
+test("row id stays injective when a field contains the prefix delimiter or a NUL", () => {
+  expect(decisionRowId("slack:1:2", "x")).not.toBe(decisionRowId("slack:1", "2:x"));
+  expect(decisionRowId("slack:1 2", "x")).not.toBe(decisionRowId("slack:1", "2 x"));
+  // A field that is itself a valid length prefix must not be re-read as one.
+  expect(decisionRowId("1:a", "b")).not.toBe(decisionRowId("1", ":ab"));
+});
+
 test("row id is stable for the same normalized sentence and differs across items", () => {
   const a = decisionRowId("slack:1", normalizeSentence("We decided to ship."));
   const b = decisionRowId("slack:1", normalizeSentence("  we DECIDED to ship  "));
@@ -596,8 +622,6 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
 import type { CueTier } from "./decision-types.ts";
-
-const encoder = new TextEncoder();
 
 export interface CueHit {
   readonly sentence: string;
@@ -667,6 +691,31 @@ export function mineCues(text: string): CueHit[] {
 }
 
 /**
+ * The two id fields are LENGTH-PREFIXED, not delimiter-joined, because that is
+ * *provably* injective for any field contents whatsoever.
+ *
+ * A delimiter is injective only while the delimiter cannot occur inside a
+ * field, and that is an assumption about connector data rather than a property
+ * of the encoding. Joining on a space demonstrably collides `("slack:a b","c")`
+ * with `("slack:a","b c")` — item ids are `${service}:${externalId}` with a
+ * connector-supplied `externalId` — giving two different decisions one row id,
+ * one silently overwriting the other. A NUL joiner only moves that assumption
+ * somewhere less likely to be violated; it does not remove it. `<len>:<field>`
+ * removes it outright: the field boundary is read from the prefix, so no field
+ * content can shift it.
+ *
+ * `String.length` counts UTF-16 code units, the same unit a substring boundary
+ * would be read in, so the encoding stays uniquely decodable for astral-plane
+ * text too.
+ *
+ * Changing this after release re-hashes every stored row and forces a full
+ * `--rebuild`, so it is a pre-merge-only decision.
+ */
+function lengthPrefixed(field: string): string {
+  return `${String(field.length)}:${field}`;
+}
+
+/**
  * Content-derived identity: hash(sourceItemId, normalized cue sentence).
  *
  * Deliberately NOT positional. Keying on the cue's character offset would mean
@@ -675,9 +724,10 @@ export function mineCues(text: string): CueHit[] {
  * model is asked again about candidates it already rejected.
  */
 export function decisionRowId(sourceItemId: string, normalizedSentence: string): string {
-  return bytesToHex(
-    blake3(encoder.encode(`${sourceItemId} ${normalizedSentence}`)),
-  ).slice(0, 32);
+  const encoder = new TextEncoder();
+  const joined = `${lengthPrefixed(sourceItemId)}${lengthPrefixed(normalizedSentence)}`;
+  const digest = bytesToHex(blake3(encoder.encode(joined)));
+  return digest.slice(0, 32);
 }
 ```
 
@@ -687,7 +737,7 @@ export function decisionRowId(sourceItemId: string, normalizedSentence: string):
 bun test packages/gateway/src/decisions/cue-mining.test.ts
 ```
 
-Expected: PASS, 9 tests. If `splitSentences` fails the `"One. Two! Three?\nFour"` case, check the lookbehind — Bun supports it, but the `\n+` alternative must come second so a terminator followed by a newline splits once, not twice.
+Expected: PASS, 11 tests. If `splitSentences` fails the `"One. Two! Three?\nFour"` case, check the lookbehind — Bun supports it, but the `\n+` alternative must come second so a terminator followed by a newline splits once, not twice.
 
 - [ ] **Step 5: Commit**
 
@@ -1712,9 +1762,6 @@ import type { DecisionEvidence } from "./decision-types.ts";
 export const CORROBORATION_BACKWARD_MS = 14 * 24 * 60 * 60 * 1000;
 export const CORROBORATION_FORWARD_MS = 90 * 24 * 60 * 60 * 1000;
 
-const MIGRATION_RE = /(^|\/)migrations\//iu;
-const MIGRATION_NAME_RE = /(^|\/)v\d+[-_]/iu;
-const IAC_RE = /\.tfvars?$|\.tf$|(^|\/)pulumi\.ya?ml$|(^|\/)cloudformation\//iu;
 const ADR_TITLE_RE = /\badr\b|^\d+[-.]|decision/iu;
 
 const STOP = new Set(["the", "a", "an", "to", "of", "for", "and", "or", "on", "in", "we"]);
@@ -1735,13 +1782,6 @@ function tokenOverlap(statement: string, title: string): boolean {
   return hits * 2 >= want.length;
 }
 
-function classifyPaths(paths: readonly string[]): Array<"migration" | "iac"> {
-  const kinds: Array<"migration" | "iac"> = [];
-  if (paths.some((p) => MIGRATION_RE.test(p) || MIGRATION_NAME_RE.test(p))) kinds.push("migration");
-  if (paths.some((p) => IAC_RE.test(p))) kinds.push("iac");
-  return kinds;
-}
-
 export interface CorroborateInput {
   readonly decisionId: string;
   readonly sourceItemId: string;
@@ -1754,9 +1794,14 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
 
   const src = db
     .query("SELECT id, service, type, title, url, modified_at FROM item WHERE id = ?")
-    .get(input.sourceItemId) as
-    | { id: string; service: string; type: string; title: string; url: string | null; modified_at: number }
-    | null;
+    .get(input.sourceItemId) as {
+    id: string;
+    service: string;
+    type: string;
+    title: string;
+    url: string | null;
+    modified_at: number;
+  } | null;
   if (src !== null) {
     out.push({
       kind: "source",
@@ -1770,19 +1815,35 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
 
   const lo = input.decidedAt - CORROBORATION_BACKWARD_MS;
   const hi = input.decidedAt + CORROBORATION_FORWARD_MS;
+  const seenEntityIds = new Set<string>();
 
-  // Code evidence: PRs and commits the source item references, via the graph
-  // edges the populator already emits. Both endpoints are type-scoped because
-  // `mentions` is polysemous.
+  // Code evidence, outgoing: PRs and commits the source item itself mentions,
+  // or that the source item (when it is itself a PR entity) was merged as.
+  // Both endpoints are type-scoped because `mentions` is polysemous. This is
+  // what makes `commit` evidence reachable for chat-sourced decisions — the
+  // graph populator only emits `mentions` from a message toward `issue`/
+  // `commit` targets, never toward a `pr` target, so `pr` evidence from this
+  // query alone would require the source item to literally be a PR.
+  //
+  // The join to `item` is INNER, and saying so matters. An earlier draft used a
+  // LEFT JOIN so that a graph entity with no indexed item could still be
+  // evidence, labelled by its entity id — but the `i.modified_at BETWEEN ?`
+  // predicate below is in the WHERE clause, where a non-matching LEFT JOIN row
+  // yields NULL and is filtered out. The LEFT JOIN was therefore inert and the
+  // "entity with no item" case unreachable, while reading as if it were
+  // supported. Corroboration requires an INDEXED item today: an unindexed
+  // target (e.g. a `merged_as` merge commit that no commit connector has
+  // indexed) contributes nothing. Making that a supported case is a deliberate
+  // scoring change — it needs a non-item timestamp to window on — not a join
+  // tweak.
   const code = db
     .query(
       `SELECT t.id AS entity_id, t.type AS entity_type, i.id AS item_id,
-              i.title AS title, i.url AS url, i.modified_at AS modified_at,
-              i.metadata AS metadata
+              i.title AS title, i.url AS url, i.modified_at AS modified_at
          FROM graph_relation r
          JOIN graph_entity s ON s.id = r.from_id
          JOIN graph_entity t ON t.id = r.to_id AND t.type IN ('pr','commit')
-         LEFT JOIN item i ON i.id = t.external_id
+         JOIN item i ON i.id = t.external_id
         WHERE s.external_id = ?
           AND r.type IN ('mentions','merged_as')
           AND i.modified_at BETWEEN ? AND ?
@@ -1792,45 +1853,80 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
     .all(input.sourceItemId, lo, hi) as Array<{
     entity_id: string;
     entity_type: string;
-    item_id: string | null;
-    title: string | null;
+    item_id: string;
+    title: string;
     url: string | null;
-    modified_at: number | null;
-    metadata: string | null;
+    modified_at: number;
   }>;
 
   for (const c of code) {
+    if (seenEntityIds.has(c.entity_id)) continue;
+    seenEntityIds.add(c.entity_id);
     out.push({
       kind: c.entity_type === "pr" ? "pr" : "commit",
       entityId: c.entity_id,
       itemId: c.item_id,
-      label: c.title ?? c.entity_id,
+      label: c.title,
       url: c.url,
       occurredAt: c.modified_at,
     });
+  }
 
-    // Migration / IaC are properties OF a corroborating change, not separate
-    // searches — a migration nobody linked to the decision proves nothing.
-    let paths: string[] = [];
-    if (c.metadata !== null) {
-      try {
-        const meta: unknown = JSON.parse(c.metadata);
-        const f = (meta as { files?: unknown }).files;
-        if (Array.isArray(f)) paths = f.filter((x): x is string => typeof x === "string");
-      } catch {
-        paths = [];
-      }
-    }
-    for (const kind of classifyPaths(paths)) {
-      out.push({
-        kind,
-        entityId: c.entity_id,
-        itemId: c.item_id,
-        label: `${kind} in ${c.title ?? c.entity_id}`,
-        url: c.url,
-        occurredAt: c.modified_at,
-      });
-    }
+  // Migration / IaC evidence is deliberately not derived here: it would read
+  // `metadata.files` on the corroborating PR/commit item, but no connector
+  // indexes changed-file paths yet, so both `EvidenceKind`s are unreachable
+  // from any live data. Reinstate once a connector populates that metadata.
+  //
+  // This is the design change the implementation forced. An earlier draft of
+  // this plan classified `metadata.files` into `migration`/`iac` evidence
+  // inline; verification against `graph/graph-populator.ts` found nothing
+  // writes that field, so the classifier was dead code that made the 1.0
+  // confidence ceiling look reachable when it is not. See the spec's
+  // "Known limits".
+
+  // Code evidence, incoming: PRs that resolve the source item, for an
+  // issue-sourced decision. `resolves` edges run PR -> issue (the populator
+  // never emits the reverse), so from the issue's side this is an INCOMING
+  // edge and has to be walked from `to_id`, not `from_id`. Both endpoints are
+  // type-scoped because `resolves` is polysemous (also emitted
+  // person -> incident elsewhere in the graph).
+  //
+  // Without this query PR evidence is unreachable for every decision that did
+  // not originate on a PR item, because `mentions` never targets a `pr` — the
+  // outgoing-edges-only walk this plan originally specified could not produce
+  // it.
+  const resolvedBy = db
+    .query(
+      `SELECT p.id AS entity_id, i.id AS item_id,
+              i.title AS title, i.url AS url, i.modified_at AS modified_at
+         FROM graph_relation r
+         JOIN graph_entity src ON src.id = r.to_id AND src.type = 'issue' AND src.external_id = ?
+         JOIN graph_entity p ON p.id = r.from_id AND p.type = 'pr'
+         JOIN item i ON i.id = p.external_id
+        WHERE r.type = 'resolves'
+          AND i.modified_at BETWEEN ? AND ?
+        ORDER BY i.modified_at ASC
+        LIMIT 20`,
+    )
+    .all(input.sourceItemId, lo, hi) as Array<{
+    entity_id: string;
+    item_id: string;
+    title: string;
+    url: string | null;
+    modified_at: number;
+  }>;
+
+  for (const r of resolvedBy) {
+    if (seenEntityIds.has(r.entity_id)) continue;
+    seenEntityIds.add(r.entity_id);
+    out.push({
+      kind: "pr",
+      entityId: r.entity_id,
+      itemId: r.item_id,
+      label: r.title,
+      url: r.url,
+      occurredAt: r.modified_at,
+    });
   }
 
   // ADR: a long-form doc whose title looks like an ADR and shares most of its
@@ -1882,7 +1978,7 @@ export function hasAdrEvidence(ev: readonly DecisionEvidence[]): boolean {
 bun test packages/gateway/src/decisions/decision-corroborate.test.ts
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 15 tests.
 
 If the `graph_entity` / `graph_relation` column names in the seed helper do not match this repo's schema, read `packages/gateway/src/index/schema-sql.ts` for the real ones and fix **the test seed**, not the query — `why.ts` is the reference for what those tables actually look like.
 
@@ -3022,8 +3118,17 @@ Follow the existing `renderGlossary` in the same file for heading level, gap-not
       ⚠ no ADR found
       rationale     connection-pool exhaustion under sustained load
       alternatives  stay on MySQL · shard by tenant
-      evidence      notion:page "Billing RFC" · PR #412 · migration V12
+      evidence      [notion:page "Billing RFC"](https://notion.so/billing-rfc) · [PR #412](https://github.com/acme/billing/pull/412)
 ```
+
+Two things about that evidence line. `DecisionEvidence.url` is populated by
+`decision-corroborate.ts` from the corroborating item's permalink and MUST be
+rendered — the spec promises "evidence links", and an item renderer that prints
+only the label silently drops every one of them. `url` is nullable (a graph
+entity with no indexed permalink), so fall back to plain text rather than
+emitting a dead `[label]()`. And no `migration`/`iac` item appears here: both
+kinds are specified but unreachable (Task 6), so a sample showing one would
+describe output the pass cannot produce.
 
 - [ ] **Step 5: Wire the union and the two dispatch chains**
 

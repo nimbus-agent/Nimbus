@@ -71,14 +71,29 @@ export function mineCues(text: string): CueHit[] {
 }
 
 /**
- * NUL joins the two id fields because neither can contain it. A space could:
- * item ids are `${service}:${externalId}` with a connector-supplied
- * `externalId`, so joining on one collides `("a b", "c")` with `("a", "b c")`
- * — two different decisions sharing a row id, one silently overwriting the
- * other. Changing this after release would re-hash every stored row and force
- * a full `--rebuild`, so it is fixed pre-merge.
+ * The two id fields are LENGTH-PREFIXED, not delimiter-joined, because that is
+ * *provably* injective for any field contents whatsoever.
+ *
+ * A delimiter is injective only while the delimiter cannot occur inside a
+ * field, and that is an assumption about connector data rather than a property
+ * of the encoding. Joining on a space demonstrably collides `("slack:a b","c")`
+ * with `("slack:a","b c")` — item ids are `${service}:${externalId}` with a
+ * connector-supplied `externalId` — giving two different decisions one row id,
+ * one silently overwriting the other. A NUL joiner only moves that assumption
+ * somewhere less likely to be violated; it does not remove it. `<len>:<field>`
+ * removes it outright: the field boundary is read from the prefix, so no field
+ * content can shift it.
+ *
+ * `String.length` counts UTF-16 code units, the same unit a substring boundary
+ * would be read in, so the encoding stays uniquely decodable for astral-plane
+ * text too.
+ *
+ * Changing this after release re-hashes every stored row and forces a full
+ * `--rebuild`, so it is a pre-merge-only decision.
  */
-const ID_FIELD_SEPARATOR = "\u0000";
+function lengthPrefixed(field: string): string {
+  return `${String(field.length)}:${field}`;
+}
 
 /**
  * Content-derived identity: hash(sourceItemId, normalized cue sentence).
@@ -90,7 +105,7 @@ const ID_FIELD_SEPARATOR = "\u0000";
  */
 export function decisionRowId(sourceItemId: string, normalizedSentence: string): string {
   const encoder = new TextEncoder();
-  const joined = `${sourceItemId}${ID_FIELD_SEPARATOR}${normalizedSentence}`;
+  const joined = `${lengthPrefixed(sourceItemId)}${lengthPrefixed(normalizedSentence)}`;
   const digest = bytesToHex(blake3(encoder.encode(joined)));
   return digest.slice(0, 32);
 }

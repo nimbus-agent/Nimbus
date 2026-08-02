@@ -359,9 +359,17 @@ const DECISIONS_EVIDENCE_PREFIX: Readonly<Record<DecisionEvidence["kind"], strin
   },
 );
 
+/**
+ * Evidence renders as a Markdown link whenever the corroborating item carried a
+ * `url` — the same `[text](url)` shape the why/glossary renderers above use.
+ * `url` is nullable (a graph entity with no indexed permalink), and a bare
+ * `[label]()` would render as a dead link, so the unlinked form stays the
+ * fallback rather than an empty target.
+ */
 function renderDecisionsEvidenceItem(e: DecisionEvidence): string {
   const prefix = DECISIONS_EVIDENCE_PREFIX[e.kind];
-  return prefix === "" ? e.label : `${prefix} ${e.label}`;
+  const text = prefix === "" ? e.label : `${prefix} ${e.label}`;
+  return e.url === null ? text : `[${text}](${e.url})`;
 }
 
 /** Days between the brief's generation time and the `--since` cutoff, for the heading. */

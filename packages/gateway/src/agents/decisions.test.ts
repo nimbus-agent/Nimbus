@@ -23,7 +23,12 @@ beforeEach(() => {
   runMigrations(db);
 });
 
-function extracted(id: string, decidedAt: number, confidence: number): void {
+function extracted(
+  id: string,
+  decidedAt: number,
+  confidence: number,
+  extractionSource: "llm" | "snippet" = "llm",
+): void {
   upsertCandidate(db, {
     id,
     sourceItemId: `item-${id}`,
@@ -40,7 +45,7 @@ function extracted(id: string, decidedAt: number, confidence: number): void {
       statement: `Decision ${id}`,
       rationale: "because",
       alternatives: ["alt"],
-      extractionSource: "llm",
+      extractionSource,
     },
     1_000,
   );
@@ -329,6 +334,30 @@ test("--service keeps ticket-key matches and discloses how many it could not pla
   const unscoped = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
   expect(unscoped.entries.map((e) => e.matchedVia)).toEqual([null, null]);
   expect(unscoped.gaps.some((g) => g.detail.includes("match neither a repository"))).toBe(false);
+});
+
+// Every gap note has to describe the brief the reader is holding. The snippet
+// note was derived from the unfiltered rows while `entries` and the
+// service-unmatched count were derived from the matched subset, so a `--service
+// billing` brief could announce "1 decision(s) are verbatim snippets" about a
+// Slack decision that was filtered out and never shown.
+test("the snippet gap note counts only decisions the brief actually returns", async () => {
+  seedItem("item-match", "jira", "issue", JSON.stringify({ key: "BILLING-12" }));
+  seedItem("item-snippet", "slack", "message", null);
+  extracted("match", 2_000, 0.9, "llm");
+  extracted("snippet", 1_000, 0.9, "snippet");
+  writePassState(db, { ...PASS_STATE, lastPassNew: 2, scannedItems: 2 });
+
+  const scoped = await runDecisions({ sinceMs: ALL_TIME_MS, service: "billing" }, ctx());
+  expect(scoped.entries.map((e) => e.id)).toEqual(["match"]);
+  expect(scoped.gaps.some((g) => g.detail.includes("verbatim snippets"))).toBe(false);
+
+  // The same store WITHOUT the filter still reports it — the note is scoped, not
+  // deleted, so this pins the fix as a filter fix rather than a silencing.
+  const unscoped = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(unscoped.gaps.some((g) => g.detail.includes("1 decision(s) are verbatim snippets"))).toBe(
+    true,
+  );
 });
 
 test("emitDecisionsBrief renders deterministically alone and defers to a configured synthesizer", async () => {

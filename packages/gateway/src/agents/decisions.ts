@@ -226,7 +226,12 @@ export async function runDecisions(
     entries.push(toEntry(ctx.db, r, explain, route));
   }
 
-  const snippetCount = rows.filter((r) => r.extractionSource === "snippet").length;
+  // Counted over the ENTRIES, not over `rows`. Every gap note describes the
+  // brief the reader is holding, and with `--service` set `rows` still contains
+  // the service-unmatched decisions that were filtered out above — counting
+  // those would report "N decision(s) are verbatim snippets" about rows the
+  // response never shows.
+  const snippetCount = entries.filter((e) => e.extractionSource === "snippet").length;
 
   return {
     kind: "decisions",
