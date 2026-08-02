@@ -160,6 +160,23 @@ test("timeout rejects and clears the waiter", async () => {
   await expect(p.result).rejects.toThrow("timed out");
 });
 
+test("a buffered notification is dropped once nothing is waiting for that agent", async () => {
+  const src = fakeSource();
+  const router = new AgentBriefRouter(src);
+  const p = router.expect("why", anyFindings, 5);
+  // The agents.* call failed, so bindSession is never reached — but the gateway already emitted.
+  src.emit("why.briefReady", { sessionId: "orphan", brief: "x", findings: { gaps: [] } });
+  await expect(p.result).rejects.toThrow("timed out");
+
+  // A later waiter for the same agent must not inherit the orphan's envelope.
+  const q = router.expect("why", anyFindings, 1000);
+  q.bindSession("orphan");
+  await expect(Promise.race([q.result, new Promise((r) => setTimeout(() => r("pending"), 20))])).resolves.toBe(
+    "pending",
+  );
+  q.cancel();
+});
+
 test("failAll rejects every in-flight waiter — the transport-death path", async () => {
   const src = fakeSource();
   const router = new AgentBriefRouter(src);
@@ -345,6 +362,20 @@ export class AgentBriefRouter {
     waiter.done = true;
     if (waiter.timer !== undefined) clearTimeout(waiter.timer);
     this.waiters.delete(waiter);
+
+    // Drop this agent's buffer once nothing is waiting on it. A waiter whose `agents.*` call failed
+    // before returning a sessionId never binds, so its envelope would otherwise sit until 32 more
+    // pushed it out. Hygiene rather than correctness: matching is by exact sessionId, so a stale
+    // envelope can never be delivered to the wrong waiter — it can only occupy space.
+    let stillWaiting = false;
+    for (const w of this.waiters) {
+      if (w.agentName === waiter.agentName) {
+        stillWaiting = true;
+        break;
+      }
+    }
+    if (!stillWaiting) this.buffered.delete(waiter.agentName);
+
     if (outcome !== undefined) waiter.settle(outcome);
   }
 }
@@ -353,7 +384,7 @@ export class AgentBriefRouter {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/cli/src/lib/agent-brief-router.test.ts`
-Expected: PASS — 6 tests.
+Expected: PASS — 8 tests.
 
 - [ ] **Step 5: Rewrite `awaitAgentBrief` over the router**
 
@@ -1221,6 +1252,20 @@ function briefClient(sessionId: string, brief: string) {
   };
 }
 
+test("the brief timeout defaults to 60s and honours NIMBUS_MCP_TIMEOUT_MS", () => {
+  expect(agentTimeoutMs({})).toBe(60_000);
+  expect(agentTimeoutMs({ NIMBUS_MCP_TIMEOUT_MS: "15000" })).toBe(15_000);
+  expect(agentTimeoutMs({ NIMBUS_MCP_TIMEOUT_MS: "not-a-number" })).toBe(60_000);
+  expect(agentTimeoutMs({ NIMBUS_MCP_TIMEOUT_MS: "-5" })).toBe(60_000);
+});
+
+test("no agent tool exposes a timeout parameter to the calling model", () => {
+  for (const spec of AGENT_TOOL_SPECS) {
+    expect(Object.keys(spec.schema)).not.toContain("timeout");
+    expect(Object.keys(spec.schema)).not.toContain("timeoutMs");
+  }
+});
+
 test("all ten async agents are registered, and preflight is not", () => {
   const names = AGENT_TOOL_SPECS.map((s) => s.name).sort();
   expect(names).toEqual(
@@ -1338,7 +1383,27 @@ import { AgentBriefRouter, type BriefNotificationSource } from "../lib/agent-bri
 import type { AdapterDeps, IpcCallable, ToolResult, ToolSpec } from "./adapter.ts";
 import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
 
-const AGENT_TIMEOUT_MS = 60_000;
+const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
+
+/**
+ * How long to wait for a brief. The default is 60 s rather than the CLI's 30 s because the
+ * federation-touching agents (`getPeerContext`, `getTeamHuddle`) wait on paired peers, not just the
+ * local index.
+ *
+ * Configurable by environment because MCP clients impose their own transport timeouts and those
+ * differ per editor: an operator whose client gives up sooner wants this lower, so the tool returns
+ * a clean error rather than having the call severed underneath it.
+ *
+ * Deliberately NOT a tool argument. A timeout is a transport concern, and the schema rule this
+ * design already established is IPC params only — never presentation or transport knobs. Exposing
+ * one would invite the calling model to invent values for it.
+ */
+export function agentTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = Number(env["NIMBUS_MCP_TIMEOUT_MS"]);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_AGENT_TIMEOUT_MS;
+}
 
 /** One router per client object, so listeners bind once per agent name per connection. */
 const routers = new WeakMap<object, AgentBriefRouter>();
@@ -1385,7 +1450,7 @@ async function runAgent(
   const pending = routerFor(client as unknown as object).expect<unknown>(
     agentName,
     undefined,
-    AGENT_TIMEOUT_MS,
+    agentTimeoutMs(),
   );
   try {
     const { sessionId } = await client.call<{ sessionId: string }>(ipcMethod, params);
@@ -1553,7 +1618,7 @@ async function runAgentTool(
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `bun test packages/cli/src/mcp/agent-tools.test.ts`
-Expected: PASS — 4 tests.
+Expected: PASS — 6 tests.
 
 - [ ] **Step 6: Register the specs in the adapter**
 
@@ -1586,19 +1651,47 @@ In `packages/cli/src/mcp/adapter.ts`, add the import:
 import { failBriefsForClient } from "./agent-tools.ts";
 ```
 
-and in `makeReconnectingClient`, extend the disconnect branch:
+then rewrite `makeReconnectingClient` so the wrapper can refer to itself. **The identity here is
+load-bearing:** `openConnection` returns the wrapper, so `getClient()` hands `runAgent` the wrapper,
+so `routerFor` keys the `WeakMap` on the **wrapper**. Failing on `raw` would look up an object that
+was never a key, miss silently, and leave every waiter to time out — the exact failure this step
+exists to prevent. Bind the wrapper to a named const and pass that:
 
 ```typescript
+function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCallable {
+  const wrapper: IpcCallable = {
+    async call<T>(method: string, params?: unknown): Promise<T> {
+      try {
+        return await raw.call<T>(method, params);
+      } catch (e) {
         if (isDisconnectError(e)) {
-          failBriefsForClient(raw as unknown as object, e as Error);
+          // `wrapper`, never `raw` — the router is keyed on what getClient() returned.
+          failBriefsForClient(wrapper, e as Error);
           invalidate();
           void raw.disconnect().catch(() => {});
         }
+        throw e;
+      }
+    },
+    disconnect(): Promise<void> {
+      return raw.disconnect();
+    },
+  };
+  return wrapper;
+}
 ```
 
-Note the router is keyed on the **raw** client, which is what `runAgent` receives after
-`getClient()` returns the wrapper — verify the object identity matches when this runs. If it does
-not, key `routerFor` on the wrapper instead and pass that same object here.
+Referencing `wrapper` inside `call` is safe: the closure runs long after the `const` is
+initialised.
+
+**Known limitation, deliberately accepted.** This hook only fires when a `call` fails, and during
+the await for a brief there is no call in flight. So a solitary in-flight brief on a dying
+connection is still bounded by its timeout rather than failing immediately; what this buys is that
+a *concurrent* failing call now fails every waiter at once instead of letting each grind out its
+own timeout. The complete fix is to drive `failAll` from a transport close event — which could not
+be designed here, because `@nimbus-dev/client` is not installed in this checkout and its event
+surface is unverified. If `IPCClient` turns out to expose a close or error event, wire `failAll` to
+it and this limitation disappears.
 
 Append to `packages/cli/src/mcp/agent-tools.test.ts`:
 
@@ -1625,8 +1718,50 @@ test("failBriefsForClient rejects a brief in flight on that client", async () =>
 });
 ```
 
-Run: `bun test packages/cli/src/mcp/agent-tools.test.ts`
-Expected: PASS — 5 tests.
+That test calls `failBriefsForClient` directly with the same object `getClient` returned, so it
+passes whether or not the adapter wires the right identity — it cannot catch the bug this step
+exists to prevent. Add one that exercises the real wiring, in
+`packages/cli/src/mcp/adapter.test.ts`:
+
+```typescript
+test("a disconnect on one call fails briefs in flight on the same connection", async () => {
+  let failNext = false;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    async call<T>(method: string): Promise<T> {
+      if (failNext && method === "connector.listStatus") {
+        throw new Error("IPC connection closed");
+      }
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const explain = TOOL_SPECS.find((s) => s.name === "explainWhy");
+  const inFlight = explain?.run(deps, { fileOrPrUrl: "x" });
+  await Promise.resolve();
+
+  // A second, failing call on the same connection trips the disconnect branch.
+  failNext = true;
+  const status = TOOL_SPECS.find((s) => s.name === "getConnectorStatus");
+  await status?.run(deps, {});
+
+  // Resolves well inside the 60 s timeout, because failAll found the wrapper in the WeakMap.
+  const out = await inFlight;
+  expect(out?.isError).toBe(true);
+}, 5000);
+```
+
+The 5-second test timeout is the assertion that matters: keyed on `raw` instead of `wrapper`, this
+test does not fail an assertion — it hangs for 60 seconds and then times out. Confirm it fails that
+way before applying the fix.
+
+Run: `bun test packages/cli/src/mcp/`
+Expected: PASS — 7 tests in `agent-tools.test.ts`, plus the new adapter test.
 
 - [ ] **Step 8: Assert the registered tool count**
 
@@ -1895,7 +2030,7 @@ Create `packages/mcp-launcher/package.json`:
 
 Create `packages/mcp-launcher/LICENSE` containing the standard MIT licence text, copyright the Nimbus authors.
 
-Create `packages/mcp-launcher/README.md` documenting: what it does, that it requires the Nimbus gateway to be installed and running, the `NIMBUS_BIN` override, and an example MCP client configuration block.
+Create `packages/mcp-launcher/README.md` documenting: what it does, that it requires the Nimbus gateway to be installed and running, the `NIMBUS_BIN` override, the `NIMBUS_MCP_TIMEOUT_MS` override (lower it when the editor's own MCP transport timeout is shorter than 60 s), and an example MCP client configuration block.
 
 - [ ] **Step 7: Verify the licence boundary**
 
