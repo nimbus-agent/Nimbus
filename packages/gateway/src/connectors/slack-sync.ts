@@ -263,7 +263,8 @@ function slackTryUpsertIndexedHistoryMessage(
   if (mr["subtype"] !== undefined && mr["subtype"] !== "thread_broadcast") {
     return null;
   }
-  const preview = typeof text === "string" ? text.slice(0, 512) : "";
+  const full = typeof text === "string" ? text : "";
+  const preview = full.slice(0, 512);
   const title = shortIndexedMessageTitleFromPreview(preview, "(no text)");
   const tsNum = Number.parseFloat(ts);
   const modifiedAt = Number.isFinite(tsNum) ? Math.round(tsNum * 1000) : now;
@@ -278,7 +279,7 @@ function slackTryUpsertIndexedHistoryMessage(
     type: "message",
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: preview,
+    body: full,
     url,
     canonicalUrl: url,
     modifiedAt,

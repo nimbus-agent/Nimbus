@@ -96,7 +96,7 @@ export function ingestClip(
     type: "web_clip",
     externalId,
     title: input.title,
-    bodyPreview: input.body,
+    body: input.body,
     url: input.url,
     canonicalUrl: canonical,
     modifiedAt: input.capturedAt,

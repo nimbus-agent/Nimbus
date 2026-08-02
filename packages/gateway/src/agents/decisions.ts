@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { explainConfidence } from "../decisions/decision-confidence.ts";
+import { loadDecisionCandidates } from "../decisions/decision-extract.ts";
 import { matchesService, type ServiceMatchRoute } from "../decisions/decision-service-scope.ts";
 import { countByStatus, listDecisions, readPassState } from "../decisions/decision-store.ts";
 import type { DecisionRecord } from "../decisions/decision-types.ts";
@@ -88,6 +89,7 @@ function buildGaps(
   entryCount: number,
   serviceUnmatched: number,
   snippetCount: number,
+  truncation: { totalSources: number; truncatedSources: number },
 ): GapNote[] {
   const gaps: GapNote[] = [];
   const anyItems = db.query("SELECT 1 FROM item LIMIT 1").get() !== null;
@@ -137,14 +139,21 @@ function buildGaps(
     });
   }
 
-  // Standing honesty note — permanent, not conditional. Recall is capped by
-  // what the index actually holds, and a brief that omits this overstates it.
-  gaps.push({
-    category: "missing_relation_emit",
-    detail:
-      "Item bodies are indexed to 512 characters, so a decision stated later in a long " +
-      "document or thread is not visible to this pass. Recall is capped, not complete.",
-  });
+  // Honesty note, now precise rather than a blanket cap claim: most sources
+  // carry a full body since V48, but a source is truncated when its connector
+  // has not declared a full body yet, or declared one that exceeded its
+  // type's cap. Conditional, not standing — an all-complete window states
+  // nothing false by staying silent.
+  if (truncation.truncatedSources > 0) {
+    gaps.push({
+      category: "missing_relation_emit",
+      detail:
+        `${String(truncation.truncatedSources)} of ${String(truncation.totalSources)} ` +
+        "source(s) considered in this window were indexed with a truncated body, so a " +
+        "decision stated past that cutoff is not visible to this pass. Recall is capped " +
+        "for those sources only, not complete.",
+    });
+  }
 
   // Second standing honesty note, also unconditional: the score scale a reader
   // sees is not the scale the pass can actually reach. The corroboration term
@@ -200,12 +209,23 @@ export async function runDecisions(
     subAgent(() => listDecisions(ctx.db, { sinceMs: cutoffMs, minConfidence, limit })),
     subAgent(() => countByStatus(ctx.db)),
     subAgent(() => readPassState(ctx.db)),
+    // The honesty count: how many of the decision-source items considered in
+    // this window were indexed with a truncated body. A separate scan from
+    // `listDecisions` above — it covers every candidate source in the window,
+    // not just the ones that produced a decision.
+    subAgent(() => loadDecisionCandidates(ctx.db, { sinceMs: cutoffMs })),
   ];
   const results = await coordinator.run(tasks);
 
   const rows = decode<DecisionRecord[]>(results[0]?.text, []);
   const counts = decode(results[1]?.text, { total: 0, pending: 0, extracted: 0, vetoed: 0 });
   const passState = decode<{ lastPassAt: number | null }>(results[2]?.text, { lastPassAt: null });
+  const candidates = decode<{ total: number; truncatedSources: number }>(results[3]?.text, {
+    total: 0,
+    truncatedSources: 0,
+  });
+  const totalSources = candidates.total;
+  const truncatedSources = candidates.truncatedSources;
 
   let serviceUnmatched = 0;
   const entries: DecisionsEntry[] = [];
@@ -245,10 +265,11 @@ export async function runDecisions(
       entries.length,
       serviceUnmatched,
       snippetCount,
+      { totalSources, truncatedSources },
     ),
     query: { sinceMs: cutoffMs, service, minConfidence, explain },
     entries,
-    stats: { ...counts, lastPassAt: passState.lastPassAt },
+    stats: { ...counts, lastPassAt: passState.lastPassAt, truncatedSources },
   };
 }
 

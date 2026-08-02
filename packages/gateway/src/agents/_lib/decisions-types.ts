@@ -63,5 +63,13 @@ export interface DecisionsBrief {
     readonly extracted: number;
     readonly vetoed: number;
     readonly lastPassAt: number | null;
+    /**
+     * Of the source item(s) considered within this brief's window, how many
+     * were indexed with `body_complete = 0` — a truncated body, whether from
+     * a connector that has not declared a full body yet or one that did but
+     * exceeded its type's cap. Replaces a blanket "512-character cap" caveat
+     * with a precise, per-brief count.
+     */
+    readonly truncatedSources: number;
   };
 }

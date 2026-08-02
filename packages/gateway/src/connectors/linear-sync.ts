@@ -172,7 +172,7 @@ function linearUpsertSingleIssue(
     type: "issue",
     externalId: identifier,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: (desc ?? "").slice(0, 512),
+    body: desc ?? "",
     url: url ?? null,
     canonicalUrl: url ?? null,
     modifiedAt: Number.isFinite(modified) ? modified : syncTime,

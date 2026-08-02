@@ -129,7 +129,13 @@ const UPGRADE_RESERVE = 5;
 /** Cap on `vetoedTerms` — this is a user notification, not an audit trail. */
 const VETOED_TERMS_REPORTED = 10;
 
-type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
+type ScanRow = {
+  id: string;
+  title: string;
+  body: string | null;
+  body_complete: number;
+  modified_at: number;
+};
 
 /**
  * The delta scan, resumed from a COMPOSITE `(modified_at, id)` cursor.
@@ -147,7 +153,7 @@ function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: str
   const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   return db
     .query(
-      `SELECT i.id, i.title, i.body_preview, i.modified_at
+      `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
        FROM item i
        WHERE ${sourceFilter}
          AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -168,9 +174,44 @@ function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: st
   if (itemIds.length === 0) return [];
   const ph = itemIds.map(() => "?").join(", ");
   const rows = db
-    .query(`SELECT title, body_preview FROM item WHERE id IN (${ph})`)
-    .all(...itemIds) as Array<{ title: string; body_preview: string | null }>;
-  return rows.map((r) => ({ text: `${r.title}. ${r.body_preview ?? ""}`.trim() }));
+    .query(`SELECT title, body FROM item WHERE id IN (${ph})`)
+    .all(...itemIds) as Array<{ title: string; body: string | null }>;
+  return rows.map((r) => ({ text: `${r.title}. ${r.body ?? ""}`.trim() }));
+}
+
+/**
+ * A read-only candidate COUNT over the FULL glossary-source domain since
+ * `sinceMs` — not the incremental delta `scanDelta` drains for mining. This
+ * backs the brief's honesty count: "N source(s) considered, M truncated" (see
+ * `agents/glossary.ts`), where "truncated" means `body_complete = 0` — either
+ * a connector that has not declared a full body yet, or one that did but the
+ * source exceeded its type's cap.
+ *
+ * Projects a SQL aggregate rather than materialising rows: the caller only
+ * ever needs the two counts, and a row-returning query would pull every
+ * matching item's full `body` (up to 16 KiB each, unbounded) across the
+ * `AgentCoordinator` JSON-stringify boundary just to discard it —
+ * particularly costly here since `agents/glossary.ts` calls this
+ * unconditionally on every invocation, list mode and single-term lookup
+ * alike. Uses the SAME `glossarySourceFilter()` predicate as `scanDelta` so
+ * the counted population always matches the mined population — that
+ * equivalence is what makes the reported number honest, so do not inline or
+ * re-derive it.
+ */
+export function loadGlossaryCandidates(
+  db: Database,
+  opts: { sinceMs: number },
+): { total: number; truncatedSources: number } {
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN i.body_complete = 0 THEN 1 ELSE 0 END), 0) AS truncated
+         FROM item i
+        WHERE ${sourceFilter} AND i.modified_at >= ?`,
+    )
+    .get(...sourceKeys, opts.sinceMs) as { total: number; truncated: number } | null;
+  return { total: row?.total ?? 0, truncatedSources: row?.truncated ?? 0 };
 }
 
 /**
@@ -194,7 +235,7 @@ function discoverPhase(
     { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }
   >();
   for (const row of rows) {
-    const text = `${row.title}\n${row.body_preview ?? ""}`;
+    const text = `${row.title}\n${row.body ?? ""}`;
     for (const c of mineTerms(text)) {
       if (!seen.has(c.key)) seen.set(c.key, { surface: c.surface, form: c.form });
     }

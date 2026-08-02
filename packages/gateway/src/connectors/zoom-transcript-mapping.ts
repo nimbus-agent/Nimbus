@@ -18,10 +18,7 @@
  * Receiving already-fetched `plainText` keeps the mapper pure.
  */
 
-import type { MappedRow } from "./mapped-row.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
-
-const TRANSCRIPT_PREVIEW_MAX_CHARS = 280;
 
 export interface ZoomTranscriptMappingInput {
   /** Parent meeting object from /v2/users/me/recordings → `meetings[]`. */
@@ -33,7 +30,24 @@ export interface ZoomTranscriptMappingInput {
   readonly syncedAt: number;
 }
 
-export type ZoomTranscriptMappedRow = MappedRow<"zoom", "transcript">;
+/**
+ * Shaped like {@link import("./mapped-row.ts").MappedRow} but with `body`
+ * (declared-full) in place of `bodyPreview`, so the store's own
+ * `clampBody`/`bodyCapForItemType` — not this mapper — is the single place
+ * that applies a length cap to the transcript text.
+ */
+export interface ZoomTranscriptMappedRow {
+  readonly service: "zoom";
+  readonly type: "transcript";
+  readonly externalId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly url: string | null;
+  readonly canonicalUrl: string | null;
+  readonly modifiedAt: number;
+  readonly metadata: Record<string, unknown>;
+  readonly syncedAt: number;
+}
 
 /** ISO-8601 string → epoch ms, or null for non-strings / unparseable input. */
 function parseIsoMs(v: unknown): number | null {
@@ -129,26 +143,6 @@ export function vttToPlainText(vtt: string): string {
   return cues.join(" ").replaceAll(/\s+/g, " ").trim();
 }
 
-/**
- * Clip {@link mapZoomTranscriptToItem} `bodyPreview` to {@link
- * TRANSCRIPT_PREVIEW_MAX_CHARS} chars with a word-boundary cut + `…` suffix
- * (review point 1.2 — mid-word clips look bad in UI). When the last
- * `WORD_BOUNDARY_LOOKBACK` chars contain no space (pathological one-long-word
- * input), falls back to a hard clip + `…`.
- */
-const WORD_BOUNDARY_LOOKBACK = 40;
-function clipTranscriptPreview(text: string): string {
-  if (text.length <= TRANSCRIPT_PREVIEW_MAX_CHARS) {
-    return text;
-  }
-  const hard = text.slice(0, TRANSCRIPT_PREVIEW_MAX_CHARS);
-  const lastSpace = hard.lastIndexOf(" ");
-  if (lastSpace >= TRANSCRIPT_PREVIEW_MAX_CHARS - WORD_BOUNDARY_LOOKBACK) {
-    return `${hard.slice(0, lastSpace)}…`;
-  }
-  return `${hard}…`;
-}
-
 export function mapZoomTranscriptToItem(
   input: ZoomTranscriptMappingInput,
 ): ZoomTranscriptMappedRow | null {
@@ -179,7 +173,6 @@ export function mapZoomTranscriptToItem(
   const url = playUrl !== undefined && playUrl !== "" ? playUrl : null;
   const recordingStart = parseIsoMs(file["recording_start"]);
   const meetingId = numberField(meeting, "id");
-  const bodyPreview = clipTranscriptPreview(input.plainText);
   const metadata: Record<string, unknown> = {
     meeting_id: meetingId ?? null,
     meeting_uuid: meetingUuid,
@@ -197,7 +190,7 @@ export function mapZoomTranscriptToItem(
     type: "transcript",
     externalId,
     title,
-    bodyPreview,
+    body: input.plainText,
     url,
     canonicalUrl: url,
     modifiedAt: recordingStart ?? input.syncedAt,

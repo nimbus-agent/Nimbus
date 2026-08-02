@@ -104,7 +104,8 @@ type ScanRow = {
   service: string;
   type: string;
   title: string;
-  body_preview: string | null;
+  body: string | null;
+  body_complete: number;
   modified_at: number;
 };
 
@@ -116,7 +117,7 @@ function scanDelta(
   const { sql, params } = decisionSourceFilter();
   return db
     .query(
-      `SELECT i.id, i.service, i.type, i.title, i.body_preview, i.modified_at
+      `SELECT i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at
          FROM item i
         WHERE ${sql}
           AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -132,6 +133,39 @@ function scanDelta(
     ) as ScanRow[];
 }
 
+/**
+ * A read-only candidate COUNT over the FULL decision-source domain within a
+ * window — not the incremental delta `scanDelta` drains for mining. This
+ * backs the brief's honesty count: "N source(s) considered, M truncated"
+ * (see `agents/decisions.ts`), where "truncated" means `body_complete = 0` —
+ * either a connector that has not declared a full body yet, or one that did
+ * but the source exceeded its type's cap.
+ *
+ * Projects a SQL aggregate rather than materialising rows: the caller only
+ * ever needs the two counts, and a row-returning query would pull every
+ * matching item's full `body` (up to 16 KiB each, unbounded — unlike
+ * `scanDelta`, there is no `LIMIT` here) across the `AgentCoordinator`
+ * JSON-stringify boundary just to discard it. Uses the SAME
+ * `decisionSourceFilter()` predicate as `scanDelta` so the counted
+ * population always matches the mined population — that equivalence is
+ * what makes the reported number honest, so do not inline or re-derive it.
+ */
+export function loadDecisionCandidates(
+  db: Database,
+  opts: { sinceMs: number },
+): { total: number; truncatedSources: number } {
+  const { sql, params } = decisionSourceFilter();
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN i.body_complete = 0 THEN 1 ELSE 0 END), 0) AS truncated
+         FROM item i
+        WHERE ${sql} AND i.modified_at >= ?`,
+    )
+    .get(...params, opts.sinceMs) as { total: number; truncated: number } | null;
+  return { total: row?.total ?? 0, truncatedSources: row?.truncated ?? 0 };
+}
+
 /** Normalises a caller-supplied positive-integer bound; see `passBudget`. */
 function boundOr(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
@@ -140,7 +174,7 @@ function boundOr(value: number | undefined, fallback: number): number {
 }
 
 function scanText(r: ScanRow): string {
-  return `${r.title}. ${r.body_preview ?? ""}`.trim();
+  return `${r.title}. ${r.body ?? ""}`.trim();
 }
 
 /** Mines one already-fetched batch and commits it with the advanced watermark. */
@@ -244,11 +278,11 @@ function serviceTypeOf(db: Database, itemId: string): string {
 }
 
 function sentenceContext(db: Database, itemId: string): string {
-  const r = db.query("SELECT title, body_preview FROM item WHERE id = ?").get(itemId) as {
+  const r = db.query("SELECT title, body FROM item WHERE id = ?").get(itemId) as {
     title: string;
-    body_preview: string | null;
+    body: string | null;
   } | null;
-  return r === null ? "" : `${r.title}. ${r.body_preview ?? ""}`.trim();
+  return r === null ? "" : `${r.title}. ${r.body ?? ""}`.trim();
 }
 
 /** Recompute evidence + confidence for one extracted row. */

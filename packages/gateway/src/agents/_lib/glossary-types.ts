@@ -50,5 +50,12 @@ export type GlossaryBrief = {
     /** Subset of `total` — authored in `[glossary.terms]`. */
     manual: number;
     lastPassAt: number | null;
+    /**
+     * Of the glossary-source item(s) indexed so far, how many were stored
+     * with `body_complete = 0` — a truncated body, whether from a connector
+     * that has not declared a full body yet or one that did but exceeded its
+     * type's cap.
+     */
+    truncatedSources: number;
   };
 };
