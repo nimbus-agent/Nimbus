@@ -67,7 +67,14 @@ export function collectIndexMetrics(db: Database): IndexMetrics {
   // NOT dbstat: bun:sqlite is not built with SQLITE_ENABLE_DBSTAT_VTAB, so
   // `dbstat` raises "no such table". The FTS5 shadow tables are ordinary
   // tables and can be summed directly, which needs no build flag.
-  const bodyRow = db.query("SELECT COALESCE(SUM(length(body)), 0) AS b FROM item").get() as {
+  //
+  // `length(body)` on a TEXT value returns the CHARACTER count, not the
+  // UTF-8 byte count (e.g. "日本語" has length 3 but is 9 bytes) — casting
+  // to BLOB makes length() return the actual byte size, which is what this
+  // counter exists to report (on-disk growth after the 16 KiB body cap).
+  const bodyRow = db
+    .query("SELECT COALESCE(SUM(length(CAST(body AS BLOB))), 0) AS b FROM item")
+    .get() as {
     b: number;
   } | null;
   const bodyBytes = Math.max(0, Math.floor(bodyRow?.b ?? 0));

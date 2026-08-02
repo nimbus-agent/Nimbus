@@ -584,11 +584,19 @@ describe("index.metrics", () => {
               totalItems: number;
               itemCountByService: Record<string, number>;
               lastSuccessfulSyncByConnector: Record<string, number | null>;
+              bodyBytes: number;
+              ftsIndexBytes: number;
             };
           }
         ).value;
         expect(typeof v.totalItems).toBe("number");
         expect(typeof v.itemCountByService).toBe("object");
+        // Regression guard: serializeMetrics() hand-picks fields off
+        // collectIndexMetrics() rather than spreading it, so these two
+        // counters could silently be dropped by a future edit with nothing
+        // else catching it.
+        expect(typeof v.bodyBytes).toBe("number");
+        expect(typeof v.ftsIndexBytes).toBe("number");
       } finally {
         db.close();
       }
