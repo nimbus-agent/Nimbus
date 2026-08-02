@@ -2099,6 +2099,37 @@ nimbus index reembed --model Xenova/all-MiniLM-L6-v2 --yes --json
 
 ---
 
+### `nimbus index rebody`
+
+Re-fetch full item bodies for services left with truncated legacy text. The full-body store (schema **V48**) lifted the 512-character cap to 16 KiB for `PROSE_HEAVY_TYPES`, but only for connectors that were migrated to pass a declared-full `body:` — existing rows synced before that migration (or by a connector that has not been migrated) are left with `item.body_complete = 0`: text that is genuinely gone from the local index and can only be recovered by re-fetching from the source API. `rebody` works by **clearing a connector's sync watermark** (`scheduler_state.cursor`) and letting the existing sync run from scratch, so a real run is real outbound API traffic against a live connector, not a local recompute.
+
+```bash
+nimbus index rebody --dry-run
+nimbus index rebody --service slack --yes
+nimbus index rebody --type issue --limit 3 --yes --json
+```
+
+**Flags:**
+
+| Flag | Required | Description |
+|---|---|---|
+| `--service <name>` | no | Restrict to a single connector service. |
+| `--type <t>` | no | Restrict the dry-run candidate scan to one item `type` (does not itself limit which connector re-syncs — see Behaviour). |
+| `--limit N` | no | Cap the number of connectors targeted by a real (non-dry) run; a malformed value is a hard error, not silently ignored, because it bounds how many connectors get an unbounded full-account network re-walk. |
+| `--dry-run` | no | Report per-service pending-body counts (`body_complete = 0`) without clearing any watermark or making any network call. |
+| `--yes` | yes (non-dry) | Confirmation gate; required for any non-`--dry-run` invocation. Omitting both `--dry-run` and `--yes` prints the planned action and exits without doing anything. |
+| `--json` | no | Suppress progress/prose output; print the final summary as one JSON object. |
+
+There is deliberately **no `--only-truncated` flag**. A sync fetches by page and time window, not by item id — no connector exposes a per-item fetch — so a flag that tried to target only the rows marked incomplete would suppress writes for already-complete items (free) while every API request still happened, saving zero rate-limit budget. It is not a planned follow-up; it is not implementable against the current connector contract.
+
+**Behaviour:** a dry run (`--dry-run`, or invoking with neither `--dry-run` nor `--yes`) computes and returns the whole-index `pending` grouping by service (never scoped to `--service`/`--type` — those filters pick which connector(s) a real run targets, not which rows the summary counts) plus a `cannotImprove` list. A service lands in `cannotImprove` when it is not in `REBODY_IMPROVABLE_SERVICES` (`packages/gateway/src/ipc/index-rebody-rpc.ts`) — the inclusion list of services whose connector passes a declared-full `body:` for every item type it writes today. As of the full-body store's PR 3, that list is nine services: `bitbucket`, `discord`, `github`, `jira`, `linear`, `obsidian`, `slack`, `snyk`, `teams` — a service with a mixed migration state (e.g. `zoom`, which migrated `zoom:transcript` but not `zoom:meeting`; or the locally-generated `nimbus` bucket, which migrated `web_clip` and `research_brief` but not `glossary_term`) is deliberately left out, because `rebody`'s pending count is grouped by service only, not by `(service, type)`. An unmigrated or newly-added connector defaults to cannot-improve — an over-cautious warning, never a false promise. A real run clears the sync watermark for each targeted service (so a `forceSync` failure — rate limit, auth — still leaves the connector armed for its next scheduled tick, surfaced as a warning) and reports `pendingBefore`/`pendingAfter` plus `succeeded`/`failed` counts.
+
+**Cost is not proportional to the pending counts shown**, and the CLI prints this caveat on every dry run and every real run: some connectors resume from a bounded recent window even from a cleared watermark (e.g. Slack, Jira's cold-start JQL floor); others have no delta sync and re-walk the **entire** account regardless of how few items are actually pending (Notion, Confluence) — for those, `rebody` can be tens of thousands of requests to recover bodies for a handful of rows.
+
+**Exit codes:** `0` = run completed (dry or real, any number of per-service failures — see `failedServices` in `--json` output). `1` = fatal abort (malformed params, Gateway down).
+
+---
+
 ### `nimbus index regraph`
 
 Re-run the graph populator over every indexed item via `index.regraph`. Needed because a populator change only reaches existing rows when they next re-sync, and historical items may never re-sync. Threads the same service-identity resolver the live sync path uses, so `correlates_with` edges between resolver-bound deployments/incidents survive the backfill instead of being cleared. Idempotent — safe to re-run.

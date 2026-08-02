@@ -8,6 +8,49 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-02 — `nimbus index rebody` — recover full bodies for already-indexed items.**
+  A backfill for the full-body store below: re-fetches item bodies for rows the V48 migration (or
+  a connector not yet migrated) left with `body_complete = 0`, by clearing a per-connector sync
+  watermark (`scheduler_state.cursor`) and letting the existing sync run from scratch — real
+  outbound API traffic, not a local recompute. `index.rebody`/`index.rebodyCancel` (long-running job
+  pattern, `index.rebodyProgress`/`Done`/`Error` notifications) plus `nimbus index rebody
+  [--service <name>] [--type <t>] [--limit N] [--dry-run] [--yes] [--json]`. An inclusion list,
+  `REBODY_IMPROVABLE_SERVICES` (nine services: `bitbucket`, `discord`, `github`, `jira`, `linear`,
+  `obsidian`, `slack`, `snyk`, `teams`), decides what a dry run reports as improvable — a mixed-migration
+  service (`zoom`: `transcript` migrated, `meeting` not; the local `nimbus` bucket: `web_clip` and
+  `research_brief` migrated, `glossary_term` not) is deliberately excluded, because the pending count
+  is grouped by service only, not by `(service, type)`. Deliberately **no `--only-truncated` flag** —
+  a sync fetches by page/time window, not by item id, so such a flag would suppress writes for
+  already-complete items while every API request still happened, saving nothing. The dry-run report
+  and the CLI both state the load-bearing caveat: cost is not proportional to the pending counts —
+  a full-scan connector (Notion, Confluence) re-walks the entire account regardless of how few items
+  are pending. No new schema, no new invariant.
+- **2026-08-02 — Full-body store: `item.body` (schema V48), lifting the 512-character index cap.**
+  `item.body_preview` was the only body text the local index stored, hard-clipped to 512 characters
+  for every item from every connector — one clamp bounding keyword search (`item_fts`), `nimbus
+  glossary` and `nimbus decisions` simultaneously, and incidentally making `embedding/chunker.ts`'s
+  256-token chunking inert (512 chars ≈ 128 tokens always produced exactly one chunk). Adds
+  `item.body` (up to 16 KiB for `PROSE_HEAVY_TYPES`, else 512) and `item.body_complete`;
+  `item_fts` is repointed from `body_preview` to `body` (migration seeds `body = body_preview`
+  before rebuilding, so no existing row's keyword coverage regresses); `body_preview` becomes a
+  derived 512-char prefix of `body`, never written independently. Embeddings
+  (`embedding/pipeline.ts`), the relationship graph, and the federation query gate (invariant I17)
+  are deliberately untouched — all three keep reading `body_preview`, so embedding egress stays
+  exactly flat, enforced by source-scanning guards. `body_complete` stays 0 for every row the V48
+  migration touches — completeness is a claim a connector makes about its own fetch and cannot be
+  inferred from stored text length.
+
+  The implementation plan named "twelve connectors." Verified against the tree, it is not twelve:
+
+  | | Sources |
+  | --- | --- |
+  | **Full body @ 16 KiB (10)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip` |
+  | **Partial — 2,000-char cap, not full-body (1)** | `nimbus:research_brief` — bounded upstream by `MAX_SUMMARY_CHARS` (`briefs/brief-report.ts`) at synthesis, in the only path that builds a `Report`; a real gain (512 → 2,000) but not full-body indexing |
+  | **Inert, still 512 (2)** | Bitbucket — emits only `type: "pr"`, while `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which no connector emits (dead configuration); `github:pr` — never added to `PROSE_HEAVY_TYPES` (only `github:issue` was), though the `body:` swap in `github-sync.ts` touches both `upsertPr` and `upsertFromIssue` |
+
+  Schema **V48**. No new security invariant — this widens a storage field and introduces no new
+  chokepoint. Spec: `docs/superpowers/specs/2026-08-02-full-body-store-design.md`; plan:
+  `docs/superpowers/plans/2026-08-02-full-body-store.md`. (#1023)
 - **2026-08-02 — `nimbus decisions` — implicit ADR extractor.** The third and final member of the
   implicit-knowledge triad, after `nimbus why` (2026-07-24) and `nimbus glossary` (2026-07-30):
   recovers decisions buried in Slack/Discord/Teams messages, Notion/Confluence/Obsidian pages, and
@@ -25,12 +68,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   express decision horizons in days/weeks, purely additive so existing `connector`/`share` callers
   are unaffected.
 
-  Two honest limits are stated in every brief, not absorbed silently: item bodies are indexed to a
-  512-character cap, so a decision stated later in a long document or thread is structurally
-  invisible to this pass — recall is capped, not complete; and `migration`/`iac` evidence is
-  specified in the schema's `decision_evidence.kind` CHECK constraint but never emitted, because no
-  connector indexes a corroborating change's file paths — so the confidence ceiling is **0.86, not
-  1.0**, and the brief never presents a full-marks scale a user cannot reach.
+  Two honest limits are stated in every brief, not absorbed silently: at ship time item bodies were
+  indexed to a blanket 512-character cap, so a decision stated later in a long document or thread
+  was structurally invisible to this pass. The full-body store (V48, below — shipped the same day)
+  lifted that cap to 16 KiB for the migrated sources this agent mines (Slack, Discord, Teams,
+  Obsidian, Linear, Jira, `github:issue`); Notion, Confluence, GitLab and `github:pr` remain on the
+  512-character cap. The blanket disclaimer is now a conditional per-brief count instead — "N of M
+  source(s) considered ... indexed with a truncated body," keyed on `body_complete = 0` via the same
+  source-filter SSoT the mining path uses, and silent when nothing is truncated. And `migration`/`iac`
+  evidence is specified in the schema's `decision_evidence.kind` CHECK constraint but never emitted,
+  because no connector indexes a corroborating change's file paths — so the confidence ceiling is
+  **0.86, not 1.0**, and the brief never presents a full-marks scale a user cannot reach.
 
   Spec: `docs/superpowers/specs/2026-08-01-nimbus-decisions-design.md`; plan:
   `docs/superpowers/plans/2026-08-01-nimbus-decisions.md`.

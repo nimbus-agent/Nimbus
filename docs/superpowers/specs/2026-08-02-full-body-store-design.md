@@ -423,6 +423,9 @@ Three PRs, in order:
    column lists, the `reindex.ts` minimization fix, both guards. No connector changes, so `body`
    is a copy of `body_preview` and observable behaviour is identical to today. Nothing can regress.
 2. **Twelve connectors** flip `bodyPreview:` → `body:`. This is where recall actually improves.
+   [**Correction, 2026-08-02 (post-implementation):** verified against the tree, it is not
+   twelve — see [§ Post-implementation correction](#post-implementation-correction-2026-08-02)
+   below.]
 3. **`index.rebody`** plus its CLI surface, which is only useful once (2) has landed.
 
 Then the follow-ups from the right-hand column above, Notion and Confluence first.
@@ -443,3 +446,32 @@ Landing with the PRs above: `docs/CHANGELOG.md`; the S1 block in `docs/roadmap.m
   512 while `wordCount` reports the full length) is largely *resolved* by this slice for the
   storage half, but its reporting half and #1006 (`web_clip` routing to OpenAI against a
   local-only store listing) are separate and stay with the web-clipper workstream.
+
+## Post-implementation correction (2026-08-02)
+
+This is a design document — the sections above are left as approved, unedited, because they
+record the reasoning at design time. This section records what implementation actually
+established, verified against the tree after PR #1023 (`faa23a8b`) merged, on the same date.
+
+**"Twelve connectors" (§ Rollout, PR 2) is wrong.** The plan's in-scope list — Slack, Discord,
+Teams, Linear, Jira, GitHub issues, Bitbucket, Obsidian, Zoom transcripts, Snyk, `nimbus:web_clip`,
+`nimbus:research_brief` — is twelve names, but two of them do not actually gain full-body indexing
+once the `bodyPreview:` → `body:` swap lands, because `bodyCapForItemType` keys on
+`PROSE_HEAVY_TYPES` membership, not on whether a connector passes `body:`:
+
+| | Sources |
+| --- | --- |
+| **Full body @ 16 KiB (10)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip` |
+| **Partial — 2,000-char cap, not full-body (1)** | `nimbus:research_brief` — bounded upstream of the store by `MAX_SUMMARY_CHARS` (`briefs/brief-report.ts`), applied at synthesis in the only path that builds a `Report`. A real gain (512 → 2,000), but not what "full-body indexing" means anywhere else in this document. |
+| **Inert, still 512 (2)** | Bitbucket — it emits only `type: "pr"`, while `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which no connector emits (dead configuration); `github:pr` — never added to `PROSE_HEAVY_TYPES` (only `github:issue` was) |
+
+Bitbucket was one of the plan's twelve and was known at design time to be a `bodyPreview:` →
+`body:` swap; what design time did not check was whether the *type* it emits is in
+`PROSE_HEAVY_TYPES`. `github:pr` was never one of the twelve — the plan's in-scope row said
+"GitHub issues" — but the `body:` swap in `github-sync.ts` touches `upsertPr` and
+`upsertFromIssue` in the same file, so `github:pr` also picked up a declared-full `body:` as a
+side effect, and also stayed inert for the same reason.
+
+`docs/CHANGELOG.md`, `docs/roadmap.md` (the S1 block and the Wave 5 `decisions` entry), and
+`docs/cli-reference.md`/`docs/schema-reference.md` carry the corrected 10/1/2 accounting;
+this spec's own body is left as the historical record of what was planned, not what shipped.
