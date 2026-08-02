@@ -193,8 +193,10 @@ export async function runDecisionsCommand(
 
   if (parsed.rebuild && !parsed.yes) {
     process.stderr.write(
-      "Rebuilding deletes ALL indexed decisions and re-mines them from scratch.\n" +
-        "Re-run with --yes to confirm.\n",
+      "nimbus decisions --rebuild deletes ALL indexed decisions and clears every veto,\n" +
+        "then re-mines from scratch. Vetoes are permanent judgements the pass will not\n" +
+        "remember — a candidate you previously rejected will be re-extracted and may\n" +
+        "reappear. This cannot be undone. Re-run with --yes to confirm.\n",
     );
     process.exit(2);
   }

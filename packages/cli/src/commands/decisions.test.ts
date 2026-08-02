@@ -309,6 +309,12 @@ describe("runDecisionsCommand — rebuild without --yes", () => {
     }
     expect(exitCalls).toEqual([2]);
     expect(briefCliCalled).toBe(false);
+    // Not just "some warning appeared" — the two facts a user needs before
+    // typing --yes: vetoes are cleared, and that specific loss is permanent.
+    // `decision-store.ts`'s `clearDecisions` docstring: "Clears vetoes too —
+    // that is the point of a rebuild."
+    expect(stderrBuf).toContain("clears every veto");
+    expect(stderrBuf).toContain("cannot be undone");
     expect(stderrBuf).toContain("Re-run with --yes to confirm.");
   });
 });
