@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { computeDeployPreflight } from "../../../src/preflight/preflight.ts";
 import {
   PREFLIGHT_FIXTURE_NOW_MS,
@@ -15,7 +16,7 @@ describe("preflight integration: payment-service fixture (real SQLite)", () => {
   let db: Database;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-int-"));
-    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
   });
   afterEach(() => {
     db.close();

@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
@@ -57,7 +58,7 @@ beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "nimbus-clip-e2e-"));
   dbPath = join(tmpDir, "nimbus.db");
   const db = new Database(dbPath);
-  runIndexedSchemaMigrations(db, 44);
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   db.close();
 
   // 2. Pairing controller (singleton; shared with the HTTP server seam).

@@ -66,7 +66,7 @@ describe("verifyIndex", () => {
        VALUES ('test:2', 'test', 'file', '2', 'Orphan Item', 2000, 2000)`,
     );
     db.run(
-      `INSERT INTO item_fts(item_fts, rowid, title, body_preview)
+      `INSERT INTO item_fts(item_fts, rowid, title, body)
        VALUES('delete', (SELECT rowid FROM item WHERE id = 'test:2'), 'Orphan Item', NULL)`,
     );
 

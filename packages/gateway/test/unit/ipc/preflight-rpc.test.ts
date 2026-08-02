@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../../../src/ipc/preflight-rpc.ts";
 import {
   PREFLIGHT_FIXTURE_NOW_MS,
@@ -15,7 +16,7 @@ describe("preflight-rpc: deploy.preflight", () => {
   let db: Database;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-rpc-"));
-    db = openSeededDbFile(join(dir, "nimbus.db"), 27);
+    db = openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
   });
   afterEach(() => {
     db.close();

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { dispatchPreflightRpc } from "../../../src/ipc/preflight-rpc.ts";
 import {
@@ -17,7 +18,7 @@ describe("E2E (in-process): deploy.preflight", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-e2e-"));
     db = new Database(join(dir, "nimbus.db"));
-    runIndexedSchemaMigrations(db, 27);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   });
 
   afterEach(() => {

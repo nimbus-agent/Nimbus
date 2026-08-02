@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { dispatchMetricsRpc } from "../../../src/ipc/metrics-rpc.ts";
 import type { DoraMetricsResult } from "../../../src/metrics/dora.ts";
@@ -8,7 +9,7 @@ import {
   seedPaymentServiceFixture,
 } from "../../fixtures/dora/payment-service/seed.ts";
 
-const TARGET_SCHEMA_VERSION = 29;
+const TARGET_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
 describe("nimbus metrics dora (e2e, in-process)", () => {
   test("returns the four-metric envelope for a configured service", async () => {

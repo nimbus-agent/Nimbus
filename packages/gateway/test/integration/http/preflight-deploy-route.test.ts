@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { startReadOnlyHttpServer } from "../../../src/ipc/http-server.ts";
 import {
   PREFLIGHT_FIXTURE_NOW_MS,
@@ -18,7 +19,7 @@ describe("GET /v1/preflight/deploy", () => {
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-preflight-http-"));
     const dbPath = join(dir, "nimbus.db");
-    seedDbFile(dbPath, 27);
+    seedDbFile(dbPath, CURRENT_SCHEMA_VERSION);
     const db = new Database(dbPath);
     await seedPaymentServicePreflightFixture(db);
     db.close();

@@ -14,6 +14,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
@@ -115,7 +116,7 @@ export async function startBriefTestServer(opts?: {
   // Migrate + close (same pattern as clip-e2e.test.ts / http-server.test.ts): the server opens
   // its own readonly + writable handles on `dbPath`, so the setup connection must not linger.
   const setupDb = new Database(dbPath);
-  runIndexedSchemaMigrations(setupDb, 44);
+  runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
   setupDb.close();
 
   // A separate writable handle, held only by this harness, for `save` (saveBriefReport) and for

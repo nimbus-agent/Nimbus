@@ -101,7 +101,8 @@ function makeHarness(tomlContent?: string): Harness {
   db.exec(`
     CREATE TABLE item (
       id TEXT PRIMARY KEY,
-      service TEXT NOT NULL
+      service TEXT NOT NULL,
+      body TEXT
     );
     CREATE TABLE embedding_chunk (
       id INTEGER PRIMARY KEY,
@@ -710,7 +711,7 @@ describe("startTelemetryFlushScheduler — interval clamping", () => {
     );
     const db = new Database(":memory:");
     db.exec(
-      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
+      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL, body TEXT); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
     );
 
     const handle = startTelemetryFlushScheduler({
@@ -743,7 +744,7 @@ describe("startTelemetryFlushScheduler — interval clamping", () => {
     );
     const db = new Database(":memory:");
     db.exec(
-      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
+      "CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL, body TEXT); CREATE TABLE embedding_chunk (id INTEGER PRIMARY KEY, item_id TEXT NOT NULL); CREATE TABLE sync_state (connector_id TEXT PRIMARY KEY, last_sync_at INTEGER);",
     );
 
     const handle = startTelemetryFlushScheduler({

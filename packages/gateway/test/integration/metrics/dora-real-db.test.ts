@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { computeDoraMetrics } from "../../../src/metrics/dora.ts";
 import {
   FIXTURE_NOW_MS,
@@ -26,7 +27,7 @@ describe("DORA real-db integration", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "nimbus-dora-real-"));
-    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
+    db = openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
   });
 
   afterEach(() => {

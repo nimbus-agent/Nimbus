@@ -9,6 +9,7 @@ import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
 import { DiskFullError } from "../../../src/db/write.ts";
 import { SqliteEmbeddingPipeline } from "../../../src/embedding/pipeline.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { insertPerson } from "../../../src/people/person-store.ts";
 import { upsertSchedulerRegistration } from "../../../src/sync/scheduler-store.ts";
@@ -19,7 +20,7 @@ function makeTinyDb(): { db: Database; cleanup: () => void; cap: () => void } {
   const db = new Database(dbPath);
   db.exec("PRAGMA journal_mode = MEMORY");
   db.exec("PRAGMA synchronous = OFF");
-  runIndexedSchemaMigrations(db, 30);
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   return {
     db,
     cap: () => {
