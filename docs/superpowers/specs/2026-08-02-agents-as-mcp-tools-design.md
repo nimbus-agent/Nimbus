@@ -272,9 +272,14 @@ directories, rather than left to rot.
 
 - Gateway not installed — the discovery failure above.
 - Gateway installed but stopped — already covered by `GATEWAY_DOWN_MESSAGE`.
-- Gateway found but too old to serve the agent tools — a version check against
-  the tool set, so the failure names the fix instead of surfacing an unknown
-  method error from the IPC layer.
+- Gateway found but too old to attribute the connection — detected by the
+  adapter at connect time, when the client-kind declaration is rejected as an
+  unknown method. Such a gateway will still serve briefs, but nothing will be
+  recorded in the ledger, so this must be reported rather than swallowed:
+  silently serving unrecorded briefs makes `nimbus prove` quietly wrong, which
+  is the exact failure this design exists to close. Reported on stderr, which is
+  safe because the MCP protocol channel is stdout. The launcher cannot detect
+  this itself — it sees the CLI binary, not the gateway's method surface.
 
 ## Error handling
 
