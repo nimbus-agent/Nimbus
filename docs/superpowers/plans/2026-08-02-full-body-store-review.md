@@ -1,6 +1,6 @@
 # Review & Suggestions: Full-Body Store (V48) Implementation Plan
 
-This document contains a structured review, suggestions, improvements, and open questions regarding the implementation plan specified in [2026-08-02-full-body-store.md](file:///C:/gitrep/Nimbus/.claude/worktrees/full-body-store/docs/superpowers/plans/2026-08-02-full-body-store.md).
+This document contains a structured review, suggestions, improvements, and open questions regarding the implementation plan specified in [2026-08-02-full-body-store.md](./2026-08-02-full-body-store.md).
 
 ---
 
@@ -8,7 +8,7 @@ This document contains a structured review, suggestions, improvements, and open 
 
 ### The Issue
 
-A design review was generated in [2026-08-02-full-body-store-design-review.md](file:///C:/gitrep/Nimbus/.claude/worktrees/full-body-store/docs/superpowers/specs/2026-08-02-full-body-store-design-review.md) containing critical feedback, specifically regarding:
+A design review was generated in [2026-08-02-full-body-store-design-review.md](../specs/2026-08-02-full-body-store-design-review.md) containing critical feedback, specifically regarding:
 
 1. Smart flagging of `body_complete` for short historical items (where `length(body_preview) < 512`) during the V48 migration.
 2. An audit for inline title derivations in non-chat prose connectors (e.g. Linear, Jira, GitHub) similar to the Slack/Discord footgun.

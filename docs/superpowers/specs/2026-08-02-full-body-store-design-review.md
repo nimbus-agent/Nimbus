@@ -1,6 +1,6 @@
 # Review & Feedback: Full-body Store Design
 
-This document contains a structured review, suggestions, improvements, and open questions regarding the design of the full-body store specified in [2026-08-02-full-body-store-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/full-body-store/docs/superpowers/specs/2026-08-02-full-body-store-design.md).
+This document contains a structured review, suggestions, improvements, and open questions regarding the design of the full-body store specified in [2026-08-02-full-body-store-design.md](./2026-08-02-full-body-store-design.md).
 
 ---
 
