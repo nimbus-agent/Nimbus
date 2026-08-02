@@ -937,14 +937,19 @@ In `packages/gateway/src/connectors/reindex.ts`, widen the rowid probe (line 21)
       .all(input.service) as Array<{ rowid: number }>;
 ```
 
-and clear all three columns (line 25):
+and clear all three columns (line 25) — **through `dbRun`, not `rawDb.run`**:
 
 ```ts
-      input.index.rawDb.run(
+      dbRun(
+        input.index.rawDb,
         `UPDATE item SET body = NULL, body_preview = NULL, body_complete = 0 WHERE service = ?`,
         [input.service],
       );
 ```
+
+Add `import { dbRun } from "../db/write.ts";` to the file.
+
+The existing line uses `input.index.rawDb.run(...)` directly. That is not an exemption — `DB_RUN_EXEC_ALLOW_LIST` contains exactly one file (`packages/gateway/src/db/write.ts`, asserted at `scripts/structure-audit/check-nimbus-invariants.test.ts:233`), and this call only survives because the D12 pattern matches the identifier `db`, not `rawDb`. Since this task is rewriting the statement anyway, route it through the **I14** wrapper rather than reproducing a latent violation. Do the same for the `DELETE FROM vec_items_384` call a few lines below it, which has the identical shape.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
