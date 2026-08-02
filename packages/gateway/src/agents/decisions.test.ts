@@ -2,13 +2,15 @@ import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import {
   markExtracted,
+  replaceEvidence,
   setConfidence,
   upsertCandidate,
   writePassState,
 } from "../decisions/decision-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { runDecisions } from "./decisions.ts";
+import type { SynthesizerLlm } from "./_lib/synthesize.ts";
+import { emitDecisionsBrief, runDecisions } from "./decisions.ts";
 
 let db: Database;
 
@@ -45,7 +47,48 @@ function extracted(id: string, decidedAt: number, confidence: number): void {
   setConfidence(db, id, confidence, false, 1_000);
 }
 
+function seedItem(id: string, service: string, type: string, metadata: string | null): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata, pinned)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [id, service, type, id, `item ${id}`, 1_000, 1_000, metadata],
+  );
+}
+
 const ctx = () => ({ db, notify: () => {}, sessionId: "s1" });
+
+const PASS_STATE = {
+  watermarkMs: 2_000,
+  watermarkId: "z",
+  lastPassAt: 1_000,
+  lastPassNew: 1,
+  scannedItems: 1,
+};
+
+/** Drives `emitDecisionsBrief` to its first notification and returns it. */
+async function collectBrief(llm?: SynthesizerLlm): Promise<{ method: string; params: unknown }> {
+  const seen: Array<{ method: string; params: unknown }> = [];
+  let settle: () => void = () => undefined;
+  const emitted = new Promise<void>((res) => {
+    settle = res;
+  });
+  await emitDecisionsBrief(
+    { sinceMs: ALL_TIME_MS },
+    {
+      db,
+      sessionId: "s1",
+      notify: (method: string, params: unknown) => {
+        seen.push({ method, params });
+        settle();
+      },
+      ...(llm === undefined ? {} : { llm }),
+    },
+  );
+  await emitted;
+  const first = seen[0];
+  if (first === undefined) throw new Error("emitDecisionsBrief notified nothing");
+  return first;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -190,6 +233,119 @@ test("an explicit minConfidence overrides the configured default, including 0", 
     { ...ctx(), defaultMinConfidence: 0.3 },
   );
   expect(brief.entries.map((e) => e.id)).toEqual(["high", "low"]);
+});
+
+// --explain must resolve the score's inputs from the STORE, not restate the
+// request: the authority term needs the source item's real `service:type` and
+// the corroboration term needs the row's real evidence kinds. Both were only
+// ever exercised with a missing item and zero evidence, where every term
+// degrades to its fallback.
+test("--explain resolves the real source authority and the evidence behind the score", async () => {
+  seedItem("item-a", "notion", "page", null);
+  extracted("a", 1_000, 0.9);
+  replaceEvidence(db, "a", [
+    {
+      kind: "source",
+      entityId: null,
+      itemId: "item-a",
+      label: "the page",
+      url: null,
+      occurredAt: 1_000,
+    },
+    {
+      kind: "pr",
+      entityId: "e-pr",
+      itemId: "github:acme/billing#412",
+      label: "Move billing to Postgres",
+      url: null,
+      occurredAt: 1_000,
+    },
+  ]);
+
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS, explain: true }, ctx());
+  const terms = brief.entries[0]?.explain ?? [];
+  expect(terms.find((t) => t.term === "authority")?.detail).toBe("notion:page");
+  // `source` is excluded from the corroboration term by construction — every
+  // decision has one, so counting it would corroborate everything.
+  expect(terms.find((t) => t.term === "corroboration")?.detail).toBe("pr");
+});
+
+test("reports still-pending candidates as a gap, and stays silent when there are none", async () => {
+  extracted("a", 1_000, 0.9);
+  writePassState(db, { ...PASS_STATE, lastPassNew: 1, scannedItems: 1 });
+
+  const clean = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(clean.gaps.some((g) => g.detail.includes("awaiting extraction"))).toBe(false);
+
+  upsertCandidate(db, {
+    id: "p1",
+    sourceItemId: "item-p1",
+    cueTier: "weak",
+    cueText: "we'll use",
+    priority: 0.1,
+    decidedAt: 1_000,
+    nowMs: 1_000,
+  });
+  const withPending = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(withPending.stats.pending).toBe(1);
+  expect(
+    withPending.gaps.some((g) => g.detail.includes("1 candidate(s) are still awaiting extraction")),
+  ).toBe(true);
+});
+
+// The negative half of the empty-index note. Asserting only that it FIRES on an
+// empty store cannot catch the self-contradiction it exists to prevent —
+// "the local index is empty" printed above a list of decisions.
+test("never claims an empty index while returning decisions", async () => {
+  extracted("a", 1_000, 0.9);
+  writePassState(db, { ...PASS_STATE, lastPassNew: 1, scannedItems: 1 });
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(brief.entries).toHaveLength(1);
+  expect(brief.gaps.some((g) => g.category === "empty_index")).toBe(false);
+});
+
+// `--service` route 2: the ticket-key path, which exists because a repo-only
+// filter silently drops process decisions. The rows it cannot place are counted
+// and disclosed rather than dropped silently.
+test("--service keeps ticket-key matches and discloses how many it could not place", async () => {
+  seedItem("item-match", "jira", "issue", JSON.stringify({ key: "BILLING-12" }));
+  seedItem("item-other", "slack", "message", null);
+  extracted("match", 2_000, 0.9);
+  extracted("other", 1_000, 0.9);
+  writePassState(db, { ...PASS_STATE, lastPassNew: 2, scannedItems: 2 });
+
+  const scoped = await runDecisions({ sinceMs: ALL_TIME_MS, service: "billing" }, ctx());
+  expect(scoped.entries.map((e) => e.id)).toEqual(["match"]);
+  expect(scoped.entries[0]?.matchedVia).toBe("ticket-key");
+  expect(scoped.query.service).toBe("billing");
+  expect(
+    scoped.gaps.some((g) =>
+      g.detail.includes("1 decision(s) match neither a repository nor a ticket project key"),
+    ),
+  ).toBe(true);
+
+  // Without a filter nothing is unmatched, so the note must not appear and no
+  // route is claimed for any entry.
+  const unscoped = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(unscoped.entries.map((e) => e.matchedVia)).toEqual([null, null]);
+  expect(unscoped.gaps.some((g) => g.detail.includes("match neither a repository"))).toBe(false);
+});
+
+test("emitDecisionsBrief renders deterministically alone and defers to a configured synthesizer", async () => {
+  extracted("a", 1_000, 0.9);
+  writePassState(db, { ...PASS_STATE, lastPassNew: 1, scannedItems: 1 });
+
+  const plain = await collectBrief();
+  expect(plain.method).toBe("decisions.briefReady");
+  expect((plain.params as { brief: string }).brief).toContain("Rendered deterministically");
+
+  const synth = await collectBrief({
+    generateMarkdown: async () => "# Synthesized decisions",
+  });
+  expect((synth.params as { brief: string }).brief).toBe("# Synthesized decisions");
+  // The typed brief travels alongside the prose, so a client never has to
+  // re-parse the Markdown.
+  expect((synth.params as { findings: { kind: string } }).findings.kind).toBe("decisions");
 });
 
 // Finding 3: the 0.86 ceiling was claimed in the docs and the spec but emitted

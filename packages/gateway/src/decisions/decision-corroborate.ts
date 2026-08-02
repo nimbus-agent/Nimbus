@@ -77,6 +77,18 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
   // graph populator only emits `mentions` from a message toward `issue`/
   // `commit` targets, never toward a `pr` target, so `pr` evidence from this
   // query alone would require the source item to literally be a PR.
+  //
+  // The join to `item` is INNER, and saying so matters. An earlier draft used a
+  // LEFT JOIN so that a graph entity with no indexed item could still be
+  // evidence, labelled by its entity id — but the `i.modified_at BETWEEN ?`
+  // predicate below is in the WHERE clause, where a non-matching LEFT JOIN row
+  // yields NULL and is filtered out. The LEFT JOIN was therefore inert and the
+  // "entity with no item" case unreachable, while reading as if it were
+  // supported. Corroboration requires an INDEXED item today: an unindexed
+  // target (e.g. a `merged_as` merge commit that no commit connector has
+  // indexed) contributes nothing. Making that a supported case is a deliberate
+  // scoring change — it needs a non-item timestamp to window on — not a join
+  // tweak.
   const code = db
     .query(
       `SELECT t.id AS entity_id, t.type AS entity_type, i.id AS item_id,
@@ -84,7 +96,7 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
          FROM graph_relation r
          JOIN graph_entity s ON s.id = r.from_id
          JOIN graph_entity t ON t.id = r.to_id AND t.type IN ('pr','commit')
-         LEFT JOIN item i ON i.id = t.external_id
+         JOIN item i ON i.id = t.external_id
         WHERE s.external_id = ?
           AND r.type IN ('mentions','merged_as')
           AND i.modified_at BETWEEN ? AND ?
@@ -94,10 +106,10 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
     .all(input.sourceItemId, lo, hi) as Array<{
     entity_id: string;
     entity_type: string;
-    item_id: string | null;
-    title: string | null;
+    item_id: string;
+    title: string;
     url: string | null;
-    modified_at: number | null;
+    modified_at: number;
   }>;
 
   for (const c of code) {
@@ -107,7 +119,7 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
       kind: c.entity_type === "pr" ? "pr" : "commit",
       entityId: c.entity_id,
       itemId: c.item_id,
-      label: c.title ?? c.entity_id,
+      label: c.title,
       url: c.url,
       occurredAt: c.modified_at,
     });
@@ -131,7 +143,7 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
          FROM graph_relation r
          JOIN graph_entity src ON src.id = r.to_id AND src.type = 'issue' AND src.external_id = ?
          JOIN graph_entity p ON p.id = r.from_id AND p.type = 'pr'
-         LEFT JOIN item i ON i.id = p.external_id
+         JOIN item i ON i.id = p.external_id
         WHERE r.type = 'resolves'
           AND i.modified_at BETWEEN ? AND ?
         ORDER BY i.modified_at ASC
@@ -139,10 +151,10 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
     )
     .all(input.sourceItemId, lo, hi) as Array<{
     entity_id: string;
-    item_id: string | null;
-    title: string | null;
+    item_id: string;
+    title: string;
     url: string | null;
-    modified_at: number | null;
+    modified_at: number;
   }>;
 
   for (const r of resolvedBy) {
@@ -152,7 +164,7 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
       kind: "pr",
       entityId: r.entity_id,
       itemId: r.item_id,
-      label: r.title ?? r.entity_id,
+      label: r.title,
       url: r.url,
       occurredAt: r.modified_at,
     });

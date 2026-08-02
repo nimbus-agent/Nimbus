@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { DecisionPassSummary } from "../decisions/decision-extract.ts";
 import { type DecisionRefresher, DecisionRefresherError } from "../decisions/decision-refresh.ts";
-import { dispatchDecisionsRpc } from "./decisions-rpc.ts";
+import { DecisionsRpcError, dispatchDecisionsRpc } from "./decisions-rpc.ts";
 
 const SUMMARY: DecisionPassSummary = {
   scanned: 1,
@@ -116,6 +116,33 @@ describe("dispatchDecisionsRpc", () => {
     expect((err?.params as { message: string } | undefined)?.message).toContain(
       "ERR_DECISIONS_PASS_RUNNING",
     );
+  });
+
+  // `DecisionsRpcError` is this module's declared error contract: `ipc/server/
+  // dispatchers.ts` re-throws it as `new RpcMethodError(e.rpcCode, e.message)`,
+  // which needs BOTH the `instanceof Error` subclassing (for the `instanceof`
+  // test to select it) and an untouched `rpcCode`/`message`.
+  it("DecisionsRpcError is an Error carrying the rpc code and message verbatim", () => {
+    const err = new DecisionsRpcError(-32004, "ERR_DECISIONS_X: nope");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("DecisionsRpcError");
+    expect(err.message).toBe("ERR_DECISIONS_X: nope");
+    expect(err.rpcCode).toBe(-32004);
+  });
+
+  it("a DecisionsRpcError from a pass reaches the wire with its own code, not -32603", async () => {
+    const c = collector();
+    const ctx = {
+      refresher: fakeRefresher({
+        run: () => Promise.reject(new DecisionsRpcError(-32004, "ERR_DECISIONS_X: nope")),
+      }),
+      notify: c.notify,
+    };
+    await dispatchDecisionsRpc("decisions.refresh", {}, ctx);
+    await Bun.sleep(10);
+    const err = c.seen.find((n) => n.method === "decisions.passError");
+    expect((err?.params as { code: number } | undefined)?.code).toBe(-32004);
+    expect((err?.params as { message: string } | undefined)?.message).toBe("ERR_DECISIONS_X: nope");
   });
 
   it("emits passError when the pass throws a plain error", async () => {

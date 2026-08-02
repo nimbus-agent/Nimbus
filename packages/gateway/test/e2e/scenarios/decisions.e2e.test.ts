@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { emitDecisionsBrief } from "../../../src/agents/decisions.ts";
 import { runDecisionPass } from "../../../src/decisions/decision-extract.ts";
@@ -16,8 +18,15 @@ function isBriefReadyParams(v: unknown): v is { brief: string; findings: { kind:
 }
 
 describe("nimbus decisions (e2e, in-process)", () => {
-  test("the decisions agent source is read-only", async () => {
-    const src = await Bun.file("packages/gateway/src/agents/decisions.ts").text();
+  test("the decisions agent source is read-only", () => {
+    // Anchored to this file, not the CWD — the sibling glossary.e2e.test.ts and
+    // expert.e2e.test.ts do the same. A CWD-relative read resolves when the
+    // suite starts at the repo root but throws ENOENT under the sharded
+    // coverage runner, which starts elsewhere.
+    const src = readFileSync(
+      path.join(__dirname, "..", "..", "..", "src", "agents", "decisions.ts"),
+      "utf8",
+    );
     expect(src).not.toContain("ToolExecutor");
     expect(src).not.toContain("HITL_REQUIRED");
     expect(src).not.toContain("connectors.dispatch");
