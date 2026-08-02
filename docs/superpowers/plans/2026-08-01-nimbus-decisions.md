@@ -83,11 +83,13 @@ These apply to **every** task. They are project non-negotiables, not preferences
 ## Task 1: V47 migration
 
 **Files:**
+
 - Create: `packages/gateway/src/index/decisions-v47-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts` (import block ~line 28; step array ends ~line 428)
 - Test: `packages/gateway/src/index/migrations/runner-v47.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `DECISIONS_V47_SQL: string`. Tables `decision_record`, `decision_evidence`, `decision_pass_state`.
 
@@ -336,11 +338,13 @@ git commit -m "feat(decisions): add V47 decision_record, decision_evidence, deci
 ## Task 2: Types and the source-type allowlist
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-types.ts`
 - Create: `packages/gateway/src/decisions/decision-source-types.ts`
 - Test: `packages/gateway/src/decisions/decision-source-types.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `type DecisionStatus = "pending" | "extracted" | "vetoed"`
@@ -497,10 +501,12 @@ git commit -m "feat(decisions): add decision types and the service-qualified sou
 This is where precision starts. The miner is high-recall by design; Task 7's LLM supplies precision.
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/cue-mining.ts`
 - Test: `packages/gateway/src/decisions/cue-mining.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CueTier` from `decision-types.ts`.
 - Produces:
   - `normalizeSentence(raw: string): string`
@@ -695,10 +701,12 @@ git commit -m "feat(decisions): add cue mining with content-derived row identity
 ## Task 4: Confidence and priority scoring
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-confidence.ts`
 - Test: `packages/gateway/src/decisions/decision-confidence.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CueTier`, `EvidenceKind` from `decision-types.ts`.
 - Produces:
   - `cueStrength(tier: CueTier): number`
@@ -929,10 +937,12 @@ git commit -m "feat(decisions): add the deterministic confidence and priority sc
 ## Task 5: The store
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-store.ts`
 - Test: `packages/gateway/src/decisions/decision-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DecisionRecord`, `DecisionEvidence`, `DecisionStatus` (Task 2); `runMigrations` (Task 1).
 - Produces:
   - `upsertCandidate(db, c: CandidateInsert): void` where `CandidateInsert = { id; sourceItemId; cueTier; cueText; priority; decidedAt; nowMs }`
@@ -1487,10 +1497,12 @@ git commit -m "feat(decisions): add the decision store over the V47 tables"
 ## Task 6: Corroboration
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-corroborate.ts`
 - Test: `packages/gateway/src/decisions/decision-corroborate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DecisionEvidence`, `EvidenceKind` (Task 2).
 - Produces:
   - `CORROBORATION_BACKWARD_MS`, `CORROBORATION_FORWARD_MS` constants
@@ -1887,10 +1899,12 @@ git commit -m "feat(decisions): corroborate decisions against graph evidence in 
 ## Task 7: The LLM adapter
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-llm-adapter.ts`
 - Test: `packages/gateway/src/decisions/decision-llm-adapter.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces:
   - `type DecisionLlm = { complete(prompt: string): Promise<string> }`
@@ -2097,10 +2111,12 @@ git commit -m "feat(decisions): add the veto-or-structure LLM adapter"
 ## Task 8: The extraction pass
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-extract.ts`
 - Test: `packages/gateway/src/decisions/decision-extract.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 2–7.
 - Produces:
   - `DecisionPassOptions = { nowMs; useLlm; maxLlmCalls; minConfidence; retryCooldownMs; llm?: DecisionLlm }`
@@ -2604,12 +2620,14 @@ git commit -m "feat(decisions): add the three-phase extraction pass with an upgr
 ## Task 9: Config — `[decisions]`
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` — add the whole `[decisions]` block immediately after the `[glossary]` one (which ends ~line 1604)
 - Test: `packages/gateway/src/config/nimbus-toml-decisions.test.ts`
 
 **Do NOT create a separate config module.** `parseBool` and `forEachSectionEntry` are declared FILE-LOCAL in `nimbus-toml.ts` (lines 53 and 64) and are not exported. A separate file cannot reach them, and exporting or duplicating them to work around that is out of scope and breaks the file. Every other section lives in this file; `[decisions]` does too.
 
 **Interfaces:**
+
 - Consumes: `forEachSectionEntry` and the section-parsing helpers already used by `[glossary]` in `nimbus-toml.ts`.
 - Produces: `NimbusDecisionsToml = { enabled; useLlm; minConfidence; maxLlmCallsPerPass; debounceMs; retryCooldownMs }`, `DEFAULT_NIMBUS_DECISIONS_TOML`, `parseNimbusDecisionsToml(raw: string): NimbusDecisionsToml`.
 
@@ -2710,12 +2728,14 @@ git commit -m "feat(decisions): add the [decisions] nimbus.toml section"
 ## Task 10: The refresher and gateway wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-refresh.ts`
 - Modify: `packages/gateway/src/platform/assemble.ts` (mirror `glossaryRefresher`: creation ~line 448, post-sync `trigger()` ~line 486, return ~line 529, `sidecarStops` ~line 1788, `ipcOpts` ~line 2103)
 - Modify: `packages/gateway/src/ipc/server/options.ts` (add `decisionsRefresher?`)
 - Test: `packages/gateway/src/decisions/decision-refresh.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runDecisionPass`, `rebuildDecisions` (Task 8).
 - Produces: `DecisionRefresher = { trigger(): void; run(opts?): Promise<DecisionPassSummary>; stop(): void }`, `createDecisionRefresher(deps): DecisionRefresher`.
 
@@ -2831,6 +2851,7 @@ git commit -m "feat(decisions): add the debounced post-sync refresher and wire i
 ## Task 11: Brief types, rendering, synthesis
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/decisions-types.ts`
 - Modify: `packages/gateway/src/agents/_lib/emit-brief.ts` (`AnyBrief` union, ~line 15)
 - Modify: `packages/gateway/src/agents/_lib/synthesize.ts` (two dispatch chains, ~lines 59-80)
@@ -2838,6 +2859,7 @@ git commit -m "feat(decisions): add the debounced post-sync refresher and wire i
 - Test: `packages/gateway/src/agents/_lib/render.decisions.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DecisionRecord`, `DecisionEvidence` (Task 2); `GapNote` from `./findings.ts`.
 - Produces:
   - `DecisionsInput = { sinceMs?: number; service?: string; minConfidence?: number; explain?: boolean; limit?: number }`
@@ -2993,7 +3015,7 @@ export interface DecisionsBrief {
 
 Follow the existing `renderGlossary` in the same file for heading level, gap-note formatting and `NO_COLOR`-safe plain Markdown. Output shape per the spec:
 
-```
+```text
 ## Decisions · 90d · 7 found
 
 0.78  Move billing to Postgres                        2026-05-14
@@ -3010,6 +3032,7 @@ In `emit-brief.ts` add `| DecisionsBrief` to `AnyBrief` and import it. In `synth
 ```typescript
   if (brief.kind === "decisions") return renderDecisions(brief);
 ```
+
 ```typescript
   if (brief.kind === "decisions") return "agents.decisions";
 ```
@@ -3037,10 +3060,12 @@ git commit -m "feat(decisions): add the decisions brief type, renderer and synth
 Implements the `--service` flag's two resolution routes. The spec is explicit that route 1 alone silently drops process decisions — "Adopt trunk-based development" has no PR and never will — so both routes are required for the flag to mean what the spec says.
 
 **Files:**
+
 - Create: `packages/gateway/src/decisions/decision-service-scope.ts`
 - Test: `packages/gateway/src/decisions/decision-service-scope.test.ts`
 
 **Interfaces:**
+
 - Consumes: `DecisionEvidence` (Task 2).
 - Produces:
   - `type ServiceMatchRoute = "repo" | "ticket-key"`
@@ -3325,10 +3350,12 @@ git commit -m "feat(decisions): resolve --service by repository and ticket proje
 ## Task 13: The agent
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/decisions.ts`
 - Test: `packages/gateway/src/agents/decisions.test.ts`
 
 **Interfaces:**
+
 - Consumes: `listDecisions`, `countByStatus`, `readPassState` (Task 5); `explainConfidence` (Task 4); `matchesService` (Task 12); `DecisionsBrief` (Task 11); `AgentCoordinator` from `../engine/coordinator.ts`; `emitBriefWithSynthesis` from `./_lib/emit-brief.ts`.
 - Produces: `DecisionsContext`, `runDecisions(input, ctx): Promise<DecisionsBrief>`, `emitDecisionsBrief(input, ctx): Promise<{ sessionId: string }>`.
 
@@ -3693,11 +3720,13 @@ git commit -m "feat(decisions): add the read-only decisions agent with three par
 ## Task 14: IPC and the Tauri allowlist
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts` (imports ~line 2/9; the `"glossary"` session-kind union ~line 187; handler beside `handleGlossary` ~line 453; dispatch map ~line 482)
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs` (`ALLOWED_METHODS` entry beside `"agents.glossary"` ~line 63; count assertion at line 519)
 - Test: add to `packages/gateway/src/ipc/agents-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `emitDecisionsBrief`, `DecisionsInput` (Tasks 11–13).
 - Produces: the `agents.decisions` JSON-RPC method.
 
@@ -3806,12 +3835,14 @@ git commit -m "feat(decisions): expose agents.decisions over IPC and the Tauri a
 ## Task 15: The CLI
 
 **Files:**
+
 - Modify: `packages/cli/src/lib/parse-duration.ts` and `parse-duration.test.ts`
 - Create: `packages/cli/src/commands/decisions.ts`
 - Create: `packages/cli/src/commands/decisions.test.ts`
 - Modify: `packages/cli/src/index.ts` (command registry, beside `glossary: runGlossaryCommand` ~line 100)
 
 **Interfaces:**
+
 - Consumes: `runAgentBriefCli`, `flagValue`, `TIMEOUT_MS` from `./_agent-brief-cli.ts`; `parseDurationToMs`.
 - Produces: `parseDecisionsArgs(args: string[]): DecisionsCliArgs`, `isDecisionsBriefLike(v): v is DecisionsBriefLike`, `runDecisionsCommand(args: string[]): Promise<void>`.
 
@@ -3917,7 +3948,7 @@ Create `commands/decisions.ts` following `commands/glossary.ts` closely — it a
 
 Usage string:
 
-```
+```text
 Usage: nimbus decisions [--since <duration>] [--service <name>] [--min-confidence <0..1>]
                         [--explain] [--json] [--refresh | --rebuild [--yes]]
 ```
@@ -3949,6 +3980,7 @@ git commit -m "feat(decisions): add the nimbus decisions CLI and day/week durati
 ## Task 16: E2E, docs, and the full gate
 
 **Files:**
+
 - Create: `packages/gateway/test/e2e/scenarios/decisions.e2e.test.ts`
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md` (Wave 5 row + the S1 Active section)
@@ -3956,6 +3988,7 @@ git commit -m "feat(decisions): add the nimbus decisions CLI and day/week durati
 - Modify: `CLAUDE.md` and `GEMINI.md` (schema V46 → V47; both files must stay in sync)
 
 **Interfaces:**
+
 - Consumes: everything.
 - Produces: no new exports.
 

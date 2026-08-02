@@ -38,7 +38,7 @@ corroborating PRs are in a graph that never leaves the machine.
 
 Two phases, following `glossary` exactly.
 
-```
+```text
 connector sync ──▶ decisionRefresher.trigger()   (debounced, platform/assemble.ts)
                         │
    Phase A discover ────┤  Pure SQL + regex. Commits `pending` rows and advances
@@ -207,7 +207,7 @@ tiered, and the tier feeds the confidence score:
 
 Source scope is service-qualified, matching `glossarySourceFilter()`:
 
-```
+```text
 slack:message · discord:message · teams:message
 notion:page · confluence:page · obsidian:obsidian_note
 linear:issue · jira:issue · github:issue · gitlab:issue
@@ -244,7 +244,7 @@ cues would then saturate the 25-call budget while `heading` cues waited.
 `priority` is computed in Phase A from the two terms that *are* known without a
 model, on the same scale they carry in the final score:
 
-```
+```text
 priority = 0.25 * cue_strength + 0.20 * source_authority
 ```
 
@@ -321,7 +321,7 @@ Computed in code from observable signals. Reproducible across passes and
 testable with fixtures — which a model's self-reported number is not, and small
 local models are badly calibrated besides.
 
-```
+```text
 confidence = clamp(0..1,
     0.25 * cue_strength
   + 0.35 * corroboration
@@ -354,7 +354,7 @@ fan-out would add coordinator overhead without adding parallelism.
 
 ## CLI
 
-```
+```text
 nimbus decisions [--since <duration>] [--service <name>]
                  [--min-confidence <0..1>] [--explain] [--json]
                  [--refresh] [--rebuild]
@@ -384,7 +384,7 @@ previously an error becomes valid, so the existing `connector` and `share`
 callers are unaffected — and it ships with its own unit tests in
 `parse-duration.test.ts`. `--since` defaults to `90d` when omitted.
 
-```
+```text
 ## Decisions · 90d · 7 found
 
 0.78  Move billing to Postgres                        2026-05-14

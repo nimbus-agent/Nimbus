@@ -401,6 +401,62 @@ A manual row is exempt from being demoted or vetoed by the reconciliation sweep 
 
 ---
 
+### `nimbus decisions`
+
+The third member of the implicit-knowledge triad (after `nimbus why` and `nimbus glossary`): recovers decisions buried in Slack/Discord/Teams messages, Notion/Confluence/Obsidian pages, and Linear/Jira/GitHub/GitLab issues — statements of the form "we decided X because Y, alternatives were Z" — and corroborates each one against downstream PRs, commits and ADRs already in the local relationship graph. `nimbus decisions` prints a chronological, confidence-scored list read straight from the already-materialized `decision_record` table; it never calls a model on the read path.
+
+Extraction normally runs as a background pass, debounced after a successful connector sync (`[decisions]` in `nimbus.toml`, default on). `--refresh` and `--rebuild` drive an on-demand pass instead of waiting for the next sync.
+
+```bash
+nimbus decisions
+nimbus decisions --since 30d --service billing
+nimbus decisions --explain --min-confidence 0.5
+nimbus decisions --refresh
+nimbus decisions --rebuild --yes
+nimbus decisions --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--since <duration>` | Only decisions decided on/after `now - <duration>` (`ms\|s\|m\|h\|d\|w`, e.g. `90d`, `2w`). Defaults to `90d`. |
+| `--service <name>` | Filter to decisions matched by either of two routes: the repository a corroborating PR/commit touches, or the source ticket's project key (Jira/Linear). Matching is on normalized tokens, not substrings — `--service bill` does not match `billing`. `--explain` labels which route fired; the brief reports how many decisions matched neither. |
+| `--min-confidence <0..1>` | Drop any decision scoring below this. No floor (`0`) when omitted. |
+| `--explain` | Print the four confidence terms (`cue_strength`, `corroboration`, `source_authority`, `completeness`) and the matched cue text for every decision. |
+| `--json` | Machine-readable JSON output (otherwise Markdown) |
+| `--refresh` | Run an on-demand pass now, then print the (possibly updated) brief. Fails with `ERR_DECISIONS_PASS_RUNNING` if a pass is already in flight. |
+| `--rebuild` | Clear the decision store — **including every `vetoed` row** — reset the watermark, and re-mine from scratch. Without `--yes`, prints a warning and exits without touching anything: a veto is a judgement already spent, and a rebuild re-asks the model about every previously rejected candidate. |
+| `--yes` | Required alongside `--rebuild` to actually run the destructive rebuild. |
+
+`--refresh` and `--rebuild` cannot be combined. A pass can take several minutes (bounded by `max_llm_calls_per_pass` sequential local-model calls); on completion, a one-line summary is written to **stderr** (never stdout, so `--json`'s stdout stays JSON-only): counts of extracted/upgraded/no-model rows. Unlike `nimbus glossary`, a decisions pass reports no mid-pass progress — there is no `decisions.passProgress` notification.
+
+**Output (Markdown):** a chronological list, each entry showing the confidence score, decided-at date, statement, rationale, alternatives, evidence (source item plus any corroborating PR/commit/ADR), and a `⚠ no ADR found` marker when `has_adr` is false. Gap notes explain an empty or partially-built list (no pass has run yet, candidates are still awaiting extraction, decisions matched neither service route) rather than looking broken.
+
+**Two honest limits, stated in every brief — not optional polish:**
+
+- **512-character body cap.** Every indexed item body is clipped to 512 characters before this pass (or the embedding pipeline) ever sees it, so a decision stated later in a long document or deep in a thread is structurally invisible to extraction. Recall is capped, not complete — widening the cap is its own future slice.
+- **Confidence ceiling is 0.86, not 1.0.** The corroboration term of the confidence formula reserves its top score (1.0) for `migration`/`iac` evidence — properties of a corroborating change's file paths — but no connector today indexes changed-file paths, so that tier is specified in the schema and never actually reached. The real ceiling with only PR/commit corroboration available is `0.6`, which caps total confidence at `0.86`. The brief does not present a full-marks scale you cannot reach.
+
+**Definition provenance.** A decision's `extractionSource` is `"llm"` (a local model structured it into statement/rationale/alternatives) or `"snippet"` (no local model was available at extraction time, so the matched sentence itself became the statement, with no rationale or alternatives). A snippet-sourced row is not permanent: a later pass automatically upgrades it once a local LLM is available, using a reserved share of that pass's budget so a large backlog of new candidates cannot starve upgrades indefinitely.
+
+**Configuration — `[decisions]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Run the background extraction pass at all. Extraction opens no network surface — it reads the local index and writes local rows — so, like `[glossary]` and unlike `[briefs]`, it defaults on. |
+| `use_llm` | `true` | Extract via a local model (Ollama or llama.cpp). `false` keeps the cheap deterministic cue-mining pass but forces every candidate into snippet mode, sparing a laptop the sequential local-model calls. |
+| `min_confidence` | `0.3` | Threaded into the extraction pass's options. Not currently applied as the `nimbus decisions` read-path default — that default is `0` (no floor); use `--min-confidence` on the command itself to filter what is displayed. |
+| `max_llm_calls_per_pass` | `25` | LLM calls per pass (sequential), split between new pending candidates and snippet-row upgrades. |
+| `debounce_ms` | `30000` | How long a burst of connector syncs coalesces before triggering one pass. |
+| `retry_cooldown_ms` | `60000` | Cooldown before a failed (unparseable) extraction is retried, preventing a permanently-unparseable high-priority candidate from starving lower-priority ones. |
+
+**Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — the extraction pass calls only the local LLM (when configured and available), and the `nimbus decisions` read path is pure SQLite. Zero `egress_ledger` rows.
+
+**Exit codes:** `1` = gateway not running; `2` = agent error (timeout or a malformed `agents.decisions` response).
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).

@@ -8,6 +8,30 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-02 — `nimbus decisions` — implicit ADR extractor.** The third and final member of the
+  implicit-knowledge triad, after `nimbus why` (2026-07-24) and `nimbus glossary` (2026-07-30):
+  recovers decisions buried in Slack/Discord/Teams messages, Notion/Confluence/Obsidian pages, and
+  Linear/Jira/GitHub/GitLab issues — statements of the form "we decided X because Y, alternatives
+  were Z" — corroborates them against downstream PRs, commits and ADRs already in the local
+  relationship graph, and returns a chronological list with a deterministic confidence score and
+  evidence links. Reuses `glossary`'s architecture exactly: a debounced post-sync pass (discover →
+  extract → corroborate), with `--refresh` running one on demand and `--rebuild` clearing the store
+  — vetoes included — to re-mine from scratch. Eleventh built-in read-only agent, zero HITL, zero
+  `connectors.dispatch`, zero `egress_ledger` rows. Schema **V47** (`decision_record`,
+  `decision_evidence`, `decision_pass_state`); Tauri `ALLOWED_METHODS` 102 → 103 (I7). No new
+  invariant. `parseDurationToMs` (`packages/cli/src/lib/parse-duration.ts`) gained `d`/`w` units to
+  express decision horizons in days/weeks, purely additive so existing `connector`/`share` callers
+  are unaffected.
+
+  Two honest limits are stated in every brief, not absorbed silently: item bodies are indexed to a
+  512-character cap, so a decision stated later in a long document or thread is structurally
+  invisible to this pass — recall is capped, not complete; and `migration`/`iac` evidence is
+  specified in the schema's `decision_evidence.kind` CHECK constraint but never emitted, because no
+  connector indexes a corroborating change's file paths — so the confidence ceiling is **0.86, not
+  1.0**, and the brief never presents a full-marks scale a user cannot reach.
+
+  Spec: `docs/superpowers/specs/2026-08-01-nimbus-decisions-design.md`; plan:
+  `docs/superpowers/plans/2026-08-01-nimbus-decisions.md`.
 - **2026-08-01 — `--json` implemented on the six commands that only documented it.** `nimbus status`,
   `connector list`, `db verify`, `db repair`, `config list` and `audit` parsed no `--json` at all —
   the flag reached only the top-level banner suppressor in `index.ts`, so a documented `| jq`
