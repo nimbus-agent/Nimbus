@@ -1,6 +1,7 @@
 # Nimbus Ecosystem Roadmap
 
-**Status:** landscape, not a commitment · first drafted 2026-08-02
+**Status:** landscape, not a commitment · first drafted 2026-08-02 · extended 2026-08-02 with
+verified defects, the eleven clusters, and the sequencing rules
 
 This is the fourth roadmap surface, and the only one that looks *outward*:
 
@@ -21,6 +22,14 @@ Items are grouped into **Track 0** (things already built that need finishing), *
 carries a *Needs:* line naming the primitive it waits on, so the tracks can be read in any
 order and sequenced later.
 
+The tracks are how items were **found**. The [eleven clusters](#the-eleven-clusters) are how they
+should be **built** — each cluster is a spec-sized unit that could carry one design doc and one
+implementation plan. Read the clusters to plan; read the tracks to check nothing was dropped.
+
+Read [Verified defects](#verified-defects) first regardless. Several are repairs to claims the
+product already makes in shipped documentation, which makes them more urgent than anything in the
+tracks.
+
 Two conventions matter:
 
 - **"Shipped but dark"** means the code exists, passes CI, and is reachable by no user. This is
@@ -28,6 +37,83 @@ Two conventions matter:
   rebuild.
 - **Effort** is relative (S/M/L/XL) and deliberately coarse. The useful signal is the *Needs:*
   line, not the size.
+
+## Verified defects
+
+Found while deepening the landscape, and confirmed against the tree on 2026-08-02. These are not
+proposals. They are gaps between what shipped code does and what shipped documentation says it
+does, which puts them ahead of every item below.
+
+### D22 is not the total chokepoint it documents itself as
+
+`I29`'s static rule is a regex on a string literal —
+`D22_DISPATCH_RE = /\bconnectors\.dispatch\b/` — while its own comment insists there is "no escape
+hatch, no 'approved wrapper' carve-out … Any future shortcut or custom-wrapper bypass therefore
+fails this preflight static check immediately."
+
+That is false. A bypass that never types the string passes trivially, and three already ship. Each
+resolves a tool off a lazy-mesh tool map and calls `tool.execute()` directly:
+
+| Path | Site | What leaves the machine |
+|---|---|---|
+| `share.replay` | `ipc/share-rpc.ts:172` | Recipe steps against the **live** mesh, gated only by `isReadOnlyToolId` — from a file a third party sent you |
+| ChatOps replies | `chatops/chatops-bot-spawn-call.ts:40` | Every operational reply, including posting answer text into a channel — the most content-bearing egress in the product |
+| Team-vault session | `teamvault/connector-session.ts:127` | A federated **peer's** invoke, under shared org credentials |
+
+None appends a ledger row, so a zero-row `nimbus prove` window is not the false-negative-proof
+claim `I29` makes. The remedy is not another append site: it is replacing the string match with a
+rule confining `.execute(` on a mesh tool map, which will fail on day one against three production
+files.
+
+Note also that scheduled connector syncs call `Syncable.sync()` directly and never reach the
+executor, so the ledger covers agent-initiated egress only. That caveat must be carried into every
+report built on it.
+
+### The share subsystem is disjoint from the ledger
+
+`grep egress` across `share/*.ts` returns nothing, and `share_records` has no `row_hash` /
+`prev_hash` columns. The one subsystem whose entire purpose is emitting data off the machine is
+invisible to the ledger whose entire purpose is recording what left — so `nimbus prove` can
+honestly report zero egress in a window during which the owner approved, signed and published a
+share.
+
+The asymmetry runs both ways: `egress.prune` is HITL-gated and leaves a continuing tombstone, while
+`pruneExpiredShares` is a bare `DELETE` with no tombstone and no consent. A `source_type='share'`
+row appended from inside `createShare` after approval closes both, and lets `prove` say "one signed
+artifact left, here is its hash" — a better answer than silence.
+
+### The egress receipt signs a bare digest
+
+`signWindowDigest` signs `UTF8(digest)` only. The window bounds, machine identity, completeness tier
+and row count are all **outside** the signature. Tolerable while the verifier recomputes from its
+own ledger; not tolerable the moment a receipt travels — and three proposed items make receipts
+travel between machines.
+
+The correction is in-tree and free: `ShareBody` in the same repo, signed with the same key by the
+same library, already folds `kind`, `createdAt`, `expiresAt`, `redactionSet` and `origin` inside the
+canonicalized signed bytes. The receipt needs a `ReceiptBody` of the same shape. This must land
+before machine link, because a receipt format is a wire protocol between machines running different
+versions.
+
+### Briefs are broadcast to every connected client
+
+`emitBriefWithSynthesis` publishes through `broadcastNotification`, which writes to every session.
+So every connected client receives the full markdown and typed findings of every brief any other
+client requested. A confidentiality defect no single-client surface can observe — and a
+**client-side** correlation fix does not close it, because the data has already been written to the
+other sockets.
+
+### Other confirmed gaps
+
+- **Runtime assets resolve against source layout.** Several modules locate assets by walking up from
+  `import.meta.dir`, in a binary that ships alone. The `/admin` 503 is the visible, harmless
+  instance; the connector spawn path is the one that matters.
+- **The author-facing contract validator always passes.** `runContractTests` is invoked without
+  `await`, so `nimbus test` can print success before the failure surfaces.
+- **Two first-party generators emit mutually incompatible manifests**, and the gateway's rejection
+  path points at a command that does not exist.
+- **The migration runner has no newer-than-target guard**, so a database written by a later binary
+  opens silently against a schema the running binary does not know.
 
 ## Track 0 — Shipped but dark
 
@@ -63,7 +149,26 @@ Ranked by how many downstream ecosystem items each one unblocks.
 
 A note on the fourth row: it is the cheapest item in this table and the one most likely to be
 skipped, because the one-shot CLI it was written for cannot observe the bug. Every concurrent
-consumer can.
+consumer can. It is now solved client-side by the agents-as-MCP-tools plan; the **gateway** half —
+per-caller notification instead of broadcast — is not, and is the confidentiality defect recorded
+above.
+
+**This table is mis-ranked, and the correction matters.** Counting how many items each primitive
+transitively unblocks:
+
+- **Extension execution path — real leverage zero.** Its three dependents are all independently
+  classified do-not-build. It is listed first above because it *looked* like the biggest unlock;
+  building it first would be the single largest wasted slot in the landscape.
+- **Approval routing — leverage two**, L-sized, and gated on an unresolved consent contradiction
+  (see the cross-cutting decisions below).
+- Three items filed **outside** Layer 0 out-leverage most of it: the per-profile data root (seven
+  downstream, and it converts three L-sized items into buildable ones), the manifest contract
+  reconciliation (six), and console packaging (seven views currently have no surface to render
+  into).
+
+The real enabling set is: inference-in-the-ledger, per-profile data root, manifest reconciliation,
+per-caller brief notification, resolve-by-URL, `agents.list`, the IPC registry, and console
+packaging.
 
 ## Track A — Customer surfaces
 
@@ -264,6 +369,289 @@ Recorded so they are re-decided rather than re-discovered:
   wants on a support command and implies share-grade redaction guarantees. A plain file with a
   golden test asserting no secret survives is the better shape — and that test is the feature.
 
+## The eleven clusters
+
+The tracks above are a catalogue. These are the buildable units — each one delivers value on its
+own, is one design conversation rather than five, and keeps together the items that must ship
+together. Ordered by value over cost-plus-risk.
+
+Four of the top five are **repair, not addition**. That inverts the instinct the tracks were
+written with, and it is the most useful single output of this exercise.
+
+### 1 — What we ship is what we claim
+
+*A person who installs the released binary gets a gateway that can sync, embed and serve its own
+console — and every remaining sentence of user-facing documentation describes something that
+exists.*
+
+One decision (how a `--compile` gateway carries non-code assets) applied to four sites, plus a
+subtraction pass over documentation that describes unshipped behaviour. Contains: verify-on-a-clean-
+machine; the asset-carrying decision; the console build step in the release workflow, the compile
+script **and** the preflight manifest; moving install-smoke outside the repo checkout so CI can
+observe the class at all; retracting docs for capability that has no production wiring; and adding
+the contributor docs to the status-drift scanner so they cannot rot again.
+
+**Size:** S to verify, M–L to fix — the connector-spawn answer determines which. **Depends on:**
+nothing; it is upstream of everything.
+
+### 2 — Data durability: the guards, the schedule, the drill
+
+*The local index — which is the product — survives a version downgrade, a bad restore and a disk
+event, and the product can prove it did.*
+
+The newer-than-target migration guard at both entry points including the Worker; a restore that
+removes `-wal`/`-shm` in the same operation and refuses if it cannot; post-restore verification that
+leaves the original intact on failure; wiring the backup scheduler that ships default-on and has
+never run; and `nimbus db drill` — snapshot, restore to temp, verify, compare item count and ledger
+head against live, never touch the live database.
+
+**Size:** M, of which the guards are about a day. **Depends on:** nothing. Build this in parallel
+with anything; it needs no design conversation, and it is the only work here that protects data
+already on users' disks.
+
+### 3 — Provenance completeness
+
+*`nimbus prove` stops omitting the largest continuous egress in the product, and every report later
+built on the ledger inherits a true scope claim instead of amplifying a false one.*
+
+The three shipped bypasses above, plus remote inference (embeddings and model calls both leave with
+no row), plus the vocabulary: a closed `source_type` union and a completeness **vector** replacing
+the scalar tier. Local inference must produce **no** rows, or the ledger is worse than silence. The
+`sync_telemetry` join that expresses the scheduled-sync caveat belongs here once, not re-derived by
+each downstream report.
+
+**Size:** M. **Depends on:** land after the MCP plan's `D22(c)`, so both chokepoints share one
+static-rule shape.
+
+### 4 — The agent invocation seam and its first contextual surfaces
+
+*Any surface — browser, editor, chat, CI, a git hook, an external model — can run an agent against
+the thing the user is looking at and get findings back, without a notification channel and without
+leaking that brief to every other connected client.*
+
+One seam, six consumers. Per-caller notification replacing broadcast; renaming the misnamed
+`sessionId` to `runId`; hoisting the brief router into the shared client so no consumer re-derives
+the bug; resolve-by-URL — where the **backfill** is the load-bearing part, since roughly half the
+mapping files never set `canonical_url` at all; a synchronous findings-returning HTTP route
+intercepted ahead of the write dispatcher so the write allowlist does not grow; a no-synthesis path
+that the hook, the route and the MCP callee all want; `agents.list`; then the thin consumers.
+
+**Mandatory precondition inside the cluster:** the ChatOps namespace filter. The namespace argument
+is currently discarded, so a chat read in a channel bound to one project already answers from the
+whole index — and an agent reply that deterministically names files, PRs and people is a materially
+worse leak than a free-text answer.
+
+**Size:** L. **Depends on:** the MCP plan's session-correlation and caller-threading tasks.
+
+### 5 — One contract, one gate
+
+*The declared surface and the real surface agree — manifests, connector health, IPC methods, agent
+lists — and CI fails when they drift again.*
+
+Pays off entirely with zero third-party authors, because what it repairs is first-party surface that
+is silently wrong today. Pick the normative manifest shape and land it across both repos; the
+missing `await`; reject legacy manifests at install with a message naming a command that exists;
+delete the stubs that let an author follow the docs and register zero tools with zero errors; fold
+conformance into the existing test command rather than adding a sibling; turn on the connector
+sandbox tests that have never executed; wire the two already-written, already-tested, unwired audit
+scripts; the IPC registry and drift gate; and repair user-MCP permissions, which are hardcoded
+deny-all today.
+
+**Size:** L. **Depends on:** nothing.
+
+### 6 — Approval you can act on away from the terminal
+
+*A pending consent prompt reaches the human wherever they are, and can be answered from a surface
+that is not the terminal that issued the ask — without weakening the gate.*
+
+Real per-platform notifications behind the platform abstraction (argv arrays, never composed shell
+strings — the body is index-derived text); the consent hop as a pointer carrying action type and a
+client label only, with a golden test that no payload field can reach it; a read-only pending
+listing with no answer path; and the desktop app as the first non-CLI approver, including replacing
+the renderer-supplied import path with a native dialog.
+
+Explicitly **no** approve-from-toast in v1: actionable toasts need Windows app-identity registration
+and a signed macOS bundle, which would make the approval channel Linux-only.
+
+**Size:** L. **Depends on:** nothing structurally; the publish half depends on code-signing
+procurement.
+
+### 7 — Profiles as a real data root, and the demo corpus that proves it
+
+*A second, throwaway Nimbus on the same machine — simultaneously the isolation boundary consultants
+need, the seeded demo that makes the agents show real output, and the fixture that makes agent
+regressions visible in CI.*
+
+These ship together because without the data root, `nimbus demo` seeds synthetic rows into the
+user's real index — a data-loss-grade defect, not a rough edge. Contains the per-profile data root
+across both path modules, a profile-suffixed socket so two profiles run at once, the isolation
+invariant with its enforcement test, and a corpus whose timestamps are **all** generated relative to
+seed time — the agents filter to 90d/3d/24h/48h windows, so a baked-date fixture returns empty
+within a week.
+
+Ship an honest statement that the federation-dependent agents return gap notes with zero peers.
+
+**Size:** L. **Depends on:** nothing to start. The isolation claim must not appear in any document
+before the enforcement test exists.
+
+### 8 — Policy you can explain, simulate and push
+
+*An operator can see what the policy resolves to, dry-run a candidate against real local history,
+and have a managed device place a signed policy the gateway verifies or refuses.*
+
+One escalating conversation about the same object: the explanation is the baseline the simulation
+diffs against, and the simulation is the dry-run the provisioning path needs. All three surface the
+same defect, which the explanation reports first — one of the five policy dimensions is declared and
+enforced nowhere.
+
+Signed-policy provisioning fails closed: a bad signature pins nothing and the gateway stays
+ungoverned rather than half-governed.
+
+**Size:** M; the per-machine installer half is L and procurement-gated. **Depends on:** nothing —
+and the recorded prerequisite "config layering" is the expensive path to a weaker guarantee than the
+signed-policy path that already ships.
+
+### 9 — Reports a buyer can check
+
+*Everything the gateway did is a row in a surface the buyer already has open, and the same reads
+serialise into a signed, offline-verifiable bundle a third party can check with no network and no
+account.*
+
+The evidence bundle is literally the console's views serialised, so building the reads twice is the
+waste to avoid. Contains audit windowing and cursor paging (the export currently returns the newest
+rows regardless of the window asked for); the paged chain-verified egress view; HITL analytics with
+disjoint buckets and a refusal to compute a single headline number, plus the never-exercised list,
+which is the real posture; connector permission review at tool granularity; the forensics timeline;
+the evidence bundle with a per-artifact assurance field and wording enforced by a golden test rather
+than author discipline; and the offline verifier page.
+
+**Size:** L. **Depends on:** clusters 1 and 3. Building it earlier means serialising a false
+completeness claim into a signed bundle.
+
+### 10 — Nimbus beyond one laptop
+
+*A Nimbus that boots on a box with no keyring, no browser and no egress; and several Nimbuses that
+know about each other well enough that "prove nothing left my machines" has a defined meaning.*
+
+One conversation about what a Nimbus *instance* is. A fourth vault backend selected **only** by
+explicit configuration — never auto-selected, because an implicit fallback is the plaintext-fallback
+anti-pattern — with a locked-start state machine; the signed model bundle that makes an offline
+first run possible; container, service and launch-agent artifacts; machine link as an owner-scoped
+preset that explicitly does **not** merge indexes; and the real content, cross-chain `prove`
+semantics: enrolment recorded as ledger rows so unlink-act-relink forces indeterminate, verification
+staying local with only signed per-machine receipts travelling, never merging on wall clock, and the
+merged answer being the minimum of the per-machine answers.
+
+**Size:** XL. **Depends on:** clusters 7, 2 and 9. Write the cross-chain design down long before
+building it, or cluster 9's receipt envelope will be shaped wrong.
+
+### 11 — Meetings as first-class
+
+*Fifteen minutes before a meeting, Nimbus tells you what changed since you last met with the people
+in the room — and, once meetings are graph nodes, the why and decisions agents gain an evidence
+class they cannot currently see.*
+
+Two waves. The brief first, because it writes and proves the attendee-to-person resolver against
+real synced data and needs no schema change; the graph edges second, with a regraph path so already
+indexed meetings backfill rather than only new syncs benefiting. Unresolved attendees are reported
+as gaps, never silently dropped.
+
+The only cluster that is a **new end-user capability** rather than a repair or a substrate — worth
+noting, given everything above it.
+
+**Size:** M for the brief, M–L for the edges. **Depends on:** nothing.
+
+## Sequencing rules
+
+Three rules do most of the work. Everything else is parallelisable — about two thirds of the items
+are roots with nothing blocking them, and no live dependency chain exceeds four hops. **The
+constraint is ordering-induced rework, not blocking.**
+
+1. **Ledger truth before every ledger report.** Eight items are reports over the egress ledger. None
+   is *blocked* by cluster 3 — all are buildable without it. All eight would be **wrong**, and all
+   eight would need rework when the completeness vocabulary changes. This is the largest rework
+   surface in the graph and the only place where deferring a non-blocking item costs more than
+   deferring a blocking one.
+2. **Receipt-body before receipts travel.** Machine link, fleet attestation, evidence export and the
+   offline verifier all move a receipt beyond the machine that can recompute it.
+3. **Reserve the paths-module interface now.** The signature of the two mirror path modules decides
+   whether the demo corpus, the appliance and machine link are M-sized or L-sized. Fixing that shape
+   costs nothing today and cannot be retrofitted cheaply.
+
+## Cross-cutting decisions to make once
+
+Each of these is invisible from inside any single track, and each will otherwise be decided
+accidentally by whichever item ships first.
+
+- **Who owns the `source_type` enum.** Five items independently plan to add a value. It is committed
+  by the row hash, so the taxonomy is permanent. Close the union before the first new appender.
+- **The consent model contradiction.** Shipped code answers it two ways: the share and preflight
+  gates accept an approval from any local client, while the executor gate rejects a foreign
+  responder. Nobody should build a second approver path until that is resolved deliberately. The
+  delegation machinery already ships and is scoped and expiring, which is the better starting point
+  than blanket authority.
+- **One key, three trust roles, no rotation.** The same signing pair covers shares, egress receipts
+  and proposed attestations; its public key is distributed for verification in all three and the
+  artifacts carry no key id. No rotation path exists for it or for four other key materials. The
+  per-profile data root forces a fork nobody will notice: prefix the key and cross-profile evidence
+  becomes unlinkable; do not prefix it and one profile can sign over another's window.
+- **Bearer-token scopes.** The clip token has no scope field. Four surfaces already share it and
+  three more are proposed on it approvingly, because reuse means no new pairing flow. Together, a
+  token minted to clip a web page becomes: run any read-only agent over the whole index, resolve any
+  URL, and read the pending-approval queue. Add scopes before the second consumer, not the fifth.
+- **Redactor classification.** Four redactors with four different contracts and no classification;
+  every new outbound surface picks one ad hoc. One classified policy plus a shared golden corpus is
+  unjustifiable per-track and obvious across six.
+- **What `payload_summary` is for.** It is deliberately unhashed and scrubbed by a function the
+  codebase itself calls a debugging aid — and two proposed items put it in front of third parties.
+  Either it stays local, or it earns a real contract.
+
+## Cut from the landscape
+
+Recorded with the argument, so they are re-decided rather than re-discovered.
+
+- **Extension runtime and marketplace.** The strongest disagreement in the source material, and the
+  cut wins. The spawned server has no consumer, its claimed leverage over the author toolchain is
+  false, and — decisively — if extension tools *did* reach the merged mesh, the dispatcher resolves
+  by name while the gate tests a frozen action-type set they cannot join, so they would dispatch
+  **ungated**. Keep the integrity chain, delete the stub, document first-party-only, and re-decide
+  from "we have no authors" rather than "we have no runtime."
+- **Voice.** Ships with no client and no production wiring; the honest move is deletion, not a
+  surface.
+- **Trace and inspect.** Three durable surfaces already answer the question better.
+- **Opening the brief union.** Needs a population, and the closed union is already broken for
+  first-party agents — that drift is the prerequisite nobody has scheduled.
+- **Recipe gallery and starter packs.** Both need a population that does not exist. Starter packs
+  additionally depend on a trustworthy consent preview that does not exist.
+- **Public connector feed.** A page derived from data the health gate already produces, not a
+  project.
+- **Migration-in importers.** Each is an S-sized connector authored through the existing connector
+  path, not a new project. Only its prerequisite — the body-preview cap — is worth scheduling.
+- **Export / import / delete portability.** Struck rather than cut: the Track 0 row is simply wrong.
+  It is fully wired end to end.
+
+## The through-line
+
+Read by asset rather than by track, every durable thing Nimbus produces is an attestation: a chained
+egress ledger, a chained audit log, signed shares with a forwarding hop chain, signature-verified
+monotonic-stricter policy, signed window receipts, an inert signed inbox, and a command literally
+named `prove`.
+
+The agents are the part a competitor ships next quarter over the same MCP servers. The chained,
+signed, offline-checkable record of what an agent did to your data is not.
+
+> The sentence a user says out loud is not "Nimbus wrote my standup." It is **"run `nimbus prove`
+> and send me the receipt."**
+
+That reprices this document. The operator console, evidence export, the offline verifier, observer
+expiry, machine link and fleet attestation stop being a compliance track aimed at buyers and become
+the differentiated core; the ambient surfaces become distribution for it.
+
+It is also the harshest available reading, because the notary substrate is exactly where every
+verified defect above clusters. Today that substrate is the product's most-marketed and least-true
+property — which is the strongest argument in this document for why the repair clusters outrank the
+additions.
+
 ## Provenance
 
 This landscape was produced on 2026-08-02 by a fourteen-agent pass: six parallel readers mapping
@@ -281,3 +669,20 @@ missing newer-than-target guard; and the embedder's remote model fetch.
 item-body indexing cap, the exact per-connector registration site count, and the precise
 location of the awaited-brief adapter, which two auditors cited differently and which exists in
 more than one form in the CLI package.
+
+### The 2026-08-02 extension
+
+The clusters, sequencing rules, cross-cutting decisions and cut list were produced by a second
+nine-agent pass: six deepening one track each into concrete v1 shapes, then three deriving the
+dependency graph, the cluster decomposition and the cross-track compounds.
+
+**Verified directly against the tree** before being written here: the three `tool.execute()` paths
+that bypass `D22`'s string-match rule and the text of the rule's own no-escape-hatch claim; the
+absence of any egress reference in `share/` and of chain columns on `share_records`; what
+`signWindowDigest` actually covers, against `ShareBody` as the in-repo counter-example.
+
+**Agent-reported with file citations**, consistent with the above but not personally re-opened: the
+unwired profile, voice and snapshot-scheduler services; the discarded ChatOps namespace argument;
+the un-awaited contract-test call; the mapping files that never set `canonical_url`; and the
+transitive leverage counts behind the Layer 0 re-ranking. Confirm before planning around any of
+them.
