@@ -104,7 +104,8 @@ type ScanRow = {
   service: string;
   type: string;
   title: string;
-  body_preview: string | null;
+  body: string | null;
+  body_complete: number;
   modified_at: number;
 };
 
@@ -116,7 +117,7 @@ function scanDelta(
   const { sql, params } = decisionSourceFilter();
   return db
     .query(
-      `SELECT i.id, i.service, i.type, i.title, i.body_preview, i.modified_at
+      `SELECT i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at
          FROM item i
         WHERE ${sql}
           AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -132,6 +133,41 @@ function scanDelta(
     ) as ScanRow[];
 }
 
+/**
+ * A read-only candidate load over the FULL decision-source domain within a
+ * window — not the incremental delta `scanDelta` drains for mining. This
+ * backs the brief's honesty count: "N source(s) considered, M truncated"
+ * (see `agents/decisions.ts`), where "truncated" means `body_complete = 0` —
+ * either a connector that has not declared a full body yet, or one that did
+ * but the source exceeded its type's cap.
+ */
+export type DecisionCandidateRow = {
+  id: string;
+  service: string;
+  type: string;
+  title: string;
+  body: string | null;
+  body_complete: number;
+  modified_at: number;
+};
+
+export function loadDecisionCandidates(
+  db: Database,
+  opts: { sinceMs: number },
+): { rows: DecisionCandidateRow[]; truncatedSources: number } {
+  const { sql, params } = decisionSourceFilter();
+  const rows = db
+    .query(
+      `SELECT i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at
+         FROM item i
+        WHERE ${sql} AND i.modified_at >= ?
+        ORDER BY i.modified_at DESC, i.id ASC`,
+    )
+    .all(...params, opts.sinceMs) as DecisionCandidateRow[];
+  const truncatedSources = rows.reduce((n, r) => n + (r.body_complete === 0 ? 1 : 0), 0);
+  return { rows, truncatedSources };
+}
+
 /** Normalises a caller-supplied positive-integer bound; see `passBudget`. */
 function boundOr(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
@@ -140,7 +176,7 @@ function boundOr(value: number | undefined, fallback: number): number {
 }
 
 function scanText(r: ScanRow): string {
-  return `${r.title}. ${r.body_preview ?? ""}`.trim();
+  return `${r.title}. ${r.body ?? ""}`.trim();
 }
 
 /** Mines one already-fetched batch and commits it with the advanced watermark. */
@@ -244,11 +280,11 @@ function serviceTypeOf(db: Database, itemId: string): string {
 }
 
 function sentenceContext(db: Database, itemId: string): string {
-  const r = db.query("SELECT title, body_preview FROM item WHERE id = ?").get(itemId) as {
+  const r = db.query("SELECT title, body FROM item WHERE id = ?").get(itemId) as {
     title: string;
-    body_preview: string | null;
+    body: string | null;
   } | null;
-  return r === null ? "" : `${r.title}. ${r.body_preview ?? ""}`.trim();
+  return r === null ? "" : `${r.title}. ${r.body ?? ""}`.trim();
 }
 
 /** Recompute evidence + confidence for one extracted row. */

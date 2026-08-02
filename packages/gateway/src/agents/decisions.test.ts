@@ -8,6 +8,7 @@ import {
   upsertCandidate,
   writePassState,
 } from "../decisions/decision-store.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
@@ -186,8 +187,19 @@ test("reports the empty index only when also returning nothing", async () => {
   expect(brief.gaps.some((g) => g.category === "empty_index")).toBe(true);
 });
 
-// The spec's standing honesty note.
-test("always reports the 512-character body cap", async () => {
+// Replaces the spec's former blanket "512-character cap" note: with every
+// source in the window declared complete, the brief states nothing false by
+// staying silent, and the honesty count itself reads zero.
+test("reports zero truncated sources and no truncation gap when the window is all complete", async () => {
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "full-body-item",
+    title: "t",
+    body: "We decided to move billing to Postgres because the pool kept exhausting connections.",
+    modifiedAt: 1_000,
+    syncedAt: 1_000,
+  });
   extracted("a", 1_000, 0.9);
   writePassState(db, {
     watermarkMs: 1_000,
@@ -197,7 +209,44 @@ test("always reports the 512-character body cap", async () => {
     scannedItems: 1,
   });
   const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
-  expect(brief.gaps.some((g) => g.detail.includes("512"))).toBe(true);
+  expect(brief.stats.truncatedSources).toBe(0);
+  expect(brief.gaps.some((g) => g.detail.includes("truncated"))).toBe(false);
+});
+
+// The point of this feature: a vague global caveat replaced with a precise
+// per-brief count — "1 of 2 source(s)", not "bodies are indexed to 512
+// characters".
+test("reports a precise truncated-source count instead of a blanket cap disclaimer", async () => {
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "complete-item",
+    title: "t1",
+    body: "We decided to move billing to Postgres because the pool kept exhausting connections.",
+    modifiedAt: 1_000,
+    syncedAt: 1_000,
+  });
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "truncated-item",
+    title: "t2",
+    bodyPreview: "We decided to shard instead; alternatives were read replicas.",
+    modifiedAt: 2_000,
+    syncedAt: 2_000,
+  });
+  extracted("a", 1_000, 0.9);
+  writePassState(db, {
+    watermarkMs: 2_000,
+    watermarkId: "z",
+    lastPassAt: 1_000,
+    lastPassNew: 1,
+    scannedItems: 2,
+  });
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(brief.stats.truncatedSources).toBe(1);
+  expect(brief.gaps.some((g) => g.detail.includes("1 of 2 source(s)"))).toBe(true);
+  expect(brief.gaps.some((g) => g.detail.includes("512"))).toBe(false);
 });
 
 test("includes the confidence breakdown only when explain is requested", async () => {
@@ -408,7 +457,8 @@ test("emitDecisionsBrief renders deterministically alone and defers to a configu
 });
 
 // Finding 3: the 0.86 ceiling was claimed in the docs and the spec but emitted
-// nowhere. Unconditional, exactly like the 512-character note above it.
+// nowhere. Unconditional — unlike the truncated-source note above it, this one
+// is not data-dependent, so it never has a silent-when-clean case.
 test("always reports the 0.86 confidence ceiling", async () => {
   extracted("a", 1_000, 0.9);
   writePassState(db, {

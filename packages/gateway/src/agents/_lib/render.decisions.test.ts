@@ -28,7 +28,14 @@ function brief(over: Partial<DecisionsBrief> = {}): DecisionsBrief {
         matchedVia: null,
       },
     ],
-    stats: { total: 1, pending: 0, extracted: 1, vetoed: 0, lastPassAt: 1_699_000_000_000 },
+    stats: {
+      total: 1,
+      pending: 0,
+      extracted: 1,
+      vetoed: 0,
+      lastPassAt: 1_699_000_000_000,
+      truncatedSources: 0,
+    },
     ...over,
   };
 }

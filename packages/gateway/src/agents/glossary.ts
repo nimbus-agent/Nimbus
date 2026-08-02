@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { loadGlossaryCandidates } from "../glossary/glossary-extract.ts";
 import {
   countByStatus,
   countSnippetSourced,
@@ -96,6 +97,7 @@ function buildGaps(
   counts: { total: number; pending: number; vetoed: number },
   lastPassAt: number | null,
   entryCount: number,
+  truncation: { totalSources: number; truncatedSources: number },
 ): GapNote[] {
   const gaps: GapNote[] = [];
   const anyItems = db.query("SELECT 1 FROM item LIMIT 1").get() !== null;
@@ -150,6 +152,19 @@ function buildGaps(
         "snippet definitions are re-consolidated automatically on later passes.",
     });
   }
+  // Honesty note, precise rather than a blanket cap claim: a source is
+  // truncated when its connector has not declared a full body yet, or
+  // declared one that exceeded its type's cap. Conditional, not standing —
+  // an all-complete corpus states nothing false by staying silent.
+  if (truncation.truncatedSources > 0) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        `${String(truncation.truncatedSources)} of ${String(truncation.totalSources)} ` +
+        "glossary source(s) are indexed with a truncated body, so a term mentioned only past " +
+        "that cutoff is not visible to this pass.",
+    });
+  }
   return gaps;
 }
 
@@ -170,6 +185,14 @@ export async function runGlossary(
 
   const counts = countByStatus(ctx.db);
   const passState = readPassState(ctx.db);
+  // The honesty count: how many of the glossary-source items indexed so far
+  // carry a truncated body. No time window here — unlike `decisions`, the
+  // glossary has no `--since`, so this covers the whole corpus.
+  const candidates = loadGlossaryCandidates(ctx.db, { sinceMs: 0 });
+  const truncation = {
+    totalSources: candidates.rows.length,
+    truncatedSources: candidates.truncatedSources,
+  };
 
   let mode: GlossaryBrief["mode"];
   let entries: GlossaryEntry[] = [];
@@ -189,7 +212,7 @@ export async function runGlossary(
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);
     mode = "list";
-    const gaps = buildGaps(ctx.db, counts, passState.lastPassAt, entries.length);
+    const gaps = buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation);
     return {
       kind: "glossary",
       agentVersion: 1,
@@ -201,7 +224,11 @@ export async function runGlossary(
       entries,
       matchedVia: null,
       suggestions: [],
-      stats: { ...counts, lastPassAt: passState.lastPassAt },
+      stats: {
+        ...counts,
+        lastPassAt: passState.lastPassAt,
+        truncatedSources: truncation.truncatedSources,
+      },
     };
   }
 
@@ -244,13 +271,17 @@ export async function runGlossary(
     agentVersion: 1,
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
-    gaps: buildGaps(ctx.db, counts, passState.lastPassAt, entries.length),
+    gaps: buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation),
     query: { term: rawTerm, limit },
     mode,
     entries,
     matchedVia,
     suggestions,
-    stats: { ...counts, lastPassAt: passState.lastPassAt },
+    stats: {
+      ...counts,
+      lastPassAt: passState.lastPassAt,
+      truncatedSources: truncation.truncatedSources,
+    },
   };
 }
 

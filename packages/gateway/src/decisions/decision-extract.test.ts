@@ -27,9 +27,9 @@ function seed(
   at: number,
 ): void {
   db.run(
-    `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-    [id, service, type, id, title, body, at, at],
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview, modified_at, synced_at, pinned)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [id, service, type, id, title, body, body, at, at],
   );
 }
 
@@ -285,12 +285,12 @@ test("a pass with an LLM that has no model available produces snippet rows, not 
   expect(row?.extractionSource).toBe("snippet");
 });
 
-// Most connectors leave `body_preview` NULL for short items; the title alone
-// still carries a heading cue, and both the scan text and the re-mined sentence
+// Most connectors leave `body` NULL for short items; the title alone still
+// carries a heading cue, and both the scan text and the re-mined sentence
 // have to tolerate the missing body rather than stringify it as "null".
-test("an item with no body_preview is scanned and extracted from its title alone", async () => {
+test("an item with no body is scanned and extracted from its title alone", async () => {
   db.run(
-    `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, pinned)
+    `INSERT INTO item (id, service, type, external_id, title, body, modified_at, synced_at, pinned)
      VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 0)`,
     ["s1", "confluence", "page", "s1", "Decision: adopt Postgres for billing", 5_000, 5_000],
   );

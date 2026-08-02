@@ -129,7 +129,13 @@ const UPGRADE_RESERVE = 5;
 /** Cap on `vetoedTerms` — this is a user notification, not an audit trail. */
 const VETOED_TERMS_REPORTED = 10;
 
-type ScanRow = { id: string; title: string; body_preview: string | null; modified_at: number };
+type ScanRow = {
+  id: string;
+  title: string;
+  body: string | null;
+  body_complete: number;
+  modified_at: number;
+};
 
 /**
  * The delta scan, resumed from a COMPOSITE `(modified_at, id)` cursor.
@@ -147,7 +153,7 @@ function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: str
   const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
   return db
     .query(
-      `SELECT i.id, i.title, i.body_preview, i.modified_at
+      `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
        FROM item i
        WHERE ${sourceFilter}
          AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -168,9 +174,42 @@ function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: st
   if (itemIds.length === 0) return [];
   const ph = itemIds.map(() => "?").join(", ");
   const rows = db
-    .query(`SELECT title, body_preview FROM item WHERE id IN (${ph})`)
-    .all(...itemIds) as Array<{ title: string; body_preview: string | null }>;
-  return rows.map((r) => ({ text: `${r.title}. ${r.body_preview ?? ""}`.trim() }));
+    .query(`SELECT title, body FROM item WHERE id IN (${ph})`)
+    .all(...itemIds) as Array<{ title: string; body: string | null }>;
+  return rows.map((r) => ({ text: `${r.title}. ${r.body ?? ""}`.trim() }));
+}
+
+/**
+ * A read-only candidate load over the FULL glossary-source domain since
+ * `sinceMs` — not the incremental delta `scanDelta` drains for mining. This
+ * backs the brief's honesty count: "N source(s) considered, M truncated" (see
+ * `agents/glossary.ts`), where "truncated" means `body_complete = 0` — either
+ * a connector that has not declared a full body yet, or one that did but the
+ * source exceeded its type's cap.
+ */
+export type GlossaryCandidateRow = {
+  id: string;
+  title: string;
+  body: string | null;
+  body_complete: number;
+  modified_at: number;
+};
+
+export function loadGlossaryCandidates(
+  db: Database,
+  opts: { sinceMs: number },
+): { rows: GlossaryCandidateRow[]; truncatedSources: number } {
+  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
+  const rows = db
+    .query(
+      `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
+         FROM item i
+        WHERE ${sourceFilter} AND i.modified_at >= ?
+        ORDER BY i.modified_at DESC, i.id ASC`,
+    )
+    .all(...sourceKeys, opts.sinceMs) as GlossaryCandidateRow[];
+  const truncatedSources = rows.reduce((n, r) => n + (r.body_complete === 0 ? 1 : 0), 0);
+  return { rows, truncatedSources };
 }
 
 /**
@@ -194,7 +233,7 @@ function discoverPhase(
     { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }
   >();
   for (const row of rows) {
-    const text = `${row.title}\n${row.body_preview ?? ""}`;
+    const text = `${row.title}\n${row.body ?? ""}`;
     for (const c of mineTerms(text)) {
       if (!seen.has(c.key)) seen.set(c.key, { surface: c.surface, form: c.form });
     }

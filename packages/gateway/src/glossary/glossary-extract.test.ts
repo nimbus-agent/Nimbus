@@ -15,7 +15,7 @@ function runMigrations(db: Database): void {
 import { dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
-import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
+import { loadGlossaryCandidates, rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
 import { projectTerm } from "./glossary-project.ts";
 import {
   clearGlossary,
@@ -200,14 +200,14 @@ test("rebuildGlossary clears rows, projections and the watermark", async () => {
   expect(readPassState(db).watermarkMs).toBeGreaterThan(0);
 });
 
-test("a null body preview falls back to empty text rather than the literal 'null'", async () => {
+test("a null body falls back to empty text rather than the literal 'null'", async () => {
   seedTermItems(3, "the CDR pipeline runs nightly");
   // The most-recently-modified item is examined first for both mining text
   // (discoverPhase) and snippet text (consolidatePhase, since all 3 items
   // fit within TOP_SOURCE_LIMIT) — an item indexed with a title but no body
-  // preview (e.g. a bare link share) must not surface the string "null" in
-  // either place.
-  db.run("UPDATE item SET body_preview = NULL WHERE id = 'slack:m2'");
+  // (e.g. a bare link share) must not surface the string "null" in either
+  // place.
+  db.run("UPDATE item SET body = NULL WHERE id = 'slack:m2'");
 
   await runGlossaryPass(db, OPTS); // no llm => snippet-sourced definition
   const t = getTerm(db, "cdr");
@@ -824,5 +824,73 @@ test("a pass with no configDir touches no authored rows", async () => {
     nowMs: 1,
   });
   await runGlossaryPass(db, PASS_OPTS);
+  expect(getTerm(db, "cdr")?.status).toBe("consolidated");
+});
+
+// The brief's honesty count: `loadGlossaryCandidates` scans the FULL
+// glossary-source domain since `sinceMs` (not the incremental delta
+// `scanDelta` drains for mining) and reports how many of those sources are
+// indexed with a truncated body (`body_complete = 0`).
+test("loadGlossaryCandidates reports how many source bodies were truncated", () => {
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "complete",
+    title: "t1",
+    body: "the CDR pipeline runs nightly",
+    modifiedAt: 2,
+    syncedAt: 1,
+  });
+  upsertIndexedItem(db, {
+    service: "slack",
+    type: "message",
+    externalId: "truncated",
+    title: "t2",
+    bodyPreview: "the CDR pipeline failed last night",
+    modifiedAt: 1,
+    syncedAt: 1,
+  });
+
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
+  expect(loaded.rows).toHaveLength(2);
+  expect(loaded.truncatedSources).toBe(1);
+});
+
+test("an item outside the glossary source-type allowlist is not a candidate", () => {
+  upsertIndexedItem(db, {
+    service: "wiz",
+    type: "issue",
+    externalId: "finding",
+    title: "t1",
+    bodyPreview: "the CDR pipeline is fine",
+    modifiedAt: 1,
+    syncedAt: 1,
+  });
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
+  expect(loaded.rows).toHaveLength(0);
+});
+
+// Guards the hidden-clamp pattern this feature hit twice already (Jira,
+// Zoom): a `bodyPreview:` -> `body:` substitution is a no-op if something
+// upstream still slices to 512 before mining reads it. This fixture is over
+// 512 characters per item, with the term mentioned only AFTER the old cap, so
+// discovery can only find it (across 3 documents, meeting `minDocFreq: 3`) by
+// reading the full stored body.
+test("discovery mines a term mentioned only past the old 512-character mark from the full stored body", async () => {
+  const padding = "Filler context about the meeting agenda and attendees. ".repeat(12);
+  expect(padding.length).toBeGreaterThan(512);
+  for (let i = 0; i < 3; i++) {
+    upsertIndexedItem(db, {
+      service: "slack",
+      type: "message",
+      externalId: `long${String(i)}`,
+      title: "thread",
+      body: `${padding}the CDR pipeline runs nightly`,
+      modifiedAt: 1000 + i,
+      syncedAt: 1000 + i,
+    });
+  }
+  const out = await runGlossaryPass(db, OPTS);
+  expect(out.discovered).toBeGreaterThan(0);
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
 });
