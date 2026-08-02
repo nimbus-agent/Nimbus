@@ -7,11 +7,14 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { loadSchedulerState, upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
 import {
   buildTargetServicesSql,
+  cannotImproveAmong,
+  clearedWatermarkWarning,
   computePendingByService,
   dispatchIndexRebodyRpc,
   type IndexRebodyRpcContext,
   IndexRebodyRpcError,
   parseRebodyParams,
+  REBODY_CANNOT_IMPROVE_SERVICES,
   resolveTargetServices,
 } from "./index-rebody-rpc.ts";
 
@@ -77,11 +80,26 @@ describe("dispatchIndexRebodyRpc", () => {
     await new Promise((r) => setTimeout(r, 50));
     const done = events.find((e) => e.method === "index.rebodyDone");
     expect(done).toBeDefined();
-    expect((done?.params as Record<string, unknown> | undefined)?.["pending"]).toEqual({
-      slack: 3,
-    });
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["pending"]).toEqual({ slack: 3 });
+    // slack genuinely recovers on rebody, so it must not be flagged as unrecoverable.
+    expect(payload?.["cannotImprove"]).toEqual([]);
     // No progress notifications and no other-service side effects: dry-run never targets anything.
     expect(events.find((e) => e.method === "index.rebodyProgress")).toBeUndefined();
+  });
+
+  test("dry run flags a cannot-improve service before any walk is paid for", async () => {
+    const { ctx, db, events } = freshCtx();
+    seedIncomplete(db, "notion", "1");
+    seedIncomplete(db, "confluence", "1");
+    seedIncomplete(db, "slack", "1");
+
+    await dispatchIndexRebodyRpc("index.rebody", { dryRun: true }, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const done = events.find((e) => e.method === "index.rebodyDone");
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["cannotImprove"]).toEqual(["confluence", "notion"]);
   });
 
   test("params reject a non-object and an empty service", async () => {
@@ -99,6 +117,20 @@ describe("dispatchIndexRebodyRpc", () => {
     await expect(dispatchIndexRebodyRpc("index.rebody", { type: "" }, ctx)).rejects.toBeInstanceOf(
       IndexRebodyRpcError,
     );
+  });
+
+  test("params reject a malformed limit (typo'd string instead of a number)", async () => {
+    const { ctx } = freshCtx();
+    await expect(
+      dispatchIndexRebodyRpc("index.rebody", { limit: "3" }, ctx),
+    ).rejects.toBeInstanceOf(IndexRebodyRpcError);
+  });
+
+  test("params reject a malformed dryRun (would otherwise silently become a real run)", async () => {
+    const { ctx } = freshCtx();
+    await expect(
+      dispatchIndexRebodyRpc("index.rebody", { dryRun: "true" }, ctx),
+    ).rejects.toBeInstanceOf(IndexRebodyRpcError);
   });
 
   test("cancel for unknown jobId returns { cancelled: false }", async () => {
@@ -126,7 +158,7 @@ describe("dispatchIndexRebodyRpc", () => {
     );
   });
 
-  test("real run with explicit service clears the watermark and, with no scheduler wired, still succeeds", async () => {
+  test("real run with explicit service clears the watermark and, with no scheduler wired, still succeeds — but a cannot-improve service's pending count never moves", async () => {
     const { ctx, db, events } = freshCtx();
     seedIncomplete(db, "notion", "p1");
     upsertSchedulerRegistration(db, "notion", 60_000, Date.now(), true);
@@ -148,8 +180,13 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(done).toBeDefined();
     const payload = done?.params as Record<string, unknown> | undefined;
     expect(payload?.["targeted"]).toEqual(["notion"]);
+    // succeeded=1 (the watermark clear + no-scheduler path "succeeded") coexists with an
+    // UNMOVED pending count — that is the honesty requirement this test is pinning down.
     expect(payload?.["succeeded"]).toBe(1);
     expect(payload?.["failed"]).toBe(0);
+    expect(payload?.["pendingBefore"]).toEqual({ notion: 1 });
+    expect(payload?.["pendingAfter"]).toEqual({ notion: 1 });
+    expect(payload?.["cannotImprove"]).toEqual(["notion"]);
   });
 
   test("real run auto-targets every service with pending rows, respecting limit", async () => {
@@ -187,6 +224,9 @@ describe("dispatchIndexRebodyRpc", () => {
     const payload = done?.params as Record<string, unknown> | undefined;
     expect(payload?.["succeeded"]).toBe(1);
     expect(payload?.["failed"]).toBe(0);
+    expect(payload?.["failedServices"]).toEqual([]);
+    expect(payload?.["warnings"]).toEqual([]);
+    expect(payload?.["pendingAfter"]).toEqual({ slack: 1 });
   });
 
   test("real run with a live syncScheduler that throws counts it as failed, not fatal", async () => {
@@ -208,6 +248,12 @@ describe("dispatchIndexRebodyRpc", () => {
     const payload = done?.params as Record<string, unknown> | undefined;
     expect(payload?.["succeeded"]).toBe(0);
     expect(payload?.["failed"]).toBe(1);
+    expect(payload?.["failedServices"]).toEqual(["jira"]);
+    const warnings = payload?.["warnings"] as string[] | undefined;
+    expect(warnings).toHaveLength(1);
+    expect(warnings?.[0]).toBe(clearedWatermarkWarning("jira"));
+    expect(warnings?.[0]).toMatch(/watermark was already cleared/);
+    expect(warnings?.[0]).toMatch(/next scheduled sync/);
     expect(events.find((e) => e.method === "index.rebodyError")).toBeUndefined();
   });
 
@@ -267,30 +313,93 @@ describe("parseRebodyParams", () => {
     expect(() => parseRebodyParams({ type: 5 })).toThrow(IndexRebodyRpcError);
   });
 
-  test("limit non-number is ignored", () => {
-    expect(parseRebodyParams({ limit: "10" }).limit).toBeUndefined();
+  // `limit` bounds how many connectors get an unbounded full-account network
+  // re-walk, so — unlike index.reembed — a malformed value is a hard error,
+  // never a silent fallback to "target everything".
+  test("limit non-number throws", () => {
+    expect(() => parseRebodyParams({ limit: "10" })).toThrow(IndexRebodyRpcError);
   });
 
-  test("limit NaN is ignored", () => {
-    expect(parseRebodyParams({ limit: Number.NaN }).limit).toBeUndefined();
+  test("limit NaN throws", () => {
+    expect(() => parseRebodyParams({ limit: Number.NaN })).toThrow(IndexRebodyRpcError);
   });
 
-  test("limit <= 0 is ignored", () => {
-    expect(parseRebodyParams({ limit: 0 }).limit).toBeUndefined();
-    expect(parseRebodyParams({ limit: -3 }).limit).toBeUndefined();
+  test("limit <= 0 throws", () => {
+    expect(() => parseRebodyParams({ limit: 0 })).toThrow(IndexRebodyRpcError);
+    expect(() => parseRebodyParams({ limit: -3 })).toThrow(IndexRebodyRpcError);
+  });
+
+  test("limit Infinity throws (finite check)", () => {
+    expect(() => parseRebodyParams({ limit: Number.POSITIVE_INFINITY })).toThrow(
+      IndexRebodyRpcError,
+    );
   });
 
   test("valid positive limit is floored", () => {
     expect(parseRebodyParams({ limit: 4.9 }).limit).toBe(4);
   });
 
-  test("dryRun non-true is ignored", () => {
-    expect(parseRebodyParams({ dryRun: "yes" }).dryRun).toBeUndefined();
+  test("limit omitted entirely is fine", () => {
+    expect(parseRebodyParams({}).limit).toBeUndefined();
+  });
+
+  // `dryRun` mistyped-into-a-real-run is the worst version of the same
+  // failure mode, so a non-boolean is rejected rather than coerced.
+  test("dryRun non-boolean throws", () => {
+    expect(() => parseRebodyParams({ dryRun: "yes" })).toThrow(IndexRebodyRpcError);
+    expect(() => parseRebodyParams({ dryRun: 1 })).toThrow(IndexRebodyRpcError);
+  });
+
+  test("dryRun false is accepted and yields dryRun undefined", () => {
     expect(parseRebodyParams({ dryRun: false }).dryRun).toBeUndefined();
   });
 
   test("dryRun true is accepted", () => {
     expect(parseRebodyParams({ dryRun: true }).dryRun).toBe(true);
+  });
+
+  test("dryRun omitted entirely is fine", () => {
+    expect(parseRebodyParams({}).dryRun).toBeUndefined();
+  });
+});
+
+describe("REBODY_CANNOT_IMPROVE_SERVICES", () => {
+  test("membership verified against each connector's sync handler (see file-header comment)", () => {
+    // notion-sync.ts:201 and confluence-sync.ts:141 pass bodyPreview: "" and never body:.
+    // _lib/gmail/api.ts:174 passes bodyPreview: preview and never body: anywhere in the file.
+    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("notion")).toBe(true);
+    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("confluence")).toBe(true);
+    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("gmail")).toBe(true);
+    // slack-sync.ts:282 passes body: full; jira-sync.ts:268 passes body: d.bodyPrev.
+    // Both genuinely recover on rebody and must not be flagged.
+    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("slack")).toBe(false);
+    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("jira")).toBe(false);
+  });
+});
+
+describe("cannotImproveAmong", () => {
+  test("empty pending map yields empty list", () => {
+    expect(cannotImproveAmong({})).toEqual([]);
+  });
+
+  test("filters to cannot-improve services only, sorted", () => {
+    expect(cannotImproveAmong({ slack: 2, notion: 5, jira: 1, confluence: 3 })).toEqual([
+      "confluence",
+      "notion",
+    ]);
+  });
+
+  test("a pending map with no cannot-improve services yields empty list", () => {
+    expect(cannotImproveAmong({ slack: 2, jira: 1 })).toEqual([]);
+  });
+});
+
+describe("clearedWatermarkWarning", () => {
+  test("names the service and states the watermark/next-sync consequence", () => {
+    const msg = clearedWatermarkWarning("confluence");
+    expect(msg).toContain("confluence");
+    expect(msg).toMatch(/watermark was already cleared/);
+    expect(msg).toMatch(/next scheduled sync/);
   });
 });
 
