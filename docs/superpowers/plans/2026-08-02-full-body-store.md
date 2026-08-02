@@ -716,6 +716,7 @@ git commit -m "feat(index): write item.body and derive body_preview from it"
 
 **Files:**
 - Modify: `packages/gateway/src/search/hybrid-internal.ts:61`
+- Modify: `packages/gateway/src/index/local-index.ts:115` — **a second, byte-identical copy of the same MATCH builder.** Found during Task 3, not at plan time. Missing it leaves 48 tests in `local-index.test.ts` red and local-index search broken at runtime. Both lines read `` return `(title : "${escaped}"* OR body_preview : "${escaped}"*)`; `` and both must become `body :`.
 - Modify: `packages/gateway/src/index/item-list-query.ts:37`
 - Modify: `packages/gateway/src/ipc/http-server.ts:144`
 - Modify: `packages/gateway/src/index/local-index.ts:453,539,698`
@@ -1711,6 +1712,8 @@ git commit -m "feat(cli): nimbus index rebody"
 - Modify: `docs/schema-reference.md`
 - Modify: `docs/cli-reference.md`
 - Modify: `.claude/commands/nimbus-db-migrations.md`
+- Modify: `CLAUDE.md` and `GEMINI.md` — both say "schema V47" in the status line; they are mirrors and must be updated together
+- Modify: `docs/architecture.md` — line 5 says "schema V47", and line 1331 is **already stale** at "Latest applied migration: V46 … `CURRENT_SCHEMA_VERSION = 46`" (drifted during V47). Fix both to V48 rather than only the one this slice moved.
 
 - [ ] **Step 1: Update the docs**
 
