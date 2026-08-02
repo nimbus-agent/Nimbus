@@ -21,7 +21,14 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "fetch",
   "download",
   "describe",
-  "preview",
+  // "preview" — DELIBERATELY ABSENT. It reads as a read verb and is not one: `iac_pulumi_preview`
+  // runs `pulumi preview --cwd <caller-supplied workingDirectory>`, and `pulumi preview` EVALUATES
+  // the stack program in that directory. Admitting the verb let an untrusted share file reach local
+  // code execution through a list named "read-only". It was also the ONLY real connector tool id
+  // ending in `_preview` (the `dataprofile_preview` this list once cited is a name the dataprofile
+  // no-row-data contract test asserts must THROW), so removing it costs zero replay coverage.
+  // The lesson generalizes: this list classifies by NAME, so a verb earns a place only when every
+  // tool that can carry it is known to be a read.
   "history",
   "export",
   "view",

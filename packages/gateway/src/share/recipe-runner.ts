@@ -33,7 +33,20 @@ export interface ReplaySummary {
   readonly missingConnector: number;
   readonly skippedNonRead: number;
   readonly error: number;
+  /** Steps beyond {@link MAX_REPLAY_STEPS} that were NOT executed. Reported, never silent. */
+  readonly capped: number;
 }
+
+/**
+ * Hard ceiling on steps executed per replay.
+ *
+ * A share file is untrusted input and its step array is unbounded, so without a cap a single file
+ * drives unlimited outbound calls against the owner's credentials — quota burn and provider-side
+ * security alerting attributed to the owner's org. The excess is reported in
+ * {@link ReplaySummary.capped} rather than dropped, because a truncated replay that looks complete
+ * is its own reporting defect.
+ */
+export const MAX_REPLAY_STEPS = 256;
 
 export interface ReplayReport {
   readonly sourceSessionId: string;
@@ -115,7 +128,9 @@ export async function replayRecipe(
   deps: RecipeRunnerDeps,
 ): Promise<ReplayReport> {
   const results: ReplayStepResult[] = [];
-  for (const s of steps) {
+  const executable = steps.slice(0, MAX_REPLAY_STEPS);
+  const capped = steps.length - executable.length;
+  for (const s of executable) {
     const base = { stepId: s.stepId, tool: s.tool, service: s.service, originalStatus: s.status };
     if (!deps.isReadOnly(s.tool)) {
       results.push({ ...base, status: "skipped-non-read" });
@@ -138,6 +153,7 @@ export async function replayRecipe(
     missingConnector: results.filter((r) => r.status === "missing-connector").length,
     skippedNonRead: results.filter((r) => r.status === "skipped-non-read").length,
     error: results.filter((r) => r.status === "error").length,
+    capped,
   };
   return { sourceSessionId, steps: results, summary };
 }

@@ -344,6 +344,24 @@ describe("resolveVerifyShareRequest", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  test("--allow-unsigned is forwarded so the verification gate can be overridden", async () => {
+    expect(
+      await resolveVerifyShareRequest([
+        "https://example.test/s.json",
+        "--replay",
+        "--allow-unsigned",
+      ]),
+    ).toEqual({
+      replay: true,
+      params: { input: "https://example.test/s.json", allowUnsigned: true },
+    });
+  });
+
+  test("allowUnsigned is ABSENT unless asked for — the gate is on by default", async () => {
+    const req = await resolveVerifyShareRequest(["https://example.test/s.json", "--replay"]);
+    expect(req?.params).not.toHaveProperty("allowUnsigned");
+  });
+
   test("an http(s) URL is passed through untouched", async () => {
     expect(await resolveVerifyShareRequest(["https://example.test/s.json"])).toEqual({
       replay: false,

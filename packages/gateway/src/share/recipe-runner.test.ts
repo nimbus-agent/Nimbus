@@ -2,7 +2,13 @@
 import { describe, expect, test } from "bun:test";
 import { isReadOnlyToolId } from "./read-tool-registry.ts";
 import type { RecipeStep } from "./recipe.ts";
-import { replayRecipe, replayShare, stepsFromShare, type ToolRunOutcome } from "./recipe-runner.ts";
+import {
+  MAX_REPLAY_STEPS,
+  replayRecipe,
+  replayShare,
+  stepsFromShare,
+  type ToolRunOutcome,
+} from "./recipe-runner.ts";
 import type { ShareFile } from "./share-format.ts";
 
 function shareWith(
@@ -187,7 +193,33 @@ describe("replayRecipe — per-step classification", () => {
       missingConnector: 1,
       skippedNonRead: 1,
       error: 0,
+      capped: 0,
     });
+  });
+
+  // A share file is untrusted input and its step array is unbounded, so one file could otherwise
+  // drive unlimited outbound calls on the owner's credentials. The excess is REPORTED, never
+  // silently dropped — a truncated replay that looks complete is its own defect.
+  test("caps the number of executed steps and reports the excess", async () => {
+    const steps = Array.from({ length: MAX_REPLAY_STEPS + 5 }, (_, i) => ({
+      stepId: `step-${i + 1}`,
+      tool: "gmail_get",
+      service: "gmail",
+      params: {},
+      status: "ok",
+      dependsOn: [],
+    }));
+    let runs = 0;
+    const report = await replayRecipe("s1", steps, {
+      isReadOnly: () => true,
+      run: async () => {
+        runs++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(runs).toBe(MAX_REPLAY_STEPS);
+    expect(report.summary.total).toBe(MAX_REPLAY_STEPS);
+    expect(report.summary.capped).toBe(5);
   });
 });
 
