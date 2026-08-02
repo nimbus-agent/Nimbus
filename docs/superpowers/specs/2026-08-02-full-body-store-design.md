@@ -108,6 +108,32 @@ external-content tables pull columns *by name* from the content table. Rebuildin
 its title alone. Seeding it first makes the upgrade strictly non-regressive: old rows keep
 exactly today's 512 characters of coverage and gain more only when re-synced.
 
+### Rejected: inferring completeness from length at migration time
+
+A natural-looking optimisation is to seed the marker from the migrated length, on the reasoning
+that a body under 512 characters cannot have been clamped:
+
+```sql
+-- REJECTED. Do not implement.
+UPDATE item SET body = body_preview,
+  body_complete = CASE WHEN length(body_preview) < 512 THEN 1 ELSE 0 END;
+```
+
+`length < 512` does **not** imply completeness, because the store's clamp is not the only
+truncation layer — connectors truncate too, and several never fetched a body at all. The rule
+would mark as complete exactly the connectors with the worst coverage:
+
+- Notion (`notion-sync.ts:201`) and Confluence (`confluence-sync.ts:141`) store `""`. Length 0
+  is under 512, so every title-only page in the index would be flagged complete and permanently
+  excluded from any backfill sweep.
+- Gmail stores the API's ~200-character `snippet` (`_lib/gmail/api.ts:149`) and Outlook stores
+  Graph's own ~255-character `bodyPreview` field (`outlook-sync.ts:47`). Both sit under 512 and
+  neither is the message body.
+
+`body_complete` is a claim a connector makes about the fetch it performed. It cannot be inferred
+from the stored artefact after the fact, so every migrated row stays `0` until a connector that
+knows better overwrites it.
+
 ### Caps
 
 A single SSoT constants module:
@@ -115,6 +141,14 @@ A single SSoT constants module:
 - `BODY_MAX_PROSE = 16384` — applied when `` `${service}:${type}` `` is in `PROSE_HEAVY_TYPES`
   (`embedding/routing.ts`, ~24 entries).
 - `BODY_MAX_DEFAULT = 512` — everything else. Unchanged from today.
+
+**The clamp is surrogate-safe.** A bare `text.slice(0, n)` can cut a UTF-16 surrogate pair in
+half, leaving a lone surrogate that is not representable in UTF-8. Today's `clipPreview` and the
+~20 connector-side slices all have this bug; it is invisible only because a truncated emoji at
+character 512 is rarely noticed. Since every clamp now funnels through one helper, it costs
+nothing to do correctly: if the character at the cut index is a high surrogate, cut one earlier.
+Codepoint safety is the goal — grapheme clusters (ZWJ sequences, flag pairs) are explicitly not
+in scope, since splitting one produces valid text, merely odd text.
 
 16 KiB comfortably covers real Slack threads, tickets, PR descriptions and normal wiki
 pages. Long email chains and large Confluence pages still clip; that is what `body_complete`
@@ -167,11 +201,28 @@ issues (`github-sync.ts:207,247`), Bitbucket (`bitbucket-sync.ts:137`), Obsidian
 | Outlook | `outlook-sync.ts:47` indexes Graph's own `bodyPreview` field | `body.content` |
 | IMAP / Apple / Fastmail / ProtonMail | `_lib/imap-client.ts:19` fetches `PREVIEW_FETCH_BYTES = 2048` from the server | a larger partial fetch, per-provider |
 
-One footgun in the left column: Slack (`slack-sync.ts:266`), Teams (`_lib/teams/api.ts:54`)
-and Discord derive the item **title** from the same local that holds the preview, via
-`shortIndexedMessageTitleFromPreview`. Widening that local to 16 KiB would feed the whole body
-into a title deriver that today only ever sees 512 characters. The full text must be bound to a
-new local passed as `body`, leaving the existing short slice feeding `title` untouched.
+**Title-derivation footgun — audited, three sites.** Some connectors derive the item **title**
+from the same local that holds the preview, so widening that local to 16 KiB would feed a whole
+document into a title deriver that today only ever sees 512 characters:
+
+| Site | How |
+| --- | --- |
+| `slack-sync.ts:267` | `shortIndexedMessageTitleFromPreview(preview, "(no text)")` |
+| `_lib/teams/api.ts:62` | `shortIndexedMessageTitleFromPreview(preview, "(message)")` |
+| `discord-sync.ts:187` | inline `bodyPreview.replaceAll(/\s+/g, " ").slice(0, 80)` |
+
+In all three the full text must be bound to a **new** local passed as `body`, leaving the
+existing short slice feeding `title` untouched. Discord's is the one that also costs
+performance rather than only correctness: a whitespace-collapsing regex over 16 KiB per message,
+at sync scale, to produce 80 characters.
+
+`shortIndexedMessageTitleFromPreview` has exactly those two production call sites
+(`connectors/sync-message-preview-title.ts`), and every other left-column connector takes its
+title from a separate source field — Jira `d.summary` (`jira-sync.ts:260`), GitHub
+`stringField(pr, "title")` (`github-sync.ts:194,228`), Bitbucket (`:107`), Linear
+(`linear-sync.ts:156`), Snyk (`snyk-issue-mapping.ts:80`), Obsidian `note.title`
+(`obsidian-sync.ts:74`), Zoom (`zoom-transcript-mapping.ts:176`). No further audit is owed;
+PR 2 re-verifies per connector as it touches each one.
 
 Each right-column entry is a new API shape, more bytes on the wire per item, and its own
 rate-limit conversation. They are deliberately **not** in this slice; each becomes a small
@@ -236,6 +287,28 @@ notifications), with `--service`, `--type`, `--limit` and `--dry-run`. It clears
 per-connector watermark for prose types and drives a re-sync, so items return with `body`
 populated and `body_complete = 1`.
 
+### Why there is no `--only-truncated`
+
+Targeting only rows where `body_complete = 0` would be the obvious way to avoid re-fetching
+items that were never truncated. It is not implementable on this mechanism, and the reason is
+worth recording so it is not proposed again.
+
+`rebody` clears a watermark and lets the existing sync run. A sync fetches by page and time
+window, not by item id — it cannot ask a connector for "the 340 items I have marked
+incomplete". A targeted single-item fetch path does not exist in this codebase for any
+connector; it is listed as unbuilt work in the browser-gateway-client direction in
+[`docs/roadmap.md`](../../roadmap.md#client-surfaces). So the flag could suppress *writes*, which
+cost nothing, while every API call still happens. It would read as a rate-limit optimisation
+while saving no requests at all.
+
+The real levers are the ones already in the flag set: `--service` and `--type` scope which
+connectors run, and `--limit` bounds the pass. `rebody` additionally **reports the remaining
+`body_complete = 0` count per service** when it finishes, and `--dry-run` prints that count
+without fetching, so the user can size the job before paying for it.
+
+Item-level targeted re-fetch is deferred. If the browser client's resolve-miss path ever builds
+a per-item fetch, `rebody` should be revisited on top of it.
+
 **Not renderer-exposed.** `index.reembed` is not in the Tauri allowlist either — only
 `index.metrics` is, and `index.rebuild` / `index.querySql` are explicitly asserted
 *un*-allowed at `ui/src-tauri/src/gateway_bridge.rs:464-466`. `ALLOWED_METHODS` stays at
@@ -262,6 +335,34 @@ removed. **V48 must extend it to null `body` and reset `body_complete = 0` in th
 transaction.** This is the one place in the design where getting it wrong is a privacy
 regression rather than a missing feature.
 
+## Storage growth
+
+**The 32× figure is per truncated prose row, not per database.** FTS5's shadow tables
+(`item_fts_data`, `item_fts_idx`) grow roughly with the volume of indexed text, and this slice
+adds text only where a prose item was actually being clipped. A short Slack message, a one-line
+Jira comment or any of the ~89 non-prose types contributes exactly what it does today. On a
+corpus dominated by short chat messages the delta is close to nothing; on one dominated by long
+wiki pages and email it approaches the cap. Sizing the change therefore needs measurement, not a
+worst-case multiplier.
+
+So `index.metrics` gains per-table byte counts for `item` and the `item_fts` shadow tables, via
+SQLite's `dbstat` virtual table. That is the point of measurement for the rollout and the thing
+that tells a user why their database grew.
+
+**Rejected: `detail=column`.** It would cut index size, and it would break two live features.
+FTS5's `snippet()` requires `detail=full`, and `ipc/http-server.ts:499` calls
+`snippet(item_fts, 0, '', '', '…', 10)` for clip-related search results. `detail=column` also
+drops phrase support, and `glossary/glossary-store.ts:83` wraps whole term keys in quotes —
+`"connection pool"` is a phrase query, and multi-word glossary terms are the common case, so
+every one of them would stop matching. (`search/hybrid-internal.ts`'s `ftsMatchQuery` splits on
+whitespace into single tokens and would survive; the glossary path would not.)
+
+Prefix indexes are not a mitigation either — `prefix='2 3'` trades *more* space for faster
+prefix matching, which is the opposite of the concern.
+
+If measurement shows growth is a real problem on target machines, the lever is the 16 KiB cap
+itself, which is one constant in one module.
+
 ## Testing
 
 **Guards against erosion** — the properties this design protects are non-changes, which is the
@@ -282,6 +383,8 @@ concrete call shape, and both are red-proved by temporarily breaking them:
 **Feature:**
 
 - the derived-prefix invariant holds for every write path: `body_preview === body.slice(0, 512)`;
+- clamping a string whose cap index falls inside a surrogate pair yields valid UTF-16 — asserted
+  with an emoji straddling the boundary, at both `BODY_MAX_PROSE` and `BODY_MAX_DEFAULT`;
 - a prose item keeps a term at character 5,000 findable via hybrid search;
 - a non-prose item still clamps at 512;
 - `GET /v1/items` carries no `body` key; `GET /v1/items/<id>` does;
