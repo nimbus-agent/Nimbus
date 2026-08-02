@@ -141,7 +141,11 @@ function handleItemByPath(path: string, db: Database): Response {
     return json({ error: "missing id" }, 400);
   }
   const row = db
-    .query("SELECT * FROM item WHERE id = ? OR external_id = ? LIMIT 1")
+    .query(
+      `SELECT id, service, type, external_id, title, body, body_preview, body_complete,
+              url, canonical_url, modified_at, author_id, metadata, synced_at, pinned
+       FROM item WHERE id = ? OR external_id = ? LIMIT 1`,
+    )
     .get(id, id) as Record<string, unknown> | null;
   return json({ data: row });
 }

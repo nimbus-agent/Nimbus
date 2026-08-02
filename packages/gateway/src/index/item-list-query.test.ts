@@ -70,7 +70,9 @@ describe("buildItemListSql (additional branches)", () => {
       limit: 5,
     });
     expect(sql).not.toContain("WHERE");
-    expect(sql).toMatch(/SELECT \* FROM item\s+ORDER BY modified_at DESC LIMIT \?/);
+    expect(sql).not.toContain("body,");
+    expect(sql).toContain("body_preview");
+    expect(sql).toMatch(/FROM item\s+ORDER BY modified_at DESC LIMIT \?/);
     expect(vals).toEqual([5]);
   });
 });

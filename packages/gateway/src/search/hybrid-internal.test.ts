@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { isVecLoaded, tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import {
@@ -32,7 +33,7 @@ const VEC_AVAILABLE = vecAvailable();
 function freshDb(): Database {
   const db = new Database(":memory:");
   tryLoadSqliteVec(db);
-  runIndexedSchemaMigrations(db, 30);
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   return db;
 }
 
@@ -189,13 +190,13 @@ describe("ftsMatchQuery", () => {
 
   test("single token produces correct FTS5 expression", () => {
     const q = ftsMatchQuery("hello");
-    expect(q).toBe(`(title : "hello"* OR body_preview : "hello"*)`);
+    expect(q).toBe(`(title : "hello"* OR body : "hello"*)`);
   });
 
   test("multi-token produces AND-joined expression", () => {
     const q = ftsMatchQuery("hello world");
-    expect(q).toContain(`(title : "hello"* OR body_preview : "hello"*)`);
-    expect(q).toContain(`(title : "world"* OR body_preview : "world"*)`);
+    expect(q).toContain(`(title : "hello"* OR body : "hello"*)`);
+    expect(q).toContain(`(title : "world"* OR body : "world"*)`);
     expect(q).toContain(" AND ");
   });
 
@@ -217,12 +218,12 @@ describe("loadBm25Hits", () => {
     const now = Date.now();
     // Insert an item that will match FTS
     db.run(
-      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+      `INSERT INTO item (id, service, type, external_id, title, body, modified_at, synced_at)
        VALUES ('svc:alpha', 'svc', 'note', 'alpha', 'alpha bravo', 'body text alpha', ?, ?)`,
       [now, now],
     );
     db.run(
-      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+      `INSERT INTO item (id, service, type, external_id, title, body, modified_at, synced_at)
        VALUES ('other:beta', 'other', 'note', 'beta', 'beta gamma', 'body text beta', ?, ?)`,
       [now, now],
     );

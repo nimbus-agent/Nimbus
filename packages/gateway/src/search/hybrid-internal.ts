@@ -58,7 +58,7 @@ export function ftsMatchQuery(name: string): string {
   return tokens
     .map((t) => {
       const escaped = t.replaceAll('"', '""');
-      return `(title : "${escaped}"* OR body_preview : "${escaped}"*)`;
+      return `(title : "${escaped}"* OR body : "${escaped}"*)`;
     })
     .join(" AND ");
 }

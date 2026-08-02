@@ -1,6 +1,6 @@
 export type ItemListQueryParams = {
-  readonly services: readonly string[];
-  readonly types: readonly string[];
+  readonly services?: readonly string[];
+  readonly types?: readonly string[];
   readonly sinceMs?: number;
   readonly untilMs?: number;
   readonly limit: number;
@@ -12,18 +12,20 @@ export function buildItemListSql(params: ItemListQueryParams): {
 } {
   const filters: string[] = [];
   const vals: Array<string | number> = [];
-  if (params.services.length > 0) {
-    const ph = params.services.map(() => "?").join(", ");
+  const services = params.services ?? [];
+  const types = params.types ?? [];
+  if (services.length > 0) {
+    const ph = services.map(() => "?").join(", ");
     filters.push(`service IN (${ph})`);
-    vals.push(...params.services);
+    vals.push(...services);
   }
-  if (params.types.length === 1 && params.types[0] !== undefined) {
+  if (types.length === 1 && types[0] !== undefined) {
     filters.push("type = ?");
-    vals.push(params.types[0]);
-  } else if (params.types.length > 1) {
-    const ph = params.types.map(() => "?").join(", ");
+    vals.push(types[0]);
+  } else if (types.length > 1) {
+    const ph = types.map(() => "?").join(", ");
     filters.push(`type IN (${ph})`);
-    vals.push(...params.types);
+    vals.push(...types);
   }
   if (params.sinceMs !== undefined) {
     filters.push("modified_at >= ?");
@@ -34,7 +36,9 @@ export function buildItemListSql(params: ItemListQueryParams): {
     vals.push(params.untilMs);
   }
   const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-  const sql = `SELECT * FROM item ${where} ORDER BY modified_at DESC LIMIT ?`;
+  const sql = `SELECT id, service, type, external_id, title, body_preview, url, canonical_url,
+                      modified_at, author_id, metadata, synced_at, pinned
+               FROM item ${where} ORDER BY modified_at DESC LIMIT ?`;
   vals.push(params.limit);
   return { sql, vals };
 }

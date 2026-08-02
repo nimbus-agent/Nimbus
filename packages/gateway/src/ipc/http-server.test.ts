@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { StatusReaders } from "./admin-status-rpc.ts";
 import { startReadOnlyHttpServer } from "./http-server.ts";
@@ -311,7 +312,7 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-routes-"));
     dbPath = join(tmpDir, "nimbus.db");
     const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 28);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, body_preview, url,
                          canonical_url, modified_at, author_id, metadata,
