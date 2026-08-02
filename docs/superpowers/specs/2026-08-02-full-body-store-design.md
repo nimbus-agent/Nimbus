@@ -268,6 +268,14 @@ Stated here so a later reader does not "helpfully" fix them:
 - **`federation/query-gate.ts:51` keeps reading `body_preview`** and slicing to
   `SNIPPET_MAX = 280`. No federated peer sees more than it does today. Worth pinning down
   given **I17** sits on that function.
+- **The relationship graph keeps receiving the 512-character preview.**
+  `upsertIndexedItem` passes `bodyPreview: preview` into `syncGraphFromIndexedItem`, and
+  `graph/graph-populator.ts:279,521` run `extractIssueRefs` and entity extraction over
+  `` `${title}\n${bodyPreview}` ``. Feeding it 16 KiB would find more references — and would
+  multiply `graph_relation` rows, change the cost of every upsert, and silently change what
+  `nimbus why` and `nimbus impact` return, none of which this slice promised. The graph
+  populator therefore keeps its current input. Widening it is a defensible follow-up with its
+  own before/after measurement, not a side effect of a storage change.
 
 ### Agents
 
@@ -345,9 +353,15 @@ corpus dominated by short chat messages the delta is close to nothing; on one do
 wiki pages and email it approaches the cap. Sizing the change therefore needs measurement, not a
 worst-case multiplier.
 
-So `index.metrics` gains per-table byte counts for `item` and the `item_fts` shadow tables, via
-SQLite's `dbstat` virtual table. That is the point of measurement for the rollout and the thing
-that tells a user why their database grew.
+So `index.metrics` gains size counters: `SUM(length(body))` over `item` for the content side,
+and `SELECT SUM(length(block)) FROM item_fts_data` for the keyword index. That is the point of
+measurement for the rollout and the thing that tells a user why their database grew.
+
+**Not `dbstat`.** SQLite's `dbstat` virtual table needs `SQLITE_ENABLE_DBSTAT_VTAB`, which
+`bun:sqlite` is not built with — probed on Bun 1.2 (`no such table: dbstat`). The FTS5 shadow
+tables are ordinary tables and can be summed directly, which is portable and needs no build
+flag. Whole-database size, if ever wanted, is
+`pragma_page_count() * pragma_page_size()`, which does work.
 
 **Rejected: `detail=column`.** It would cut index size, and it would break two live features.
 FTS5's `snippet()` requires `detail=full`, and `ipc/http-server.ts:499` calls
