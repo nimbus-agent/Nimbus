@@ -32,6 +32,7 @@ import { dispatchGlossaryRpc, GlossaryRpcError } from "../glossary-rpc.ts";
 import { dispatchHitlRpc, HitlRpcError } from "../hitl-rpc.ts";
 import { dispatchIdentityRpc, type IdentityRpcContext, IdentityRpcError } from "../identity-rpc.ts";
 import { dispatchIndexDemoSymbolRpc, IndexDemoSymbolRpcError } from "../index-demo-symbol-rpc.ts";
+import { dispatchIndexRebodyRpc, IndexRebodyRpcError } from "../index-rebody-rpc.ts";
 import { dispatchIndexReembedRpc, IndexReembedRpcError } from "../index-reembed-rpc.ts";
 import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-rpc.ts";
 import { generatePairingCode } from "../lan-pairing.ts";
@@ -545,6 +546,36 @@ export async function tryDispatchIndexReembedRpc(
     if (out.kind === "hit") return out.value;
   } catch (e) {
     if (e instanceof IndexReembedRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+export async function tryDispatchIndexRebodyRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "index.rebody" && method !== "index.rebodyCancel") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "index.rebody requires LocalIndex");
+  }
+  try {
+    const out = await dispatchIndexRebodyRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      logger: pino({ level: "info" }),
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+      ...(ctx.options.syncScheduler === undefined
+        ? {}
+        : { syncScheduler: ctx.options.syncScheduler }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof IndexRebodyRpcError) {
       throw new RpcMethodError(e.rpcCode, e.message);
     }
     throw e;
@@ -1071,7 +1102,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1084,6 +1115,8 @@ async function dispatchPhase4PlatformGroup(
   if (profileOutcome !== phase4RpcSkipped) return profileOutcome;
   const indexReembedOutcome = await tryDispatchIndexReembedRpc(ctx, method, params);
   if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
+  const indexRebodyOutcome = await tryDispatchIndexRebodyRpc(ctx, method, params);
+  if (indexRebodyOutcome !== phase4RpcSkipped) return indexRebodyOutcome;
   const indexRegraphOutcome = await tryDispatchIndexRegraphRpc(ctx, method, params);
   if (indexRegraphOutcome !== phase4RpcSkipped) return indexRegraphOutcome;
   const indexDemoSymbolOutcome = await tryDispatchIndexDemoSymbolRpc(ctx, method, params);

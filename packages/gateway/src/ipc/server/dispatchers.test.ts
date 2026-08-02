@@ -48,6 +48,7 @@ import {
   tryDispatchFederationRpc,
   tryDispatchHitlRpc,
   tryDispatchIndexDemoSymbolRpc,
+  tryDispatchIndexRebodyRpc,
   tryDispatchIndexReembedRpc,
   tryDispatchIndexRegraphRpc,
   tryDispatchLanRpc,
@@ -397,6 +398,56 @@ describe("tryDispatchIndexReembedRpc", () => {
     const outcome = await tryDispatchIndexReembedRpc(ctx, "index.reembedCancel", {
       jobId: "missing",
     }).catch((e: unknown) => e);
+    expect(outcome).not.toBe(phase4RpcSkipped);
+  });
+});
+
+describe("tryDispatchIndexRebodyRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchIndexRebodyRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("throws when localIndex missing", async () => {
+    const { ctx } = makeCtx();
+    await expect(tryDispatchIndexRebodyRpc(ctx, "index.rebody", {})).rejects.toThrow(
+      /requires LocalIndex/,
+    );
+  });
+  test("delegates index.rebody with valid wiring and no syncScheduler", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const outcome = await tryDispatchIndexRebodyRpc(ctx, "index.rebody", { dryRun: true });
+    expect(outcome).not.toBe(phase4RpcSkipped);
+    expect((outcome as { jobId: string }).jobId).toMatch(/^rebody_/);
+  });
+  test("delegates index.rebodyCancel with valid wiring", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const outcome = await tryDispatchIndexRebodyRpc(ctx, "index.rebodyCancel", {
+      jobId: "missing",
+    });
+    expect(outcome).toEqual({ cancelled: false });
+  });
+  test("rejects invalid params as RpcMethodError", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    await expect(
+      tryDispatchIndexRebodyRpc(ctx, "index.rebody", { service: "" }),
+    ).rejects.toBeDefined();
+  });
+  test("forwards a live syncScheduler into the rebody context", async () => {
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({
+      localIndex,
+      syncScheduler: {
+        forceSync: async () => {},
+      } as unknown as NonNullable<ServerCtx["options"]["syncScheduler"]>,
+    });
+    const outcome = await tryDispatchIndexRebodyRpc(ctx, "index.rebody", { dryRun: true });
     expect(outcome).not.toBe(phase4RpcSkipped);
   });
 });
