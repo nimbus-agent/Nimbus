@@ -43,4 +43,17 @@ describe("connector reindex", () => {
     const audit = idx.listAuditWithChain(10);
     expect(audit.some((r) => r.actionType === "data.minimization.prune")).toBe(false);
   });
+
+  test("metadata_only with zero matching items writes no prune audit entry", async () => {
+    const idx = makeIdx();
+    // No items at all for this service — the WHERE clause matches nothing.
+    const result = await reindexConnector({
+      index: idx,
+      service: "nonexistent-service",
+      depth: "metadata_only",
+    });
+    expect(result.itemsAffected).toBe(0);
+    const audit = idx.listAuditWithChain(10);
+    expect(audit.some((r) => r.actionType === "data.minimization.prune")).toBe(false);
+  });
 });
