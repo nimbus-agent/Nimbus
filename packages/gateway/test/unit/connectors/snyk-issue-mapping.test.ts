@@ -250,7 +250,7 @@ describe("mapSnykAggregatedIssueToItem", () => {
     expect(row.canonicalUrl).toBe("https://app.snyk.io/org/org-uuid-1/project/proj-uuid-1");
   });
 
-  test("bodyPreview falls back to title when description is missing", () => {
+  test("body falls back to title when description is missing", () => {
     const issue = makeIssue();
     const d = issue["issueData"] as Record<string, unknown>;
     delete d["description"];
@@ -262,6 +262,6 @@ describe("mapSnykAggregatedIssueToItem", () => {
     if (row === null) {
       throw new Error("expected mapping to succeed");
     }
-    expect(row.bodyPreview).toBe("Prototype Pollution in lodash");
+    expect(row.body).toBe("Prototype Pollution in lodash");
   });
 });

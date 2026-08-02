@@ -1,3 +1,4 @@
+import { BODY_MAX_PROSE } from "../index/body-caps.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { plainTextPreviewFromHtml } from "../string/html-plain-text.ts";
@@ -134,7 +135,7 @@ function upsertFromPullRequest(
     type: "pr",
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: plainTextPreviewFromHtml(desc, 512),
+    body: plainTextPreviewFromHtml(desc, BODY_MAX_PROSE),
     url,
     canonicalUrl: url,
     modifiedAt: Number.isFinite(modified) ? modified : now,

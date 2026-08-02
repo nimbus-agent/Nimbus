@@ -14,7 +14,7 @@ export interface SnykMappedRow {
   readonly type: "vulnerability";
   readonly externalId: string;
   readonly title: string;
-  readonly bodyPreview: string;
+  readonly body: string;
   readonly url: string | null;
   readonly canonicalUrl: string;
   readonly modifiedAt: number;
@@ -114,7 +114,7 @@ export function mapSnykAggregatedIssueToItem(
     type: "vulnerability",
     externalId: `${ctx.orgId}/${ctx.projectId}/${id}`,
     title,
-    bodyPreview: description,
+    body: description,
     url,
     canonicalUrl,
     modifiedAt,

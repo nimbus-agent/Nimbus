@@ -67,16 +67,23 @@ function maxIso(a: string, b: string): string {
   return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
-function descriptionPreview(fields: Record<string, unknown>): string {
+/**
+ * Full (untruncated) issue description text. Jira's `fields.description` is
+ * either a plain string (classic REST v2 shape) or an Atlassian Document
+ * Format object (REST v3); either way the caller passes the result through as
+ * `body:`, so the store's own `clampBody`/`bodyCapForItemType` — not this
+ * function — is the single place that applies a length cap.
+ */
+function descriptionText(fields: Record<string, unknown>): string {
   const d = fields["description"];
   if (d === null || d === undefined) {
     return "";
   }
   if (typeof d === "string") {
-    return d.slice(0, 512);
+    return d;
   }
   try {
-    return JSON.stringify(d).slice(0, 512);
+    return JSON.stringify(d);
   } catch {
     return "";
   }
@@ -224,7 +231,7 @@ function jiraIssueDerivedFromFields(
     maxUpdatedIso.value =
       maxUpdatedIso.value === "" ? updatedRaw : maxIso(maxUpdatedIso.value, updatedRaw);
   }
-  const bodyPrev = fields === undefined ? "" : descriptionPreview(fields);
+  const bodyPrev = fields === undefined ? "" : descriptionText(fields);
   const creator = fields === undefined ? undefined : asRecord(fields["creator"]);
   return {
     summary,
@@ -258,7 +265,7 @@ function jiraIndexOneIssue(p: {
     type: "issue",
     externalId: key,
     title: d.summary.length > 512 ? d.summary.slice(0, 512) : d.summary,
-    bodyPreview: d.bodyPrev.slice(0, 512),
+    body: d.bodyPrev,
     url: browseUrl,
     canonicalUrl: browseUrl,
     modifiedAt: Number.isFinite(d.modified) ? d.modified : syncTime,
