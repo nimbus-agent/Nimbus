@@ -45,6 +45,13 @@ const FORBIDDEN_OVER_LAN = new Set([
   // paired peer able to wipe the glossary. The read-only `agents.glossary` stays
   // admitted, like every other agent.
   "glossary",
+  // Decisions on-demand passes are the direct analogue of glossary's: refresh spends the
+  // owner's local model, rebuild clears decision_record, decision_evidence and the pass
+  // watermark — vetoes included, and a veto is permanent by design, so this is the sole
+  // recovery path for one. The denylist is default-allow, so omitting this would leave a
+  // paired peer able to wipe every stored decision and every veto. The read-only
+  // `agents.decisions` stays admitted, like every other agent.
+  "decisions",
   // Zero-config onboarding — `nimbus init`'s local demo hint (a file:line from
   // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
   // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).
