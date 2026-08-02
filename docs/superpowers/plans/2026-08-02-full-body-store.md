@@ -51,7 +51,7 @@
 
 ---
 
-# PR 1 — Substrate
+## PR 1 — Substrate
 
 No connector changes. `body` is a copy of `body_preview`, so observable behaviour is identical to today and nothing can regress.
 
@@ -60,10 +60,12 @@ No connector changes. `body` is a copy of `body_preview`, so observable behaviou
 ### Task 1: Body caps and surrogate-safe clamp
 
 **Files:**
+
 - Create: `packages/gateway/src/index/body-caps.ts`
 - Test: `packages/gateway/src/index/body-caps.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PROSE_HEAVY_TYPES` from `packages/gateway/src/embedding/routing.ts` (a leaf constants module with no imports — no dependency cycle).
 - Produces: `BODY_MAX_PROSE: 16384`, `BODY_MAX_DEFAULT: 512`, `BODY_PREVIEW_MAX: 512`, `bodyCapForItemType(service: string, type: string): number`, `clampBody(text: string, max: number): string`.
 
@@ -183,12 +185,14 @@ git commit -m "feat(index): body cap SSoT with surrogate-safe clamping"
 ### Task 2: V48 migration
 
 **Files:**
+
 - Create: `packages/gateway/src/index/body-store-v48-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - Modify: `packages/gateway/src/index/local-index.ts:265`
 - Test: `packages/gateway/src/index/migrations/runner-v48.test.ts`
 
 **Interfaces:**
+
 - Produces: `BODY_STORE_V48_SQL: readonly string[]`; schema version 48; `item.body TEXT`; `item.body_complete INTEGER NOT NULL DEFAULT 0`; `item_fts` indexing `(title, body)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -402,10 +406,12 @@ git commit -m "feat(index): V48 adds item.body and repoints item_fts at it"
 ### Task 3: Store writes the body and derives the preview
 
 **Files:**
+
 - Modify: `packages/gateway/src/index/item-store.ts`
 - Test: `packages/gateway/src/index/item-store-body.test.ts`
 
 **Interfaces:**
+
 - Consumes: `bodyCapForItemType`, `clampBody`, `BODY_MAX_DEFAULT`, `BODY_PREVIEW_MAX` from Task 1; the V48 schema from Task 2.
 - Produces: `upsertIndexedItem` accepting either `bodyPreview?: string` (legacy, `body_complete = 0`) or `body?: string` (declared-full, `body_complete = 1` when it fits), never both. `IndexedItemRow` gains `body: string | null` and `body_complete: number`.
 
@@ -715,6 +721,7 @@ git commit -m "feat(index): write item.body and derive body_preview from it"
 ### Task 4: Repoint the FTS match and pin the read shapes
 
 **Files:**
+
 - Modify: `packages/gateway/src/search/hybrid-internal.ts:61`
 - Modify: `packages/gateway/src/index/local-index.ts:115` — **a second, byte-identical copy of the same MATCH builder.** Found during Task 3, not at plan time. Missing it leaves 48 tests in `local-index.test.ts` red and local-index search broken at runtime. Both lines read `` return `(title : "${escaped}"* OR body_preview : "${escaped}"*)`; `` and both must become `body :`.
 - Modify: `packages/gateway/src/index/item-list-query.ts:37`
@@ -723,6 +730,7 @@ git commit -m "feat(index): write item.body and derive body_preview from it"
 - Test: `packages/gateway/src/index/item-read-shape.test.ts`
 
 **Interfaces:**
+
 - Consumes: the V48 schema from Task 2 and the store from Task 3.
 - Produces: no new exports. `GET /v1/items/<id>` gains `body`; every list read keeps `body_preview` only.
 
@@ -829,7 +837,7 @@ Leave lines 92 and 180 (`i.body_preview AS body_preview`) alone — those select
 
 `packages/gateway/src/index/local-index.ts` — replace `SELECT *` at line 453 and line 698, and `SELECT i.*` at line 539, with this column list (aliased `i.` for the 539 join):
 
-```
+```text
 id, service, type, external_id, title, body_preview, url, canonical_url,
 modified_at, author_id, metadata, synced_at, pinned
 ```
@@ -858,10 +866,12 @@ git commit -m "fix(search): match fts on body and pin item read shapes"
 ### Task 5: Data-minimization must clear the new column
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/reindex.ts:21-27`
 - Test: `packages/gateway/src/connectors/reindex-body.test.ts`
 
 **Interfaces:**
+
 - Consumes: the V48 schema and the store.
 - Produces: no new exports.
 
@@ -972,10 +982,12 @@ git commit -m "fix(connectors): metadata_only reindex must clear item.body too"
 ### Task 6: Guards that the bounded readers stay bounded
 
 **Files:**
+
 - Create: `packages/gateway/src/embedding/embedding-body-source.guard.test.ts`
 - Create: `packages/gateway/src/federation/federation-body-source.guard.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing at runtime — these read source text.
 - Produces: no exports.
 
@@ -1066,10 +1078,12 @@ git commit -m "test(index): guard that embedding and federation stay on body_pre
 ### Task 7: Size counters in `index.metrics`
 
 **Files:**
+
 - Modify: `packages/gateway/src/db/metrics.ts`
 - Test: `packages/gateway/src/db/metrics-body-size.test.ts`
 
 **Interfaces:**
+
 - Consumes: the V48 schema.
 - Produces: `IndexMetrics` gains `bodyBytes: number` and `ftsIndexBytes: number`.
 
@@ -1195,7 +1209,7 @@ The PR description is the permanent commit body; summarise the substrate, the se
 
 ---
 
-# PR 2 — Connectors
+## PR 2 — Connectors
 
 Twelve one-line-ish changes. This is where recall actually improves. Each connector switches `bodyPreview:` to `body:` and passes the untruncated source text.
 
@@ -1204,12 +1218,14 @@ Twelve one-line-ish changes. This is where recall actually improves. Each connec
 ### Task 9: The three chat connectors (title-derivation footgun)
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/slack-sync.ts:266-281`
 - Modify: `packages/gateway/src/connectors/_lib/teams/api.ts:54-87`
 - Modify: `packages/gateway/src/connectors/discord-sync.ts:183-202`
 - Test: `packages/gateway/src/connectors/chat-body-full.test.ts`
 
 **Interfaces:**
+
 - Consumes: `upsertIndexedItem`'s `body` input from Task 3.
 - Produces: `slack:message`, `teams:message`, `discord:message` rows with full bodies and `body_complete = 1`.
 
@@ -1295,6 +1311,7 @@ git commit -m "feat(connectors): index full chat message bodies"
 ### Task 10: The five issue-tracker connectors
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/linear-sync.ts:175`
 - Modify: `packages/gateway/src/connectors/jira-sync.ts:261`
 - Modify: `packages/gateway/src/connectors/github-sync.ts:207,247`
@@ -1303,6 +1320,7 @@ git commit -m "feat(connectors): index full chat message bodies"
 - Test: `packages/gateway/src/connectors/issue-body-full.test.ts`
 
 **Interfaces:**
+
 - Consumes: `upsertIndexedItem`'s `body` input.
 - Produces: full-bodied `linear:issue`, `jira:issue`, `github:issue`, `bitbucket:issue`, `snyk:vulnerability` rows.
 
@@ -1381,6 +1399,7 @@ git commit -m "feat(connectors): index full issue and vulnerability bodies"
 ### Task 11: Notes, transcripts, clips and briefs
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/obsidian-sync.ts:75`
 - Modify: `packages/gateway/src/connectors/zoom-transcript-mapping.ts:182`
 - Modify: `packages/gateway/src/clips/clip-ingest.ts:99`
@@ -1388,6 +1407,7 @@ git commit -m "feat(connectors): index full issue and vulnerability bodies"
 - Test: `packages/gateway/src/connectors/document-body-full.test.ts`
 
 **Interfaces:**
+
 - Consumes: `upsertIndexedItem`'s `body` input.
 - Produces: full-bodied `obsidian:obsidian_note`, `zoom:transcript`, `nimbus:web_clip`, `nimbus:research_brief` rows.
 
@@ -1451,11 +1471,13 @@ git commit -m "feat(connectors): index full note, transcript, clip and brief bod
 ### Task 12: Agents report truncated sources
 
 **Files:**
+
 - Modify: `packages/gateway/src/decisions/decision-extract.ts:119,143,247-251`
 - Modify: `packages/gateway/src/glossary/glossary-extract.ts`
 - Test: `packages/gateway/src/decisions/decision-truncation-report.test.ts`
 
 **Interfaces:**
+
 - Consumes: `item.body` and `item.body_complete`.
 - Produces: both briefs carry a `truncatedSources: number` alongside their existing source count.
 
@@ -1553,18 +1575,20 @@ Title: `feat(connectors): index full bodies for the twelve prose sources`
 
 ---
 
-# PR 3 — Backfill
+## PR 3 — Backfill
 
 ---
 
 ### Task 14: `index.rebody` IPC
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/index-rebody-rpc.ts`
 - Create: `packages/gateway/src/ipc/index-rebody-rpc.test.ts`
 - Modify: `packages/gateway/src/ipc/index.ts` (register the handler)
 
 **Interfaces:**
+
 - Consumes: `LongRunningJobRegistry` from `packages/gateway/src/ipc/_lib/long-running.ts`; `dispatchByMethod` from `packages/gateway/src/ipc/_lib/dispatch-by-method.ts`.
 - Produces: `index.rebody` accepting `{ service?: string; type?: string; limit?: number; dryRun?: boolean }` and returning `{ jobId: string }`, plus `index.rebodyProgress` notifications. **Not** added to the Tauri allowlist — `ALLOWED_METHODS` stays at 103.
 
@@ -1651,11 +1675,13 @@ git commit -m "feat(ipc): index.rebody re-fetches bodies for already-indexed ite
 ### Task 15: `nimbus index rebody` CLI
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/index-cmd.ts`
 - Modify: `packages/cli/src/commands/help.ts`
 - Test: `packages/cli/src/commands/index-cmd.test.ts`
 
 **Interfaces:**
+
 - Consumes: `index.rebody` from Task 14.
 - Produces: `nimbus index rebody [--service <id>] [--type <t>] [--limit <n>] [--dry-run]`.
 
@@ -1677,7 +1703,7 @@ Mirror the existing `reembed` subcommand's argument parsing, progress rendering 
 
 `--dry-run` output must state the cost, not only the count, because the count alone understates it for full-scan connectors:
 
-```
+```text
 pending bodies: notion 4210, slack 122
 note: notion has no delta sync — rebody re-walks every page in the workspace,
       not just the 4210 listed above. slack re-walks a bounded recent window.
@@ -1707,6 +1733,7 @@ git commit -m "feat(cli): nimbus index rebody"
 ### Task 16: Documentation and PR 3 gate
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: `docs/roadmap.md` (the S1 block and the Wave 5 `glossary` / `decisions` entries)
 - Modify: `docs/schema-reference.md`
