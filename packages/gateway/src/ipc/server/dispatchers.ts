@@ -22,6 +22,7 @@ import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
+import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
 import { dispatchEgressRpc, type EgressRpcCtx, EgressRpcError } from "../egress-rpc.ts";
@@ -951,6 +952,27 @@ export async function tryDispatchGlossaryRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchDecisionsRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("decisions.")) return phase4RpcSkipped;
+  const refresher = ctx.options.decisionsRefresher;
+  if (refresher === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchDecisionsRpc(method, params, {
+      refresher,
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof DecisionsRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 /** Owner-HITL approval for `egress.prune`, gated through the calling client's consent channel. */
 function makePruneApproval(
   ctx: ServerCtx,
@@ -1049,7 +1071,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1080,6 +1102,8 @@ async function dispatchPhase4PlatformGroup(
   if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
   const glossaryOutcome = await tryDispatchGlossaryRpc(ctx, method, params);
   if (glossaryOutcome !== phase4RpcSkipped) return glossaryOutcome;
+  const decisionsOutcome = await tryDispatchDecisionsRpc(ctx, method, params);
+  if (decisionsOutcome !== phase4RpcSkipped) return decisionsOutcome;
   const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
   if (clipOutcome !== phase4RpcSkipped) return clipOutcome;
   return tryDispatchAdminRpc(ctx, method, params);

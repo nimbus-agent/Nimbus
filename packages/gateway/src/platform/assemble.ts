@@ -90,7 +90,7 @@ import {
   startToolCallLogRetention,
 } from "../db/tool-call-log-retention.ts";
 import { applyWritablePragmas } from "../db/writable-pragmas.ts";
-import { runDecisionPass } from "../decisions/decision-extract.ts";
+import { rebuildDecisions, runDecisionPass } from "../decisions/decision-extract.ts";
 import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
@@ -494,15 +494,22 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const decisionsRefresher = decisionsCfg.enabled
     ? createDecisionRefresher({
         debounceMs: decisionsCfg.debounceMs,
-        runPass: () =>
-          runDecisionPass(db, {
+        runPass: (runOpts) => {
+          const passOpts = {
             nowMs: Date.now(),
             useLlm: decisionsCfg.useLlm,
             maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
             minConfidence: decisionsCfg.minConfidence,
             retryCooldownMs: decisionsCfg.retryCooldownMs,
             ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
-          }),
+          };
+          // `decisions.rebuild` (ipc/decisions-rpc.ts) is the only caller that ever sets
+          // `rebuild: true` — the debounced post-sync `trigger()` path above never does, and
+          // `decisions.refresh` always passes `false` explicitly. `rebuildDecisions` clears
+          // `decision_record`/`decision_evidence`/the watermark, vetoes included, before
+          // re-running — the sole recovery path for a veto, which is otherwise permanent.
+          return runOpts?.rebuild ? rebuildDecisions(db, passOpts) : runDecisionPass(db, passOpts);
+        },
         onError: (err) => {
           syncLogger.warn({ err }, "decision extraction pass failed");
         },

@@ -135,10 +135,13 @@ export type CreateIpcServerOptions = {
   // model, rebuild truncates both glossary tables. Not Tauri-exposed (I7 — no desktop
   // glossary surface).
   glossaryRefresher?: GlossaryRefresher;
-  // Decisions (S1 Local Brain). The dependency seam behind a future decisions.* IPC namespace
-  // (post-sync debounced extraction pass — see decisions/decision-refresh.ts). Unlike
-  // glossaryRefresher, construction itself is gated on `[decisions].enabled`: absent when
-  // decisions are disabled, rather than always-present-but-internally-gated.
+  // Decisions (S1 Local Brain). The dependency seam behind the decisions.* IPC namespace
+  // (refresh, rebuild — both long-running jobs backed by the post-sync debounced extraction
+  // pass, see ipc/decisions-rpc.ts + decisions/decision-refresh.ts). Unlike glossaryRefresher,
+  // construction itself is gated on `[decisions].enabled`: absent when decisions are disabled,
+  // rather than always-present-but-internally-gated — so an absent refresher yields "Method not
+  // found" rather than an explicit ERR_DECISIONS_DISABLED. Not Tauri-exposed (I7 — no desktop
+  // decisions maintenance surface; the read-only agents.decisions covers that).
   decisionsRefresher?: DecisionRefresher;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
