@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.18.1](https://github.com/nimbus-agent/Nimbus/compare/v1.18.0...v1.18.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **ipc:** forbid the clip namespace over LAN — clip.pair opens the I30 pairing window ([#1027](https://github.com/nimbus-agent/Nimbus/issues/1027)) ([7bd2cdc](https://github.com/nimbus-agent/Nimbus/commit/7bd2cdc128e4f5ab8fcdb3a8301bc8cdd6efade5))
+
 ## [1.18.0](https://github.com/nimbus-agent/Nimbus/compare/v1.17.0...v1.18.0) (2026-08-02)
 
 
