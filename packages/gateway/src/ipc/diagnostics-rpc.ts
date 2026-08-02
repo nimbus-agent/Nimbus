@@ -126,6 +126,8 @@ function serializeMetrics(db: Database): Record<string, unknown> {
     itemCountByService: m.itemCountByService,
     totalItems: m.totalItems,
     indexSizeBytes: m.indexSizeBytes,
+    bodyBytes: m.bodyBytes,
+    ftsIndexBytes: m.ftsIndexBytes,
     embeddingCoveragePercent: m.embeddingCoveragePercent,
     lastSuccessfulSyncByConnector: lastSync,
     queryLatencyP50Ms: m.queryLatencyP50Ms,

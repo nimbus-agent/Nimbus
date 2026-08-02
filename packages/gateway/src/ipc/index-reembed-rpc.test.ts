@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import pino from "pino";
 import type { Embedder, IndexedItem } from "../embedding/types.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { tryLoadSqliteVec } from "../index/sqlite-vec-load.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -23,7 +24,7 @@ import {
 function freshCtx() {
   const db = new Database(":memory:");
   tryLoadSqliteVec(db);
-  runIndexedSchemaMigrations(db, 30);
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   const events: Array<{ method: string; params: unknown }> = [];
   const ctx = {
     db,
@@ -494,7 +495,7 @@ describe("dispatchIndexReembedRpc — non-dryRun via _sinkFactory seam", () => {
   } {
     const db = new Database(":memory:");
     tryLoadSqliteVec(db);
-    runIndexedSchemaMigrations(db, 30);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
     const events: Array<{ method: string; params: unknown }> = [];
     const ctx: IndexReembedRpcContext = {
       db,

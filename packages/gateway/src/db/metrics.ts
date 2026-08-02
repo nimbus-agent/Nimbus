@@ -10,6 +10,8 @@ export type IndexMetrics = {
   itemCountByService: Record<string, number>;
   totalItems: number;
   indexSizeBytes: number;
+  bodyBytes: number;
+  ftsIndexBytes: number;
   embeddingCoveragePercent: number;
   lastSuccessfulSyncByConnector: Record<string, Date | null>;
   queryLatencyP50Ms: number;
@@ -62,10 +64,30 @@ export function collectIndexMetrics(db: Database): IndexMetrics {
 
   const { bytes } = pageStats(db);
 
+  // NOT dbstat: bun:sqlite is not built with SQLITE_ENABLE_DBSTAT_VTAB, so
+  // `dbstat` raises "no such table". The FTS5 shadow tables are ordinary
+  // tables and can be summed directly, which needs no build flag.
+  const bodyRow = db.query("SELECT COALESCE(SUM(length(body)), 0) AS b FROM item").get() as {
+    b: number;
+  } | null;
+  const bodyBytes = Math.max(0, Math.floor(bodyRow?.b ?? 0));
+
+  let ftsIndexBytes = 0;
+  try {
+    const ftsRow = db
+      .query("SELECT COALESCE(SUM(length(block)), 0) AS b FROM item_fts_data")
+      .get() as { b: number } | null;
+    ftsIndexBytes = Math.max(0, Math.floor(ftsRow?.b ?? 0));
+  } catch {
+    /* item_fts absent on a partially-migrated database */
+  }
+
   return {
     itemCountByService,
     totalItems,
     indexSizeBytes: bytes,
+    bodyBytes,
+    ftsIndexBytes,
     embeddingCoveragePercent,
     lastSuccessfulSyncByConnector,
     queryLatencyP50Ms: lat.p50Ms,

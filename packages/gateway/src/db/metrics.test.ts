@@ -15,6 +15,8 @@ function createMinimalSchema(db: Database): void {
       type TEXT NOT NULL,
       external_id TEXT NOT NULL,
       title TEXT NOT NULL,
+      body TEXT,
+      body_complete INTEGER NOT NULL DEFAULT 0,
       modified_at INTEGER NOT NULL,
       synced_at INTEGER NOT NULL
     )
@@ -106,9 +108,15 @@ describe("collectIndexMetrics — real SQLite happy paths", () => {
   });
 
   test("items grouped by service are counted correctly", () => {
-    db.run(`INSERT INTO item VALUES ('i1','github','pr','e1','T1',1,1)`);
-    db.run(`INSERT INTO item VALUES ('i2','github','pr','e2','T2',2,2)`);
-    db.run(`INSERT INTO item VALUES ('i3','slack','message','e3','T3',3,3)`);
+    db.run(
+      `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at) VALUES ('i1','github','pr','e1','T1',1,1)`,
+    );
+    db.run(
+      `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at) VALUES ('i2','github','pr','e2','T2',2,2)`,
+    );
+    db.run(
+      `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at) VALUES ('i3','slack','message','e3','T3',3,3)`,
+    );
 
     const m = collectIndexMetrics(db);
     expect(m.totalItems).toBe(3);
@@ -117,7 +125,9 @@ describe("collectIndexMetrics — real SQLite happy paths", () => {
   });
 
   test("embeddingCoveragePercent is non-zero when items exist with embeddings", () => {
-    db.run(`INSERT INTO item VALUES ('i1','svc','note','e1','T1',1,1)`);
+    db.run(
+      `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at) VALUES ('i1','svc','note','e1','T1',1,1)`,
+    );
     db.run(
       `INSERT INTO embedding_chunk (item_id,chunk_index,chunk_text,model,dims,embedded_at) VALUES ('i1',0,'hello','test',384,1)`,
     );
@@ -129,7 +139,9 @@ describe("collectIndexMetrics — real SQLite happy paths", () => {
   });
 
   test("embeddingCoveragePercent is 0 when items exist but no embeddings", () => {
-    db.run(`INSERT INTO item VALUES ('i1','svc','note','e1','T1',1,1)`);
+    db.run(
+      `INSERT INTO item (id,service,type,external_id,title,modified_at,synced_at) VALUES ('i1','svc','note','e1','T1',1,1)`,
+    );
 
     const m = collectIndexMetrics(db);
     // 0 emb out of 1 total → 0%

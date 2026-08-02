@@ -2,10 +2,11 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
 import { transitionHealth } from "../connectors/health.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { type MetricsServerHandle, startMetricsServer } from "./metrics-server.ts";
 
 function makeDbWithItems(items: Array<{ id: string; service: string }>): Database {
-  const db = openSeededInMemoryDb(30);
+  const db = openSeededInMemoryDb(CURRENT_SCHEMA_VERSION);
   const now = Date.now();
   for (const it of items) {
     db.run(
@@ -106,7 +107,7 @@ describe("startMetricsServer", () => {
   });
 
   test("escapes label backslash, double-quote, and newline characters", async () => {
-    const escapeDb = openSeededInMemoryDb(30);
+    const escapeDb = openSeededInMemoryDb(CURRENT_SCHEMA_VERSION);
     const now = Date.now();
     const rawLabel = String.raw`tricky"name\with`;
     const wild = `${rawLabel}\nnewline`;
