@@ -4,6 +4,9 @@
 > agents through the existing `nimbus mcp-server` stdio surface, plus the
 > packaging change that makes that server listable in MCP directories. The
 > gateway-hosted HTTP transport is explicitly the successor, not this design.
+>
+> **Revised 2026-08-02** following review — see
+> [the review response](./2026-08-02-agents-as-mcp-tools-design-review-response.md).
 
 ## The problem
 
@@ -48,6 +51,8 @@ Verified against the tree on 2026-08-02.
 | Ledger `sourceType` | first-class field, committed to the BLAKE3 row hash | `egress/egress-ledger.ts:11,29` |
 | Existing `sourceType` values | `task`, `prune` | `egress-record.ts:51`, `egress-prune.ts:91` |
 | Free index text already crossing to the editor LLM | `semanticSnippet` | `projectRankedItem`, `adapter.ts:96` |
+| Per-connection caller identity | `clientId`, `randomUUID()` per connection, threaded into `dispatchAgentInvoke` | `ipc/server/server.ts:95,172` |
+| Agents that are not pure reads | 1 — `preflight` (the `I24` federated action path) | `docs/cli-reference.md`, `federation/preflight-gate.ts` |
 
 That last row settles a question that would otherwise dominate the design: prose
 drawn from indexed bodies **already** reaches the editor's model today. A brief
@@ -71,15 +76,45 @@ is a difference of degree, not of kind.
 
 ## Surface
 
-One tool per agent, appended to `TOOL_SPECS`. Names stay verb-shaped to match
-the existing six — `explainWhy`, `getCatchup`, `findExpert`, `assessImpact`,
-`findConflicts` — rather than mirroring internal agent names. Each tool's
-description is lifted from that agent's CLI help, so the calling model receives
-the same framing a human does. Exact names for the less self-evident agents are
-pinned during implementation from each agent's own description.
+One tool per exposed agent, appended to `TOOL_SPECS`. Names stay verb-shaped to
+match the existing six rather than mirroring internal agent names, several of
+which (`ghost`, `janitor`, `huddle`) mean nothing to a calling model. Each
+tool's description is lifted from that agent's entry in
+[`cli-reference.md`](../../cli-reference.md), so the calling model receives the
+same framing a human does.
 
-Argument schemas mirror the agent's IPC params, reusing the existing zod
-helpers. Result shape:
+| Agent | Tool | Purpose |
+| --- | --- | --- |
+| `why-peek` | `peekWhy` | synchronous why-lens probe; ships first |
+| `why` | `explainWhy` | why is this line/file the way it is — six parallel lanes over the relationship graph |
+| `catchup` | `getCatchup` | retrospective digest of what happened while you were away |
+| `expert` | `findExpert` | who on the team has the most context on this |
+| `impact` | `assessImpact` | if I change this, what breaks — reverse-dependency blast radius |
+| `conflicts` | `findConflicts` | work-in-progress collisions before editing a file |
+| `decisions` | `findDecisions` | recovers decision records never written down |
+| `glossary` | `getGlossary` | team terminology as a queryable glossary; lists when `term` is omitted |
+| `janitor` | `checkResourceUsage` | is this cloud resource still in use, and what breaks if I delete it |
+| `ghost` | `getPeerContext` | ambient teammate context for a file, via paired peers |
+| `huddle` | `getTeamHuddle` | team-scoped briefing across paired peers |
+
+**`preflight` is deliberately excluded.** It is the only agent in the set that is
+not purely a read: it asks each paired downstream owner in a namespace to *run*
+their own preflight, which is the `I24` federated action-request path — sandboxed
+execution behind the local owner's HITL gate. Exposing it would let a calling
+model queue consent prompts on the owner's machine and trigger execution on
+peers. Read-only is the boundary of this design; see "Out of scope".
+
+**`getPeerContext` and `getTeamHuddle` reach across the federation.** They remain
+reads and stay behind the `I17` query gate, but unlike the other nine they cause
+outbound peer traffic. That distinction must survive into the ledger row rather
+than being flattened into a generic MCP entry.
+
+Argument schemas mirror the agent's IPC params — **IPC params only, never CLI
+flags**. The IPC surface is already free of presentation concerns because
+rendering lives CLI-side in `renderAgentBrief`; observed params are domain-shaped
+throughout (`topicOrFile`, `fileOrPrUrl`, `depth`, `term`, `limit`,
+`resourceRef`). No filter for UI-specific options is required, because no such
+option crosses the IPC boundary. Reusing the existing zod helpers. Result shape:
 
 - content block 1 — the brief markdown, verbatim.
 - content block 2 — the typed findings as JSON.
@@ -105,17 +140,31 @@ per call and never removed. Again harmless in a process that exits; in a
 long-lived server it leaks a handler per invocation and every stale handler
 fires on every subsequent brief.
 
-Three changes:
+A third gap sits alongside them. If the gateway connection drops mid-flight, the
+awaited notification can never arrive, and nothing observes that: the adapter
+owns `isDisconnectError` and a reconnecting client, but `awaitAgentBrief` does
+not watch the transport. The call is not stranded forever — the 30-second
+timeout bounds it — but a caller waits out that full timeout to learn something
+knowable immediately, and reports it as a timeout rather than a disconnect.
+
+Four changes:
 
 1. Compare the notification's `sessionId` against the one returned by the
    `agents.<name>` call; ignore non-matching notifications rather than
    resolving on them.
-2. Deregister both handlers when the promise settles, by any path including
-   timeout.
-3. Make the 30-second timeout injectable — appropriate for a CLI, wrong to
+2. Deregister both handlers when the promise settles, by any path — resolve,
+   reject, timeout, or transport death. A `finally` on the settle path, not
+   cleanup duplicated into each branch.
+3. Reject immediately on transport death, with a disconnect error rather than a
+   timeout error.
+4. Make the 30-second timeout injectable — appropriate for a CLI, wrong to
    hardcode for callers with their own deadlines.
 
-The CLI inherits the correctness fix.
+The handlers in question are client-side (`client.onNotification`); nothing
+accumulates on the gateway. The leak is bounded to the calling process, which is
+precisely why a long-lived server is where it becomes visible.
+
+The CLI inherits all four fixes.
 
 ## Ledger integration
 
@@ -143,13 +192,56 @@ committed to the row hash, so existing receipts remain valid.
   existing discipline. A ledger that can be outrun by the thing it records is
   decorative.
 
-**Invariant cost, stated plainly.** This is a *second* append path. It must
-extend `D22`'s static confinement rather than be exempted from it — an appender
-outside the static check silently retires the invariant it appears to serve.
-Per the triple rule, one commit carries: the wiring, the `I29` section update in
+### Caller attribution
+
+Appending on every `agents.*` call would be wrong: a CLI-invoked brief never
+leaves the machine, so recording it as egress would make the ledger claim
+traffic that did not occur — the mirror image of the honesty gap this section
+exists to close. The append must fire only for MCP-originated calls, so the
+gateway has to distinguish them.
+
+It already can. The IPC server mints a per-connection `clientId` (`randomUUID()`,
+`ipc/server/server.ts:95`) and threads it through `dispatchMethod` into
+`dispatchAgentInvoke`. The missing piece is not identity but *kind*.
+
+The design adds a connect-time client-kind declaration, recorded once per
+connection and immutable for its lifetime. This matters more than it looks:
+a per-call payload field would be caller-supplied on every invocation, whereas a
+connection-scoped kind is server-held after the handshake — the same
+server-derived-not-caller-supplied property `I23` relies on for reply targets.
+
+The honest reading of a resulting row is "the gateway served this brief to a
+connection that identified as MCP." That is adequate here, because every client
+on this socket is a local process the owner started; anyone able to open it can
+already call anything. The threat model is honesty of record, not defence
+against a hostile local caller.
+
+Federation-touching agents (`getPeerContext`, `getTeamHuddle`) additionally cause
+outbound peer traffic. Their rows must remain distinguishable from purely local
+briefs rather than collapsing into one undifferentiated MCP entry.
+
+### Invariant cost, stated plainly
+
+This is a *second* append path, and the framing of how it lands is load-bearing.
+
+The wrong move — and the tempting one, because it turns CI green in a line — is
+to add the new file to the static checker as a permitted appender. That is an
+exemption wearing an extension's clothes. `D22`'s value is not that a known set
+of files may append; it is that every path which can cause egress *must* pass
+through an append first. An allowlist entry satisfies the checker while
+dissolving the property.
+
+The extension must therefore assert the new chokepoint the way `D22` asserts the
+executor's: the MCP agent path has exactly one append site, and every
+MCP-originated agent invocation is statically shown to route through it. A test
+that only proves "this file is allowed to append" is not an enforcement test.
+
+Per the triple rule, one commit carries the wiring, the `I29` section update in
 [`SECURITY-INVARIANTS.md`](../../SECURITY-INVARIANTS.md), the enforcement test,
-and a new case in the static audit. This is the largest single cost in the
-design.
+and the extended static case. Wiring site: the append belongs with the
+agent-invoke dispatch in `packages/gateway/src/ipc/`, adjacent to
+`dispatchAgentInvoke`, so that no MCP-reachable agent route can bypass it. This
+is the largest single cost in the design.
 
 ## Packaging
 
@@ -157,12 +249,32 @@ A separate MIT package whose `bin` shells to `nimbus mcp-server --stdio`.
 Separate because the CLI is AGPL; MIT because a launcher people are asked to run
 via `npx` should impose no obligations.
 
-The install-time failure mode needs deliberate handling, because the package
-installs cleanly and then does nothing useful on its own:
+**Binary discovery.** A bare `exec("nimbus …")` is not sufficient. `nimbus` is
+frequently absent from a global `PATH` — the Windows installer is per-user, and
+package-manager and user-space installs land in directories that editors
+spawning a subprocess do not inherit. The resolution order is:
 
-- gateway installed but stopped — already covered by `GATEWAY_DOWN_MESSAGE`.
-- gateway not installed at all — needs its own message pointing at the install
-  documentation.
+1. `NIMBUS_BIN`, if set. An explicit escape hatch that works for every packaging
+   scheme and is the one thing an editor's MCP config can set directly.
+2. `PATH` lookup.
+3. A small documented set of per-OS install locations.
+4. Otherwise, a platform-specific error naming the install documentation — not a
+   raw command-not-found exit code.
+
+One constraint the obvious implementation violates: the launcher **cannot import
+the CLI's path helpers**. `getCliPlatformPaths` lives in the AGPL CLI, and this
+package is MIT. Step 3 therefore duplicates a small amount of path knowledge by
+necessity. That duplication is a drift risk and should be covered by a test that
+asserts the launcher's location list against the installers' actual output
+directories, rather than left to rot.
+
+**Three distinct failure states**, which must not be collapsed into one message:
+
+- Gateway not installed — the discovery failure above.
+- Gateway installed but stopped — already covered by `GATEWAY_DOWN_MESSAGE`.
+- Gateway found but too old to serve the agent tools — a version check against
+  the tool set, so the failure names the fix instead of surfacing an unknown
+  method error from the IPC layer.
 
 ## Error handling
 
@@ -182,8 +294,11 @@ returns an `isError` result. Three cases are new:
 | Adapter unit tests | tool registration, argument validation, projection, error results — injected `IpcCallable`, existing pattern |
 | **Concurrency test** | two simultaneous calls to one agent each receive their own brief. Must fail against today's code, or the session fix is unproven |
 | Handler-leak test | handler count returns to baseline after a settled call, including on timeout |
+| Transport-death test | a mid-flight disconnect rejects immediately with a disconnect error, not after the full timeout |
 | Ledger tests | exactly one `source_type='mcp'` row per invocation; a failed append suppresses the brief entirely |
-| Static audit | the extended `D22` confinement accepts the new append site and still rejects an unconfined one |
+| **Attribution test** | a CLI-originated `agents.*` call appends **no** row. The false-positive guard — a ledger that over-reports is as dishonest as one that under-reports |
+| Static audit | the extended `D22` confinement proves every MCP-originated agent route passes through the append site, and still rejects an unconfined one. Asserting the file is *permitted* to append does not count |
+| Launcher discovery | the per-OS location list matches the installers' actual output directories, so the duplicated path knowledge cannot rot silently |
 | E2E stdio | extends `mcp-server-stdio.test.ts` |
 
 The concurrency test is the load-bearing one. It should be written first and
@@ -194,9 +309,14 @@ observed failing.
 - **Gateway-hosted HTTP/SSE transport.** The recorded successor. Once the HTTP
   agent-invocation route exists, the stdio adapter becomes a thin client of it
   rather than a parallel implementation.
-- **Write-capable tools.** Everything here is read-only. Exposing a
-  HITL-gated action through MCP is a separate design with a separate threat
-  model.
+- **Write-capable tools, and `preflight`.** Everything exposed here is a read.
+  `agents.preflight` is excluded despite being an "agent" because it is the
+  `I24` federated action-request path: it triggers sandboxed execution on peers
+  behind the local owner's HITL gate. A calling model that can invoke it can
+  queue consent prompts on the owner's machine. Exposing any HITL-gated action
+  through MCP is a separate design with a separate threat model, and it should
+  start from the question of whether an external model should be able to
+  *originate* a consent prompt at all.
 - **Third-party agent authoring.** Requires opening the closed brief union;
   tracked in [`ecosystem-roadmap.md`](../../ecosystem-roadmap.md) Track B.
 
