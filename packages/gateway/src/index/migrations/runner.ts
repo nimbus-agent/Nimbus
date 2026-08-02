@@ -9,6 +9,7 @@ import { dbExec, dbRun, dbStmtRun } from "../../db/write.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
+import { BODY_STORE_V48_SQL } from "../body-store-v48-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
@@ -432,6 +433,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     47,
     "decision_record + decision_evidence + decision_pass_state (implicit ADR extractor v47)",
     DECISIONS_V47_SQL,
+  ),
+  simpleStep(
+    47,
+    48,
+    "item.body + body_complete; item_fts over body (full-body store v48)",
+    BODY_STORE_V48_SQL,
   ),
 ];
 
