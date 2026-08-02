@@ -39,6 +39,14 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.remove",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
+  // index.rebody is a STRONGER case than reembed: reembed only recomputes local embeddings
+  // (embedding_chunk + vec_items_*, pure local CPU work). rebody clears a connector's sync
+  // watermark and drives an outbound re-sync against the user's connected third-party services
+  // (Notion/Confluence/Jira/etc.) — potentially tens of thousands of API requests spent against
+  // the OWNER's own credentials and rate-limit quota. A paired LAN peer must never be able to
+  // trigger that on the owner's behalf, so both are fully forbidden (I5 defense-in-depth).
+  "index.rebody",
+  "index.rebodyCancel",
   // Glossary on-demand passes are write-class and local-only: refresh spends the
   // owner's local model, rebuild TRUNCATES both glossary tables and deletes every
   // projected item. The denylist is default-allow, so omitting this would leave a

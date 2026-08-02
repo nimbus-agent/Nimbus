@@ -119,6 +119,21 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
     expect(src).toMatch(/"index\.reembedCancel"/);
   });
 
+  test("FORBIDDEN_OVER_LAN blocks index.rebody* (drives outbound third-party API traffic)", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(src).toMatch(/"index\.rebody"/);
+    expect(src).toMatch(/"index\.rebodyCancel"/);
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // Fully forbidden, not merely write-gated: unlike index.reembed (local CPU recompute),
+    // rebody spends the owner's own third-party API quota/rate limits — a stronger reason, so
+    // this must never be reachable by a paired peer regardless of grant-write.
+    expect(() => checkLanMethodAllowed("index.rebody", peer)).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    expect(() => checkLanMethodAllowed("index.rebodyCancel", peer)).toThrow(
+      /ERR_METHOD_NOT_ALLOWED/,
+    );
+  });
+
   test("FORBIDDEN_OVER_LAN blocks extension.checkForUpdates + extension.update (T2 PR 3)", async () => {
     const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(src).toMatch(/"extension\.checkForUpdates"/);

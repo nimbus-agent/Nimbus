@@ -229,3 +229,25 @@ describe("decisions over LAN (I5 — on-demand passes are write-class and local-
     expect(() => checkLanMethodAllowed("agents.decisions", peer)).not.toThrow();
   });
 });
+
+describe("index.rebody over LAN (I5 — drives outbound third-party API traffic)", () => {
+  test("index.rebody and index.rebodyCancel are forbidden over LAN regardless of grant-write", () => {
+    for (const m of ["index.rebody", "index.rebodyCancel"]) {
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("index.rebody rejection is ERR_METHOD_NOT_ALLOWED (fully forbidden, not merely write-gated)", () => {
+    let thrown: LanError | undefined;
+    try {
+      checkLanMethodAllowed("index.rebody", { peerId: "p", writeAllowed: true });
+    } catch (e) {
+      thrown = e as LanError;
+    }
+    expect(thrown).toBeInstanceOf(LanError);
+    expect(thrown?.message).toMatch(/ERR_METHOD_NOT_ALLOWED/);
+  });
+});
