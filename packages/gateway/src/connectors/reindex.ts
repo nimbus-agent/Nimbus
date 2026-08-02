@@ -1,3 +1,4 @@
+import { dbRun } from "../db/write.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 
 export type ReindexDepth = "metadata_only" | "summary" | "full";
@@ -18,16 +19,21 @@ export async function reindexConnector(input: ReindexInput): Promise<ReindexResu
   if (input.depth === "metadata_only") {
     const rowids = input.index.rawDb
       .query(
-        `SELECT rowid FROM item WHERE service = ? AND (body_preview IS NOT NULL AND body_preview <> '')`,
+        `SELECT rowid FROM item
+         WHERE service = ?
+           AND ((body IS NOT NULL AND body <> '')
+                OR (body_preview IS NOT NULL AND body_preview <> ''))`,
       )
       .all(input.service) as Array<{ rowid: number }>;
     input.index.rawDb.transaction(() => {
-      input.index.rawDb.run(`UPDATE item SET body_preview = NULL WHERE service = ?`, [
-        input.service,
-      ]);
+      dbRun(
+        input.index.rawDb,
+        `UPDATE item SET body = NULL, body_preview = NULL, body_complete = 0 WHERE service = ?`,
+        [input.service],
+      );
       for (const r of rowids) {
         try {
-          input.index.rawDb.run(`DELETE FROM vec_items_384 WHERE rowid = ?`, [r.rowid]);
+          dbRun(input.index.rawDb, `DELETE FROM vec_items_384 WHERE rowid = ?`, [r.rowid]);
         } catch {
           /* vec table absent */
         }
