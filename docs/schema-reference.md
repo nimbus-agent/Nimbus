@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V46** (full-table rebuild of `glossary_term` widening `definition_source` to `CHECK(... IN ('llm','snippet','manual'))` for manual term authoring — S1 "Local Brain"; V45 `glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V47** (`decision_record` + `decision_evidence` + `decision_pass_state` — implicit ADR extractor, S1 "Local Brain"; V46 full-table rebuild of `glossary_term` widening `definition_source` to `CHECK(... IN ('llm','snippet','manual'))` for manual term authoring — S1 "Local Brain"; V45 `glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -552,6 +552,84 @@ CREATE TABLE IF NOT EXISTS glossary_pass_state (
     watermark_id  TEXT    NOT NULL DEFAULT '',  -- item.id tiebreaker: the cursor is (modified_at, id),
                                                 -- so a batch truncated inside a group of rows sharing
                                                 -- one modified_at resumes instead of skipping the rest
+    last_pass_at  INTEGER,                      -- wall-clock time of the last completed pass
+    last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new candidates discovered by the last pass
+    scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass
+);
+
+-- Implicit ADR extractor (S1 "Local Brain") — V47.
+-- `decision_record.id` is content-derived: hash(source_item_id, normalized cue sentence). It is
+-- deliberately NOT positional. Keying on the cue's character offset would mean a typo fix earlier
+-- in a document re-hashes every later cue, re-queueing extracted rows AND resurrecting `vetoed`
+-- ones under new ids — which would defeat the whole reason this table has no foreign key.
+-- `source_item_id` carries NO foreign key on purpose. `vetoed` rows are the durable record of
+-- model calls already spent; cascading them away on an index reset would re-burn the extraction
+-- budget on candidates already rejected. The reconciliation sweep demotes rows whose source is
+-- gone instead. `decision_evidence` DOES cascade — it is derived, cheap to recompute, and
+-- meaningless without its parent.
+-- `priority` and `confidence` are two different numbers on purpose. `priority` is knowable before
+-- the model runs (cue strength + source authority) and orders the extraction queue. `confidence`
+-- needs corroboration and completeness, so it is 0 for every pending row and must never be used
+-- to order that queue. `decided_at` is a CONTENT date — the source item's `modified_at` — never a
+-- row timestamp.
+CREATE TABLE IF NOT EXISTS decision_record (
+    id                TEXT PRIMARY KEY,   -- hash(source_item_id, normalized cue sentence) — content-derived, not positional
+    source_item_id    TEXT NOT NULL,      -- references item(id); deliberately NO foreign key — see above
+    status            TEXT NOT NULL CHECK(status IN ('pending','extracted','vetoed')),
+    statement         TEXT,               -- NULL until extracted
+    rationale         TEXT,               -- NULL until extracted
+    alternatives      TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
+    extraction_source TEXT CHECK(extraction_source IN ('llm','snippet')),
+    cue_tier          TEXT NOT NULL CHECK(cue_tier IN ('heading','explicit','weak')),
+    cue_text          TEXT NOT NULL,
+    priority          REAL NOT NULL DEFAULT 0,   -- knowable pre-extraction: cue strength + source authority; orders the queue
+    confidence        REAL NOT NULL DEFAULT 0,   -- 0 for every pending row; needs corroboration — must never order the queue
+    decided_at        INTEGER NOT NULL,   -- CONTENT date: source item's modified_at, never a row timestamp
+    has_adr           INTEGER NOT NULL DEFAULT 0,
+    stats_verified_at INTEGER NOT NULL DEFAULT 0,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at   INTEGER NOT NULL DEFAULT 0,
+    updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_status_confidence
+    ON decision_record(status, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_pending_priority
+    ON decision_record(status, priority DESC, last_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_decision_decided_at
+    ON decision_record(status, decided_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_verified
+    ON decision_record(status, stats_verified_at);
+CREATE INDEX IF NOT EXISTS idx_decision_source_item
+    ON decision_record(source_item_id);
+
+-- `kind` includes `'migration'` and `'iac'` for forward-compatibility, but nothing emits them
+-- today — both would need changed-file paths that no connector currently indexes. They stay in
+-- the CHECK so the schema does not need to change the day a connector starts supplying them; the
+-- doc should not be read as implying evidence kinds the system can produce now.
+CREATE TABLE IF NOT EXISTS decision_evidence (
+    decision_id  TEXT NOT NULL REFERENCES decision_record(id) ON DELETE CASCADE,  -- derived data — DOES cascade, unlike source_item_id above
+    kind         TEXT NOT NULL CHECK(kind IN ('source','pr','commit','migration','iac','adr')),
+    entity_id    TEXT,
+    item_id      TEXT,
+    label        TEXT NOT NULL,
+    url          TEXT,
+    occurred_at  INTEGER,
+    PRIMARY KEY (decision_id, kind, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_evidence_decision
+    ON decision_evidence(decision_id);
+
+-- Single-row watermark for the extraction pass, same pattern as `glossary_pass_state` above.
+-- The cursor is COMPOSITE (`watermark_ms` + `watermark_id`), not just a timestamp: a bulk import
+-- stamping thousands of rows with one job-level timestamp would otherwise let a batch truncated
+-- inside that group skip the remainder permanently. `watermark_id` breaks the tie on `item.id`, a
+-- primary key and therefore total.
+CREATE TABLE IF NOT EXISTS decision_pass_state (
+    id            INTEGER PRIMARY KEY CHECK(id = 1),
+    watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- modified_at of the last row the scan consumed
+    watermark_id  TEXT    NOT NULL DEFAULT '',  -- item.id tiebreaker within a shared modified_at group
     last_pass_at  INTEGER,                      -- wall-clock time of the last completed pass
     last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new candidates discovered by the last pass
     scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass
