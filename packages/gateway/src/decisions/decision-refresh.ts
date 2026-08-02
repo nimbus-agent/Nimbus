@@ -45,6 +45,20 @@ export type DecisionRefresher = {
  * cannot accumulate a backlog of redundant work. Dropping the trigger
  * outright would lose the items of whichever sync overlapped the pass until
  * some later sync triggered again.
+ *
+ * LIMIT — `stop()` is not cancellation. It clears the debounce timer only; a
+ * pass already awaiting `provider.generate` runs to completion, and there is
+ * no timeout beneath it. A hung local model therefore pins `running = true`
+ * for the life of the process, and every later `run()` throws
+ * `ERR_DECISIONS_PASS_RUNNING` until the gateway restarts — which is the
+ * documented recovery (`docs/cli-reference.md`, `nimbus decisions`).
+ *
+ * Adding an `AbortController` here would NOT fix that: the abort has nowhere
+ * to go, because `LlmGenerateOptions` carries no `signal` field. The fix is
+ * that cross-cutting LLM-layer change, which glossary needs identically — see
+ * the LIMIT notes in `decisions/decision-llm-adapter.ts` and
+ * `glossary/glossary-llm-adapter.ts`. Do it there first, then give this
+ * refresher a per-pass controller.
  */
 export function createDecisionRefresher(deps: DecisionRefresherDeps): DecisionRefresher {
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -11,6 +11,7 @@ const SUMMARY: DecisionPassSummary = {
   upgraded: 0,
   failed: 0,
   noModel: 0,
+  discoveryComplete: true,
 };
 
 /**
@@ -45,6 +46,7 @@ test("debounces bursts of triggers into a single run", async () => {
         upgraded: 0,
         failed: 0,
         noModel: 0,
+        discoveryComplete: true,
       };
     },
   });
@@ -70,6 +72,7 @@ test("stop() prevents a pending debounced run", async () => {
         upgraded: 0,
         failed: 0,
         noModel: 0,
+        discoveryComplete: true,
       };
     },
   });
@@ -90,6 +93,7 @@ test("run() surfaces the summary to the caller", async () => {
       upgraded: 0,
       failed: 0,
       noModel: 0,
+      discoveryComplete: true,
     }),
   });
   expect((await r.run()).extracted).toBe(1);
@@ -111,6 +115,7 @@ test("a failing pass does not wedge the refresher", async () => {
         upgraded: 0,
         failed: 0,
         noModel: 0,
+        discoveryComplete: true,
       };
     },
   });

@@ -516,6 +516,21 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_decisions_brief_only() {
+        // S1 decisions: the read-only brief is renderer-callable; the maintenance
+        // verbs that rewrite the decision store are not (I7). decisions.rebuild in
+        // particular CLEARS every extracted and vetoed row, and both verbs are
+        // LAN-forbidden, so neither may reach the renderer.
+        //
+        // Named explicitly on purpose: allowlist_exact_size alone would stay green
+        // if a later change swapped agents.decisions out for decisions.refresh,
+        // since the count is unchanged by a one-for-one substitution.
+        assert!(is_method_allowed("agents.decisions"));
+        assert!(!is_method_allowed("decisions.refresh"));
+        assert!(!is_method_allowed("decisions.rebuild"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
         assert_eq!(ALLOWED_METHODS.len(), 103);
     }

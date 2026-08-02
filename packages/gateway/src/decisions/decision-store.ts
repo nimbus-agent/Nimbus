@@ -50,10 +50,32 @@ type EvidenceRow = {
   kind: string;
   entity_id: string | null;
   item_id: string | null;
+  evidence_key: string;
   label: string;
   url: string | null;
   occurred_at: number | null;
 };
+
+/**
+ * The TOTAL row identity for `decision_evidence` (V47 `evidence_key`).
+ *
+ * Keying the table on `label` was data loss: labels are item titles, two
+ * distinct PRs can share one, and the `INSERT OR REPLACE` below would keep
+ * only the last. `entityId` and `itemId` are the natural identities but both
+ * are nullable (`source`/`adr` evidence carries no entity id; a future
+ * evidence kind may carry neither), so neither alone can be a NOT NULL key.
+ *
+ * The prefixes are load-bearing: without them a graph entity id that happened
+ * to equal an item id would alias, and a label that happened to equal an id
+ * would alias too. `label:` last is a deterministic fallback, not a
+ * preference — it restores exactly the old collision behaviour for the one
+ * case where nothing better exists.
+ */
+export function evidenceKey(e: DecisionEvidence): string {
+  if (e.entityId !== null) return `entity:${e.entityId}`;
+  if (e.itemId !== null) return `item:${e.itemId}`;
+  return `label:${e.label}`;
+}
 
 function parseStringArray(raw: string): string[] {
   try {
@@ -223,9 +245,9 @@ export function replaceEvidence(db: Database, id: string, ev: readonly DecisionE
       dbRun(
         db,
         `INSERT OR REPLACE INTO decision_evidence
-           (decision_id, kind, entity_id, item_id, label, url, occurred_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, e.kind, e.entityId, e.itemId, e.label, e.url, e.occurredAt],
+           (decision_id, kind, entity_id, item_id, evidence_key, label, url, occurred_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, e.kind, e.entityId, e.itemId, evidenceKey(e), e.label, e.url, e.occurredAt],
       );
     }
   })();

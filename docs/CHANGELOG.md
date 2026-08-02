@@ -18,7 +18,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   extract → corroborate), with `--refresh` running one on demand and `--rebuild` clearing the store
   — vetoes included — to re-mine from scratch. Eleventh built-in read-only agent, zero HITL, zero
   `connectors.dispatch`, zero `egress_ledger` rows. Schema **V47** (`decision_record`,
-  `decision_evidence`, `decision_pass_state`); Tauri `ALLOWED_METHODS` 102 → 103 (I7). No new
+  `decision_evidence`, `decision_pass_state`); Tauri `ALLOWED_METHODS` 102 → 103 (I7) — the added
+  method is `agents.decisions`, the read-only brief; `decisions.refresh`/`decisions.rebuild` are
+  LAN-forbidden and deliberately NOT renderer-callable, asserted by name rather than by count. No new
   invariant. `parseDurationToMs` (`packages/cli/src/lib/parse-duration.ts`) gained `d`/`w` units to
   express decision horizons in days/weeks, purely additive so existing `connector`/`share` callers
   are unaffected.

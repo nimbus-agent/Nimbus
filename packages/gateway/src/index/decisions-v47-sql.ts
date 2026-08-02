@@ -24,6 +24,19 @@
  * `decided_at` is a CONTENT date — the source item's `modified_at` — never a
  * row timestamp.
  *
+ * `decision_evidence` is keyed on `evidence_key`, NOT on `label`. `label` is a
+ * display string derived from an item title, and titles are not unique: two
+ * distinct PRs called "Bump deps" corroborating one decision would collide on
+ * `(decision_id, kind, label)` and the second would be silently dropped by
+ * `replaceEvidence`'s `INSERT OR REPLACE` — schema-level data loss that reads
+ * as "only one PR corroborates this". `evidence_key` is a TOTAL, NOT NULL
+ * identity computed by `evidenceKey()` (`decisions/decision-store.ts`): the
+ * graph `entity_id` when present, else the `item_id`, else the label, each
+ * under its own prefix so the three namespaces cannot alias one another.
+ * `entity_id`/`item_id` are kept as their own nullable columns because they
+ * are what callers join on; the key exists purely to make the row identity
+ * total.
+ *
  * `decision_pass_state` carries a COMPOSITE cursor. `watermark_ms` alone cannot
  * express "resume inside a group of items sharing one `modified_at`", and a
  * bulk import stamping thousands of rows with one job-level timestamp makes
@@ -67,10 +80,11 @@ CREATE TABLE IF NOT EXISTS decision_evidence (
   kind         TEXT NOT NULL CHECK(kind IN ('source','pr','commit','migration','iac','adr')),
   entity_id    TEXT,
   item_id      TEXT,
+  evidence_key TEXT NOT NULL,
   label        TEXT NOT NULL,
   url          TEXT,
   occurred_at  INTEGER,
-  PRIMARY KEY (decision_id, kind, label)
+  PRIMARY KEY (decision_id, kind, evidence_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_decision_evidence_decision

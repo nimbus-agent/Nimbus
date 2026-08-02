@@ -12,6 +12,7 @@ const SUMMARY: DecisionPassSummary = {
   upgraded: 0,
   failed: 0,
   noModel: 0,
+  discoveryComplete: true,
 };
 
 function fakeRefresher(over: Partial<DecisionRefresher> = {}): DecisionRefresher {

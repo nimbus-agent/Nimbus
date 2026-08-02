@@ -263,6 +263,7 @@ test("maxLlmCalls: 0 makes no LLM call and still returns a well-formed summary",
     upgraded: 0,
     failed: 0,
     noModel: 0,
+    discoveryComplete: true,
   });
 });
 
@@ -408,4 +409,120 @@ test("a later pass with a working LLM upgrades rows that previously had no model
   expect(summary.upgraded).toBe(1);
   const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
   expect(row?.extractionSource).toBe("llm");
+});
+
+// Regression: `writePassState` lived INSIDE the non-empty-delta branch, so a
+// pass over an unchanged (or empty) index recorded nothing. `agents/decisions.ts`
+// reads `lastPassAt` for its "the extraction pass has not run yet" gap note, so
+// a user who ran `nimbus decisions --refresh` successfully was then advised to
+// run `nimbus decisions --refresh`.
+test("a pass over an EMPTY index still records last_pass_at", async () => {
+  const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
+  expect(summary.scanned).toBe(0);
+  expect(summary.discovered).toBe(0);
+  expect(readPassState(db).lastPassAt).toBe(OPTS.nowMs);
+});
+
+test("a pass over an UNCHANGED index records last_pass_at without moving the watermark", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  await runDecisionPass(db, { ...OPTS, useLlm: false });
+  const first = readPassState(db);
+  expect(first.watermarkMs).toBe(5_000);
+  expect(first.scannedItems).toBe(1);
+
+  // Second pass: same index, nothing new to scan.
+  const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, useLlm: false });
+  expect(summary.scanned).toBe(0);
+
+  const second = readPassState(db);
+  expect(second.lastPassAt).toBe(20_000);
+  // The watermark and the running scanned total must NOT move on an empty
+  // delta — a pass that read nothing has not read past anything.
+  expect(second.watermarkMs).toBe(first.watermarkMs);
+  expect(second.watermarkId).toBe(first.watermarkId);
+  expect(second.scannedItems).toBe(first.scannedItems);
+  expect(second.lastPassNew).toBe(0);
+});
+
+// Regression: `discoverPhase` called `scanDelta` ONCE, capped at
+// SCAN_BATCH_LIMIT. `rebuildDecisions` clears the watermark and runs a single
+// pass, so an index with more than one batch of source items had only its
+// oldest batch rebuilt — and the summary reported success. Discovery drains now.
+test("discovery drains past a single batch instead of truncating", async () => {
+  for (let i = 0; i < 7; i++) {
+    seed(`s${i}`, "slack", "message", "t", `We decided on thing ${String(i)}.`, 5_000 + i);
+  }
+  const summary = await runDecisionPass(db, {
+    ...OPTS,
+    useLlm: false,
+    maxLlmCalls: 0,
+    scanBatchLimit: 2,
+  });
+  expect(summary.scanned).toBe(7);
+  expect(summary.discovered).toBe(7);
+  expect(summary.discoveryComplete).toBe(true);
+  expect(countByStatus(db).total).toBe(7);
+  expect(readPassState(db).watermarkId).toBe("s6");
+  expect(readPassState(db).scannedItems).toBe(7);
+});
+
+test("--rebuild re-discovers every item, not just the first batch", async () => {
+  for (let i = 0; i < 5; i++) {
+    seed(`s${i}`, "slack", "message", "t", `We decided on thing ${String(i)}.`, 5_000 + i);
+  }
+  await runDecisionPass(db, { ...OPTS, useLlm: false, maxLlmCalls: 0, scanBatchLimit: 2 });
+
+  const summary = await rebuildDecisions(db, {
+    ...OPTS,
+    nowMs: 20_000,
+    useLlm: false,
+    maxLlmCalls: 0,
+    scanBatchLimit: 2,
+  });
+  expect(summary.discovered).toBe(5);
+  expect(summary.discoveryComplete).toBe(true);
+  expect(countByStatus(db).total).toBe(5);
+});
+
+// The safety bound must be honest, not silently treated as completion: a capped
+// scan reporting success is the very shape this fix exists to remove.
+test("hitting the discovery batch bound reports discoveryComplete false and resumes next pass", async () => {
+  for (let i = 0; i < 7; i++) {
+    seed(`s${i}`, "slack", "message", "t", `We decided on thing ${String(i)}.`, 5_000 + i);
+  }
+  const capped = await runDecisionPass(db, {
+    ...OPTS,
+    useLlm: false,
+    maxLlmCalls: 0,
+    scanBatchLimit: 2,
+    maxDiscoveryBatches: 2,
+  });
+  expect(capped.scanned).toBe(4);
+  expect(capped.discoveryComplete).toBe(false);
+  expect(readPassState(db).watermarkId).toBe("s3");
+
+  // No work is LOST — the next pass resumes from the persisted watermark.
+  const rest = await runDecisionPass(db, {
+    ...OPTS,
+    nowMs: 20_000,
+    useLlm: false,
+    maxLlmCalls: 0,
+    scanBatchLimit: 2,
+  });
+  expect(rest.scanned).toBe(3);
+  expect(rest.discoveryComplete).toBe(true);
+  expect(countByStatus(db).total).toBe(7);
+});
+
+test("a non-finite scanBatchLimit falls back to the default instead of reaching SQL", async () => {
+  seed("s1", "slack", "message", "t", "We decided on a thing.", 5_000);
+  const summary = await runDecisionPass(db, {
+    ...OPTS,
+    useLlm: false,
+    maxLlmCalls: 0,
+    scanBatchLimit: Number.NaN,
+    maxDiscoveryBatches: 0,
+  });
+  expect(summary.scanned).toBe(1);
+  expect(summary.discoveryComplete).toBe(true);
 });

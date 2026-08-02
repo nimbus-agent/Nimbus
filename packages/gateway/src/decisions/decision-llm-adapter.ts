@@ -105,6 +105,28 @@ export async function extractDecision(
  * extraction rather than treating it as a failure. See that file's doc
  * comment for the full rationale (local-only gate, "summarisation" task,
  * direct `provider.generate` call, and the abort-signal limitation).
+ *
+ * LIMIT — a decisions pass is UNBOUNDED AND UNCANCELLABLE. `complete` takes no
+ * `AbortSignal` at all (glossary's `generateJson` at least takes one that
+ * bounds the WAIT), because there is nothing to thread it into:
+ * `LlmGenerateOptions` has no `signal` field and both providers hardcode
+ * `AbortSignal.timeout(120_000)` on their own fetch. `runDecisionPass` awaits
+ * `provider.generate` per candidate with no deadline of its own, and
+ * `createDecisionRefresher`'s `stop()` only clears the debounce timer — it
+ * cannot interrupt a pass already in flight. A hung local model therefore
+ * leaves the refresher's `running` flag set, and every later
+ * `decisions.refresh` / `decisions.rebuild` fails `ERR_DECISIONS_PASS_RUNNING`
+ * until the gateway restarts.
+ *
+ * This is deliberately NOT fixed decisions-locally. The real fix is a `signal`
+ * field on `LlmGenerateOptions` threaded into each provider's fetch, which is a
+ * cross-cutting LLM-layer change that glossary needs identically — see the
+ * matching LIMIT note in `glossary/glossary-llm-adapter.ts`, which asks whoever
+ * adds that field to thread it through. Whoever does: add `signal?: AbortSignal`
+ * to `DecisionLlm.complete` here, give `runDecisionPass` a per-pass controller,
+ * and combine with `AbortSignal.any`. A decisions-only timeout wrapper would
+ * abandon the await while the model kept generating, which is what the pass
+ * already effectively does — it would change the error message, not the hang.
  */
 export function createDecisionLlm(router: LlmRouter): DecisionLlm {
   return {

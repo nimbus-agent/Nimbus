@@ -20,7 +20,18 @@ import {
 } from "./decision-store.ts";
 import type { DecisionRecord } from "./decision-types.ts";
 
-const SCAN_BATCH_LIMIT = 5000;
+export const SCAN_BATCH_LIMIT = 5000;
+
+/**
+ * Safety bound on the discovery drain. A pass keeps scanning until a batch
+ * comes back short, so on a healthy index this is never reached — it exists
+ * only so a pathological case (a `modified_at`/`id` cursor that somehow fails
+ * to advance, a table growing faster than it is scanned) terminates instead of
+ * spinning. Hitting it is NOT silently treated as completion: the pass reports
+ * `discoveryComplete: false` and the CLI says so, because "the rebuild covered
+ * a prefix of your index" and "the rebuild finished" are different facts.
+ */
+export const MAX_DISCOVERY_BATCHES = 1000;
 
 /**
  * Per-pass work budget. `maxLlmCalls` reaches here from config/IPC, so a
@@ -53,6 +64,15 @@ export interface DecisionPassOptions {
   // an existing store instead of requiring a `--rebuild`.
   readonly retryCooldownMs: number;
   readonly llm?: DecisionLlm;
+  /**
+   * Rows per discovery batch. Production never sets this — it exists so a test
+   * can prove the drain loop over 3 batches instead of seeding 15,001 rows.
+   * Normalised like `maxLlmCalls`: a non-finite or <1 value falls back to
+   * `SCAN_BATCH_LIMIT` rather than reaching SQL as a `LIMIT`.
+   */
+  readonly scanBatchLimit?: number;
+  /** Test seam for `MAX_DISCOVERY_BATCHES`; same normalisation. */
+  readonly maxDiscoveryBatches?: number;
 }
 
 export interface DecisionPassSummary {
@@ -68,6 +88,15 @@ export interface DecisionPassSummary {
    * from `failed`, which means the model replied with unparseable output.
    */
   readonly noModel: number;
+  /**
+   * `false` when discovery stopped on the `MAX_DISCOVERY_BATCHES` safety bound
+   * with items still behind the watermark. A capped scan that reports success
+   * is the silent-truncation shape this feature already had to fix once in the
+   * ADR query, so the truth is carried in the summary rather than inferred.
+   * The next pass resumes from the persisted watermark, so the work is
+   * deferred, never lost.
+   */
+  readonly discoveryComplete: boolean;
 }
 
 type ScanRow = {
@@ -79,7 +108,11 @@ type ScanRow = {
   modified_at: number;
 };
 
-function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: string }): ScanRow[] {
+function scanDelta(
+  db: Database,
+  cursor: { watermarkMs: number; watermarkId: string },
+  batchLimit: number,
+): ScanRow[] {
   const { sql, params } = decisionSourceFilter();
   return db
     .query(
@@ -95,29 +128,30 @@ function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: str
       cursor.watermarkMs,
       cursor.watermarkMs,
       cursor.watermarkId,
-      SCAN_BATCH_LIMIT,
+      batchLimit,
     ) as ScanRow[];
+}
+
+/** Normalises a caller-supplied positive-integer bound; see `passBudget`. */
+function boundOr(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  const n = Math.trunc(value);
+  return n >= 1 ? n : fallback;
 }
 
 function scanText(r: ScanRow): string {
   return `${r.title}. ${r.body_preview ?? ""}`.trim();
 }
 
-/**
- * Phase A — discover. Pure SQL + regex, committed before any model call, and
- * the watermark advances HERE. Candidates are durable `pending` rows the moment
- * this returns, so an interrupted Phase B costs one in-flight call rather than
- * a full re-scan.
- */
-function discoverPhase(
+/** Mines one already-fetched batch and commits it with the advanced watermark. */
+function commitBatch(
   db: Database,
+  rows: readonly ScanRow[],
+  last: ScanRow,
   opts: DecisionPassOptions,
-): { scanned: number; discovered: number } {
-  const state = readPassState(db);
-  const rows = scanDelta(db, state);
-  if (rows.length === 0) return { scanned: 0, discovered: 0 };
-
-  let discovered = 0;
+  running: { scanned: number; discovered: number; scannedItemsBefore: number },
+): number {
+  let batchDiscovered = 0;
   db.transaction(() => {
     for (const r of rows) {
       const serviceType = `${r.service}:${r.type}`;
@@ -131,22 +165,74 @@ function discoverPhase(
           decidedAt: r.modified_at,
           nowMs: opts.nowMs,
         });
-        discovered++;
+        batchDiscovered++;
       }
     }
-    const last = rows[rows.length - 1];
-    if (last !== undefined) {
-      writePassState(db, {
-        watermarkMs: last.modified_at,
-        watermarkId: last.id,
-        lastPassAt: opts.nowMs,
-        lastPassNew: discovered,
-        scannedItems: state.scannedItems + rows.length,
-      });
-    }
+    writePassState(db, {
+      watermarkMs: last.modified_at,
+      watermarkId: last.id,
+      lastPassAt: opts.nowMs,
+      lastPassNew: running.discovered + batchDiscovered,
+      scannedItems: running.scannedItemsBefore + running.scanned + rows.length,
+    });
   })();
+  return batchDiscovered;
+}
 
-  return { scanned: rows.length, discovered };
+/**
+ * Phase A — discover. Pure SQL + regex, committed before any model call, and
+ * the watermark advances HERE. Candidates are durable `pending` rows the moment
+ * this returns, so an interrupted Phase B costs one in-flight call rather than
+ * a full re-scan.
+ *
+ * Discovery DRAINS. A single `scanDelta` call caps at `SCAN_BATCH_LIMIT`, so a
+ * one-shot phase meant `--rebuild` — which clears the watermark and runs one
+ * pass — covered only the oldest 5000 source items on a larger index and
+ * reported success anyway. Each batch commits before the next is fetched, so an
+ * interrupted drain resumes from the persisted watermark rather than restarting.
+ * The loop ends when a batch comes back short of the limit (the common case, and
+ * one query on a small index, exactly as before) or on the `MAX_DISCOVERY_BATCHES`
+ * bound, which is reported as `discoveryComplete: false`.
+ */
+function discoverPhase(
+  db: Database,
+  opts: DecisionPassOptions,
+): { scanned: number; discovered: number; discoveryComplete: boolean } {
+  const initial = readPassState(db);
+  const batchLimit = boundOr(opts.scanBatchLimit, SCAN_BATCH_LIMIT);
+  const maxBatches = boundOr(opts.maxDiscoveryBatches, MAX_DISCOVERY_BATCHES);
+
+  let cursor = { watermarkMs: initial.watermarkMs, watermarkId: initial.watermarkId };
+  const running = { scanned: 0, discovered: 0, scannedItemsBefore: initial.scannedItems };
+  let discoveryComplete = false;
+
+  for (let batch = 0; batch < maxBatches; batch++) {
+    const rows = scanDelta(db, cursor, batchLimit);
+    const last = rows[rows.length - 1];
+    if (last === undefined) {
+      discoveryComplete = true;
+      break;
+    }
+    running.discovered += commitBatch(db, rows, last, opts, running);
+    running.scanned += rows.length;
+    cursor = { watermarkMs: last.modified_at, watermarkId: last.id };
+    if (rows.length < batchLimit) {
+      discoveryComplete = true;
+      break;
+    }
+  }
+
+  if (running.scanned === 0) {
+    // The delta was empty, but the PASS still ran. Recording only inside the
+    // non-empty branch left `last_pass_at` null forever on an unchanged index,
+    // so `agents/decisions.ts` kept telling a user who had just run
+    // `nimbus decisions --refresh` to run `nimbus decisions --refresh`.
+    // The watermark and `scanned_items` are carried through UNCHANGED — a pass
+    // that scanned nothing must not move a cursor it never read past.
+    writePassState(db, { ...initial, lastPassAt: opts.nowMs, lastPassNew: 0 });
+  }
+
+  return { scanned: running.scanned, discovered: running.discovered, discoveryComplete };
 }
 
 function serviceTypeOf(db: Database, itemId: string): string {
@@ -281,7 +367,7 @@ export async function runDecisionPass(
   db: Database,
   opts: DecisionPassOptions,
 ): Promise<DecisionPassSummary> {
-  const { scanned, discovered } = discoverPhase(db, opts);
+  const { scanned, discovered, discoveryComplete } = discoverPhase(db, opts);
 
   let extracted = 0;
   let vetoed = 0;
@@ -350,7 +436,7 @@ export async function runDecisionPass(
     }
   }
 
-  return { scanned, discovered, extracted, vetoed, upgraded, failed, noModel };
+  return { scanned, discovered, extracted, vetoed, upgraded, failed, noModel, discoveryComplete };
 }
 
 /**

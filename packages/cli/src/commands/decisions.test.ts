@@ -138,6 +138,40 @@ describe("renderPassOutcome", () => {
     });
     expect(line).toContain("0 no model");
   });
+
+  // A rebuild whose discovery scan hit its batch bound covered only a PREFIX of
+  // the index. Printing a bare "Pass complete" over that is the silent-
+  // truncation shape the gateway fix removes; the CLI must not re-introduce it.
+  test("says so when discovery was incomplete", () => {
+    const line = renderPassOutcome({
+      scanned: 5_000,
+      discovered: 12,
+      extracted: 12,
+      vetoed: 0,
+      upgraded: 0,
+      failed: 0,
+      noModel: 12,
+      discoveryComplete: false,
+    });
+    expect(line).toContain("INCOMPLETE");
+    expect(line).toContain("re-run");
+  });
+
+  test("stays silent about discovery when it completed, and when the field is absent", () => {
+    const base = {
+      scanned: 5,
+      discovered: 1,
+      extracted: 1,
+      vetoed: 0,
+      upgraded: 0,
+      failed: 0,
+      noModel: 1,
+    };
+    expect(renderPassOutcome({ ...base, discoveryComplete: true })).not.toContain("INCOMPLETE");
+    // An older gateway omits the field entirely — never invent a warning from
+    // `undefined`.
+    expect(renderPassOutcome(base)).not.toContain("INCOMPLETE");
+  });
 });
 
 /**

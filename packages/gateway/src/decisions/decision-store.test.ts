@@ -5,6 +5,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   countByStatus,
+  evidenceKey,
   listDecisions,
   markExtracted,
   markVetoed,
@@ -122,6 +123,55 @@ test("replaceEvidence is idempotent and readable back through listDecisions", ()
   const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
   expect(row?.evidence).toHaveLength(1);
   expect(row?.evidence[0]?.label).toBe("#412");
+});
+
+// Regression: `decision_evidence` was keyed on (decision_id, kind, label).
+// `label` is an item TITLE, so two distinct PRs sharing a title and
+// corroborating one decision collided and the second silently replaced the
+// first through `INSERT OR REPLACE` — data loss that reads as "only one PR
+// corroborates this". V47 keys on the total `evidence_key` instead.
+test("two same-titled PRs on one decision BOTH survive replaceEvidence", () => {
+  candidate("a", 0.5);
+  markExtracted(
+    db,
+    "a",
+    { statement: "s", rationale: null, alternatives: [], extractionSource: "llm" },
+    6_000,
+  );
+  const ev = [
+    {
+      kind: "pr",
+      entityId: "gh:pr:1",
+      itemId: "item-pr-1",
+      label: "Bump deps",
+      url: "https://example.test/1",
+      occurredAt: 7_000,
+    },
+    {
+      kind: "pr",
+      entityId: "gh:pr:2",
+      itemId: "item-pr-2",
+      label: "Bump deps",
+      url: "https://example.test/2",
+      occurredAt: 8_000,
+    },
+  ] as const;
+  replaceEvidence(db, "a", ev);
+
+  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(row?.evidence).toHaveLength(2);
+  expect(row?.evidence.map((e) => e.entityId).sort()).toEqual(["gh:pr:1", "gh:pr:2"]);
+  // Re-running must still be idempotent, not additive.
+  replaceEvidence(db, "a", ev);
+  const [again] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(again?.evidence).toHaveLength(2);
+});
+
+test("evidenceKey prefers entity id, then item id, then the label", () => {
+  const base = { kind: "pr", label: "Bump deps", url: null, occurredAt: null } as const;
+  expect(evidenceKey({ ...base, entityId: "e1", itemId: "i1" })).toBe("entity:e1");
+  expect(evidenceKey({ ...base, entityId: null, itemId: "i1" })).toBe("item:i1");
+  expect(evidenceKey({ ...base, entityId: null, itemId: null })).toBe("label:Bump deps");
 });
 
 test("listDecisions filters by since and min confidence, newest first", () => {

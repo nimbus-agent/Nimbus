@@ -112,6 +112,11 @@ export function parseDecisionsArgs(args: string[]): DecisionsCliArgs {
  * `extracted`/`upgraded` is load-bearing, not cosmetic: without it a user with
  * no local model installed sees `extracted: 12`, concludes the LLM ran, and
  * never learns every decision is a verbatim snippet.
+ *
+ * `discoveryComplete` is OPTIONAL here, unlike on the gateway's own type: this
+ * is a wire shape, and a CLI talking to an older gateway must not invent a
+ * truncation warning from an absent field. Only an explicit `false` is
+ * reported.
  */
 export type DecisionsPassSummaryLike = {
   scanned: number;
@@ -121,13 +126,21 @@ export type DecisionsPassSummaryLike = {
   upgraded: number;
   failed: number;
   noModel: number;
+  discoveryComplete?: boolean;
 };
 
 export function renderPassOutcome(s: DecisionsPassSummaryLike): string {
-  return (
+  const line =
     `Pass complete: ${String(s.extracted)} extracted, ${String(s.upgraded)} upgraded, ` +
-    `${String(s.noModel)} no model.`
-  );
+    `${String(s.noModel)} no model.`;
+  // A capped discovery scan that prints "Pass complete" and nothing else is the
+  // silent-truncation shape: the user believes their whole index was covered.
+  // Say it plainly, and say the fix, because re-running resumes from the
+  // watermark rather than starting over.
+  if (s.discoveryComplete === false) {
+    return `${line} Discovery was INCOMPLETE — the scan hit its batch bound with items left; re-run to continue from where it stopped.`;
+  }
+  return line;
 }
 
 /**

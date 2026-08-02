@@ -568,6 +568,21 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*103\s*\)/);
   });
 
+  // The count above is NOT sufficient on its own. A change that removes
+  // agents.decisions and adds decisions.refresh — LAN-forbidden, and the verb
+  // that can clear the whole decision store via decisions.rebuild — leaves the
+  // count at 103 and would sail through. Name the methods.
+  test("S1 decisions: agents.decisions is renderer-exposed; the pass verbs stay absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"agents\.decisions",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"decisions\.refresh",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"decisions\.rebuild",\s*$/m);
+    // …and the Rust side asserts the same thing at runtime, not just by count.
+    expect(rust).toContain(`assert!(is_method_allowed("agents.decisions"));`);
+    expect(rust).toContain(`assert!(!is_method_allowed("decisions.refresh"));`);
+    expect(rust).toContain(`assert!(!is_method_allowed("decisions.rebuild"));`);
+  });
+
   test("I29: the 4 egress read verbs are renderer-exposed; egress.prune (mutation) stays absent", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     for (const m of ["egress.head", "egress.list", "egress.proveWindow", "egress.verify"]) {

@@ -64,12 +64,45 @@ test("V47 decision_evidence cascades when its decision is deleted", () => {
      VALUES ('d1','i1','extracted','heading','Decision:',1,1)`,
   );
   db.run(
-    `INSERT INTO decision_evidence (decision_id, kind, label)
-     VALUES ('d1','pr','#412')`,
+    `INSERT INTO decision_evidence (decision_id, kind, evidence_key, label)
+     VALUES ('d1','pr','entity:pr-412','#412')`,
   );
   db.run("DELETE FROM decision_record WHERE id = 'd1'");
   const left = db.query("SELECT COUNT(*) AS n FROM decision_evidence").get() as { n: number };
   expect(left.n).toBe(0);
+  db.close();
+});
+
+// The V47 evidence key is `evidence_key`, NOT `label`. Labels are item titles
+// and two distinct PRs can share one; keying on the label made the second row
+// silently replace the first. These two tests pin the amended key shape.
+test("V47 decision_evidence keys two same-labelled PRs separately", () => {
+  const db = migrated();
+  db.run(
+    `INSERT INTO decision_record
+       (id, source_item_id, status, cue_tier, cue_text, decided_at, updated_at)
+     VALUES ('d1','i1','extracted','heading','Decision:',1,1)`,
+  );
+  const insert = `INSERT OR REPLACE INTO decision_evidence
+       (decision_id, kind, entity_id, item_id, evidence_key, label)
+     VALUES (?, 'pr', ?, ?, ?, 'Bump deps')`;
+  db.run(insert, ["d1", "ent-a", "item-a", "entity:ent-a"]);
+  db.run(insert, ["d1", "ent-b", "item-b", "entity:ent-b"]);
+  const n = db.query("SELECT COUNT(*) AS n FROM decision_evidence").get() as { n: number };
+  expect(n.n).toBe(2);
+  db.close();
+});
+
+test("V47 decision_evidence rejects a null evidence_key", () => {
+  const db = migrated();
+  db.run(
+    `INSERT INTO decision_record
+       (id, source_item_id, status, cue_tier, cue_text, decided_at, updated_at)
+     VALUES ('d1','i1','extracted','heading','Decision:',1,1)`,
+  );
+  expect(() =>
+    db.run(`INSERT INTO decision_evidence (decision_id, kind, label) VALUES ('d1','pr','#412')`),
+  ).toThrow();
   db.close();
 });
 

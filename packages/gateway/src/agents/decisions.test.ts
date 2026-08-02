@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+import { runDecisionPass } from "../decisions/decision-extract.ts";
 import {
   markExtracted,
   replaceEvidence,
@@ -149,6 +150,35 @@ test("reports a gap when no pass has run", async () => {
   );
   const brief = await runDecisions({}, ctx());
   expect(brief.gaps.some((g) => g.detail.includes("has not run"))).toBe(true);
+});
+
+// The user-visible half of the `last_pass_at` regression: a real pass over an
+// index with nothing new to scan must clear this gap note. It previously did
+// not, so a successful `nimbus decisions --refresh` was answered with
+// "run `nimbus decisions --refresh`".
+test("a completed pass that found nothing new clears the 'has not run yet' gap", async () => {
+  // A `github:pr` is NOT a decision source (see DECISION_SOURCE_TYPES), so the
+  // index is non-empty — which is what selects gap 2 over gap 1 — while the
+  // pass's delta scan is genuinely EMPTY. That is exactly the shape that used
+  // to leave `last_pass_at` null forever.
+  db.run(
+    "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ["seed:1", "github", "pr", "seed:1", "seed item", 0, 0],
+  );
+  const before = await runDecisions({}, ctx());
+  expect(before.gaps.some((g) => g.detail.includes("has not run"))).toBe(true);
+
+  // A pass with an empty delta: no candidates discovered, but it DID run.
+  await runDecisionPass(db, {
+    nowMs: 50_000,
+    useLlm: false,
+    maxLlmCalls: 0,
+    retryCooldownMs: 0,
+  });
+
+  const after = await runDecisions({}, ctx());
+  expect(after.gaps.some((g) => g.detail.includes("has not run"))).toBe(false);
+  expect(after.stats.lastPassAt).toBe(50_000);
 });
 
 test("reports the empty index only when also returning nothing", async () => {
