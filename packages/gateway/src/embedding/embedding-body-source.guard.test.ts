@@ -16,7 +16,12 @@ function source(file: string): string {
   return readFileSync(join(import.meta.dir, file), "utf8");
 }
 
-for (const file of ["pipeline.ts", "create-routing-runtime.ts", "lazy-scheduler.ts"]) {
+for (const file of [
+  "pipeline.ts",
+  "create-routing-runtime.ts",
+  "lazy-scheduler.ts",
+  "embedding-worker-core.ts",
+]) {
   test(`${file} selects body_preview and never item.body`, () => {
     const src = source(file);
     expect(src).toContain("body_preview");
@@ -25,7 +30,10 @@ for (const file of ["pipeline.ts", "create-routing-runtime.ts", "lazy-scheduler.
   });
 }
 
-test("itemTextForEmbedding reads body_preview", () => {
+test("itemTextForEmbedding reads body_preview and never falls back to item.body", () => {
   const src = source("chunker.ts");
   expect(src).toContain("item.body_preview");
+  // A future "widen on demand" fallback (e.g. `item.body?.trim() ?? item.body_preview...`)
+  // must fail this guard even though the positive assertion above still passes.
+  expect(src.match(/\bitem\.body\b(?!_preview)/g)).toBeNull();
 });
