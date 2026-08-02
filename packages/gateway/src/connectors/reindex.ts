@@ -29,17 +29,45 @@ function isMissingVecTableError(err: unknown, table: string): boolean {
   return err instanceof Error && new RegExp(`no such table:\\s*${table}\\b`, "i").test(err.message);
 }
 
+// I9 is unconditional ("identifiers via escapeIdentifier") — it does not bend
+// just because a particular caller's identifier happens to be constrained to
+// a fixed, known-safe set. Same local pattern already established in
+// db/repair.ts (quote-doubling); kept local here rather than imported because
+// there is no shared canonical export of it yet (repair.ts defines its own
+// copy too — see the round-4 report note on that).
+function escapeIdentifier(id: string): string {
+  return `"${id.replaceAll('"', '""')}"`;
+}
+
 export async function reindexConnector(input: ReindexInput): Promise<ReindexResult> {
   if (input.depth === "metadata_only") {
-    const items = input.index.rawDb
-      .query(
-        `SELECT id FROM item
-         WHERE service = ?
-           AND ((body IS NOT NULL AND body <> '')
-                OR (body_preview IS NOT NULL AND body_preview <> ''))`,
-      )
-      .all(input.service) as Array<{ id: string }>;
+    // Selection happens INSIDE the same transaction as the UPDATE/DELETEs
+    // below (CodeRabbit #1026): reading it outside would let a concurrent
+    // write land between the read and the blanket UPDATE, so an item's body
+    // could get nulled by that UPDATE while its chunk cleanup below ran
+    // against a stale, pre-write item list. `items` is assigned inside the
+    // transaction closure and read after — bun:sqlite's `db.transaction()`
+    // runs its callback synchronously, so this is not a race.
+    let items: Array<{ id: string }> = [];
     input.index.rawDb.transaction(() => {
+      // Matches an item that either still has body text to strip OR already
+      // has embedding_chunk rows to erase. The second arm is load-bearing:
+      // an item whose body/body_preview were already nulled by an OLDER,
+      // broken metadata_only run (CodeRabbit #1026) would otherwise never
+      // match again, permanently orphaning its embedding_chunk plaintext —
+      // exactly the population that already asked for erasure and didn't
+      // get it. A re-run of metadata_only must be able to repair them.
+      items = input.index.rawDb
+        .query(
+          `SELECT id FROM item
+           WHERE service = ?
+             AND (
+               (body IS NOT NULL AND body <> '')
+               OR (body_preview IS NOT NULL AND body_preview <> '')
+               OR EXISTS (SELECT 1 FROM embedding_chunk c WHERE c.item_id = item.id)
+             )`,
+        )
+        .all(input.service) as Array<{ id: string }>;
       dbRun(
         input.index.rawDb,
         `UPDATE item SET body = NULL, body_preview = NULL, body_complete = 0 WHERE service = ?`,
@@ -79,10 +107,14 @@ export async function reindexConnector(input: ReindexInput): Promise<ReindexResu
           }
           // `chunk.dims` is constrained to SUPPORTED_EMBEDDING_DIMS just above,
           // so this can only ever resolve to a real, known vec table name —
-          // never caller-influenced interpolation.
+          // never caller-influenced interpolation. Still routed through
+          // escapeIdentifier() below: I9 applies unconditionally, not only
+          // where a particular call site looks unexploitable.
           const vecTable = `vec_items_${chunk.dims}`;
           try {
-            dbRun(input.index.rawDb, `DELETE FROM ${vecTable} WHERE rowid = ?`, [chunk.vec_rowid]);
+            dbRun(input.index.rawDb, `DELETE FROM ${escapeIdentifier(vecTable)} WHERE rowid = ?`, [
+              chunk.vec_rowid,
+            ]);
           } catch (err) {
             if (!isMissingVecTableError(err, vecTable)) {
               throw err;

@@ -17,6 +17,25 @@ function vecAvailable(): boolean {
 }
 const VEC_AVAILABLE = vecAvailable();
 
+// CodeRabbit finding on #1026: `describe.skipIf(!VEC_AVAILABLE)` below is
+// correct for local dev on a platform without the native extension, but if it
+// silently skips in CI, every erasure-completeness test in this file
+// disappears and a green CI run proves nothing about erasure — a "guard that
+// cannot fail" of exactly the kind flagged before in this codebase (see
+// scripts/coverage-floor/check.ts's `lcovHasBranchData` instrumentation
+// canary for the same pattern: fail loudly on infrastructure absence rather
+// than let a downstream check read a false, unearned pass). This is an
+// always-running (never skipIf'd) canary: it is a no-op outside CI, and in CI
+// specifically it turns "sqlite-vec didn't load" into a hard failure instead
+// of a quiet skip, so the absence can never hide behind a green build.
+test("CI must have sqlite-vec available, or the erasure-completeness suites below are silently absent", () => {
+  const inCI = process.env["CI"] === "true";
+  if (!inCI) {
+    return;
+  }
+  expect(VEC_AVAILABLE).toBe(true);
+});
+
 function makeIdx(): LocalIndex {
   const db = new Database(":memory:");
   LocalIndex.ensureSchema(db);
@@ -34,6 +53,18 @@ function seedItem(idx: LocalIndex, opts: { id: string; service: string; body: st
     rowid: number;
   };
   return row.rowid;
+}
+
+// A pre-existing item that already ran (the old, broken) metadata_only and so
+// already has body/body_preview NULL — but still carries orphaned
+// embedding_chunk plaintext this fix must be able to clean up on a re-run.
+function seedItemNoBody(idx: LocalIndex, opts: { id: string; service: string }): void {
+  idx.rawDb.run(
+    `INSERT INTO item (
+       id, service, type, external_id, title, body, body_preview, body_complete, modified_at, synced_at, pinned
+     ) VALUES (?, ?, 'test', ?, 't', NULL, NULL, 0, ?, ?, 0)`,
+    [opts.id, opts.service, opts.id, Date.now(), Date.now()],
+  );
 }
 
 function seedChunk(
@@ -119,6 +150,42 @@ describe.skipIf(!VEC_AVAILABLE)("metadata_only reindex — erasure completeness"
       .query(`SELECT COUNT(*) AS c FROM vec_items_384 WHERE rowid IN (1, 2, 3)`)
       .get() as { c: number };
     expect(otherVecCount.c).toBe(3);
+  });
+
+  // CodeRabbit finding on #1026: the item probe only matched items with
+  // non-empty body/body_preview. An item that already ran the OLD, broken
+  // metadata_only has body/body_preview already NULL, so it no longer
+  // matches — its orphaned embedding_chunk plaintext (and vector) is
+  // invisible to every later run, including this fix's own. That is exactly
+  // the population that already asked for erasure and didn't get it, and a
+  // re-run must be able to repair them.
+  test("orphaned embedding_chunk rows are erased even when body/body_preview are already NULL", async () => {
+    const idx = makeIdx();
+    seedItemNoBody(idx, { id: "orphan:1", service: "orphan" });
+    seedChunk(idx, {
+      itemId: "orphan:1",
+      chunkIndex: 0,
+      vecRowid: 1,
+      dims: 384,
+      text: "orphaned plaintext from a pre-fix metadata_only run",
+    });
+
+    const result = await reindexConnector({
+      index: idx,
+      service: "orphan",
+      depth: "metadata_only",
+    });
+    expect(result.itemsAffected).toBe(1);
+
+    const remaining = idx.rawDb
+      .query(`SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?`)
+      .get("orphan:1") as { c: number };
+    expect(remaining.c).toBe(0);
+
+    const vecRemaining = idx.rawDb
+      .query(`SELECT COUNT(*) AS c FROM vec_items_384 WHERE rowid = 1`)
+      .get() as { c: number };
+    expect(vecRemaining.c).toBe(0);
   });
 });
 
