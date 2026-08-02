@@ -28,7 +28,7 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  *     of requests to recover bodies for a subset of items.
  *
  * Cost is a separate axis from completeness — do not assume "bounded window"
- * implies "will complete". `REBODY_CANNOT_IMPROVE_SERVICES` below tracks
+ * implies "will complete". `REBODY_IMPROVABLE_SERVICES` below tracks
  * completeness: Gmail is bounded-window (cheap) but its connector still never
  * declares a full `body:`, so re-syncing it costs little AND recovers
  * nothing. Notion/Confluence are full-scan (expensive) AND cannot complete —
@@ -79,51 +79,94 @@ export type RebodyParams = {
 };
 
 /**
- * Services whose connector sync handler calls `upsertIndexedItemForSync` /
- * `upsertIndexedItem` with only `bodyPreview:` and never `body:`, for every
- * item, today. `item-store.ts`'s `bodyComplete` is `declaredFull && raw.length
- * <= cap ? 1 : 0` — `declaredFull` is `row.body !== undefined`, so a connector
- * that never passes `body:` can NEVER produce a `body_complete = 1` row. For
- * these services `rebody` clearing the watermark and re-syncing changes
- * nothing: `pendingAfter` will equal `pendingBefore` no matter how many times
- * you pay for the walk. That is a structural fact about the connector, not a
- * sync failure — it is surfaced to the caller as `cannotImprove` rather than
- * silently absorbed into a `succeeded` count.
+ * Services whose connector passes `body:` (the declared-full variant of
+ * `IndexedItemBodyInput` in `item-store.ts`) for EVERY item it writes, today.
+ * `bodyComplete` there is `declaredFull && raw.length <= cap ? 1 : 0` —
+ * `declaredFull` is `row.body !== undefined` — so re-fetching via `rebody`
+ * can flip `body_complete` to 1 ONLY for a service listed here.
+ *
+ * Everything absent from this set is treated as cannot-improve BY DESIGN.
+ * This is the inverse of an earlier version of this constant
+ * (`REBODY_CANNOT_IMPROVE_SERVICES`, an exception list of 3 names), which was
+ * wrong by construction: as of 2026-08-02, 74 files under
+ * `packages/gateway/src/connectors/` call `upsertIndexedItem`/
+ * `upsertIndexedItemForSync`, and only the ~10 services listed below have
+ * been migrated to pass `body:` — every other connector is therefore
+ * permanently `body_complete = 0`, which an exception list of 3 grossly
+ * undercounted. An inclusion list is correct by construction instead: an
+ * unknown or newly-added connector defaults to cannot-improve — an
+ * over-cautious warning, never a false promise — until it is deliberately
+ * added here in the same change that migrates its sync handler.
  *
  * Verify membership with:
  *
- *   grep -n "bodyPreview\|body:" packages/gateway/src/connectors/<service>-sync.ts
+ *   grep -rln "body:" packages/gateway/src/connectors/ --include=*.ts | grep -v "\.test\."
  *
- * (Gmail's is at `connectors/_lib/gmail/api.ts`, not `gmail-sync.ts` itself.)
- * A connector belongs here iff that grep shows `bodyPreview:` call sites and
- * NO `body:` call site anywhere in the file. Verified 2026-08-02:
+ * then read each hit — do NOT trust the grep alone, for three reasons found
+ * while building this list:
  *
- *   - notion-sync.ts:201       `bodyPreview: ""` — no `body:` anywhere.
- *   - confluence-sync.ts:141   `bodyPreview: ""` — no `body:` anywhere.
- *   - _lib/gmail/api.ts:174    `bodyPreview: preview` (the ~200-char API
- *     snippet) — no `body:` anywhere in the file.
+ *   1. Most connectors build their upsert row via a shared
+ *      `<name>-mapping.ts` file. The generic `MappedRow<S, T>` type in
+ *      `mapped-row.ts` hardcodes `bodyPreview: string` — every connector
+ *      using it (51 of the 68 `*-mapping.ts` files, as of 2026-08-02) is
+ *      structurally bodyPreview-only no matter what unrelated `body:` matches
+ *      turn up elsewhere in the same file (an HTTP request `body:
+ *      JSON.stringify(...)`, a `body: unknown` function parameter, etc.). A
+ *      handful of connectors (`snyk-issue-mapping.ts`,
+ *      `zoom-transcript-mapping.ts`) define their OWN row type with
+ *      `body: string` in place of `bodyPreview: string` — those are the real
+ *      migrated ones. Check the row TYPE the mapper returns, not grep noise.
+ *   2. Object-shorthand (`{ bodyPreview }`, no colon — e.g.
+ *      `dagster-job-mapping.ts`) does not match a plain `"bodyPreview:"` or
+ *      `"body:"` grep. Check the row's field LIST, not just colon-suffixed
+ *      keys.
+ *   3. A service can have MULTIPLE item types with DIFFERENT completeness.
+ *      `zoom` migrated `zoom:transcript` (`zoom-transcript-mapping.ts`,
+ *      `body:`) but NOT `zoom:meeting` (`zoom-meeting-mapping.ts`,
+ *      `bodyPreview:`). The locally-generated `service: "nimbus"` bucket has
+ *      migrated `web_clip` (`clips/clip-ingest.ts`) and `research_brief`
+ *      (`briefs/brief-save.ts`) but NOT `glossary_term`
+ *      (`glossary/glossary-project.ts`, `bodyPreview:`). `rebody`'s pending
+ *      map is grouped by SERVICE only (see `computePendingByService`), not by
+ *      `(service, type)`, so a mixed service cannot be safely marked
+ *      improvable at that granularity — `zoom` and `nimbus` are deliberately
+ *      EXCLUDED here (the safe direction) until/unless the pending grouping
+ *      is made type-aware.
  *
- * Checked and NOT in this set: `slack-sync.ts:282` passes `body: full`;
- * `jira-sync.ts:268` passes `body: d.bodyPrev`. Both genuinely recover on
- * `rebody`.
+ * Membership verified 2026-08-02 — every item-writing code path for each of
+ * these services passes `body:`:
  *
- * Remove an entry the instant that connector's sync handler starts passing
- * `body:` for its items — otherwise this list itself silently becomes the
- * same kind of unacknowledged lie `rebody` exists to avoid. This is a
- * hand-maintained list by necessity (there is no runtime signal for "this
- * connector could pass `body:` but doesn't"); re-verify it whenever a
- * connector's sync handler changes.
+ *   bitbucket  bitbucket-sync.ts:138        body: plainTextPreviewFromHtml(...)
+ *   discord    discord-sync.ts:203          body: full
+ *   github     github-sync.ts:207,247       body: body ?? "" (pr AND issue — both checked)
+ *   jira       jira-sync.ts:268             body: d.bodyPrev
+ *   linear     linear-sync.ts:175           body: desc ?? ""
+ *   obsidian   obsidian-sync.ts:75          body: note.body
+ *   slack      slack-sync.ts:282            body: full
+ *   snyk       snyk-issue-mapping.ts:117    body: description
+ *   teams      _lib/teams/api.ts:89         body: full
+ *
+ * Add an entry only when you migrate a connector's LAST remaining
+ * bodyPreview-only item type to pass `body:` — not when only some of its
+ * item types are migrated (see `zoom` / `nimbus` above for why a partial
+ * migration must NOT be added).
  */
-export const REBODY_CANNOT_IMPROVE_SERVICES: ReadonlySet<string> = new Set([
-  "notion",
-  "confluence",
-  "gmail",
+export const REBODY_IMPROVABLE_SERVICES: ReadonlySet<string> = new Set([
+  "bitbucket",
+  "discord",
+  "github",
+  "jira",
+  "linear",
+  "obsidian",
+  "slack",
+  "snyk",
+  "teams",
 ]);
 
-/** Services in `pending` that are also in `REBODY_CANNOT_IMPROVE_SERVICES`, sorted. */
+/** Services in `pending` that are NOT in `REBODY_IMPROVABLE_SERVICES`, sorted. */
 export function cannotImproveAmong(pending: Record<string, number>): string[] {
   return Object.keys(pending)
-    .filter((service) => REBODY_CANNOT_IMPROVE_SERVICES.has(service))
+    .filter((service) => !REBODY_IMPROVABLE_SERVICES.has(service))
     .sort((a, b) => a.localeCompare(b));
 }
 

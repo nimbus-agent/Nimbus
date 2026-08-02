@@ -14,7 +14,7 @@ import {
   type IndexRebodyRpcContext,
   IndexRebodyRpcError,
   parseRebodyParams,
-  REBODY_CANNOT_IMPROVE_SERVICES,
+  REBODY_IMPROVABLE_SERVICES,
   resolveTargetServices,
 } from "./index-rebody-rpc.ts";
 
@@ -100,6 +100,23 @@ describe("dispatchIndexRebodyRpc", () => {
     const done = events.find((e) => e.method === "index.rebodyDone");
     const payload = done?.params as Record<string, unknown> | undefined;
     expect(payload?.["cannotImprove"]).toEqual(["confluence", "notion"]);
+  });
+
+  test("dry run flags a service merely ABSENT from REBODY_IMPROVABLE_SERVICES, not only the pre-inversion hardcoded three", async () => {
+    // "brand-new-saas" is not notion/confluence/gmail (the old exception list) and is not in
+    // REBODY_IMPROVABLE_SERVICES either — under the inverted, correct-by-construction list it
+    // must still be reported as cannot-improve, with zero maintenance action required.
+    const { ctx, db, events } = freshCtx();
+    seedIncomplete(db, "brand-new-saas", "1");
+    seedIncomplete(db, "slack", "1");
+
+    await dispatchIndexRebodyRpc("index.rebody", { dryRun: true }, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const done = events.find((e) => e.method === "index.rebodyDone");
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["pending"]).toEqual({ "brand-new-saas": 1, slack: 1 });
+    expect(payload?.["cannotImprove"]).toEqual(["brand-new-saas"]);
   });
 
   test("params reject a non-object and an empty service", async () => {
@@ -363,17 +380,47 @@ describe("parseRebodyParams", () => {
   });
 });
 
-describe("REBODY_CANNOT_IMPROVE_SERVICES", () => {
-  test("membership verified against each connector's sync handler (see file-header comment)", () => {
-    // notion-sync.ts:201 and confluence-sync.ts:141 pass bodyPreview: "" and never body:.
-    // _lib/gmail/api.ts:174 passes bodyPreview: preview and never body: anywhere in the file.
-    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("notion")).toBe(true);
-    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("confluence")).toBe(true);
-    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("gmail")).toBe(true);
-    // slack-sync.ts:282 passes body: full; jira-sync.ts:268 passes body: d.bodyPrev.
-    // Both genuinely recover on rebody and must not be flagged.
-    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("slack")).toBe(false);
-    expect(REBODY_CANNOT_IMPROVE_SERVICES.has("jira")).toBe(false);
+describe("REBODY_IMPROVABLE_SERVICES", () => {
+  test("membership verified against every item-writing code path for each service (see file-header comment)", () => {
+    // Every item-writing call site for each of these passes body: (the declared-full variant):
+    //   bitbucket-sync.ts:138, discord-sync.ts:203, github-sync.ts:207+247 (pr AND issue),
+    //   jira-sync.ts:268, linear-sync.ts:175, obsidian-sync.ts:75, slack-sync.ts:282,
+    //   snyk-issue-mapping.ts:117, _lib/teams/api.ts:89.
+    for (const service of [
+      "bitbucket",
+      "discord",
+      "github",
+      "jira",
+      "linear",
+      "obsidian",
+      "slack",
+      "snyk",
+      "teams",
+    ]) {
+      expect(REBODY_IMPROVABLE_SERVICES.has(service)).toBe(true);
+    }
+  });
+
+  test("notion, confluence and gmail pass bodyPreview only — never in the set", () => {
+    // notion-sync.ts:201, confluence-sync.ts:141, _lib/gmail/api.ts:174 — all bodyPreview only.
+    expect(REBODY_IMPROVABLE_SERVICES.has("notion")).toBe(false);
+    expect(REBODY_IMPROVABLE_SERVICES.has("confluence")).toBe(false);
+    expect(REBODY_IMPROVABLE_SERVICES.has("gmail")).toBe(false);
+  });
+
+  test("zoom and nimbus are mixed (some item types migrated, some not) and are deliberately excluded", () => {
+    // zoom:transcript passes body: but zoom:meeting passes bodyPreview: — mixed at the service
+    // granularity rebody operates at, so zoom is excluded (the safe direction).
+    expect(REBODY_IMPROVABLE_SERVICES.has("zoom")).toBe(false);
+    // service:"nimbus" web_clip/research_brief pass body: but glossary_term passes bodyPreview: —
+    // same mixed-service reasoning.
+    expect(REBODY_IMPROVABLE_SERVICES.has("nimbus")).toBe(false);
+  });
+
+  test("an unknown/never-seen service defaults to cannot-improve — the point of inverting the list", () => {
+    expect(REBODY_IMPROVABLE_SERVICES.has("some-brand-new-connector-nobody-has-heard-of")).toBe(
+      false,
+    );
   });
 });
 
@@ -391,6 +438,15 @@ describe("cannotImproveAmong", () => {
 
   test("a pending map with no cannot-improve services yields empty list", () => {
     expect(cannotImproveAmong({ slack: 2, jira: 1 })).toEqual([]);
+  });
+
+  test("a service absent from REBODY_IMPROVABLE_SERVICES is reported as cannot-improve by default", () => {
+    // This is the behavior the inversion buys: an unrecognized service (never explicitly
+    // hardcoded as an exception) is still flagged, because it is simply absent from the
+    // inclusion list — no maintenance action was needed to catch it.
+    expect(cannotImproveAmong({ "totally-unknown-service": 4 })).toEqual([
+      "totally-unknown-service",
+    ]);
   });
 });
 
