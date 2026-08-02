@@ -3,7 +3,8 @@ name: Structure audit
 # Reusable workflow — fast PR check (≤30 s budget) for the binary subset of
 # audit:* gates: D1/D2/D3 (boundaries), D8 (any-count ratchet), D10/D11
 # (Nimbus invariants), the coverage-gate PAL classification
-# (`audit:coverage-gate-pal`), and release-please manifest drift.
+# (`audit:coverage-gate-pal`), release-please manifest drift, and root
+# `overrides` drift (`audit:override-drift`).
 #
 # Ubuntu-only by design: every gate is static analysis with zero OS variance.
 # The platform-equality non-negotiable is a runtime property
@@ -62,3 +63,10 @@ jobs:
 
       - name: Audit release-please manifest drift
         run: bun run audit:release-please
+
+      # A root `overrides` pin outranks every declared range, so a divergence is
+      # invisible in CI without this: the Dependabot PR that bumps the declared
+      # range merges green and changes nothing installed. Local `preflight:fast`
+      # alone would leave the gate unenforced on the merge path.
+      - name: Audit root overrides drift
+        run: bun run audit:override-drift

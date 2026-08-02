@@ -6,7 +6,7 @@
       "name": "nimbus",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.30.0",
-        "@nimbus-dev/sdk": "^1.11.0",
+        "@nimbus-dev/sdk": "^1.11.1",
         "astro": "^7.1.4",
         "zod": "^4.4.3",
       },
@@ -29,7 +29,7 @@
         "istanbul-lib-coverage": "3.2.2",
         "istanbul-lib-report": "3.0.1",
         "istanbul-reports": "3.2.0",
-        "js-yaml": "^5.2.2",
+        "js-yaml": "^4.3.1",
         "jscpd": "^5.0.14",
         "knip": "^6.29.0",
         "markdownlint-cli2": "^0.23.2",
@@ -55,7 +55,7 @@
         "@clack/prompts": "^1.7.0",
         "@modelcontextprotocol/sdk": "1.30.0",
         "@nimbus-dev/client": "^0.15.0",
-        "@nimbus-dev/sdk": "^1.8.1",
+        "@nimbus-dev/sdk": "^1.11.1",
         "ink": "^7.1.1",
         "ink-text-input": "^6.0.0",
         "pino": "^10.3.1",
@@ -84,9 +84,9 @@
       "name": "@nimbus/gateway",
       "version": "0.1.0",
       "dependencies": {
-        "@mastra/core": "^1.53.0",
-        "@mastra/mcp": "^1.15.0",
-        "@nimbus-dev/sdk": "^1.8.1",
+        "@mastra/core": "^1.43.0",
+        "@mastra/mcp": "^1.10.0",
+        "@nimbus-dev/sdk": "^1.11.1",
         "@noble/hashes": "^2.2.0",
         "@scure/bip39": "^2.2.0",
         "@xenova/transformers": "^2.17.0",
@@ -94,7 +94,7 @@
         "bs58": "^6.0.0",
         "hyparquet": "^1.26.2",
         "imapflow": "^1.6.1",
-        "js-yaml": "^5.2.2",
+        "js-yaml": "^4.3.1",
         "pino": "^10.3.1",
         "semver": "^7.8.3",
         "sqlite-vec": "^0.1.6",
@@ -1357,9 +1357,8 @@
     "fast-uri": "3.1.4",
     "form-data": "4.0.6",
     "hono": "4.12.32",
-    "js-yaml": "4.3.0",
+    "js-yaml": "4.3.1",
     "linkify-it": "5.0.2",
-    "nodemailer": "9.0.1",
     "postcss": "8.5.23",
     "protobufjs": "7.6.5",
     "qs": "6.15.3",
@@ -1818,7 +1817,7 @@
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.15.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-/yxm52rW+Vy1mWKAsA4UhajG5tcTlJf5Q7cVUJmvtTE94OKC9P0OjMeRFWCJ47o2MggRbO0PLoI+VDSUv/HpUQ=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.11.0", "", {}, "sha512-4X/wuT+/1FjJQUH9UXBmmKZqtnJcpt94h1oo3UpuC3DDYbMzzHMA+KVI15SIi3zC90CbJ1jHornI6nnR0CF/rA=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.13.0", "", {}, "sha512-zeCtOKFuXGojpDPoc0gC1ALNsQadcLK5fxT5iB4FPjP1nis2scvt8IMrbj/teVNONUPa1v4BETW699GZAL1KmQ=="],
 
     "@nimbus/cli": ["@nimbus/cli@workspace:packages/cli"],
 
@@ -2948,7 +2947,7 @@
 
     "js-tokens": ["js-tokens@10.0.0", "", {}, "sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q=="],
 
-    "js-yaml": ["js-yaml@4.3.0", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": { "js-yaml": "bin/js-yaml.js" } }, "sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q=="],
+    "js-yaml": ["js-yaml@4.3.1", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": { "js-yaml": "bin/js-yaml.js" } }, "sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ=="],
 
     "jscpd": ["jscpd@5.0.14", "", { "optionalDependencies": { "jscpd-darwin-arm64": "5.0.14", "jscpd-darwin-x64": "5.0.14", "jscpd-linux-arm64-gnu": "5.0.14", "jscpd-linux-x64-gnu": "5.0.14", "jscpd-linux-x64-musl": "5.0.14", "jscpd-windows-x64-msvc": "5.0.14" }, "bin": { "jscpd": "run-jscpd.js" } }, "sha512-zge+FPZZAymt2Do5Z0+QHyIn4/XcUhrO/W7of9HcHZfx2AK8++dYhLA1uWtwXj47ml3Of8PbcUW4wUWvYMCc3w=="],
 
@@ -3440,7 +3439,7 @@
 
     "node-releases": ["node-releases@2.0.46", "", {}, "sha512-GYVXHE2KnrzAfsAjl4uP++evGFCrAU1jta4ubEjIG7YWt/64Gqv66a30yKwWczVjA6j3bM4nBwH7Pk1JmDHaxQ=="],
 
-    "nodemailer": ["nodemailer@9.0.1", "", {}, "sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw=="],
+    "nodemailer": ["nodemailer@9.0.3", "", {}, "sha512-n+YP+NKwR5zRWa60k3GiQ6Q3B4KXCoAw40dAKeCtYn020iNN74aWK2liXIC3ZEATeGql7we3tE3t8QwhY0eskw=="],
 
     "normalize-path": ["normalize-path@3.0.0", "", {}, "sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA=="],
 
@@ -4173,8 +4172,6 @@
     "@modelcontextprotocol/sdk/ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 
     "@mswjs/interceptors/@open-draft/deferred-promise": ["@open-draft/deferred-promise@2.2.0", "", {}, "sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA=="],
-
-    "@nimbus/gateway/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.10.0", "", {}, "sha512-NIau3p9HWF6OcIRoyx4Rwzml+tPxSQITaxXH+QaNmk2H9nbMmey5Pb4lxD5eoDelATbOvpQpRceR+8HAlLXy2g=="],
 
     "@rolldown/binding-wasm32-wasi/@emnapi/core": ["@emnapi/core@1.11.1", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ=="],
 

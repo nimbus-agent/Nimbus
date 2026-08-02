@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "1.16.0",
+  "version": "1.16.1",
   "private": true,
   "repository": {
     "type": "git",
@@ -20,12 +20,11 @@
     "@hono/node-server": "2.0.12",
     "@mastra/core": "1.43.0",
     "@mastra/mcp": "1.10.0",
-    "nodemailer": "9.0.1",
     "undici": "7.28.0",
     "shell-quote": "1.10.0",
     "brace-expansion": "5.0.8",
     "tar": "7.5.22",
-    "js-yaml": "4.3.0",
+    "js-yaml": "4.3.1",
     "postcss": "8.5.23",
     "qs": "6.15.3",
     "yaml": "2.9.0",
@@ -160,6 +159,7 @@
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",
     "audit:openapi-drift": "bun scripts/structure-audit/check-openapi-drift.ts --check",
     "audit:release-please": "bun scripts/structure-audit/check-release-please-manifest.ts",
+    "audit:override-drift": "bun scripts/structure-audit/check-override-drift.ts",
     "audit:js-licenses": "bun scripts/structure-audit/check-js-licenses.ts --check",
     "audit:svg-assets": "bun scripts/audit/svg-assets.ts",
     "audit:readme-cli": "bun scripts/audit/readme-cli-commands.ts",
@@ -243,7 +243,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@nimbus-dev/sdk": "^1.11.0",
+    "@nimbus-dev/sdk": "^1.11.1",
     "astro": "^7.1.4",
     "zod": "^4.4.3"
   },
@@ -266,7 +266,7 @@
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "js-yaml": "^5.2.2",
+    "js-yaml": "^4.3.1",
     "jscpd": "^5.0.14",
     "knip": "^6.29.0",
     "markdownlint-cli2": "^0.23.2",
