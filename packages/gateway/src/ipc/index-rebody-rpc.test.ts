@@ -175,6 +175,28 @@ describe("dispatchIndexRebodyRpc", () => {
     );
   });
 
+  test("real run with an unknown/typo'd service emits index.rebodyError (-32602) and clears no watermark", async () => {
+    const { ctx, db, events } = freshCtx();
+    upsertSchedulerRegistration(db, "typo-service", 60_000, Date.now(), true);
+    db.query(`UPDATE scheduler_state SET cursor = ? WHERE service_id = ?`).run(
+      "existing-cursor",
+      "typo-service",
+    );
+
+    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "typo-service" }, ctx);
+    expect(out.kind).toBe("hit");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Nothing was touched: no forceSync, no watermark clear, no wasted API quota.
+    expect(loadSchedulerState(db, "typo-service")?.cursor).toBe("existing-cursor");
+    const err = events.find((e) => e.method === "index.rebodyError");
+    expect(err).toBeDefined();
+    const errPayload = err?.params as Record<string, unknown> | undefined;
+    expect(errPayload?.["code"]).toBe(-32602);
+    expect(errPayload?.["message"]).toMatch(/typo-service/);
+    expect(events.find((e) => e.method === "index.rebodyDone")).toBeUndefined();
+  });
+
   test("real run with explicit service clears the watermark and, with no scheduler wired, still succeeds — but a cannot-improve service's pending count never moves", async () => {
     const { ctx, db, events } = freshCtx();
     seedIncomplete(db, "notion", "p1");
@@ -218,7 +240,7 @@ describe("dispatchIndexRebodyRpc", () => {
 
     const done = events.find((e) => e.method === "index.rebodyDone");
     const payload = done?.params as Record<string, unknown> | undefined;
-    expect((payload?.["targeted"] as string[]).length).toBe(1);
+    expect((payload?.["targeted"] as string[] | undefined)?.length).toBe(1);
   });
 
   test("real run with a live syncScheduler that succeeds", async () => {
@@ -274,10 +296,12 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(events.find((e) => e.method === "index.rebodyError")).toBeUndefined();
   });
 
-  test("cancel aborts a real run before it processes further targets", async () => {
-    const { ctx, db } = freshCtx({
+  test("cancel aborts a real run before it processes further targets — observably fewer than all 3 targets get forceSync'd", async () => {
+    const forceSyncCalls: string[] = [];
+    const { ctx, db, events } = freshCtx({
       syncScheduler: {
-        forceSync: async () => {
+        forceSync: async (serviceId: string) => {
+          forceSyncCalls.push(serviceId);
           await new Promise((r) => setTimeout(r, 30));
         },
       },
@@ -288,11 +312,25 @@ describe("dispatchIndexRebodyRpc", () => {
 
     const out = await dispatchIndexRebodyRpc("index.rebody", {}, ctx);
     const hit = (out as { kind: "hit"; value: { jobId: string } }).value;
+    // Cancel immediately — before the first in-flight forceSync("a") has resolved, so the loop
+    // must never reach "b" or "c".
     const cancelOut = await dispatchIndexRebodyRpc("index.rebodyCancel", { jobId: hit.jobId }, ctx);
     expect((cancelOut as { kind: "hit"; value: { cancelled: boolean } }).value.cancelled).toBe(
       true,
     );
     await new Promise((r) => setTimeout(r, 100));
+
+    // This is the assertion that actually guards cancellation: deleting the `signal.aborted`
+    // break in runRebody's loop makes forceSync get called for all 3 targets, whereas the old
+    // assertion (only `cancelled === true`) would still pass either way.
+    expect(forceSyncCalls.length).toBeLessThan(3);
+    expect(forceSyncCalls).toEqual(["a"]);
+    const done = events.find((e) => e.method === "index.rebodyDone");
+    expect(done).toBeDefined();
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["targeted"]).toEqual(["a", "b", "c"]);
+    const processed = (payload?.["succeeded"] as number) + (payload?.["failed"] as number);
+    expect(processed).toBe(1);
   });
 });
 
@@ -492,10 +530,42 @@ describe("buildTargetServicesSql", () => {
 });
 
 describe("resolveTargetServices", () => {
-  test("explicit service short-circuits the query", () => {
+  test("explicit service with a matching pending row short-circuits the query", () => {
     const db = new Database(":memory:");
     runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    seedIncomplete(db, "slack", "1");
     expect(resolveTargetServices({ service: "slack" }, db)).toEqual(["slack"]);
+  });
+
+  test("explicit service with NO pending rows throws -32602 (refuses to spend API quota on nothing)", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    expect(() => resolveTargetServices({ service: "totally-unknown" }, db)).toThrow(
+      IndexRebodyRpcError,
+    );
+  });
+
+  test("explicit service that HAS pending rows but none of the requested type throws -32602 (type is honoured, not silently ignored)", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    // jira has a pending "message" row but the caller asks for type "issue" — must not silently
+    // fall back to re-walking all of jira ignoring the type filter.
+    seedIncomplete(db, "jira", "1", "message");
+    let thrown: IndexRebodyRpcError | undefined;
+    try {
+      resolveTargetServices({ service: "jira", type: "issue" }, db);
+    } catch (e) {
+      thrown = e as IndexRebodyRpcError;
+    }
+    expect(thrown).toBeInstanceOf(IndexRebodyRpcError);
+    expect(thrown?.message).toMatch(/type "issue"/);
+  });
+
+  test("explicit service + type that DOES match proceeds normally", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    seedIncomplete(db, "jira", "1", "issue");
+    expect(resolveTargetServices({ service: "jira", type: "issue" }, db)).toEqual(["jira"]);
   });
 
   test("auto-detects distinct services with pending rows", () => {

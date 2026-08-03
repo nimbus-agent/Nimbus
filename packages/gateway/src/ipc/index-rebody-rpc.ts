@@ -150,6 +150,19 @@ export type RebodyParams = {
  * bodyPreview-only item type to pass `body:` — not when only some of its
  * item types are migrated (see `zoom` / `nimbus` above for why a partial
  * migration must NOT be added).
+ *
+ * `bitbucket` deliberately stays in this set even though `bitbucket:pr` is
+ * NOT in `PROSE_HEAVY_TYPES` (bitbucket-sync.ts emits only `type: "pr"`;
+ * `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which nothing emits) and so is
+ * capped at `BODY_MAX_DEFAULT` (512), not the 16 KiB prose cap. That caps how
+ * MUCH of a long PR description completes, but membership here is about
+ * whether `body_complete` can EVER reach 1, not whether every item does: a
+ * PR body of <= 512 chars — a large share of real PRs, many with a one-line
+ * or empty description — still satisfies `declaredFull && raw.length <= cap`
+ * and flips 0 -> 1 on `rebody`. A shorter cap does not disqualify a
+ * connector; ZERO declared-full call sites does (see notion/confluence/gmail
+ * above). Do not conflate "inert" in the CHANGELOG/roadmap (did not get the
+ * 16 KiB prose-cap lift) with "cannot complete" — they are different claims.
  */
 export const REBODY_IMPROVABLE_SERVICES: ReadonlySet<string> = new Set([
   "bitbucket",
@@ -268,8 +281,37 @@ export function buildTargetServicesSql(p: RebodyParams): {
   return { sql, params };
 }
 
+/**
+ * An explicit `service` is validated against the SAME `body_complete = 0` /
+ * `type` query used for auto-detection — never trusted blind. Two failure
+ * modes this closes, both real API-quota spend for zero benefit if left
+ * silent:
+ *
+ *   - A typo'd or unknown `service` would otherwise reach `clearSchedulerCursor`
+ *     + `forceSync` in `runRebody` for a connector that was never going to
+ *     recover anything (there is nothing pending for it).
+ *   - `type` alongside `service` would otherwise be silently ignored — a
+ *     caller sending `{ service: "jira", type: "issue" }` when `jira`'s only
+ *     pending rows are some OTHER type got a full `jira` re-walk with no
+ *     signal that `type` had no effect.
+ *
+ * Both are rejected with -32602 rather than silently proceeding or silently
+ * returning nothing, matching the round-1 precedent set for `limit`/`dryRun`:
+ * a malformed/nonsensical input to a command that spends the user's own API
+ * quota is a hard error, not a best-effort guess.
+ */
 export function resolveTargetServices(p: RebodyParams, db: Database): string[] {
   if (p.service !== undefined) {
+    const { sql, params } = buildTargetServicesSql(p);
+    const rows = db.query(sql).all(...params) as Array<{ service: string }>;
+    if (!rows.some((r) => r.service === p.service)) {
+      throw new IndexRebodyRpcError(
+        -32602,
+        p.type === undefined
+          ? `params.service "${p.service}" has no pending (body_complete = 0) rows; refusing to spend API quota on a service with nothing to recover`
+          : `params.service "${p.service}" has no pending (body_complete = 0) rows of type "${p.type}"; refusing to spend API quota on a service/type combination with nothing to recover`,
+      );
+    }
     return [p.service];
   }
   const { sql, params } = buildTargetServicesSql(p);

@@ -415,6 +415,51 @@ describe("nimbus index reembed — IPC flow (--yes)", () => {
       runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--yes"]),
     ).rejects.toThrow(/network down/);
   });
+
+  it("buffers and still renders a progress notification that arrives BEFORE the RPC response assigns jobId (no drop, no hang)", async () => {
+    const mock = createMockIpcClient([{ jobId: "job-race" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      if (m === "index.reembed") {
+        // Emitted BEFORE the base call resolves: at this instant the client has not yet
+        // learned jobId. The old (buggy) client dropped this silently; a correct client
+        // buffers it and renders it once jobId is known.
+        mock.emit("index.reembedProgress", {
+          jobId: "job-race",
+          done: 1,
+          total: 4,
+          skipped: 0,
+        });
+        mock.emit("index.reembedDone", {
+          jobId: "job-race",
+          succeeded: 4,
+          skipped: 0,
+          durationMs: 5,
+        });
+      }
+      return baseClient.call(m, p);
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["reembed", "--model", "Xenova/all-MiniLM-L6-v2", "--yes"]);
+    expect(out.stdout).toMatch(/progress: 1\/4/);
+    expect(out.stdout).toMatch(/Reembedded 4 item/);
+  }, 2000);
 });
 
 describe("nimbus index rebody — argument parsing", () => {
@@ -923,6 +968,60 @@ describe("nimbus index rebody — IPC flow (--yes, real run)", () => {
     });
     await expect(runIndexCmd(["rebody", "--yes"])).rejects.toThrow(/network down/);
   });
+
+  it("buffers and still renders a progress notification that arrives BEFORE the RPC response assigns jobId (no drop, no hang)", async () => {
+    const mock = createMockIpcClient([{ jobId: "job-rebody-race" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      if (m === "index.rebody") {
+        // Emitted BEFORE the base call resolves — jobId is not yet known client-side. The old
+        // (buggy) streamRebody dropped this silently (`jobId === undefined` at delivery time);
+        // a correct client buffers it and renders it once jobId is known. Without the fix this
+        // also leaves the returned promise unresolved (index.rebodyDone would be dropped too),
+        // so this test times out rather than merely failing an assertion on a regression.
+        mock.emit("index.rebodyProgress", {
+          jobId: "job-rebody-race",
+          done: 1,
+          total: 3,
+          service: "slack",
+        });
+        mock.emit("index.rebodyDone", {
+          jobId: "job-rebody-race",
+          durationMs: 5,
+          dryRun: false,
+          targeted: ["slack"],
+          succeeded: 1,
+          failed: 0,
+          failedServices: [],
+          warnings: [],
+          cannotImprove: [],
+          pendingBefore: { slack: 1 },
+          pendingAfter: { slack: 0 },
+        });
+      }
+      return baseClient.call(m, p);
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["rebody", "--yes"]);
+    expect(out.stdout).toMatch(/progress: 1\/3 \(slack\)/);
+    expect(out.stdout).toMatch(/slack: 1 -> 0/);
+  }, 2000);
 });
 
 describe("nimbus index regraph — IPC flow", () => {

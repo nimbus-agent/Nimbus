@@ -64,38 +64,88 @@ function parseReembedOptions(args: string[]): ReembedOptions {
   return opts;
 }
 
+/**
+ * `LongRunningJobRegistry.start()` (gateway side) can emit a progress/done/error
+ * notification before the `index.reembed`/`index.rebody` RPC response even reaches this
+ * client — trivially for a zero-`await` `dryRun` path, where the job's `run()` resolves
+ * synchronously and the "done" emit can be written to the wire before the RPC response
+ * frame is. A notification handler that only matches against an already-known `jobId`
+ * silently drops anything that arrives first: progress vanishes, and a dropped `done`/`error`
+ * leaves this promise unresolved forever. Buffer events until `jobId` is known, then replay
+ * them in arrival order — used by both `streamReembed` and `streamRebody` below.
+ */
+function streamJob<TDone extends { jobId: string }>(
+  c: IPCClient,
+  call: { method: string; params: Record<string, unknown> },
+  events: {
+    progressMethod: string;
+    doneMethod: string;
+    errorMethod: string;
+    onProgress: (p: unknown) => void;
+  },
+): Promise<TDone> {
+  return new Promise<TDone>((resolve, reject) => {
+    let jobId: string | undefined;
+    const buffered: Array<{ method: string; payload: unknown }> = [];
+
+    function dispatch(method: string, payload: unknown): void {
+      const p = payload as { jobId: string };
+      if (jobId === undefined || p.jobId !== jobId) return;
+      if (method === events.progressMethod) {
+        events.onProgress(payload);
+      } else if (method === events.doneMethod) {
+        resolve(payload as TDone);
+      } else if (method === events.errorMethod) {
+        reject(new Error(`ERROR: ${(payload as { message: string }).message}`));
+      }
+    }
+
+    function onEvent(method: string, payload: unknown): void {
+      if (jobId === undefined) {
+        buffered.push({ method, payload });
+        return;
+      }
+      dispatch(method, payload);
+    }
+
+    c.onNotification(events.progressMethod, (n: unknown) => onEvent(events.progressMethod, n));
+    c.onNotification(events.doneMethod, (n: unknown) => onEvent(events.doneMethod, n));
+    c.onNotification(events.errorMethod, (n: unknown) => onEvent(events.errorMethod, n));
+
+    c.call<{ jobId: string }>(call.method, call.params)
+      .then((r) => {
+        jobId = r.jobId;
+        const toFlush = buffered.splice(0, buffered.length);
+        for (const { method, payload } of toFlush) {
+          dispatch(method, payload);
+        }
+      })
+      .catch(reject);
+  });
+}
+
 function streamReembed(
   c: IPCClient,
   params: Record<string, unknown>,
   isJson: boolean,
 ): Promise<ReembedSummary> {
-  return new Promise<ReembedSummary>((resolve, reject) => {
-    let jobId: string | undefined;
-    c.onNotification("index.reembedProgress", (n: unknown) => {
-      const p = n as { jobId: string; done: number; total: number; skipped: number };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      if (!isJson) {
-        console.log(
-          `progress: ${String(p.done)}/${String(p.total)} (skipped ${String(p.skipped)})`,
-        );
-      }
-    });
-    c.onNotification("index.reembedDone", (n: unknown) => {
-      const p = n as ReembedSummary;
-      if (jobId === undefined || p.jobId !== jobId) return;
-      resolve(p);
-    });
-    c.onNotification("index.reembedError", (n: unknown) => {
-      const p = n as { jobId: string; code: number; message: string };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      reject(new Error(`ERROR: ${p.message}`));
-    });
-    c.call<{ jobId: string }>("index.reembed", params)
-      .then((r) => {
-        jobId = r.jobId;
-      })
-      .catch(reject);
-  });
+  return streamJob<ReembedSummary>(
+    c,
+    { method: "index.reembed", params },
+    {
+      progressMethod: "index.reembedProgress",
+      doneMethod: "index.reembedDone",
+      errorMethod: "index.reembedError",
+      onProgress: (n: unknown) => {
+        const p = n as { done: number; total: number; skipped: number };
+        if (!isJson) {
+          console.log(
+            `progress: ${String(p.done)}/${String(p.total)} (skipped ${String(p.skipped)})`,
+          );
+        }
+      },
+    },
+  );
 }
 
 function printReembedSummaryJson(summary: ReembedSummary): void {
@@ -268,31 +318,21 @@ function streamRebody(
   params: Record<string, unknown>,
   isJson: boolean,
 ): Promise<RebodyDonePayload> {
-  return new Promise<RebodyDonePayload>((resolve, reject) => {
-    let jobId: string | undefined;
-    c.onNotification("index.rebodyProgress", (n: unknown) => {
-      const p = n as { jobId: string; done: number; total: number; service: string };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      if (!isJson) {
-        console.log(`progress: ${String(p.done)}/${String(p.total)} (${p.service})`);
-      }
-    });
-    c.onNotification("index.rebodyDone", (n: unknown) => {
-      const p = n as RebodyDonePayload;
-      if (jobId === undefined || p.jobId !== jobId) return;
-      resolve(p);
-    });
-    c.onNotification("index.rebodyError", (n: unknown) => {
-      const p = n as { jobId: string; code: number; message: string };
-      if (jobId === undefined || p.jobId !== jobId) return;
-      reject(new Error(`ERROR: ${p.message}`));
-    });
-    c.call<{ jobId: string }>("index.rebody", params)
-      .then((r) => {
-        jobId = r.jobId;
-      })
-      .catch(reject);
-  });
+  return streamJob<RebodyDonePayload>(
+    c,
+    { method: "index.rebody", params },
+    {
+      progressMethod: "index.rebodyProgress",
+      doneMethod: "index.rebodyDone",
+      errorMethod: "index.rebodyError",
+      onProgress: (n: unknown) => {
+        const p = n as { done: number; total: number; service: string };
+        if (!isJson) {
+          console.log(`progress: ${String(p.done)}/${String(p.total)} (${p.service})`);
+        }
+      },
+    },
+  );
 }
 
 function printRebodySummaryJson(summary: RebodyDonePayload): void {
