@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { BODY_MAX_PROSE } from "./body-caps.ts";
-import { upsertIndexedItem } from "./item-store.ts";
+import { selectItemBodyFetchState, upsertIndexedItem } from "./item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "./local-index.ts";
 import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
 
@@ -120,5 +120,77 @@ test("re-upserting a shorter body shrinks both columns", () => {
   const row = read(d, "slack:1");
   expect(row.body).toBe("short");
   expect(row.body_preview).toBe("short");
+  d.close();
+});
+
+test("bodyTruncated forces body_complete = 0 even under the cap", () => {
+  const d = db();
+  upsertIndexedItem(d, {
+    ...base,
+    service: "notion",
+    type: "page",
+    externalId: "p1",
+    body: "short text",
+    bodyTruncated: true,
+  });
+
+  const row = read(d, "notion:p1");
+  expect(row.body_complete).toBe(0);
+  d.close();
+});
+
+test("body without bodyTruncated still reports complete", () => {
+  const d = db();
+  upsertIndexedItem(d, {
+    ...base,
+    service: "notion",
+    type: "page",
+    externalId: "p2",
+    body: "short text",
+  });
+
+  const row = read(d, "notion:p2");
+  expect(row.body_complete).toBe(1);
+  d.close();
+});
+
+test("selectItemBodyFetchState reads modified_at and metadata.bodyFetch", () => {
+  const d = db();
+  upsertIndexedItem(d, {
+    ...base,
+    service: "notion",
+    type: "page",
+    externalId: "p3",
+    body: "text",
+    modifiedAt: 4242,
+    metadata: { notionPageId: "p3", bodyFetch: "capped" },
+  });
+
+  expect(selectItemBodyFetchState(d, "notion:p3")).toEqual({
+    modifiedAt: 4242,
+    bodyFetch: "capped",
+  });
+  d.close();
+});
+
+test("selectItemBodyFetchState returns null bodyFetch when the key is absent", () => {
+  const d = db();
+  upsertIndexedItem(d, {
+    ...base,
+    service: "notion",
+    type: "page",
+    externalId: "p4",
+    bodyPreview: "",
+    modifiedAt: 7,
+    metadata: { notionPageId: "p4" },
+  });
+
+  expect(selectItemBodyFetchState(d, "notion:p4")).toEqual({ modifiedAt: 7, bodyFetch: null });
+  d.close();
+});
+
+test("selectItemBodyFetchState returns null for an unknown id", () => {
+  const d = db();
+  expect(selectItemBodyFetchState(d, "notion:nope")).toBeNull();
   d.close();
 });
