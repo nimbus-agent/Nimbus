@@ -123,7 +123,10 @@ describe("DORA metrics calculators", () => {
   afterEach(() => {
     db.close();
     try {
-      rmSync(dir, { recursive: true, force: true });
+      // maxRetries: 0 / retryDelay: 0 — a pinned handle must fail FAST rather than block
+      // the hook's timeout budget; a leaked temp dir is the accepted trade-off (#972,
+      // #973). Do NOT turn this back into a blocking retry.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
     } catch {
       /* Windows EBUSY — OS cleans temp dir on reboot */
     }

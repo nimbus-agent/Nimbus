@@ -24,7 +24,11 @@ describe("E2E (in-process): deploy.preflight", () => {
   afterEach(() => {
     db.close();
     try {
-      rmSync(dir, { recursive: true, force: true });
+      // maxRetries: 0 / retryDelay: 0 — an unfinalized statement can make db.close() a
+      // silent no-op that pins the file open, and Windows will otherwise burn the hook's
+      // timeout budget retrying the delete. Fail fast and leak the temp dir instead: it's
+      // the accepted trade-off (#972, #973). Do NOT turn this back into a blocking retry.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
     } catch {
       /* non-fatal */
     }

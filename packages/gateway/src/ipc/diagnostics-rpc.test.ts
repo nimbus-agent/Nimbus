@@ -59,7 +59,11 @@ function makeCtxWithIndex(dataDir: string): {
 
 function rmTmp(dir: string): void {
   try {
-    rmSync(dir, { recursive: true, force: true });
+    // maxRetries: 0 / retryDelay: 0 — a pinned handle (e.g. from makeCtxWithIndex's
+    // Database) must fail FAST rather than block the hook's timeout budget; a leaked
+    // temp dir is the accepted trade-off (#972, #973). Do NOT turn this back into a
+    // blocking retry.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
   } catch {
     /* best-effort */
   }
