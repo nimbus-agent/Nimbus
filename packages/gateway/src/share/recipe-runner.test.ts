@@ -179,6 +179,97 @@ describe("replayRecipe — per-step classification", () => {
     expect(r3.steps[0]?.status).toBe("diverged");
   });
 
+  test("non-object params → skipped-invalid-params, executor NEVER called", async () => {
+    let calls = 0;
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", ["not", "an", "object"])], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+    expect(calls).toBe(0);
+  });
+
+  test("prototype-pollution key in params → skipped-invalid-params, executor NEVER called", async () => {
+    let calls = 0;
+    // JSON.parse is how a share file's params actually arrive, and it creates `__proto__` as an
+    // OWN property — an object literal would not, so the literal would not reproduce the bug.
+    const polluted: unknown = JSON.parse('{"id":"1","__proto__":{"isAdmin":true}}');
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", polluted)], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+    expect(calls).toBe(0);
+  });
+
+  test("undefined params are valid — a no-argument read tool still runs", async () => {
+    let received: unknown = "never called";
+    // Built inline, not via `step()`: that helper defaults `params` to `{}`, so passing
+    // `undefined` through it would never exercise the absent-params case.
+    const noParams: RecipeStep = {
+      stepId: "step-x",
+      tool: "gmail_get",
+      service: "gmail",
+      params: undefined,
+      status: "ok",
+      dependsOn: [],
+    };
+    const report = await replayRecipe("s1", [noParams], {
+      isReadOnly: readOnly,
+      run: async (_tool, params) => {
+        received = params;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("match");
+    expect(received).toBeUndefined();
+  });
+
+  test.each([
+    ["null", null],
+    ["a string", "gimme"],
+    ["a number", 42],
+  ])("%s as the params root → skipped-invalid-params, executor NEVER called", async (_label, p) => {
+    let calls = 0;
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", p)], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+    expect(calls).toBe(0);
+  });
+
+  test("an array nested INSIDE params is legal — a list of ids still runs", async () => {
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", { ids: ["a", "b"] })], {
+      isReadOnly: readOnly,
+      run: async () => ({ kind: "ran", ok: true }),
+    });
+    expect(report.steps[0]?.status).toBe("match");
+  });
+
+  test("a nested prototype-pollution key → skipped-invalid-params", async () => {
+    const nested: unknown = JSON.parse('{"filter":{"deep":{"__proto__":{"isAdmin":true}}}}');
+    let calls = 0;
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", nested)], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+    expect(calls).toBe(0);
+  });
+
   test("summary tallies each category and total", async () => {
     const steps = [step("file_delete"), step("gmail_get", "ok"), step("slack_list", "ok")];
     const report = await replayRecipe("s1", steps, {
@@ -192,6 +283,7 @@ describe("replayRecipe — per-step classification", () => {
       diverged: 0,
       missingConnector: 1,
       skippedNonRead: 1,
+      skippedInvalidParams: 0,
       error: 0,
       capped: 0,
     });

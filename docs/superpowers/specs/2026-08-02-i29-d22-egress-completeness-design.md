@@ -4,6 +4,31 @@
 > claims and what `D22` enforces, enumerates every bypass, and proposes phased remediation. One
 > finding exceeds record-honesty and has its own immediate-mitigation section.
 
+> ## ⚠️ STALE IN PART — re-verified against `8d663237` on 2026-08-03
+>
+> **The `share.replay` execution risk described below is no longer live.** Four of the five
+> immediate mitigations shipped after this document was written. Read that section as history, not
+> as a current finding:
+>
+> | Mitigation (§ *Immediate mitigations*) | Status at `8d663237` |
+> |---|---|
+> | 1. Enforce the signature | ✅ `ipc/share-rpc.ts:298` — throws `ERR_UNVERIFIED_SHARE` unless `allowUnsigned` is passed |
+> | 2. Remove `"preview"` from `READ_VERBS` | ✅ `share/read-tool-registry.ts:24-31` — removed, with the `iac_pulumi_preview` chain documented in-code |
+> | 3. Validate step parameters | ⚠️ **partially closed 2026-08-03** — a shape guard (`hasSafeParamsShape`) now rejects non-object roots and prototype-pollution keys before `execute`. Per-tool `inputSchema` validation remains open: `LazyMeshToolMap` (`connectors/lazy-mesh/tool-map.ts:22-24`) exposes no schema. |
+> | 4. Cap step count | ✅ `MAX_REPLAY_STEPS = 256`, excess reported as `summary.capped` |
+> | 5. Don't spawn the mesh to enumerate tools | ✅ `ipc/share-rpc.ts:305-312` — resolved lazily, with the force-spawn bug cited in the comment |
+>
+> Note also that §*What is not wrong* is corrected by the code: `dataprofile_preview`, cited there
+> as a real read tool, is a name the dataprofile no-row-data contract test asserts must **throw** —
+> so removing the `preview` verb cost zero replay coverage.
+>
+> **Not re-verified:** the eleven-class bypass enumeration and the `ToolExecutor` sink-omission
+> count. Those remain as written and still need confirmation before becoming commits, per this
+> document's own *Verification status* section.
+>
+> Companion: [`2026-08-03-i29-ledger-completeness-design.md`](./2026-08-03-i29-ledger-completeness-design.md)
+> covers the `fetch` modality and defers to this document on taxonomy, sink requirement and tier shape.
+
 ## Summary
 
 `I29` states that the egress ledger is complete over the executor chokepoint, and `D22`'s own source

@@ -47,6 +47,34 @@ describe("formatReplayReport", () => {
     expect(out).toMatch(/match.*1/);
   });
 
+  test("params-rejected steps are surfaced in the summary, not only per-step", () => {
+    const out = formatReplayReport({
+      sourceSessionId: "s1",
+      steps: [
+        {
+          stepId: "step-1",
+          tool: "gmail_get",
+          service: "gmail",
+          status: "skipped-invalid-params",
+          originalStatus: "ok",
+        },
+      ],
+      summary: {
+        total: 1,
+        match: 0,
+        diverged: 0,
+        missingConnector: 0,
+        skippedNonRead: 0,
+        skippedInvalidParams: 1,
+        error: 0,
+      },
+    });
+    // Assert on the SUMMARY line specifically — the per-step line already contains this status,
+    // so a whole-output match would pass without the summary ever mentioning it.
+    const summaryLine = out.split("\n").find((l) => l.startsWith("Summary:")) ?? "";
+    expect(summaryLine).toContain("skipped-invalid-params 1");
+  });
+
   test("empty report → a clear 'no steps' line, no crash", () => {
     const out = formatReplayReport({
       sourceSessionId: "s",
