@@ -1233,6 +1233,14 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(audit).toContain("D22-egress-append");
   });
 
+  test("I29: the D22 comment does not claim totality it cannot enforce", async () => {
+    // D22 matches a literal string; it cannot see `inner.dispatch(action)`. Claiming otherwise is
+    // the defect Phase 1 fixes — a label that leads its mechanism.
+    const src = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(src).not.toContain("no escape hatch");
+    expect(src).toContain("matches the literal string");
+  });
+
   test("the egress append symbol is NOT referenced outside egress/* and executor.ts", async () => {
     // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
     const exec = await read("packages/gateway/src/engine/executor.ts");

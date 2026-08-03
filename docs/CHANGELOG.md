@@ -8,6 +8,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-04 — Egress ledger (I29) Phase 1: make the completeness claim true, not just stated.**
+  D22's own comment claimed "there is no escape hatch, no 'approved wrapper' carve-out … Any future
+  shortcut or custom-wrapper bypass therefore fails this preflight static check immediately." That
+  was false: D22 is a regex over the literal string `connectors.dispatch`, and a real dispatcher
+  decorator (`connectors/connector-write-dispatch.ts`, calling `inner.dispatch(action)`) already
+  passes it — as would a session façade or a raw lazy-mesh `tool.execute()`. This phase does not
+  close those paths (that's capability removal, Phase 2 of the I29 security spec); it corrects the
+  claim and hardens what D22's mechanism actually covers:
+  - **Fixed a live miscount:** every `egress.prune` retention tombstone was itself counted as an
+    outbound egress event, inflating `nimbus prove`'s reported figure. `EgressSourceType`
+    (`egress-source-type.ts`) is now a FROZEN 8-member union (`task`/`prune`/`session`/`sync`/
+    `model`/`peer`/`boot`/`degraded` — an input to `computeEgressRowHash`, so widening it later is a
+    chain break, not a refactor), and `MARKER_SOURCE_TYPES`/`isMarkerSourceType` exclude the
+    `prune`/`boot`/`degraded` bookkeeping rows from the outbound count.
+  - **A per-process boot marker carries a coverage vector.** `egress-coverage.ts` defines
+    `CoverageVector`/`CoverageClass`/`Granularity` and `THIS_BINARY_COVERAGE` (what this binary is
+    built to observe); `egress-boot-marker.ts` `appendBootMarker` writes it, serialized, into the
+    HASHED `source_id` of a `source_type='boot'` row once per process, so the coverage claim is
+    tamper-evident rather than prose. Phase 1 adds **no new coverage** — only `task` is
+    `"per-call"`, every other class is `"none"` — and that is itself the honest part: raising an
+    entry without landing its appender would be the same overclaim in a new place.
+  - **`proveWindow` reports `{ coverage, outboundEgressEvents, indeterminate }`**, replacing the old
+    scalar `tier`. `nimbus prove` / `nimbus egress` never print a bare `0 ✓`: a provable window
+    prints the count with its observed/unobserved scope, and a window with no covering boot marker
+    (or a degraded chain) prints `indeterminate` and exits 1 instead of a hopeful zero.
+  - **The executor's `egressSink` is now a REQUIRED constructor parameter** (no `?`), with a named
+    `NULL_EGRESS_SINK` for the 7 gate-only executors whose actions are local mutations, not egress —
+    an unwired sink is now a compile error, not a silent no-op.
+  - **Documentation now describes the mechanism, not the intent.** The D22 comment, the I29 section
+    of `docs/SECURITY-INVARIANTS.md`, the mirrored `CLAUDE.md`/`GEMINI.md` I29 bullet, and the
+    `nimbus-egress` skill all now state that D22 confines the literal string `connectors.dispatch`
+    to `executor.ts` and `appendEgressEntry` to `egress/*` — not that no wrapper/façade/raw-execute
+    path can exist. No new invariant; I29/D22 unchanged in number and continue to enforce what they
+    always enforced. Spec: `.superpowers/sdd/2026-08-03-i29-phase1-make-the-claim-true/`.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
   Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
   `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a
