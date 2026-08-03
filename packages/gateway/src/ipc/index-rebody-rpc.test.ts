@@ -90,8 +90,8 @@ describe("dispatchIndexRebodyRpc", () => {
 
   test("dry run flags a cannot-improve service before any walk is paid for", async () => {
     const { ctx, db, events } = freshCtx();
-    seedIncomplete(db, "notion", "1");
-    seedIncomplete(db, "confluence", "1");
+    seedIncomplete(db, "gmail", "1");
+    seedIncomplete(db, "zoom", "1");
     seedIncomplete(db, "slack", "1");
 
     await dispatchIndexRebodyRpc("index.rebody", { dryRun: true }, ctx);
@@ -99,7 +99,7 @@ describe("dispatchIndexRebodyRpc", () => {
 
     const done = events.find((e) => e.method === "index.rebodyDone");
     const payload = done?.params as Record<string, unknown> | undefined;
-    expect(payload?.["cannotImprove"]).toEqual(["confluence", "notion"]);
+    expect(payload?.["cannotImprove"]).toEqual(["gmail", "zoom"]);
   });
 
   test("dry run flags a service merely ABSENT from REBODY_IMPROVABLE_SERVICES, not only the pre-inversion hardcoded three", async () => {
@@ -199,33 +199,33 @@ describe("dispatchIndexRebodyRpc", () => {
 
   test("real run with explicit service clears the watermark and, with no scheduler wired, still succeeds — but a cannot-improve service's pending count never moves", async () => {
     const { ctx, db, events } = freshCtx();
-    seedIncomplete(db, "notion", "p1");
-    upsertSchedulerRegistration(db, "notion", 60_000, Date.now(), true);
+    seedIncomplete(db, "gmail", "p1");
+    upsertSchedulerRegistration(db, "gmail", 60_000, Date.now(), true);
     // Simulate an existing watermark that rebody must clear.
     db.query(`UPDATE scheduler_state SET cursor = ? WHERE service_id = ?`).run(
       "some-cursor",
-      "notion",
+      "gmail",
     );
-    expect(loadSchedulerState(db, "notion")?.cursor).toBe("some-cursor");
+    expect(loadSchedulerState(db, "gmail")?.cursor).toBe("some-cursor");
 
-    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "notion" }, ctx);
+    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "gmail" }, ctx);
     expect(out.kind).toBe("hit");
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(loadSchedulerState(db, "notion")?.cursor).toBeNull();
+    expect(loadSchedulerState(db, "gmail")?.cursor).toBeNull();
     const progressEvents = events.filter((e) => e.method === "index.rebodyProgress");
     expect(progressEvents.length).toBe(1);
     const done = events.find((e) => e.method === "index.rebodyDone");
     expect(done).toBeDefined();
     const payload = done?.params as Record<string, unknown> | undefined;
-    expect(payload?.["targeted"]).toEqual(["notion"]);
+    expect(payload?.["targeted"]).toEqual(["gmail"]);
     // succeeded=1 (the watermark clear + no-scheduler path "succeeded") coexists with an
     // UNMOVED pending count — that is the honesty requirement this test is pinning down.
     expect(payload?.["succeeded"]).toBe(1);
     expect(payload?.["failed"]).toBe(0);
-    expect(payload?.["pendingBefore"]).toEqual({ notion: 1 });
-    expect(payload?.["pendingAfter"]).toEqual({ notion: 1 });
-    expect(payload?.["cannotImprove"]).toEqual(["notion"]);
+    expect(payload?.["pendingBefore"]).toEqual({ gmail: 1 });
+    expect(payload?.["pendingAfter"]).toEqual({ gmail: 1 });
+    expect(payload?.["cannotImprove"]).toEqual(["gmail"]);
   });
 
   test("real run auto-targets every service with pending rows, respecting limit", async () => {
@@ -421,15 +421,18 @@ describe("parseRebodyParams", () => {
 describe("REBODY_IMPROVABLE_SERVICES", () => {
   test("membership verified against every item-writing code path for each service (see file-header comment)", () => {
     // Every item-writing call site for each of these passes body: (the declared-full variant):
-    //   bitbucket-sync.ts:138, discord-sync.ts:203, github-sync.ts:207+247 (pr AND issue),
-    //   jira-sync.ts:268, linear-sync.ts:175, obsidian-sync.ts:75, slack-sync.ts:282,
-    //   snyk-issue-mapping.ts:117, _lib/teams/api.ts:89.
+    //   bitbucket-sync.ts:137, confluence-sync.ts:150, discord-sync.ts:203,
+    //   github-sync.ts:207+247 (pr AND issue), jira-sync.ts:268, linear-sync.ts:175,
+    //   notion-sync.ts:245, obsidian-sync.ts:75, slack-sync.ts:282,
+    //   snyk-issue-mapping.ts:117, _lib/teams/api.ts:88.
     for (const service of [
       "bitbucket",
+      "confluence",
       "discord",
       "github",
       "jira",
       "linear",
+      "notion",
       "obsidian",
       "slack",
       "snyk",
@@ -439,10 +442,14 @@ describe("REBODY_IMPROVABLE_SERVICES", () => {
     }
   });
 
-  test("notion, confluence and gmail pass bodyPreview only — never in the set", () => {
-    // notion-sync.ts:201, confluence-sync.ts:141, _lib/gmail/api.ts:174 — all bodyPreview only.
-    expect(REBODY_IMPROVABLE_SERVICES.has("notion")).toBe(false);
-    expect(REBODY_IMPROVABLE_SERVICES.has("confluence")).toBe(false);
+  test("notion and confluence can now be improved by rebody", () => {
+    expect(REBODY_IMPROVABLE_SERVICES.has("notion")).toBe(true);
+    expect(REBODY_IMPROVABLE_SERVICES.has("confluence")).toBe(true);
+    expect(cannotImproveAmong({ notion: 3, confluence: 2, zoom: 1 })).toEqual(["zoom"]);
+  });
+
+  test("gmail passes bodyPreview only — never in the set", () => {
+    // _lib/gmail/api.ts:174 — bodyPreview only.
     expect(REBODY_IMPROVABLE_SERVICES.has("gmail")).toBe(false);
   });
 
@@ -468,10 +475,7 @@ describe("cannotImproveAmong", () => {
   });
 
   test("filters to cannot-improve services only, sorted", () => {
-    expect(cannotImproveAmong({ slack: 2, notion: 5, jira: 1, confluence: 3 })).toEqual([
-      "confluence",
-      "notion",
-    ]);
+    expect(cannotImproveAmong({ slack: 2, gmail: 5, jira: 1, zoom: 3 })).toEqual(["gmail", "zoom"]);
   });
 
   test("a pending map with no cannot-improve services yields empty list", () => {

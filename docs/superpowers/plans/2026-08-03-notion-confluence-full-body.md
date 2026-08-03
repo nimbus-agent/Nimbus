@@ -291,7 +291,12 @@ export type ItemBodyFetchState = { modifiedAt: number; bodyFetch: string | null 
  * could gain anything: when we last saw it change, and the verdict the
  * connector recorded last time it tried. A `bodyFetch` of `"complete"` or
  * `"capped"` both mean "do not re-fetch"; `null` means never attempted, or
- * attempted and errored, so retry.
+ * attempted and errored — which marks the item retryable in principle, but
+ * does not by itself guarantee a retry happens. A sync that folds this item's
+ * timestamp into its watermark before attempting the body fetch (Notion:
+ * see the errored branch in `connectors/notion-sync.ts`) will normally have
+ * already advanced past it by the time the fetch fails, so the item is
+ * re-examined only on a later edit or an explicit `nimbus index rebody`.
  */
 export function selectItemBodyFetchState(db: Database, id: string): ItemBodyFetchState | null {
   const row = db

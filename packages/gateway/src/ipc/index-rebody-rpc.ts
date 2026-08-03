@@ -31,9 +31,11 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  * implies "will complete". `REBODY_IMPROVABLE_SERVICES` below tracks
  * completeness: Gmail is bounded-window (cheap) but its connector still never
  * declares a full `body:`, so re-syncing it costs little AND recovers
- * nothing. Notion/Confluence are full-scan (expensive) AND cannot complete —
- * the worst combination, which is exactly why the dry-run result surfaces
- * `cannotImprove` before the caller pays for the walk.
+ * nothing. Notion and Confluence are both full-scan (expensive) but both now
+ * complete: Confluence recovers a page's whole body in the search response it
+ * already pays for, and Notion recovers bodies over successive budgeted
+ * passes, converging once no pass is cut short. Both were the "expensive AND
+ * cannot complete" worst case until 2026-08-03.
  *
  * There is deliberately no `--only-truncated` mode today, and it is not an
  * oversight — it is not implementable given how syncs work. A sync fetches by
@@ -133,18 +135,20 @@ export type RebodyParams = {
  *      EXCLUDED here (the safe direction) until/unless the pending grouping
  *      is made type-aware.
  *
- * Membership verified 2026-08-02 — every item-writing code path for each of
+ * Membership verified 2026-08-03 — every item-writing code path for each of
  * these services passes `body:`:
  *
- *   bitbucket  bitbucket-sync.ts:138        body: plainTextPreviewFromHtml(...)
- *   discord    discord-sync.ts:203          body: full
- *   github     github-sync.ts:207,247       body: body ?? "" (pr AND issue — both checked)
- *   jira       jira-sync.ts:268             body: d.bodyPrev
- *   linear     linear-sync.ts:175           body: desc ?? ""
- *   obsidian   obsidian-sync.ts:75          body: note.body
- *   slack      slack-sync.ts:282            body: full
- *   snyk       snyk-issue-mapping.ts:117    body: description
- *   teams      _lib/teams/api.ts:89         body: full
+ *   bitbucket   bitbucket-sync.ts:137        body: plainTextFromHtml(desc)
+ *   confluence  confluence-sync.ts:150       body: text (declared-full branch of the bodyInput ternary)
+ *   discord     discord-sync.ts:203          body: full
+ *   github      github-sync.ts:207,247       body: body ?? "" (pr AND issue — both checked)
+ *   jira        jira-sync.ts:268             body: d.bodyPrev
+ *   linear      linear-sync.ts:175           body: desc ?? ""
+ *   notion      notion-sync.ts:245           body: fetched.text
+ *   obsidian    obsidian-sync.ts:75          body: note.body
+ *   slack       slack-sync.ts:282            body: full
+ *   snyk        snyk-issue-mapping.ts:117    body: description
+ *   teams       _lib/teams/api.ts:88         body: full
  *
  * Add an entry only when you migrate a connector's LAST remaining
  * bodyPreview-only item type to pass `body:` — not when only some of its
@@ -166,10 +170,12 @@ export type RebodyParams = {
  */
 export const REBODY_IMPROVABLE_SERVICES: ReadonlySet<string> = new Set([
   "bitbucket",
+  "confluence",
   "discord",
   "github",
   "jira",
   "linear",
+  "notion",
   "obsidian",
   "slack",
   "snyk",
