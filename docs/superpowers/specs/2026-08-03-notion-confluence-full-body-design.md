@@ -119,7 +119,10 @@ bloating. It exports:
 ```ts
 export const NOTION_BODY_FETCH_BUDGET_PER_SYNC = 200;
 
-export type NotionPageBodyResult = { text: string; truncated: boolean };
+/** `capped` = permanently truncated (per-page request cap). `errored` = retry next pass. */
+export type NotionPageBodyOutcome = "complete" | "capped" | "errored";
+
+export type NotionPageBodyResult = { text: string; outcome: NotionPageBodyOutcome };
 
 export async function fetchNotionPageText(
   deps: { accessToken: string; rateLimiter: ProviderRateLimiter; budget: { left: number } },
@@ -131,17 +134,42 @@ export async function fetchNotionPageText(
 Text comes from each block's `rich_text[].plain_text` (Notion supplies `plain_text` on every
 rich-text item — simpler and more faithful than re-walking `text.content`).
 
-**Depth.** Recurse **only** into pure container blocks — `column_list`, `column`, `toggle`,
-`synced_block` — and only when `has_children` is true, to a maximum depth of 2. Containers
-are the blocks that hold text but carry none of their own: a two-column page returns
-essentially nothing without recursion, and toggle-structured FAQ pages are exactly the
-"definitions" shape the glossary agent wants. `child_page` and `child_database` are never
-followed — they are separate items the search walk already indexes in their own right, and
-following them would double-index and blow the budget.
+**Depth.** Recurse into **any** block with `has_children`, to a maximum depth of 2, with
+exactly two exclusions: `child_page` and `child_database`. Those two are separate items the
+search walk already indexes in their own right, so following them would double-index and blow
+the budget.
 
-**Budget.** `rateLimiter.acquire("notion")` moves to **per request**, and every request
-decrements a per-sync budget of 200. Nested-container requests draw on the same budget as
-top-level ones, so a pathological page cannot starve the rest of the workspace.
+The rule is deliberately *not* "pure container blocks only" (`column_list`, `column`,
+`toggle`, `synced_block`). Carrying text of its own and having children worth fetching are
+independent properties, and conflating them loses real content: `bulleted_list_item`,
+`numbered_list_item`, `to_do`, `callout` and `quote` all carry their own `rich_text` **and**
+routinely hold nested children. Nested bullets are among the most common structures in a
+Notion decision doc, and a containers-only rule would silently drop every sub-bullet. When a
+block both has text and has children, both are collected: its own `rich_text` first, then its
+children's.
+
+**Two bounds, and only one of them can truncate a page.**
+`rateLimiter.acquire("notion")` moves to **per request**. Every request decrements a per-sync
+budget of `NOTION_BODY_FETCH_BUDGET_PER_SYNC = 200`, and any single page's walk is capped at
+`NOTION_BODY_REQUESTS_PER_PAGE_MAX = 10` — necessary once list items are recursed into, since
+a list-heavy page could otherwise cost dozens of requests and dominate a whole pass.
+
+The global budget is checked **before starting a page, never during it**: if fewer than
+`NOTION_BODY_REQUESTS_PER_PAGE_MAX` requests remain, the pass stops and the page is left
+untouched for the next one. A page that is started can therefore always afford to finish.
+
+This is a deliberate invariant, not an incidental ordering: it means **truncation only ever
+has permanent causes** — the per-page request cap, or the store's 16 KiB clamp. It is never
+caused by the transient global budget. So a truncated page is truncated identically on every
+future pass, and re-fetching it can never gain anything. Without this rule the two causes are
+indistinguishable in the stored row, and the retryable case (budget) and the permanent case
+(page too big) have to be told apart after the fact — which is exactly the trap described
+under *Skip-if-fresh* below.
+
+**The connector records the verdict.** Every page it actually attempts is upserted with
+`metadata.bodyFetch` set to `"complete"` or `"capped"`. A page it never attempts, and a page
+whose fetch errored, carry no `bodyFetch` key at all — so errors retry on the next pass,
+which is what we want.
 
 **Rate limit.** [`sync/rate-limiter.ts:103`](../../../packages/gateway/src/sync/rate-limiter.ts)
 raises notion from `requestsPerMinute: 30` to **120** (burst unchanged at 5). Notion's
@@ -151,17 +179,44 @@ At 120 a full-budget pass is ~100 seconds, still comfortably under the published
 This is a shared table, so the change is scoped to the single `notion` row and affects no
 other provider's quota.
 
-### Skip-if-fresh
+### Skip-if-fresh (Notion only)
 
-Before spending budget on a page, a local read checks whether we already have it:
+Before spending budget on a page, a local read checks whether we already have everything we
+are ever going to fetch for it:
 
 ```
-body_complete = 1 AND modified_at == <this page's last_edited_time>
+modified_at == isoMs(<this page's last_edited_time>)
+  AND json_extract(metadata, '$.bodyFetch') IS NOT NULL
   -> skip the block fetch entirely, and skip the upsert (it would be a no-op write)
 ```
 
 This is a SQLite read, not an API call. It is what makes repeated passes cheap: pass 5 of a
 backfill re-walks search but re-fetches only the pages it has not already completed.
+
+**Confluence has no skip-if-fresh and does not need one.** Its body arrives inside the search
+payload that the sync already pays for, so skipping saves neither a request nor bandwidth.
+The check exists solely to protect the Notion per-page fetch budget.
+
+**Why this keys on `metadata.bodyFetch` and not on `body_complete`, and why that is
+load-bearing rather than an optimisation.** A page whose text genuinely exceeds 16 KiB, or
+whose block tree exceeds the per-page request cap, is stored with `body_complete = 0` —
+correct and permanent, since re-fetching can never improve it. A `body_complete = 1` check
+alone would therefore never skip such a page, and every pass would re-fetch its whole block
+tree forever. That is not merely wasted quota: **if a workspace holds more than
+`NOTION_BODY_FETCH_BUDGET_PER_SYNC / NOTION_BODY_REQUESTS_PER_PAGE_MAX` such pages, the budget
+is exhausted on every pass, the watermark is pinned on every pass, and Notion never converges
+to incremental sync** — it re-walks the entire workspace every five minutes in perpetuity.
+This check is what makes the convergence guarantee above actually hold.
+
+A length heuristic (`length(body) >= BODY_MAX_PROSE`) was considered as a way to detect the
+16 KiB case without a metadata key, and rejected on two counts. It cannot see the per-page-cap
+case at all, since such a page is usually well under the cap. And it is off by one against
+`clampBody` ([`body-caps.ts:24-31`](../../../packages/gateway/src/index/body-caps.ts)), which
+drops one extra unit when the cut would split a surrogate pair — so a clamped body can be
+exactly `cap - 1` long, and a `>= cap` test would silently fail to skip precisely the pages
+most likely to contain emoji or other non-BMP text. An explicit verdict written by the
+connector that knows why it stopped is both narrower and more honest than inferring the reason
+from a length.
 
 ### Convergence
 
@@ -185,19 +240,29 @@ waiting for the ordinary 5-minute tick backfills at ~2,400 pages/hour, needs no 
 change, and cannot starve anything. Fixing continuation fairness in the scheduler is a
 worthwhile separate change with its own blast radius; it is not this slice.
 
-**The pin condition is "budget exhausted", deliberately not "anything incomplete".** A page
-the integration lacks permission to read fails every time. If incompleteness pinned the
-watermark, that one page would pin it forever and force a full workspace re-walk every five
-minutes in perpetuity. Such a page indexes title-only with `body_complete = 0` and does not
-block convergence — `nimbus index rebody` remains the way to retry it deliberately.
+**The pin condition is "the budget stopped the pass", deliberately not "anything incomplete".**
+Two kinds of page are permanently incomplete: one the integration lacks permission to read,
+and one whose block tree exceeds the per-page request cap. If incompleteness pinned the
+watermark, either kind would pin it forever and force a full workspace re-walk every five
+minutes in perpetuity. Both index with `body_complete = 0` and neither blocks convergence —
+`nimbus index rebody` remains the way to retry them deliberately.
 
 ### Error handling
 
 A per-page body fetch **never throws**. Any non-OK response returns the text gathered so far
-with `truncated: true`; the page still upserts with its title and URL, so the worst case is
-exactly today's behaviour for that page and never worse. A **429 additionally zeroes the
-remaining budget**, so the pass backs off rather than spending 200 requests discovering it
-is rate-limited. The 429 still calls `rateLimiter.penalise("notion", 60_000)` as today.
+with `outcome: "errored"`; the page still upserts with its title, URL and whatever text was
+recovered, so the worst case is exactly today's behaviour for that page and never worse. A
+**429 additionally zeroes the remaining budget**, so the pass backs off rather than spending
+200 requests discovering it is rate-limited. The 429 still calls
+`rateLimiter.penalise("notion", 60_000)` as today.
+
+`"errored"` is deliberately a distinct outcome from `"capped"`, not a flavour of truncation.
+Both set `bodyTruncated: true` and so both write `body_complete = 0`, but only `"capped"`
+records `metadata.bodyFetch`. An error is a transient condition — a network blip, a 429, a
+permission that gets granted tomorrow — and must be retried on the next pass; a cap is a
+permanent property of the page and must never be retried. Collapsing the two would either
+strand errored pages forever or re-fetch capped pages forever, depending on which way it
+collapsed.
 
 The existing throw-on-429 in the *search* call is unchanged — the search walk is cheap,
 bounded, and a failure there genuinely means the sync cannot proceed.
@@ -206,11 +271,12 @@ bounded, and a failure there genuinely means the sync cannot proceed.
 
 `body_complete` is computed solely as `raw.length <= cap`
 ([`item-store.ts:85`](../../../packages/gateway/src/index/item-store.ts)), so a connector
-cannot express "I passed a body, but I knowingly did not fetch all of it". Budget-truncated
-Notion pages need exactly that: their text may be well under 16 KiB while being an
-incomplete rendering of the page. Writing `body_complete = 1` there would be a false claim
-in the exact column the previous slice added for honesty, and would make
-`nimbus index rebody` consider the page done and never retry it.
+cannot express "I passed a body, but I knowingly did not fetch all of it". Notion pages with
+outcome `"capped"` or `"errored"` need exactly that: their text may be well under 16 KiB
+while being an incomplete rendering of the page. Writing `body_complete = 1` there would be a
+false claim in the exact column the previous slice added for honesty, and would make
+`nimbus index rebody` consider the page done and never retry it. The connector therefore
+passes `bodyTruncated: outcome !== "complete"`.
 
 `IndexedItemBodyInput` gains a third field on the `body` arm only:
 
@@ -297,18 +363,77 @@ Cases:
 | Confluence | missing/empty `body.storage` → page still indexes, title-only |
 | Confluence | a >16 KiB body clamps to the cap and reports `body_complete = 0` |
 | Notion | multi-page block pagination via `start_cursor` concatenates in order |
-| Notion | container recursion at depth 2 (`column_list` → `column` → text) |
+| Notion | recursion at depth 2 through a container (`column_list` → `column` → text) |
+| Notion | recursion into a `bulleted_list_item` that has children collects **both** its own text and its sub-bullets, in order |
 | Notion | `child_page` / `child_database` are **not** followed |
 | Notion | depth is capped at 2 — a third level is not requested |
-| Notion | budget exhaustion → `truncated` → `body_complete = 0`, asserted by **reading the column**, not by trusting the call |
-| Notion | watermark pinned when the budget is exhausted; advanced when it is not |
-| Notion | 429 mid-walk → page indexes title-only, remaining budget zeroed, **sync still succeeds** |
+| Notion | a page is never **started** when fewer than `NOTION_BODY_REQUESTS_PER_PAGE_MAX` requests remain — asserted by counting fetches, so budget can never truncate a page mid-walk |
+| Notion | per-page cap hit → `truncated` → `body_complete = 0` **and** `metadata.bodyFetch = "capped"`, asserted by **reading the columns**, not by trusting the call |
+| Notion | a `"capped"` page with unchanged `modified_at` is skipped on the next pass — the regression test for the perpetual-re-fetch trap |
+| Notion | >200 capped pages still converge: the watermark advances rather than pinning every pass |
+| Notion | watermark pinned when the budget stops the pass; advanced when it does not |
+| Notion | 429 mid-walk → page indexes title-only, **no** `metadata.bodyFetch` key, remaining budget zeroed, **sync still succeeds** |
+| Notion | an errored page is retried on the next pass (absence of `bodyFetch` is the retry signal) |
 | Notion | a non-429 error mid-walk does not pin the watermark |
-| Notion | already-complete + unchanged `modified_at` → zero fetches, zero upserts |
+| Notion | `bodyFetch = "complete"` + unchanged `modified_at` → zero fetches, zero upserts |
+| Notion | changed `modified_at` re-fetches even when `bodyFetch` is present |
 | Store | `bodyTruncated: true` forces `body_complete = 0` even for text under the cap |
 | Store | passing `bodyPreview` + `bodyTruncated` together is a type error |
 | html | `plainTextFromHtml` does not truncate; `plainTextPreviewFromHtml` still does |
 | rebody | `confluence` and `notion` are no longer in `cannotImprove` |
+
+## Deferred, with triggers
+
+Two review findings are real but deliberately not addressed in this slice. Each is recorded
+with the concrete condition that should reopen it.
+
+### Search-walk amplification on large workspaces
+
+Because the watermark is pinned until the backlog drains, every pass re-walks the search
+result set from the beginning. The re-walk is cheap **per page** — skip-if-fresh is a SQLite
+read, not an API call — but the search requests themselves are real, and they are quadratic in
+workspace size:
+
+```
+passes           = N / BUDGET
+search reqs/pass = N / 100          (page_size = 100)
+total search     = N² / (100 · BUDGET)
+```
+
+| Workspace | Body requests | Search requests | Amplification |
+| --- | --- | --- | --- |
+| 1,000 pages | 1,000 | 50 | 1.05× |
+| 10,000 pages | 10,000 | 5,000 | 1.5× |
+| 50,000 pages | 50,000 | 125,000 | 3.5× |
+
+Acceptable to ~10,000 pages, poor beyond it. **The obvious fix — persisting a search
+`start_cursor` across passes — is not safe.** Notion's `/v1/search` sorts by
+`last_edited_time` descending, so the result set reorders whenever anyone edits a page. A
+cursor resumed five minutes later indexes into a set that has shifted underneath it, silently
+skipping or duplicating pages. Notion's search also accepts no `last_edited_time` filter (only
+an `object` type filter and a sort), so the walk cannot be narrowed server-side either. A
+correct fix needs a locally persisted backlog queue keyed by page id, which is a schema change
+and its own design.
+
+**Trigger to reopen:** a real workspace above ~10,000 pages, or an observed initial backfill
+that does not converge within a day.
+
+### Confluence batch-size fallback
+
+The review suggests retrying a failed batch at a smaller `limit` (10 or 5) when a fattened
+`body.storage` payload provokes a timeout or 502/504. Not implemented: this is a speculative
+failure with no observation behind it, `limit=25` with a body expand is ordinary Atlassian
+usage, and an adaptive-retry path adds branches that each need ≥80% coverage to defend a
+hypothesis.
+
+Worth being explicit about the failure mode we are accepting, since it is pre-existing and
+this change makes it marginally more likely: a non-OK Confluence search response **throws**,
+aborting the sync without advancing the cursor, so the next scheduled tick retries the same
+request. A persistent 5xx on one batch means that connector stops making progress — it is not
+silent, and it is not data loss, but it is a stall.
+
+**Trigger to reopen:** any observed timeout or 502/504 from the expanded search. The fix is
+then a single one-shot retry of that batch at `limit=10`, not general adaptive sizing.
 
 ## Risks
 
@@ -316,5 +441,6 @@ Cases:
 | --- | --- |
 | Confluence `expand=body.storage` behaves differently against a live Cloud instance than against the mocked search response | The `expand` mechanism itself is already exercised by the existing `history.lastUpdated,space,version` expand; the batch limit drop to 25 is the hedge against payload rejection. Verified against mocks in CI; a live discrepancy shows up as an empty body, which degrades to today's behaviour, not to a failure |
 | The notion rate-limit bump (30 → 120) is wrong for some workspace or plan tier | 120 is a third under Notion's documented ~180/min. A 429 still penalises for 60s and now also zeroes the pass budget, so the failure mode is a slower backfill, not an aborted sync |
-| A very large workspace takes many passes to backfill | By design, and bounded: ~2,400 pages/hour with no effect on other connectors. Progress is visible via `body_complete` counts through `nimbus index rebody --dry-run` |
-| `notion-page-body.ts` recursion misses text in an unanticipated container block type | The container set is explicit and small; an unlisted container's own `rich_text` still indexes, only its children are missed. Widening the set later is additive |
+| A very large workspace takes many passes to backfill | By design, and bounded: ~2,400 pages/hour with no effect on other connectors. Progress is visible via `body_complete` counts through `nimbus index rebody --dry-run`. Search-request amplification above ~10,000 pages is quantified and deferred — see [§ Deferred](#search-walk-amplification-on-large-workspaces) |
+| A page's text is missed below depth 2 | Recursion now follows any `has_children` block, so the loss is confined to genuinely deep nesting (a sub-sub-bullet), not to whole structural categories. Such a page reports `truncated`, so it is visible as `body_complete = 0` rather than silently wrong |
+| `metadata.bodyFetch` makes `metadata` load-bearing for sync control flow, not just display | It is a connector-owned key on a connector-owned row, read by exactly one query in the same connector. It stays well inside the 64 KB `RAW_META_MAX_BYTES` limit and is invisible to every other consumer |
