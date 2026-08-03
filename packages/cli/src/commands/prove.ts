@@ -6,13 +6,50 @@ import { getCliPlatformPaths } from "../paths.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
+
+export interface ProveCompleteness {
+  readonly coverage: Readonly<Record<string, string>>;
+  readonly outboundEgressEvents: number;
+  readonly indeterminate: boolean;
+}
+
 type ProveResult = {
   rows: EgressRow[];
-  completeness: { tier: string; outboundEgressEvents: number };
+  completeness: ProveCompleteness;
   verify: VerifyResult;
   receipt?: { sigB64: string; pubkeyB64: string; digest: string };
 };
 type Head = { head: string; count: number };
+
+/** Pure renderer — the whole point is that this is testable without a gateway. */
+export function formatProveResult(input: {
+  readonly delta: number;
+  readonly completeness: ProveCompleteness;
+  readonly chainOk: boolean;
+}): string {
+  if (!input.chainOk || input.completeness.indeterminate) {
+    const why = !input.chainOk
+      ? "the egress chain is unverifiable"
+      : "no boot marker covers this window, so nothing recorded what was being observed";
+    return `indeterminate — cannot prove zero egress: ${why}`;
+  }
+  const observed = Object.entries(input.completeness.coverage)
+    .filter(([, g]) => g !== "none")
+    .map(([c]) => c)
+    .sort();
+  const unobserved = Object.entries(input.completeness.coverage)
+    .filter(([, g]) => g === "none")
+    .map(([c]) => c)
+    .sort();
+  const scope = observed.includes("task") ? "gated connector actions" : observed.join(", ");
+  const lines = [
+    `outbound egress events during this query: ${String(input.delta)} (scope: ${scope})`,
+  ];
+  if (unobserved.length > 0) {
+    lines.push(`  not observed: ${unobserved.join(", ")}`);
+  }
+  return lines.join("\n");
+}
 
 async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   const state = await readGatewayState(getCliPlatformPaths());
@@ -119,7 +156,11 @@ export async function runEgressReport(
     return;
   }
   console.log(
-    `outbound egress events: ${String(out.completeness.outboundEgressEvents)} (tier: ${out.completeness.tier})`,
+    formatProveResult({
+      delta: out.completeness.outboundEgressEvents,
+      completeness: out.completeness,
+      chainOk: out.verify.ok,
+    }),
   );
   for (const r of out.rows) {
     const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
@@ -143,10 +184,18 @@ export async function runProve(args: string[]): Promise<void> {
     }
     const after = await client.call<Head>("egress.head", {});
     const delta = after.count - before.count;
-    if (delta === 0) {
-      console.log("outbound egress events during this query: 0 ✓");
-    } else {
-      console.log(`outbound egress events during this query: ${String(delta)}`);
+    const window = await client.call<ProveResult>("egress.proveWindow", {});
+    console.log(
+      formatProveResult({
+        delta,
+        completeness: window.completeness,
+        chainOk: window.verify.ok,
+      }),
+    );
+    if (window.verify.ok === false || window.completeness.indeterminate) {
+      process.exitCode = 1;
+    }
+    if (delta !== 0) {
       await runEgressReport(client, { json: false, sign });
     }
   });
