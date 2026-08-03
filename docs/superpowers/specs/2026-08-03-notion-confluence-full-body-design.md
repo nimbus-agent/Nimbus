@@ -119,7 +119,7 @@ bloating. It exports:
 ```ts
 export const NOTION_BODY_FETCH_BUDGET_PER_SYNC = 200;
 
-/** `capped` = permanently truncated (per-page request cap). `errored` = retry next pass. */
+/** `capped` = permanently truncated (per-page request cap). `errored` = transient; see "Error handling" below for why that does not mean "retried next pass". */
 export type NotionPageBodyOutcome = "complete" | "capped" | "errored";
 
 export type NotionPageBodyResult = { text: string; outcome: NotionPageBodyOutcome };
@@ -186,8 +186,10 @@ under *Skip-if-fresh* below.
 
 **The connector records the verdict.** Every page it actually attempts is upserted with
 `metadata.bodyFetch` set to `"complete"` or `"capped"`. A page it never attempts, and a page
-whose fetch errored, carry no `bodyFetch` key at all — so errors retry on the next pass,
-which is what we want.
+whose fetch errored, carry no `bodyFetch` key at all — that absence is the signal that a
+future fetch could still gain something. It is not, on its own, a guarantee that a future pass
+*will* re-attempt it; see "Error handling" below for why the watermark usually moves past an
+errored page anyway, and what recovery path actually applies.
 
 **Rate limit.** [`sync/rate-limiter.ts:103`](../../../packages/gateway/src/sync/rate-limiter.ts)
 raises notion from `requestsPerMinute: 30` to **120** (burst unchanged at 5). Notion's
@@ -284,10 +286,32 @@ recovered, so the worst case is exactly today's behaviour for that page and neve
 `"errored"` is deliberately a distinct outcome from `"capped"`, not a flavour of truncation.
 Both set `bodyTruncated: true` and so both write `body_complete = 0`, but only `"capped"`
 records `metadata.bodyFetch`. An error is a transient condition — a network blip, a 429, a
-permission that gets granted tomorrow — and must be retried on the next pass; a cap is a
-permanent property of the page and must never be retried. Collapsing the two would either
+permission that gets granted tomorrow — and *ought* to be retried, in contrast to a cap, which
+is a permanent property of the page and must never be retried. Collapsing the two would either
 strand errored pages forever or re-fetch capped pages forever, depending on which way it
 collapsed.
+
+**"No `bodyFetch` key" is a retry *signal*, not a retry *guarantee*.** The watermark check in
+`notionWatermarkOrAdvanceMax` runs, and folds this page's `last_edited_time` into `maxEdited`,
+*before* the body fetch is attempted — the fetch outcome cannot retroactively un-advance a
+watermark that has already moved past it. Because search is sorted descending by
+`last_edited_time`, the very next pass's watermark will normally sit at or above this page's
+timestamp, so it is skipped by rule 1 before rule 2 (skip-if-fresh) or the fetch ever runs. In
+practice an errored page is re-examined only when it is edited again in Notion (producing a
+newer `last_edited_time` that clears the watermark) or when `nimbus index rebody --service
+notion` clears the watermark outright and forces a full re-walk.
+
+Two more targeted fixes were considered and rejected. Excluding only the errored page's own
+contribution to `maxEdited` (rather than the running max over every page in the batch) only
+helps in the narrow case where the errored page happens to be the newest one in the workspace —
+any other successful, newer page has already pushed the watermark past it regardless. Carrying
+the errored page's id forward so a later pass can specifically re-request it would need a
+cursor-codec change to encode a set of ids alongside the watermark, which is out of scope for
+this slice. Pinning the watermark at or below the oldest error reintroduces exactly the
+pathology *Convergence* above exists to prevent: one permanently-unreadable page — a 403 that
+never clears, say — would pin the watermark forever and force a full workspace re-walk every
+five minutes in perpetuity. `nimbus index rebody` is therefore the recovery path, not an
+automatic next-pass retry.
 
 The existing throw-on-429 in the *search* call is unchanged — the search walk is cheap,
 bounded, and a failure there genuinely means the sync cannot proceed.
@@ -401,7 +425,7 @@ Cases:
 | Notion | >200 capped pages still converge: the watermark advances rather than pinning every pass |
 | Notion | watermark pinned when the budget stops the pass; advanced when it does not |
 | Notion | 429 mid-walk → page indexes title-only, **no** `metadata.bodyFetch` key, remaining budget zeroed, **sync still succeeds** |
-| Notion | an errored page is retried on the next pass (absence of `bodyFetch` is the retry signal) |
+| Notion | an errored page indexes title-only with no `bodyFetch` key, and the sync still succeeds |
 | Notion | a non-429 error mid-walk does not pin the watermark |
 | Notion | `bodyFetch = "complete"` + unchanged `modified_at` → zero fetches, zero upserts |
 | Notion | changed `modified_at` re-fetches even when `bodyFetch` is present |

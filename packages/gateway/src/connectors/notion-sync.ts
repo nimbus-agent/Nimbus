@@ -221,6 +221,18 @@ async function notionConsumeSearchResultRow(
   const title = extractTitleFromProperties(row["properties"]);
   const url = `https://www.notion.so/${id.replaceAll("-", "")}`;
   acc.upserted += 1;
+  // The missing `bodyFetch` key marks this page as retryable in principle,
+  // but `notionWatermarkOrAdvanceMax` already folded its `last_edited_time`
+  // into `maxEdited` above, before we knew the fetch would fail — and search
+  // is sorted descending by that timestamp, so the *next* pass's watermark
+  // will normally sit at or above it. In practice this page is re-examined
+  // only when it is edited again in Notion (a newer `last_edited_time`) or
+  // when `nimbus index rebody --service notion` clears the watermark and
+  // forces a full re-walk. This is deliberate, not a bug: excluding an
+  // errored page's own contribution to `maxEdited` only helps when it
+  // happens to be the newest page in the workspace, and pinning the
+  // watermark below it would let one permanently-unreadable page (a 403,
+  // say) re-walk the entire workspace every sync, forever.
   const metadata: Record<string, unknown> =
     fetched.outcome === "errored"
       ? { notionPageId: id }

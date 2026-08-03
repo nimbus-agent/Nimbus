@@ -1179,7 +1179,15 @@ test("a capped page is skipped on the next pass — no perpetual re-fetch", asyn
   db.close();
 });
 
-test("an errored page records no bodyFetch and is retried", async () => {
+// Fix round 1 correction: this test only runs one pass and asserts nothing
+// about a retry actually happening. It does NOT — the watermark check runs
+// (and folds this page's last_edited_time into maxEdited) *before* the fetch
+// attempt, so a later pass's watermark normally already sits at or above
+// this page. The missing `bodyFetch` key is real (it marks the page as
+// retryable in principle), but the page is only re-examined when it is
+// edited again in Notion or when `nimbus index rebody` clears the watermark.
+// See notion-sync.ts for the full rationale.
+test("an errored page indexes title-only with no bodyFetch key, and the sync still succeeds", async () => {
   const db = createMemoryIndexDb();
   const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
   const page = makePage("pg-1");
@@ -1196,12 +1204,13 @@ test("an errored page records no bodyFetch and is retried", async () => {
   }) as typeof fetch;
   const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} })
     .sync(syncTestContext(db, vault), null);
-  expect(r.itemsUpserted).toBe(1); // sync still succeeds
+  expect(r.itemsUpserted).toBe(1);
   const row = db
-    .query<{ meta: string; body_complete: number }, []>(
-      "SELECT metadata AS meta, body_complete FROM item WHERE service = 'notion'",
+    .query<{ title: string; meta: string; body_complete: number }, []>(
+      "SELECT title, metadata AS meta, body_complete FROM item WHERE service = 'notion'",
     )
     .get();
+  expect(row?.title).toBe("Hello"); // title-only: the title still indexed despite the body error
   expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBeUndefined();
   expect(row?.body_complete).toBe(0);
   db.close();

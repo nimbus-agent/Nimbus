@@ -988,7 +988,7 @@ describeWithFetchRestore("notion-sync", () => {
     db.close();
   });
 
-  test("an errored page records no bodyFetch and is retried", async () => {
+  test("an errored page indexes title-only with no bodyFetch key, and the sync still succeeds", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
     const page = makePage("pg-1");
@@ -1003,16 +1003,22 @@ describeWithFetchRestore("notion-sync", () => {
       }
       return Promise.resolve(new Response("{}", { status: 500 }));
     }) as unknown as typeof fetch;
+    // A block-fetch failure must not reject the whole sync — the page still
+    // indexes with what we already know about it (title, URL), just no body.
     const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
       syncTestContext(db, vault),
       null,
     );
-    expect(r.itemsUpserted).toBe(1); // sync still succeeds
+    expect(r.itemsUpserted).toBe(1);
     const row = db
-      .query<{ meta: string; body_complete: number }, []>(
-        "SELECT metadata AS meta, body_complete FROM item WHERE service = 'notion'",
+      .query<{ title: string; meta: string; body_complete: number }, []>(
+        "SELECT title, metadata AS meta, body_complete FROM item WHERE service = 'notion'",
       )
       .get();
+    expect(row?.title).toBe("Hello"); // title-only: the title still indexed despite the body error
+    // Absence of `bodyFetch` is the retry signal, but a later pass only
+    // re-examines this page if it is edited again (new last_edited_time) or
+    // `nimbus index rebody` clears the watermark — see notion-sync.ts.
     expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBeUndefined();
     expect(row?.body_complete).toBe(0);
     db.close();
