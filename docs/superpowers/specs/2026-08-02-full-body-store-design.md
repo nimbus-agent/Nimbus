@@ -475,3 +475,10 @@ side effect, and also stayed inert for the same reason.
 `docs/CHANGELOG.md`, `docs/roadmap.md` (the S1 block and the Wave 5 `decisions` entry), and
 `docs/cli-reference.md`/`docs/schema-reference.md` carry the corrected 10/1/2 accounting;
 this spec's own body is left as the historical record of what was planned, not what shipped.
+
+### Follow-up 2026-08-03 — Notion + Confluence
+
+The 10/1/2 accounting above was accurate when written. `notion:page` and
+`confluence:page` were migrated from `bodyPreview: ""` to a declared-full
+`body:` on 2026-08-03, making the count **12 full / 1 partial / 2 inert**.
+Design: `2026-08-03-notion-confluence-full-body-design.md`.

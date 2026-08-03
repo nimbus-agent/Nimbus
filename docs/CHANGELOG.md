@@ -8,6 +8,55 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
+  Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
+  `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a
+  declared-full `body:`, joining the 16 KiB `PROSE_HEAVY_TYPES` cap.
+
+  **Confluence** (`connectors/confluence-sync.ts`) gets the whole page body for free: the CQL
+  search's `expand` param grows from `history.lastUpdated,space,version` to
+  `history.lastUpdated,space,version,body.storage`, and a new `confluenceBodyText()` helper pulls
+  `body.storage.value` (run through `plainTextFromHtml`) off the same response — zero extra API
+  requests. The larger per-row payload halved the page-fetch size (50 → 25) to stay within response
+  limits.
+
+  **Notion** (`connectors/notion-page-body.ts`) has no equivalent expand — a page's content is a
+  separate block tree — so it walks `blocks/children` recursively (depth capped at 3, a cycle
+  guard, not a cost bound) under two budgets: `NOTION_BODY_FETCH_BUDGET_PER_SYNC` (200 requests,
+  shared across every page in one sync pass) and `NOTION_BODY_REQUESTS_PER_PAGE_MAX` (10 requests,
+  per page — without it one list-heavy page could dominate a whole pass). A page that exhausts its
+  per-page budget gets `outcome: "capped"` (permanent — never re-fetched, since it would hit the
+  same cap again) or `"errored"` (transient — retried on a later pass or an explicit `nimbus index
+  rebody`); either way the page still indexes with its title and URL rather than failing outright.
+  Pages that don't fit in one pass converge over Notion's existing 5-minute sync cadence
+  (`defaultIntervalMs: 5 * 60 * 1000`) rather than in a single run. The Notion rate-limit quota
+  (`sync/rate-limiter.ts` `DEFAULT_QUOTAS.notion`) was raised from 30 to 120 requests/minute
+  (`burstSize` unchanged at 5) to give the block-tree walk headroom.
+
+  A new `bodyTruncated` flag on `IndexedItemBodyInput` (`index/item-store.ts`) lets a connector
+  assert "this body is incomplete" even when the raw text happens to fit under the cap — Notion's
+  `"capped"`/`"errored"` outcomes set it, so `body_complete` reflects the fetch outcome, not just a
+  length check. It is an in-memory input field read at write time, not a new column — no migration,
+  schema stays **V48**.
+
+  Fixed a live bug found while wiring the above: Teams (`connectors/_lib/teams/api.ts`) was calling
+  `plainTextPreviewFromHtml(content, BODY_MAX_PROSE)` — pre-truncating to the 16 KiB cap before
+  handing text to the store — so the store's own `raw.length <= cap` check always passed and every
+  over-cap Teams message was wrongly recorded `body_complete = 1`. Teams now calls a new
+  `plainTextFromHtml()` (`string/html-plain-text.ts`, no length limit) and lets the store apply the
+  cap, so truncated Teams messages are correctly marked incomplete and are eligible for `nimbus
+  index rebody`.
+
+  `REBODY_IMPROVABLE_SERVICES` (`ipc/index-rebody-rpc.ts`) grows from nine services to eleven,
+  adding `confluence` and `notion` in sorted position: `bitbucket`, `confluence`, `discord`,
+  `github`, `jira`, `linear`, `notion`, `obsidian`, `slack`, `snyk`, `teams`.
+
+  The full-body-store connector accounting (2026-08-02 entry below) moves from 10 full / 1 partial
+  / 2 inert to **12 full body @ 16 KiB / 1 partial / 2 inert** — the partial (`nimbus:research_brief`)
+  and inert (Bitbucket, `github:pr`) counts are unchanged. This also makes true, as of today, a
+  previously-false claim in [`docs/roadmap.md`](./roadmap.md) Wave 5: `nimbus glossary` mining
+  "Confluence/Notion pages" had nothing to mine before this landed. No new security invariant.
+  Design: `docs/superpowers/specs/2026-08-03-notion-confluence-full-body-design.md`. (#1032)
 - **2026-08-02 — `nimbus index rebody` — recover full bodies for already-indexed items.**
   A backfill for the full-body store below: re-fetches item bodies for rows the V48 migration (or
   a connector not yet migrated) left with `body_complete = 0`, by clearing a per-connector sync
@@ -15,8 +64,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   outbound API traffic, not a local recompute. `index.rebody`/`index.rebodyCancel` (long-running job
   pattern, `index.rebodyProgress`/`Done`/`Error` notifications) plus `nimbus index rebody
   [--service <name>] [--type <t>] [--limit N] [--dry-run] [--yes] [--json]`. An inclusion list,
-  `REBODY_IMPROVABLE_SERVICES` (nine services: `bitbucket`, `discord`, `github`, `jira`, `linear`,
-  `obsidian`, `slack`, `snyk`, `teams`), decides what a dry run reports as improvable — a mixed-migration
+  `REBODY_IMPROVABLE_SERVICES` (as of 2026-08-03, eleven services: `bitbucket`, `confluence`,
+  `discord`, `github`, `jira`, `linear`, `notion`, `obsidian`, `slack`, `snyk`, `teams`), decides
+  what a dry run reports as improvable — a mixed-migration
   service (`zoom`: `transcript` migrated, `meeting` not; the local `nimbus` bucket: `web_clip` and
   `research_brief` migrated, `glossary_term` not) is deliberately excluded, because the pending count
   is grouped by service only, not by `(service, type)`. Deliberately **no `--only-truncated` flag** —
@@ -40,13 +90,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   migration touches — completeness is a claim a connector makes about its own fetch and cannot be
   inferred from stored text length.
 
-  The implementation plan named "twelve connectors." Verified against the tree, it is not twelve:
+  The implementation plan named "twelve connectors." Verified against the tree at the time, it was
+  not twelve — it took a follow-up PR the next day (2026-08-03, above) to reach twelve, and for a
+  different set of reasons than the plan assumed. Current accounting:
 
   | | Sources |
   | --- | --- |
-  | **Full body @ 16 KiB (10)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip` |
+  | **Full body @ 16 KiB (12)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip`, Notion pages, Confluence pages |
   | **Partial — 2,000-char cap, not full-body (1)** | `nimbus:research_brief` — bounded upstream by `MAX_SUMMARY_CHARS` (`briefs/brief-report.ts`) at synthesis, in the only path that builds a `Report`; a real gain (512 → 2,000) but not full-body indexing |
   | **Inert, still 512 (2)** | Bitbucket — emits only `type: "pr"`, while `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which no connector emits (dead configuration); `github:pr` — never added to `PROSE_HEAVY_TYPES` (only `github:issue` was), though the `body:` swap in `github-sync.ts` touches both `upsertPr` and `upsertFromIssue` |
+
+  (Notion and Confluence were not in this row until 2026-08-03 — see the entry above. At ship time
+  on 2026-08-02 this row read **(10)** without them.)
 
   Schema **V48**. No new security invariant — this widens a storage field and introduces no new
   chokepoint. Spec: `docs/superpowers/specs/2026-08-02-full-body-store-design.md`; plan:
