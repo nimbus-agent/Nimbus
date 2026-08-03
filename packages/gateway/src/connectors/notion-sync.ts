@@ -1,8 +1,18 @@
 import { getValidNotionAccessToken } from "../auth/notion-access-token.ts";
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import {
+  itemPrimaryKey,
+  selectItemBodyFetchState,
+  upsertIndexedItemForSync,
+} from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import {
+  fetchNotionPageText,
+  NOTION_BODY_FETCH_BUDGET_PER_SYNC,
+  NOTION_BODY_REQUESTS_PER_PAGE_MAX,
+  type NotionBlockFetchDeps,
+} from "./notion-page-body.ts";
 import { isoMs, maxIso } from "./sync-iso-helpers.ts";
 import {
   decodeWatermarkCursorV1,
@@ -137,6 +147,9 @@ type NotionRowProcessAcc = {
   maxEdited: string;
   upserted: number;
   shouldStop: boolean;
+  /** The pass ran out of budget. Distinct from `shouldStop` (hit the watermark). */
+  budgetStopped: boolean;
+  bytes: number;
 };
 
 function notionWatermarkOrAdvanceMax(
@@ -167,17 +180,15 @@ function notionAuthorIdFromPageRow(ctx: SyncContext, row: Record<string, unknown
   return resolvePersonForSync(ctx.db, { notionUserId });
 }
 
-function notionConsumeSearchResultRow(
+async function notionConsumeSearchResultRow(
   ctx: SyncContext,
+  deps: NotionBlockFetchDeps,
   item: unknown,
   opts: { watermarkMs: number; syncTime: number },
   acc: NotionRowProcessAcc,
-): boolean {
+): Promise<boolean> {
   const row = asRecord(item);
-  if (row === undefined) {
-    return false;
-  }
-  if (stringField(row, "object") !== "page") {
+  if (row === undefined || stringField(row, "object") !== "page") {
     return false;
   }
   const id = stringField(row, "id");
@@ -188,36 +199,59 @@ function notionConsumeSearchResultRow(
   if (notionWatermarkOrAdvanceMax(edited, opts, acc) === "stop") {
     return true;
   }
+  const rawModified = edited !== undefined && edited !== "" ? isoMs(edited) : opts.syncTime;
+  const modifiedAt = Number.isFinite(rawModified) ? rawModified : opts.syncTime;
+
+  // 1. Nothing to gain: we already recorded a verdict for this exact revision.
+  const prior = selectItemBodyFetchState(ctx.db, itemPrimaryKey(SERVICE_ID, id));
+  if (prior !== null && prior.bodyFetch !== null && prior.modifiedAt === modifiedAt) {
+    return false;
+  }
+
+  // 2. Never start a page we cannot afford to finish — this is what keeps the
+  //    global budget from ever being a *cause* of truncation.
+  if (deps.budget.left < NOTION_BODY_REQUESTS_PER_PAGE_MAX) {
+    acc.budgetStopped = true;
+    return true;
+  }
+
+  const fetched = await fetchNotionPageText(deps, id);
+  acc.bytes += fetched.bytes;
+
   const title = extractTitleFromProperties(row["properties"]);
   const url = `https://www.notion.so/${id.replaceAll("-", "")}`;
-  const modified = edited !== undefined && edited !== "" ? isoMs(edited) : opts.syncTime;
   acc.upserted += 1;
-  const authorId = notionAuthorIdFromPageRow(ctx, row);
+  const metadata: Record<string, unknown> =
+    fetched.outcome === "errored"
+      ? { notionPageId: id }
+      : { notionPageId: id, bodyFetch: fetched.outcome };
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "page",
     externalId: id,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: "",
+    body: fetched.text,
+    bodyTruncated: fetched.outcome !== "complete",
     url,
     canonicalUrl: url,
-    modifiedAt: Number.isFinite(modified) ? modified : opts.syncTime,
-    authorId,
-    metadata: { notionPageId: id },
+    modifiedAt,
+    authorId: notionAuthorIdFromPageRow(ctx, row),
+    metadata,
     pinned: false,
     syncedAt: opts.syncTime,
   });
   return false;
 }
 
-function notionAccumulateSearchResults(
+async function notionAccumulateSearchResults(
   ctx: SyncContext,
+  deps: NotionBlockFetchDeps,
   results: unknown[],
   opts: { watermarkMs: number; syncTime: number },
   acc: NotionRowProcessAcc,
-): void {
+): Promise<void> {
   for (const item of results) {
-    if (notionConsumeSearchResultRow(ctx, item, opts, acc)) {
+    if (await notionConsumeSearchResultRow(ctx, deps, item, opts, acc)) {
       break;
     }
   }
@@ -252,7 +286,12 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
       const watermark = prev?.watermark ?? null;
       const watermarkMs = watermark !== null && watermark !== "" ? isoMs(watermark) : -1;
 
-      await ctx.rateLimiter.acquire("notion");
+      const deps: NotionBlockFetchDeps = {
+        accessToken,
+        rateLimiter: ctx.rateLimiter,
+        budget: { left: NOTION_BODY_FETCH_BUDGET_PER_SYNC },
+      };
+      let budgetStopped = false;
 
       let nextCursor: string | undefined;
       let upserted = 0;
@@ -263,18 +302,30 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
 
       for (;;) {
         const body = notionSearchRequestBody(nextCursor);
+        await ctx.rateLimiter.acquire("notion");
         const batch = await notionFetchSearchBatch(ctx, accessToken, body);
         bytesTransferred += batch.bytesThisPage;
-        const acc: NotionRowProcessAcc = { maxEdited, upserted: 0, shouldStop: false };
-        notionAccumulateSearchResults(ctx, batch.results, { watermarkMs, syncTime }, acc);
+        const acc: NotionRowProcessAcc = {
+          maxEdited,
+          upserted: 0,
+          shouldStop: false,
+          budgetStopped: false,
+          bytes: 0,
+        };
+        await notionAccumulateSearchResults(
+          ctx,
+          deps,
+          batch.results,
+          { watermarkMs, syncTime },
+          acc,
+        );
         upserted += acc.upserted;
         maxEdited = acc.maxEdited;
         shouldStop = acc.shouldStop;
+        budgetStopped = acc.budgetStopped;
+        bytesTransferred += acc.bytes;
 
-        if (shouldStop) {
-          break;
-        }
-        if (!batch.hasMore) {
+        if (shouldStop || budgetStopped || !batch.hasMore) {
           break;
         }
         if (batch.nextCursor === undefined || batch.nextCursor === "") {
@@ -283,7 +334,21 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
         nextCursor = batch.nextCursor;
       }
 
-      const nextW = maxEdited === "" ? watermark : maxEdited;
+      // A pass stopped by the budget must NOT advance the watermark: pages
+      // older than the stopping point are unprocessed, and advancing would
+      // skip them forever.
+      const nextW = budgetStopped ? watermark : maxEdited === "" ? watermark : maxEdited;
+
+      // A multi-pass backfill is otherwise invisible: the sync reports success
+      // with hasMore:false every time, so nothing distinguishes "converged"
+      // from "still working through a 10,000-page workspace".
+      if (budgetStopped) {
+        ctx.logger.info(
+          { service: SERVICE_ID, upserted },
+          "notion sync budget exhausted; watermark pinned for backfill convergence",
+        );
+      }
+
       const nextEnc = encodeCursor({ v: 1, watermark: nextW });
 
       return {

@@ -100,7 +100,7 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   bitbucket: { requestsPerMinute: 60, burstSize: 5 },
   linear: { requestsPerMinute: 60, burstSize: 10 },
   jira: { requestsPerMinute: 60, burstSize: 10 },
-  notion: { requestsPerMinute: 30, burstSize: 5 },
+  notion: { requestsPerMinute: 120, burstSize: 5 },
   confluence: { requestsPerMinute: 60, burstSize: 10 },
   discord: { requestsPerMinute: 50, burstSize: 10 },
   jenkins: { requestsPerMinute: 60, burstSize: 10 },

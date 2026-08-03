@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-
+import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -12,7 +12,9 @@ import {
   testConnectorSyncNoop,
   urlFromFetchInput,
 } from "./connector-sync-test-helpers.ts";
+import { NOTION_BODY_FETCH_BUDGET_PER_SYNC } from "./notion-page-body.ts";
 import { createNotionSyncable } from "./notion-sync.ts";
+import { encodeWatermarkCursorV1 } from "./sync-watermark-cursor-v1.ts";
 
 /** Build a valid oauth payload accepted by getValidNotionAccessToken */
 function makeOauthPayload(overrides?: Partial<{ accessToken: string; expiresAt: number }>): string {
@@ -63,6 +65,34 @@ function installFetchSinglePage(
       { status: 200 },
     );
   }) as unknown as typeof fetch;
+}
+
+/** Serve one search page, then block children per parent id. */
+function installSearchAndBlocks(
+  pages: Record<string, unknown>[],
+  blocks: Record<string, unknown[]>,
+): { count: () => number } {
+  let blockCalls = 0;
+  globalThis.fetch = ((input: SyncTestFetchParams[0]) => {
+    const url = urlFromFetchInput(input);
+    if (url.includes("/v1/search")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ results: pages, has_more: false, next_cursor: null }), {
+          status: 200,
+        }),
+      );
+    }
+    blockCalls += 1;
+    const m = /\/v1\/blocks\/([^/?]+)\/children/.exec(url);
+    const parent = decodeURIComponent(m?.[1] ?? "");
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ results: blocks[parent] ?? [], has_more: false, next_cursor: null }),
+        { status: 200 },
+      ),
+    );
+  }) as unknown as typeof fetch;
+  return { count: () => blockCalls };
 }
 
 describeWithFetchRestore("notion-sync", () => {
@@ -350,17 +380,24 @@ describeWithFetchRestore("notion-sync", () => {
 
   // ── covers lines 283, 81: next_cursor present + multi-page pagination ──
   test("follows pagination cursor across multiple pages", async () => {
-    let callCount = 0;
+    let searchCallCount = 0;
     globalThis.fetch = (async (
-      _input: SyncTestFetchParams[0],
+      input: SyncTestFetchParams[0],
       init?: SyncTestFetchParams[1],
     ): Promise<Response> => {
-      callCount += 1;
+      const url = urlFromFetchInput(input);
+      if (!url.includes("/v1/search")) {
+        // Block-children request from the body walk: no children.
+        return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), {
+          status: 200,
+        });
+      }
+      searchCallCount += 1;
       const body =
         init?.body !== undefined && typeof init.body === "string"
           ? (JSON.parse(init.body) as Record<string, unknown>)
           : {};
-      if (callCount === 1) {
+      if (searchCallCount === 1) {
         // First page: no start_cursor in body
         expect(body["start_cursor"]).toBeUndefined();
         return new Response(
@@ -392,17 +429,24 @@ describeWithFetchRestore("notion-sync", () => {
       ...silentSyncContextExtras(),
     };
     const r = await sync.sync(ctx, null);
-    expect(callCount).toBe(2);
+    expect(searchCallCount).toBe(2);
     expect(r.itemsUpserted).toBe(2);
     expectServiceItemCount(db, "notion", 2);
   });
 
   // ── covers line 132: next_cursor present in response ──
   test("captures next_cursor string from response", async () => {
-    let callCount = 0;
-    globalThis.fetch = (async (): Promise<Response> => {
-      callCount += 1;
-      if (callCount === 1) {
+    let searchCallCount = 0;
+    globalThis.fetch = (async (input: SyncTestFetchParams[0]): Promise<Response> => {
+      const url = urlFromFetchInput(input);
+      if (!url.includes("/v1/search")) {
+        // Block-children request from the body walk: no children.
+        return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), {
+          status: 200,
+        });
+      }
+      searchCallCount += 1;
+      if (searchCallCount === 1) {
         return new Response(
           JSON.stringify({
             results: [makePage("page-1", { last_edited_time: "2026-04-03T12:00:00.000Z" })],
@@ -430,7 +474,7 @@ describeWithFetchRestore("notion-sync", () => {
       ...silentSyncContextExtras(),
     };
     await sync.sync(ctx, null);
-    expect(callCount).toBe(2);
+    expect(searchCallCount).toBe(2);
   });
 
   // ── covers line 253: malformed cursor → treated as null watermark ──
@@ -842,5 +886,181 @@ describeWithFetchRestore("notion-sync", () => {
       title: string;
     };
     expect(row.title).toBe("Hello World");
+  });
+
+  // ── Task 5: full-body walk integration ──────────────────────────────────
+
+  test("indexes a page body from its blocks", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    installSearchAndBlocks([makePage("pg-1")], {
+      "pg-1": [
+        {
+          id: "b1",
+          type: "paragraph",
+          has_children: false,
+          paragraph: { rich_text: [{ plain_text: "decided to ship" }] },
+        },
+      ],
+    });
+    await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
+      syncTestContext(db, vault),
+      null,
+    );
+    const row = db
+      .query<{ body: string; body_complete: number; meta: string }, []>(
+        "SELECT body, body_complete, metadata AS meta FROM item WHERE service = 'notion'",
+      )
+      .get();
+    expect(row?.body).toBe("decided to ship");
+    expect(row?.body_complete).toBe(1);
+    expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBe("complete");
+    db.close();
+  });
+
+  test("skips a page whose bodyFetch is recorded and modified_at is unchanged", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const page = makePage("pg-1");
+    const first = installSearchAndBlocks([page], { "pg-1": [] });
+    const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, vault), null);
+    expect(first.count()).toBe(1);
+    // Second pass with the watermark cleared: same page, unchanged.
+    const second = installSearchAndBlocks([page], { "pg-1": [] });
+    await syncable.sync(syncTestContext(db, vault), null);
+    expect(second.count()).toBe(0);
+    db.close();
+  });
+
+  test("a capped page is skipped on the next pass — no perpetual re-fetch", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const page = makePage("pg-1");
+    // Nesting one level past MAX_DEPTH (3) forces outcome "capped".
+    const deep = {
+      "pg-1": [
+        {
+          id: "b1",
+          type: "bulleted_list_item",
+          has_children: true,
+          bulleted_list_item: { rich_text: [{ plain_text: "L1" }] },
+        },
+      ],
+      b1: [
+        {
+          id: "b2",
+          type: "bulleted_list_item",
+          has_children: true,
+          bulleted_list_item: { rich_text: [{ plain_text: "L2" }] },
+        },
+      ],
+      b2: [
+        {
+          id: "b3",
+          type: "bulleted_list_item",
+          has_children: true,
+          bulleted_list_item: { rich_text: [{ plain_text: "L3" }] },
+        },
+      ],
+      b3: [
+        {
+          id: "b4",
+          type: "bulleted_list_item",
+          has_children: false,
+          bulleted_list_item: { rich_text: [{ plain_text: "L4" }] },
+        },
+      ],
+    };
+    const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    installSearchAndBlocks([page], deep);
+    await syncable.sync(syncTestContext(db, vault), null);
+    const row = db
+      .query<{ body_complete: number; meta: string }, []>(
+        "SELECT body_complete, metadata AS meta FROM item WHERE service = 'notion'",
+      )
+      .get();
+    expect(row?.body_complete).toBe(0);
+    expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBe("capped");
+    const second = installSearchAndBlocks([page], deep);
+    await syncable.sync(syncTestContext(db, vault), null);
+    expect(second.count()).toBe(0); // the regression this whole design exists to prevent
+    db.close();
+  });
+
+  test("an errored page records no bodyFetch and is retried", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const page = makePage("pg-1");
+    globalThis.fetch = ((input: SyncTestFetchParams[0]) => {
+      const url = urlFromFetchInput(input);
+      if (url.includes("/v1/search")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ results: [page], has_more: false, next_cursor: null }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 500 }));
+    }) as unknown as typeof fetch;
+    const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
+      syncTestContext(db, vault),
+      null,
+    );
+    expect(r.itemsUpserted).toBe(1); // sync still succeeds
+    const row = db
+      .query<{ meta: string; body_complete: number }, []>(
+        "SELECT metadata AS meta, body_complete FROM item WHERE service = 'notion'",
+      )
+      .get();
+    expect(JSON.parse(row?.meta ?? "{}").bodyFetch).toBeUndefined();
+    expect(row?.body_complete).toBe(0);
+    db.close();
+  });
+
+  test("the watermark is pinned when the budget stops the pass", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    // More pages than the budget can serve: BUDGET / PER_PAGE_MAX pages fit.
+    const many = Array.from({ length: NOTION_BODY_FETCH_BUDGET_PER_SYNC + 5 }, (_, i) =>
+      makePage(`pg-${String(i)}`),
+    );
+    installSearchAndBlocks(many, {});
+    // Real Notion quota (burst 5) would force this test to wait on real
+    // wall-clock refills once the walk issues more than a handful of
+    // requests — same override pattern as notion-page-body.test.ts's `deps()`
+    // and zoom-sync.test.ts's `fastLimiter`.
+    const fastLimiter = new ProviderRateLimiter({
+      notion: { requestsPerMinute: 600_000, burstSize: 1000 },
+    });
+    const ctx = {
+      db,
+      vault,
+      ...silentSyncContextExtras(),
+      rateLimiter: fastLimiter,
+    };
+    const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
+      ctx,
+      null,
+    );
+    expect(r.cursor).toBe(encodeWatermarkCursorV1("nimbus-ntn1:", { v: 1, watermark: null }));
+    db.close();
+  });
+
+  test("the watermark advances when the budget does not stop the pass", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    installSearchAndBlocks([makePage("pg-1")], { "pg-1": [] });
+    const r = await createNotionSyncable({ ensureNotionMcpRunning: async () => {} }).sync(
+      syncTestContext(db, vault),
+      null,
+    );
+    // The cursor is a base64url-encoded JSON payload (nimbus-json-cursor.ts),
+    // not a literal string, so compare it against the real encoder rather
+    // than substring-matching the raw ISO timestamp.
+    expect(r.cursor).toBe(
+      encodeWatermarkCursorV1("nimbus-ntn1:", { v: 1, watermark: "2026-04-01T12:00:00.000Z" }),
+    );
+    db.close();
   });
 });
