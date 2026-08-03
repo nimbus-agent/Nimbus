@@ -45,7 +45,7 @@ Named explicitly so no task drifts into them: instrumenting `router.ts`/`openai-
 **Files:**
 - Create: `packages/gateway/src/egress/egress-source-type.ts`
 - Create: `packages/gateway/src/egress/egress-source-type.test.ts`
-- Modify: `packages/gateway/src/egress/egress-ledger.ts` (the `EgressEntry.sourceType` field, line 11)
+- Modify: `packages/gateway/src/egress/egress-record.ts:11` — `EgressEntry.sourceType`. **Note it is `egress-record.ts`, not `egress-ledger.ts`**; `EgressEntry` is defined there and re-exported.
 
 **Interfaces:**
 - Consumes: nothing.
@@ -160,15 +160,13 @@ Expected: PASS (3 tests)
 
 - [ ] **Step 5: Narrow `EgressEntry.sourceType` to the union**
 
-In `packages/gateway/src/egress/egress-ledger.ts`, add the import and change the field (currently `readonly sourceType: string;` at line 11 of `egress-record.ts` — the `EgressEntry` interface lives there):
-
-In `packages/gateway/src/egress/egress-record.ts`:
+In `packages/gateway/src/egress/egress-record.ts` (the file that defines `EgressEntry`), add:
 
 ```ts
 import type { EgressSourceType } from "./egress-source-type.ts";
 ```
 
-and change:
+and change the field:
 
 ```ts
   readonly sourceType: string;
@@ -179,6 +177,8 @@ to:
 ```ts
   readonly sourceType: EgressSourceType;
 ```
+
+**Do NOT narrow `EgressRowHashInput.sourceType` in `egress-ledger.ts` — leave it `string`.** That type is the *hash* boundary, and `verifyEgressChain` feeds it values read back out of SQLite (`egress-verify.ts:125`). The verifier must faithfully hash whatever bytes are stored, including a `source_type` this binary does not recognize — a row written by a *newer* gateway. Narrowing it would force a cast at that call site which asserts something untrue about DB contents, and a verifier that refused to hash an unknown value would report a false chain break. The union constrains what this binary may **write**; it must not constrain what the verifier can **read**.
 
 - [ ] **Step 6: Verify the whole egress suite and typecheck still pass**
 
@@ -300,6 +300,7 @@ EOF
 - Create: `packages/gateway/src/egress/egress-coverage.test.ts`
 - Create: `packages/gateway/src/egress/egress-boot-marker.ts`
 - Create: `packages/gateway/src/egress/egress-boot-marker.test.ts`
+- Modify: `packages/gateway/src/platform/assemble.ts:1702` — append the marker at startup (Step 9). **Without this the feature is inert in production and no test in this plan catches it.**
 
 **Interfaces:**
 - Consumes: `EgressSourceType` (Task 1), `appendEgressEntry` (`egress-ledger.ts`).
@@ -310,7 +311,10 @@ EOF
   - `function serializeCoverage(v: CoverageVector): string`
   - `function parseCoverage(s: string): CoverageVector | null`
   - `function weakestCoverage(vs: readonly CoverageVector[]): CoverageVector`
+  - `const ALL_NONE_COVERAGE: CoverageVector`
   - `function appendBootMarker(db: Database, coverage: CoverageVector, now: number): void`
+  - `function coverageForWindow(db, opts: { since?: number; until?: number }): CoverageVector`
+  - `const BOOT_MARKER_METHOD = "egress.boot"`
 
 **Design note — where the vector is stored.** It goes in `source_id`, which **is** hashed by `computeEgressRowHash`, so the recorded coverage claim is tamper-evident. It must not go in `payload_summary`, which is deliberately unhashed.
 
@@ -426,6 +430,19 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
   peer: "none",
 };
 
+/**
+ * Claims nothing about any class. Used as the contribution of an UNPARSEABLE boot marker, so the
+ * weakest-merge drives the whole window to `none` (→ `indeterminate`) rather than letting a
+ * sibling marker's richer claim stand unchallenged.
+ */
+export const ALL_NONE_COVERAGE: CoverageVector = {
+  task: "none",
+  session: "none",
+  sync: "none",
+  model: "none",
+  peer: "none",
+};
+
 /** Stable, key-sorted serialization. Stored in the HASHED `source_id`, so it must be canonical. */
 export function serializeCoverage(v: CoverageVector): string {
   return COVERAGE_CLASSES.map((c) => `${c}=${v[c]}`).join(";");
@@ -486,6 +503,7 @@ Create `packages/gateway/src/egress/egress-boot-marker.test.ts`. Reuse the DB fi
 import { describe, expect, test } from "bun:test";
 import { appendBootMarker, coverageForWindow } from "./egress-boot-marker.ts";
 import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
+import { appendEgressEntry } from "./egress-ledger.ts";
 import { listEgress, verifyEgressChain } from "./egress-verify.ts";
 
 describe("boot marker", () => {
@@ -532,6 +550,35 @@ describe("boot marker", () => {
     });
     db.close();
   });
+
+  test("an unparseable marker forces all-none — it must not be silently skipped", () => {
+    const db = makeTestDb();
+    // A marker this binary cannot parse: written by a NEWER gateway, or corrupted. Skipping it
+    // would let the OTHER (valid, richer) marker vouch for the window — overstating coverage.
+    appendEgressEntry(db, {
+      timestamp: 1_000,
+      sourceType: "boot",
+      sourceId: "task=teleportation;wat=none",
+      destination: "local",
+      method: "egress.boot",
+      payloadSummary: "{}",
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+    });
+    appendBootMarker(
+      db,
+      { task: "per-call", session: "per-call", sync: "per-run", model: "per-call", peer: "per-call" },
+      2_000,
+    );
+    expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
+      task: "none",
+      session: "none",
+      sync: "none",
+      model: "none",
+      peer: "none",
+    });
+    db.close();
+  });
 });
 ```
 
@@ -549,6 +596,7 @@ Create `packages/gateway/src/egress/egress-boot-marker.ts`:
 import type { Database } from "bun:sqlite";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import {
+  ALL_NONE_COVERAGE,
   type CoverageVector,
   parseCoverage,
   serializeCoverage,
@@ -588,6 +636,14 @@ export function appendBootMarker(db: Database, coverage: CoverageVector, now: nu
  *
  * Markers strictly AFTER the window are ignored — a binary that started later cannot vouch for what
  * was observed earlier. No covering marker yields all-`none`, i.e. claim nothing.
+ *
+ * An UNPARSEABLE marker contributes an all-`none` vector rather than being skipped. Skipping it
+ * would let a sibling marker's richer claim stand, overstating coverage; contributing all-`none`
+ * drives the weakest-merge to `none` everywhere, so the window reports `indeterminate`. This is the
+ * "indeterminate, never a false zero" rule — NOT a throw, because one unreadable row must not take
+ * `nimbus egress` down. (Deliberate tampering is already caught elsewhere: `source_id` is hashed,
+ * so an edited marker breaks `verifyEgressChain`. The case handled here is a marker written by a
+ * NEWER binary using a class or granularity this one does not know.)
  */
 export function coverageForWindow(
   db: Database,
@@ -599,7 +655,8 @@ export function coverageForWindow(
     if (r.method !== BOOT_MARKER_METHOD) continue;
     if (opts.until !== undefined && r.timestamp > opts.until) continue;
     const v = r.sourceId === null ? null : parseCoverage(r.sourceId);
-    if (v !== null) vectors.push(v);
+    // Unreadable marker → claim nothing for every class (see doc comment).
+    vectors.push(v ?? ALL_NONE_COVERAGE);
   }
   return weakestCoverage(vectors);
 }
@@ -610,10 +667,51 @@ export function coverageForWindow(
 Run: `bun test packages/gateway/src/egress/ && bun run typecheck`
 Expected: all PASS, typecheck exit 0.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Wire the marker into gateway startup**
+
+**Without this step the feature is inert in production:** no boot marker is ever written, so every
+window has no covering marker and `prove` reports `indeterminate` forever. The tests above all pass
+regardless — they append markers themselves — so nothing else in this plan catches the omission.
+
+In `packages/gateway/src/platform/assemble.ts`, add to the imports:
+
+```ts
+import { appendBootMarker } from "../egress/egress-boot-marker.ts";
+import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
+```
+
+and immediately after line 1702, `const db = openGatewaySqlite(paths.dataDir, sidecarStops);`:
+
+```ts
+  // I29: record what THIS binary is built to observe, before anything can emit egress. Without a
+  // covering marker `proveWindow` reports `indeterminate` rather than a false zero, so this append
+  // is what makes a clean window provable. Safe here: openGatewaySqlite ran LocalIndex.ensureSchema
+  // (assemble.ts:251), so egress_ledger (V44) exists.
+  appendBootMarker(db, THIS_BINARY_COVERAGE, Date.now());
+```
+
+Placement matters in two directions: it must be **after** `openGatewaySqlite` (the table must exist,
+or `appendEgressEntry` throws `no such table`) and **before** any subsystem that could emit egress
+is constructed, so no row can precede the marker that describes it.
+
+- [ ] **Step 10: Verify the marker actually lands at startup**
+
+Run the gateway against a scratch data dir and inspect the ledger:
 
 ```bash
-git add packages/gateway/src/egress/egress-coverage.ts packages/gateway/src/egress/egress-coverage.test.ts packages/gateway/src/egress/egress-boot-marker.ts packages/gateway/src/egress/egress-boot-marker.test.ts
+NIMBUS_DATA_DIR="$(mktemp -d)" bun run packages/gateway/src/index.ts --help >/dev/null 2>&1 || true
+```
+
+Then in a `bun repl` or a scratch script, open that dir's `nimbus.db` and confirm exactly one row
+with `source_type='boot'` and a `source_id` of `model=none;peer=none;session=none;sync=none;task=per-call`.
+**If the gateway entry point does not assemble on `--help`, start it normally and stop it instead** —
+the point is to prove the append happens on a real boot, not in a test fixture. A passing unit suite
+is not evidence for this step.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add packages/gateway/src/egress/egress-coverage.ts packages/gateway/src/egress/egress-coverage.test.ts packages/gateway/src/egress/egress-boot-marker.ts packages/gateway/src/egress/egress-boot-marker.test.ts packages/gateway/src/platform/assemble.ts
 git commit -m "feat(egress): per-source coverage vector and per-process boot marker"
 ```
 
@@ -1162,3 +1260,55 @@ EOF
 **Type consistency.** `EgressSourceType` (Task 1) is consumed by `EgressEntry.sourceType`, `MARKER_SOURCE_TYPES` and `isMarkerSourceType` (Task 2). `CoverageVector`/`CoverageClass`/`Granularity` (Task 3) are consumed by `coverageForWindow` (Task 3), `EgressCompleteness` (Task 4) and `ProveCompleteness` (Task 6). `NULL_EGRESS_SINK` (Task 5) satisfies the `EgressSink` interface already defined at `egress-ledger.ts:87`. `BOOT_MARKER_METHOD` is defined and consumed in Task 3 only. No name appears in two spellings.
 
 **Ordering hazard flagged in Task 5:** making `egressSink` required while `delegation?` precedes it is a TypeScript error — the plan changes `delegation` to an explicit `| undefined` rather than leaving the engineer to discover it.
+
+---
+
+## Review Disposition
+
+Against [`2026-08-03-i29-phase1-make-the-claim-true-review.md`](./2026-08-03-i29-phase1-make-the-claim-true-review.md).
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1.1 | No task wires `appendBootMarker` into `assemble.ts`, so the marker never lands in production | **Fixed — the most serious finding.** Task 3 Steps 9–11 added. See below. |
+| 1.2 | Task 1's Files header names `egress-ledger.ts`; `EgressEntry` lives in `egress-record.ts` | **Fixed.** Header corrected and the muddled Step 5 wording rewritten. |
+| 2.1 | Narrow `EgressRowHashInput.sourceType` to the union | **Rejected**, with the reasoning recorded inline in Task 1 Step 5. |
+| 2.2 | An unparseable boot marker is silently skipped | **Fixed**, via all-`none` contribution rather than the suggested throw. |
+
+### On 1.1 — why this one mattered most
+
+The gap was real and the whole feature hinged on it: with no startup append, every window has no
+covering marker and `prove` reports `indeterminate` forever — a feature that is worse than not
+shipping it. What makes it dangerous is that **every test in Task 3 passes anyway**, because each
+one appends its own marker. Unit tests could not have caught this.
+
+The fix therefore includes Step 10, which verifies against a *real gateway boot* rather than a
+fixture. The reviewer's suggested insertion point (`assemble.ts:1702`) was verified correct:
+`openGatewaySqlite` calls `LocalIndex.ensureSchema` at line 251, so `egress_ledger` (V44) exists by
+the time it returns. The plan adds the second ordering constraint the review did not mention — the
+append must also precede construction of anything that can emit egress, so no row predates the
+marker describing it.
+
+### On 2.1 — why the hash boundary keeps `string`
+
+`computeEgressRowHash` is called by `verifyEgressChain` (`egress-verify.ts:125`) with values read
+back out of SQLite. Narrowing its input to the union would force a cast there asserting something
+untrue about DB contents: a ledger can legitimately hold a `source_type` written by a *newer*
+gateway. A verifier that would not hash an unrecognized value would report a false chain break —
+precisely the false-negative class this work exists to remove.
+
+The union belongs on the **write** path (`EgressEntry`), which Task 1 narrows. It must not constrain
+the **read** path. Type safety at the hash boundary would be safety against the wrong thing.
+
+### On 2.2 — accepted, but not as a throw
+
+The concern is right and the hole is specific: with two markers where one is unreadable, skipping it
+lets the *other*, richer marker vouch for the window — overstating coverage. Contributing an
+all-`none` vector instead drives the weakest-merge to `none` everywhere, so the window reports
+`indeterminate`.
+
+The suggested alternative — throw an integrity exception — is rejected because one unreadable row
+would take `nimbus egress` down entirely, and this codebase's established rule is "indeterminate,
+never a false zero", not "fail hard". Worth noting the review's tampering premise is already covered
+elsewhere: `source_id` is hashed, so an *edited* marker breaks `verifyEgressChain` and the window is
+indeterminate on that path. The case this fix actually addresses is a forward-compatibility one — a
+marker from a newer binary using a class or granularity this one does not know.
