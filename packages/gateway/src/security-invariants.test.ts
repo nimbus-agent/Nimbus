@@ -188,6 +188,17 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       expect(() => checkLanMethodAllowed(m, peer)).toThrow(/not callable over LAN/);
     }
   });
+
+  test("FORBIDDEN_OVER_LAN blocks the clip namespace (I30 — pairing must stay owner-opened)", async () => {
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    // clip.pair opens the I30 pairing window and returns the one-time code in its response; a
+    // paired LAN peer must never be able to call it and mint its own token without the owner
+    // running `nimbus clip pair`. Checked on two methods to prove the namespace entry, not a
+    // single-method coincidence.
+    expect(() => checkLanMethodAllowed("clip.pair", peer)).toThrow(/not callable over LAN/);
+    expect(() => checkLanMethodAllowed("clip.status", peer)).toThrow(/not callable over LAN/);
+  });
 });
 
 describe("I6 — LAN bind defaults to loopback", () => {
