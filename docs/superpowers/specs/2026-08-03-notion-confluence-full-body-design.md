@@ -134,7 +134,7 @@ export async function fetchNotionPageText(
 Text comes from each block's `rich_text[].plain_text` (Notion supplies `plain_text` on every
 rich-text item — simpler and more faithful than re-walking `text.content`).
 
-**Depth.** Recurse into **any** block with `has_children`, to a maximum depth of 2, with
+**Depth.** Recurse into **any** block with `has_children`, to a maximum depth of 3, with
 exactly two exclusions: `child_page` and `child_database`. Those two are separate items the
 search walk already indexes in their own right, so following them would double-index and blow
 the budget.
@@ -147,6 +147,24 @@ routinely hold nested children. Nested bullets are among the most common structu
 Notion decision doc, and a containers-only rule would silently drop every sub-bullet. When a
 block both has text and has children, both are collected: its own `rich_text` first, then its
 children's.
+
+**Why 3 and not 2.** Depth is a cycle guard, not the cost bound — the per-page request cap
+below is what actually bounds cost, and it applies identically at either depth. Given that,
+depth 2 was simply too shallow to be worth the content it lost: `toggle` → list → sub-list is
+an ordinary Notion structure and sits at depth 3, as does `table` → `table_row` → cell text
+and two levels of bullet nesting. At depth 2 every such page is permanently `capped`, and
+because `capped` is permanent it is then skipped forever with its sub-lists never indexed.
+Raising to 3 is never worse on the completeness verdict — a page that completes at depth 2
+still completes at depth 3, and a page too deep for 3 was already capped at 2 — it only
+spends more of the budget on pages it can now finish. A limit is still needed at all because
+`synced_block` references can in principle form a cycle.
+
+**Text extraction is not uniformly `rich_text`.** Most blocks carry their text at
+`block[block.type].rich_text`, but two shapes do not, and both are worth having: a `table_row`
+holds `cells`, a two-dimensional array of rich-text arrays, and media blocks (`image`, `file`,
+`video`, `bookmark`) carry a `caption` with no `rich_text` at all. Tables in particular are a
+common way to write a glossary — exactly the content the downstream agents want — so a
+`rich_text`-only extractor would return nothing for a page built around one.
 
 **Two bounds, and only one of them can truncate a page.**
 `rateLimiter.acquire("notion")` moves to **per request**. Every request decrements a per-sync
@@ -239,6 +257,13 @@ Slack, Jira, GitHub and every other connector for the duration. Pinning the wate
 waiting for the ordinary 5-minute tick backfills at ~2,400 pages/hour, needs no scheduler
 change, and cannot starve anything. Fixing continuation fairness in the scheduler is a
 worthwhile separate change with its own blast radius; it is not this slice.
+
+**A pinned pass logs.** The sync reports success with `hasMore: false` on every pass, so
+nothing otherwise distinguishes "converged" from "still working through a 10,000-page
+workspace" — a backfill that takes hours is completely invisible. A budget-stopped pass emits
+one `ctx.logger.info` naming the service and the count upserted. Deliberately a log line and
+not sync telemetry: `sync_telemetry` already records `hadMore`, and adding a distinct
+"pinned" signal there would be a schema change for an operability nicety.
 
 **The pin condition is "the budget stopped the pass", deliberately not "anything incomplete".**
 Two kinds of page are permanently incomplete: one the integration lacks permission to read,
@@ -363,10 +388,13 @@ Cases:
 | Confluence | missing/empty `body.storage` → page still indexes, title-only |
 | Confluence | a >16 KiB body clamps to the cap and reports `body_complete = 0` |
 | Notion | multi-page block pagination via `start_cursor` concatenates in order |
-| Notion | recursion at depth 2 through a container (`column_list` → `column` → text) |
+| Notion | recursion through a container (`column_list` → `column` → text) |
+| Notion | `toggle` → `bulleted_list_item` → sub-bullet resolves fully at depth 3 |
+| Notion | a `table` → `table_row` yields its `cells` text, joined |
+| Notion | an image/file `caption` is indexed when the block has no `rich_text` |
 | Notion | recursion into a `bulleted_list_item` that has children collects **both** its own text and its sub-bullets, in order |
 | Notion | `child_page` / `child_database` are **not** followed |
-| Notion | depth is capped at 2 — a third level is not requested |
+| Notion | depth is capped at 3 — a fourth level is not requested, and the page reports `capped` |
 | Notion | a page is never **started** when fewer than `NOTION_BODY_REQUESTS_PER_PAGE_MAX` requests remain — asserted by counting fetches, so budget can never truncate a page mid-walk |
 | Notion | per-page cap hit → `truncated` → `body_complete = 0` **and** `metadata.bodyFetch = "capped"`, asserted by **reading the columns**, not by trusting the call |
 | Notion | a `"capped"` page with unchanged `modified_at` is skipped on the next pass — the regression test for the perpetual-re-fetch trap |
@@ -442,5 +470,5 @@ then a single one-shot retry of that batch at `limit=10`, not general adaptive s
 | Confluence `expand=body.storage` behaves differently against a live Cloud instance than against the mocked search response | The `expand` mechanism itself is already exercised by the existing `history.lastUpdated,space,version` expand; the batch limit drop to 25 is the hedge against payload rejection. Verified against mocks in CI; a live discrepancy shows up as an empty body, which degrades to today's behaviour, not to a failure |
 | The notion rate-limit bump (30 → 120) is wrong for some workspace or plan tier | 120 is a third under Notion's documented ~180/min. A 429 still penalises for 60s and now also zeroes the pass budget, so the failure mode is a slower backfill, not an aborted sync |
 | A very large workspace takes many passes to backfill | By design, and bounded: ~2,400 pages/hour with no effect on other connectors. Progress is visible via `body_complete` counts through `nimbus index rebody --dry-run`. Search-request amplification above ~10,000 pages is quantified and deferred — see [§ Deferred](#search-walk-amplification-on-large-workspaces) |
-| A page's text is missed below depth 2 | Recursion now follows any `has_children` block, so the loss is confined to genuinely deep nesting (a sub-sub-bullet), not to whole structural categories. Such a page reports `truncated`, so it is visible as `body_complete = 0` rather than silently wrong |
+| A page's text is missed below depth 3 | Recursion follows any `has_children` block to three levels, which covers `toggle` → list → sub-list and `table` → `table_row`. What remains uncaptured is genuinely deep nesting, and such a page reports `capped`, so it is visible as `body_complete = 0` rather than silently wrong |
 | `metadata.bodyFetch` makes `metadata` load-bearing for sync control flow, not just display | It is a connector-owned key on a connector-owned row, read by exactly one query in the same connector. It stays well inside the 64 KB `RAW_META_MAX_BYTES` limit and is invisible to every other consumer |

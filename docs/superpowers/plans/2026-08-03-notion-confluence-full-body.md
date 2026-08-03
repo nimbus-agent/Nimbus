@@ -606,6 +606,32 @@ describeWithFetchRestore("notion-page-body", () => {
     expect(notionBlockOwnText({ id: "x", type: "divider" })).toBe("");
   });
 
+  test("notionBlockOwnText reads table_row cells, joined", () => {
+    expect(
+      notionBlockOwnText({
+        id: "r1",
+        type: "table_row",
+        table_row: {
+          cells: [[{ plain_text: "CDR" }], [{ plain_text: "change data record" }], []],
+        },
+      }),
+    ).toBe("CDR | change data record");
+  });
+
+  test("notionBlockOwnText falls back to caption when there is no rich_text", () => {
+    expect(
+      notionBlockOwnText({
+        id: "i1",
+        type: "image",
+        image: { caption: [{ plain_text: "the deploy topology" }] },
+      }),
+    ).toBe("the deploy topology");
+  });
+
+  test("notionBlockOwnText returns empty for a table_row with no cells array", () => {
+    expect(notionBlockOwnText({ id: "r2", type: "table_row", table_row: {} })).toBe("");
+  });
+
   test("collects top-level text and reports complete", async () => {
     globalThis.fetch = routedFetch({ p1: [para("b1", "one"), para("b2", "two")] });
     const r = await fetchNotionPageText(deps(), "p1");
@@ -613,7 +639,7 @@ describeWithFetchRestore("notion-page-body", () => {
     expect(r.outcome).toBe("complete");
   });
 
-  test("follows a container to depth 2", async () => {
+  test("follows a container into its children", async () => {
     globalThis.fetch = routedFetch({
       p1: [{ id: "c1", type: "column_list", has_children: true, column_list: {} }],
       c1: [para("b1", "inner")],
@@ -654,15 +680,41 @@ describeWithFetchRestore("notion-page-body", () => {
     expect(r.outcome).toBe("complete");
   });
 
-  test("stops at depth 2 and reports capped", async () => {
+  test("toggle -> list -> sub-list resolves fully at depth 3", async () => {
+    globalThis.fetch = routedFetch({
+      p1: [{ id: "t1", type: "toggle", has_children: true,
+             toggle: { rich_text: [{ plain_text: "Decisions" }] } }],
+      t1: [bullet("b1", "L1", true)],
+      b1: [bullet("b2", "L2")],
+    });
+    const r = await fetchNotionPageText(deps(), "p1");
+    expect(r.text).toBe("Decisions\nL1\nL2");
+    expect(r.outcome).toBe("complete");
+  });
+
+  test("stops at depth 3 and reports capped", async () => {
     globalThis.fetch = routedFetch({
       p1: [bullet("b1", "L1", true)],
       b1: [bullet("b2", "L2", true)],
-      b2: [bullet("b3", "L3")],
+      b2: [bullet("b3", "L3", true)],
+      b3: [bullet("b4", "L4")],
     });
     const r = await fetchNotionPageText(deps(), "p1");
-    expect(r.text).toBe("L1\nL2");
+    expect(r.text).toBe("L1\nL2\nL3");
     expect(r.outcome).toBe("capped");
+  });
+
+  test("a table's rows are collected", async () => {
+    globalThis.fetch = routedFetch({
+      p1: [{ id: "tb1", type: "table", has_children: true, table: { table_width: 2 } }],
+      tb1: [
+        { id: "r1", type: "table_row", has_children: false,
+          table_row: { cells: [[{ plain_text: "CDR" }], [{ plain_text: "change data record" }]] } },
+      ],
+    });
+    const r = await fetchNotionPageText(deps(), "p1");
+    expect(r.text).toBe("CDR | change data record");
+    expect(r.outcome).toBe("complete");
   });
 
   test("paginates block children via start_cursor", async () => {
@@ -780,8 +832,13 @@ export const NOTION_BODY_FETCH_BUDGET_PER_SYNC = 200;
  */
 export const NOTION_BODY_REQUESTS_PER_PAGE_MAX = 10;
 
-/** Depth 1 is the page's own children; 2 is one level of nesting below that. */
-const MAX_DEPTH = 2;
+/**
+ * Depth 1 is the page's own children. 3 covers the ordinary Notion shapes —
+ * `toggle` → list → sub-list, `table` → `table_row`, two levels of bullets.
+ * This is a cycle guard (a `synced_block` reference can in principle loop),
+ * NOT the cost bound; `NOTION_BODY_REQUESTS_PER_PAGE_MAX` is that.
+ */
+const MAX_DEPTH = 3;
 
 /** Separate items in their own right — following them would double-index. */
 const NOT_FOLLOWED_BLOCK_TYPES: ReadonlySet<string> = new Set(["child_page", "child_database"]);
@@ -825,7 +882,25 @@ export function notionRichTextToPlain(richText: unknown): string {
   return parts.join("");
 }
 
-/** A block's text lives under a key named after its own `type`. */
+/** A `table_row` has no `rich_text` — its text is a 2-D array of rich-text arrays. */
+function notionTableRowText(payload: Record<string, unknown>): string {
+  const cells = payload["cells"];
+  if (!Array.isArray(cells)) {
+    return "";
+  }
+  return cells
+    .map((cell) => notionRichTextToPlain(cell))
+    .filter((t) => t !== "")
+    .join(" | ");
+}
+
+/**
+ * A block's text lives under a key named after its own `type`, but the shape
+ * under that key varies: most blocks use `rich_text`, a `table_row` uses
+ * `cells`, and media blocks (`image`, `file`, `video`, `bookmark`) carry only a
+ * `caption`. A `rich_text`-only reader returns nothing for a page built around
+ * a table — a common way to write exactly the glossary content we want.
+ */
 export function notionBlockOwnText(block: Record<string, unknown>): string {
   const type = stringField(block, "type");
   if (type === undefined) {
@@ -835,7 +910,11 @@ export function notionBlockOwnText(block: Record<string, unknown>): string {
   if (payload === undefined) {
     return "";
   }
-  return notionRichTextToPlain(payload["rich_text"]);
+  if (type === "table_row") {
+    return notionTableRowText(payload);
+  }
+  const own = notionRichTextToPlain(payload["rich_text"]);
+  return own === "" ? notionRichTextToPlain(payload["caption"]) : own;
 }
 
 type WalkState = { used: number; bytes: number; capped: boolean };
@@ -1073,14 +1152,16 @@ test("a capped page is skipped on the next pass — no perpetual re-fetch", asyn
   const db = createMemoryIndexDb();
   const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
   const page = makePage("pg-1");
-  // A block nested 3 deep forces outcome "capped".
+  // Nesting one level past MAX_DEPTH (3) forces outcome "capped".
   const deep = {
     "pg-1": [{ id: "b1", type: "bulleted_list_item", has_children: true,
                bulleted_list_item: { rich_text: [{ plain_text: "L1" }] } }],
     b1: [{ id: "b2", type: "bulleted_list_item", has_children: true,
            bulleted_list_item: { rich_text: [{ plain_text: "L2" }] } }],
-    b2: [{ id: "b3", type: "bulleted_list_item", has_children: false,
+    b2: [{ id: "b3", type: "bulleted_list_item", has_children: true,
            bulleted_list_item: { rich_text: [{ plain_text: "L3" }] } }],
+    b3: [{ id: "b4", type: "bulleted_list_item", has_children: false,
+           bulleted_list_item: { rich_text: [{ plain_text: "L4" }] } }],
   };
   const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
   installSearchAndBlocks([page], deep);
@@ -1318,6 +1399,16 @@ And the watermark decision:
       // older than the stopping point are unprocessed, and advancing would
       // skip them forever.
       const nextW = budgetStopped ? watermark : maxEdited === "" ? watermark : maxEdited;
+
+      // A multi-pass backfill is otherwise invisible: the sync reports success
+      // with hasMore:false every time, so nothing distinguishes "converged"
+      // from "still working through a 10,000-page workspace".
+      if (budgetStopped) {
+        ctx.logger.info(
+          { service: SERVICE_ID, upserted },
+          "notion sync budget exhausted; watermark pinned for backfill convergence",
+        );
+      }
 ```
 
 - [ ] **Step 5: Raise the notion rate limit**
