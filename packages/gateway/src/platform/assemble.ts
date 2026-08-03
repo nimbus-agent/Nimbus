@@ -93,6 +93,8 @@ import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { rebuildDecisions, runDecisionPass } from "../decisions/decision-extract.ts";
 import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
+import { appendBootMarker } from "../egress/egress-boot-marker.ts";
+import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
 import {
@@ -1700,6 +1702,11 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const vault = await createNimbusVault(paths);
   const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
+  // I29: record what THIS binary is built to observe, before anything can emit egress. Without a
+  // covering marker `proveWindow` reports `indeterminate` rather than a false zero, so this append
+  // is what makes a clean window provable. Safe here: openGatewaySqlite ran LocalIndex.ensureSchema,
+  // so egress_ledger (V44) exists.
+  appendBootMarker(db, THIS_BINARY_COVERAGE, Date.now());
   const notifications = createStubNotifications();
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   const rateLimiter = new ProviderRateLimiter();
