@@ -1,7 +1,6 @@
-import { BODY_MAX_PROSE } from "../../../index/body-caps.ts";
 import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
 import { resolvePersonForSync } from "../../../people/linker.ts";
-import { plainTextPreviewFromHtml } from "../../../string/html-plain-text.ts";
+import { plainTextFromHtml } from "../../../string/html-plain-text.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import { asUnknownObjectRecord } from "../../json-unknown.ts";
 import { modifiedMsFromIso, type ODataDeltaPage } from "../../microsoft-graph-sync-shared.ts";
@@ -52,7 +51,7 @@ export function upsertChannelMessage(
   }
   const externalId = `${teamId}:${channelId}:${id}`;
   const content = m.body !== undefined && typeof m.body.content === "string" ? m.body.content : "";
-  const full = plainTextPreviewFromHtml(content, BODY_MAX_PROSE);
+  const full = plainTextFromHtml(content);
   const preview = full.slice(0, 512);
   let fromName: string | null = null;
   const displayName = m.from?.user?.displayName;

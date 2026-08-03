@@ -1,7 +1,6 @@
-import { BODY_MAX_PROSE } from "../index/body-caps.ts";
 import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
-import { plainTextPreviewFromHtml } from "../string/html-plain-text.ts";
+import { plainTextFromHtml } from "../string/html-plain-text.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
@@ -135,7 +134,7 @@ function upsertFromPullRequest(
     type: "pr",
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    body: plainTextPreviewFromHtml(desc, BODY_MAX_PROSE),
+    body: plainTextFromHtml(desc),
     url,
     canonicalUrl: url,
     modifiedAt: Number.isFinite(modified) ? modified : now,

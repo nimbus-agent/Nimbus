@@ -327,4 +327,58 @@ describe("createTeamsSyncable", () => {
       .get(itemPrimaryKey("teams", "team-1:chan-1:msg-del"));
     expect(afterRow).toBeFalsy();
   });
+
+  test("a Teams message over the prose cap is not reported complete", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createTeamsSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    // 20 KiB of body content, well over BODY_MAX_PROSE (16384)
+    const huge = "x".repeat(20_000);
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              {
+                id: "msg-huge",
+                createdDateTime: "2024-05-01T10:00:00Z",
+                body: { contentType: "text", content: huge },
+                from: { user: { id: "ms-user-1", displayName: "Pat" } },
+              },
+            ],
+            "@odata.deltaLink":
+              "https://graph.microsoft.com/v1.0/teams/team-1/channels/chan-1/messages/delta?token=d1",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const messagesCursor = encodeTeamsSyncCursor({
+      v: 1,
+      phase: "messages",
+      teams: [{ id: "team-1" }],
+      teamsNext: null,
+      channelTeamIdx: 1,
+      channelsByTeam: { "team-1": ["chan-1"] },
+      chanNext: null,
+      pairs: [{ teamId: "team-1", channelId: "chan-1" }],
+      pairIdx: 0,
+      deltaByKey: {},
+    });
+
+    const r1 = await syncable.sync(ctx, messagesCursor);
+    expect(r1.itemsUpserted).toBe(1);
+
+    const row = db
+      .query<{ body_complete: number; len: number }, []>(
+        "SELECT body_complete, length(body) AS len FROM item WHERE service = 'teams'",
+      )
+      .get();
+    expect(row?.len).toBe(16_384);
+    expect(row?.body_complete).toBe(0); // was 1 — the bug
+  });
 });

@@ -36,7 +36,13 @@ export function collapseWhitespace(input: string): string {
   return out.trim();
 }
 
+/** Full plain text — no length limit. Let the store apply the cap so
+ *  `body_complete` is computed against the real length, not a pre-clipped one. */
+export function plainTextFromHtml(raw: string): string {
+  return collapseWhitespace(stripHtmlTagsToSpaces(raw));
+}
+
 export function plainTextPreviewFromHtml(raw: string, maxLen: number): string {
-  const plain = collapseWhitespace(stripHtmlTagsToSpaces(raw));
+  const plain = plainTextFromHtml(raw);
   return plain.length > maxLen ? plain.slice(0, maxLen) : plain;
 }
