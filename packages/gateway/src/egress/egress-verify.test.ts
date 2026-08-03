@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { appendBootMarker } from "./egress-boot-marker.ts";
+import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import type { EgressEntry } from "./egress-record.ts";
 import { egressHead, listEgress, proveWindow, verifyEgressChain } from "./egress-verify.ts";
@@ -110,9 +112,24 @@ describe("listEgress", () => {
 describe("proveWindow", () => {
   test("a zero-egress window reports outboundEgressEvents 0 and verifies ok", () => {
     const out = proveWindow(db, { since: 0, until: 1000 });
-    expect(out.completeness).toEqual({ tier: "authorized-actions", outboundEgressEvents: 0 });
+    expect(out.completeness.outboundEgressEvents).toBe(0);
     expect(out.verify.ok).toBe(true);
     expect(out.rows).toHaveLength(0);
+  });
+  test("a window with no covering boot marker is indeterminate, never a clean zero", () => {
+    const out = proveWindow(db, {});
+    expect(out.completeness.outboundEgressEvents).toBe(0);
+    // 0 events, intact chain — and STILL not provable, because nothing recorded what was observed.
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
+  });
+  test("with a boot marker, a clean window is determinate and reports its coverage", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1_000);
+    const out = proveWindow(db, {});
+    expect(out.completeness.indeterminate).toBe(false);
+    expect(out.completeness.coverage.task).toBe("per-call");
+    expect(out.completeness.coverage.model).toBe("none");
+    expect(out.completeness.outboundEgressEvents).toBe(0); // the marker itself is not counted
   });
   test("a window with one dispatch reports exactly that row", () => {
     appendEgressEntry(db, e({ timestamp: 50, method: "email.send" }));

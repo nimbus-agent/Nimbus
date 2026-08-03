@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { GENESIS_HASH } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
+import { coverageForWindow } from "./egress-boot-marker.ts";
+import { COVERAGE_CLASSES, type CoverageVector } from "./egress-coverage.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
 import { isMarkerSourceType } from "./egress-source-type.ts";
 
@@ -179,13 +181,23 @@ export function listEgress(
   return rows.map(toRow);
 }
 
-export type EgressCompleteness = { tier: "authorized-actions"; outboundEgressEvents: number };
+export type EgressCompleteness = {
+  /** What the binaries writing into this window were built to observe (§3.6 of the annex). */
+  readonly coverage: CoverageVector;
+  readonly outboundEgressEvents: number;
+  /**
+   * True when the count cannot be relied on: no boot marker covers the window, so there is no
+   * evidence any egress class was being observed. NEVER report a bare zero in this state.
+   */
+  readonly indeterminate: boolean;
+};
 
 /**
- * The `nimbus prove` window: the rows in [since, until], the completeness tier (honest about the
- * "authorized-actions" boundary — does NOT claim raw-syscall capture, per the spec), and the chain
- * verify result. A degraded chain surfaces `verify.ok === false` — the CLI prints `indeterminate`,
- * never a false `0` (the EAF "indeterminate, never a false zero" rule).
+ * The `nimbus prove` window: the rows in [since, until], the completeness (a per-source coverage
+ * vector — what the binaries writing into this window were built to observe — plus an
+ * `indeterminate` flag when no boot marker covers the window), and the chain verify result. A
+ * degraded chain surfaces `verify.ok === false` — the CLI prints `indeterminate`, never a false
+ * `0` (the EAF "indeterminate, never a false zero" rule).
  *
  * NOTE — `verify` runs `verifyEgressChain` over the WHOLE ledger (fromId = 0), not just the
  * window rows. This is intentional and fail-closed: the "zero egress in window W" inference is
@@ -205,9 +217,11 @@ export function proveWindow(
   const outbound = rows.filter(
     (r) => r.resultStatus === "authorized" && !isMarkerSourceType(r.sourceType),
   ).length;
+  const coverage = coverageForWindow(db, opts);
+  const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
-    completeness: { tier: "authorized-actions", outboundEgressEvents: outbound },
+    completeness: { coverage, outboundEgressEvents: outbound, indeterminate },
     verify: verifyEgressChain(db),
   };
 }
