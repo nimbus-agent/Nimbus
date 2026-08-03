@@ -3,10 +3,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { appendBootMarker, coverageForWindow } from "./egress-boot-marker.ts";
+import { appendBootMarker } from "./egress-boot-marker.ts";
 import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
-import { listEgress, verifyEgressChain } from "./egress-verify.ts";
+import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verify.ts";
 
 let db: Database;
 beforeEach(() => {

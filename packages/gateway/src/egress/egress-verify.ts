@@ -1,8 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { GENESIS_HASH } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
-import { coverageForWindow } from "./egress-boot-marker.ts";
-import { COVERAGE_CLASSES, type CoverageVector } from "./egress-coverage.ts";
+import { BOOT_MARKER_METHOD } from "./egress-boot-marker.ts";
+import {
+  ALL_NONE_COVERAGE,
+  COVERAGE_CLASSES,
+  type CoverageVector,
+  parseCoverage,
+  weakestCoverage,
+} from "./egress-coverage.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
 import { isMarkerSourceType } from "./egress-source-type.ts";
 
@@ -179,6 +185,41 @@ export function listEgress(
     )
     .all(since, until, limit) as RawRow[];
   return rows.map(toRow);
+}
+
+/**
+ * The coverage that can be claimed for a window: the weakest granularity per class across every
+ * boot marker at or before the window's end.
+ *
+ * Markers strictly AFTER the window are ignored — a binary that started later cannot vouch for what
+ * was observed earlier. No covering marker yields all-`none`, i.e. claim nothing.
+ *
+ * An UNPARSEABLE marker contributes an all-`none` vector rather than being skipped. Skipping it
+ * would let a sibling marker's richer claim stand, overstating coverage; contributing all-`none`
+ * drives the weakest-merge to `none` everywhere, so the window reports `indeterminate`. This is the
+ * "indeterminate, never a false zero" rule — NOT a throw, because one unreadable row must not take
+ * `nimbus egress` down. (Deliberate tampering is already caught elsewhere: `source_id` is hashed,
+ * so an edited marker breaks `verifyEgressChain`. The case handled here is a marker written by a
+ * NEWER binary using a class or granularity this one does not know.)
+ *
+ * Lives here (not in `egress-boot-marker.ts`) because it consumes `listEgress`, which is defined in
+ * this module — keeping it there would create a two-way import cycle between the two files
+ * (forbidden by `.dependency-cruiser.cjs` `no-circular`, enforced via `audit:boundaries`).
+ */
+export function coverageForWindow(
+  db: Database,
+  opts: { since?: number | undefined; until?: number | undefined },
+): CoverageVector {
+  const rows = listEgress(db, {});
+  const vectors: CoverageVector[] = [];
+  for (const r of rows) {
+    if (r.method !== BOOT_MARKER_METHOD) continue;
+    if (opts.until !== undefined && r.timestamp > opts.until) continue;
+    const v = r.sourceId === null ? null : parseCoverage(r.sourceId);
+    // Unreadable marker → claim nothing for every class (see doc comment).
+    vectors.push(v ?? ALL_NONE_COVERAGE);
+  }
+  return weakestCoverage(vectors);
 }
 
 export type EgressCompleteness = {
