@@ -820,7 +820,7 @@ git commit -m "feat(egress): proveWindow reports a coverage vector and flags ind
 - Modify: `packages/gateway/src/engine/executor.ts:224` (the `egressSink?:` parameter)
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (6 sites: lines ~314, 507, 703, 1020, 1206, 1324)
 - Modify: `packages/gateway/src/ipc/server/vault-dispatch.ts:95`
-- Test: `packages/gateway/src/security-invariants.test.ts`
+- Test: `packages/gateway/src/security-invariants.test.ts` — import `egressHead` and `makeEgressSink` for the NULL_EGRESS_SINK test
 
 **Interfaces:**
 - Consumes: `EgressSink` (`egress-ledger.ts`).
@@ -844,15 +844,11 @@ test("I29: the executor's egress sink is a REQUIRED constructor parameter", () =
   expect(src).not.toContain("private readonly egressSink?: EgressSink,");
 });
 
-test("I29: NULL_EGRESS_SINK appends nothing", () => {
-  let appended = 0;
-  const spy: EgressSink = {
-    append() {
-      appended++;
-    },
-  };
-  spy.append({
-    timestamp: 0,
+test("I29: NULL_EGRESS_SINK leaves a real ledger untouched, where makeEgressSink writes", () => {
+  // Asserts REAL behaviour against a real ledger — not that a spy counted a call. The two sinks
+  // are handed the identical entry so the only variable is which sink received it.
+  const entry = {
+    timestamp: 1,
     sourceType: "task",
     sourceId: null,
     destination: "d",
@@ -860,21 +856,15 @@ test("I29: NULL_EGRESS_SINK appends nothing", () => {
     payloadSummary: "{}",
     hitlStatus: "not_required",
     resultStatus: "authorized",
-  });
-  expect(appended).toBe(1); // sanity: the spy works
-  // The null sink accepts the same entry and does nothing.
-  expect(() =>
-    NULL_EGRESS_SINK.append({
-      timestamp: 0,
-      sourceType: "task",
-      sourceId: null,
-      destination: "d",
-      method: "m",
-      payloadSummary: "{}",
-      hitlStatus: "not_required",
-      resultStatus: "authorized",
-    }),
-  ).not.toThrow();
+  } as const;
+
+  const db = makeTestDb(); // same fixture helper the egress suite uses
+  NULL_EGRESS_SINK.append(entry);
+  expect(egressHead(db).count).toBe(0);
+
+  makeEgressSink(db).append(entry);
+  expect(egressHead(db).count).toBe(1);
+  db.close();
 });
 ```
 
@@ -998,9 +988,11 @@ const COVERED = {
 describe("formatProveResult", () => {
   test("a zero window never prints a bare 0 — it names what was observed", () => {
     const out = formatProveResult({ delta: 0, completeness: COVERED, chainOk: true });
-    expect(out).toContain("0");
-    // The scope qualifier is mandatory: a bare "0 ✓" is the defect being fixed.
-    expect(out).toContain("gated connector actions");
+    // Assert the whole first line, not just that a "0" appears somewhere: the defect being fixed
+    // is a count printed WITHOUT its scope, so the scope must be on the same line as the number.
+    expect(out.split("\n")[0]).toBe(
+      "outbound egress events during this query: 0 (scope: gated connector actions)",
+    );
     expect(out).toContain("not observed: model, peer, session, sync");
   });
 
@@ -1158,7 +1150,7 @@ EOF
 - Modify: `CLAUDE.md` and `GEMINI.md` (the I29 bullet — **both**, they mirror each other)
 - Modify: `.claude/commands/nimbus-egress.md`
 - Modify: `docs/CHANGELOG.md`
-- Test: `packages/gateway/src/security-invariants.test.ts`
+- Test: `packages/gateway/src/security-invariants.test.ts` — import `egressHead` and `makeEgressSink` for the NULL_EGRESS_SINK test
 
 **This is the honesty task and the reason Phase 1 exists.** D22's own source comment claims *"there is no escape hatch, no 'approved wrapper' carve-out … Any future shortcut or custom-wrapper bypass therefore fails this preflight static check immediately."* That is false: D22 is a regex over the literal string `connectors.dispatch`, and `connectors/connector-write-dispatch.ts:21` is a dispatcher decorator calling `inner.dispatch(action)` that passes it. The comment must describe the mechanism, not the intent.
 
