@@ -1,5 +1,20 @@
 import type { Database } from "bun:sqlite";
 
+/**
+ * I9 — canonical identifier escaper. SQLite has no parameter-binding syntax
+ * for identifiers (table/column names), only for values, so any identifier
+ * that cannot be reduced to a literal from a fixed allowlist must be
+ * interpolated through this function rather than a raw template literal.
+ * Doubling embedded `"` is the standard SQLite quoted-identifier escape.
+ *
+ * This is the single canonical copy — every call site imports it from here
+ * (`db/repair.ts`, `connectors/reindex.ts`) rather than redefining it, per
+ * `docs/SECURITY-INVARIANTS.md` I9. Behaviour must not drift between callers.
+ */
+export function escapeIdentifier(id: string): string {
+  return `"${id.replaceAll('"', '""')}"`;
+}
+
 let _diskSpaceWarning = false;
 const _diskFullListeners: Array<() => void> = [];
 

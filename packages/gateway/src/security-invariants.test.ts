@@ -223,10 +223,34 @@ describe("I8 — Tauri renderer CSP is restrictive", () => {
 });
 
 describe("I9 — bound SQL parameters; identifiers go through escapeIdentifier", () => {
-  test("db/repair.ts escapes identifiers by doubling quotes (no raw interpolation)", async () => {
-    const src = await read("packages/gateway/src/db/repair.ts");
-    expect(src).toMatch(/escapeIdentifier/);
+  test("db/write.ts defines the canonical escapeIdentifier (doubles embedded quotes)", async () => {
+    const src = await read("packages/gateway/src/db/write.ts");
+    expect(src).toMatch(/export function escapeIdentifier\(/);
     expect(src).toMatch(/replaceAll\('"', '""'\)/);
+  });
+
+  test("db/repair.ts imports escapeIdentifier from db/write.ts rather than defining its own copy", async () => {
+    const src = await read("packages/gateway/src/db/repair.ts");
+    // The import must be the SOURCE of the symbol. A regression that re-adds a
+    // local `const escapeIdentifier = ...` / `function escapeIdentifier(...)`
+    // shadowing definition would still satisfy a bare /escapeIdentifier/ match
+    // and a bare /replaceAll\('"', '""'\)/ match (the string would just move
+    // with it) — that is precisely the two-copies-of-a-security-primitive
+    // drift this consolidation exists to prevent, so this test must fail in
+    // that case rather than pass on the name alone.
+    expect(src).toMatch(/import \{ dbRun, escapeIdentifier \} from "\.\/write\.ts"/);
+    expect(src).toMatch(/escapeIdentifier\(table\)/);
+    // The implementation itself must NOT be present in this file.
+    expect(src).not.toMatch(/replaceAll\('"', '""'\)/);
+    expect(src).not.toMatch(/(?:const|function)\s+escapeIdentifier\s*[=(]/);
+  });
+
+  test("connectors/reindex.ts imports escapeIdentifier from db/write.ts rather than defining its own copy", async () => {
+    const src = await read("packages/gateway/src/connectors/reindex.ts");
+    expect(src).toMatch(/import \{ dbRun, escapeIdentifier \} from "\.\.\/db\/write\.ts"/);
+    expect(src).toMatch(/escapeIdentifier\(vecTable\)/);
+    expect(src).not.toMatch(/replaceAll\('"', '""'\)/);
+    expect(src).not.toMatch(/(?:const|function)\s+escapeIdentifier\s*[=(]/);
   });
 
   test("db/repair.ts guards against NUL-byte / empty identifier names", async () => {
