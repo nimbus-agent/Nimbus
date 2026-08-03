@@ -238,3 +238,56 @@ construction sites omitting the sink, `mesh.listTools()` having no production ca
 remediation design over the combined enumeration. The threat pass corrected two claims from the
 sweep pass (the `I11` breach and an arbitrary-SQL warehouse tool), both of which are recorded above
 under "What is not wrong."
+
+---
+
+## Reconciliation with the `fetch`-modality annex (2026-08-03)
+
+[`2026-08-03-i29-ledger-completeness-design.md`](./2026-08-03-i29-ledger-completeness-design.md) was
+drafted independently and without consulting this document. It has been reduced to an **annex**
+covering the `fetch` modality; this document remains the spec of record for architecture, phase
+ordering, and the MCP-mesh execute modality.
+
+Four of the five conflicts resolved **to this document**: the frozen `source_type` union, the
+required sink with `NULL_EGRESS_SINK`, the per-source coverage vector, and the prohibition on
+allowlist entries. The annex's `net:`/`local:` prefix taxonomy and scalar tier ladder are withdrawn.
+
+### One resolution goes the other way — Phase 4's "local inference must produce no rows"
+
+**Superseded.** Local inference **does** write rows; they are excluded from the headline count by a
+predicate over the hashed `destination` host, evaluated at read time.
+
+The reasoning, because it overturns a decision recorded here. This document's objection is noise,
+which is a matter of degree and answerable with `egress.prune`. The cost on the other side is not:
+if local inference writes no rows, the local/remote predicate decides *whether evidence exists at
+all*, so a predicate that wrongly judges a remote host local destroys the record of a real egress —
+silently and permanently. With rows written and the split derived at read time, the identical bug
+only mis-*counts*: the row still names the true host, the chain still proves it unedited, and a
+corrected predicate re-derives history. That is this document's own "indeterminate, never a false
+zero" principle applied to its own recommendation.
+
+Phase 4's accompanying requirement — that the predicate be **structural, not convention** — stands
+and remains open; read-time derivation makes adopting it later a non-breaking change.
+
+### Two decisions this document's Phase 1 must now absorb
+
+Both are irreversible after Phase 1, because the union is BLAKE3-committed:
+
+1. **The frozen union needs members for the boot and degraded markers.** The annex introduces a
+   per-process boot marker (the mechanism that turns an unwired sink into `indeterminate` rather
+   than a false zero) and a degraded marker. Neither fits `task`/`prune`/`session`/`sync`/`model`/
+   `peer`. Recommendation: admit `boot` and `degraded` while the union is still open — exactly the
+   "land it complete, including members whose appenders do not exist yet" case argued for above.
+2. **How the required sink reaches leaf functions.** `router.ts`'s `llmClassify` and the
+   `openai-embedder` closure take no `db` and are not constructed through `ToolExecutor`, so
+   "required at construction" does not by itself reach them. Recommendation: thread a sink at each
+   subsystem's own construction boundary rather than fall back to an ambient global.
+
+### Corrections to this document's counting, from the annex
+
+- `pruneEgress` writes `resultStatus: "authorized"` (`egress-prune.ts:97`), so **prune tombstones
+  are already counted as outbound egress events** by `proveWindow`. Marker exclusion must be
+  explicit; `result_status` alone does not express it.
+- The `fetch`-modality inventory is 24 connector files, 11 non-connector outbound sites and 4
+  inbound false positives — plus two non-`fetch` sites (`Bun.connect`, `WebSocket`) that a
+  `fetch`-only sweep misses entirely.

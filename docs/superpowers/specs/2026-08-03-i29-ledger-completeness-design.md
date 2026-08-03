@@ -1,10 +1,25 @@
-# I29 ledger completeness — widening egress coverage beyond the executor chokepoint
+# I29 ledger completeness — the `fetch` modality (annex)
 
-- **Date:** 2026-08-03
+- **Date:** 2026-08-03 · reconciled 2026-08-03
 - **Branch:** `dev/asaf/i29-ledger-completeness`
-- **Status:** design approved, plan pending
+- **Status:** **annex** to [`2026-08-02-i29-d22-egress-completeness-design.md`](./2026-08-02-i29-d22-egress-completeness-design.md), the security spec of record. Reconciled per option R3.
 - **Touches:** `packages/gateway/src/egress/`, `engine/router.ts`, `embedding/`, `llm/`, `audit/`, `updater/`, `telemetry/`, `identity/`, `extensions/`, `share/`, `sync/scheduler.ts`, `ipc/lan-client.ts`, `chatops/transport/`, `scripts/structure-audit/`, `packages/cli/src/commands/prove.ts`
 - **Explicitly out of scope (parallel branch owns these):** `packages/gateway/src/connectors/**`, `index/item-store.ts`, `sync/rate-limiter.ts`, `string/**`, `ipc/index-rebody-rpc.ts`
+
+> ## Reading order
+>
+> The spec of record owns the **architecture**: the `source_type` union, the sink requirement, the
+> coverage vector, and the phase ordering. It also owns the modality this document does not cover —
+> the MCP-mesh execute path.
+>
+> This annex owns the **`fetch` modality**: the verified call-site inventory, the classification
+> rules, the append helper, and the per-site delivery detail. It supplies the content for the spec
+> of record's Phases 3–5.
+>
+> Where the two disagreed, four conflicts resolved to the spec of record and one resolved here;
+> all five are recorded in §12. **Sections 3.2, 3.3 and 3.6 were rewritten in that reconciliation** —
+> the `net:`/`local:` prefix taxonomy and the scalar tier ladder they originally proposed are
+> withdrawn.
 
 ---
 
@@ -98,7 +113,7 @@ Enforcement follows the repo's existing idiom rather than inventing one: **stati
 ### 2.2 Non-goals
 
 - Per-HTTP-request rows for connector sync.
-- Raw-syscall or packet capture. The tier vocabulary exists precisely to avoid claiming this.
+- Raw-syscall or packet capture. The coverage vector exists precisely to avoid claiming this.
 - A portable/attestable EAF artifact. Receipt signing stays as-is.
 - Any change to `egress.prune`, the HITL frozen set, or receipt signing keys.
 - Instrumenting in-process MiniLM embedding: it makes no network call, so it gets no row.
@@ -111,9 +126,12 @@ Enforcement follows the repo's existing idiom rather than inventing one: **stati
 
 ```ts
 export interface EgressCallContext {
-  readonly sourceType: string;       // taxonomy base, e.g. "llm" — prefix applied by classifier
-  readonly method: string;           // stable logical verb, e.g. "llm.inference"
-  readonly summary?: unknown;        // metadata only — never request bodies
+  /** A member of the FROZEN union (§3.3) — never a new value, never a prefixed one. */
+  readonly sourceType: EgressSourceType;
+  /** Stable logical verb, e.g. "llm.inference". Never the HTTP verb plus path. */
+  readonly method: string;
+  /** Metadata only — never request bodies (§3.5). */
+  readonly summary?: unknown;
 }
 
 export async function egressFetch(
@@ -125,18 +143,41 @@ export async function egressFetch(
 /** For egress that returns no Response: Bun.connect, WebSocket. */
 export function recordEgress(target: string, ctx: EgressCallContext): void;
 
-/** Boot wiring. Appends the boot marker. */
-export function setEgressSink(sink: EgressSink, tier: CoverageTier): void;
-
-/** Test seam. */
-export function resetEgressSink(): void;
+/** Boot wiring. Appends the boot marker carrying this binary's coverage vector (§3.6). */
+export function registerEgressSink(sink: EgressSink, coverage: CoverageVector): void;
 ```
 
 `egressFetch` is a drop-in for `fetch`: `init` passes through untouched and a plain `Response` is returned, so every call site keeps its existing `res.ok` / `.json()` / `.text()` handling. Verified against the real shapes at `router.ts:129` (POST + headers + body), `openai-embedder.ts:23` (same), `manifest-fetcher.ts:138` (`{ signal }`), `updater.ts:232` (`{ redirect: "follow" }`).
 
 `recordEgress` exists because `Bun.connect` and `new WebSocket` have no `Response` to wrap, and because D22 forbids calling `appendEgressEntry` outside `egress/` — callers import this instead.
 
-### 3.2 Sink registration is module-scoped, not threaded
+### 3.2 Sink registration — superseded by the spec of record
+
+> **Withdrawn.** This section originally proposed leaving `egressSink?:` optional and adding a
+> module-scoped `setEgressSink`. The spec of record's Phase 1 requires the sink instead, with a
+> named `NULL_EGRESS_SINK` for gate-only construction sites, and that wins: a named null is a
+> decision on the record, an omitted optional is an accident waiting. The reasoning below is
+> retained only because the leaf-function problem it identifies is real and Phase 1 must solve it.
+
+The obstacle is genuine. `llmClassify(provider, userText, model, apiKey)` in `router.ts` and the
+embedder closure in `openai-embedder.ts` are leaf functions with **no `db` handle and no DI path to
+a sink**. Requiring the sink at `ToolExecutor` construction does not by itself reach them, because
+they are not constructed through the executor at all.
+
+So Phase 1's "make the sink required" and this annex's call sites meet at an unresolved seam, and
+**Phase 3 must decide it explicitly** rather than inheriting a global by default. Two candidates:
+
+1. **Thread it** — give each subsystem that performs egress an explicit sink parameter at its own
+   construction boundary (`makeOpenAiEmbedder(..., sink)`, the router's factory, the schedulers).
+   More edits, no ambient state, and every call site is greppable.
+2. **A module-scoped registration** as originally proposed, with `NULL_EGRESS_SINK` as the default
+   rather than `undefined`, so an unwired process records nothing *and says so* instead of silently
+   appending nothing.
+
+Option 1 is preferable on the same grounds Phase 1 gives for the required sink; option 2 is cheaper.
+Recorded as an open decision for Phase 3, not settled here.
+
+### 3.2.1 Original rationale (historical)
 
 `llmClassify(provider, userText, model, apiKey)` in `router.ts` and the embedder closure in `openai-embedder.ts` are leaf functions with **no `db` handle and no DI path to a sink**. Threading an `EgressSink` to them would change roughly 11 leaf signatures across unrelated subsystems.
 
@@ -144,44 +185,88 @@ Instead, `platform/assemble.ts` calls `setEgressSink(makeEgressSink(db), tier)` 
 
 Test hazard, mitigated: a module-global is a known contamination source in this repo's Bun test runs. `resetEgressSink()` is exported and called in `afterEach` for every suite that touches it; suites that do not register a sink exercise the unregistered path deliberately (§4.3).
 
-### 3.3 Taxonomy — classification lives in the hashed `source_type`
+### 3.3 Taxonomy — the frozen union, with local/remote derived from `destination`
 
-`source_type` has **no CHECK constraint** (V44; `prune` already exploits this) and **is** an input to `computeEgressRowHash`. Putting the classification there makes it tamper-evident: a remote call cannot be silently reclassified as local without breaking the chain.
+> **Rewritten in reconciliation.** The `net:`/`local:` prefix scheme originally proposed here is
+> **withdrawn**. The spec of record freezes a closed union up front and states the reason plainly:
+> `source_type` is BLAKE3-committed, so a later rename is a chain break rather than a refactor, and
+> incremental widening is called out by name as a thing not to do. This annex adds no members.
 
-| `source_type` | Meaning | Counted in headline |
-|---|---|---|
-| `task` | gated connector action (**existing, unchanged**) | yes |
-| `prune` | retention tombstone (**existing, unchanged**) | no — **behaviour change, see §3.3.1** |
-| `boot` | process-start marker, `method` carries the tier | no |
-| `net:llm`, `net:embedding`, `net:sync`, `net:telemetry`, `net:updater`, `net:identity`, `net:registry`, `net:share`, `net:federation`, `net:chatops`, `net:audit` | left the machine | yes |
-| `net:unknown` | host unparseable — recorded rather than dropped | yes |
-| `net:unattributed` | caught by the PR-3 runtime backstop | yes |
-| `net:degraded` | recovery marker; carries the count of lost appends | no |
-| `local:*` | loopback — did not leave the machine | **no** |
-
-The headline count becomes:
+The union is the spec of record's, defined in its Phase 1 and used verbatim here:
 
 ```ts
-/** Rows that record bookkeeping, not egress. Never counted. */
-const MARKER_SOURCE_TYPES = new Set(["prune", "boot", "net:degraded"]);
+type EgressSourceType = "task" | "prune" | "session" | "sync" | "model" | "peer";
+```
 
-rows.filter(
+The `fetch` modality maps onto it without additions:
+
+| Call class (§6) | `source_type` |
+|---|---|
+| LLM inference + classification (`router.ts`), embeddings | `model` |
+| Connector sync runs (scheduler seam) | `sync` |
+| Federated peer sends (`lan-client.ts`) | `peer` |
+| Telemetry, audit shipper, updater, JWKS, registry, share transport, ChatOps | `session` |
+| Gated connector actions (existing) | `task` |
+| Retention tombstone (existing) | `prune` |
+
+#### 3.3.1 Local vs remote is derived from `destination`, not encoded in `source_type`
+
+This is how the frozen union and the local-inference decision (§12, resolved *here* rather than to
+the spec of record) coexist. `destination` is the request **host**, and `destination` **is an input
+to `computeEgressRowHash`** — so classifying from it is exactly as tamper-evident as a prefix would
+have been. A remote call cannot be relabelled local without breaking the chain.
+
+```ts
+const outbound = rows.filter(
   (r) =>
     r.resultStatus === "authorized" &&
-    !r.sourceType.startsWith("local:") &&
-    !MARKER_SOURCE_TYPES.has(r.sourceType),
+    !MARKER_SOURCE_TYPES.has(r.sourceType) &&
+    !isLoopbackDestination(r.destination),   // §3.4
 ).length;
 ```
 
-Marker exclusion is explicit rather than implied by `result_status`, because markers legitimately carry `authorized` and would otherwise be counted as egress.
+Deriving at read time rather than freezing a label at write time is a deliberate advantage, and the
+reason the local-inference conflict resolved the way it did: **a classifier bug stays correctable.**
+If `isLoopbackDestination` is ever wrong, the rows still carry the true host, so a fixed classifier
+re-derives the correct count from history. Under the spec of record's alternative — write no row for
+local inference — a misclassified remote call leaves no evidence at all.
 
-Existing `task` rows are counted exactly as they are today, so old ledgers keep reporting the same numbers for real actions.
+Marker rows are excluded explicitly rather than by `result_status`, because they legitimately carry
+`authorized`:
+
+```ts
+/** Rows that record bookkeeping, not egress. Never counted. */
+const MARKER_SOURCE_TYPES: ReadonlySet<string> = new Set(["prune"]);
+```
+
+Existing `task` rows are counted exactly as they are today, so old ledgers keep reporting the same
+numbers for real actions.
+
+#### 3.3.2 The boot and degraded markers need a home in the frozen union
+
+The union has no member for them, and this annex may not add one. Two options for Phase 1, which
+owns the union:
+
+1. **Admit two more members now** — `boot` and `degraded` — while the union is still being frozen.
+   Cheap at this moment and impossible later; this is precisely the "land it complete, including
+   members whose appenders do not exist yet" case the spec of record argues for.
+2. **Carry them as `session` rows** with a reserved `method` (`egress.boot`, `egress.degraded`) and
+   exclude by `method`. Adds no members, at the cost of overloading `session`.
+
+**Option 1 is recommended**, and must be decided before Phase 1 lands, not after — that is the whole
+point of freezing the union up front.
+
+#### 3.3.3 This corrects a pre-existing miscount
+
+`pruneEgress` writes `resultStatus: "authorized"` (`egress-prune.ts:97`), and today's filter is `rows.filter((r) => r.resultStatus === "authorized")` with no source-type exclusion. **A prune tombstone is therefore already counted as an outbound egress event**, inflating the number by one per prune — even though pruning is a local retention operation that sends nothing off-machine.
+
+Excluding markers fixes this. It is a user-visible change to a number that was previously wrong, so it belongs in the changelog entry rather than passing silently. The boot and degraded markers would have inherited the same bug had the exclusion not been made explicit.
 
 #### 3.3.1 This corrects a pre-existing miscount
 
 `pruneEgress` writes `resultStatus: "authorized"` (`egress-prune.ts:97`), and today's filter is `rows.filter((r) => r.resultStatus === "authorized")` with no source-type exclusion. **A prune tombstone is therefore already counted as an outbound egress event**, inflating the number by one per prune — even though pruning is a local retention operation that sends nothing off-machine.
 
-Excluding markers fixes this. It is a user-visible change to a number that was previously wrong, so it belongs in the PR-2 changelog entry rather than passing silently. The `boot` and `net:degraded` markers introduced here would have inherited the same bug had the exclusion not been made explicit.
+Excluding markers fixes this. It is a user-visible change to a number that was previously wrong, so it belongs in the changelog entry of whichever phase lands it, rather than passing silently. The `boot` and degraded markers introduced here would have inherited the same bug had the exclusion not been made explicit.
 
 ### 3.4 Classification rules
 
@@ -189,22 +274,27 @@ Resolved from the **URL host** (pre-DNS), reusing `share/safe-fetch.ts`'s export
 
 `safe-fetch` deliberately conflates loopback with private-LAN; this work must split them, because `127.0.0.1` did not leave the machine and `192.168.1.50` did:
 
-- **loopback** → `local:` — `127.0.0.0/8`, `::1`, `::`, and the bare hostname `localhost`.
-- **private-LAN** (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`, `fe80::/10`) → `net:` — a peer on the LAN is off-machine.
-- **link-local** (`169.254.0.0/16`, `fe80::/10`) → `net:`. This is not a formality: `169.254.169.254` is the cloud instance-metadata endpoint, a credential-bearing destination that must never be classified as local.
-- **everything else** → `net:`.
+The predicate is `isLoopbackDestination(destination)` (§3.3.1), applied at read time to the stored
+host. It answers one question — *did this leave the machine?* — and nothing else:
+
+- **loopback** → `true` — `127.0.0.0/8`, `::1`, `::`, and the bare hostname `localhost`.
+- **private-LAN** (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`) → `false`. A peer on the LAN is off-machine.
+- **link-local** (`169.254.0.0/16`, `fe80::/10`) → `false`. This is not a formality: `169.254.169.254` is the cloud instance-metadata endpoint, a credential-bearing destination that must never be classified as local.
+- **everything else** → `false`.
 
 Classifying pre-DNS is a deliberate simplification: it is deterministic and cheap, and `safe-fetch` already documents the DNS-rebinding TOCTOU limitation for resolution-time classification. Stated as a limitation in §7 rather than silently assumed.
 
 #### 3.4.1 The classifier fails toward over-reporting, and that is the design
 
-A local model reached by hostname rather than by IP — `http://workstation:11434`, `http://my-macbook.local:11434` — classifies as `net:llm` even though nothing left the machine. `prove` then reports a non-zero count for a fully-local query.
+A local model reached by hostname rather than by IP — `http://workstation:11434`, `http://my-macbook.local:11434` — is counted as having left the machine even though it did not. `prove` then reports a non-zero count for a fully-local query.
 
 This is the **safe** failure direction and is accepted deliberately. A ledger that over-reports egress produces a user complaint; a ledger that under-reports produces a false `0 ✓`, which is the entire defect this work exists to fix.
 
 That asymmetry is why **`.local` must not be added to the loopback set.** mDNS `.local` names resolve to *other machines* on the LAN as readily as to this one; treating the suffix as loopback would classify genuine off-machine egress as local and manufacture exactly the false zero being eliminated. The same objection applies to any hostname-pattern heuristic.
 
-The supported way to get a clean `0 ✓` from a local model is to point the provider at `127.0.0.1` or `localhost`, which will be documented in the `[llm]` configuration reference. A structural alternative — classify as `local:` when the request target *is* the configured local-provider endpoint, rather than by inspecting the host string — is deferred (§11), because it interacts with an unresolved conflict about whether local inference should emit rows at all.
+The supported way to get a clean `0 ✓` from a local model is to point the provider at `127.0.0.1` or `localhost`, which will be documented in the `[llm]` configuration reference.
+
+A structural alternative remains open: classify as local when the request target *is* the configured local-provider endpoint, rather than by inspecting the host string. The spec of record asks for exactly this shape — "a structural local/remote predicate, not ... convention". It is deferred rather than adopted because reading `[llm]` config inside the classifier couples the ledger to config resolution, and because the read-time derivation (§3.3.1) makes it a **correctable** decision rather than a permanent one: adopting it later re-derives every historical count correctly.
 
 ### 3.5 Row content
 
@@ -214,17 +304,37 @@ The supported way to get a clean `0 ✓` from a local model is to point the prov
 - **`hitl_status`** = `not_required` for all new classes (they are not gated). Satisfies the existing CHECK; no migration.
 - **`result_status`** = `authorized`. Rows are appended *before* the call, so this means "authorized to send", never "delivered" — identical semantics to the action path.
 
-### 3.6 Boot marker and the tier ladder
+### 3.6 Boot marker, carrying the coverage vector
 
-`setEgressSink` appends one `source_type='boot'` row per process start whose `method` carries that binary's coverage tier.
+> **Rewritten in reconciliation.** The scalar `CoverageTier` ladder originally proposed here is
+> **withdrawn** in favour of the spec of record's per-source coverage vector, which is strictly more
+> expressive: a scalar cannot say "connector actions are complete, sync is per-run, model calls are
+> uncovered" — and that is exactly the state the ledger will be in between phases.
 
-This closes the design's most dangerous failure mode. Without it, a build where `setEgressSink` is never called produces an empty ledger, and every window reads as a clean `0` — a false zero indistinguishable from real silence.
+The boot marker survives the reconciliation unchanged in purpose, and gains a better payload.
+
+**Purpose.** One marker row per process start. Without it, a build that never wires the sink
+produces an empty ledger, and every window reads as a clean `0` — a false zero indistinguishable
+from real silence. This is the annex's main structural contribution and §4.3 depends on it.
+
+**Payload.** The marker records the writing binary's coverage vector — which source classes it was
+built to observe, and at what granularity:
 
 ```ts
-export type CoverageTier = "authorized-actions" | "first-party-egress" | "all-egress";
+type Granularity = "none" | "per-run" | "per-call";
+type CoverageVector = Readonly<Record<EgressSourceType, Granularity>>;
 ```
 
-`proveWindow` finds the boot markers spanning the window and reports the **weakest** one. A ledger written partly by today's action-scoped binary therefore reports `authorized-actions`, not a false `all-egress`. `EgressCompleteness.tier` widens from its current one-member union to this type.
+So a Phase-3 binary writes `{ task: "per-call", sync: "per-run", model: "none", … }`, and a
+Phase-4 binary writes the same with `model: "per-call"`.
+
+**Resolution over a window.** `proveWindow` finds the boot markers spanning the window and reports
+the **weakest granularity per source class** across them. A ledger written partly by today's
+action-scoped binary therefore reports `model: "none"` for that window — it cannot claim coverage a
+past binary never had. A window with no covering marker is `indeterminate` (§4.3).
+
+This replaces `EgressCompleteness.tier`, whose current value `"authorized-actions"` becomes the
+vector `{ task: "per-call", …rest: "none" }`.
 
 ---
 
@@ -237,12 +347,12 @@ Append throws → `gate()` throws → `execute()` propagates → dispatch never 
 ### 4.2 New classes — degrade and continue
 
 1. Append throws → catch, increment an in-memory lost-append counter, **proceed with the call**.
-2. On the next *successful* append, emit a `net:degraded` marker first, recording how many appends were lost.
-3. `proveWindow` reports `indeterminate` for any window touching a `net:degraded` marker or a chain break — reusing the existing "indeterminate, never a false zero" rule.
+2. On the next *successful* append, emit a degraded marker first, recording how many appends were lost.
+3. `proveWindow` reports `indeterminate` for any window touching a degraded marker or a chain break — reusing the existing "indeterminate, never a false zero" rule.
 
 **Known limitation, stated rather than hidden:** if the process dies between a failed append and the next successful one, that degradation signal is lost and the window reads clean. Only hard fail-closed eliminates this; availability was chosen over it deliberately (§2.1).
 
-The sharpest form of this: **if the database is read-only or lock-held, step 2 can never run**, because writing the `net:degraded` marker is itself an append. Recovery-on-next-append handles a transient failure (a malformed head, a constraint error) and does nothing for a sustained one.
+The sharpest form of this: **if the database is read-only or lock-held, step 2 can never run**, because writing the degraded marker is itself an append. Recovery-on-next-append handles a transient failure (a malformed head, a constraint error) and does nothing for a sustained one.
 
 Soundness survives this, via the boot marker rather than via the recovery marker. A restart with an unwritable database cannot append a boot marker either, so the window has no covering marker and `proveWindow` reports `indeterminate` — not a clean zero. What is lost is *forensic detail*: how many appends were dropped, and when. A sentinel file outside SQLite would recover that detail; it is deferred as an enhancement (§11), not required for the completeness claim.
 
@@ -250,14 +360,14 @@ Soundness survives this, via the boot marker rather than via the recovery marker
 
 Calling `egressFetch` with no sink registered is a programming error, not a runtime condition — but the two builds must behave differently, and the spec is explicit about which:
 
-- **Test and development builds throw.** A missing `setEgressSink` is a wiring bug and should fail loudly where it is cheap to fix.
+- **Test and development builds throw.** A missing sink registration is a wiring bug and should fail loudly where it is cheap to fix. (Under the recommended threaded-sink resolution of §3.2, most of this class becomes a compile error instead — which is strictly better. The boot marker still covers whatever remains reachable at runtime.)
 - **Production proceeds with the call and records nothing**, consistent with degrade-and-continue (§4.2): an instrumentation defect must not take the product down.
 
 Production safety therefore rests entirely on the boot marker. With no marker covering the window, `proveWindow` reports `indeterminate`, so an unwired sink surfaces as "cannot prove" rather than as a silent `0 ✓`. This is the single most important reason the boot marker exists, and an enforcement test asserts that a sink-less boot yields `indeterminate` and never zero.
 
 ### 4.4 Unparseable host
 
-`new URL(input)` throwing must not drop the row. Recorded as `net:unknown` with `destination = "unknown"` and counted. When classification fails, the safe direction is to record.
+`new URL(input)` throwing must not drop the row. Recorded with `destination = "unknown"`, its own `source_type` unchanged, and **counted** — `isLoopbackDestination("unknown")` is `false`, so an unparseable host is treated as having left the machine. When classification fails, the safe direction is to record and to count.
 
 ---
 
@@ -275,37 +385,67 @@ Added to `checkEgressChokepointConfinement` in `scripts/structure-audit/check-ni
 
 These are not hypothetical: `node:net` is already imported in `ipc/server/socket-listeners.ts` (inbound, needs `// egress-ok:`) and `node:http`/`node:https` in `testing/bun-test-support.ts` (test-only, already exempt). The rule flags the **import** as well as the call, since `import net from "node:net"` followed by an aliased call is otherwise invisible to line-regex matching.
 
-**Two escapes:**
+**Escapes — and the reconciliation of the allowlist objection.**
 
-1. A per-line `// egress-ok: <reason>` comment, following the existing `// cross-platform-ok` idiom. Used for the three inbound `Bun.serve` handlers (`auth/pkce.ts`, `ipc/http-server.ts`, `ipc/metrics-server.ts`).
-2. A directory allowlist for `connectors/**`, documented in-code as *ledgered at the sync-scheduler seam, per-run*.
+The spec of record says, flatly: *"Do not add an allowlist entry so the audit passes. That satisfies
+the checker while dissolving the property."* This annex originally proposed a `connectors/**`
+directory allowlist. That objection is right about escape hatches and the proposal is narrowed
+accordingly:
+
+1. **`// egress-ok: <reason>` per line**, following the existing `// cross-platform-ok` idiom. Used
+   only for the three **inbound** `Bun.serve` handlers (`auth/pkce.ts`, `ipc/http-server.ts`,
+   `ipc/metrics-server.ts`) and the inbound `node:net` import in `ipc/server/socket-listeners.ts`.
+   These are not egress at all — a false positive of the regex, not a carve-out from the property.
+2. **`connectors/**` is a scope boundary, not an allowlist entry.** The distinction is load-bearing
+   and the annex asserts it explicitly: an allowlist entry says *"this file may reach the network
+   unrecorded"*; a scope boundary says *"this file's egress is recorded by a different declared
+   mechanism, at a granularity the coverage vector states."* Connector-sync egress **is** ledgered —
+   one `sync` row per run at the scheduler seam — and `sync: "per-run"` in the vector says so in
+   the report, where a user can see it.
+
+The honest weakness, stated rather than buried: per-run granularity means a connector that quietly
+called a *fourth-party* host during a sync would be indistinguishable from one that did not. Closing
+that requires per-request instrumentation inside `connectors/**` (out of scope here — the parallel
+branch owns those files) or the mesh-side work in the spec of record's Phase 2. Until then the
+vector must not claim `sync: "per-call"`.
 
 **The regex must not fire on** `fetch(req) {` method definitions, `refetch(`, `fetchFn`, or `safeFetch(`. This is precisely the guard-authoring failure mode this repo has hit before, so the rule ships with a fixture that red-proves **both** directions: it fires on a real bare call, and stays silent on each of those four shapes.
 
 ---
 
-## 6. Call-site inventory for PR 2
+## 6. Call-site inventory
 
-14 files, none in the forbidden set:
+14 files, none in the forbidden set. `source_type` values are the frozen union (§3.3); `method` is
+the per-site logical verb, which is where the finer distinction lives.
 
-| File | New `source_type` | Mechanism |
-|---|---|---|
-| `engine/router.ts` (×2) | `net:llm` | `egressFetch` |
-| `embedding/openai-embedder.ts` | `net:embedding` | `egressFetch` |
-| `llm/ollama-provider.ts` (×5) | `local:llm` / `net:llm` | `egressFetch` |
-| `llm/llamacpp-provider.ts` (×2) | `local:llm` / `net:llm` | `egressFetch` |
-| `audit/audit-shipper.ts` | `net:audit` | `egressFetch` |
-| `telemetry/flush-scheduler.ts` | `net:telemetry` | `egressFetch` |
-| `updater/manifest-fetcher.ts` | `net:updater` | `egressFetch` |
-| `updater/updater.ts` | `net:updater` | `egressFetch` |
-| `identity/jwks-cache.ts` | `net:identity` | `egressFetch` |
-| `extensions/registry-client.ts` | `net:registry` | `egressFetch` |
-| `share/safe-fetch.ts` | `net:share` | `egressFetch` |
-| `sync/scheduler.ts` (`runJob`) | `net:sync` | `recordEgress`, one row per run |
-| `ipc/lan-client.ts` (×2) | `net:federation` | `recordEgress` |
-| `chatops/transport/bun-socket.ts` | `net:chatops` | `recordEgress` |
+| File | `source_type` | `method` | Mechanism | Phase |
+|---|---|---|---|---|
+| `engine/router.ts` (×2) | `model` | `llm.classify` | `egressFetch` | 4 |
+| `embedding/openai-embedder.ts` | `model` | `embedding.embed` | `egressFetch` | 4 |
+| `llm/ollama-provider.ts` (×5) | `model` | `llm.inference` | `egressFetch` | 4 |
+| `llm/llamacpp-provider.ts` (×2) | `model` | `llm.inference` | `egressFetch` | 4 |
+| `sync/scheduler.ts` (`runJob`) | `sync` | `sync.run` | `recordEgress`, one row per run | 3 |
+| `ipc/lan-client.ts` (×2) | `peer` | `federation.send` | `recordEgress` | 4 |
+| `audit/audit-shipper.ts` | `session` | `audit.ship` | `egressFetch` | 5 |
+| `telemetry/flush-scheduler.ts` | `session` | `telemetry.flush` | `egressFetch` | 5 |
+| `updater/manifest-fetcher.ts` | `session` | `updater.manifest` | `egressFetch` | 5 |
+| `updater/updater.ts` | `session` | `updater.download` | `egressFetch` | 5 |
+| `identity/jwks-cache.ts` | `session` | `identity.jwks` | `egressFetch` | 5 |
+| `extensions/registry-client.ts` | `session` | `registry.publisherKey` | `egressFetch` | 5 |
+| `share/safe-fetch.ts` | `session` | `share.forward` | `egressFetch` | 5 |
+| `chatops/transport/bun-socket.ts` | `session` | `chatops.socket` | `recordEgress` | 5 |
+
+The local-vs-remote split for the `model` rows is **not** in this table by design — it is derived
+from `destination` at read time (§3.3.1), so an Ollama call on `127.0.0.1` and an Anthropic call are
+the same `source_type` with different hosts.
 
 `sync/scheduler.ts` is the seam that covers all 24 connector files **without editing any of them** — which the parallel-branch constraint requires and which is also the better design at this granularity.
+
+The Phase column maps each site onto the spec of record's phases. Note that its Phase 5 is
+*"document the permanently excluded set by name"* — the `session` rows above are precisely that set,
+and this annex's position is that they should be **recorded** rather than merely documented as
+excluded, since recording them costs one row per event and removes the need to defend the exclusion
+at all. That is a proposal to Phase 5, not a decision taken here.
 
 ---
 
@@ -314,9 +454,9 @@ These are not hypothetical: `node:net` is already imported in `ipc/server/socket
 Written down because the tier vocabulary must stay honest:
 
 1. **Connector subprocess traffic is per-run, not per-request.** A sync run is one row regardless of how many HTTP calls it made. `mcp-connectors/*` are separate processes; neither a gateway-side static audit nor a gateway-side global patch can see inside them.
-2. **Third-party libraries inside the gateway process** are uncovered until the PR-3 backstop lands. This is exactly the gap between `first-party-egress` and `all-egress`.
+2. **Third-party libraries inside the gateway process** are uncovered until the `globalThis.fetch` backstop lands (unscheduled, §9). No coverage-vector entry may claim otherwise.
 
-   **The PR-3 backstop's boundary, stated precisely:** patching `globalThis.fetch` intercepts `fetch` and nothing else. A dependency using `node:https.request` or opening a raw socket is invisible to it. Closing *that* would require intercepting socket creation itself, which is out of scope here. Consequently `all-egress` means "all egress via `fetch`, plus all first-party egress via any primitive" — the tier string and its documentation must say so rather than implying packet-level completeness.
+   **The backstop’s boundary, stated precisely:** patching `globalThis.fetch` intercepts `fetch` and nothing else. A dependency using `node:https.request` or opening a raw socket is invisible to it. Closing *that* would require intercepting socket creation itself, which is out of scope here. Consequently even a fully-delivered backstop means "all egress via `fetch`, plus all first-party egress via any primitive" — the coverage vector and its documentation must say so rather than implying packet-level completeness.
 3. **DNS rebinding** — classification uses the pre-resolution URL host (§3.4).
 4. **Lost degradation signal on abrupt process death** (§4.2).
 5. **Not syscall capture.** A determined local process can still open a socket; this ledger records what *Nimbus* sends.
@@ -327,16 +467,17 @@ Written down because the tier vocabulary must stay honest:
 
 | Layer | Coverage |
 |---|---|
-| Unit — classification | IPv6, `::ffff:` mapped v4, bracketed hosts, bare `localhost`, LAN-vs-loopback split, unparseable host → `net:unknown` |
-| Unit — classification (negative) | `169.254.169.254` → `net:` never `local:`; `anything.local` → `net:` never `local:` (§3.4.1) |
+| Unit — `isLoopbackDestination` | IPv6, `::ffff:` mapped v4, bracketed hosts, bare `localhost`, LAN-vs-loopback split |
+| Unit — classification (negative) | `169.254.169.254` → not loopback; `anything.local` → not loopback (§3.4.1); `"unknown"` → not loopback, so it counts |
+| Unit — union identity | `EgressSourceType` members asserted with `toEqual` against the literal list, never a length check — widening the union must be a visible diff (spec of record, Phase 1) |
 | Static — Node primitives | `D22-egress-fetch` red-proved against `https.request(`, `net.connect(`, `tls.connect(` and a `node:net` import (§5) |
 | Unit — ordering | fake `fetch` asserts the row already exists when the call fires (append-before-egress) |
-| Unit — degrade | append throws → call still completes → counter set → `net:degraded` marker on next successful append |
-| Unit — tier | weakest-tier resolution across multiple boot markers; window with no covering marker → `indeterminate` |
-| Unit — markers | `prune` / `boot` / `net:degraded` rows excluded from the count despite carrying `authorized` (§3.3.1) |
-| Unit — unwired sink | a boot with no `setEgressSink` yields `indeterminate`, never `0` (§4.3) |
+| Unit — degrade | append throws → call still completes → counter set → degraded marker on next successful append |
+| Unit — coverage vector | weakest-granularity-per-source resolution across multiple boot markers; window with no covering marker → `indeterminate` |
+| Unit — markers | marker rows excluded from the count despite carrying `authorized` (§3.3.3) |
+| Unit — unwired sink | a boot with no sink yields `indeterminate`, never `0` (§4.3) |
 | Regression | rows written by the current binary still verify (hash inputs unchanged) |
-| Invariant | `I29` describe block extended: prefix counting, `local:` exclusion, gated-action abort still fires |
+| Invariant | `I29` describe block extended: loopback exclusion, marker exclusion, gated-action abort still fires |
 | Static | `D22-egress-fetch` red-proved in both directions (§5) |
 | E2E | `nimbus prove` with `prefer_local` Ollama → `0 ✓` with loopback listed; with a cloud model → non-zero |
 
@@ -346,15 +487,24 @@ Coverage floor ≥80% line+branch per new file under `egress/`, verified Docker-
 
 ## 9. Delivery
 
-| PR | Contents | Tier reported |
+> **Renumbered in reconciliation.** The standalone PR 1/2/3 ladder is withdrawn; this annex's work
+> is sequenced by the spec of record's phases, which put **truth before coverage** — Phase 1 makes
+> the claim honest before any new coverage lands, and this annex's content is all coverage.
+
+| Phase (spec of record) | This annex supplies | Coverage vector after |
 |---|---|---|
-| 1 | `egress-fetch.ts`, classification, taxonomy, boot marker, tier resolution, sink registration, tests. No call sites moved. | `authorized-actions` (unchanged) |
-| 2 | The 14 call sites; `D22-egress-fetch` enforced; **I29 rewrite + CLI wording** — the invariant triple lands together | `first-party-egress` |
-| 3 | `globalThis.fetch` backstop → `net:unattributed` rows | `all-egress` |
+| 1 — make the claim true | *nothing new*, but two inputs it must absorb: the frozen union must include the boot/degraded members (§3.3.2), and the local-inference decision (§12) fixes what `model` rows mean | `{ task: per-call, …rest: none }` |
+| 2 — remove the execute capability | *nothing* — the MCP-mesh modality is the spec of record's | unchanged |
+| 3 — the sync chokepoint | `recordEgress` at `sync/scheduler.ts` `runJob`; the sink-threading decision (§3.2) | `sync: per-run` |
+| 4 — model and peer tiers | `egressFetch` + `isLoopbackDestination`; the `model` and `peer` call sites (§6) | `model: per-call, peer: per-call` |
+| 5 — the excluded set | the `session` call sites (§6), with the proposal to record rather than exclude them | `session: per-call` |
+| — (unscheduled) | `globalThis.fetch` backstop; boundary in §7.2 | catches non-first-party `fetch` |
 
-PR 2 carries wiring + docs + test in one commit, per the repo's triple rule. The tier only reaches `all-egress` at PR 3; stopping after PR 2 is legitimate, it just means the CLI keeps saying `first-party-egress`.
+Each phase carries wiring + docs + test in one commit, per the repo's triple rule. The
+`D22-egress-fetch` static rule lands with Phase 4, once the call sites it would flag have moved —
+landing it earlier would only be green because of exemptions, which is what §5 argues against.
 
-**Docs to update in PR 2:** `docs/SECURITY-INVARIANTS.md` (I29 statement + wired-at + anti-patterns), `CLAUDE.md` + `GEMINI.md` (I29 bullet, both files), `.claude/commands/nimbus-egress.md`, `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`.
+**Docs to update when the invariant statement changes:** `docs/SECURITY-INVARIANTS.md` (I29 statement + wired-at + anti-patterns), `CLAUDE.md` + `GEMINI.md` (I29 bullet, both files), `.claude/commands/nimbus-egress.md`, `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`.
 
 ---
 
@@ -362,11 +512,11 @@ PR 2 carries wiring + docs + test in one commit, per the repo's triple rule. The
 
 | Risk | Mitigation |
 |---|---|
-| Module-global sink contaminates Bun test runs | `resetEgressSink()` in `afterEach`; no `mock.module` for this seam |
+| Module-global sink contaminates Bun test runs | Only applies if §3.2 resolves to module-scoped registration; the recommended threaded-sink option removes the risk entirely. If taken anyway: an exported reset in `afterEach`, and no `mock.module` for this seam |
 | D22 regex false-positives on `fetch(req) {` / `refetch(` / `fetchFn` | fixture red-proves both directions before the rule is enforced (§5) |
 | Ledger volume from loopback LLM rows | rows are small and metadata-only; `egress.prune` already exists for retention |
-| `prove` output churn breaks existing e2e assertions | CLI wording changes land in PR 2 with its test updates |
-| Tier ladder misread as "done" after PR 2 | tier string is printed next to every count, never a bare number |
+| `prove` output churn breaks existing e2e assertions | CLI wording changes land with the phase that changes coverage, alongside its test updates |
+| Partial coverage misread as complete | the coverage vector is printed next to every count, never a bare number |
 
 ---
 
@@ -377,9 +527,9 @@ Against [`2026-08-03-i29-ledger-completeness-design-review.md`](./2026-08-03-i29
 | # | Finding | Disposition |
 |---|---|---|
 | 1 | Pre-DNS classification misses hostname-addressed local models; classify link-local | **Partly fixed, partly rejected.** Link-local added explicitly as `net:` (§3.4) — a good catch, `169.254.169.254` is credential-bearing. The `.local`/hostname exception is **rejected**: see §3.4.1. |
-| 2 | Node primitives (`node:net`/`tls`/`http`/`https`) bypass the static rule; state PR-3's boundary | **Fixed in full** (§5, §7.2). Correct and cheap; the rule now flags imports as well as calls. |
+| 2 | Node primitives (`node:net`/`tls`/`http`/`https`) bypass the static rule; state the backstop's boundary | **Fixed in full** (§5, §7.2). Correct and cheap; the rule now flags imports as well as calls. |
 | 3 | Replace the module-global sink with `AsyncLocalStorage` | **Concern accepted, mechanism rejected. Deferred** — see below. |
-| 4 | A read-only/locked DB means the `net:degraded` marker can never be written; add a sentinel file | **Partly fixed, remainder deferred.** §4.2 now states the sustained-failure case and why soundness survives it. The sentinel file is deferred. |
+| 4 | A read-only/locked DB means the degraded marker can never be written; add a sentinel file | **Partly fixed, remainder deferred.** §4.2 now states the sustained-failure case and why soundness survives it. The sentinel file is deferred. |
 
 ### 11.1 Why `AsyncLocalStorage` is the wrong mechanism here
 
@@ -393,27 +543,44 @@ The underlying concern is nonetheless real, and there is a better answer already
 
 | Item | Why deferred |
 |---|---|
-| Structural local-provider predicate (classify by configured endpoint, not host string) | Blocked on whether local inference emits rows at all — see §12 |
+| Structural local-provider predicate (classify by configured endpoint, not host string) | Unblocked by §12.2 but still deferred: read-time derivation makes adopting it later non-breaking (§3.4.1) |
 | Sentinel file for degradation across restarts | Forensic detail only; soundness already held by the boot marker (§4.2) |
 | Socket-level interception beyond `globalThis.fetch` | Out of scope; boundary now documented (§7.2) |
-| Required sink / `NULL_EGRESS_SINK` | Subsumed by the spec of record's Phase 1 (§12) |
+| Required sink / `NULL_EGRESS_SINK` | Adopted from the spec of record's Phase 1 (§3.2, §12.1) |
 
 ---
 
-## 12. Unresolved: conflict with the 2026-08-02 spec of record
+## 12. Reconciliation with the spec of record — RESOLVED (2026-08-03)
 
-[`2026-08-02-i29-d22-egress-completeness-design.md`](./2026-08-02-i29-d22-egress-completeness-design.md) is the security spec of record for this invariant and was written from a six-agent audit. It was not consulted while this document was drafted — an omission, since it covers the same question with wider modality coverage.
+[`2026-08-02-i29-d22-egress-completeness-design.md`](./2026-08-02-i29-d22-egress-completeness-design.md) is the security spec of record for this invariant, written from a six-agent audit. It was not consulted while this document was first drafted — an omission, since it covers the same question across a wider set of modalities. Reconciled per option **R3**: it owns the architecture and the execute modality; this annex owns the `fetch` modality.
 
-**This spec must not proceed to a plan until reconciled.** Known conflicts:
+### 12.1 The five conflicts
 
-| Question | Spec of record | This spec | Assessment |
+| # | Question | Resolution | Where |
 |---|---|---|---|
-| `source_type` | Freeze the closed union up front — the row hash makes each value permanent | Widens incrementally with `net:`/`local:` | Spec of record is right |
-| Sink | Required, named `NULL_EGRESS_SINK` | Optional + module-global | Spec of record is right |
-| Tier | Per-source coverage vector | Scalar 3-rung ladder | Spec of record is more expressive |
-| D22 allowlist | "Do not add an allowlist entry so the audit passes" | Adds `connectors/**` | Needs reconciliation |
-| Local inference | **No rows at all** — else the ledger becomes noise | Rows, excluded from the count | **Open — owner decision** |
+| 1 | `source_type` | **To the spec of record.** Closed union frozen up front; this annex adds no members and maps onto `task`/`prune`/`session`/`sync`/`model`/`peer`. | §3.3 rewritten |
+| 2 | Sink | **To the spec of record.** Required, with `NULL_EGRESS_SINK`. The leaf-function seam it does not reach is escalated as an open Phase-3 decision rather than silently defaulted to a global. | §3.2 rewritten |
+| 3 | Tier | **To the spec of record.** Per-source coverage vector; the scalar ladder is withdrawn. The boot marker survives and now carries the vector. | §3.6 rewritten |
+| 4 | D22 allowlist | **To the spec of record in principle**, with one asserted distinction: `connectors/**` is a declared scope boundary backed by the scheduler-seam row and the `sync: "per-run"` vector entry, not an entry added to make the audit pass. The weakness of per-run granularity is stated. | §5 rewritten |
+| 5 | Local inference | **To this annex.** Rows are written and excluded from the count by a `destination`-derived predicate, rather than not written at all. | §3.3.1 |
 
-It also enumerates a modality this document missed entirely: the MCP-mesh execute path (raw `tool.execute()`, the `teamvault/connector-session.ts` façade, `auth/oauth-registry.ts:486` OAuth refresh), plus a security finding beyond record-honesty in `share.replay`.
+### 12.2 Why conflict 5 resolved against the spec of record
 
-**What this document contributes that the spec of record does not:** the verified `fetch`-modality inventory (§1.1–1.2), the pre-existing prune miscount (§3.3.1), the boot marker for detecting an unwired sink (§3.6), and the review dispositions above. The intended resolution is to fold these into the spec of record's phase structure and vocabulary — this becomes detail under its Phases 3–5, not a parallel plan.
+Its position — *"local inference must produce no rows … or the ledger becomes noise"* — treats the cost as noise. That is answerable with retention (`egress.prune` exists) and is a matter of degree.
+
+The cost on the other side is not a matter of degree. If local inference writes no rows, the local/remote predicate decides **whether evidence exists at all**, so a predicate that wrongly judges a remote host local destroys the record of a real egress, silently and permanently. With rows written and the split derived at read time from the hashed `destination`, the identical bug only mis-*counts*: the row still names `api.anthropic.com`, the chain still proves it was not edited, and a corrected predicate re-derives the true count from history.
+
+Same failure, one recoverable and one not. The spec of record's own governing principle is *"indeterminate, never a false zero"*, and writing no rows is the option that can produce a false zero.
+
+Its accompanying requirement — that the predicate be **structural, not convention** — is accepted and remains open (§3.4.1); read-time derivation makes adopting it later a non-breaking change.
+
+### 12.3 What this annex contributes
+
+The verified `fetch`-modality inventory (§1.1–1.2), the pre-existing prune miscount (§3.3.3), the boot marker that turns an unwired sink into `indeterminate` rather than a false zero (§3.6, §4.3), the classification rules and their deliberate over-reporting bias (§3.4.1), the Node-primitive coverage of the static rule (§5), and the review dispositions (§11).
+
+### 12.4 Carried forward as open decisions
+
+Both must be settled **inside Phase 1**, because the union is BLAKE3-committed and cannot be widened afterwards:
+
+1. **Boot/degraded marker members** — admit them to the frozen union now, or overload `session` with reserved `method` values (§3.3.2). Recommendation: admit them.
+2. **How the sink reaches leaf functions** — thread it per subsystem, or module-scoped registration defaulting to `NULL_EGRESS_SINK` (§3.2). Recommendation: thread it.
