@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import {
   ConsentCoordinatorImpl,
   ConsentDisconnectedError,
@@ -533,7 +534,7 @@ describe("ToolExecutor — HITL whitelist", () => {
   test("every HITL_REQUIRED action type triggers the consent channel", async () => {
     for (const actionType of HITL_REQUIRED) {
       const m = createMocks(true);
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       await exec.execute({ type: actionType });
       expect(m.consentCalls).toHaveLength(1);
     }
@@ -541,7 +542,7 @@ describe("ToolExecutor — HITL whitelist", () => {
 
   test("action types not in HITL_REQUIRED do not call the consent channel", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     await exec.execute({ type: "filesystem.search" });
     expect(m.consentCalls).toHaveLength(0);
   });
@@ -549,7 +550,7 @@ describe("ToolExecutor — HITL whitelist", () => {
   test("rejected consent does not call the connector; audit shows rejected", async () => {
     const m = createMocks(true);
     m.approveNext = false;
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const action: PlannedAction = { type: "file.delete", payload: { path: HITL_TEST_TARGET_PATH } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "rejected", reason: "User declined consent gate." });
@@ -561,7 +562,7 @@ describe("ToolExecutor — HITL whitelist", () => {
 
   test("audit row body redacts credential-shaped keys (S2-F2)", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     await exec.execute({
       type: "slack.message.post",
       payload: {
@@ -587,7 +588,7 @@ describe("ToolExecutor — rejected consent (email)", () => {
     test(`rejected consent for ${emailAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlEmailRejectPayload(emailAction);
       const out = await exec.execute({ type: emailAction, payload });
       expect(out.status).toBe("rejected");
@@ -603,7 +604,7 @@ describe("ToolExecutor — rejected consent (slack)", () => {
   test("rejected consent for slack.message.post does not call the connector; audit rejected", async () => {
     const m = createMocks(true);
     m.approveNext = false;
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const out = await exec.execute({
       type: "slack.message.post",
       payload: {
@@ -624,7 +625,7 @@ describe("ToolExecutor — rejected consent (teams)", () => {
     test(`rejected consent for ${teamsAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlTeamsRejectPayload(teamsAction);
       const out = await exec.execute({ type: teamsAction, payload });
       expect(out.status).toBe("rejected");
@@ -645,7 +646,7 @@ describe("ToolExecutor — rejected consent (linear)", () => {
     test(`rejected consent for ${linearAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlLinearRejectPayload(linearAction);
       const out = await exec.execute({ type: linearAction, payload });
       expect(out.status).toBe("rejected");
@@ -666,7 +667,7 @@ describe("ToolExecutor — rejected consent (jira)", () => {
     test(`rejected consent for ${jiraAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlJiraRejectPayload(jiraAction);
       const out = await exec.execute({ type: jiraAction, payload });
       expect(out.status).toBe("rejected");
@@ -688,7 +689,7 @@ describe("ToolExecutor — rejected consent (notion)", () => {
     test(`rejected consent for ${notionAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlNotionRejectPayload(notionAction);
       const out = await exec.execute({ type: notionAction, payload });
       expect(out.status).toBe("rejected");
@@ -709,7 +710,7 @@ describe("ToolExecutor — rejected consent (confluence)", () => {
     test(`rejected consent for ${confluenceAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlConfluenceRejectPayload(confluenceAction);
       const out = await exec.execute({ type: confluenceAction, payload });
       expect(out.status).toBe("rejected");
@@ -726,7 +727,7 @@ describe("ToolExecutor — rejected consent (jenkins)", () => {
     test(`rejected consent for ${jenkinsAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlJenkinsRejectPayload(jenkinsAction);
       const out = await exec.execute({ type: jenkinsAction, payload });
       expect(out.status).toBe("rejected");
@@ -743,7 +744,7 @@ describe("ToolExecutor — rejected consent (github_actions)", () => {
     test(`rejected consent for ${ghaAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlGithubActionsRejectPayload(ghaAction);
       const out = await exec.execute({ type: ghaAction, payload });
       expect(out.status).toBe("rejected");
@@ -760,7 +761,7 @@ describe("ToolExecutor — rejected consent (circleci)", () => {
     test(`rejected consent for ${cciAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlCircleciRejectPayload(cciAction);
       const out = await exec.execute({ type: cciAction, payload });
       expect(out.status).toBe("rejected");
@@ -777,7 +778,7 @@ describe("ToolExecutor — rejected consent (gitlab)", () => {
     test(`rejected consent for ${glAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlGitlabCiRejectPayload(glAction);
       const out = await exec.execute({ type: glAction, payload });
       expect(out.status).toBe("rejected");
@@ -798,7 +799,7 @@ describe("ToolExecutor — rejected consent (pagerduty)", () => {
     test(`rejected consent for ${pdAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlPagerdutyRejectPayload(pdAction);
       const out = await exec.execute({ type: pdAction, payload });
       expect(out.status).toBe("rejected");
@@ -819,7 +820,7 @@ describe("ToolExecutor — rejected consent (kubernetes)", () => {
     test(`rejected consent for ${k8sAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlKubernetesRejectPayload(k8sAction);
       const out = await exec.execute({ type: k8sAction, payload });
       expect(out.status).toBe("rejected");
@@ -841,7 +842,7 @@ describe("ToolExecutor — rejected consent (aws)", () => {
     test(`rejected consent for ${awsAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlAwsRejectPayload(awsAction);
       const out = await exec.execute({ type: awsAction, payload });
       expect(out.status).toBe("rejected");
@@ -858,7 +859,7 @@ describe("ToolExecutor — rejected consent (azure)", () => {
     test(`rejected consent for ${azAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlAzureRejectPayload(azAction);
       const out = await exec.execute({ type: azAction, payload });
       expect(out.status).toBe("rejected");
@@ -875,7 +876,7 @@ describe("ToolExecutor — rejected consent (gcp)", () => {
     test(`rejected consent for ${gcpAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlGcpRejectPayload(gcpAction);
       const out = await exec.execute({ type: gcpAction, payload });
       expect(out.status).toBe("rejected");
@@ -897,7 +898,7 @@ describe("ToolExecutor — rejected consent (iac)", () => {
     test(`rejected consent for ${iacAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlIacRejectPayload(iacAction);
       const out = await exec.execute({ type: iacAction, payload });
       expect(out.status).toBe("rejected");
@@ -914,7 +915,7 @@ describe("ToolExecutor — rejected consent (filesystem writes)", () => {
     test(`rejected consent for ${fileAction} does not call the connector; audit rejected`, async () => {
       const m = createMocks(true);
       m.approveNext = false;
-      const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+      const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
       const payload = hitlFileRejectPayload(fileAction);
       const out = await exec.execute({ type: fileAction, payload });
       expect(out.status).toBe("rejected");
@@ -929,7 +930,7 @@ describe("ToolExecutor — rejected consent (filesystem writes)", () => {
 describe("ToolExecutor — approval, ordering, and consent channel", () => {
   test("approved consent calls the connector; audit shows approved", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const action: PlannedAction = { type: "file.delete", payload: { path: HITL_TEST_TARGET_PATH } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "ok", result: { done: true } });
@@ -939,7 +940,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
 
   test("not_required path calls connector without consent; audit shows not_required", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const action: PlannedAction = { type: "filesystem.search", payload: { q: "notes" } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "ok", result: { done: true } });
@@ -965,7 +966,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
         return Promise.resolve(undefined);
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors);
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     await exec.execute({ type: "file.delete" });
     expect(order).toEqual(["audit", "dispatch"]);
   });
@@ -989,7 +990,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
         return Promise.resolve(undefined);
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors);
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     const action: PlannedAction = { type: "file.move", payload: { from: "a", to: "b" } };
     const out = await exec.execute(action);
     expect(out).toEqual({ status: "rejected", reason: "client disconnected" });
@@ -1021,7 +1022,7 @@ describe("ToolExecutor — approval, ordering, and consent channel", () => {
         return Promise.resolve(undefined);
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors);
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     await expect(exec.execute({ type: "file.delete" })).rejects.toThrow("network glitch");
     expect(auditCalls).toHaveLength(0);
   });
@@ -1058,7 +1059,7 @@ describe("formatConsentPrompt", () => {
 describe("ToolExecutor.gate()", () => {
   test("gate() returns 'proceed' for non-gated action without calling consent", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const result = await exec.gate({ type: "filesystem.search" });
     expect(result).toBe("proceed");
     expect(m.consentCalls).toHaveLength(0);
@@ -1067,7 +1068,7 @@ describe("ToolExecutor.gate()", () => {
 
   test("gate() returns 'proceed' for gated action when approved", async () => {
     const m = createMocks(true);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const result = await exec.gate({ type: "data.delete", payload: { service: "github" } });
     expect(result).toBe("proceed");
     expect(m.consentCalls).toHaveLength(1);
@@ -1077,7 +1078,7 @@ describe("ToolExecutor.gate()", () => {
 
   test("gate() returns rejected ActionResult when user declines", async () => {
     const m = createMocks(false);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const result = await exec.gate({ type: "connector.remove", payload: { serviceId: "github" } });
     expect(result).not.toBe("proceed");
     expect((result as { status: string }).status).toBe("rejected");
@@ -1087,7 +1088,7 @@ describe("ToolExecutor.gate()", () => {
 
   test("execute() does not dispatch when gate rejects", async () => {
     const m = createMocks(false);
-    const exec = new ToolExecutor(m.consent, m.audit, m.connectors);
+    const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
     const result = await exec.execute({ type: "data.delete", payload: { service: "github" } });
     expect(result.status).toBe("rejected");
     expect(m.dispatchCalls).toHaveLength(0);

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
-import { makeEgressSink } from "../egress/egress-ledger.ts";
+import { makeEgressSink, NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -174,7 +174,7 @@ async function runActionsPlan(
   const egressSink =
     typeof p.localIndex.getDatabase === "function"
       ? makeEgressSink(p.localIndex.getDatabase())
-      : undefined;
+      : NULL_EGRESS_SINK;
   const executor = new ToolExecutor(consent, p.localIndex, p.dispatcher, p.delegation, egressSink);
   const summaries: string[] = [];
   const structured: unknown[] = [];

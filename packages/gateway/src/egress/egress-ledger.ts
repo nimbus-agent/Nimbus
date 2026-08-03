@@ -95,3 +95,17 @@ export function makeEgressSink(db: Database): EgressSink {
     },
   };
 }
+
+/**
+ * The explicit "this executor performs no egress" sink.
+ *
+ * Gate-only executors (vault, teamvault, reindex, data, auto-update, connector.auth, egress.prune)
+ * perform LOCAL mutations and pair with a rejecting dispatcher, so they must not record egress.
+ * A NAMED null states that decision; an omitted optional parameter is indistinguishable from
+ * forgetting to wire one.
+ */
+export const NULL_EGRESS_SINK: EgressSink = {
+  append(): void {
+    /* intentionally empty — see doc comment */
+  },
+};

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import {
   bindConsentChannel,
   formatConsentPrompt,
@@ -51,7 +52,7 @@ function createExecutorHarness(initialApprove: boolean): {
     },
   };
 
-  const executor = new ToolExecutor(consent, audit, connectors);
+  const executor = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
 
   return { auditCalls, executor };
 }
@@ -154,7 +155,7 @@ describe("audit payload safety (§7.8)", () => {
     const connectors: ConnectorDispatcher = {
       dispatch: async () => ({ ok: true }),
     };
-    const executor = new ToolExecutor(consent, audit, connectors);
+    const executor = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     await executor.execute({
       type: "linear.issue.create",
       payload: { mcpToolId: "x", input: { teamId: "t", title: "x" } },

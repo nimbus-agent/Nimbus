@@ -5,6 +5,7 @@
 // so the only thing to prove is that those four action types are gated and that
 // the gate fires (consent BEFORE dispatch; reject ⇒ no dispatch). No prod code.
 import { describe, expect, test } from "bun:test";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
@@ -43,7 +44,7 @@ function harness(approve: boolean): {
     },
   };
   return {
-    exec: new ToolExecutor(consent, audit, connectors),
+    exec: new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK),
     order,
     prompts,
     dispatchCount: () => dispatched,

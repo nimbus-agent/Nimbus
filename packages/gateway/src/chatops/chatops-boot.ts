@@ -1,5 +1,6 @@
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
@@ -242,8 +243,10 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       requestRemote: () => presenter.requestApproval(),
     },
     // I29: a chatops-approved write dispatches a real connector action — an outbound event — so the
-    // executor carries the egress sink (append-before-dispatch). Absent (sink not wired) → no ledger.
-    deps.egressSink,
+    // executor carries the egress sink (append-before-dispatch). Production always wires a real
+    // sink (assemble.ts); NULL_EGRESS_SINK only backstops callers (tests) that omit it, since the
+    // sink is now a required constructor parameter.
+    deps.egressSink ?? NULL_EGRESS_SINK,
   );
   const knownActions = HITL_REQUIRED;
 

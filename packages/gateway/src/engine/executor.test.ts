@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { EgressSink } from "../egress/egress-ledger.ts";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { ToolExecutor } from "./executor.ts";
 import type {
@@ -84,9 +85,9 @@ describe("I29 — egress ledger append-before-dispatch (executor wiring)", () =>
     expect(dispatched.count).toBe(0);
   });
 
-  test("with no sink injected, the executor still gates + dispatches (back-compat)", async () => {
+  test("with NULL_EGRESS_SINK, the executor still gates + dispatches (no ledger row recorded)", async () => {
     const d = deps({});
-    const exec = new ToolExecutor(d.consent, d.audit, d.connectors);
+    const exec = new ToolExecutor(d.consent, d.audit, d.connectors, undefined, NULL_EGRESS_SINK);
     const res = await exec.execute({ type: "search.run", payload: {} });
     expect(res.status).toBe("ok");
   });

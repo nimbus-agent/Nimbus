@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { PairingWindowController } from "./clips/pairing-window.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
+import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
+import { egressHead } from "./egress/egress-verify.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
+import { CURRENT_SCHEMA_VERSION } from "./index/local-index.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
@@ -1234,6 +1237,39 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
     const exec = await read("packages/gateway/src/engine/executor.ts");
     expect(exec).toContain("EgressSink");
+  });
+
+  test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
+    // A required parameter makes an unwired sink a compile error rather than a silent no-op. The
+    // named NULL_EGRESS_SINK keeps the "this executor performs no egress" decision on the record.
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toContain("private readonly egressSink: EgressSink,");
+    expect(src).not.toContain("private readonly egressSink?: EgressSink,");
+  });
+
+  test("NULL_EGRESS_SINK leaves a real ledger untouched, where makeEgressSink writes", () => {
+    // Asserts REAL behaviour against a real ledger — not that a spy counted a call. The two sinks
+    // are handed the identical entry so the only variable is which sink received it.
+    const entry = {
+      timestamp: 1,
+      sourceType: "task",
+      sourceId: null,
+      destination: "d",
+      method: "m",
+      payloadSummary: "{}",
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+    } as const;
+
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+
+    NULL_EGRESS_SINK.append(entry);
+    expect(egressHead(db).count).toBe(0);
+
+    makeEgressSink(db).append(entry);
+    expect(egressHead(db).count).toBe(1);
+    db.close();
   });
 });
 

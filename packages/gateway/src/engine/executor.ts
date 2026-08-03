@@ -220,8 +220,8 @@ export class ToolExecutor {
     private readonly consent: ConsentChannel,
     private readonly audit: AuditSink,
     private readonly connectors: ConnectorDispatcher,
-    private readonly delegation?: ExecutorDelegationDep,
-    private readonly egressSink?: EgressSink,
+    private readonly delegation: ExecutorDelegationDep | undefined,
+    private readonly egressSink: EgressSink,
   ) {}
 
   /** I20/D10: when a HITL action has an active delegate, route the approval to them; honor only a
@@ -294,17 +294,15 @@ export class ToolExecutor {
       ...(sessionId === undefined ? {} : { sessionId }),
     });
 
-    if (this.egressSink !== undefined) {
-      this.egressSink.append(
-        buildEgressEntry({
-          action,
-          hitlStatus,
-          resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
-          sessionId,
-          now: Date.now(),
-        }),
-      );
-    }
+    this.egressSink.append(
+      buildEgressEntry({
+        action,
+        hitlStatus,
+        resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
+        sessionId,
+        now: Date.now(),
+      }),
+    );
 
     if (hitlStatus === "rejected") {
       return { status: "rejected", reason: rejectReason };
