@@ -191,9 +191,20 @@ Resolved from the **URL host** (pre-DNS), reusing `share/safe-fetch.ts`'s export
 
 - **loopback** → `local:` — `127.0.0.0/8`, `::1`, `::`, and the bare hostname `localhost`.
 - **private-LAN** (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`, `fe80::/10`) → `net:` — a peer on the LAN is off-machine.
+- **link-local** (`169.254.0.0/16`, `fe80::/10`) → `net:`. This is not a formality: `169.254.169.254` is the cloud instance-metadata endpoint, a credential-bearing destination that must never be classified as local.
 - **everything else** → `net:`.
 
 Classifying pre-DNS is a deliberate simplification: it is deterministic and cheap, and `safe-fetch` already documents the DNS-rebinding TOCTOU limitation for resolution-time classification. Stated as a limitation in §7 rather than silently assumed.
+
+#### 3.4.1 The classifier fails toward over-reporting, and that is the design
+
+A local model reached by hostname rather than by IP — `http://workstation:11434`, `http://my-macbook.local:11434` — classifies as `net:llm` even though nothing left the machine. `prove` then reports a non-zero count for a fully-local query.
+
+This is the **safe** failure direction and is accepted deliberately. A ledger that over-reports egress produces a user complaint; a ledger that under-reports produces a false `0 ✓`, which is the entire defect this work exists to fix.
+
+That asymmetry is why **`.local` must not be added to the loopback set.** mDNS `.local` names resolve to *other machines* on the LAN as readily as to this one; treating the suffix as loopback would classify genuine off-machine egress as local and manufacture exactly the false zero being eliminated. The same objection applies to any hostname-pattern heuristic.
+
+The supported way to get a clean `0 ✓` from a local model is to point the provider at `127.0.0.1` or `localhost`, which will be documented in the `[llm]` configuration reference. A structural alternative — classify as `local:` when the request target *is* the configured local-provider endpoint, rather than by inspecting the host string — is deferred (§11), because it interacts with an unresolved conflict about whether local inference should emit rows at all.
 
 ### 3.5 Row content
 
@@ -231,6 +242,10 @@ Append throws → `gate()` throws → `execute()` propagates → dispatch never 
 
 **Known limitation, stated rather than hidden:** if the process dies between a failed append and the next successful one, that degradation signal is lost and the window reads clean. Only hard fail-closed eliminates this; availability was chosen over it deliberately (§2.1).
 
+The sharpest form of this: **if the database is read-only or lock-held, step 2 can never run**, because writing the `net:degraded` marker is itself an append. Recovery-on-next-append handles a transient failure (a malformed head, a constraint error) and does nothing for a sustained one.
+
+Soundness survives this, via the boot marker rather than via the recovery marker. A restart with an unwritable database cannot append a boot marker either, so the window has no covering marker and `proveWindow` reports `indeterminate` — not a clean zero. What is lost is *forensic detail*: how many appends were dropped, and when. A sentinel file outside SQLite would recover that detail; it is deferred as an enhancement (§11), not required for the completeness claim.
+
 ### 4.3 Unregistered sink
 
 Calling `egressFetch` with no sink registered is a programming error, not a runtime condition — but the two builds must behave differently, and the spec is explicit about which:
@@ -250,7 +265,15 @@ Production safety therefore rests entirely on the boot marker. With no marker co
 
 Added to `checkEgressChokepointConfinement` in `scripts/structure-audit/check-nimbus-invariants.ts`, which already does line-regex matching over comment-stripped source with a path allowlist — the new rule slots into that structure.
 
-**Flags:** bare `fetch(`, `Bun.connect(`, `new WebSocket(` in `packages/gateway/src`, non-test, outside `egress/`.
+**Flags:** bare `fetch(`, `Bun.connect(`, `new WebSocket(` in `packages/gateway/src`, non-test, outside `egress/` — **plus the Node compatibility primitives**, which Bun supports and which would otherwise sail past a Bun-API-only rule:
+
+| Primitive | Why it must be covered |
+|---|---|
+| `node:https` / `node:http` — `.request(`, `.get(` | a complete HTTP client that never types `fetch` |
+| `node:net` — `.connect(`, `.createConnection(` | raw TCP; the `Bun.connect` equivalent |
+| `node:tls` — `.connect(` | raw TLS |
+
+These are not hypothetical: `node:net` is already imported in `ipc/server/socket-listeners.ts` (inbound, needs `// egress-ok:`) and `node:http`/`node:https` in `testing/bun-test-support.ts` (test-only, already exempt). The rule flags the **import** as well as the call, since `import net from "node:net"` followed by an aliased call is otherwise invisible to line-regex matching.
 
 **Two escapes:**
 
@@ -292,6 +315,8 @@ Written down because the tier vocabulary must stay honest:
 
 1. **Connector subprocess traffic is per-run, not per-request.** A sync run is one row regardless of how many HTTP calls it made. `mcp-connectors/*` are separate processes; neither a gateway-side static audit nor a gateway-side global patch can see inside them.
 2. **Third-party libraries inside the gateway process** are uncovered until the PR-3 backstop lands. This is exactly the gap between `first-party-egress` and `all-egress`.
+
+   **The PR-3 backstop's boundary, stated precisely:** patching `globalThis.fetch` intercepts `fetch` and nothing else. A dependency using `node:https.request` or opening a raw socket is invisible to it. Closing *that* would require intercepting socket creation itself, which is out of scope here. Consequently `all-egress` means "all egress via `fetch`, plus all first-party egress via any primitive" — the tier string and its documentation must say so rather than implying packet-level completeness.
 3. **DNS rebinding** — classification uses the pre-resolution URL host (§3.4).
 4. **Lost degradation signal on abrupt process death** (§4.2).
 5. **Not syscall capture.** A determined local process can still open a socket; this ledger records what *Nimbus* sends.
@@ -303,6 +328,8 @@ Written down because the tier vocabulary must stay honest:
 | Layer | Coverage |
 |---|---|
 | Unit — classification | IPv6, `::ffff:` mapped v4, bracketed hosts, bare `localhost`, LAN-vs-loopback split, unparseable host → `net:unknown` |
+| Unit — classification (negative) | `169.254.169.254` → `net:` never `local:`; `anything.local` → `net:` never `local:` (§3.4.1) |
+| Static — Node primitives | `D22-egress-fetch` red-proved against `https.request(`, `net.connect(`, `tls.connect(` and a `node:net` import (§5) |
 | Unit — ordering | fake `fetch` asserts the row already exists when the call fires (append-before-egress) |
 | Unit — degrade | append throws → call still completes → counter set → `net:degraded` marker on next successful append |
 | Unit — tier | weakest-tier resolution across multiple boot markers; window with no covering marker → `indeterminate` |
@@ -340,3 +367,53 @@ PR 2 carries wiring + docs + test in one commit, per the repo's triple rule. The
 | Ledger volume from loopback LLM rows | rows are small and metadata-only; `egress.prune` already exists for retention |
 | `prove` output churn breaks existing e2e assertions | CLI wording changes land in PR 2 with its test updates |
 | Tier ladder misread as "done" after PR 2 | tier string is printed next to every count, never a bare number |
+
+---
+
+## 11. Review disposition
+
+Against [`2026-08-03-i29-ledger-completeness-design-review.md`](./2026-08-03-i29-ledger-completeness-design-review.md).
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Pre-DNS classification misses hostname-addressed local models; classify link-local | **Partly fixed, partly rejected.** Link-local added explicitly as `net:` (§3.4) — a good catch, `169.254.169.254` is credential-bearing. The `.local`/hostname exception is **rejected**: see §3.4.1. |
+| 2 | Node primitives (`node:net`/`tls`/`http`/`https`) bypass the static rule; state PR-3's boundary | **Fixed in full** (§5, §7.2). Correct and cheap; the rule now flags imports as well as calls. |
+| 3 | Replace the module-global sink with `AsyncLocalStorage` | **Concern accepted, mechanism rejected. Deferred** — see below. |
+| 4 | A read-only/locked DB means the `net:degraded` marker can never be written; add a sentinel file | **Partly fixed, remainder deferred.** §4.2 now states the sustained-failure case and why soundness survives it. The sentinel file is deferred. |
+
+### 11.1 Why `AsyncLocalStorage` is the wrong mechanism here
+
+`AsyncLocalStorage` is idiomatic in this codebase — `engine/agent-request-context.ts` and `chatops/chatops-request-context.ts` both use it, and §3.2 cites the former as precedent. So the suggestion is reasonable on its face.
+
+It does not work for this problem. ALS only carries a value into code running inside a `.run()` callback, and the egress classes that matter most are **timer-driven, outside any request context**: `telemetry/flush-scheduler.ts:159` and `sync/scheduler.ts:191` are both `setInterval`. A timer callback's `getStore()` returns `undefined`, so every unattended egress path — sync, telemetry, updater, OAuth refresh — falls back to the module global anyway. ALS would add ceremony while leaving the dominant classes exactly as they are.
+
+The underlying concern is nonetheless real, and there is a better answer already on the table: the 2026-08-02 spec of record calls for making the sink **required** at construction with a named `NULL_EGRESS_SINK` for gate-only sites. That removes the ambient read for every path reachable by DI, rather than relocating it. Deferred into that reconciliation (§12) rather than solved twice.
+
+### 11.2 Deferred
+
+| Item | Why deferred |
+|---|---|
+| Structural local-provider predicate (classify by configured endpoint, not host string) | Blocked on whether local inference emits rows at all — see §12 |
+| Sentinel file for degradation across restarts | Forensic detail only; soundness already held by the boot marker (§4.2) |
+| Socket-level interception beyond `globalThis.fetch` | Out of scope; boundary now documented (§7.2) |
+| Required sink / `NULL_EGRESS_SINK` | Subsumed by the spec of record's Phase 1 (§12) |
+
+---
+
+## 12. Unresolved: conflict with the 2026-08-02 spec of record
+
+[`2026-08-02-i29-d22-egress-completeness-design.md`](./2026-08-02-i29-d22-egress-completeness-design.md) is the security spec of record for this invariant and was written from a six-agent audit. It was not consulted while this document was drafted — an omission, since it covers the same question with wider modality coverage.
+
+**This spec must not proceed to a plan until reconciled.** Known conflicts:
+
+| Question | Spec of record | This spec | Assessment |
+|---|---|---|---|
+| `source_type` | Freeze the closed union up front — the row hash makes each value permanent | Widens incrementally with `net:`/`local:` | Spec of record is right |
+| Sink | Required, named `NULL_EGRESS_SINK` | Optional + module-global | Spec of record is right |
+| Tier | Per-source coverage vector | Scalar 3-rung ladder | Spec of record is more expressive |
+| D22 allowlist | "Do not add an allowlist entry so the audit passes" | Adds `connectors/**` | Needs reconciliation |
+| Local inference | **No rows at all** — else the ledger becomes noise | Rows, excluded from the count | **Open — owner decision** |
+
+It also enumerates a modality this document missed entirely: the MCP-mesh execute path (raw `tool.execute()`, the `teamvault/connector-session.ts` façade, `auth/oauth-registry.ts:486` OAuth refresh), plus a security finding beyond record-honesty in `share.replay`.
+
+**What this document contributes that the spec of record does not:** the verified `fetch`-modality inventory (§1.1–1.2), the pre-existing prune miscount (§3.3.1), the boot marker for detecting an unwired sink (§3.6), and the review dispositions above. The intended resolution is to fold these into the spec of record's phase structure and vocabulary — this becomes detail under its Phases 3–5, not a parallel plan.
