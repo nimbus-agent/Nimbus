@@ -111,6 +111,28 @@ describe("runEgressReport", () => {
     expect(out.stdout).toContain("indeterminate");
   });
 
+  // Fix round 1: an intact chain (verify.ok === true) with no boot marker covering the window
+  // (completeness.indeterminate === true) must still exit non-zero — an unprovable window is not
+  // a clean report. Previously exitCode was only set inside the `!out.verify.ok` branch, so this
+  // combination fell through to the default exitCode (0) despite printing "indeterminate".
+  test("an intact chain with no covering boot marker (indeterminate) prints indeterminate and exits non-zero", async () => {
+    const c = fakeClient({
+      "egress.proveWindow": {
+        rows: [],
+        completeness: {
+          coverage: { task: "none", session: "none", sync: "none", model: "none", peer: "none" },
+          outboundEgressEvents: 0,
+          indeterminate: true,
+        },
+        verify: { ok: true },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: fake client
+    }) as any;
+    await runEgressReport(c, { json: false });
+    expect(out.stdout).toContain("indeterminate");
+    expect(process.exitCode).toBe(1);
+  });
+
   test("--json prints the raw proveWindow payload and returns early", async () => {
     const payload = {
       rows: [

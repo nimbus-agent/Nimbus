@@ -162,6 +162,11 @@ export async function runEgressReport(
       chainOk: out.verify.ok,
     }),
   );
+  if (out.completeness.indeterminate) {
+    // Chain is intact (the `!out.verify.ok` branch above already returned), but no boot marker
+    // covers this window — the count cannot be trusted. An unprovable window must not exit 0.
+    process.exitCode = 1;
+  }
   for (const r of out.rows) {
     const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
     console.log(`  ${ts}  ${r.method.padEnd(28)} ${r.resultStatus}`);
