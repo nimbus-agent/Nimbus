@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { createConfluenceSyncable } from "./confluence-sync.ts";
+import { confluenceBodyText, createConfluenceSyncable } from "./confluence-sync.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -706,5 +706,88 @@ describeWithFetchRestore("confluence-sync", () => {
     const r = await sync.sync(ctx, null);
     expect(r.itemsUpserted).toBe(0);
     expect(r.cursor).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Full-body indexing via the body.storage expand (V48)
+  // -------------------------------------------------------------------------
+  test("indexes the storage body as full text", async () => {
+    const ctx = makeCtx();
+    globalThis.fetch = makeFetch(
+      200,
+      JSON.stringify({
+        results: [
+          makePageResult({
+            body: { storage: { value: "<p>Hello <b>there</b></p>", representation: "storage" } },
+          }),
+        ],
+      }),
+    ) as typeof fetch;
+    await createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} }).sync(ctx, null);
+    const row = ctx.db
+      .query<{ body: string; body_complete: number }, []>(
+        "SELECT body, body_complete FROM item WHERE service = 'confluence'",
+      )
+      .get();
+    expect(row?.body).toBe("Hello there");
+    expect(row?.body_complete).toBe(1);
+  });
+
+  test("requests the body.storage expand at limit 25", async () => {
+    const seen: string[] = [];
+    const ctx = makeCtx();
+    globalThis.fetch = ((input: SyncTestFetchParams[0]) => {
+      seen.push(urlFromFetchInput(input));
+      return Promise.resolve(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    }) as typeof fetch;
+    await createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} }).sync(ctx, null);
+    expect(seen[0]).toContain("body.storage");
+    expect(seen[0]).toContain("limit=25");
+  });
+
+  test("a page with no body.storage indexes title-only and does not claim completeness", async () => {
+    const ctx = makeCtx();
+    globalThis.fetch = makeFetch(
+      200,
+      JSON.stringify({ results: [makePageResult()] }),
+    ) as typeof fetch;
+    await createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} }).sync(ctx, null);
+    const row = ctx.db
+      .query<{ body: string; body_complete: number }, []>(
+        "SELECT body, body_complete FROM item WHERE service = 'confluence'",
+      )
+      .get();
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("a storage body over the prose cap clamps and reports incomplete", async () => {
+    const ctx = makeCtx();
+    globalThis.fetch = makeFetch(
+      200,
+      JSON.stringify({
+        results: [makePageResult({ body: { storage: { value: `<p>${"z".repeat(20_000)}</p>` } } })],
+      }),
+    ) as typeof fetch;
+    await createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} }).sync(ctx, null);
+    const row = ctx.db
+      .query<{ len: number; body_complete: number }, []>(
+        "SELECT length(body) AS len, body_complete FROM item WHERE service = 'confluence'",
+      )
+      .get();
+    expect(row?.len).toBe(16_384);
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("macro markup strips to its inner text", () => {
+    expect(
+      confluenceBodyText({
+        body: {
+          storage: {
+            value:
+              '<ac:structured-macro ac:name="info"><ac:rich-text-body><p>Note</p></ac:rich-text-body></ac:structured-macro>',
+          },
+        },
+      }),
+    ).toBe("Note");
   });
 });

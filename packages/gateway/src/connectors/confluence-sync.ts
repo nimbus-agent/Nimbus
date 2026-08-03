@@ -1,5 +1,6 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
+import { plainTextFromHtml } from "../string/html-plain-text.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import {
   asRecord,
@@ -101,6 +102,18 @@ function confluenceWatermarkStopOrBumpMax(
   return false;
 }
 
+/**
+ * `null` (not `""`) when the row carries no storage body at all — an absent
+ * expand must not be indistinguishable from an empty page, or the store would
+ * report `body_complete = 1` for a body we never received.
+ */
+export function confluenceBodyText(row: Record<string, unknown>): string | null {
+  const body = asRecord(row["body"]);
+  const storage = body === undefined ? undefined : asRecord(body["storage"]);
+  const value = storage === undefined ? undefined : stringField(storage, "value");
+  return value === undefined ? null : plainTextFromHtml(value);
+}
+
 function confluenceUpsertOneSearchHit(
   ctx: SyncContext,
   item: unknown,
@@ -133,12 +146,14 @@ function confluenceUpsertOneSearchHit(
   acc.upserted += 1;
   const by = confluenceLastUpdatedBy(row);
   const authorId = by === null ? null : resolveConfluenceAuthorId(ctx, by);
+  const text = confluenceBodyText(row);
+  const bodyInput: IndexedItemBodyInput = text === null ? { bodyPreview: "" } : { body: text };
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "page",
     externalId: id,
     title: title.length > 512 ? title.slice(0, 512) : title,
-    bodyPreview: "",
+    ...bodyInput,
     url: webUi,
     canonicalUrl: webUi,
     modifiedAt: Number.isFinite(modified) ? modified : opts.syncTime,
@@ -166,7 +181,7 @@ async function confluenceFetchSearchPageBatch(
     cql: cqlBase,
     limit: String(limit),
     start: String(start),
-    expand: "history.lastUpdated,space,version",
+    expand: "history.lastUpdated,space,version,body.storage",
   });
   const url = `${apiBase}/content/search?${qs.toString()}`;
   const res = await fetch(url, {
@@ -202,7 +217,7 @@ async function confluenceFetchSearchPageBatch(
 
 async function confluenceRunPagedSearch(p: ConfluencePagedSearchParams): Promise<SyncResult> {
   const { ctx, apiBase, email, token, baseRaw, cqlBase, watermark, watermarkMs, t0 } = p;
-  const limit = 50;
+  const limit = 25;
   let start = 0;
   let bytesTransferred = 0;
   const acc = { maxEdited: watermark ?? "", upserted: 0 };
