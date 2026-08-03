@@ -120,4 +120,24 @@ describe("proveWindow", () => {
     expect(out.completeness.outboundEgressEvents).toBe(1);
     expect(out.rows[0]?.method).toBe("email.send");
   });
+  test("marker rows are not counted as outbound egress events", () => {
+    // One real gated action…
+    appendEgressEntry(
+      db,
+      e({ timestamp: 50, sourceType: "task", destination: "jira", method: "jira.issue.create" }),
+    );
+    // …and one prune tombstone, which carries resultStatus 'authorized' but sends NOTHING.
+    appendEgressEntry(
+      db,
+      e({
+        timestamp: 51,
+        sourceType: "prune",
+        sourceId: "boundary-hash",
+        destination: "local",
+        method: "egress.prune",
+      }),
+    );
+    const out = proveWindow(db, {});
+    expect(out.completeness.outboundEgressEvents).toBe(1);
+  });
 });

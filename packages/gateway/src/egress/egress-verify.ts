@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { GENESIS_HASH } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
+import { isMarkerSourceType } from "./egress-source-type.ts";
 
 /** Hard ceiling on `listEgress` rows — bounds the cost of an IPC-supplied `limit`. */
 const MAX_EGRESS_LIST_LIMIT = 5000;
@@ -201,7 +202,9 @@ export function proveWindow(
     ...(opts.since !== undefined && { since: opts.since }),
     ...(opts.until !== undefined && { until: opts.until }),
   });
-  const outbound = rows.filter((r) => r.resultStatus === "authorized").length;
+  const outbound = rows.filter(
+    (r) => r.resultStatus === "authorized" && !isMarkerSourceType(r.sourceType),
+  ).length;
   return {
     rows,
     completeness: { tier: "authorized-actions", outboundEgressEvents: outbound },
