@@ -253,6 +253,17 @@ describe("I9 — bound SQL parameters; identifiers go through escapeIdentifier",
     expect(src).not.toMatch(/(?:const|function)\s+escapeIdentifier\s*[=(]/);
   });
 
+  test("search/vec-store.ts imports escapeIdentifier from db/write.ts rather than a raw template literal", async () => {
+    const src = await read("packages/gateway/src/search/vec-store.ts");
+    // Same shape as reindex.ts: dims is constrained to SUPPORTED_EMBEDDING_DIMS,
+    // but I9 is unconditional — the identifier is still escaped rather than
+    // interpolated raw, and there must be no independent local copy.
+    expect(src).toMatch(/import \{ escapeIdentifier \} from "\.\.\/db\/write\.ts"/);
+    expect(src).toMatch(/escapeIdentifier\(`vec_items_\$\{String\(dims\)\}`\)/);
+    expect(src).not.toMatch(/replaceAll\('"', '""'\)/);
+    expect(src).not.toMatch(/(?:const|function)\s+escapeIdentifier\s*[=(]/);
+  });
+
   test("db/repair.ts guards against NUL-byte / empty identifier names", async () => {
     const src = await read("packages/gateway/src/db/repair.ts");
     expect(src).toMatch(/String\.fromCodePoint\(0\)/);

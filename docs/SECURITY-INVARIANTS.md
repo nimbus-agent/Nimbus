@@ -162,7 +162,7 @@ No inline comments were mapped to I8 specifically in the triage. No additional s
 
 **Defense:** every SQLite query uses bound parameters via the typed `dbRun` / `dbExec` wrappers in `packages/gateway/src/db/write.ts`. Identifier-class values that cannot be parameter-bound (table/column names from a finite allowlist) go through the canonical `escapeIdentifier` export, also in `db/write.ts` — every caller imports it rather than defining its own copy.
 
-**Wired at:** `db/write.ts` (canonical `escapeIdentifier` definition, alongside `dbRun`/`dbExec`/`dbStmtRun`), `db/repair.ts` (imports `escapeIdentifier`; also applies its own null-byte / empty-name guard, `isUnsafeSqlIdentifier`, before escaping — repair-specific because its table names come from a live `PRAGMA foreign_key_check` scan rather than a fixed allowlist), `connectors/reindex.ts` (imports `escapeIdentifier` for the dim-derived `vec_items_<dims>` table name), `people/person-store.ts` (per-field parameter binding after S5-F5 fix).
+**Wired at:** `db/write.ts` (canonical `escapeIdentifier` definition, alongside `dbRun`/`dbExec`/`dbStmtRun`), `db/repair.ts` (imports `escapeIdentifier`; also applies its own null-byte / empty-name guard, `isUnsafeSqlIdentifier`, before escaping — repair-specific because its table names come from a live `PRAGMA foreign_key_check` scan rather than a fixed allowlist), `connectors/reindex.ts` and `search/vec-store.ts` (both import `escapeIdentifier` for the dim-derived `vec_items_<dims>` table name — I9 applies unconditionally even though `dims` is constrained to `SUPPORTED_EMBEDDING_DIMS`), `people/person-store.ts` (per-field parameter binding after S5-F5 fix).
 
 **Anti-pattern:** template-literal SQL on caller-supplied data (``db.run(`UPDATE ... SET ${field} = ${value}`)``). S5-F5 was a `sets.join()` template in `patchPerson` that built SQL from caller-supplied field names. A second anti-pattern specific to this defense: redefining a local `escapeIdentifier` instead of importing the canonical one from `db/write.ts` — two independent copies is exactly the drift that produces a subtly-different third copy later.
 
@@ -170,7 +170,7 @@ No inline comments were mapped to I8 specifically in the triage. No additional s
 
 ### Migrated rationale (2026-05-28)
 
-The comment at `search/vec-store.ts:16` describes constructing the virtual-table identifier for `vec_items_384` / `vec_items_1536` from a dim constant. As of this writing that file builds the identifier via a plain template literal (`` `vec_items_${String(dims)}` ``) rather than routing it through `escapeIdentifier` — the dim value is drawn from `SUPPORTED_EMBEDDING_DIMS`, a fixed compile-time set, so it cannot carry attacker-controlled content, but the comment's claim about the mechanism is stale against current code and is flagged here rather than silently left to drift further. The comment at `test/integration/db/disk-full-propagation.test.ts:296` confirms that the integration test covers the `SQLITE_FULL` → `DiskFullError` propagation path through `dbRun`.
+The comment at `search/vec-store.ts:16` documents that the virtual-table identifier for `vec_items_384` / `vec_items_1536` is constructed via `escapeIdentifier` rather than a template literal, because the table name is computed from a dim constant — a concrete example of the identifier-binding rule for non-string inputs. The comment at `test/integration/db/disk-full-propagation.test.ts:296` confirms that the integration test covers the `SQLITE_FULL` → `DiskFullError` propagation path through `dbRun`.
 
 ---
 
