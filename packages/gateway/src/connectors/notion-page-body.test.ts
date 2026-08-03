@@ -235,6 +235,39 @@ describeWithFetchRestore("notion-page-body", () => {
     expect(r.outcome).toBe("capped");
   });
 
+  test("the global budget never truncates a page mid-walk, even once it goes negative", async () => {
+    // deps(2) starts the sync-wide budget far below what this page needs (5
+    // paginated requests). The budget is checked by the CALLER before starting a
+    // page, never inside the walk — so a page already in progress must run to
+    // completion regardless of how far left goes negative. Asserting the exact
+    // fetch count is what would catch a regression like an added
+    // `if (deps.budget.left <= 0) return;` inside collectChildren's loop: such a
+    // change wouldn't show up as a coverage gap (budget.left has no existing
+    // conditional), but it WOULD change this call count.
+    const totalRequests = 5;
+    let call = 0;
+    globalThis.fetch = (() => {
+      call += 1;
+      const isLast = call === totalRequests;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            results: [para(`b${String(call)}`, `t${String(call)}`)],
+            has_more: !isLast,
+            next_cursor: isLast ? null : "CUR",
+          }),
+          { status: 200 },
+        ),
+      );
+    }) as unknown as typeof fetch;
+    const d = deps(2);
+    const r = await fetchNotionPageText(d, "p1");
+    expect(call).toBe(totalRequests);
+    expect(r.outcome).toBe("complete");
+    expect(r.text).toBe("t1\nt2\nt3\nt4\nt5");
+    expect(d.budget.left).toBe(2 - totalRequests);
+  });
+
   test("a 429 returns errored and zeroes the remaining budget", async () => {
     globalThis.fetch = routedFetch({}, 429);
     const d = deps(100);
@@ -263,6 +296,36 @@ describeWithFetchRestore("notion-page-body", () => {
         new Response(JSON.stringify({ results: "nope" }), { status: 200 }),
       )) as unknown as typeof fetch;
     expect((await fetchNotionPageText(deps(), "p1")).outcome).toBe("errored");
+  });
+
+  test("a later request on the same page preserves earlier gathered text on error", async () => {
+    // fetchNotionPageText's contract: "a failure returns whatever text was
+    // gathered." Every other errored test fails on the FIRST request, so `out`
+    // is empty in all of them — none actually exercises the "partial text
+    // survives" half of the contract. Here the first paginated request
+    // succeeds and contributes text, then the second (same page, via
+    // start_cursor) fails.
+    let call = 0;
+    globalThis.fetch = (() => {
+      call += 1;
+      if (call === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              results: [para("b1", "first")],
+              has_more: true,
+              next_cursor: "CUR",
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 500 }));
+    }) as unknown as typeof fetch;
+    const r = await fetchNotionPageText(deps(), "p1");
+    expect(call).toBe(2);
+    expect(r.outcome).toBe("errored");
+    expect(r.text).toBe("first");
   });
 
   test("a non-object JSON root returns errored", async () => {
