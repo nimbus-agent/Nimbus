@@ -269,19 +269,39 @@ zero" principle applied to its own recommendation.
 Phase 4's accompanying requirement — that the predicate be **structural, not convention** — stands
 and remains open; read-time derivation makes adopting it later a non-breaking change.
 
-### Two decisions this document's Phase 1 must now absorb
+### Two amendments to this document's Phase 1 — decided 2026-08-03
 
-Both are irreversible after Phase 1, because the union is BLAKE3-committed:
+Both were irreversible-after-Phase-1 decisions, and both are now settled. **Phase 1 as written above
+is amended accordingly.**
 
-1. **The frozen union needs members for the boot and degraded markers.** The annex introduces a
-   per-process boot marker (the mechanism that turns an unwired sink into `indeterminate` rather
-   than a false zero) and a degraded marker. Neither fits `task`/`prune`/`session`/`sync`/`model`/
-   `peer`. Recommendation: admit `boot` and `degraded` while the union is still open — exactly the
-   "land it complete, including members whose appenders do not exist yet" case argued for above.
-2. **How the required sink reaches leaf functions.** `router.ts`'s `llmClassify` and the
-   `openai-embedder` closure take no `db` and are not constructed through `ToolExecutor`, so
-   "required at construction" does not by itself reach them. Recommendation: thread a sink at each
-   subsystem's own construction boundary rather than fall back to an ambient global.
+**1. The frozen union is eight members, not six.**
+
+```ts
+type EgressSourceType =
+  | "task" | "prune" | "session" | "sync" | "model" | "peer"
+  | "boot"       // per-process marker carrying the coverage vector
+  | "degraded";  // lost-append recovery marker
+```
+
+The annex's boot marker is the mechanism that turns an unwired sink into `indeterminate` rather than
+a false zero, so it is not optional, and neither marker fits the original six. Admitting them now is
+the "land it complete, including members whose appenders do not exist yet" case this document
+argues for; the alternative — overloading `session` with reserved `method` values — was rejected
+because it demotes marker exclusion from a type-level check to a string match.
+
+The identity test this document requires (`toEqual` against the literal list, never a length check)
+now asserts all eight.
+
+**2. The required sink is threaded, not ambient.**
+
+"Required at construction" does not by itself reach `router.ts`'s `llmClassify` or the
+`openai-embedder` closure — they take no `db` and are not constructed through `ToolExecutor`. The
+resolution is an explicit `EgressSink` parameter at each subsystem's own construction boundary,
+wired in `platform/assemble.ts`. No module-global, no `AsyncLocalStorage`.
+
+This strengthens Phase 1's intent rather than qualifying it: a forgotten sink becomes a compile
+error instead of a runtime condition detectable only through the boot marker. `NULL_EGRESS_SINK`
+keeps its role for gate-only construction sites, where a named null is the decision on the record.
 
 ### Corrections to this document's counting, from the annex
 

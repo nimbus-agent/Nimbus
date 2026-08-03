@@ -134,17 +134,19 @@ export interface EgressCallContext {
   readonly summary?: unknown;
 }
 
+/** The sink is THREADED (§3.2.2) — passed explicitly, never looked up ambiently. */
 export async function egressFetch(
+  sink: EgressSink,
   input: string | URL,
   init: RequestInit | undefined,
   ctx: EgressCallContext,
 ): Promise<Response>;
 
 /** For egress that returns no Response: Bun.connect, WebSocket. */
-export function recordEgress(target: string, ctx: EgressCallContext): void;
+export function recordEgress(sink: EgressSink, target: string, ctx: EgressCallContext): void;
 
-/** Boot wiring. Appends the boot marker carrying this binary's coverage vector (§3.6). */
-export function registerEgressSink(sink: EgressSink, coverage: CoverageVector): void;
+/** Appended once per process by whoever owns the Database handle — describes the PROCESS (§3.6). */
+export function appendBootMarker(sink: EgressSink, coverage: CoverageVector): void;
 ```
 
 `egressFetch` is a drop-in for `fetch`: `init` passes through untouched and a plain `Response` is returned, so every call site keeps its existing `res.ok` / `.json()` / `.text()` handling. Verified against the real shapes at `router.ts:129` (POST + headers + body), `openai-embedder.ts:23` (same), `manifest-fetcher.ts:138` (`{ signal }`), `updater.ts:232` (`{ redirect: "follow" }`).
@@ -164,18 +166,35 @@ embedder closure in `openai-embedder.ts` are leaf functions with **no `db` handl
 a sink**. Requiring the sink at `ToolExecutor` construction does not by itself reach them, because
 they are not constructed through the executor at all.
 
-So Phase 1's "make the sink required" and this annex's call sites meet at an unresolved seam, and
-**Phase 3 must decide it explicitly** rather than inheriting a global by default. Two candidates:
+#### 3.2.2 DECIDED 2026-08-03: thread the sink, no ambient state
 
-1. **Thread it** — give each subsystem that performs egress an explicit sink parameter at its own
-   construction boundary (`makeOpenAiEmbedder(..., sink)`, the router's factory, the schedulers).
-   More edits, no ambient state, and every call site is greppable.
-2. **A module-scoped registration** as originally proposed, with `NULL_EGRESS_SINK` as the default
-   rather than `undefined`, so an unwired process records nothing *and says so* instead of silently
-   appending nothing.
+Each subsystem that performs egress takes an explicit `EgressSink` at **its own** construction
+boundary — `makeOpenAiEmbedder(opts, sink)`, the router's factory, `SyncScheduler`, the telemetry
+flush scheduler, the updater, `LanClient`, the ChatOps transport. No module-scoped registration, no
+`AsyncLocalStorage`, no default.
 
-Option 1 is preferable on the same grounds Phase 1 gives for the required sink; option 2 is cheaper.
-Recorded as an open decision for Phase 3, not settled here.
+**Why this over the cheaper module-global:**
+
+- It is the same argument Phase 1 makes for the required sink, applied one level down. A threaded
+  parameter that must be supplied is a decision on the record; an ambient lookup that silently
+  returns nothing is an accident waiting.
+- **Most of the unwired-sink failure class becomes a compile error** rather than a runtime condition
+  detectable only via the boot marker. That is a strictly better failure mode and it shrinks §4.3.
+- Every egress site becomes greppable by its constructor signature, which the static rule in §5 can
+  lean on.
+- It sidesteps the Bun `mock.module` contamination hazard entirely, rather than mitigating it with
+  a reset hook.
+
+**Cost, accepted:** more edits, and each subsystem's construction site must be found and updated.
+`platform/assemble.ts` is the single place that owns those constructions, so the change is wide but
+shallow.
+
+**What remains ambient:** nothing for the sink. `source_id` still comes from the existing
+`getAgentRequestSessionId()` where a request context exists, and is `null` in timer-driven paths —
+which is correct, since those runs genuinely have no session.
+
+**The boot marker is not threaded** — it is appended once, at boot, by whichever code owns the
+`Database` handle (`platform/assemble.ts`), because it describes the *process*, not a subsystem.
 
 ### 3.2.1 Original rationale (historical)
 
@@ -192,11 +211,24 @@ Test hazard, mitigated: a module-global is a known contamination source in this 
 > `source_type` is BLAKE3-committed, so a later rename is a chain break rather than a refactor, and
 > incremental widening is called out by name as a thing not to do. This annex adds no members.
 
-The union is the spec of record's, defined in its Phase 1 and used verbatim here:
+The union is the spec of record's, defined in its Phase 1, **plus the two marker members admitted
+by the decision in §3.3.2**:
 
 ```ts
-type EgressSourceType = "task" | "prune" | "session" | "sync" | "model" | "peer";
+type EgressSourceType =
+  // the spec of record's six
+  | "task"      // gated connector action (existing)
+  | "prune"     // retention tombstone (existing)
+  | "session"   // gateway housekeeping egress
+  | "sync"      // connector sync run
+  | "model"     // inference + embeddings, local or remote
+  | "peer"      // federated send
+  // admitted 2026-08-03, before the freeze (§3.3.2)
+  | "boot"      // process-start marker carrying the coverage vector
+  | "degraded"; // lost-append recovery marker
 ```
+
+Eight members, frozen. Widening this later is a chain break, not a refactor.
 
 The `fetch` modality maps onto it without additions:
 
@@ -236,25 +268,26 @@ Marker rows are excluded explicitly rather than by `result_status`, because they
 
 ```ts
 /** Rows that record bookkeeping, not egress. Never counted. */
-const MARKER_SOURCE_TYPES: ReadonlySet<string> = new Set(["prune"]);
+const MARKER_SOURCE_TYPES = new Set<EgressSourceType>(["prune", "boot", "degraded"]);
 ```
 
 Existing `task` rows are counted exactly as they are today, so old ledgers keep reporting the same
 numbers for real actions.
 
-#### 3.3.2 The boot and degraded markers need a home in the frozen union
+#### 3.3.2 Marker members — DECIDED 2026-08-03: admit them
 
-The union has no member for them, and this annex may not add one. Two options for Phase 1, which
-owns the union:
+The markers are admitted to the union as `boot` and `degraded`, rather than overloaded onto
+`session` with reserved `method` values.
 
-1. **Admit two more members now** — `boot` and `degraded` — while the union is still being frozen.
-   Cheap at this moment and impossible later; this is precisely the "land it complete, including
-   members whose appenders do not exist yet" case the spec of record argues for.
-2. **Carry them as `session` rows** with a reserved `method` (`egress.boot`, `egress.degraded`) and
-   exclude by `method`. Adds no members, at the cost of overloading `session`.
+**Why.** This is exactly the case the spec of record argues for when it says to land the union
+complete, "including members whose appenders do not exist yet" — the alternative costs nothing today
+and is impossible tomorrow, because `source_type` is BLAKE3-committed. Overloading `session` would
+also have made marker exclusion a `method`-string match rather than a type-level one, so a missed
+exclusion would surface as a wrong count rather than a compile error.
 
-**Option 1 is recommended**, and must be decided before Phase 1 lands, not after — that is the whole
-point of freezing the union up front.
+The rejected option is recorded because it constrains a future reader: if a ninth member is ever
+wanted, the answer is **not** to add it. It is to overload `session` with a reserved `method`, and
+to accept the weaker exclusion that implies.
 
 #### 3.3.3 This corrects a pre-existing miscount
 
@@ -356,14 +389,25 @@ The sharpest form of this: **if the database is read-only or lock-held, step 2 c
 
 Soundness survives this, via the boot marker rather than via the recovery marker. A restart with an unwritable database cannot append a boot marker either, so the window has no covering marker and `proveWindow` reports `indeterminate` — not a clean zero. What is lost is *forensic detail*: how many appends were dropped, and when. A sentinel file outside SQLite would recover that detail; it is deferred as an enhancement (§11), not required for the completeness claim.
 
-### 4.3 Unregistered sink
+### 4.3 Missing sink — now mostly a compile error
 
-Calling `egressFetch` with no sink registered is a programming error, not a runtime condition — but the two builds must behave differently, and the spec is explicit about which:
+The threading decision (§3.2.2) largely dissolves this section. `egressFetch` and `recordEgress`
+take the sink as a required parameter, and each subsystem takes one at construction, so **a call
+site that forgets the sink does not compile.** There is no ambient lookup that can silently return
+nothing.
 
-- **Test and development builds throw.** A missing sink registration is a wiring bug and should fail loudly where it is cheap to fix. (Under the recommended threaded-sink resolution of §3.2, most of this class becomes a compile error instead — which is strictly better. The boot marker still covers whatever remains reachable at runtime.)
-- **Production proceeds with the call and records nothing**, consistent with degrade-and-continue (§4.2): an instrumentation defect must not take the product down.
+Two runtime residues remain, and the boot marker covers both:
 
-Production safety therefore rests entirely on the boot marker. With no marker covering the window, `proveWindow` reports `indeterminate`, so an unwired sink surfaces as "cannot prove" rather than as a silent `0 ✓`. This is the single most important reason the boot marker exists, and an enforcement test asserts that a sink-less boot yields `indeterminate` and never zero.
+1. **A subsystem constructed with `NULL_EGRESS_SINK`** where a real sink was intended. Type-correct,
+   so the compiler is satisfied — but the named null makes it greppable and reviewable, which is
+   exactly why the spec of record prefers a named null to an omitted optional.
+2. **A boot path that never appends the marker at all** — the process ran, but nothing recorded what
+   it was built to observe.
+
+In both cases the window has no covering boot marker, so `proveWindow` reports `indeterminate`: an
+unwired sink surfaces as "cannot prove" rather than as a silent `0 ✓`. That is the boot marker's
+primary justification, and an enforcement test asserts a marker-less window yields `indeterminate`
+and never zero.
 
 ### 4.4 Unparseable host
 
@@ -475,7 +519,7 @@ Written down because the tier vocabulary must stay honest:
 | Unit — degrade | append throws → call still completes → counter set → degraded marker on next successful append |
 | Unit — coverage vector | weakest-granularity-per-source resolution across multiple boot markers; window with no covering marker → `indeterminate` |
 | Unit — markers | marker rows excluded from the count despite carrying `authorized` (§3.3.3) |
-| Unit — unwired sink | a boot with no sink yields `indeterminate`, never `0` (§4.3) |
+| Unit — unwired sink | a window with no covering boot marker yields `indeterminate`, never `0` (§4.3) |
 | Regression | rows written by the current binary still verify (hash inputs unchanged) |
 | Invariant | `I29` describe block extended: loopback exclusion, marker exclusion, gated-action abort still fires |
 | Static | `D22-egress-fetch` red-proved in both directions (§5) |
@@ -512,7 +556,7 @@ landing it earlier would only be green because of exemptions, which is what §5 
 
 | Risk | Mitigation |
 |---|---|
-| Module-global sink contaminates Bun test runs | Only applies if §3.2 resolves to module-scoped registration; the recommended threaded-sink option removes the risk entirely. If taken anyway: an exported reset in `afterEach`, and no `mock.module` for this seam |
+| Module-global sink contaminates Bun test runs | **Eliminated** by the threading decision (§3.2.2) — there is no module-global to contaminate |
 | D22 regex false-positives on `fetch(req) {` / `refetch(` / `fetchFn` | fixture red-proves both directions before the rule is enforced (§5) |
 | Ledger volume from loopback LLM rows | rows are small and metadata-only; `egress.prune` already exists for retention |
 | `prove` output churn breaks existing e2e assertions | CLI wording changes land with the phase that changes coverage, alongside its test updates |
@@ -578,9 +622,12 @@ Its accompanying requirement — that the predicate be **structural, not convent
 
 The verified `fetch`-modality inventory (§1.1–1.2), the pre-existing prune miscount (§3.3.3), the boot marker that turns an unwired sink into `indeterminate` rather than a false zero (§3.6, §4.3), the classification rules and their deliberate over-reporting bias (§3.4.1), the Node-primitive coverage of the static rule (§5), and the review dispositions (§11).
 
-### 12.4 Carried forward as open decisions
+### 12.4 The two carried-forward decisions — BOTH SETTLED 2026-08-03
 
-Both must be settled **inside Phase 1**, because the union is BLAKE3-committed and cannot be widened afterwards:
+| Decision | Outcome | Consequence |
+|---|---|---|
+| Boot/degraded marker members (§3.3.2) | **Admit them.** The frozen union is eight members: `task`, `prune`, `session`, `sync`, `model`, `peer`, `boot`, `degraded`. | Marker exclusion is type-level, not a `method`-string match. Phase 1 must land all eight; a ninth is a chain break. |
+| How the sink reaches leaf functions (§3.2.2) | **Thread it.** Explicit `EgressSink` parameter at each subsystem's construction boundary; no module-global, no `AsyncLocalStorage`. | Most missing-sink bugs become compile errors (§4.3 shrinks accordingly). `platform/assemble.ts` carries the wiring; `egressFetch`/`recordEgress` take the sink as their first argument. |
 
-1. **Boot/degraded marker members** — admit them to the frozen union now, or overload `session` with reserved `method` values (§3.3.2). Recommendation: admit them.
-2. **How the sink reaches leaf functions** — thread it per subsystem, or module-scoped registration defaulting to `NULL_EGRESS_SINK` (§3.2). Recommendation: thread it.
+Nothing in this annex is now blocked. Phase 1 can be planned against the eight-member union, and
+Phases 3–5 against the threaded-sink call sites in §6.
