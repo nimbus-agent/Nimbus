@@ -93,6 +93,20 @@ const FORBIDDEN_OVER_LAN = new Set([
   "scim.setToken",
   "scim.listUsers",
   "scim.deprovision",
+  // Web clipper (I30): clip.pair opens the owner-only PairingWindowController window and returns
+  // the one-time code in its RPC response. Admitting it over LAN (the denylist is default-allow)
+  // would let an already-paired LAN peer call clip.pair itself, read the code back, then POST it
+  // to /v1/clips/pair/confirm and mint its own Vault-stored bearer token — never routing through
+  // the owner running `nimbus clip pair`, which defeats I30's owner-opened-window requirement.
+  // The whole namespace is forbidden (not just clip.pair): clip.status/list/delete are local-CLI
+  // surfaces too (the browser extension talks to the bearer-authed HTTP surface, never LAN
+  // JSON-RPC), so forbidding the namespace costs no legitimate caller anything.
+  "clip",
+  // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
+  // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
+  // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),
+  // so a LAN caller only ever triggers an owner consent prompt and can never prune unilaterally.
+  // Listing it here would be redundant, not a fix — don't "fix" it by adding it to this set.
 ]);
 
 const WRITE_METHODS = new Set([

@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.18.0](https://github.com/nimbus-agent/Nimbus/compare/v1.17.0...v1.18.0) (2026-08-02)
+
+
+### Features
+
+* **index:** full-body store — V48 item.body, uncapped keyword search, and full bodies for the prose sources ([#1023](https://github.com/nimbus-agent/Nimbus/issues/1023)) ([faa23a8](https://github.com/nimbus-agent/Nimbus/commit/faa23a8b50fe7d8e9ae293adcb7e912572a1a900))
+
+
+### Bug Fixes
+
+* **share:** fail closed on unverified share replay ([#1021](https://github.com/nimbus-agent/Nimbus/issues/1021)) ([e210723](https://github.com/nimbus-agent/Nimbus/commit/e210723c8885f77c9be560ff3ccb3cff90e9018e))
+
 ## [1.17.0](https://github.com/nimbus-agent/Nimbus/compare/v1.16.1...v1.17.0) (2026-08-02)
 
 
