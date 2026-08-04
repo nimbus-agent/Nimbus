@@ -694,6 +694,71 @@ describe("createGmailSyncable", () => {
     expect(row?.body).toBe("Agreed, ship Tuesday.");
   });
 
+  test("a blank text/plain alternative does not suppress the real text/html body end-to-end", async () => {
+    // CodeRabbit finding A, exercised through the full sync path: a sender
+    // that emits a whitespace-only text/plain alternative beside a real
+    // text/html part used to end up with `gmailMessageBodyText` returning ""
+    // after `.trim()` (the `found.plain.length > 0` branch won on the blank
+    // part), so `upsertGmailMessage` stored the snippet with
+    // `body_complete = 0` and the HTML body was never indexed — permanently,
+    // since a later `index.rebody` reproduces the same result.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const blankPlain = Buffer.from("   \n  ", "utf8").toString("base64url");
+    const htmlBody = Buffer.from("<p>Real content lives here.</p>", "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({ messages: [{ id: "m3", threadId: "th3" }], nextPageToken: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m3")) {
+        return new Response(
+          JSON.stringify({
+            id: "m3",
+            threadId: "th3",
+            snippet: "Real content lives here.",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "multipart/alternative",
+              headers: [
+                { name: "Subject", value: "Blank plain alt" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              parts: [
+                { mimeType: "text/plain", body: { data: blankPlain } },
+                { mimeType: "text/html", body: { data: htmlBody } },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("gmail", "m3")) as { body: string; body_complete: number } | undefined;
+    expect(row?.body).toBe("Real content lives here.");
+    expect(row?.body_complete).toBe(1);
+  });
+
   test("an S/MIME message with no extractable text keeps its snippet and stays incomplete", async () => {
     // Representative input, not a fixture shaped to the code: a real
     // signed-and-encrypted message whose only part is opaque PKCS#7 bytes.

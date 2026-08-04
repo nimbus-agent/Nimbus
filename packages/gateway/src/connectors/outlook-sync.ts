@@ -61,7 +61,15 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
   }
   const subject = typeof m.subject === "string" && m.subject !== "" ? m.subject : "(no subject)";
   const raw = typeof m.body?.content === "string" ? m.body.content : "";
-  const text = m.body?.contentType?.toLowerCase() === "text" ? raw : plainTextFromHtmlLines(raw);
+  // `parseODataDeltaPage` validates only the top-level `value` array and casts
+  // each element to `GraphMessage` without runtime validation — this is
+  // external JSON, so `contentType` can be any JSON type. A non-string here
+  // (or absent) must fall through to the HTML path (the safe default: HTML
+  // stripping on plain text is a no-op-ish pass through `plainTextFromHtmlLines`
+  // that only collapses whitespace), not throw and abort the whole sync page.
+  const contentType =
+    typeof m.body?.contentType === "string" ? m.body.contentType.toLowerCase() : "";
+  const text = contentType === "text" ? raw : plainTextFromHtmlLines(raw);
   const body = stripQuotedTail(text);
   // Empty-body handling is a PAIR with `connectors/_lib/gmail/api.ts` — keep
   // the two arms in step. The `bodyPreview` arm is what stops a body-less

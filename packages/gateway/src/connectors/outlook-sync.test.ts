@@ -790,6 +790,44 @@ describe("createOutlookSyncable", () => {
     expect(row?.body_complete).toBe(0);
   });
 
+  test("a non-string contentType (external JSON) does not throw and falls through to the HTML path", async () => {
+    // CodeRabbit finding C: `parseODataDeltaPage` validates only the
+    // top-level `value` array and casts each element to `GraphMessage`
+    // without runtime validation. Graph is external JSON, so `contentType`
+    // could be any JSON type. `m.body?.contentType?.toLowerCase()` on a
+    // non-string (e.g. a number) throws a TypeError and aborts the whole
+    // sync page. A non-string contentType must be treated as non-"text" and
+    // routed through `plainTextFromHtmlLines`, which is a safe no-op-ish
+    // pass for content with no HTML markup.
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "badcontenttype",
+            subject: "Weird payload",
+            // contentType is a number, not the string the GraphMessage type
+            // promises — this is what a malformed/unexpected Graph response
+            // looks like at runtime.
+            body: { contentType: 12345, content: "plain enough text" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "badcontenttype")) as { body: string } | undefined;
+    expect(row?.body).toBe("plain enough text");
+  });
+
   test("a message with no body still indexes title-only", async () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });

@@ -136,6 +136,30 @@ test("multipart/alternative where no child produces plain or html text returns e
   ).toBe("");
 });
 
+test("a whitespace-only text/plain alternative does not suppress a real sibling text/html", () => {
+  // CodeRabbit finding A: `leafText` used to record ANY part whose
+  // `body.data` decoded to a non-empty string, including one that decodes
+  // to whitespace only. Inside `multipart/alternative` that blank part still
+  // wins the type-based pick (plain over html) because `plain.length > 0`,
+  // discarding the sibling text/html representation — even though the blank
+  // plain part carries nothing usable.
+  expect(
+    gmailMessageBodyText({
+      mimeType: "multipart/alternative",
+      parts: [
+        { mimeType: "text/plain", body: { data: b64url("   \n\t  ") } },
+        { mimeType: "text/html", body: { data: b64url("<p>real content</p>") } },
+      ],
+    }),
+  ).toBe("real content");
+});
+
+test("a whitespace-only text/html leaf is not recorded either", () => {
+  expect(gmailMessageBodyText({ mimeType: "text/html", body: { data: b64url("  \n  ") } })).toBe(
+    "",
+  );
+});
+
 test("bounded: content nested deeper than MAX_DEPTH is dropped, not just non-throwing", () => {
   // "does not throw" and "is bounded" are different claims — a 200-level
   // linear chain sits well inside JS's default call-stack limit regardless

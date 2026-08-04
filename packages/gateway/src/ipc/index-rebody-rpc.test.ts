@@ -422,8 +422,8 @@ describe("REBODY_IMPROVABLE_SERVICES", () => {
   test("membership verified against every item-writing code path for each service (see file-header comment)", () => {
     // Every item-writing call site for each of these passes body: (the declared-full variant):
     //   bitbucket-sync.ts:137, confluence-sync.ts:150, discord-sync.ts:203,
-    //   github-sync.ts:207+247 (pr AND issue), _lib/gmail/api.ts:181, jira-sync.ts:268,
-    //   linear-sync.ts:175, notion-sync.ts:245, obsidian-sync.ts:78, outlook-sync.ts:66,
+    //   github-sync.ts:207+247 (pr AND issue), _lib/gmail/api.ts:168, jira-sync.ts:268,
+    //   linear-sync.ts:175, notion-sync.ts:245, obsidian-sync.ts:78, outlook-sync.ts:74,
     //   slack-sync.ts:282, snyk-issue-mapping.ts:117, _lib/teams/api.ts:88.
     for (const service of [
       "bitbucket",

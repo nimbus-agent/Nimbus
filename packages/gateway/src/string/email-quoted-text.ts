@@ -51,12 +51,22 @@ const SIGNATURE_RE = /^-- $/;
 const QUOTE_RE = /^\s*>/;
 const HEADER_FIELD_RE = /^\s*(from|sent|to|cc|subject|date)\s*:\s*\S/i;
 
-function isMarker(line: string, headerish: boolean): boolean {
+/**
+ * `dividerBelowQualifies` gates the DIVIDER_RE arm the same way the terminal
+ * scan gates it (see `quotedBlockBelowFlags`): a divider is a marker only
+ * when the first nonblank line strictly below it actually starts a quoted
+ * block. Without this gate, a bare trailing divider — or one merely followed
+ * by the author's OWN prose — is treated as a marker just like a real `>`
+ * line, and the backward walk in `stripQuotedTail` swallows it (and
+ * everything after it that the walk also treats as marker/blank) into the
+ * "quoted tail", which can delete authored content that never was quoted.
+ */
+function isMarker(line: string, headerish: boolean, dividerBelowQualifies: boolean): boolean {
   return (
     QUOTE_RE.test(line) ||
     ATTRIBUTION_RE.test(line) ||
     ORIGINAL_MESSAGE_RE.test(line) ||
-    DIVIDER_RE.test(line) ||
+    (DIVIDER_RE.test(line) && dividerBelowQualifies) ||
     SIGNATURE_RE.test(line) ||
     headerish
   );
@@ -72,10 +82,22 @@ function headerBlockFlags(lines: readonly string[]): boolean[] {
 }
 
 /**
- * `flags[i]` — does the region strictly BELOW line `i` look like the quoted
- * block an underscore divider at `i` would be claiming to introduce? One `>`
- * line or one line of a `From:`/`Sent:` header block is enough; an author's
- * own prose is not.
+ * `flags[i]` — does the FIRST NONBLANK line strictly below line `i` look like
+ * the start of the quoted block an underscore divider at `i` would be
+ * claiming to introduce? That line being a `>` line or a line of a
+ * `From:`/`Sent:` header block is enough; an author's own prose immediately
+ * below the divider is not — even if a real quote block happens to sit
+ * further down, past that prose.
+ *
+ * Deliberately NOT "does ANY line below qualify" — that reading (an earlier
+ * version of this function) treats `"Intro\n__________\nOwn prose\n> quote"`
+ * as terminal at the divider, because SOME line below it (the `> quote` two
+ * lines down) matches, even though the line immediately below the divider is
+ * the author's own prose. Only ADJACENCY — the first nonblank line below is
+ * itself the start of the quoted block — makes the divider mean what its
+ * Outlook origin means; blank lines in between don't break adjacency (a
+ * divider, a blank line, then a `>` line is still "immediately followed by a
+ * quote" in the sense that matters here).
  *
  * Deliberately a single O(n) SUFFIX pass rather than the obvious "scan
  * downward from this divider" predicate. The terminal loop below tries every
@@ -90,14 +112,18 @@ function headerBlockFlags(lines: readonly string[]): boolean[] {
  * synchronously on the gateway event loop from `gmail/api.ts` and
  * `outlook-sync.ts` BEFORE any body cap applies, so that is a denial of
  * service. The suffix pass answers every divider in O(1) after one O(n)
- * sweep, with identical semantics.
+ * sweep, with identical semantics — it just tracks the nearest NONBLANK
+ * line's qualification instead of an OR across everything seen so far.
  */
 function quotedBlockBelowFlags(lines: readonly string[], headerish: readonly boolean[]): boolean[] {
   const flags = lines.map(() => false);
-  let seen = false;
+  let nearestNonBlankQualifies = false;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    flags[i] = seen;
-    seen = seen || headerish[i] === true || QUOTE_RE.test(lines[i] ?? "");
+    flags[i] = nearestNonBlankQualifies;
+    const line = lines[i] ?? "";
+    if (line.trim() !== "") {
+      nearestNonBlankQualifies = headerish[i] === true || QUOTE_RE.test(line);
+    }
   }
   return flags;
 }
@@ -166,12 +192,20 @@ export function stripQuotedTail(body: string): string {
   const analysis = joinWrappedAttributions(original);
   const lines = analysis.map((a) => a.text);
   const headerish = headerBlockFlags(lines);
+  // Same divider qualification the terminal scan uses below, computed over
+  // the JOINED (walk) lines rather than the original ones — the walk and its
+  // `isMarker` calls index into `lines`, not `original`, and a wrapped
+  // attribution can shift those indices apart.
+  const dividerBelowQualifies = quotedBlockBelowFlags(lines, headerish);
 
   // Walk backwards over everything that could belong to a quoted tail.
   let start = lines.length;
   while (start > 0) {
     const line = lines[start - 1] ?? "";
-    if (line.trim() === "" || isMarker(line, headerish[start - 1] === true)) {
+    if (
+      line.trim() === "" ||
+      isMarker(line, headerish[start - 1] === true, dividerBelowQualifies[start - 1] === true)
+    ) {
       start -= 1;
       continue;
     }
@@ -189,7 +223,14 @@ export function stripQuotedTail(body: string): string {
     while (firstIdx < lines.length && (lines[firstIdx] ?? "").trim() === "") {
       firstIdx += 1;
     }
-    if (firstIdx < lines.length && isMarker(lines[firstIdx] ?? "", headerish[firstIdx] === true)) {
+    if (
+      firstIdx < lines.length &&
+      isMarker(
+        lines[firstIdx] ?? "",
+        headerish[firstIdx] === true,
+        dividerBelowQualifies[firstIdx] === true,
+      )
+    ) {
       walkCut = analysis[start]?.origIndex ?? original.length;
     }
   }

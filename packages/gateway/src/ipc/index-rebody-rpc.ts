@@ -182,14 +182,14 @@ export type RebodyParams = {
  *   confluence  confluence-sync.ts:150       body: text (declared-full branch of the bodyInput ternary)
  *   discord     discord-sync.ts:203          body: full
  *   github      github-sync.ts:207,247       body: body ?? "" (pr AND issue — both checked)
- *   gmail       _lib/gmail/api.ts:181        body (shorthand; unconditional, not a ternary branch)
+ *   gmail       _lib/gmail/api.ts:168        body (declared-full branch of the bodyInput ternary)
  *   jira        jira-sync.ts:268             body: d.bodyPrev
  *   linear      linear-sync.ts:175           body: desc ?? ""
  *   notion      notion-sync.ts:245           body: fetched.text
  *   obsidian    obsidian-sync.ts:78          body: note.body
- *   outlook     outlook-sync.ts:66           body: text (declared-full branch of the bodyInput ternary,
+ *   outlook     outlook-sync.ts:74           body: text (declared-full branch of the bodyInput ternary,
  *                                            mirroring confluence — `body === ""` falls back to
- *                                            `{ bodyPreview: "" }` instead)
+ *                                            `{ bodyPreview: preview }` instead of a hardcoded `""`)
  *   slack       slack-sync.ts:282            body: full
  *   snyk        snyk-issue-mapping.ts:117    body: description
  *   teams       _lib/teams/api.ts:88         body: full
@@ -199,7 +199,16 @@ export type RebodyParams = {
  * `upsertIndexedItemForSync`, shifting the `body:` line without changing the
  * expression. Re-verifying every row, not just the two being added, is what
  * caught it — a grep alone would not have, since `body: note.body` still
- * matches; only opening the file and counting lines does.)
+ * matches; only opening the file and counting lines does.
+ *
+ * `gmail` corrected from :181 — an unrelated `resolvePersonForSync` spread —
+ * to :168, and its description from "shorthand; unconditional, not a ternary
+ * branch" to "declared-full branch of the bodyInput ternary": the final fix
+ * wave introduced the `body === "" ? { bodyPreview: snippet } : { body }`
+ * ternary and this citation was never updated to match. `outlook` had drifted
+ * the same way, from :74 to a stale :66 (a comment line, not code) — found by
+ * re-verifying every row while fixing gmail's, the exact discipline the
+ * obsidian correction above already established.)
  *
  * Add an entry only when you migrate a connector's LAST remaining
  * bodyPreview-only item type to pass `body:` — not when only some of its

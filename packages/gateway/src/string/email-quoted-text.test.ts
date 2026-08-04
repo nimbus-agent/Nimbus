@@ -173,6 +173,43 @@ test("a pathological attribution-shaped line does not cause catastrophic backtra
   expect(elapsedMs).toBeLessThan(1000);
 });
 
+test("an underscore divider followed by the author's OWN prose, with a real quote further below, keeps the prose", () => {
+  // The false positive CodeRabbit flagged: "does ANY line below qualify"
+  // (the pre-fix `quotedBlockBelowFlags`) sees the `> quote` two lines down
+  // and marks the DIVIDER terminal, deleting "Own prose" along with it even
+  // though the line immediately below the divider is the author's own text,
+  // not a quote. Qualification must require ADJACENCY — the first nonblank
+  // line below — not merely "some line below, anywhere". The trailing
+  // `> quote` line is still genuinely quoted content and is correctly
+  // stripped by the ordinary backward walk (a `>` line IS an unconditional
+  // marker) — it is "Own prose" that must survive, and it does.
+  const body = "Intro\n__________\nOwn prose\n> quote";
+  expect(stripQuotedTail(body)).toBe("Intro\n__________\nOwn prose");
+});
+
+test("a divider immediately followed by a quote (no prose in between) still cuts, even via the walk path", () => {
+  // The walk's own `isMarker` gate (not just the terminal scan) must honour
+  // the same adjacency rule: dropping DIVIDER_RE from `isMarker` entirely
+  // (CodeRabbit's literal suggested diff) would leave a divider that
+  // genuinely precedes a quote sitting in the KEPT text instead of being
+  // stripped along with the quote below it.
+  expect(stripQuotedTail(`Intro\n${"_".repeat(12)}\n> real quote`)).toBe("Intro");
+});
+
+test("a bare trailing divider with nothing quoted below it is not treated as a marker", () => {
+  // CodeRabbit also flagged that `isMarker` accepted a bare trailing divider
+  // unconditionally. With nothing below it at all, the divider must not
+  // qualify, so the walk never even reaches it as a "marker".
+  const body = "Real content\nMore of it\n__________";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a blank line between the divider and the quoted block does not break adjacency", () => {
+  // "First nonblank line below" — blank lines in between must not count
+  // against qualification.
+  expect(stripQuotedTail(`Ack.\n\n${"_".repeat(12)}\n\n> the original thread`)).toBe("Ack.");
+});
+
 test("many non-terminal dividers do not cost quadratic time", () => {
   // The conditional gate on DIVIDER_RE (an underscore rule is terminal only
   // when a quoted block actually follows) must not be evaluated by scanning

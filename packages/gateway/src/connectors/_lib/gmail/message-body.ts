@@ -23,10 +23,24 @@ function leafText(node: MessagePayload): Found {
     return out;
   }
   const mime = node.mimeType ?? "";
+  if (!mime.startsWith("text/plain") && !mime.startsWith("text/html")) {
+    return out;
+  }
+  const decoded = decodeBase64Url(data);
+  // A part whose body decodes to whitespace only is not usable text, and
+  // recording it is actively harmful: inside `multipart/alternative`, an
+  // empty `text/plain` alternative would still win the type-based pick over
+  // a sibling `text/html` part that has real content (see `collect`'s
+  // docstring), discarding the only representation actually worth indexing.
+  // Senders that emit a blank `text/plain` alongside a real HTML part are
+  // common in practice, not a hypothetical edge case.
+  if (decoded.trim() === "") {
+    return out;
+  }
   if (mime.startsWith("text/plain")) {
-    out.plain.push(decodeBase64Url(data));
-  } else if (mime.startsWith("text/html")) {
-    out.html.push(decodeBase64Url(data));
+    out.plain.push(decoded);
+  } else {
+    out.html.push(decoded);
   }
   return out;
 }
