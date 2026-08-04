@@ -160,13 +160,13 @@ No inline comments were mapped to I8 specifically in the triage. No additional s
 
 ## I9 — SQL parameter binding only
 
-**Defense:** every SQLite query uses bound parameters via the typed `dbRun` / `dbExec` wrappers in `packages/gateway/src/db/write.ts`. Identifier-class values that cannot be parameter-bound (table/column names from a finite allowlist) go through `escapeIdentifier` with a null-byte / empty-name guard.
+**Defense:** every non-identifier value reaching SQLite is a bound parameter, never interpolated — on reads as well as writes. SQLite **writes** additionally go through the typed `dbRun` / `dbExec` / `dbStmtRun` wrappers in `packages/gateway/src/db/write.ts` (that confinement is the separate static check **D12**); reads bind through `db.query(sql).all(...params)` and friends without those wrappers, which is expected and not a gap. Identifier-class values that cannot be parameter-bound (table/column names from a finite allowlist) go through the canonical `escapeIdentifier` export, also in `db/write.ts` — every caller imports it rather than defining its own copy.
 
-**Wired at:** `db/write.ts`, `db/repair.ts` (`escapeIdentifier`), `people/person-store.ts` (per-field parameter binding after S5-F5 fix).
+**Wired at:** `db/write.ts` (canonical `escapeIdentifier` definition, alongside `dbRun`/`dbExec`/`dbStmtRun`), `db/repair.ts` (imports `escapeIdentifier`; also applies its own null-byte / empty-name guard, `isUnsafeSqlIdentifier`, before escaping — repair-specific because its table names come from a live `PRAGMA foreign_key_check` scan rather than a fixed allowlist), `connectors/reindex.ts` and `search/vec-store.ts` (both import `escapeIdentifier` for the dim-derived `vec_items_<dims>` table name — I9 applies unconditionally even though `dims` is constrained to `SUPPORTED_EMBEDDING_DIMS`), `people/person-store.ts` (per-field parameter binding after S5-F5 fix).
 
-**Anti-pattern:** template-literal SQL on caller-supplied data (``db.run(`UPDATE ... SET ${field} = ${value}`)``). S5-F5 was a `sets.join()` template in `patchPerson` that built SQL from caller-supplied field names.
+**Anti-pattern:** template-literal SQL on caller-supplied data (``db.run(`UPDATE ... SET ${field} = ${value}`)``). S5-F5 was a `sets.join()` template in `patchPerson` that built SQL from caller-supplied field names. A second anti-pattern specific to this defense: redefining a local `escapeIdentifier` instead of importing the canonical one from `db/write.ts` — two independent copies is exactly the drift that produces a subtly-different third copy later.
 
-**How to comply:** read S5-F5 before adding any new SQL. Identifier-shaped inputs go through `escapeIdentifier`; everything else binds. There is no "internal callers are trusted" carve-out.
+**How to comply:** read S5-F5 before adding any new SQL. Identifier-shaped inputs go through the imported `escapeIdentifier`; everything else binds. There is no "internal callers are trusted" carve-out.
 
 ### Migrated rationale (2026-05-28)
 

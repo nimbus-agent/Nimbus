@@ -14,8 +14,11 @@ afterEach(() => {
     if (dir !== undefined) {
       // Best-effort: a just-terminated worker may still hold the sqlite file open
       // on Windows (EBUSY); a leftover temp dir is harmless, a failed cleanup is not.
+      // maxRetries: 0 / retryDelay: 0 — fail FAST rather than block the hook's timeout
+      // budget; the leaked dir is the accepted trade-off (#972, #973). Do NOT turn this
+      // back into a blocking retry.
       try {
-        rmSync(dir, { recursive: true, force: true });
+        rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
       } catch {
         /* worker still releasing the db handle — leave the temp dir for the OS to reap */
       }

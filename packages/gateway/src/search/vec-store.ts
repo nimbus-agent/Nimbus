@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { escapeIdentifier } from "../db/write.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "../embedding/routing.ts";
 
 export type VectorChunkHit = {
@@ -34,7 +35,12 @@ export function vectorSearchChunks(
       ).join(",")})`,
     );
   }
-  const vecTable = `vec_items_${String(dims)}`;
+  // `dims` is constrained to SUPPORTED_EMBEDDING_DIMS just above, so this can
+  // only ever resolve to a real, known vec table name — never
+  // caller-influenced interpolation. Still routed through escapeIdentifier()
+  // below: I9 applies unconditionally, not only where a particular call site
+  // looks unexploitable (same rationale as connectors/reindex.ts).
+  const vecTable = escapeIdentifier(`vec_items_${String(dims)}`);
   const lim = Math.min(500, Math.max(1, Math.floor(options.limit)));
   const q = new Float32Array(options.queryEmbedding);
   let sql = `

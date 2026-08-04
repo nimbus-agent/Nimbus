@@ -19,7 +19,10 @@ describe("buildSyntheticIndex", () => {
       db.close();
       expect(row.n).toBe(FIXTURE_TIER_SIZES.small);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      // maxRetries: 0 / retryDelay: 0 — a pinned handle must fail FAST rather than block
+      // the hook's timeout budget; a leaked temp dir is the accepted trade-off (#972,
+      // #973). Do NOT turn this back into a blocking retry.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
     }
   });
 
@@ -34,7 +37,10 @@ describe("buildSyntheticIndex", () => {
       expect(contentA).toHaveLength(contentB.length);
       expect(contentA.equals(contentB)).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      // maxRetries: 0 / retryDelay: 0 — fail FAST rather than block the hook's timeout
+      // budget; a leaked temp dir is the accepted trade-off (#972, #973). Do NOT turn
+      // this back into a blocking retry.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
     }
   });
 
@@ -49,7 +55,10 @@ describe("buildSyntheticIndex", () => {
       expect(path).toBe(path2);
       expect(mtime2).toBe(mtime1);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      // maxRetries: 0 / retryDelay: 0 — fail FAST rather than block the hook's timeout
+      // budget; a leaked temp dir is the accepted trade-off (#972, #973). Do NOT turn
+      // this back into a blocking retry.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 0, retryDelay: 0 });
     }
   });
 });

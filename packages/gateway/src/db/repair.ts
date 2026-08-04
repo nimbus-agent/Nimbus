@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { verifyIndex } from "./verify.ts";
-import { dbRun } from "./write.ts";
+import { dbRun, escapeIdentifier } from "./write.ts";
 
 export type RepairAction =
   | "vec_orphan_delete"
@@ -130,8 +130,6 @@ function repairForeignKeys(db: Database): RepairOutcome {
       list.push(v.rowid);
       byTable.set(v.table, list);
     }
-
-    const escapeIdentifier = (id: string): string => `"${id.replaceAll('"', '""')}"`;
 
     let totalDeleted = 0;
     db.transaction(() => {

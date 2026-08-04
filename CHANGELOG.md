@@ -2,6 +2,20 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.19.1](https://github.com/nimbus-agent/Nimbus/compare/v1.19.0...v1.19.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **deps:** bump the brace-expansion override to 5.0.9 (GHSA-rgw5-rvv9-x895) ([#1035](https://github.com/nimbus-agent/Nimbus/issues/1035)) ([8d66323](https://github.com/nimbus-agent/Nimbus/commit/8d663237a4ff3615e12cd6c8f106aa3c51b4f34e))
+
+## [1.19.0](https://github.com/nimbus-agent/Nimbus/compare/v1.18.1...v1.19.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** nimbus index rebody, and correct the full-body-store connector accounting ([#1032](https://github.com/nimbus-agent/Nimbus/issues/1032)) ([9ab8c69](https://github.com/nimbus-agent/Nimbus/commit/9ab8c697f4aa81e843e4670a888f19d654c1c9cc))
+
 ## [1.18.1](https://github.com/nimbus-agent/Nimbus/compare/v1.18.0...v1.18.1) (2026-08-03)
 
 

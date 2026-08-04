@@ -1,4 +1,4 @@
-import { dbRun } from "../db/write.ts";
+import { dbRun, escapeIdentifier } from "../db/write.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "../embedding/routing.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 
@@ -27,16 +27,6 @@ export type ReindexResult = {
  */
 function isMissingVecTableError(err: unknown, table: string): boolean {
   return err instanceof Error && new RegExp(`no such table:\\s*${table}\\b`, "i").test(err.message);
-}
-
-// I9 is unconditional ("identifiers via escapeIdentifier") — it does not bend
-// just because a particular caller's identifier happens to be constrained to
-// a fixed, known-safe set. Same local pattern already established in
-// db/repair.ts (quote-doubling); kept local here rather than imported because
-// there is no shared canonical export of it yet (repair.ts defines its own
-// copy too — see the round-4 report note on that).
-function escapeIdentifier(id: string): string {
-  return `"${id.replaceAll('"', '""')}"`;
 }
 
 export async function reindexConnector(input: ReindexInput): Promise<ReindexResult> {
