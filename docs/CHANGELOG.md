@@ -8,6 +8,68 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-04 — Depth enforcement is now real (V49), plus real Gmail and Outlook bodies.**
+  Two independent gaps, closed together because the second built on the first: connector index
+  depth (`metadata_only` / `summary` / `full`) had never actually been enforced for body content,
+  and Gmail/Outlook only ever indexed a metadata snippet, never the message body.
+
+  **Depth enforcement.** `SyncContext.depth` is now a required field, resolved per sync run, and
+  every connector's item-writing call now routes through a single chokepoint
+  (`upsertIndexedItemForSync` in `index/item-store.ts`) that coerces the row to the configured
+  depth before it is written: `metadata_only` suppresses `body` **and** `body_preview` alike (an
+  empty string, not an omitted field — omission would fall through to the title); `summary` forces
+  the legacy preview arm, clamping to 512 characters and never claiming `body_complete`; `full` is a
+  pass-through. Obsidian was the one connector-side bypass — `connectors/obsidian-sync.ts` called
+  `upsertIndexedItem` directly, so a `metadata_only`/`summary` vault kept getting full note bodies
+  indexed on every sync regardless of the persisted setting. It now goes through the same
+  chokepoint. **This is a user-visible behavior change**: an Obsidian connector configured at
+  anything other than `full` depth stops leaking full note bodies into the index as of this release.
+
+  Schema **V49** backfills `sync_state.depth` from `'summary'` to `'full'` for every existing row
+  (`metadata_only` rows are untouched). This is not cosmetic: V21 declared
+  `depth TEXT NOT NULL DEFAULT 'summary'`, so every row already held `'summary'` materialised rather
+  than NULL, and because depth had never been enforced for bodies, a stored `'summary'` expressed no
+  intent and had always behaved as `'full'` in practice. Enforcing depth without this backfill would
+  have silently truncated every existing index to 512 characters on its next sync. Three code-level
+  fallbacks (`local-index.ts` ×2, `sync/scheduler.ts`) that defaulted an absent depth row to
+  `"summary"` were flipped to `"full"` for the same reason.
+
+  **Gmail** (`connectors/_lib/gmail/api.ts`) now fetches `format=full` instead of
+  `format=metadata` — the same Gmail API request at the same 5-quota-unit cost — and walks the MIME
+  tree to extract text: `text/plain` is preferred by part type (not by document position), a
+  `multipart/alternative` picks one representation, and a `multipart/mixed` concatenates its parts.
+
+  **Outlook** (`connectors/outlook-sync.ts`) adds `body` to its Graph `$select`, and its cursor
+  prefix moves from `nimbus-outl1:` to `nimbus-outl2:` so every stored `@odata.deltaLink` is
+  invalidated once on upgrade — a delta link encodes the projection of the query that minted it, so
+  an old link would keep returning body-less responses forever, including for brand-new messages.
+
+  **The quoted-tail trimmer** (`string/email-quoted-text.ts`, new) strips the quoted reply chain
+  from an email body before it is indexed: email threads are heavily self-duplicating, and without
+  this a twenty-message thread would store the same quoted paragraphs twenty times, spending each
+  reply's body cap on text already indexed. It cuts a quoted TAIL (marker to end of message), not at
+  the first marker, so an inline quotation followed by more of the author's own prose is left alone.
+  Both Gmail and Outlook route HTML bodies through a new **line-preserving HTML-to-text helper**
+  (`string/html-plain-text-lines.ts`) rather than the existing `plainTextFromHtml`, which flattens
+  every newline to a space — fine for its other four prose-only consumers, but it would have made
+  the line-anchored trimmer a no-op, since the trimmer matches quote markers against whole lines.
+
+  `REBODY_IMPROVABLE_SERVICES` (`ipc/index-rebody-rpc.ts`) grows from eleven services to thirteen,
+  adding `gmail` and `outlook` in sorted position. The full-body-store connector accounting
+  (2026-08-02 entry below, most recently updated 2026-08-03) moves from 12 to **14 full body @
+  16 KiB** (the twelve from 2026-08-03 plus Gmail and Outlook, both already in `PROSE_HEAVY_TYPES`);
+  the partial (1) and inert (2) counts are unchanged. No new security invariant. Schema **V49**.
+  Design: `docs/superpowers/specs/2026-08-04-index-depth-and-email-bodies-design.md`.
+
+  **Outlook resets itself once.** The cursor prefix move means the next scheduled Outlook sync
+  performs one full mailbox delta with `body` requested on every page, rather than the usual
+  incremental trickle — that is the one-time cost of the feature, and no action is required. A large
+  mailbox will notice the sync taking longer than usual just this once.
+
+  **Gmail applies going forward.** `format=full` affects every message fetched from now on,
+  including new mail, so nothing further is required for the feature to work. Messages already in
+  the index keep their old metadata-only snippet until they're next touched at the source or
+  recovered explicitly with `nimbus index rebody --service gmail`.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
   Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
   `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a

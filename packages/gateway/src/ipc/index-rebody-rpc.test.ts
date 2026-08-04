@@ -90,7 +90,7 @@ describe("dispatchIndexRebodyRpc", () => {
 
   test("dry run flags a cannot-improve service before any walk is paid for", async () => {
     const { ctx, db, events } = freshCtx();
-    seedIncomplete(db, "gmail", "1");
+    seedIncomplete(db, "figma", "1");
     seedIncomplete(db, "zoom", "1");
     seedIncomplete(db, "slack", "1");
 
@@ -99,13 +99,13 @@ describe("dispatchIndexRebodyRpc", () => {
 
     const done = events.find((e) => e.method === "index.rebodyDone");
     const payload = done?.params as Record<string, unknown> | undefined;
-    expect(payload?.["cannotImprove"]).toEqual(["gmail", "zoom"]);
+    expect(payload?.["cannotImprove"]).toEqual(["figma", "zoom"]);
   });
 
   test("dry run flags a service merely ABSENT from REBODY_IMPROVABLE_SERVICES, not only the pre-inversion hardcoded three", async () => {
-    // "brand-new-saas" is not notion/confluence/gmail (the old exception list) and is not in
-    // REBODY_IMPROVABLE_SERVICES either — under the inverted, correct-by-construction list it
-    // must still be reported as cannot-improve, with zero maintenance action required.
+    // "brand-new-saas" is not in REBODY_IMPROVABLE_SERVICES — under the inverted,
+    // correct-by-construction list it must still be reported as cannot-improve, with zero
+    // maintenance action required.
     const { ctx, db, events } = freshCtx();
     seedIncomplete(db, "brand-new-saas", "1");
     seedIncomplete(db, "slack", "1");
@@ -199,33 +199,33 @@ describe("dispatchIndexRebodyRpc", () => {
 
   test("real run with explicit service clears the watermark and, with no scheduler wired, still succeeds — but a cannot-improve service's pending count never moves", async () => {
     const { ctx, db, events } = freshCtx();
-    seedIncomplete(db, "gmail", "p1");
-    upsertSchedulerRegistration(db, "gmail", 60_000, Date.now(), true);
+    seedIncomplete(db, "figma", "p1");
+    upsertSchedulerRegistration(db, "figma", 60_000, Date.now(), true);
     // Simulate an existing watermark that rebody must clear.
     db.query(`UPDATE scheduler_state SET cursor = ? WHERE service_id = ?`).run(
       "some-cursor",
-      "gmail",
+      "figma",
     );
-    expect(loadSchedulerState(db, "gmail")?.cursor).toBe("some-cursor");
+    expect(loadSchedulerState(db, "figma")?.cursor).toBe("some-cursor");
 
-    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "gmail" }, ctx);
+    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "figma" }, ctx);
     expect(out.kind).toBe("hit");
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(loadSchedulerState(db, "gmail")?.cursor).toBeNull();
+    expect(loadSchedulerState(db, "figma")?.cursor).toBeNull();
     const progressEvents = events.filter((e) => e.method === "index.rebodyProgress");
     expect(progressEvents.length).toBe(1);
     const done = events.find((e) => e.method === "index.rebodyDone");
     expect(done).toBeDefined();
     const payload = done?.params as Record<string, unknown> | undefined;
-    expect(payload?.["targeted"]).toEqual(["gmail"]);
+    expect(payload?.["targeted"]).toEqual(["figma"]);
     // succeeded=1 (the watermark clear + no-scheduler path "succeeded") coexists with an
     // UNMOVED pending count — that is the honesty requirement this test is pinning down.
     expect(payload?.["succeeded"]).toBe(1);
     expect(payload?.["failed"]).toBe(0);
-    expect(payload?.["pendingBefore"]).toEqual({ gmail: 1 });
-    expect(payload?.["pendingAfter"]).toEqual({ gmail: 1 });
-    expect(payload?.["cannotImprove"]).toEqual(["gmail"]);
+    expect(payload?.["pendingBefore"]).toEqual({ figma: 1 });
+    expect(payload?.["pendingAfter"]).toEqual({ figma: 1 });
+    expect(payload?.["cannotImprove"]).toEqual(["figma"]);
   });
 
   test("real run auto-targets every service with pending rows, respecting limit", async () => {
@@ -422,18 +422,20 @@ describe("REBODY_IMPROVABLE_SERVICES", () => {
   test("membership verified against every item-writing code path for each service (see file-header comment)", () => {
     // Every item-writing call site for each of these passes body: (the declared-full variant):
     //   bitbucket-sync.ts:137, confluence-sync.ts:150, discord-sync.ts:203,
-    //   github-sync.ts:207+247 (pr AND issue), jira-sync.ts:268, linear-sync.ts:175,
-    //   notion-sync.ts:245, obsidian-sync.ts:75, slack-sync.ts:282,
-    //   snyk-issue-mapping.ts:117, _lib/teams/api.ts:88.
+    //   github-sync.ts:207+247 (pr AND issue), _lib/gmail/api.ts:181, jira-sync.ts:268,
+    //   linear-sync.ts:175, notion-sync.ts:245, obsidian-sync.ts:78, outlook-sync.ts:66,
+    //   slack-sync.ts:282, snyk-issue-mapping.ts:117, _lib/teams/api.ts:88.
     for (const service of [
       "bitbucket",
       "confluence",
       "discord",
       "github",
+      "gmail",
       "jira",
       "linear",
       "notion",
       "obsidian",
+      "outlook",
       "slack",
       "snyk",
       "teams",
@@ -448,9 +450,10 @@ describe("REBODY_IMPROVABLE_SERVICES", () => {
     expect(cannotImproveAmong({ notion: 3, confluence: 2, zoom: 1 })).toEqual(["zoom"]);
   });
 
-  test("gmail passes bodyPreview only — never in the set", () => {
-    // _lib/gmail/api.ts:174 — bodyPreview only.
-    expect(REBODY_IMPROVABLE_SERVICES.has("gmail")).toBe(false);
+  test("gmail and outlook can now be improved by rebody", () => {
+    expect(REBODY_IMPROVABLE_SERVICES.has("gmail")).toBe(true);
+    expect(REBODY_IMPROVABLE_SERVICES.has("outlook")).toBe(true);
+    expect(cannotImproveAmong({ gmail: 2, outlook: 1, zoom: 1 })).toEqual(["zoom"]);
   });
 
   test("zoom and nimbus are mixed (some item types migrated, some not) and are deliberately excluded", () => {
@@ -475,7 +478,7 @@ describe("cannotImproveAmong", () => {
   });
 
   test("filters to cannot-improve services only, sorted", () => {
-    expect(cannotImproveAmong({ slack: 2, gmail: 5, jira: 1, zoom: 3 })).toEqual(["gmail", "zoom"]);
+    expect(cannotImproveAmong({ slack: 2, figma: 5, jira: 1, zoom: 3 })).toEqual(["figma", "zoom"]);
   });
 
   test("a pending map with no cannot-improve services yields empty list", () => {
