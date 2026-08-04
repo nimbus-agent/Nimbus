@@ -25,6 +25,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   chokepoint. **This is a user-visible behavior change**: an Obsidian connector configured at
   anything other than `full` depth stops leaking full note bodies into the index as of this release.
 
+  **Suppression now covers vectors, not only stored text.** `SqliteEmbeddingPipeline.embedItem`
+  (`embedding/pipeline.ts`) previously returned before its `DELETE FROM embedding_chunk` when an
+  item chunked to no embeddable text — the reachable state after a depth downgrade to
+  `metadata_only` leaves an item with a blank title, since `itemTextForEmbedding` falls back to the
+  title once `body_preview` is empty. Old chunks (and, via the V30 dim-aware delete triggers, their
+  vectors in `vec_items_384`/`vec_items_1536`) survived that early return, so a suppressed item's
+  content stayed searchable as vectors even though its stored text was gone. The early return now
+  deletes the item's existing chunks for its model first, so a depth downgrade clears
+  previously-computed embeddings along with the text.
+
   Schema **V49** backfills `sync_state.depth` from `'summary'` to `'full'` for every existing row
   (`metadata_only` rows are untouched). This is not cosmetic: V21 declared
   `depth TEXT NOT NULL DEFAULT 'summary'`, so every row already held `'summary'` materialised rather

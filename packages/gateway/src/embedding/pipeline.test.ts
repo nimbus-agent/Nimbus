@@ -558,6 +558,112 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     expect(pipeline.embeddingDims).toBe(384);
   });
 
+  test("embedItem clears stale chunks+vectors when a depth downgrade leaves no embeddable text", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'gmail', 'email', 'e1', 'Q3 roadmap', 'a long email body with real content', ?, ?)`,
+      ["gmail:e1", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+
+    // Full-depth embed: chunks + vectors exist, derived from the body.
+    await pipeline.embedItem({
+      id: "gmail:e1",
+      service: "gmail",
+      type: "email",
+      title: "Q3 roadmap",
+      body_preview: "a long email body with real content",
+    });
+    const before = (
+      db.query("SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?").get("gmail:e1") as {
+        c: number;
+      }
+    ).c;
+    expect(before).toBeGreaterThanOrEqual(1);
+    const vecBefore = (db.query("SELECT COUNT(*) AS c FROM vec_items_384").get() as { c: number })
+      .c;
+    expect(vecBefore).toBe(before);
+
+    // Depth downgrade to metadata_only: body and body_preview suppressed, and
+    // here the title is also blank/whitespace — itemTextForEmbedding falls
+    // through to "" and chunkText([]) hits the early return.
+    await pipeline.embedItem({
+      id: "gmail:e1",
+      service: "gmail",
+      type: "email",
+      title: "   ",
+      body_preview: null,
+    });
+
+    const afterChunks = (
+      db.query("SELECT COUNT(*) AS c FROM embedding_chunk WHERE item_id = ?").get("gmail:e1") as {
+        c: number;
+      }
+    ).c;
+    expect(afterChunks).toBe(0);
+    const vecAfter = (db.query("SELECT COUNT(*) AS c FROM vec_items_384").get() as { c: number }).c;
+    expect(vecAfter).toBe(0);
+  });
+
+  test("embedItem still re-embeds title-only on downgrade when the title is non-empty (no regression)", async () => {
+    const db = freshDb();
+    const now = Date.now();
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at)
+       VALUES (?, 'gmail', 'email', 'e2', 'Budget approval needed', 'please approve the attached budget', ?, ?)`,
+      ["gmail:e2", now, now],
+    );
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384),
+    });
+
+    await pipeline.embedItem({
+      id: "gmail:e2",
+      service: "gmail",
+      type: "email",
+      title: "Budget approval needed",
+      body_preview: "please approve the attached budget",
+    });
+    const before = (
+      db
+        .query("SELECT chunk_text FROM embedding_chunk WHERE item_id = ?")
+        .all("gmail:e2") as Array<{
+        chunk_text: string;
+      }>
+    ).map((r) => r.chunk_text);
+    expect(before.some((t) => t.includes("please approve"))).toBe(true);
+
+    // Downgrade: body suppressed, but the title survives metadata_only — the
+    // title-only re-embed path (pieces.length > 0) must still run and replace
+    // the body-derived chunks, not just delete them.
+    await pipeline.embedItem({
+      id: "gmail:e2",
+      service: "gmail",
+      type: "email",
+      title: "Budget approval needed",
+      body_preview: null,
+    });
+
+    const after = (
+      db
+        .query("SELECT chunk_text FROM embedding_chunk WHERE item_id = ?")
+        .all("gmail:e2") as Array<{
+        chunk_text: string;
+      }>
+    ).map((r) => r.chunk_text);
+    expect(after.length).toBeGreaterThanOrEqual(1);
+    expect(after.some((t) => t.includes("Budget approval needed"))).toBe(true);
+    expect(after.some((t) => t.includes("please approve"))).toBe(false);
+    const vecCount = (db.query("SELECT COUNT(*) AS c FROM vec_items_384").get() as { c: number }).c;
+    expect(vecCount).toBe(after.length);
+  });
+
   test("backfillAll caps in-flight embeds at backfillConcurrency", async () => {
     const db = freshDb();
     const now = Date.now();
