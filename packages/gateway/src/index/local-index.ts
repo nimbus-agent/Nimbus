@@ -729,6 +729,15 @@ export class LocalIndex {
     return rows.map((row) => ({ ...rowToItem(row), indexPrimaryKey: String(row.id) }));
   }
 
+  /**
+   * NOT the live sync-state write path — this method has no production
+   * callers (only its own definition and tests reference it); the scheduler
+   * records a sync through `sync/scheduler-store.ts`, and the row that
+   * materialises `depth` for a never-configured connector is created by
+   * `connectors/health.ts` `upsertHealthRow()`. The explicit `depth 'full'`
+   * below is kept consistent with those sites so a future caller does not
+   * reintroduce V21's stale `DEFAULT 'summary'`.
+   */
   recordSync(connectorId: string, token: string): void {
     const now = Date.now();
     dbRun(

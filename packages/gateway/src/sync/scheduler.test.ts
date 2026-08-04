@@ -786,4 +786,41 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     await sched.stop();
     expect(capturedDepth).toBe("metadata_only");
   });
+
+  // The regression the test ABOVE structurally cannot catch: it calls
+  // `setConnectorDepth` first, which creates the `sync_state` row, so the
+  // `INSERT OR IGNORE` inside `transitionHealth()` -> `upsertHealthRow()` is
+  // a no-op and its column list is never exercised. A connector whose depth
+  // was NEVER set takes the other path: run 1 sees no row at all (
+  // `getDepthForService` falls back to "full"), then the success transition
+  // CREATES the row — and if that insert omits `depth`, the row inherits
+  // V21's stale `DEFAULT 'summary'` and every later run silently indexes at
+  // 512 chars with `body_complete` pinned to 0. Only a SECOND run observes
+  // it, hence the two forced syncs.
+  test("a connector whose depth was never set still syncs at full on the SECOND run", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    const seenDepths: Array<SyncContext["depth"]> = [];
+    sched.register({
+      serviceId: "never-configured",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(runCtx): Promise<SyncResult> {
+        seenDepths.push(runCtx.depth);
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    });
+
+    await sched.forceSync("never-configured");
+    await sched.forceSync("never-configured");
+    await sched.forceSync("never-configured");
+    await sched.stop();
+
+    expect(seenDepths).toEqual(["full", "full", "full"]);
+    const row = db
+      .query(`SELECT depth FROM sync_state WHERE connector_id = ?`)
+      .get("never-configured") as { depth: string } | null;
+    expect(row?.depth).toBe("full");
+  });
 });
