@@ -172,3 +172,32 @@ test("a pathological attribution-shaped line does not cause catastrophic backtra
   expect(result).toBe(body);
   expect(elapsedMs).toBeLessThan(1000);
 });
+
+test("many non-terminal dividers do not cost quadratic time", () => {
+  // The conditional gate on DIVIDER_RE (an underscore rule is terminal only
+  // when a quoted block actually follows) must not be evaluated by scanning
+  // downward from each divider: the terminal loop tries EVERY divider and
+  // only breaks when one qualifies, so a body whose dividers all fail the
+  // gate — exactly the false-positive case the gate exists to allow — costs
+  // Σ(n−i). Measured against the real `stripQuotedTail` with a per-divider
+  // downward scan: 27 KB -> 50 ms, 55 KB -> 198 ms, 110 KB -> 770 ms,
+  // 220 KB -> 3811 ms, 440 KB -> 20093 ms, a clean 4x per doubling; the
+  // degenerate all-underscore shape is not required either (1.2 MB of
+  // alternating divider/prose measured 10555 ms). The O(n) suffix pass
+  // (`quotedBlockBelowFlags`) clears this same input in ~4 ms, so a 1000 ms
+  // ceiling leaves two orders of magnitude of headroom against CI jitter
+  // while still reliably catching a regression back to the per-divider scan.
+  //
+  // Email bodies are remote-attacker-controlled and `stripQuotedTail` runs
+  // synchronously on the gateway event loop from `gmail/api.ts` and
+  // `outlook-sync.ts` BEFORE any body cap applies — nothing upstream bounds
+  // this input.
+  const body = `Intro\n${`${"_".repeat(10)}\n`.repeat(20_000)}tail prose`;
+  const startedAt = performance.now();
+  const result = stripQuotedTail(body);
+  const elapsedMs = performance.now() - startedAt;
+  // No divider introduces a quoted block, so nothing may be cut — the same
+  // property the false-positive test above asserts, at scale.
+  expect(result).toBe(body);
+  expect(elapsedMs).toBeLessThan(1000);
+});

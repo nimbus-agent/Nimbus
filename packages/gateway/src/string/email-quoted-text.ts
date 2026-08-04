@@ -33,9 +33,9 @@ const ORIGINAL_MESSAGE_RE = /^\s*-{2,}\s*original message\s*-{2,}\s*$/i;
  * intrinsically terminal — it is also an ordinary human formatting idiom for
  * separating two sections of one's OWN message. Its Outlook meaning is
  * specifically "a quoted header block follows", so that is what
- * `dividerIntroducesQuotedBlock` checks before the divider is allowed to end
- * the message. Ungated, `"Intro\n\n__________\n\nSection two"` silently
- * deleted everything from the rule down.
+ * `quotedBlockBelowFlags` answers before the divider is allowed to end the
+ * message. Ungated, `"Intro\n\n__________\n\nSection two"` silently deleted
+ * everything from the rule down.
  */
 const DIVIDER_RE = /^\s*_{10,}\s*$/;
 /**
@@ -72,21 +72,34 @@ function headerBlockFlags(lines: readonly string[]): boolean[] {
 }
 
 /**
- * Does the region BELOW an underscore divider actually look like the quoted
- * block the divider claims to introduce? One `>` line or one line of a
- * `From:`/`Sent:` header block is enough; an author's own prose is not.
+ * `flags[i]` — does the region strictly BELOW line `i` look like the quoted
+ * block an underscore divider at `i` would be claiming to introduce? One `>`
+ * line or one line of a `From:`/`Sent:` header block is enough; an author's
+ * own prose is not.
+ *
+ * Deliberately a single O(n) SUFFIX pass rather than the obvious "scan
+ * downward from this divider" predicate. The terminal loop below tries every
+ * divider line and only stops when one qualifies, so a per-divider downward
+ * scan costs Σ(n−i) — quadratic — on a body whose dividers all FAIL the gate,
+ * which is precisely the false-positive case the gate exists to allow.
+ * Measured against the real `stripQuotedTail` with the per-divider form:
+ * 27 KB → 50 ms, 55 KB → 198 ms, 110 KB → 770 ms, 220 KB → 3811 ms,
+ * 440 KB → 20093 ms — a clean 4x per doubling, and not only on a degenerate
+ * all-underscore body (1.2 MB of alternating divider/prose → 10555 ms). Email
+ * bodies are remote-attacker-controlled and `stripQuotedTail` runs
+ * synchronously on the gateway event loop from `gmail/api.ts` and
+ * `outlook-sync.ts` BEFORE any body cap applies, so that is a denial of
+ * service. The suffix pass answers every divider in O(1) after one O(n)
+ * sweep, with identical semantics.
  */
-function dividerIntroducesQuotedBlock(
-  lines: readonly string[],
-  headerish: readonly boolean[],
-  at: number,
-): boolean {
-  for (let i = at + 1; i < lines.length; i += 1) {
-    if (headerish[i] === true || QUOTE_RE.test(lines[i] ?? "")) {
-      return true;
-    }
+function quotedBlockBelowFlags(lines: readonly string[], headerish: readonly boolean[]): boolean[] {
+  const flags = lines.map(() => false);
+  let seen = false;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    flags[i] = seen;
+    seen = seen || headerish[i] === true || QUOTE_RE.test(lines[i] ?? "");
   }
-  return false;
+  return flags;
 }
 
 /** Openers that may have been wrapped away from their `wrote:`-style closer. */
@@ -192,15 +205,19 @@ export function stripQuotedTail(body: string): string {
   //
   // An underscore divider is terminal only CONDITIONALLY: it is also an
   // ordinary formatting idiom, so it must actually be followed by the quoted
-  // header block it claims to introduce (see `dividerIntroducesQuotedBlock`).
+  // header block it claims to introduce. The answer for EVERY line is
+  // precomputed in one suffix pass (`quotedBlockBelowFlags`) so this loop
+  // stays O(n) — consulting it per divider instead would be quadratic when no
+  // divider qualifies and the loop therefore never breaks.
   const originalHeaderish = headerBlockFlags(original);
+  const quotedBelow = quotedBlockBelowFlags(original, originalHeaderish);
   let terminalCut: number | undefined;
   for (let i = original.length - 1; i >= 0; i -= 1) {
     const line = original[i] ?? "";
     const terminal =
       ORIGINAL_MESSAGE_RE.test(line) ||
       SIGNATURE_RE.test(line) ||
-      (DIVIDER_RE.test(line) && dividerIntroducesQuotedBlock(original, originalHeaderish, i));
+      (DIVIDER_RE.test(line) && quotedBelow[i] === true);
     if (terminal) {
       terminalCut = i;
       break;
