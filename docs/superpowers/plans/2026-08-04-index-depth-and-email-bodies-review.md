@@ -39,6 +39,10 @@ Provide a mechanism or heuristic in the trimmer to handle multi-line attribution
 
 - Check if the current line starts with `on` followed by a space and a subsequent adjacent line ends with `wrote:`.
 
+### Resolution
+
+Implemented. `stripQuotedTail` in [`packages/gateway/src/string/email-quoted-text.ts`](../../../packages/gateway/src/string/email-quoted-text.ts) calls a normalisation pre-pass, `joinWrappedAttributions(original)`, before any marker matching — it joins an opener line to a following line that closes it (bounded to two continuation lines), so a wrapped `On ... User` / `<user@example.com> wrote:` pair is analysed as one attribution line.
+
 ---
 
 ## 2. Gmail MIME Walker: Sequential `text/plain` Parts
@@ -62,6 +66,10 @@ Instead of overwriting `out.plain` only if it is empty, accumulate/concatenate a
 
 Alternatively, document this behavior as an accepted limitation for standard message body extraction, as the vast majority of emails encapsulate the main body within a single text part under a `multipart/alternative` structure.
 
+### Resolution
+
+Implemented, and there is no `walk` function or `out.plain === ""` overwrite guard in the shipped code. `collect()` in [`packages/gateway/src/connectors/_lib/gmail/message-body.ts`](../../../packages/gateway/src/connectors/_lib/gmail/message-body.ts) concatenates sequential text parts in order for `multipart/mixed` / `multipart/related` containers, and for `multipart/alternative` picks one representation by type (first `text/plain` child in document order, else first `text/html` child) rather than by position. Pinned by `message-body.test.ts`.
+
 ---
 
 ## 3. Outlook Delta Link Migration: Transition Grace Period or Automatic Reset
@@ -78,3 +86,7 @@ Consider implementing an automatic transition/reset check in the Outlook sync co
 
 - If a stored cursor exists, but we detect that we are running the V49 version and the database shows the sync state cursor was created prior to V49 (or we can store a migration flag/metadata), we can force-clear the delta cursor once to trigger a clean full-body sync.
 - If clearing the cursor causes too much rate-limiting or quota cost for large mailboxes, then the manual `rebody` requirement is the only safe option, but the design should justify this trade-off explicitly.
+
+### Resolution
+
+Implemented — this recommendation's first bullet is exactly what shipped. `outlook-sync.ts` bumps the cursor-prefix constant `CURSOR_PREFIX` from `"nimbus-outl1:"` to `"nimbus-outl2:"`; `decodeMicrosoftGraphDeltaCursor` returns `undefined` on a prefix mismatch, so every stored pre-upgrade delta link fails to decode and the sync falls through to the initial request URL (where `$select` lives), forcing exactly one fresh full delta with `body` on every page on the next scheduled sync. No stored migration flag/metadata is needed — the prefix mismatch itself is the one-time detector. No user action is required; the accepted cost is that one full delta re-walk, called out in the design doc's Risks table rather than as a CHANGELOG instruction.

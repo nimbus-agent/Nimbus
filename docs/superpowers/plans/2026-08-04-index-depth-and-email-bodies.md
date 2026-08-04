@@ -645,6 +645,17 @@ export function stripQuotedTail(body: string): string {
 }
 ```
 
+> **Resolution (shipped implementation differs from the listing above).** This backward walk only
+> extends over lines that are themselves blank or markers, so it never reaches a marker that
+> *introduces* ordinary text — `-----Original Message-----` followed by a lone `From:` line, or a
+> signature delimiter (a line consisting of exactly `--` plus a trailing space) followed by
+> signature lines. It failed two of this plan's own tests. What shipped instead:
+> a "terminal marker" class (`ORIGINAL_MESSAGE_RE`, `SIGNATURE_RE`, `DIVIDER_RE`) that scans the
+> original lines from the end for the last such marker, combined with this walk as `Math.min(walkCut,
+> terminalCut)` — the earlier (more conservative) of the two candidates — so no previously-passing
+> case regresses. See `stripQuotedTail` in
+> [`packages/gateway/src/string/email-quoted-text.ts`](../../../packages/gateway/src/string/email-quoted-text.ts).
+
 - [ ] **Step 4: Run and confirm they pass**
 
 Run: `bun test packages/gateway/src/string/email-quoted-text.test.ts`
@@ -938,6 +949,16 @@ export function gmailMessageBodyText(payload: MessagePayload): string {
 }
 ```
 
+> **Resolution (shipped implementation differs from the listing above).** `collect()`'s
+> `multipart/alternative` handling above keeps the first child that produces *any* content — plain
+> or HTML — i.e. selection by document **position**. A sender free to list `text/html` before
+> `text/plain` in the parts array would have its lossy HTML picked over the available plain text,
+> the opposite of the function's own documented contract. What shipped instead: selection by
+> **type**, not position — every child is visited, then the first child (in document order) that
+> yielded `text/plain` wins; only when no child yielded `text/plain` does the first child that
+> yielded `text/html` win. See `collect()` in
+> [`packages/gateway/src/connectors/_lib/gmail/message-body.ts`](../../../packages/gateway/src/connectors/_lib/gmail/message-body.ts).
+
 - [ ] **Step 5: Request the full message and pass a real body**
 
 `_lib/gmail/api.ts`, in `fetchMessageMetadata` — swap the format and drop the now-redundant `metadataHeaders` (they are included in `format=full`):
@@ -1063,6 +1084,15 @@ Then pass the discriminated arm, so a body-less message does not claim completen
 ```
 
 and spread `...bodyInput` into the `upsertIndexedItemForSync` call in place of `bodyPreview: preview`. Keep `preview` only if it still feeds something else.
+
+> **Resolution (shipped implementation differs from the listing above).** `{ bodyPreview: "" }`
+> would have prevented the store's `row.body ?? row.bodyPreview ?? row.title` title fallback, since
+> `""` is not nullish — a body-less message would index with an empty string, not the title, and
+> would not be searchable by title. What shipped instead: the body-less arm carries Graph's real
+> `bodyPreview` — `body === "" ? { bodyPreview: preview } : { body }`, where `preview = typeof
+> m.bodyPreview === "string" ? m.bodyPreview : ""` — so the message stays searchable at
+> `body_complete = 0` (falling back further to the title only when Graph's `bodyPreview` is itself
+> absent). See [`packages/gateway/src/connectors/outlook-sync.ts`](../../../packages/gateway/src/connectors/outlook-sync.ts).
 
 - [ ] **Step 5a: Bump the cursor prefix so existing installs reset themselves**
 

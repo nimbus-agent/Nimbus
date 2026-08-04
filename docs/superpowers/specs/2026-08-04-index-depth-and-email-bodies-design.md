@@ -144,12 +144,31 @@ behaved as `full`. Backfilling preserves exactly the behaviour those installs ha
 is left alone and finally becomes enforced on every sync, which is the privacy win this slice exists
 for.
 
-**New rows** get `'full'` by changing the one insert that omits the column
-([`local-index.ts:736`](../../../packages/gateway/src/index/local-index.ts)) to write it explicitly,
-and `getDepthForService`'s fallback likewise. The column's `DEFAULT 'summary'` is left in place with
-a comment marking it superseded: SQLite cannot alter a column default in place, and rebuilding
-`sync_state` (the V46 `glossary_term` treatment) is disproportionate when two code sites fully
-determine the value. No code path relies on the column default after this.
+**New rows** get `'full'` across all three production `sync_state` insert sites, plus
+`getDepthForService`'s no-row fallback:
+
+- `local-index.ts` `setConnectorDepth` — the explicit human choice (`nimbus connector reindex
+  --depth`), inserting the caller-chosen depth.
+- `local-index.ts` `recordSync` — writes `depth = 'full'` explicitly, but has **zero production
+  callers**; it exists for the historical/test surface only.
+- `connectors/health.ts` `upsertHealthRow` — the one that matters: it is reached from
+  `transitionHealth()`, which the scheduler calls on every sync (success, pause/resume, and every
+  error path), and it is the **only** `sync_state` insert that actually runs in production for a
+  connector whose depth was never explicitly set. It now writes `depth = 'full'` explicitly rather
+  than omitting the column.
+
+Omitting the column at `upsertHealthRow` would have let the row inherit the column's stale
+`DEFAULT 'summary'` — and since V49 only backfills rows that already existed, every connector added
+*after* the upgrade would index at `full` for exactly one sync (no row yet → `getDepthForService`
+falls back to `full`) and then permanently regress to `summary`: 512-char bodies,
+`body_complete` pinned to `0`, and `nimbus index rebody` permanently disarmed for that service. This
+was the branch's most serious near-miss; future changes to `upsertHealthRow` must preserve the
+explicit `'full'` write rather than relying on the column default.
+
+The column's `DEFAULT 'summary'` is left in place with a comment marking it superseded: SQLite
+cannot alter a column default in place, and rebuilding `sync_state` (the V46 `glossary_term`
+treatment) is disproportionate when the code sites above fully determine the value. No code path
+relies on the column default after this.
 
 ### Gmail — `format=full` and a MIME walk
 
@@ -342,5 +361,5 @@ shapes rather than argued about.
 | `$select` on Outlook's delta breaks pagination | Set on the initial request only; a test asserts it is absent from followed links |
 | Gmail `format=full` responses are much larger | Bandwidth only — quota cost is unchanged at 5 units. Attachment bytes are not inlined |
 | The trimmer cuts real content | The tail rule is the mitigation: a marker only counts when everything below it to the end of the message is quoted/attribution/signature, so inline quotations followed by more prose are untouched. Never-return-empty covers the wholly-quoted degenerate case. Pure function, pinned by a corpus of awkward shapes |
-| Existing Outlook installs see no bodies after upgrade | Their stored delta link encodes the pre-`$select` projection. Documented as requiring one `nimbus index rebody --service outlook`, which is why outlook joins the improvable list here. Must be stated in the release notes or the feature reads as broken |
+| Existing Outlook installs see no bodies after upgrade | Their stored delta link encodes the pre-`$select` projection. Resolved automatically by the `nimbus-outl1:` → `nimbus-outl2:` cursor-prefix bump: the undecodable old-prefix cursor falls through to the initial request URL (where `$select` lives), so the next scheduled sync performs one fresh full mailbox delta with `body` on every page — no user action required, though a large mailbox will notice that one sync. `rebody` is not needed for this case; `outlook` joins `REBODY_IMPROVABLE_SERVICES` for the separate, ordinary reason every entry there does — `outlook-sync.ts` now has a declared-full `body:` call site, so `nimbus index rebody --service outlook` remains available to complete individual messages that end up `body_complete = 0` for unrelated reasons (a transient fetch error, or a message indexed while depth was `metadata_only`/`summary`). Must be stated in the release notes as a heads-up, not an instruction |
 | Depth enforcement changes every connector's write path | It is one coercion at one site, behind existing store tests; `full` (the post-migration default) is a pass-through, so the common path is unchanged |

@@ -1076,9 +1076,11 @@ nimbus connector reindex confluence --depth full
 
 | Depth | Effect |
 |---|---|
-| `metadata_only` *(default)* | IDs, timestamps, titles, URLs, owners — no body content. Suppresses both `body` and `body_preview`; a connector's fetched text is discarded before it reaches the index. |
+| `metadata_only` *(default for this command)* | IDs, timestamps, titles, URLs, owners — no body content. Suppresses both `body` and `body_preview`; a connector's fetched text is discarded before it reaches the index. |
 | `summary` | Metadata + a 512-character prefix of each item's body, stored in `body_preview`. There is no summarizer — it is a plain truncation, and it never claims completeness (`body_complete` stays 0). |
 | `full` | Metadata + full body content up to the connector's cap (16 KiB for prose-heavy item types, 512 characters otherwise) — the largest index footprint. |
+
+`metadata_only` is the default **only for `nimbus connector reindex` when `--depth` is omitted** (the CLI passes `metadata_only` explicitly in that case, and the reindex persists it). It is not the depth a connector starts at: a connector that has never had its depth explicitly set — a fresh install's first sync — resolves to `full`, since `sync_state` rows are always written with `depth = 'full'` (`connectors/health.ts` `upsertHealthRow`) and a missing `sync_state.depth` row also resolves to `full`. Running `reindex` without `--depth` therefore *lowers* a connector's depth from its `full` starting point — pass `--depth full` explicitly to reindex without changing it.
 
 Output reports the resolved mode and the number of items affected. The depth is persisted as the connector's default and is enforced on **every** subsequent sync, not only at `reindex` time — every connector's item-writing code path is routed through a shared depth chokepoint (`upsertIndexedItemForSync`) that coerces the row to the configured depth before it is written, so a `metadata_only` or `summary` connector never accumulates full bodies between explicit reindexes.
 
