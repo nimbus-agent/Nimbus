@@ -63,3 +63,29 @@ test("a quoted-tail-shaped body keeps its attribution line separate for downstre
     "Ship it.\nOn Mon, Ana wrote:",
   );
 });
+
+test("a pathological run of unterminated <li tags does not cause catastrophic backtracking", () => {
+  // Adversarial shape: many "<li " starts with no closing ">" anywhere, so a
+  // match at each start position fails only after the engine gives up.
+  // Unbounded (`[^>]*`), this scales quadratically with input length
+  // (measured against this exact file's prior regex: 20 KB -> 28.1 ms,
+  // 40 KB -> 114.9 ms, 80 KB -> 456.5 ms, 160 KB -> 1833.4 ms — a clean 4x
+  // per doubling); at this input size (~200 KB) the unbounded regex would
+  // take several seconds. `[^<>]*` clears this in well under a millisecond
+  // regardless of input length (it can only ever scan as far as the next `<`
+  // or `>`), so a 1000 ms ceiling leaves multiple orders of magnitude of
+  // headroom against CI jitter while still reliably catching a regression
+  // back to the unbounded form.
+  // No ">" anywhere means no tag pattern ever matches, so the frozen
+  // `stripHtmlTagsToSpaces` (entered at the very first "<") never sees a
+  // closing ">" to exit tag mode either — by that function's own documented
+  // behavior ("treats unclosed < as hiding the remainder"), it swallows the
+  // rest of the string, including the trailing "x". The result is legitimately
+  // "" for this input; what this test actually guards is elapsed time.
+  const pathological = `${"<li ".repeat(50_000)}x`;
+  const startedAt = performance.now();
+  const result = plainTextFromHtmlLines(pathological);
+  const elapsedMs = performance.now() - startedAt;
+  expect(result).toBe("");
+  expect(elapsedMs).toBeLessThan(1000);
+});

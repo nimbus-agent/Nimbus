@@ -645,6 +645,13 @@ describe("createOutlookSyncable", () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
     const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
 
+    // "plain & simple" is a FIXED POINT of plainTextFromHtmlLines (no tags, no
+    // newlines, no whitespace runs) -- it round-trips identically whether or
+    // not the text arm is (wrongly) routed through the html path, so it can't
+    // discriminate. A fixture with a real newline can: plainTextFromHtmlLines's
+    // first step neutralises every source newline to a space, so if the text
+    // arm were ever routed through it, "line one\nline two" would come back as
+    // "line one line two" instead of unchanged.
     globalThis.fetch = (async (input: FetchInput) => {
       const url = requestUrlString(input);
       if (url.includes("/messages/delta")) {
@@ -652,7 +659,7 @@ describe("createOutlookSyncable", () => {
           {
             id: "textbody",
             subject: "Plain",
-            body: { contentType: "text", content: "plain & simple" },
+            body: { contentType: "text", content: "line one\nline two" },
           },
         ]);
       }
@@ -664,7 +671,7 @@ describe("createOutlookSyncable", () => {
     const row = db
       .query("SELECT body FROM item WHERE id = ?")
       .get(itemPrimaryKey("outlook", "textbody")) as { body: string } | undefined;
-    expect(row?.body).toBe("plain & simple");
+    expect(row?.body).toBe("line one\nline two");
   });
 
   test("a message with no body still indexes title-only", async () => {

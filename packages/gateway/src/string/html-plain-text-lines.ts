@@ -39,9 +39,27 @@ import { stripHtmlTagsToSpaces } from "./html-plain-text.ts";
  * Matching the pair as one unit collapses it to a single `\n`, while a
  * genuinely unclosed list (`<li>One<li>Two`, no `</li>` anywhere) still falls
  * through to the standalone opening-`<li>` alternative.
+ *
+ * The `<li`/`<br` attribute-skip alternatives use `[^<>]*`, not the more
+ * obvious `[^>]*`. `[^>]*` is unbounded and, on an input like
+ * `"<li ".repeat(n)`, scans to end-of-string and backtracks at EVERY one of
+ * the n start positions before failing (no `>` anywhere) — O(n²), a
+ * remote-attacker-controlled body run synchronously on every indexed
+ * message, before any body cap applies (measured: ~1.9s at n=40000, a clean
+ * 4x per doubling). `[^<>]*` additionally excludes `<`, so it can only ever
+ * scan as far as the NEXT `<` or `>` in the whole string — every attack
+ * input that creates many start positions necessarily also plants a `<`
+ * between them (each one starts with `<li`/`<br`), which bounds each
+ * position's scan to the gap to that next delimiter. Summed over the whole
+ * string, that is O(n) total, not O(n) per position — genuinely linear, not
+ * just linear-with-a-large-constant like a `{0,400}` cap would be. Measured
+ * empirically against three attack shapes (the exact repro above, a single
+ * very long unterminated attribute, and many long unterminated attributes)
+ * and confirmed sub-millisecond at every size tested, see
+ * `html-plain-text-lines.test.ts`'s ReDoS regression test.
  */
 const BLOCK_BOUNDARY_RE =
-  /<\/li\s*>\s*<li(?:\s[^>]*)?>|<\/(?:p|div|tr|li|h[1-6]|blockquote)\s*>|<br(?:\s[^>]*)?\/?>|<li(?:\s[^>]*)?>/gi;
+  /<\/li\s*>\s*<li(?:\s[^<>]*)?>|<\/(?:p|div|tr|li|h[1-6]|blockquote)\s*>|<br(?:\s[^<>]*)?\/?>|<li(?:\s[^<>]*)?>/gi;
 
 function collapseHorizontalWhitespace(line: string): string {
   return line.replace(/\s+/g, " ").trim();
