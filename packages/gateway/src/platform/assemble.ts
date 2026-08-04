@@ -1722,7 +1722,7 @@ export function appendBootMarkerOrWarn(
     logger.warn(
       { err },
       "I29: failed to append the egress boot marker — egress proofs (nimbus prove / " +
-        "egress.verify) will report 'indeterminate' for any window this process observes " +
+        "egress.verify) will report 'indeterminate' for every window this process observes " +
         "until the next successful boot marker",
     );
   }

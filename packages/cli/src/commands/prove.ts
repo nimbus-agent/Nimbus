@@ -58,11 +58,11 @@ export function formatProveResult(input: {
   const observed = Object.entries(input.completeness.coverage)
     .filter(([, g]) => g !== "none")
     .map(([c]) => c)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   const unobserved = Object.entries(input.completeness.coverage)
     .filter(([, g]) => g === "none")
     .map(([c]) => c)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   // Name EVERY observed class — collapsing to just "gated connector actions" whenever `task` is
   // among several observed classes would silently drop the others from both this line AND the
   // "not observed" line below, understating scope.
