@@ -2,6 +2,10 @@
 import { delimiter, join } from "node:path";
 import { assertDidWork } from "./assert-work.ts";
 
+// Only `lint:markdown` is load-bearing here: markdownlint-cli2 exits 0 after linting nothing, so
+// the count is the only evidence it did work. biome exits non-zero on 0 files, which the exit-code
+// check below already catches before the assertion runs — its pattern is kept as a belt-and-braces
+// guard against a future biome that reports zero and exits 0.
 const PATTERNS: Record<string, RegExp[]> = {
   lint: [/Checked (\d+) files/],
   "lint:markdown": [/Linting: (\d+) files/],
