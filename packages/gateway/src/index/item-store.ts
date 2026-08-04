@@ -145,11 +145,38 @@ export function upsertIndexedItem(
   );
 }
 
-export function upsertIndexedItemForSync(
-  ctx: SyncContext,
-  row: Parameters<typeof upsertIndexedItem>[1],
-): void {
-  upsertIndexedItem(ctx.db, row, ctx.resolveServiceId);
+type BodyRow = Parameters<typeof upsertIndexedItem>[1];
+
+/**
+ * Coerce a connector's body input to the connector's configured depth.
+ *
+ * `metadata_only` passes `body: ""` rather than omitting the input, because
+ * `upsertIndexedItem` computes `raw = row.body ?? row.bodyPreview ?? row.title`
+ * — omission would fall through to the TITLE and store it as the body. The
+ * empty string is not nullish, so it wins that chain and both `body` and
+ * `body_preview` land empty. `bodyTruncated` keeps `body_complete` at 0 so a
+ * suppressed body is never reported as a complete one.
+ */
+function applyDepth(depth: SyncContext["depth"], row: BodyRow): BodyRow {
+  if (depth === "full") {
+    return row;
+  }
+  const { body, bodyPreview, bodyTruncated, ...rest } = row as BodyRow & {
+    body?: string;
+    bodyPreview?: string;
+    bodyTruncated?: boolean;
+  };
+  if (depth === "metadata_only") {
+    return { ...rest, body: "", bodyTruncated: true } as BodyRow;
+  }
+  // summary: force the legacy preview arm, which clamps to 512 and never
+  // claims completeness.
+  const text = body ?? bodyPreview ?? "";
+  return { ...rest, bodyPreview: text } as BodyRow;
+}
+
+export function upsertIndexedItemForSync(ctx: SyncContext, row: BodyRow): void {
+  upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }

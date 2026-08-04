@@ -38,6 +38,12 @@ export interface SyncContext {
     | { readonly kind: "bound"; readonly serviceId: string }
     | { readonly kind: "excluded" }
     | { readonly kind: "unknown" };
+  /**
+   * The connector's persisted index depth, resolved per sync run by the
+   * scheduler. Enforced centrally in `upsertIndexedItemForSync` — connectors
+   * do not read this and must not be trusted to honour it individually.
+   */
+  depth: "metadata_only" | "summary" | "full";
 }
 
 export interface Syncable {

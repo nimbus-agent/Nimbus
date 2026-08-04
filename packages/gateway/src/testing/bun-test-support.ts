@@ -49,6 +49,8 @@ export function createSyncTestContext(db: Database, vault: NimbusVault): SyncCon
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    // Connector sync tests exercise the full-body path unless a test overrides it.
+    depth: "full",
   };
 }
 

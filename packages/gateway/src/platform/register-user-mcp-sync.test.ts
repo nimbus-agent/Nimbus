@@ -106,6 +106,7 @@ function makeSyncContext(db: Database): { ctx: SyncContext; warns: CapturedWarn[
       sandboxCwd: os.tmpdir(),
       credentialFor: () => ({ credential: "personal" }),
       runTeamList: async () => [],
+      depth: "full",
     },
     warns,
   };

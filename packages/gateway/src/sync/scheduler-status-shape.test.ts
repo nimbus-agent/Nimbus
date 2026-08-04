@@ -21,6 +21,7 @@ function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    depth: "full",
   };
   const sched = new SyncScheduler(ctx, {}, { initialOnline: false });
   return { idx, sched, db };

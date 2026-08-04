@@ -21,6 +21,7 @@ function makeCtx(): { ctx: SyncContext; db: Database; cleanup: () => void } {
     db,
     logger: pino({ level: "silent" }),
     rateLimiter: new ProviderRateLimiter({}),
+    depth: "full",
   } as unknown as SyncContext;
   return { ctx, db, cleanup: () => db.close() };
 }

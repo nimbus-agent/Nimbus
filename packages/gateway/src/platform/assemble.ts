@@ -1767,6 +1767,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     logger: syncLogger,
     rateLimiter,
     resolveServiceId,
+    // Shared template context — the scheduler overrides this per run
+    // (sync/scheduler.ts `runJob`) with the connector's actual persisted
+    // depth; this is only the safe pass-through default for any other caller.
+    depth: "full",
     ...teamCredentialExtras,
   };
   const syncContext: SyncContext = scheduleItemEmbedding

@@ -53,6 +53,7 @@ function testContext(db: Database): SyncContext {
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    depth: "full",
   };
 }
 

@@ -23,6 +23,7 @@ function ctx(
     sandboxCwd: SANDBOX_CWD,
     credentialFor: () => ({ credential: "personal" as const }),
     runTeamList: async () => [{ team: true }],
+    depth: "full",
     ...over,
   };
 }

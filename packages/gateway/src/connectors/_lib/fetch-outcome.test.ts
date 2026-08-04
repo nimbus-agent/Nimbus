@@ -5,10 +5,14 @@ import type { SyncContext } from "../../sync/types.ts";
 import { connectorFetch } from "./fetch-outcome.ts";
 
 /** Wave 7b SyncContext members — unused by connectorFetch, personal-credential defaults. */
-const PERSONAL_SYNC_EXTRAS: Pick<SyncContext, "sandboxCwd" | "credentialFor" | "runTeamList"> = {
+const PERSONAL_SYNC_EXTRAS: Pick<
+  SyncContext,
+  "sandboxCwd" | "credentialFor" | "runTeamList" | "depth"
+> = {
   sandboxCwd: os.tmpdir(),
   credentialFor: () => ({ credential: "personal" }),
   runTeamList: async () => [],
+  depth: "full",
 };
 
 interface RateLimiterRecord {
