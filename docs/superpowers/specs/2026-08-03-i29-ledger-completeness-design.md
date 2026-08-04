@@ -145,8 +145,16 @@ export async function egressFetch(
 /** For egress that returns no Response: Bun.connect, WebSocket. */
 export function recordEgress(sink: EgressSink, target: string, ctx: EgressCallContext): void;
 
-/** Appended once per process by whoever owns the Database handle — describes the PROCESS (§3.6). */
-export function appendBootMarker(sink: EgressSink, coverage: CoverageVector): void;
+/**
+ * Appended once per process by whoever owns the `Database` handle — describes the PROCESS (§3.6).
+ * NOT threaded through `EgressSink`: it takes the `db` handle directly, because it runs before any
+ * subsystem (and therefore any sink) is constructed. Shipped as `appendBootMarker(db, coverage,
+ * now)` in `egress/egress-boot-marker.ts`, called once from `platform/assemble.ts` — the boot path
+ * wraps it as `appendBootMarkerOrWarn(db, coverage, now, logger)`, which swallows an append failure
+ * (non-fatal: a corrupted/locked ledger degrades proofs to `indeterminate` rather than blocking
+ * startup) and logs a warning instead.
+ */
+export function appendBootMarker(db: Database, coverage: CoverageVector, now: number): void;
 ```
 
 `egressFetch` is a drop-in for `fetch`: `init` passes through untouched and a plain `Response` is returned, so every call site keeps its existing `res.ok` / `.json()` / `.text()` handling. Verified against the real shapes at `router.ts:129` (POST + headers + body), `openai-embedder.ts:23` (same), `manifest-fetcher.ts:138` (`{ signal }`), `updater.ts:232` (`{ redirect: "follow" }`).
@@ -172,6 +180,12 @@ Each subsystem that performs egress takes an explicit `EgressSink` at **its own*
 boundary — `makeOpenAiEmbedder(opts, sink)`, the router's factory, `SyncScheduler`, the telemetry
 flush scheduler, the updater, `LanClient`, the ChatOps transport. No module-scoped registration, no
 `AsyncLocalStorage`, no default.
+
+Phase 1 already ships this shape for the task/connector modality — `RunAskParams.egressSink` and
+`ChatopsBootDeps.egressSink` are both required (non-optional) fields, threaded from
+`platform/assemble.ts` down to the `ToolExecutor` constructor, which itself takes `egressSink` as a
+required parameter (no `?`). The `fetch`-modality subsystems above extend the identical pattern to
+their own leaf functions; nothing in Phase 1's threading needs to change for Phases 3–5 to adopt it.
 
 **Why this over the cheaper module-global:**
 
@@ -214,29 +228,12 @@ Test hazard, mitigated: a module-global is a known contamination source in this 
 > (`isMarkerSourceType`) depends on the set being closed. Incremental widening is called out by name
 > as a thing not to do. This annex adds no members.
 
-The union is the spec of record's, defined in its Phase 1, **plus the two marker members admitted
-by the decision in §3.3.2**:
-
-```ts
-type EgressSourceType =
-  // the spec of record's six
-  | "task"      // gated connector action (existing)
-  | "prune"     // retention tombstone (existing)
-  | "session"   // gateway housekeeping egress
-  | "sync"      // connector sync run
-  | "model"     // inference + embeddings, local or remote
-  | "peer"      // federated send
-  // admitted 2026-08-03, before the freeze (§3.3.2)
-  | "boot"      // process-start marker carrying the coverage vector
-  | "degraded"; // lost-append recovery marker
-```
-
-Eight members, frozen. Widening this later is not a chain break — `verifyEgressChain` recomputes
-row hashes from stored column values, so a ninth member invalidates no existing row — but a
-`source_type` value written today is permanent in the data, and `isMarkerSourceType` depends on the
-set being closed, so the vocabulary must be chosen deliberately, not extended casually.
-
-The `fetch` modality maps onto it without additions:
+**The spec of record is the single documentary owner of the union — this annex references it rather
+than restating it.** The type, its members, and the freeze rationale live in one place in code:
+`packages/gateway/src/egress/egress-source-type.ts` (`EGRESS_SOURCE_TYPES`), which the spec of
+record's Phase 1 section documents. Restating the member list here would give the union two owners
+that can drift; this annex instead maps the `fetch` modality onto the shipped union, unchanged and
+with no additions:
 
 | Call class (§6) | `source_type` |
 |---|---|
@@ -301,12 +298,6 @@ to accept the weaker exclusion that implies.
 
 Excluding markers fixes this. It is a user-visible change to a number that was previously wrong, so it belongs in the changelog entry rather than passing silently. The boot and degraded markers would have inherited the same bug had the exclusion not been made explicit.
 
-#### 3.3.1 This corrects a pre-existing miscount
-
-`pruneEgress` writes `resultStatus: "authorized"` (`egress-prune.ts:97`), and today's filter is `rows.filter((r) => r.resultStatus === "authorized")` with no source-type exclusion. **A prune tombstone is therefore already counted as an outbound egress event**, inflating the number by one per prune — even though pruning is a local retention operation that sends nothing off-machine.
-
-Excluding markers fixes this. It is a user-visible change to a number that was previously wrong, so it belongs in the changelog entry of whichever phase lands it, rather than passing silently. The `boot` and degraded markers introduced here would have inherited the same bug had the exclusion not been made explicit.
-
 ### 3.4 Classification rules
 
 Resolved from the **URL host** (pre-DNS), reusing `share/safe-fetch.ts`'s exported `isPrivateAddress()` and `unbracketHost()` — tested IPv4, IPv6, and `::ffff:` mapped-v4 handling.
@@ -361,11 +352,15 @@ built to observe, and at what granularity:
 
 ```ts
 type Granularity = "none" | "per-run" | "per-call";
-type CoverageVector = Readonly<Record<EgressSourceType, Granularity>>;
+// The egress-BEARING source types only — marker classes (`prune`/`boot`/`degraded`) carry no
+// coverage claim, so `CoverageClass` is five members, not all eight of `EgressSourceType`.
+type CoverageClass = "model" | "peer" | "session" | "sync" | "task";
+type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 ```
 
-So a Phase-3 binary writes `{ task: "per-call", sync: "per-run", model: "none", … }`, and a
-Phase-4 binary writes the same with `model: "per-call"`.
+Shipped as `egress/egress-coverage.ts` (`COVERAGE_CLASSES`, `CoverageVector`). So a Phase-3 binary
+writes `{ task: "per-call", sync: "per-run", model: "none", … }`, and a Phase-4 binary writes the
+same with `model: "per-call"`.
 
 **Resolution over a window.** `proveWindow` finds the boot markers spanning the window and reports
 the **weakest granularity per source class** across them. A ledger written partly by today's
@@ -578,11 +573,13 @@ landing it earlier would only be green because of exemptions, which is what §5 
 
 ## 11. Review disposition
 
-Against [`2026-08-03-i29-ledger-completeness-design-review.md`](./2026-08-03-i29-ledger-completeness-design-review.md).
+Against the design review of this annex. That review's findings were folded in below and the
+review document itself was removed once each disposition landed — the dispositions are the
+permanent record.
 
 | # | Finding | Disposition |
 |---|---|---|
-| 1 | Pre-DNS classification misses hostname-addressed local models; classify link-local | **Partly fixed, partly rejected.** Link-local added explicitly as `net:` (§3.4) — a good catch, `169.254.169.254` is credential-bearing. The `.local`/hostname exception is **rejected**: see §3.4.1. |
+| 1 | Pre-DNS classification misses hostname-addressed local models; classify link-local | **Partly fixed, partly rejected.** Link-local added explicitly to the classifier — resolved `false` (not loopback), never the withdrawn `net:` prefix (§3.4) — a good catch, `169.254.169.254` is credential-bearing. The `.local`/hostname exception is **rejected**: see §3.4.1. |
 | 2 | Node primitives (`node:net`/`tls`/`http`/`https`) bypass the static rule; state the backstop's boundary | **Fixed in full** (§5, §7.2). Correct and cheap; the rule now flags imports as well as calls. |
 | 3 | Replace the module-global sink with `AsyncLocalStorage` | **Concern accepted, mechanism rejected. Deferred** — see below. |
 | 4 | A read-only/locked DB means the degraded marker can never be written; add a sentinel file | **Partly fixed, remainder deferred.** §4.2 now states the sustained-failure case and why soundness survives it. The sentinel file is deferred. |
