@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { vaultIdFromAbsolutePath } from "../../../src/connectors/obsidian-vault-id.ts";
 import { NULL_EGRESS_SINK } from "../../../src/egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../../../src/engine/executor.ts";
+import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../../../src/engine/types.ts";
 
 function buildVault(): { root: string; vaultId: string } {
   const root = mkdtempSync(join(tmpdir(), "obsidian-hitl-"));
@@ -19,28 +20,21 @@ test("obsidian.note.append is in HITL_REQUIRED (structural)", () => {
 
 test("audit log entry is written before the dispatcher executes the append", async () => {
   const calls: Array<"audit" | "dispatch"> = [];
-  const audit = {
+  const audit: AuditSink = {
     recordAudit: () => {
       calls.push("audit");
     },
   };
-  const dispatch = {
+  const dispatch: ConnectorDispatcher = {
     dispatch: async () => {
       calls.push("dispatch");
       return { ok: true };
     },
   };
-  const consent = {
+  const consent: ConsentChannel = {
     requestApproval: async (_prompt: string, _details?: Record<string, unknown>) => true,
   };
-  // biome-ignore lint/suspicious/noExplicitAny: mock spies are simpler than typed mocks here
-  const exec = new ToolExecutor(
-    consent as any,
-    audit as any,
-    dispatch as any,
-    undefined,
-    NULL_EGRESS_SINK,
-  );
+  const exec = new ToolExecutor(consent, audit, dispatch, undefined, NULL_EGRESS_SINK);
   const result = await exec.execute({
     type: "obsidian.note.append",
     payload: {
@@ -58,30 +52,23 @@ test("rejecting the consent prompt returns rejected and never dispatches", async
   const dailyPath = join(root, "2026-05-10.md");
   writeFileSync(dailyPath, "before");
 
-  const consent = {
+  const consent: ConsentChannel = {
     requestApproval: async () => false,
   };
   let auditCalls = 0;
-  const audit = {
+  const audit: AuditSink = {
     recordAudit: () => {
       auditCalls++;
     },
   };
   let dispatched = false;
-  const dispatch = {
+  const dispatch: ConnectorDispatcher = {
     dispatch: async () => {
       dispatched = true;
       return null;
     },
   };
-  // biome-ignore lint/suspicious/noExplicitAny: mock spies are simpler than typed mocks here
-  const exec = new ToolExecutor(
-    consent as any,
-    audit as any,
-    dispatch as any,
-    undefined,
-    NULL_EGRESS_SINK,
-  );
+  const exec = new ToolExecutor(consent, audit, dispatch, undefined, NULL_EGRESS_SINK);
 
   const result = await exec.execute({
     type: "obsidian.note.append",
