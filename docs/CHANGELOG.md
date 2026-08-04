@@ -85,6 +85,30 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
       marker covering the window's start) but "the last marker at or before `since`, plus all
       markers within the window." Left as a documented known limitation (`nimbus-egress` skill +
       a code comment on `coverageForWindow`) for a later phase.
+  - **Fix wave 2, same day — four soundness findings from a follow-up code review:**
+    - **`coverageForWindow` now reads boot markers via a dedicated SQL query** (`method =
+      BOOT_MARKER_METHOD`, no pagination), not `listEgress(db, {})` — the latter defaults `limit`
+      to 1000 ordered oldest-first, so on any ledger past 1000 rows a recent boot marker (including
+      an unparseable one that must force `indeterminate`) was invisible.
+    - **`parseCoverage` now rejects what it claimed to reject.** It previously accepted
+      `"task=per-call=extra"` (dropping the extra segment), ignored unknown keys, and let a
+      duplicate key silently overwrite — so a marker from a NEWER binary carrying an unknown
+      coverage class parsed as valid and contributed real coverage instead of forcing
+      `indeterminate`. It now returns `null` for any non-`key=value` segment, any key outside
+      `COVERAGE_CLASSES`, or any duplicate key.
+    - **`ChatopsBootDeps.egressSink` is now required**, dropping the `?? NULL_EGRESS_SINK` default
+      at the construction site — the ChatOps executor is dispatch-capable (real connector actions),
+      so a caller that wants no ledger must say so explicitly (`NULL_EGRESS_SINK`) instead of
+      getting it by omission. Production (`platform/assemble.ts`) already wired a real sink.
+    - **The "recorded, not fixed" limitation two bullets above is now fixed.** `coverageForWindow`
+      merges the marker covering the window's `since` (the last one at or before it) with every
+      marker booted within the window, instead of every marker in all of history — so a bounded
+      window is no longer capped by an old marker from before it starts, and a window whose start
+      has no covering marker honestly reports `indeterminate` instead of borrowing a later marker's
+      claim for an unobserved slice. An omitted `since` (`nimbus egress`/`nimbus prove` with no
+      `--since`) is a deliberate carve-out of that rule: it only withholds the claim when a real
+      ledger row precedes the ledger's first-ever boot marker, so a fresh database isn't punished
+      into permanent `indeterminate` merely because `since` defaults to 0.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
   Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
   `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a

@@ -43,6 +43,26 @@ describe("coverage vector", () => {
     expect(parseCoverage("task=per-call")).toBeNull(); // missing classes
   });
 
+  test("parse rejects an unknown key rather than silently ignoring it (fix 2)", () => {
+    // A marker written by a NEWER binary carrying a class this one doesn't know must be REJECTED
+    // (→ null → ALL_NONE_COVERAGE), not accepted with the unknown segment dropped — otherwise a
+    // forward-incompatible marker would contribute real (understated) coverage instead of forcing
+    // `indeterminate`.
+    const withUnknownKey = `${serializeCoverage(THIS_BINARY_COVERAGE)};futureclass=per-call`;
+    expect(parseCoverage(withUnknownKey)).toBeNull();
+  });
+
+  test("parse rejects a duplicate key rather than silently overwriting it (fix 2)", () => {
+    const withDuplicate = `${serializeCoverage(THIS_BINARY_COVERAGE)};task=per-call`;
+    expect(parseCoverage(withDuplicate)).toBeNull();
+  });
+
+  test("parse rejects an extra `=` in a segment rather than dropping the tail (fix 2)", () => {
+    // "task=per-call=extra" must not silently parse as task="per-call" with "extra" discarded.
+    const withExtraEquals = "task=per-call=extra;session=none;sync=none;model=none;peer=none";
+    expect(parseCoverage(withExtraEquals)).toBeNull();
+  });
+
   test("weakest takes the LOWEST granularity per class across binaries", () => {
     const rich: CoverageVector = {
       task: "per-call",

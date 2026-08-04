@@ -1,6 +1,5 @@
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
-import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
@@ -40,8 +39,14 @@ export interface ChatopsBootDeps {
   readonly audit: AuditSink;
   /** Dispatches an approved action to the live connector mesh (same seam as the engine). */
   readonly dispatcher: ConnectorDispatcher;
-  /** I29 egress ledger: appends one row before every connector dispatch. Absent → no ledger. */
-  readonly egressSink?: EgressSink;
+  /**
+   * I29 egress ledger: appends one row before every connector dispatch. This executor is
+   * dispatch-capable (it reaches real connector actions via `deps.dispatcher`), so the sink is
+   * REQUIRED — production wires a real one (`platform/assemble.ts`); a caller that wants to opt
+   * out (e.g. a test) must pass `NULL_EGRESS_SINK` explicitly so that choice is visible at the
+   * call site instead of silently defaulted.
+   */
+  readonly egressSink: EgressSink;
   /** Bot Framework JWT validator (I18 verifier, aud === teamsBotAppId). Absent → the Teams
    *  events surface is NOT exposed (fail-closed). */
   readonly validateTeamsJwt?: TeamsEventsSurface["validateBotJwt"];
@@ -243,10 +248,10 @@ export function buildChatopsBoot(deps: ChatopsBootDeps): ChatopsBoot {
       requestRemote: () => presenter.requestApproval(),
     },
     // I29: a chatops-approved write dispatches a real connector action — an outbound event — so the
-    // executor carries the egress sink (append-before-dispatch). Production always wires a real
-    // sink (assemble.ts); NULL_EGRESS_SINK only backstops callers (tests) that omit it, since the
-    // sink is now a required constructor parameter.
-    deps.egressSink ?? NULL_EGRESS_SINK,
+    // executor carries the egress sink (append-before-dispatch). `egressSink` is a REQUIRED dep
+    // (see the doc comment on `ChatopsBootDeps.egressSink`) — production always wires a real sink
+    // (assemble.ts); a caller that wants no ledger passes `NULL_EGRESS_SINK` explicitly.
+    deps.egressSink,
   );
   const knownActions = HITL_REQUIRED;
 

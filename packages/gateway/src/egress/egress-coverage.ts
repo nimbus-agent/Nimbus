@@ -49,12 +49,28 @@ function isGranularity(s: string): s is Granularity {
   return (GRANULARITIES as readonly string[]).includes(s);
 }
 
-/** Parse; returns null (never a guess) if any class is missing or any value is unrecognized. */
+/**
+ * Parse; returns null (never a guess, never a partial vector) unless the string is EXACTLY the
+ * canonical `serializeCoverage` shape: every `;`-segment is a single `key=value` pair (no extra
+ * `=`), every key is a known `CoverageClass`, every key appears at most once, and every class is
+ * present with a recognized `Granularity`.
+ *
+ * This is deliberately strict — a marker written by a NEWER binary that adds an unknown coverage
+ * class, or that is merely malformed, must be REJECTED (→ `null`, which the caller turns into
+ * `ALL_NONE_COVERAGE`) rather than silently accepted with the unknown/duplicate/extra data
+ * dropped. Accepting-and-ignoring would let that marker contribute real (understated but
+ * plausible-looking) coverage instead of forcing the window to `indeterminate` — exactly the
+ * forward-compatibility failure this function exists to prevent.
+ */
 export function parseCoverage(s: string): CoverageVector | null {
   const found = new Map<string, string>();
   for (const part of s.split(";")) {
-    const [k, val] = part.split("=");
-    if (k !== undefined && val !== undefined) found.set(k, val);
+    const eq = part.split("=");
+    if (eq.length !== 2) return null; // not exactly one `key=value` pair (0 or ≥2 `=` signs)
+    const [k, val] = eq as [string, string];
+    if (!(COVERAGE_CLASSES as readonly string[]).includes(k)) return null; // unknown key
+    if (found.has(k)) return null; // duplicate key
+    found.set(k, val);
   }
   const out: Partial<Record<CoverageClass, Granularity>> = {};
   for (const c of COVERAGE_CLASSES) {

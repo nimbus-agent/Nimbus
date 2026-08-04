@@ -187,48 +187,128 @@ export function listEgress(
   return rows.map(toRow);
 }
 
+type MarkerRow = { timestamp: number; source_id: string | null };
+
 /**
- * The coverage that can be claimed for a window: the weakest granularity per class across every
- * boot marker at or before the window's end.
+ * The single boot-marker row (if any) at or before `ts`. Queried DIRECTLY against
+ * `egress_ledger` — NOT via `listEgress`, whose default 1000-row page (oldest-first) would make a
+ * marker appended after row 1000 invisible on any ledger past that size (fix 1). Restricted in SQL
+ * to `method = BOOT_MARKER_METHOD` so no pagination limit is needed here at all.
+ */
+function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
+  // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — normalize so
+  // callers can use a single `!== undefined` check.
+  const row = db
+    .query(
+      `SELECT timestamp, source_id FROM egress_ledger
+       WHERE method = ? AND timestamp <= ?
+       ORDER BY timestamp DESC, id DESC LIMIT 1`,
+    )
+    .get(BOOT_MARKER_METHOD, ts) as MarkerRow | null;
+  return row ?? undefined;
+}
+
+/** Every boot-marker row strictly after `sinceExclusive` and at or before `until`, oldest first. */
+function markersInRange(db: Database, sinceExclusive: number, until: number): MarkerRow[] {
+  return db
+    .query(
+      `SELECT timestamp, source_id FROM egress_ledger
+       WHERE method = ? AND timestamp > ? AND timestamp <= ?
+       ORDER BY timestamp ASC, id ASC`,
+    )
+    .all(BOOT_MARKER_METHOD, sinceExclusive, until) as MarkerRow[];
+}
+
+/** True if ANY ledger row (marker or not) falls in `[since, beforeTs)`. */
+function hasRowBefore(db: Database, since: number, beforeTs: number): boolean {
+  // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — `!= null` catches
+  // both so an empty result isn't mistaken for a found row.
+  const row = db
+    .query(`SELECT 1 as x FROM egress_ledger WHERE timestamp >= ? AND timestamp < ? LIMIT 1`)
+    .get(since, beforeTs) as { x: number } | null;
+  return row != null;
+}
+
+function coverageOf(r: MarkerRow): CoverageVector {
+  // Unreadable/unparseable marker → claim nothing for every class (see doc comment below).
+  return r.source_id === null
+    ? ALL_NONE_COVERAGE
+    : (parseCoverage(r.source_id) ?? ALL_NONE_COVERAGE);
+}
+
+/**
+ * The coverage that can be claimed for a window `[since, until]`: the weakest granularity per
+ * class across the boot marker that covers the window's START, merged with every boot marker that
+ * booted DURING the window.
  *
- * Markers strictly AFTER the window are ignored — a binary that started later cannot vouch for what
- * was observed earlier. No covering marker yields all-`none`, i.e. claim nothing.
+ * Sound rule (fix 4): a window may claim coverage only if a marker covers its start. A window
+ * whose first-ever marker boots mid-window (e.g. `since=500` but the earliest marker is at
+ * `t=1000`) must not silently claim coverage for the unobserved `[500, 1000)` slice just because a
+ * marker eventually shows up before `until` — that slice had no marker vouching for it, so nothing
+ * can be said about it, and the honest answer is `indeterminate`.
  *
- * An UNPARSEABLE marker contributes an all-`none` vector rather than being skipped. Skipping it
- * would let a sibling marker's richer claim stand, overstating coverage; contributing all-`none`
- * drives the weakest-merge to `none` everywhere, so the window reports `indeterminate`. This is the
- * "indeterminate, never a false zero" rule — NOT a throw, because one unreadable row must not take
- * `nimbus egress` down. (Deliberate tampering is already caught elsewhere: `source_id` is hashed,
- * so an edited marker breaks `verifyEgressChain`. The case handled here is a marker written by a
- * NEWER binary using a class or granularity this one does not know.)
+ * Implementation: `since`'s covering marker (the LAST marker at or before `since`) plus every
+ * marker within `(since, until]`. If no marker covers `since` AND the caller asked for that
+ * specific `since` explicitly, the window claims nothing (`ALL_NONE_COVERAGE`) — the "may claim
+ * coverage only if a marker covers its start" rule applied literally.
  *
- * Lives here (not in `egress-boot-marker.ts`) because it consumes `listEgress`, which is defined in
- * this module — keeping it there would create a two-way import cycle between the two files
- * (forbidden by `.dependency-cruiser.cjs` `no-circular`, enforced via `audit:boundaries`).
+ * UNBOUNDED-QUERY CARVE-OUT (`since` omitted, e.g. plain `nimbus egress`/`nimbus prove`): an
+ * omitted `since` means "from the beginning of recorded history", and there is by definition
+ * nothing before that beginning to be silently uncovered — UNLESS the ledger's own earliest rows
+ * predate its first-ever boot marker (a real, if rare, gap: e.g. a build old enough not to call
+ * `appendBootMarker`). So for the omitted-`since` case only, the window still claims coverage from
+ * the markers within it as long as no ledger row precedes the earliest of those markers; a fresh
+ * database (whose very first row IS the boot marker) is therefore NOT punished into permanent
+ * `indeterminate` just because `since` defaults to 0 and no marker literally covers timestamp 0.
  *
- * KNOWN LIMITATION (recorded, not fixed): this merges the weakest coverage over ALL markers at or
- * before the window's end — the ENTIRE history, not just markers relevant to the window's start —
- * so the very first task-only marker ever appended permanently drags every later window's coverage
- * down. Coverage can never rise after a gateway upgrade, even for a window entirely after a
- * more-capable binary booted. The correct fix is NOT a plain `since` filter (that would drop the
- * marker covering the window's start, understating coverage the other way) but "the last marker at
- * or before `since`, plus all markers within [`since`, `until`]". Left as-is for Phase 1 — do not
- * rediscover this as a bug in a later phase; it's this comment's known gap.
+ * An UNPARSEABLE marker (any marker, whether covering `since` or booted mid-window) contributes an
+ * all-`none` vector rather than being skipped. Skipping it would let a sibling marker's richer
+ * claim stand, overstating coverage; contributing all-`none` drives the weakest-merge to `none`
+ * everywhere, so the window reports `indeterminate`. This is the "indeterminate, never a false
+ * zero" rule — NOT a throw, because one unreadable row must not take `nimbus egress` down.
+ * (Deliberate tampering is already caught elsewhere: `source_id` is hashed, so an edited marker
+ * breaks `verifyEgressChain`. The case handled here is a marker written by a NEWER binary using a
+ * class or granularity this one does not know.)
+ *
+ * Lives here (not in `egress-boot-marker.ts`) because a two-way import between the two files is
+ * forbidden by `.dependency-cruiser.cjs` `no-circular` (enforced via `audit:boundaries`).
+ *
+ * RECONCILED (was a recorded known limitation): coverage no longer merges over the ENTIRE ledger
+ * history for a bounded window — only the marker covering `since` plus markers booted within the
+ * window count, so coverage CAN rise for a window entirely after a more-capable binary booted; an
+ * old, weaker marker from long before `since` no longer permanently caps it. The unbounded query
+ * (no `--since`) is the one case that still merges across all history, and that is correct, not a
+ * limitation: asking about the whole ledger genuinely requires the weakest coverage across every
+ * binary that ever wrote into it.
  */
 export function coverageForWindow(
   db: Database,
   opts: { since?: number | undefined; until?: number | undefined },
 ): CoverageVector {
-  const rows = listEgress(db, {});
-  const vectors: CoverageVector[] = [];
-  for (const r of rows) {
-    if (r.method !== BOOT_MARKER_METHOD) continue;
-    if (opts.until !== undefined && r.timestamp > opts.until) continue;
-    const v = r.sourceId === null ? null : parseCoverage(r.sourceId);
-    // Unreadable marker → claim nothing for every class (see doc comment).
-    vectors.push(v ?? ALL_NONE_COVERAGE);
+  const since = opts.since ?? 0;
+  const until = opts.until ?? Number.MAX_SAFE_INTEGER;
+  const sinceOmitted = opts.since === undefined;
+
+  const priorMarker = lastMarkerAtOrBefore(db, since);
+  const inWindow = markersInRange(db, since, until);
+
+  if (priorMarker === undefined) {
+    if (inWindow.length === 0) return ALL_NONE_COVERAGE; // no marker anywhere near this window
+    if (!sinceOmitted) {
+      // The caller asked for a specific `since` and no marker covers it — the window's start is
+      // genuinely unobserved. Claim nothing (see "sound rule" above).
+      return ALL_NONE_COVERAGE;
+    }
+    // Unbounded carve-out: only withhold the claim if real rows precede the first in-window
+    // marker — i.e. there is an actual observed gap, not just an unmarked timestamp 0.
+    const firstMarkerTs = inWindow[0]?.timestamp;
+    if (firstMarkerTs !== undefined && hasRowBefore(db, since, firstMarkerTs)) {
+      return ALL_NONE_COVERAGE;
+    }
   }
-  return weakestCoverage(vectors);
+
+  const markerRows = priorMarker === undefined ? inWindow : [priorMarker, ...inWindow];
+  return weakestCoverage(markerRows.map(coverageOf));
 }
 
 export type EgressCompleteness = {

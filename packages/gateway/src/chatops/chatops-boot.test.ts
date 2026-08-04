@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import type { EgressEntry } from "../egress/egress-record.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
@@ -73,6 +75,8 @@ interface Harness {
   posts: { platform: string; channel: string; text: string; serviceUrl?: string }[];
   dispatched: PlannedAction[];
   audits: { actionType: string; hitlStatus: string; actionJson: string }[];
+  /** Recording fake for `ChatopsBootDeps.egressSink` (now required — I29 fix 3). */
+  egressEntries: EgressEntry[];
   boot: ReturnType<typeof buildChatopsBoot>;
 }
 
@@ -81,6 +85,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
   const posts: Harness["posts"] = [];
   const dispatched: PlannedAction[] = [];
   const audits: Harness["audits"] = [];
+  const egressEntries: EgressEntry[] = [];
 
   const runTool: RunChatopsTool = (platform, toolId, args, opts) => {
     if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
@@ -136,6 +141,9 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
         return Promise.resolve({ rolledBack: true });
       },
     },
+    // Recording fake, not NULL_EGRESS_SINK: this executor is dispatch-capable, so the default
+    // harness proves the sink is actually consulted (see the I29 fix-3 regression test below).
+    egressSink: { append: (entry) => void egressEntries.push(entry) },
     socketFactory: () => socket,
     log: () => {},
     ...overrides,
@@ -145,7 +153,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
   boot.bindAskEngine((query, namespace) =>
     Promise.resolve(`[${namespace}] answer to: ${query} → oncall = alice`),
   );
-  return { socket, posts, dispatched, audits, boot };
+  return { socket, posts, dispatched, audits, egressEntries, boot };
 }
 
 describe("buildChatopsBoot — full production graph", () => {
@@ -390,6 +398,7 @@ describe("buildChatopsBoot — full production graph", () => {
       runTool,
       audit: { recordAudit: () => {} },
       dispatcher: { dispatch: () => Promise.resolve({}) },
+      egressSink: NULL_EGRESS_SINK,
       socketFactory: () => socket,
       log: () => {},
     });
@@ -418,6 +427,24 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(h.audits.find((a) => a.actionType === "deployment.rollback")?.hitlStatus).toBe(
       "approved",
     );
+    await h.boot.service.stop();
+  });
+
+  test("I29 fix 3: a chatops-approved dispatch appends a real egress row, not a silent NULL sink", async () => {
+    // ChatopsBootDeps.egressSink is now REQUIRED (dropped the `?? NULL_EGRESS_SINK` default) —
+    // this proves the executor actually calls the sink it was handed, wired into a real dispatch.
+    const h = buildHarness();
+    h.boot.bindLocalConsent(() => Promise.resolve(true));
+    await h.boot.service.start();
+    h.socket.emit(
+      mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "31b"),
+    );
+    await until(() => h.posts.some((p) => p.text.includes("Approval needed")));
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus approve", "32b"));
+    await until(() => h.dispatched.length === 1);
+    expect(h.egressEntries).toHaveLength(1);
+    expect(h.egressEntries[0]?.method).toBe("deployment.rollback");
+    expect(h.egressEntries[0]?.resultStatus).toBe("authorized");
     await h.boot.service.stop();
   });
 
@@ -468,6 +495,7 @@ describe("buildChatopsBoot — full production graph", () => {
           return Promise.resolve({});
         },
       },
+      egressSink: NULL_EGRESS_SINK,
       socketFactory: () => socket,
       log: () => {},
     });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
 import { buildChatopsBoot } from "./chatops-boot.ts";
@@ -85,6 +86,7 @@ function buildBoot() {
     runTool,
     audit: { recordAudit: () => {} },
     dispatcher: { dispatch: () => Promise.resolve({}) },
+    egressSink: NULL_EGRESS_SINK,
     socketFactory: () => socket,
     log: () => {},
     onInboundMessage: async (m) => void inbound.push(m),
