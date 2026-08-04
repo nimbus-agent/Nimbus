@@ -472,12 +472,25 @@ function isGranularity(s: string): s is Granularity {
   return (GRANULARITIES as readonly string[]).includes(s);
 }
 
-/** Parse; returns null (never a guess) if any class is missing or any value is unrecognized. */
+/**
+ * Parse; returns null (never a guess, never a partial vector) unless the string is EXACTLY the
+ * canonical `serializeCoverage` shape: every `;`-segment is a single `key=value` pair (no extra
+ * `=`), every key is a known `CoverageClass`, every key appears at most once, and every class is
+ * present with a recognized `Granularity`. Strict on purpose — a marker from a NEWER binary
+ * carrying an unknown class, or one that is merely malformed, must be REJECTED (→ `null`) rather
+ * than silently accepted with the unknown/duplicate/extra data dropped; accepting-and-ignoring
+ * would let it contribute understated-but-plausible coverage instead of forcing the window to
+ * `indeterminate`.
+ */
 export function parseCoverage(s: string): CoverageVector | null {
   const found = new Map<string, string>();
   for (const part of s.split(";")) {
-    const [k, val] = part.split("=");
-    if (k !== undefined && val !== undefined) found.set(k, val);
+    const eq = part.split("=");
+    if (eq.length !== 2) return null; // not exactly one `key=value` pair (0 or ≥2 `=` signs)
+    const [k, val] = eq as [string, string];
+    if (!(COVERAGE_CLASSES as readonly string[]).includes(k)) return null; // unknown key
+    if (found.has(k)) return null; // duplicate key
+    found.set(k, val);
   }
   const out: Partial<Record<CoverageClass, Granularity>> = {};
   for (const c of COVERAGE_CLASSES) {
@@ -521,10 +534,10 @@ Create `packages/gateway/src/egress/egress-boot-marker.test.ts`. Reuse the DB fi
 ```ts
 // packages/gateway/src/egress/egress-boot-marker.test.ts
 import { describe, expect, test } from "bun:test";
-import { appendBootMarker, coverageForWindow } from "./egress-boot-marker.ts";
+import { appendBootMarker } from "./egress-boot-marker.ts";
 import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
-import { listEgress, verifyEgressChain } from "./egress-verify.ts";
+import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verify.ts";
 
 describe("boot marker", () => {
   test("appends one marker row carrying the serialized vector in the hashed source_id", () => {
@@ -551,56 +564,29 @@ describe("boot marker", () => {
     });
     db.close();
   });
-
-  test("coverageForWindow uses markers at or before the window, weakest wins", () => {
-    const db = makeTestDb();
-    appendBootMarker(db, THIS_BINARY_COVERAGE, 1_000);
-    appendBootMarker(
-      db,
-      { task: "per-call", session: "per-call", sync: "per-run", model: "per-call", peer: "per-call" },
-      2_000,
-    );
-    // Window covers both boots → weakest per class.
-    expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
-      task: "per-call",
-      session: "none",
-      sync: "none",
-      model: "none",
-      peer: "none",
-    });
-    db.close();
-  });
-
-  test("an unparseable marker forces all-none — it must not be silently skipped", () => {
-    const db = makeTestDb();
-    // A marker this binary cannot parse: written by a NEWER gateway, or corrupted. Skipping it
-    // would let the OTHER (valid, richer) marker vouch for the window — overstating coverage.
-    appendEgressEntry(db, {
-      timestamp: 1_000,
-      sourceType: "boot",
-      sourceId: "task=teleportation;wat=none",
-      destination: "local",
-      method: "egress.boot",
-      payloadSummary: "{}",
-      hitlStatus: "not_required",
-      resultStatus: "authorized",
-    });
-    appendBootMarker(
-      db,
-      { task: "per-call", session: "per-call", sync: "per-run", model: "per-call", peer: "per-call" },
-      2_000,
-    );
-    expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
-      task: "none",
-      session: "none",
-      sync: "none",
-      model: "none",
-      peer: "none",
-    });
-    db.close();
-  });
 });
 ```
+
+> **Superseded during implementation — see the shipped files.** This first-cut sketch tests a
+> simpler `coverageForWindow` than what shipped (at-or-before-`until` only, no `since` semantics,
+> `method`-only marker selection). Two soundness bugs surfaced before merge and are fixed in the
+> shipped code, not reflected above:
+>
+> - **Fix 1 (pagination):** the initial implementation read markers via `listEgress(db, {})`, whose
+>   default 1000-row page silently hid a marker appended past row 1000 on a large ledger.
+> - **Fix 4 (start-of-window soundness):** merging every marker at-or-before `until` let a marker
+>   that booted *mid-window* vouch for the whole window, including the unobserved slice before it.
+>   The shipped rule requires a marker covering the window's **start** (`since`), with a documented
+>   carve-out for an omitted `since` on a fresh database.
+> - **This PR's fix (source_type guard):** both marker queries now require `source_type = 'boot'` in
+>   addition to `method = ?`, so a non-marker row cannot vouch for coverage merely by reusing the
+>   `egress.boot` method string.
+>
+> The authoritative behavior, tests, and doc comments live in `egress-verify.ts`'s
+> `coverageForWindow` / `lastMarkerAtOrBefore` / `markersInRange` and in
+> `egress-boot-marker.test.ts`'s full suite (fix-1/fix-4 regressions, the unparseable-marker case,
+> and the non-boot-row-with-colliding-method case) — read those, not this step, for the current
+> contract.
 
 - [ ] **Step 6: Run test to verify it fails**
 
@@ -614,15 +600,8 @@ Create `packages/gateway/src/egress/egress-boot-marker.ts`:
 ```ts
 // packages/gateway/src/egress/egress-boot-marker.ts
 import type { Database } from "bun:sqlite";
+import { type CoverageVector, serializeCoverage } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
-import {
-  ALL_NONE_COVERAGE,
-  type CoverageVector,
-  parseCoverage,
-  serializeCoverage,
-  weakestCoverage,
-} from "./egress-coverage.ts";
-import { listEgress } from "./egress-verify.ts";
 
 /** `method` for every boot marker row. Stable — `coverageForWindow` selects on it. */
 export const BOOT_MARKER_METHOD = "egress.boot";
@@ -630,9 +609,9 @@ export const BOOT_MARKER_METHOD = "egress.boot";
 /**
  * Append this process's boot marker.
  *
- * Without it, a build that never wires a sink produces an empty ledger and every window reads as a
- * clean `0` — a false zero indistinguishable from real silence. The marker is what makes that case
- * report `indeterminate` instead.
+ * Without it, a window with no covering marker produces an empty ledger and reads as a clean `0` —
+ * a false zero indistinguishable from real silence. The marker is what makes that case report
+ * `indeterminate` instead.
  *
  * The vector goes in `source_id` because `source_id` IS an input to `computeEgressRowHash`; a
  * coverage claim that could be edited without breaking the chain would be worthless.
@@ -649,38 +628,15 @@ export function appendBootMarker(db: Database, coverage: CoverageVector, now: nu
     resultStatus: "authorized",
   });
 }
-
-/**
- * The coverage that can be claimed for a window: the weakest granularity per class across every
- * boot marker at or before the window's end.
- *
- * Markers strictly AFTER the window are ignored — a binary that started later cannot vouch for what
- * was observed earlier. No covering marker yields all-`none`, i.e. claim nothing.
- *
- * An UNPARSEABLE marker contributes an all-`none` vector rather than being skipped. Skipping it
- * would let a sibling marker's richer claim stand, overstating coverage; contributing all-`none`
- * drives the weakest-merge to `none` everywhere, so the window reports `indeterminate`. This is the
- * "indeterminate, never a false zero" rule — NOT a throw, because one unreadable row must not take
- * `nimbus egress` down. (Deliberate tampering is already caught elsewhere: `source_id` is hashed,
- * so an edited marker breaks `verifyEgressChain`. The case handled here is a marker written by a
- * NEWER binary using a class or granularity this one does not know.)
- */
-export function coverageForWindow(
-  db: Database,
-  opts: { since?: number | undefined; until?: number | undefined },
-): CoverageVector {
-  const rows = listEgress(db, {});
-  const vectors: CoverageVector[] = [];
-  for (const r of rows) {
-    if (r.method !== BOOT_MARKER_METHOD) continue;
-    if (opts.until !== undefined && r.timestamp > opts.until) continue;
-    const v = r.sourceId === null ? null : parseCoverage(r.sourceId);
-    // Unreadable marker → claim nothing for every class (see doc comment).
-    vectors.push(v ?? ALL_NONE_COVERAGE);
-  }
-  return weakestCoverage(vectors);
-}
 ```
+
+`coverageForWindow` is **not** defined in this file — it lives in `egress-verify.ts`. A two-way
+import between `egress-boot-marker.ts` and `egress-verify.ts` is forbidden by
+`.dependency-cruiser.cjs`'s `no-circular` rule (`audit:boundaries`), and `coverageForWindow` needs
+`listEgress`'s row shape from `egress-verify.ts`, so it lives there instead, keyed off the
+`BOOT_MARKER_METHOD` constant this file exports. See `egress-verify.ts` for its implementation
+(`lastMarkerAtOrBefore` + `markersInRange`, both `AND source_type = 'boot'`) and doc comment (the
+since-start soundness rule, the fresh-database carve-out, and the unparseable-marker rule).
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -697,22 +653,57 @@ In `packages/gateway/src/platform/assemble.ts`, add to the imports:
 
 ```ts
 import { appendBootMarker } from "../egress/egress-boot-marker.ts";
-import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
+import { type CoverageVector, THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 ```
 
-and immediately after line 1702, `const db = openGatewaySqlite(paths.dataDir, sidecarStops);`:
+and call it from `assemblePlatformServices`, right after `openGatewaySqlite` builds `db` — **not**
+called bare, but through a small wrapper that keeps a failed append from aborting the whole gateway:
 
 ```ts
-  // I29: record what THIS binary is built to observe, before anything can emit egress. Without a
-  // covering marker `proveWindow` reports `indeterminate` rather than a false zero, so this append
-  // is what makes a clean window provable. Safe here: openGatewaySqlite ran LocalIndex.ensureSchema
-  // (assemble.ts:251), so egress_ledger (V44) exists.
-  appendBootMarker(db, THIS_BINARY_COVERAGE, Date.now());
+/**
+ * I29: append this process's boot marker WITHOUT letting a failure abort gateway startup.
+ *
+ * `appendEgressEntry` (via `readHeadHash`) deliberately THROWS on a malformed head `row_hash`
+ * (fail-closed against a corrupted chain), and a read-only/locked SQLite file throws too. Left
+ * unguarded, either condition takes the WHOLE GATEWAY down over what is, by design, a
+ * degraded-proof condition, not a fatal one — a window with no covering marker already reports
+ * `indeterminate` rather than a false zero. Worse: `egress.verify`/`nimbus egress verify` are only
+ * reachable through a running gateway, so an unbootable gateway prevents the user from even
+ * diagnosing the corruption blocking it. Swallowing the failure is never silent — it warns, naming
+ * what failed and that proofs will read `indeterminate` until the next successful boot marker.
+ */
+export function appendBootMarkerOrWarn(
+  db: Database,
+  coverage: CoverageVector,
+  now: number,
+  logger: Pick<Logger, "warn">,
+): void {
+  try {
+    appendBootMarker(db, coverage, now);
+  } catch (err) {
+    logger.warn(
+      { err },
+      "I29: failed to append the egress boot marker — egress proofs (nimbus prove / " +
+        "egress.verify) will report 'indeterminate' for any window this process observes " +
+        "until the next successful boot marker",
+    );
+  }
+}
+
+// … inside assemblePlatformServices, after `ensurePlatformDirectories` and before `db` is opened:
+const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
+// … then, right after `const db = openGatewaySqlite(paths.dataDir, sidecarStops);`:
+appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, Date.now(), syncLogger);
 ```
+
+`syncLogger`'s construction moved earlier than its original position (it used to be built after the
+boot-marker call) purely so the wrapper above has somewhere to log; nothing else about its
+construction changed.
 
 Placement matters in two directions: it must be **after** `openGatewaySqlite` (the table must exist,
 or `appendEgressEntry` throws `no such table`) and **before** any subsystem that could emit egress
-is constructed, so no row can precede the marker that describes it.
+is constructed, so no row can precede the marker that describes it. A failed append does **not**
+delay or block that ordering — assembly proceeds immediately, degraded rather than dead.
 
 - [ ] **Step 10: Verify the marker actually lands at startup**
 
@@ -749,7 +740,19 @@ git commit -m "feat(egress): per-source coverage vector and per-process boot mar
 - Consumes: `coverageForWindow` (Task 3), `isMarkerSourceType` (Task 1).
 - Produces: `type EgressCompleteness = { coverage: CoverageVector; outboundEgressEvents: number; indeterminate: boolean }`.
 
-**Breaking change, intentional:** `EgressCompleteness.tier` is removed. Its only consumers are `proveWindow`, the `egress.proveWindow` IPC handler, and `prove.ts` (Task 6). Grep before editing: `grep -rn "completeness" packages/gateway/src packages/cli/src --include=*.ts | grep -v test`.
+**NOT a breaking change — `tier` is RETAINED, additively, as a deprecated compatibility shim.**
+This step originally planned to *remove* `EgressCompleteness.tier` outright. That plan changed
+before merge: the published `@nimbus-dev/client@0.15.0`'s `validateEgressCompleteness` hard-throws
+unless a `tier` field equal to `"authorized-actions"` is present (it predates the
+`coverage`/`indeterminate` shape), so dropping the field breaks every published-client consumer —
+including nimbus-vscode — against a gateway that shipped this change. The coverage vector is the
+semantic replacement and the only thing anything in the gateway or CLI reads for a decision; `tier`
+is emitted alongside it, unread, purely for old-client wire compatibility.
+`tier: "authorized-actions"` is true today only because Phase 1 coverage is task-only
+(`THIS_BINARY_COVERAGE` has exactly one non-`"none"` class); it becomes false — and MUST be removed,
+not merely left deprecated — the moment a later phase raises another coverage class above `"none"`.
+Its only consumers are `proveWindow`, the `egress.proveWindow` IPC handler, and `prove.ts` (Task 6).
+Grep before editing: `grep -rn "completeness" packages/gateway/src packages/cli/src --include=*.ts | grep -v test`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -789,12 +792,11 @@ In `packages/gateway/src/egress/egress-verify.ts`, replace the `EgressCompletene
 export type EgressCompleteness = { tier: "authorized-actions"; outboundEgressEvents: number };
 ```
 
-with:
+with (note `coverageForWindow` is imported from nowhere — it is defined lower in this SAME file,
+`egress-verify.ts`, not in `egress-boot-marker.ts`; see the note at the end of Task 3's Step 7 for
+why):
 
 ```ts
-import type { CoverageVector } from "./egress-coverage.ts";
-import { coverageForWindow } from "./egress-boot-marker.ts";
-
 export type EgressCompleteness = {
   /** What the binaries writing into this window were built to observe (§3.6 of the annex). */
   readonly coverage: CoverageVector;
@@ -804,6 +806,12 @@ export type EgressCompleteness = {
    * evidence any egress class was being observed. NEVER report a bare zero in this state.
    */
   readonly indeterminate: boolean;
+  /**
+   * DEPRECATED additive compatibility shim — retained, not removed (see Task 4's file header
+   * above for why). Emitted ALONGSIDE `coverage`/`outboundEgressEvents`/`indeterminate`, never in
+   * place of them; nothing in the gateway or CLI reads it for a decision.
+   */
+  readonly tier: "authorized-actions";
 };
 ```
 
@@ -814,7 +822,12 @@ and in `proveWindow`, replace the `completeness` construction:
   const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
-    completeness: { coverage, outboundEgressEvents: outbound, indeterminate },
+    completeness: {
+      coverage,
+      outboundEgressEvents: outbound,
+      indeterminate,
+      tier: "authorized-actions", // deprecated compat shim — see the type's doc comment
+    },
     verify: verifyEgressChain(db),
   };
 ```
@@ -824,7 +837,9 @@ adding `COVERAGE_CLASSES` to the `egress-coverage.ts` import.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/gateway/src/egress/ && bun run typecheck`
-Expected: PASS. Typecheck will flag the `egress.proveWindow` IPC handler and `prove.ts` if they read `.tier` — fix the IPC handler now (it forwards the object; no change needed unless it destructures `tier`), and leave `prove.ts` to Task 6 **only if** typecheck still passes; otherwise fix it here.
+Expected: PASS. `tier` stays wire-compatible with `@nimbus-dev/client@0.15.0`'s
+`validateEgressCompleteness`, so neither the `egress.proveWindow` IPC handler nor `prove.ts` needs a
+breaking-change fixup for `.tier` — confirm with a grep rather than assume: `grep -rn "\.tier" packages/gateway/src packages/cli/src --include=*.ts | grep -v test`.
 
 - [ ] **Step 5: Commit**
 

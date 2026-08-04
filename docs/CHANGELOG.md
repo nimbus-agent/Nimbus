@@ -109,6 +109,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
       `--since`) is a deliberate carve-out of that rule: it only withholds the claim when a real
       ledger row precedes the ledger's first-ever boot marker, so a fresh database isn't punished
       into permanent `indeterminate` merely because `since` defaults to 0.
+  - **Fix wave 3, same day — two findings from the final pre-push review:**
+    - **`coverageForWindow`'s marker queries now require `source_type = 'boot'`, not `method` alone.**
+      Both `lastMarkerAtOrBefore` and `markersInRange` (`egress-verify.ts`) previously filtered only
+      on `method = BOOT_MARKER_METHOD`, so any ledger row that happened to carry `method='egress.boot'`
+      — a bug, or a future row class colliding with the string — would vouch for coverage regardless
+      of its actual `source_type`. Only a genuine `appendBootMarker` row (`source_type='boot'`) may
+      claim coverage now.
+    - **The startup boot-marker append no longer takes the gateway down with it.** `appendBootMarker`
+      was called bare from `assemblePlatformServices`; `appendEgressEntry` (via `readHeadHash`)
+      deliberately throws on a malformed head `row_hash` (fail-closed against chain corruption) or a
+      read-only/locked database, so either condition previously aborted gateway startup entirely —
+      worse than the degraded-proof state the design already has an honest answer for
+      (`indeterminate`), and self-defeating besides: `egress.verify`/`nimbus egress verify` are only
+      reachable through a running gateway, so an unbootable gateway blocks the user from even
+      diagnosing the corruption. `platform/assemble.ts` now calls the new `appendBootMarkerOrWarn`
+      wrapper instead: it catches the failure, logs a warning naming what failed and stating that
+      egress proofs will read `indeterminate` until the next successful boot marker, and lets
+      assembly continue. The gated-action append in `executor.ts` `gate()` is unaffected and remains
+      hard fail-closed — this change touches only the once-per-process startup marker.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
   Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
   `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a

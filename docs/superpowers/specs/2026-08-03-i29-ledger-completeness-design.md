@@ -372,8 +372,14 @@ the **weakest granularity per source class** across them. A ledger written partl
 action-scoped binary therefore reports `model: "none"` for that window — it cannot claim coverage a
 past binary never had. A window with no covering marker is `indeterminate` (§4.3).
 
-This replaces `EgressCompleteness.tier`, whose current value `"authorized-actions"` becomes the
-vector `{ task: "per-call", …rest: "none" }`.
+The coverage vector is the SEMANTIC replacement for `EgressCompleteness.tier` — its current value
+`"authorized-actions"` becomes the vector `{ task: "per-call", …rest: "none" }`, and the vector, not
+`tier`, is what the gateway and CLI actually read for any decision. `tier` itself is not removed: it
+is retained, additively, as deprecated compatibility data for `@nimbus-dev/client@0.15.0`, whose
+`validateEgressCompleteness` hard-throws without a `tier === "authorized-actions"` field (it predates
+the `coverage`/`indeterminate` shape). It stays true only while coverage remains task-only, and MUST
+be removed — not merely left deprecated — the moment a later phase raises another coverage class
+above `"none"`, at which point `"authorized-actions"` would misstate what the binary observes.
 
 ---
 

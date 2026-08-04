@@ -123,6 +123,25 @@ describe("boot marker", () => {
     expect(coverageForWindow(db, { since: 2_000, until: 3_000 })).toEqual(THIS_BINARY_COVERAGE);
   });
 
+  test("a non-boot row whose method collides with the boot-marker method does NOT contribute coverage", () => {
+    // Regression: `coverageForWindow`'s marker queries used to filter on `method = ?` alone, so
+    // ANY ledger row carrying `method='egress.boot'` — regardless of its own `source_type` — was
+    // treated as a coverage claim. Append a `task` row that reuses the boot-marker method string
+    // and assert it is ignored: the window must stay indeterminate (all-none), exactly as if no
+    // marker existed at all.
+    appendEgressEntry(db, {
+      timestamp: 500,
+      sourceType: "task",
+      sourceId: "task=per-call;session=per-call;sync=per-call;model=per-call;peer=per-call",
+      destination: "local",
+      method: "egress.boot",
+      payloadSummary: "{}",
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+    });
+    expect(coverageForWindow(db, { since: 100, until: 1_000 })).toEqual(ALL_NONE_COVERAGE);
+  });
+
   test("an unparseable marker forces all-none via the merge, even when the window's start IS covered", () => {
     // A marker this binary cannot parse: written by a NEWER gateway, or corrupted. Skipping it
     // would let the OTHER (valid, richer) marker vouch for the window — overstating coverage. A

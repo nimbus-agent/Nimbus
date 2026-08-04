@@ -198,10 +198,15 @@ type MarkerRow = { timestamp: number; source_id: string | null };
 function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
   // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — normalize so
   // callers can use a single `!== undefined` check.
+  //
+  // `AND source_type = 'boot'` is load-bearing, not redundant with `method = ?`: `method` alone
+  // would let ANY ledger row whose method happens to collide with `BOOT_MARKER_METHOD` (a bug, or
+  // a future row class reusing the string) vouch for coverage regardless of its actual class. Only
+  // a genuine `appendBootMarker` row (`source_type='boot'`) may claim coverage.
   const row = db
     .query(
       `SELECT timestamp, source_id FROM egress_ledger
-       WHERE method = ? AND timestamp <= ?
+       WHERE method = ? AND source_type = 'boot' AND timestamp <= ?
        ORDER BY timestamp DESC, id DESC LIMIT 1`,
     )
     .get(BOOT_MARKER_METHOD, ts) as MarkerRow | null;
@@ -210,10 +215,11 @@ function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
 
 /** Every boot-marker row strictly after `sinceExclusive` and at or before `until`, oldest first. */
 function markersInRange(db: Database, sinceExclusive: number, until: number): MarkerRow[] {
+  // See `lastMarkerAtOrBefore` above for why `source_type = 'boot'` must accompany `method = ?`.
   return db
     .query(
       `SELECT timestamp, source_id FROM egress_ledger
-       WHERE method = ? AND timestamp > ? AND timestamp <= ?
+       WHERE method = ? AND source_type = 'boot' AND timestamp > ? AND timestamp <= ?
        ORDER BY timestamp ASC, id ASC`,
     )
     .all(BOOT_MARKER_METHOD, sinceExclusive, until) as MarkerRow[];

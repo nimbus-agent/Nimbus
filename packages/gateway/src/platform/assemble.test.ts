@@ -1,8 +1,14 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assemblePlatformServices } from "./assemble.ts";
+import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
+import { appendEgressEntry } from "../egress/egress-ledger.ts";
+import { coverageForWindow } from "../egress/egress-verify.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { appendBootMarkerOrWarn, assemblePlatformServices } from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
@@ -12,6 +18,68 @@ describe("assemblePlatformServices (smoke)", () => {
     expect(typeof assemblePlatformServices).toBe("function");
     expect(assemblePlatformServices).toHaveLength(1);
     expect(assemblePlatformServices.constructor.name).toBe("AsyncFunction");
+  });
+});
+
+// I29 fix: a corrupted/locked ledger must degrade egress proofs to `indeterminate`, not take the
+// whole gateway down. `appendBootMarkerOrWarn` is the narrowest testable unit around the
+// unguarded `appendBootMarker` call in `assemblePlatformServices` — exercised directly here
+// against a real (in-memory) egress_ledger rather than via a full ~30s gateway boot.
+describe("appendBootMarkerOrWarn", () => {
+  let db: Database;
+  beforeEach(() => {
+    db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  });
+  afterEach(() => db.close());
+
+  it("does not throw when the ledger head row_hash is malformed, and warns naming the failure", () => {
+    // Seed one row, then corrupt its row_hash the same way egress-ledger.test.ts does — this is
+    // exactly the condition `readHeadHash` fails closed on.
+    appendEgressEntry(db, {
+      timestamp: 1,
+      sourceType: "task",
+      sourceId: "s",
+      destination: "email",
+      method: "email.send",
+      payloadSummary: "{}",
+      hitlStatus: "approved",
+      resultStatus: "authorized",
+    });
+    db.run(
+      `UPDATE egress_ledger SET row_hash = 'deadbeef' WHERE id = (SELECT MAX(id) FROM egress_ledger)`,
+    );
+
+    const warnCalls: unknown[][] = [];
+    const logger = { warn: (...args: unknown[]) => void warnCalls.push(args) };
+
+    expect(() => appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, 2_000, logger)).not.toThrow();
+
+    expect(warnCalls).toHaveLength(1);
+    const [meta, message] = warnCalls[0] as [{ err: unknown }, string];
+    expect(meta.err).toBeDefined();
+    expect(message).toMatch(/boot marker/i);
+    expect(message).toMatch(/indeterminate/i);
+
+    // No marker was appended (the append itself failed) — the window this process should have
+    // covered stays indeterminate rather than reporting a falsely clean/covered state.
+    expect(coverageForWindow(db, { since: 2_000, until: 3_000 })).toEqual({
+      task: "none",
+      session: "none",
+      sync: "none",
+      model: "none",
+      peer: "none",
+    });
+  });
+
+  it("appends normally and warns nothing when the ledger is healthy", () => {
+    const warnCalls: unknown[][] = [];
+    const logger = { warn: (...args: unknown[]) => void warnCalls.push(args) };
+
+    appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, 1_000, logger);
+
+    expect(warnCalls).toHaveLength(0);
+    expect(coverageForWindow(db, {})).toEqual(THIS_BINARY_COVERAGE);
   });
 });
 
