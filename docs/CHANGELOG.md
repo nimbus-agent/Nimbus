@@ -32,10 +32,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   intent and had always behaved as `'full'` in practice. Enforcing depth without this backfill would
   have silently truncated every existing index to 512 characters on its next sync. Three code-level
   fallbacks (`local-index.ts` ×2, `sync/scheduler.ts`) that defaulted an absent depth row to
-  `"summary"` were flipped to `"full"` for the same reason.
+  `"summary"` were flipped to `"full"` for the same reason, as was the `sync_state` insert in
+  `connectors/health.ts` — the one insert with production callers, and therefore the only path that
+  materialises a depth row for a connector added *after* this migration ran, which the backfill
+  cannot reach.
+
+  **If you deliberately chose `summary`, V49 reset it to `full` and you must re-apply it.** The
+  backfill cannot distinguish a `'summary'` you asked for from the column default nobody chose, and
+  because depth was never enforced for bodies, neither had ever behaved differently. Re-run
+  `nimbus connector reindex <name> --depth summary` for any connector you had deliberately set that
+  way; from this release it is genuinely enforced on every sync. `metadata_only` connectors are
+  untouched and need no action.
 
   **Gmail** (`connectors/_lib/gmail/api.ts`) now fetches `format=full` instead of
-  `format=metadata` — the same Gmail API request at the same 5-quota-unit cost — and walks the MIME
+  `format=metadata` — the same Gmail API request at the same 5-quota-unit cost, though *not* the
+  same bandwidth: `format=full` returns the inline part bytes, so an initial mailbox sync moves
+  substantially more data than it used to — and walks the MIME
   tree to extract text: `text/plain` is preferred by part type (not by document position), a
   `multipart/alternative` picks one representation, and a `multipart/mixed` concatenates its parts.
 
@@ -53,6 +65,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   (`string/html-plain-text-lines.ts`) rather than the existing `plainTextFromHtml`, which flattens
   every newline to a space — fine for its other four prose-only consumers, but it would have made
   the line-anchored trimmer a no-op, since the trimmer matches quote markers against whole lines.
+  Outlook is the first consumer handed a complete HTML *document* rather than a fragment, so that
+  helper also drops `<style>` / `<script>` / `<head>` sections (a Word-composed message carries
+  kilobytes of `mso-` CSS, which would otherwise land ahead of the prose and eat the body cap),
+  decodes character references (`&nbsp;` above all — Graph's `bodyPreview`, which Outlook indexed
+  before, is already decoded), and escapes a stray `<` in author prose so `"if a < b"` no longer
+  loses the rest of its line. An underscore divider is now treated as end-of-message only when a
+  quoted header block or a `>` quote actually follows it; a 10+ underscore rule is also an ordinary
+  human section separator, and treating it as unconditionally terminal deleted the rest of the
+  message. A Gmail or Outlook message whose body cannot be extracted at all (S/MIME, attachment-only)
+  keeps its provider snippet at `body_complete = 0` rather than recording an empty body as a
+  complete one, so `nimbus index rebody` can still revisit it.
 
   `REBODY_IMPROVABLE_SERVICES` (`ipc/index-rebody-rpc.ts`) grows from eleven services to thirteen,
   adding `gmail` and `outlook` in sorted position. The full-body-store connector accounting
@@ -67,7 +90,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   mailbox will notice the sync taking longer than usual just this once.
 
   **Gmail applies going forward.** `format=full` affects every message fetched from now on,
-  including new mail, so nothing further is required for the feature to work. Messages already in
+  including new mail, so nothing further is required for the feature to work — at the cost of more
+  bytes over the wire per message, most noticeably on a first sync of a large mailbox. Messages already in
   the index keep their old metadata-only snippet until they're next touched at the source or
   recovered explicitly with `nimbus index rebody --service gmail`.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**

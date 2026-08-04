@@ -1082,6 +1082,8 @@ nimbus connector reindex confluence --depth full
 
 Output reports the resolved mode and the number of items affected. The depth is persisted as the connector's default and is enforced on **every** subsequent sync, not only at `reindex` time — every connector's item-writing code path is routed through a shared depth chokepoint (`upsertIndexedItemForSync`) that coerces the row to the configured depth before it is written, so a `metadata_only` or `summary` connector never accumulates full bodies between explicit reindexes.
 
+**Deepening is not retroactive.** Lowering the depth rewrites existing rows immediately (bodies are stripped or clamped in place), but **raising** it does not bring back text that was never stored: `--depth full` on a connector that has been running at `summary` or `metadata_only` reports `0` items affected and switches the setting for future syncs only. The Gateway has no copy of the discarded bodies to restore from — they have to be fetched again. To recover them, either force a fresh sync (`nimbus connector sync <name> --full`, which re-fetches from scratch rather than resuming the stored cursor) or run `nimbus index rebody --service <name>` for the connectors that support it. This asymmetry has always been in the code; it becomes visible for the first time now that depth is actually enforced between reindexes.
+
 ---
 
 ## Configuration
