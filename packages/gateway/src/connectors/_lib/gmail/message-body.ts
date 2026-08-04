@@ -1,4 +1,4 @@
-import { plainTextFromHtml } from "../../../string/html-plain-text.ts";
+import { plainTextFromHtmlLines } from "../../../string/html-plain-text-lines.ts";
 import type { MessagePayload } from "./api.ts";
 
 /** Depth bound — a malformed or hostile tree must not be able to spin. */
@@ -99,5 +99,5 @@ export function gmailMessageBodyText(payload: MessagePayload): string {
   if (found.html.length === 0) {
     return "";
   }
-  return plainTextFromHtml(found.html.join("\n"));
+  return plainTextFromHtmlLines(found.html.join("\n"));
 }

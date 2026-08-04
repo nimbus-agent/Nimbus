@@ -631,6 +631,69 @@ describe("createGmailSyncable", () => {
     expect(row?.body_complete).toBe(1);
   });
 
+  test("indexes an HTML-only Gmail body with the quoted tail stripped", async () => {
+    // The html fallback in `gmailMessageBodyText` used to flatten everything
+    // through `plainTextFromHtml`, which collapses all newlines into a single
+    // space — `stripQuotedTail`'s line-anchored markers can never match a
+    // single-line body. It now routes through the line-preserving
+    // `plainTextFromHtmlLines` instead.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const htmlBody =
+      "<p>Agreed, ship Tuesday.</p><p>> On Mon, Ana wrote:</p><p>> the whole thread</p>";
+    const encodedBody = Buffer.from(htmlBody, "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m2", threadId: "th2" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m2")) {
+        return new Response(
+          JSON.stringify({
+            id: "m2",
+            threadId: "th2",
+            snippet: "Agreed, ship Tuesday...",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "text/html",
+              headers: [
+                { name: "Subject", value: "Ship plan" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              body: { data: encodedBody },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db.query("SELECT body FROM item WHERE id = ?").get(itemPrimaryKey("gmail", "m2")) as
+      | { body: string }
+      | undefined;
+    expect(row?.body).toBe("Agreed, ship Tuesday.");
+  });
+
   test("requests format=full, not format=metadata", async () => {
     const { ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
