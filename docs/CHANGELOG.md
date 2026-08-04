@@ -92,7 +92,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   (2026-08-02 entry below, most recently updated 2026-08-03) moves from 12 to **14 full body @
   16 KiB** (the twelve from 2026-08-03 plus Gmail and Outlook, both already in `PROSE_HEAVY_TYPES`);
   the partial (1) and inert (2) counts are unchanged. No new security invariant. Schema **V49**.
-  Design: `docs/superpowers/specs/2026-08-04-index-depth-and-email-bodies-design.md`.
+  Design + plan archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-08-04-index-depth-and-email-bodies-design.md`.
 
   **Outlook resets itself once.** The cursor prefix move means the next scheduled Outlook sync
   performs one full mailbox delta with `body` requested on every page, rather than the usual
@@ -281,8 +282,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   unchanged; this entry is the current statement of that accounting, superseding the (10) figure in
   the 2026-08-02 entry below. This also makes true, as of 2026-08-03, a previously-false claim in
   [`docs/roadmap.md`](./roadmap.md) Wave 5: `nimbus glossary` mining "Confluence/Notion pages" had
-  nothing to mine before this landed. No new security invariant. Design:
-  `docs/superpowers/specs/2026-08-03-notion-confluence-full-body-design.md`.
+  nothing to mine before this landed. No new security invariant. Design + plan archived on
+  delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-08-03-notion-confluence-full-body-design.md`.
 - **2026-08-02 — `nimbus index rebody` — recover full bodies for already-indexed items.**
   A backfill for the full-body store below: re-fetches item bodies for rows the V48 migration (or
   a connector not yet migrated) left with `body_complete = 0`, by clearing a per-connector sync
@@ -324,8 +326,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   | **Inert, still 512 (2)** | Bitbucket — emits only `type: "pr"`, while `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which no connector emits (dead configuration); `github:pr` — never added to `PROSE_HEAVY_TYPES` (only `github:issue` was), though the `body:` swap in `github-sync.ts` touches both `upsertPr` and `upsertFromIssue` |
 
   Schema **V48**. No new security invariant — this widens a storage field and introduces no new
-  chokepoint. Spec: `docs/superpowers/specs/2026-08-02-full-body-store-design.md`; plan:
-  `docs/superpowers/plans/2026-08-02-full-body-store.md`. (#1023)
+  chokepoint. Spec + plan archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-08-02-full-body-store-design.md`. (#1023)
 
   **Superseded 2026-08-03:** this (10) accounting was correct for what shipped on 2026-08-02; the
   2026-08-03 entry above brought Notion and Confluence into the full-body group, moving the live
@@ -359,8 +361,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   because no connector indexes a corroborating change's file paths — so the confidence ceiling is
   **0.86, not 1.0**, and the brief never presents a full-marks scale a user cannot reach.
 
-  Spec: `docs/superpowers/specs/2026-08-01-nimbus-decisions-design.md`; plan:
-  `docs/superpowers/plans/2026-08-01-nimbus-decisions.md`.
+  Spec + plan archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-08-01-nimbus-decisions-design.md`.
 - **2026-08-01 — `--json` implemented on the six commands that only documented it.** `nimbus status`,
   `connector list`, `db verify`, `db repair`, `config list` and `audit` parsed no `--json` at all —
   the flag reached only the top-level banner suppressor in `index.ts`, so a documented `| jq`
@@ -425,9 +427,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   a general "consonant + s" rule, which was measured to break `"docs" → "doc"` and the function's own
   headline example, `"SLOs" → "slo"`. `depluralize` still strips a trailing plural `s` outside that
   narrow exemption, so `"https"` still normalizes to `"http"` and `"kubernetes"` to `"kubernete"` —
-  that needs an acronym allowlist, which is separate work, not attempted here. Spec:
-  `docs/superpowers/specs/2026-07-31-nimbus-glossary-manual-authoring-design.md`; plan:
-  `docs/superpowers/plans/2026-07-31-nimbus-glossary-manual-authoring.md`.
+  that needs an acronym allowlist, which is separate work, not attempted here. Spec + plan
+  archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-07-31-nimbus-glossary-manual-authoring-design.md`.
 
 - **2026-07-31 — `nimbus glossary --refresh` no longer hangs when the gateway dies mid-pass.**
   `@nimbus-dev/client` bumped `^0.14.0` → `^0.15.0` for its new `IPCClient.onClose`, and
@@ -468,8 +470,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   disappearance is never silent even past that cap. Known limit
   added: the abort signal used at gateway shutdown does not propagate into the LLM provider's
   underlying HTTP request, which keeps running until the provider's own 120s timeout or process
-  exit. Spec: `docs/superpowers/specs/2026-07-31-nimbus-glossary-llm-wiring-design.md`; plan:
-  `docs/superpowers/plans/2026-07-31-nimbus-glossary-llm-wiring.md`.
+  exit. Spec + plan archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-07-31-nimbus-glossary-llm-wiring-design.md`.
 
 - **2026-07-30 — `nimbus glossary` — implicit-knowledge glossary.**
   A tenth built-in read-only agent plus a background extraction pass that mines domain
@@ -501,8 +503,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   available. Wiring the LLM into the scheduled pass, and adding a snippet→LLM upgrade path, are both
   follow-ups. ADRs are mined only from Obsidian-indexed
   roots (there is no generic markdown item type), and commit messages are mined from the subject
-  line only. Spec: `docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md`; plan:
-  `docs/superpowers/plans/2026-07-30-nimbus-glossary.md`.
+  line only. Spec + plan archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md`.
 
 - **2026-07-30 — macOS `nimbus init` can no longer hang on a locked keychain, issue #932.**
   The remaining half of the first-run hang. With #928 fixed the boot log still stopped dead, and a

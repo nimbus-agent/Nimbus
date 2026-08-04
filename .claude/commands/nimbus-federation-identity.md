@@ -75,7 +75,7 @@ Phase 6 Slice 6a (2026-06-11) added an **asker-side fan-out layer** on top of th
 
 **`federation/peer-fanout.ts`** — the shared helper that iterates `PeerRegistry`, dispatches `federation.query` or `federation.expertise` to each peer in parallel (per-peer timeout + error isolation), and merges the results. Consumed only by the three new cross-colleague agents (`ghost`, `conflicts`, `huddle`).
 
-**V38 `federation_known_namespaces`** — asker-side SQLite cache (added by the V38 migration, `CURRENT_SCHEMA_VERSION = 38`) recording which remote namespaces a successful federated query touched. Lets the agents default to an ambient sweep when `--namespace` is omitted. Rows are pruned when a `no_grant` response is received or a peer is unpaired. This table lives on the **asker** side only — it carries no secret data and is not subject to I17 (which governs the answering side).
+**V38 `federation_known_namespaces`** — asker-side SQLite cache (added by the V38 migration, which set `CURRENT_SCHEMA_VERSION` to 38 at the time — the constant has since moved on; check `index/local-index.ts` for its current value) recording which remote namespaces a successful federated query touched. Lets the agents default to an ambient sweep when `--namespace` is omitted. Rows are pruned when a `no_grant` response is received or a peer is unpaired. This table lives on the **asker** side only — it carries no secret data and is not subject to I17 (which governs the answering side).
 
 **No new invariant for Slice 6a.** The answering side remains fully gated by I17 (`query-gate.ts`). The fan-out adds asker-side orchestration only.
 

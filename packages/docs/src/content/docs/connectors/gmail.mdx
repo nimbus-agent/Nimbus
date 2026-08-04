@@ -3,7 +3,7 @@ title: Gmail
 description: Index Gmail messages and threads, and send/draft mail through HITL-gated write tools.
 ---
 
-The Gmail connector indexes message metadata into the local SQLite index and exposes read tools for labels, messages, and threads, plus three HITL-gated write tools for drafting and sending mail.
+The Gmail connector indexes message headers **and message bodies** into the local SQLite index and exposes read tools for labels, messages, and threads, plus three HITL-gated write tools for drafting and sending mail.
 
 ---
 
@@ -11,6 +11,23 @@ The Gmail connector indexes message metadata into the local SQLite index and exp
 
 - **Service id:** `gmail`
 - **Item types:** `email`
+- **Body:** the message body, up to **16 KiB**. The sync walks the MIME tree of a `format=full`
+  message and prefers the `text/plain` part, falling back to `text/html` converted to plain text;
+  quoted reply chains and signature blocks are stripped. If no body part can be extracted (an
+  encrypted or malformed message, or one exceeding the walker's depth/part bounds) the connector
+  falls back to Gmail's short `snippet`, which stays searchable but is marked incomplete
+  (`body_complete = 0`) rather than claiming to be the whole message.
+- **Attachments are never fetched** — attachment bytes never reach the index.
+
+:::note[Bandwidth, not quota]
+Fetching bodies uses `format=full` instead of `format=metadata`. That is the same Gmail API request
+at the same 5-quota-unit cost, but it returns the inline part bytes — so an initial mailbox sync
+moves substantially more data than it did before this was enabled.
+:::
+
+Indexing depth is enforced on **every** sync, not just at `reindex` time. A connector set to
+`summary` clamps the body to 512 characters; `metadata_only` suppresses it entirely. See
+[Indexing depth](/user-guide/connectors/#indexing-depth).
 
 ## Authenticate
 

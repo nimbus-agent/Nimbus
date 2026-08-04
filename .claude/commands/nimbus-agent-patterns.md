@@ -2,7 +2,7 @@
 name: nimbus-agent-patterns
 description: >
   Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
-  janitor, preflight, why): file location, the
+  janitor, preflight, why, glossary, decisions): file location, the
   read-only/HITL-free shape invariant, parallel sub-agent decomposition via
   AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
@@ -16,7 +16,22 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+
+### Implicit-knowledge agents (Spine S1 — Local Brain)
+
+Three agents mine knowledge nobody wrote down, from content already in the index. They are read-only like every other built-in agent, but they differ from the Phase 5 briefs in one structural way: **two of them own a persisted extraction pass plus a watermark table**, so they are not purely request-scoped.
+
+**`why`** — see the section below; six-lane provenance, no persisted pass.
+
+**`glossary`** (`packages/gateway/src/agents/glossary.ts`) — IPC `agents.glossary`, CLI `nimbus glossary [<term>] [--refresh|--rebuild] [--json]`. Backed by `glossary_term` + the single-row `glossary_pass_state` watermark (**V45**; **V46** widened `definition_source` to admit `'manual'`). Consolidation uses the local LLM when `[glossary].use_llm` is true and one is available; without one it falls back to a verbatim snippet definition that a later pass automatically re-queues and upgrades. `[glossary.terms]` / `[glossary.synonyms]` in `nimbus.toml` let a human author or correct a term — `definition_source='manual'` wins on collision, sorts first, and is exempt from the sweep's demotion and veto (but not its statistics refresh); removing the config entry demotes rather than deletes.
+
+**`decisions`** (`packages/gateway/src/agents/decisions.ts`) — IPC `agents.decisions`, CLI `nimbus decisions [--since <duration>] [--service <name>] [--json]`. Backed by `decision_record` + `decision_evidence` + `decision_pass_state` (**V47**), fed by a debounced post-sync pass (discover → extract → corroborate). Confidence is scored deterministically from corroborating evidence already in the relationship graph — **never** from a model's self-report.
+
+**Two honesty rules these agents established, worth copying:**
+
+1. **State the recall limit in the brief, not just the docs.** `decisions` reports a per-brief truncated-source count keyed on `body_complete = 0` (`N of M source(s) … indexed with a truncated body`) and stays silent when nothing is truncated — it does not carry a standing disclaimer that readers learn to ignore.
+2. **Never present a full-marks scale the user cannot reach.** `migration`/`iac` evidence is in the V47 schema but no connector indexes changed-file paths, so the confidence ceiling is **0.86, not 1.0** — and the brief says so.
 
 ### Cross-Colleague Agents (Phase 6 Slice 6a)
 

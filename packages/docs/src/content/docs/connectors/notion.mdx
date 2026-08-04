@@ -3,7 +3,7 @@ title: Notion
 description: Index Notion pages and databases and act on pages, blocks, and comments via HITL-gated write tools.
 ---
 
-The Notion connector indexes pages into the local SQLite index and exposes read tools for pages, databases, blocks, and comments, plus four HITL-gated write tools for creating pages, appending blocks, and posting comments.
+The Notion connector indexes pages — titles **and full page bodies** — into the local SQLite index and exposes read tools for pages, databases, blocks, and comments, plus four HITL-gated write tools for creating pages, appending blocks, and posting comments.
 
 ---
 
@@ -11,6 +11,21 @@ The Notion connector indexes pages into the local SQLite index and exposes read 
 
 - **Service id:** `notion`
 - **Item types:** `page`
+- **Body:** the page's block text, up to **16 KiB**. Fetching a body costs an extra API call per
+  page, so an initial workspace sync is meaningfully slower and more quota-hungry than a
+  title-only one.
+
+:::note[A page whose body fetch fails is not retried automatically]
+If a page's block fetch errors (a 403 on a page the integration cannot read, say), the page is still
+indexed — with its title and no body — and the sync watermark still advances past it. That is
+deliberate: pinning the watermark below one permanently-unreadable page would re-walk the entire
+workspace on every sync, forever. Such a page is re-examined only when it is edited again in Notion,
+or when you run `nimbus index rebody --service notion` to clear the watermark and force a full
+re-walk.
+:::
+
+Indexing depth is enforced on **every** sync, not just at `reindex` time. See
+[Indexing depth](/user-guide/connectors/#indexing-depth).
 
 ## Authenticate
 

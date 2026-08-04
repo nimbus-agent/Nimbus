@@ -3,7 +3,7 @@ title: Confluence
 description: Index Confluence pages and blog posts and read + write content across spaces. Cloud only.
 ---
 
-The Confluence connector indexes pages into the local SQLite index and exposes read tools across pages, blog posts, comments, and spaces, plus a small set of HITL-gated write tools for creating and updating content. Confluence Cloud only.
+The Confluence connector indexes pages — titles **and full page bodies** — into the local SQLite index and exposes read tools across pages, blog posts, comments, and spaces, plus a small set of HITL-gated write tools for creating and updating content. Confluence Cloud only.
 
 ---
 
@@ -11,6 +11,16 @@ The Confluence connector indexes pages into the local SQLite index and exposes r
 
 - **Service id:** `confluence`
 - **Item types:** `page`
+- **Body:** the page's storage-format content converted to plain text, up to **16 KiB**.
+
+:::note[The initial sync reaches back 30 days, not the whole space]
+Confluence's first sync indexes pages modified in the last **30 days**. Running
+`nimbus index rebody --service confluence` re-fetches bodies within that same window — it is not an
+account-wide backfill, so pages older than the window stay body-less until they are edited.
+:::
+
+Indexing depth is enforced on **every** sync, not just at `reindex` time. See
+[Indexing depth](/user-guide/connectors/#indexing-depth).
 
 ## Authenticate
 

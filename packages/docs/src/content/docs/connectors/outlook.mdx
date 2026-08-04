@@ -3,7 +3,7 @@ title: Outlook
 description: Index Outlook mail and read mail / calendar / contacts. Tools register conditionally on granted Microsoft Graph scopes.
 ---
 
-The Outlook connector indexes mail messages into the local SQLite index and exposes read tools across mail, calendar, and contacts, plus three HITL-gated write tools for sending mail and creating / deleting calendar events.
+The Outlook connector indexes mail messages — headers **and message bodies** — into the local SQLite index and exposes read tools across mail, calendar, and contacts, plus three HITL-gated write tools for sending mail and creating / deleting calendar events.
 
 Tools are **registered conditionally** based on the granted Microsoft Graph scopes — if a tool's required scope is not in `MICROSOFT_OAUTH_SCOPES`, it is not registered and the agent cannot call it.
 
@@ -13,6 +13,15 @@ Tools are **registered conditionally** based on the granted Microsoft Graph scop
 
 - **Service id:** `outlook`
 - **Item types:** `email` (sync only indexes mail; calendar and contacts are MCP-only surfaces)
+- **Body:** the message body, up to **16 KiB**. The sync `$select`s Graph's `body` alongside
+  `bodyPreview`, converts HTML to plain text, and strips quoted reply chains and signature blocks.
+  A message with no extractable body falls back to Graph's ~255-character `bodyPreview`, which stays
+  searchable but is marked incomplete (`body_complete = 0`) rather than claiming to be the whole
+  message.
+- **Attachments are never fetched** — attachment bytes never reach the index.
+
+Indexing depth is enforced on **every** sync, not just at `reindex` time. See
+[Indexing depth](/user-guide/connectors/#indexing-depth).
 
 ## Authenticate
 

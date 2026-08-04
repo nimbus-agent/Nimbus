@@ -108,8 +108,8 @@ a violation of a rule the review layer had just been taught.
 
 ## Sub-programs
 
-Design of record:
-`superpowers/specs/2026-07-23-org-infrastructure-program-design.md`.
+Design of record (archived on delivery — read via
+`git show 06c6a144:docs/superpowers/specs/2026-07-23-org-infrastructure-program-design.md`).
 
 | | Sub-program | Status | Gate |
 | --- | --- | --- | --- |
@@ -293,7 +293,8 @@ moves to P6).
   have been exercised before now, since the workflow never ran on `Nimbus`; the
   first real external PR tests it.
 - **Deferred:** CCLA employee-roster automation; private repos; retroactive
-  signatures. See `docs/superpowers/specs/2026-07-24-cla-design.md`.
+  signatures. Design archived on delivery — read via
+  `git show dd98484b:docs/superpowers/specs/2026-07-24-cla-design.md`.
 - **Robustness follow-up — CLOSED (2026-07-26, in P2 Phase 1):**
   `check-cla-coverage` used to treat any per-repo `gh` failure as "cla.yml
   absent", so a transient 5xx/rate-limit would false-red until the next run.
@@ -719,8 +720,8 @@ was genuinely missing was the *review* layer, in two halves.
 ### P5 progress log
 
 **Both specified gates are delivered and green in the sweep (2026-07-27, run
-30231918767).** They shipped in #845 alongside the batch spec
-`docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
+30231918767).** They shipped in #845 alongside the batch spec, archived on delivery — read via
+`git show dd98484b:docs/superpowers/specs/2026-07-26-p5-p3-infra-batch-design.md`.
 
 - **Delivered — `audit:secret-inventory` (#845).** Asserts every secret this
   repo's workflows consume appears in BOTH inventories:
