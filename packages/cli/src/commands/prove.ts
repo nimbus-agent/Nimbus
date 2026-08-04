@@ -28,7 +28,6 @@ type ProveResult = {
   verify: VerifyResult;
   receipt?: { sigB64: string; pubkeyB64: string; digest: string };
 };
-type Head = { head: string; count: number };
 
 /** Friendlier display name for a coverage class; classes without an entry print their raw name. */
 const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
@@ -203,27 +202,40 @@ export async function runEgressReport(
   }
 }
 
-/** `nimbus prove "<query>"` — snapshot head, run the query, print the egress diff (before/after). */
+/** `nimbus prove "<query>"` — snapshot a time window around the query, print the egress delta. */
 export async function runProve(args: string[]): Promise<void> {
   const sign = args.includes("--receipt") || args.includes("--sign");
   const query = args.find((a) => !a.startsWith("--"));
   await withConsentIpc(async (client) => {
-    const before = await client.call<Head>("egress.head", {});
+    const since = Date.now();
     if (query !== undefined && query !== "") {
       // The blocking ask path (mirrors `nimbus ask`): agent.invoke runs the query so the ledger head
       // advances if (and only if) the agent dispatches a real outbound action.
       await client.call("agent.invoke", { input: query, stream: false });
     }
-    const after = await client.call<Head>("egress.head", {});
-    const delta = after.count - before.count;
-    const window = await client.call<ProveResult>("egress.proveWindow", {});
+    const until = Date.now();
+    // `egress.proveWindow({ since, until })` — NOT `egress.head` before/after — so the headline
+    // uses the SAME counting rule as the report below: authorized, non-marker rows only. A raw
+    // `head.count` diff would also count blocked rows, boot/degraded markers, and any concurrent
+    // append from another session, silently inflating the number this command exists to keep
+    // honest.
+    //
+    // RESIDUAL LIMITATION: this is a TIME window, not a query-correlation id. There is no per-row
+    // field tying an egress_ledger row to the query that caused it, so a concurrent append from
+    // another gateway session (another CLI invocation, another agent run, a background sync) that
+    // lands inside [since, until] is counted here too, attributed to a query that did not cause
+    // it. This command does not — and structurally cannot, without a correlation id threaded
+    // through the executor and stored per row — prove that the counted egress was CAUSED BY this
+    // query, only that authorized, non-marker egress was appended during the time this query ran.
+    const window = await client.call<ProveResult>("egress.proveWindow", { since, until });
+    const delta = window.completeness.outboundEgressEvents;
     console.log(
       formatProveResult({
         delta,
         completeness: window.completeness,
         chainOk: window.verify.ok,
-        // `delta` is the true before/after head-count diff for THIS query — the only number in
-        // this file that scope legitimately applies to.
+        // `delta` is the authorized, non-marker row count for the [since, until] window this query
+        // ran in — the same counting rule `runEgressReport` uses below, just windowed narrower.
         label: "during this query",
       }),
     );

@@ -208,6 +208,51 @@ describe("replayRecipe — per-step classification", () => {
     expect(calls).toBe(0);
   });
 
+  // The guard forbids THREE own-property names (FORBIDDEN_PARAM_KEYS), not just `__proto__` — the
+  // above test alone leaves `constructor` and `prototype` unexercised. Parameterised so all three
+  // share one assertion shape and a regression on any of them is unambiguous about which key broke.
+  test.each([
+    ["__proto__", '{"id":"1","__proto__":{"isAdmin":true}}'],
+    ["constructor", '{"id":"1","constructor":{"isAdmin":true}}'],
+    ["prototype", '{"id":"1","prototype":{"isAdmin":true}}'],
+  ])(
+    "forbidden key %s anywhere in params → skipped-invalid-params, executor NEVER called",
+    async (_label, json) => {
+      let calls = 0;
+      // JSON.parse, not an object literal — see the comment on the `__proto__`-only test above for
+      // why that distinction matters for `__proto__` specifically; kept consistent for all three.
+      const polluted: unknown = JSON.parse(json);
+      const report = await replayRecipe("s1", [step("gmail_get", "ok", polluted)], {
+        isReadOnly: readOnly,
+        run: async () => {
+          calls++;
+          return { kind: "ran", ok: true };
+        },
+      });
+      expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+      expect(calls).toBe(0);
+    },
+  );
+
+  test("params tree deeper than MAX_PARAM_DEPTH → skipped-invalid-params, executor NEVER called", async () => {
+    let calls = 0;
+    // MAX_PARAM_DEPTH is 32; nest one level past it so it is the walk's depth ceiling — not a
+    // forbidden key — that triggers the rejection.
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 33; i++) {
+      deep = { nested: deep };
+    }
+    const report = await replayRecipe("s1", [step("gmail_get", "ok", deep)], {
+      isReadOnly: readOnly,
+      run: async () => {
+        calls++;
+        return { kind: "ran", ok: true };
+      },
+    });
+    expect(report.steps[0]?.status).toBe("skipped-invalid-params");
+    expect(calls).toBe(0);
+  });
+
   test("undefined params are valid — a no-argument read tool still runs", async () => {
     let received: unknown = "never called";
     // Built inline, not via `step()`: that helper defaults `params` to `{}`, so passing

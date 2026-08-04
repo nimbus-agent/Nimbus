@@ -4,6 +4,8 @@
 > claims and what `D22` enforces, enumerates every bypass, and proposes phased remediation. One
 > finding exceeds record-honesty and has its own immediate-mitigation section.
 
+<!-- -->
+
 > ## ⚠️ STALE IN PART — re-verified against `8d663237` on 2026-08-03
 >
 > **The `share.replay` execution risk described below is no longer live.** Four of the five

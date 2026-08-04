@@ -11,13 +11,25 @@ import type {
   PlannedAction,
 } from "./types.ts";
 
-function deps(over: { approve?: boolean; onDispatch?: () => void; sink?: EgressSink }): {
+function deps(over: { approve?: boolean; onDispatch?: () => void }): {
   consent: ConsentChannel;
   audit: AuditSink;
   connectors: ConnectorDispatcher;
+  /** A REAL recording sink, wired to `appended` below — pass this to `ToolExecutor` to observe appends. */
+  sink: EgressSink;
+  /**
+   * Populated ONLY by `sink.append` above. If a test constructs its `ToolExecutor` with a
+   * DIFFERENT sink (e.g. `NULL_EGRESS_SINK`), this array staying empty proves that other sink's
+   * behavior, not merely that nothing was wired to observe it.
+   */
   appended: EgressEntry[];
 } {
   const appended: EgressEntry[] = [];
+  const sink: EgressSink = {
+    append: (e) => {
+      appended.push(e);
+    },
+  };
   const consent: ConsentChannel = {
     requestApproval: async () => over.approve ?? true,
   };
@@ -28,7 +40,7 @@ function deps(over: { approve?: boolean; onDispatch?: () => void; sink?: EgressS
       return { ok: true };
     },
   };
-  return { consent, audit, connectors, appended };
+  return { consent, audit, connectors, sink, appended };
 }
 
 describe("I29 — egress ledger append-before-dispatch (executor wiring)", () => {
@@ -85,10 +97,29 @@ describe("I29 — egress ledger append-before-dispatch (executor wiring)", () =>
     expect(dispatched.count).toBe(0);
   });
 
+  // POSITIVE CONTROL for the NULL_EGRESS_SINK test below: proves `d.appended` staying empty is a
+  // meaningful assertion — i.e. that it IS capable of failing — by wiring the SAME `deps()`-built
+  // recording sink (`d.sink`) into the executor on the same code path and observing a real append.
+  // Without this control, an accidentally-disconnected `appended` array would make the
+  // NULL_EGRESS_SINK test pass vacuously even with a real sink wired in by mistake.
+  test("positive control — with a real recording sink, execute() DOES append", async () => {
+    const d = deps({});
+    const exec = new ToolExecutor(d.consent, d.audit, d.connectors, undefined, d.sink);
+    const res = await exec.execute({ type: "search.run", payload: {} });
+    expect(res.status).toBe("ok");
+    expect(d.appended).toHaveLength(1);
+    expect(d.appended[0]?.resultStatus).toBe("authorized");
+  });
+
   test("with NULL_EGRESS_SINK, the executor still gates + dispatches (no ledger row recorded)", async () => {
     const d = deps({});
     const exec = new ToolExecutor(d.consent, d.audit, d.connectors, undefined, NULL_EGRESS_SINK);
     const res = await exec.execute({ type: "search.run", payload: {} });
     expect(res.status).toBe("ok");
+    // d.sink (the recording sink built by deps()) was never passed to the executor above — it was
+    // given NULL_EGRESS_SINK instead — so d.appended must stay empty. The positive control test
+    // above proves this assertion is capable of failing (i.e. that `appended` really is connected
+    // to a sink the executor can write through).
+    expect(d.appended).toEqual([]);
   });
 });

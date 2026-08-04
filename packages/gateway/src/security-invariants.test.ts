@@ -1241,10 +1241,33 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(src).toContain("matches the literal string");
   });
 
-  test("the egress append symbol is NOT referenced outside egress/* and executor.ts", async () => {
-    // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
-    const exec = await read("packages/gateway/src/engine/executor.ts");
-    expect(exec).toContain("EgressSink");
+  test("appendEgressEntry( is called only from files under packages/gateway/src/egress/", async () => {
+    // A source scan of the CALL form, not the bare identifier: matching `appendEgressEntry\(`
+    // (with the open paren) means an import (`import { appendEgressEntry } from ...`) or a
+    // comment mentioning the name cannot satisfy — or falsely trip — this guard. Only an actual
+    // invocation counts. Mirrors the production D22 static audit's scope
+    // (`checkEgressChokepointConfinement` in check-nimbus-invariants.ts), which also exempts
+    // `.test.ts` files — egress-adjacent tests (e.g. `ipc/egress-rpc.test.ts`) legitimately call
+    // it directly to seed fixture rows.
+    const dir = resolve(REPO_ROOT, "packages/gateway/src");
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    const offenders: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) {
+        continue;
+      }
+      const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
+      const abs = resolve(parentDir, entry.name);
+      const relFromGatewaySrc = abs
+        .slice(dir.length + 1)
+        .split("\\")
+        .join("/");
+      const contents = await readFile(abs, "utf8");
+      if (contents.includes("appendEgressEntry(") && !relFromGatewaySrc.startsWith("egress/")) {
+        offenders.push(relFromGatewaySrc);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

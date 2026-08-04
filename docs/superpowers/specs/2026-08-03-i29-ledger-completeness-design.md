@@ -27,7 +27,7 @@
 
 I29 states that every gated action appends one `egress_ledger` row before `connectors.dispatch`, and D22 confines `connectors.dispatch` to a single call site. Both hold. Verified on `8d663237`:
 
-```
+```text
 $ grep -rn "connectors\.dispatch" packages/gateway/src --include=*.ts | grep -v "\.test\.ts"
 packages/gateway/src/engine/executor.ts:318:      const result = await this.connectors.dispatch(action);
 ```
@@ -36,7 +36,7 @@ The problem is not that the chokepoint leaks. It is that **the chokepoint is not
 
 `nimbus prove "<query>"` (`packages/cli/src/commands/prove.ts:147`) prints:
 
-```
+```text
 outbound egress events during this query: 0 ✓
 ```
 
@@ -208,8 +208,11 @@ Test hazard, mitigated: a module-global is a known contamination source in this 
 
 > **Rewritten in reconciliation.** The `net:`/`local:` prefix scheme originally proposed here is
 > **withdrawn**. The spec of record freezes a closed union up front and states the reason plainly:
-> `source_type` is BLAKE3-committed, so a later rename is a chain break rather than a refactor, and
-> incremental widening is called out by name as a thing not to do. This annex adds no members.
+> a `source_type` value written today is permanent IN THE DATA (`verifyEgressChain` recomputes each
+> row's hash from that row's own stored column values, so widening the union invalidates no existing
+> row — it is not a chain break), so the vocabulary must be chosen deliberately, and marker-exclusion
+> (`isMarkerSourceType`) depends on the set being closed. Incremental widening is called out by name
+> as a thing not to do. This annex adds no members.
 
 The union is the spec of record's, defined in its Phase 1, **plus the two marker members admitted
 by the decision in §3.3.2**:
@@ -228,7 +231,10 @@ type EgressSourceType =
   | "degraded"; // lost-append recovery marker
 ```
 
-Eight members, frozen. Widening this later is a chain break, not a refactor.
+Eight members, frozen. Widening this later is not a chain break — `verifyEgressChain` recomputes
+row hashes from stored column values, so a ninth member invalidates no existing row — but a
+`source_type` value written today is permanent in the data, and `isMarkerSourceType` depends on the
+set being closed, so the vocabulary must be chosen deliberately, not extended casually.
 
 The `fetch` modality maps onto it without additions:
 
@@ -626,7 +632,7 @@ The verified `fetch`-modality inventory (§1.1–1.2), the pre-existing prune mi
 
 | Decision | Outcome | Consequence |
 |---|---|---|
-| Boot/degraded marker members (§3.3.2) | **Admit them.** The frozen union is eight members: `task`, `prune`, `session`, `sync`, `model`, `peer`, `boot`, `degraded`. | Marker exclusion is type-level, not a `method`-string match. Phase 1 must land all eight; a ninth is a chain break. |
+| Boot/degraded marker members (§3.3.2) | **Admit them.** The frozen union is eight members: `task`, `prune`, `session`, `sync`, `model`, `peer`, `boot`, `degraded`. | Marker exclusion is type-level, not a `method`-string match. Phase 1 must land all eight; a ninth is not a chain break (row hashes are recomputed from stored values), but it is a permanent, deliberate addition to a closed, data-permanent vocabulary. |
 | How the sink reaches leaf functions (§3.2.2) | **Thread it.** Explicit `EgressSink` parameter at each subsystem's construction boundary; no module-global, no `AsyncLocalStorage`. | Most missing-sink bugs become compile errors (§4.3 shrinks accordingly). `platform/assemble.ts` carries the wiring; `egressFetch`/`recordEgress` take the sink as their first argument. |
 
 Nothing in this annex is now blocked. Phase 1 can be planned against the eight-member union, and

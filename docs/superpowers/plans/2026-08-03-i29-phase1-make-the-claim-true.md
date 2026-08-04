@@ -4,7 +4,7 @@
 
 **Goal:** Make `nimbus prove` stop overstating what the egress ledger observed — freeze the `source_type` union, require the sink, replace the scalar tier with a per-source coverage vector, and kill the false `0 ✓` — **without adding any new egress coverage.**
 
-**Architecture:** Truth before coverage. Every change here makes the *existing* claim honest; nothing new is instrumented. A per-process boot marker records what the running binary was built to observe, so a window with no covering marker reports `indeterminate` instead of a clean zero. The `source_type` union is frozen at eight members in one commit because `source_type` is BLAKE3-committed — widening it later is a chain break, not a refactor.
+**Architecture:** Truth before coverage. Every change here makes the *existing* claim honest; nothing new is instrumented. A per-process boot marker records what the running binary was built to observe, so a window with no covering marker reports `indeterminate` instead of a clean zero. The `source_type` union is frozen at eight members in one commit because a `source_type` value written today is permanent in the data — `verifyEgressChain` recomputes row hashes from stored column values, so widening the union later invalidates no existing row, but marker-exclusion (`isMarkerSourceType`) depends on the set being closed, so the vocabulary must be chosen deliberately up front.
 
 **Tech Stack:** Bun 1.2+, TypeScript 6.x strict, `bun:sqlite`, `bun:test`, Biome.
 
@@ -43,11 +43,13 @@ Named explicitly so no task drifts into them: instrumenting `router.ts`/`openai-
 ### Task 1: Freeze the `source_type` union
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/egress-source-type.ts`
 - Create: `packages/gateway/src/egress/egress-source-type.test.ts`
 - Modify: `packages/gateway/src/egress/egress-record.ts:11` — `EgressEntry.sourceType`. **Note it is `egress-record.ts`, not `egress-ledger.ts`**; `EgressEntry` is defined there and re-exported.
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `type EgressSourceType`, `const EGRESS_SOURCE_TYPES: readonly EgressSourceType[]`, `const MARKER_SOURCE_TYPES: ReadonlySet<EgressSourceType>`, `function isMarkerSourceType(s: string): boolean`.
 
@@ -68,7 +70,10 @@ import {
 
 describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // IDENTITY assertion, never a length check: widening the union must show up as a diff on this
-  // line. `source_type` is BLAKE3-committed, so a new member is a chain break, not a refactor.
+  // line. Widening is NOT a chain break (verifyEgressChain recomputes each row's hash from that
+  // row's own stored source_type, never from this union's current definition) — it's frozen because
+  // a value written today is permanent in the data and isMarkerSourceType depends on the set being
+  // known and closed. See the doc comment on EGRESS_SOURCE_TYPES.
   test("is exactly these eight members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
@@ -113,10 +118,21 @@ Create `packages/gateway/src/egress/egress-source-type.ts`:
 /**
  * The FROZEN `egress_ledger.source_type` union.
  *
- * `source_type` is an input to `computeEgressRowHash`, so every value here is permanent: adding a
- * member later cannot be a refactor, it is a chain break. The union therefore lands COMPLETE,
- * including members whose appenders do not exist yet (`boot`, `degraded` arrive with the boot
- * marker; `sync`, `model`, `peer` arrive in later phases).
+ * `source_type` IS one of the fields `computeEgressRowHash` hashes, but widening this union later
+ * is NOT a chain break: `verifyEgressChain` recomputes each row's hash from that row's OWN STORED
+ * column values (`sourceType: r.source_type`, `egress-verify.ts`), never from the current union
+ * definition, so adding a ninth TypeScript member changes no stored row and no hash input — every
+ * existing row still verifies exactly as before. (What WOULD be a chain break: changing
+ * `computeEgressRowHash`'s input set, or rewriting a stored row's values.)
+ *
+ * The union is frozen anyway, for two real reasons: (1) a `source_type` value written today is
+ * permanent IN THE DATA — every row ever appended keeps whatever string it was given, forever, so
+ * the vocabulary must be chosen deliberately rather than casually extended; (2) `isMarkerSourceType`
+ * (below) depends on the set of source types being known and closed — an unreviewed new member could
+ * silently land outside `MARKER_SOURCE_TYPES` and get miscounted as outbound egress, or inside it and
+ * get miscounted as bookkeeping. The union therefore lands COMPLETE, including members whose
+ * appenders do not exist yet (`boot`, `degraded` arrive with the boot marker; `sync`, `model`, `peer`
+ * arrive in later phases).
  *
  * If a ninth class is ever wanted, the answer is NOT to extend this union — it is to reuse
  * `session` with a reserved `method` value, accepting the weaker string-match exclusion.
@@ -197,10 +213,12 @@ git commit -m "feat(egress): freeze the source_type union at eight members"
 ### Task 2: Stop counting marker rows (fixes a live miscount)
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/egress-verify.ts` (`proveWindow`, ~line 199-208)
 - Test: `packages/gateway/src/egress/egress-verify.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isMarkerSourceType` from Task 1.
 - Produces: `proveWindow` with corrected `completeness.outboundEgressEvents`.
 
@@ -296,6 +314,7 @@ EOF
 ### Task 3: Coverage vector + per-process boot marker
 
 **Files:**
+
 - Create: `packages/gateway/src/egress/egress-coverage.ts`
 - Create: `packages/gateway/src/egress/egress-coverage.test.ts`
 - Create: `packages/gateway/src/egress/egress-boot-marker.ts`
@@ -303,6 +322,7 @@ EOF
 - Modify: `packages/gateway/src/platform/assemble.ts:1702` — append the marker at startup (Step 9). **Without this the feature is inert in production and no test in this plan catches it.**
 
 **Interfaces:**
+
 - Consumes: `EgressSourceType` (Task 1), `appendEgressEntry` (`egress-ledger.ts`).
 - Produces:
   - `type Granularity = "none" | "per-run" | "per-call"`
@@ -720,10 +740,12 @@ git commit -m "feat(egress): per-source coverage vector and per-process boot mar
 ### Task 4: `proveWindow` reports the vector, and `indeterminate` without a marker
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/egress-verify.ts` (`EgressCompleteness` ~line 181, `proveWindow` ~line 199)
 - Test: `packages/gateway/src/egress/egress-verify.test.ts`
 
 **Interfaces:**
+
 - Consumes: `coverageForWindow` (Task 3), `isMarkerSourceType` (Task 1).
 - Produces: `type EgressCompleteness = { coverage: CoverageVector; outboundEgressEvents: number; indeterminate: boolean }`.
 
@@ -816,6 +838,7 @@ git commit -m "feat(egress): proveWindow reports a coverage vector and flags ind
 ### Task 5: Make the executor's egress sink required
 
 **Files:**
+
 - Modify: `packages/gateway/src/egress/egress-ledger.ts` (add `NULL_EGRESS_SINK`)
 - Modify: `packages/gateway/src/engine/executor.ts:224` (the `egressSink?:` parameter)
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (6 sites: lines ~314, 507, 703, 1020, 1206, 1324)
@@ -823,6 +846,7 @@ git commit -m "feat(egress): proveWindow reports a coverage vector and flags ind
 - Test: `packages/gateway/src/security-invariants.test.ts` — import `egressHead` and `makeEgressSink` for the NULL_EGRESS_SINK test
 
 **Interfaces:**
+
 - Consumes: `EgressSink` (`egress-ledger.ts`).
 - Produces: `const NULL_EGRESS_SINK: EgressSink`.
 
@@ -960,11 +984,13 @@ git commit -m "feat(egress): require the executor's egress sink, with a named NU
 ### Task 6: Kill the false `0 ✓`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/prove.ts` (`ProveResult` ~line 11, `runEgressReport` ~line 121, `runProve` ~line 147)
 - Create: `packages/cli/src/commands/prove-format.test.ts` — a new pure-renderer test file, matching the existing `share-replay-format.test.ts` convention of testing a formatter separately from its command
 - Modify: `packages/cli/src/commands/prove.test.ts` — this file already exists and exercises the command; expect it to need updating in Step 6
 
 **Interfaces:**
+
 - Consumes: the `EgressCompleteness` shape from Task 4.
 - Produces: a `formatProveResult` pure renderer, so the output is testable without a gateway.
 
@@ -1145,6 +1171,7 @@ EOF
 ### Task 7: The invariant triple — docs + enforcement test
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (I29 section, ~line 531-546)
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (the D22 comment asserting totality)
 - Modify: `CLAUDE.md` and `GEMINI.md` (the I29 bullet — **both**, they mirror each other)
@@ -1197,7 +1224,7 @@ In `scripts/structure-audit/check-nimbus-invariants.ts`, replace the totality cl
 
 Replace the **Statement** paragraph with one that scopes the claim to what holds, and add a **Known limits** block naming: the three bypass classes above; that coverage is `task`-only in this phase; and that the coverage vector, not prose, is the machine-readable claim. Keep the existing *Wired at* / *Anti-pattern* / *How to comply* structure. Add to *Wired at*:
 
-- `packages/gateway/src/egress/egress-source-type.ts` — the frozen union (widening it is a chain break).
+- `packages/gateway/src/egress/egress-source-type.ts` — the frozen union (a value written today is permanent in the data, and marker-exclusion depends on the set being closed).
 - `packages/gateway/src/egress/egress-coverage.ts` + `egress-boot-marker.ts` — the per-process coverage claim.
 
 - [ ] **Step 5: Update the mirrored I29 bullet in `CLAUDE.md` and `GEMINI.md`**
