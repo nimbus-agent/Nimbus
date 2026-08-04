@@ -180,7 +180,8 @@ frequency for the glossary agent. The trimmer cuts at:
 - `On <date>, <someone> wrote:` (and the common localised/wrapped variants),
 - `-----Original Message-----`,
 - Outlook's `________________________________` divider,
-- a trailing `-- ` signature delimiter.
+- a trailing signature delimiter: a line consisting of exactly `--` followed by a single space
+  (the trailing space is part of the convention and must not be trimmed away when matching).
 
 It returns the text **above** the first such marker. It is deliberately conservative: when no marker
 matches, the body is returned unchanged.
