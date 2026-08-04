@@ -70,6 +70,19 @@ test("an attribution in the KEPT region is not reflowed into one line", () => {
   expect(stripQuotedTail(body)).toBe(body);
 });
 
+test("a terminal-marker cut still slices from the ORIGINAL lines", () => {
+  // The other join+cut test (above) returns through the early "no marker at
+  // all" exit and never reaches the slice, so it doesn't actually guard the
+  // analysis-only-join property. This one's cut is driven by the terminal-
+  // marker path, which is where a `lines.slice` (joined-text) regression
+  // would actually be visible.
+  const body =
+    "On Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n\nMy reply.\n\n-- \nAna";
+  expect(stripQuotedTail(body)).toBe(
+    "On Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n\nMy reply.",
+  );
+});
+
 test("an opener with no closer within the wrap budget is left alone", () => {
   const body = "On the whole\nI think we should\nship it\nand see.";
   expect(stripQuotedTail(body)).toBe(body);
@@ -112,4 +125,34 @@ test("fewer than 10 underscores is not a divider", () => {
 test("a terminal marker appearing twice cuts at the LAST one", () => {
   const body = "A.\n\n-----Original Message-----\nFrom: x\n\n-----Original Message-----\nFrom: y";
   expect(stripQuotedTail(body)).toBe("A.\n\n-----Original Message-----\nFrom: x");
+});
+
+test("a signature delimiter WITH the trailing space cuts", () => {
+  expect(stripQuotedTail("Thanks.\n\n-- \nAna")).toBe("Thanks.");
+});
+
+test("a bare -- with no trailing space does NOT cut", () => {
+  // A false positive here would silently delete real prose (e.g. a
+  // Setext-style heading underline); prefer the false negative.
+  const body = "Thanks.\n\n--\nnot a signature, just two dashes.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a pathological attribution-shaped line does not cause catastrophic backtracking", () => {
+  // Adversarial shape: two `.+` separated by a literal, with no trailing
+  // colon so the match fails only after exhausting the backtracking search
+  // space. Unbounded, this scales quadratically with input length (measured
+  // 20 KB -> 11.5 ms, 40 KB -> 45.3 ms, 80 KB -> 186.5 ms — a clean 4x per
+  // doubling); at this input size (~500 KB) the unbounded regex would take
+  // several seconds. The bounded regex (`.{1,400}`) clears this in single-
+  // digit milliseconds regardless of input length, so a 1000 ms ceiling
+  // leaves multiple orders of magnitude of headroom against CI jitter while
+  // still reliably catching a regression back to the unbounded form.
+  const pathological = `am ${"schrieb x ".repeat(50_000)}`;
+  const body = `Intro.\n\n${pathological}`;
+  const startedAt = performance.now();
+  const result = stripQuotedTail(body);
+  const elapsedMs = performance.now() - startedAt;
+  expect(result).toBe(body);
+  expect(elapsedMs).toBeLessThan(1000);
 });

@@ -13,12 +13,30 @@
  * text above the marker is non-empty.
  */
 
+/**
+ * Every `.+` is bounded to 400 chars, consistently across all three
+ * alternatives. The German alternative has two unbounded `.+` separated by a
+ * literal (`schrieb`), which backtracks quadratically on a long attacker-
+ * controlled line with no trailing colon — email bodies are remote-attacker-
+ * controlled and this regex runs on every indexed message before any body
+ * cap applies. Bounding is the safe direction: an attribution line longer
+ * than 400 chars simply stops matching, which only means it's a very unusual
+ * attribution line and is not one of this heuristic's target cases anyway.
+ */
 const ATTRIBUTION_RE =
-  /^\s*(on\s+.+\bwrote:\s*$|am\s+.+\bschrieb\s+.+:\s*$|le\s+.+\ba\s+écrit\s*:\s*$)/i;
+  /^\s*(on\s+.{1,400}\bwrote:\s*$|am\s+.{1,400}\bschrieb\s+.{1,400}:\s*$|le\s+.{1,400}\ba\s+écrit\s*:\s*$)/i;
 const ORIGINAL_MESSAGE_RE = /^\s*-{2,}\s*original message\s*-{2,}\s*$/i;
 const DIVIDER_RE = /^\s*_{10,}\s*$/;
-/** A signature delimiter is exactly two hyphens and a single trailing space. */
-const SIGNATURE_RE = /^--\s?$/;
+/**
+ * A signature delimiter is exactly two hyphens and a single trailing space
+ * (RFC 3676). Deliberately NOT `--` (bare) or `--\t` — a heuristic that
+ * deletes content should prefer false negatives: a missed signature costs
+ * storage and a little index noise, but a false positive on a bare `--`
+ * (e.g. a Setext-style heading underline, which is ordinary prose) silently
+ * deletes something a person wrote. A signature whose trailing space was
+ * stripped in transit is no longer trimmed — that is the accepted cost.
+ */
+const SIGNATURE_RE = /^-- $/;
 const QUOTE_RE = /^\s*>/;
 const HEADER_FIELD_RE = /^\s*(from|sent|to|cc|subject|date)\s*:\s*\S/i;
 
