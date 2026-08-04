@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.20.0](https://github.com/nimbus-agent/Nimbus/compare/v1.19.1...v1.20.0) (2026-08-04)
+
+
+### Features
+
+* **connectors:** index real Notion and Confluence page bodies ([#1039](https://github.com/nimbus-agent/Nimbus/issues/1039)) ([609409e](https://github.com/nimbus-agent/Nimbus/commit/609409ec07c6b72c9d817330a394e1b961ca27fb))
+
 ## [1.19.1](https://github.com/nimbus-agent/Nimbus/compare/v1.19.0...v1.19.1) (2026-08-03)
 
 
