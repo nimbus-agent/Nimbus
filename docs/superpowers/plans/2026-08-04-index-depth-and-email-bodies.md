@@ -468,6 +468,25 @@ test("handles CRLF line endings", () => {
   expect(stripQuotedTail("Yes.\r\n\r\n> quoted")).toBe("Yes.");
 });
 
+test("cuts at an attribution the client wrapped across two lines", () => {
+  const body =
+    "Agreed.\n\nOn Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n> the thread";
+  expect(stripQuotedTail(body)).toBe("Agreed.");
+});
+
+test("an attribution in the KEPT region is not reflowed into one line", () => {
+  // The wrap-join is analysis-only; the returned text must be sliced from the
+  // original lines, not the joined ones.
+  const body =
+    "On Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n\nMy actual reply.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("an opener with no closer within the wrap budget is left alone", () => {
+  const body = "On the whole\nI think we should\nship it\nand see.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
 test("empty input is returned as-is", () => {
   expect(stripQuotedTail("")).toBe("");
 });
@@ -527,11 +546,69 @@ function headerBlockFlags(lines: readonly string[]): boolean[] {
   return isField.map((f, i) => f && (isField[i - 1] === true || isField[i + 1] === true));
 }
 
+/** Openers that may have been wrapped away from their `wrote:`-style closer. */
+const ATTRIBUTION_OPENER_RE = /^\s*(on|am|le)\s+\S/i;
+const ATTRIBUTION_CLOSER_RE = /(wrote:|schrieb:|a écrit\s*:)\s*$/i;
+/** How many continuation lines a wrapped attribution may span. */
+const ATTRIBUTION_MAX_WRAP = 2;
+
+/**
+ * Join attributions the sending client wrapped across lines.
+ *
+ * Mobile and narrow-viewport clients emit:
+ *
+ *     On Mon, Aug 3, 2026 at 4:32 PM User
+ *     <user@example.com> wrote:
+ *
+ * Neither half matches line-at-a-time, and the consequence is worse than a
+ * missed marker: the backward walk stops on the unrecognised continuation
+ * line, the boundary check rejects it, and the body comes back COMPLETELY
+ * untrimmed. Joining first makes the existing single-line logic work.
+ */
+type AnalysisLine = { readonly text: string; readonly origIndex: number };
+
+function joinWrappedAttributions(lines: readonly string[]): AnalysisLine[] {
+  const out: AnalysisLine[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (!ATTRIBUTION_OPENER_RE.test(line) || ATTRIBUTION_CLOSER_RE.test(line)) {
+      out.push({ text: line, origIndex: i });
+      continue;
+    }
+    let joined = line;
+    let consumed = 0;
+    while (consumed < ATTRIBUTION_MAX_WRAP && i + consumed + 1 < lines.length) {
+      const next = lines[i + consumed + 1] ?? "";
+      if (next.trim() === "" || QUOTE_RE.test(next)) {
+        break;
+      }
+      consumed += 1;
+      joined = `${joined} ${next.trim()}`;
+      if (ATTRIBUTION_CLOSER_RE.test(next)) {
+        break;
+      }
+    }
+    if (consumed > 0 && ATTRIBUTION_CLOSER_RE.test(joined)) {
+      out.push({ text: joined, origIndex: i });
+      i += consumed;
+    } else {
+      out.push({ text: line, origIndex: i });
+    }
+  }
+  return out;
+}
+
 export function stripQuotedTail(body: string): string {
   if (body === "") {
     return body;
   }
-  const lines = body.split(/\r?\n/);
+  // The join is for ANALYSIS ONLY. The returned text is always sliced from the
+  // ORIGINAL lines via `origIndex` — otherwise an attribution sitting in the
+  // kept region (a case that must return unchanged) would come back with two
+  // lines silently merged into one.
+  const original = body.split(/\r?\n/);
+  const analysis = joinWrappedAttributions(original);
+  const lines = analysis.map((a) => a.text);
   const headerish = headerBlockFlags(lines);
 
   // Walk backwards over everything that could belong to a quoted tail.
@@ -562,7 +639,8 @@ export function stripQuotedTail(body: string): string {
     return body;
   }
 
-  const kept = lines.slice(0, start).join("\n").replace(/\s+$/, "");
+  const cutAt = analysis[start]?.origIndex ?? original.length;
+  const kept = original.slice(0, cutAt).join("\n").replace(/\s+$/, "");
   return kept === "" ? body : kept;
 }
 ```
@@ -681,6 +759,33 @@ test("returns empty for a payload with no usable part", () => {
   expect(gmailMessageBodyText({ mimeType: "image/png" })).toBe("");
 });
 
+test("concatenates sequential text/plain parts in multipart/mixed", () => {
+  // multipart/mixed is a SEQUENCE, not alternatives — dropping all but the
+  // first would silently truncate the body.
+  expect(
+    gmailMessageBodyText({
+      mimeType: "multipart/mixed",
+      parts: [
+        { mimeType: "text/plain", body: { data: b64url("first half") } },
+        { mimeType: "image/png", body: { attachmentId: "att-1" } },
+        { mimeType: "text/plain", body: { data: b64url("second half") } },
+      ],
+    }),
+  ).toBe("first half\nsecond half");
+});
+
+test("multipart/alternative picks ONE representation, it does not concatenate", () => {
+  expect(
+    gmailMessageBodyText({
+      mimeType: "multipart/alternative",
+      parts: [
+        { mimeType: "text/plain", body: { data: b64url("chosen") } },
+        { mimeType: "text/plain", body: { data: b64url("not chosen") } },
+      ],
+    }),
+  ).toBe("chosen");
+});
+
 test("bounded: a pathological deep tree does not hang", () => {
   let node: Record<string, unknown> = { mimeType: "text/plain", body: { data: b64url("deep") } };
   for (let i = 0; i < 200; i++) {
@@ -754,41 +859,82 @@ function decodeBase64Url(data: string): string {
   return Buffer.from(data, "base64url").toString("utf8");
 }
 
-type Found = { plain: string; html: string };
+/** Text collected from one subtree: plain and html candidates, each a sequence. */
+type Found = { plain: string[]; html: string[] };
 
-function walk(node: MessagePayload, depth: number, state: { visited: number }, out: Found): void {
-  if (depth > MAX_DEPTH || state.visited >= MAX_PARTS) {
-    return;
-  }
-  state.visited += 1;
-  const mime = node.mimeType ?? "";
+function leafText(node: MessagePayload): Found {
+  const out: Found = { plain: [], html: [] };
   const data = node.body?.data;
-  const isAttachment = node.body?.attachmentId !== undefined;
-  if (!isAttachment && data !== undefined && data !== "") {
-    if (mime.startsWith("text/plain") && out.plain === "") {
-      out.plain = decodeBase64Url(data);
-    } else if (mime.startsWith("text/html") && out.html === "") {
-      out.html = decodeBase64Url(data);
-    }
+  // Gmail does not inline attachment bytes here, and filenames are not what we
+  // index — skip any part that defers to a separate attachment fetch.
+  if (node.body?.attachmentId !== undefined || data === undefined || data === "") {
+    return out;
   }
-  for (const part of node.parts ?? []) {
-    walk(part, depth + 1, state, out);
+  const mime = node.mimeType ?? "";
+  if (mime.startsWith("text/plain")) {
+    out.plain.push(decodeBase64Url(data));
+  } else if (mime.startsWith("text/html")) {
+    out.html.push(decodeBase64Url(data));
   }
+  return out;
 }
 
 /**
- * Plain text for a Gmail message payload: the first `text/plain` part if there
- * is one, otherwise the first `text/html` part stripped to text. Attachment
- * parts are skipped — Gmail does not inline their bytes, and filenames are not
- * what we index.
+ * Collect text honouring MIME container semantics.
+ *
+ * `multipart/alternative` means "these are the SAME content in different
+ * representations — pick one", so the first child that yields anything wins.
+ * `multipart/mixed` and `multipart/related` mean "these are a SEQUENCE", so
+ * their children concatenate in order.
+ *
+ * Taking only the first text part regardless of container would silently drop
+ * body text on any message interleaving prose with inline parts — the same
+ * class of quiet truncation this workstream exists to remove.
+ */
+function collect(node: MessagePayload, depth: number, state: { visited: number }): Found {
+  if (depth > MAX_DEPTH || state.visited >= MAX_PARTS) {
+    return { plain: [], html: [] };
+  }
+  state.visited += 1;
+
+  const parts = node.parts ?? [];
+  if (parts.length === 0) {
+    return leafText(node);
+  }
+
+  const isAlternative = (node.mimeType ?? "").startsWith("multipart/alternative");
+  const acc: Found = { plain: [], html: [] };
+  for (const part of parts) {
+    const got = collect(part, depth + 1, state);
+    if (isAlternative) {
+      // First child that produced anything wins; ignore the rest.
+      if (got.plain.length > 0 || got.html.length > 0) {
+        if (acc.plain.length === 0 && acc.html.length === 0) {
+          acc.plain.push(...got.plain);
+          acc.html.push(...got.html);
+        }
+      }
+      continue;
+    }
+    acc.plain.push(...got.plain);
+    acc.html.push(...got.html);
+  }
+  return acc;
+}
+
+/**
+ * Plain text for a Gmail message payload. Prefers `text/plain`; falls back to
+ * `text/html` stripped to text.
  */
 export function gmailMessageBodyText(payload: MessagePayload): string {
-  const out: Found = { plain: "", html: "" };
-  walk(payload, 0, { visited: 0 }, out);
-  if (out.plain !== "") {
-    return out.plain.trim();
+  const found = collect(payload, 0, { visited: 0 });
+  if (found.plain.length > 0) {
+    return found.plain.join("\n").trim();
   }
-  return out.html === "" ? "" : plainTextFromHtml(out.html);
+  if (found.html.length === 0) {
+    return "";
+  }
+  return plainTextFromHtml(found.html.join("\n"));
 }
 ```
 
@@ -918,7 +1064,34 @@ Then pass the discriminated arm, so a body-less message does not claim completen
 
 and spread `...bodyInput` into the `upsertIndexedItemForSync` call in place of `bodyPreview: preview`. Keep `preview` only if it still feeds something else.
 
-- [ ] **Step 5: Add `$select` to the initial request**
+- [ ] **Step 5a: Bump the cursor prefix so existing installs reset themselves**
+
+`outlook-sync.ts:16`:
+
+```ts
+// Bumped from "nimbus-outl1:" so every stored delta link is invalidated ONCE
+// on upgrade. A stored @odata.deltaLink encodes the projection of the query
+// that minted it, so an install following a pre-$select link would keep
+// receiving body-less responses for EVERY message, including brand-new ones —
+// the feature would be off, not merely incomplete. decodeMicrosoftGraphDeltaCursor
+// returns undefined on a prefix mismatch and the sync does
+// `nextUrl = dec?.nextUrl ?? null`, so an undecodable cursor falls through to
+// the INITIAL request URL, which is where $select lives. One fresh delta, no
+// new machinery, no error path.
+const CURSOR_PREFIX = "nimbus-outl2:";
+```
+
+Add a test asserting an `outl1:` cursor is treated as absent:
+
+```ts
+test("a pre-upgrade outl1 cursor is ignored and the initial delta URL is used", async () => {
+  // pass a cursor string built with the OLD "nimbus-outl1:" prefix
+  expect(seenUrl).toContain("/me/messages/delta");
+  expect(decodeURIComponent(seenUrl)).toContain("body");
+});
+```
+
+- [ ] **Step 5b: Add `$select` to the initial request**
 
 At the delta URL construction (~:102), on the branch taken when there is no stored cursor:
 
@@ -981,7 +1154,10 @@ grep -rn "12 full\|eleven services\|(12)" docs/*.md
 
 Accounting goes **12 → 14 full**, 1 partial, 2 inert. Dated CHANGELOG entries are historical and are **never** retroactively edited — corrections go in the new dated entry.
 
-Add a 2026-08-04 CHANGELOG entry covering: enforced depth + V49, Gmail and Outlook bodies, the trimmer, and — prominently — that **existing Outlook installs need one `nimbus index rebody --service outlook`**, because a stored `@odata.deltaLink` encodes the pre-`$select` projection and will keep returning body-less responses until the cursor is cleared. Without that note the feature reads as broken. Same for Gmail: already-indexed messages keep their snippets until a rebody.
+Add a 2026-08-04 CHANGELOG entry covering: enforced depth + V49, Gmail and Outlook bodies, and the trimmer. Two upgrade notes, phrased as heads-ups rather than instructions:
+
+- **Outlook resets itself once.** The cursor prefix moves `nimbus-outl1:` → `nimbus-outl2:`, invalidating every stored delta link, so the next scheduled sync performs one full mailbox delta with `body` on every page. That is the one-time cost of the feature — no user action required. Say so plainly, because a large mailbox will notice the sync.
+- **Gmail applies going forward.** `format=full` affects every message fetched from that point on, including new ones, so nothing is required for the feature to work; already-indexed messages keep their snippets until `nimbus index rebody --service gmail`.
 
 Do **not** cite a PR number you have not verified; this branch has none until it is pushed.
 

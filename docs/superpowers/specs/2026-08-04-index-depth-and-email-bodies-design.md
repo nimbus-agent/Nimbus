@@ -74,6 +74,7 @@ Enforcement goes in **one** place, not in ninety connectors.
 1. `SyncContext` gains `depth: ReindexDepth`.
 2. The scheduler already computes it (`getDepthForService`); it now also puts it on the context it
    builds for each sync run — once per sync, not once per item.
+
 3. `upsertIndexedItemForSync` coerces the caller's body input according to that depth before
    delegating to `upsertIndexedItem`.
 
@@ -105,6 +106,7 @@ reasons, both load-bearing:
    [`reindex.ts:63`](../../../packages/gateway/src/connectors/reindex.ts) nulls `body`,
    `body_preview` and `body_complete` together — so enforcement and reindex agree instead of
    drifting.
+
 2. Simply *omitting* the body input does not produce an empty body. `upsertIndexedItem` computes
    `const raw = row.body ?? row.bodyPreview ?? row.title`
    ([`item-store.ts:88`](../../../packages/gateway/src/index/item-store.ts)), so dropping both arms
@@ -154,11 +156,18 @@ determine the value. No code path relies on the column default after this.
 `fetchMessageMetadata` requests `format=full`. The response's `payload` is a MIME tree, so a new pure
 module walks it:
 
-- Prefer the `text/plain` part; fall back to `text/html` decoded then run through the existing
-  non-truncating `plainTextFromHtml` (`string/html-plain-text.ts`).
+- **Respect container semantics.** `multipart/alternative` means "pick one representation" — prefer
+  the `text/plain` child, else `text/html` decoded and run through the existing non-truncating
+  `plainTextFromHtml` (`string/html-plain-text.ts`). `multipart/mixed` and `multipart/related` mean
+  "a sequence" — concatenate their text parts in order. Taking only the first text part regardless of
+  container would silently drop body text on any message that interleaves prose with inline parts,
+  which is the exact class of silent truncation this workstream exists to eliminate; it would be a
+  smaller version of the Teams `body_complete` bug fixed in #1039.
+
 - Part bodies are **base64url** (`-`/`_`, not `+`/`/`) — decode accordingly, not with plain base64.
 - Skip parts carrying an `attachmentId`: Gmail does not inline attachment bytes there, and indexing
   filenames is not the goal.
+
 - Bound the recursion depth and total parts visited, for the same reason the Notion walk is bounded —
   a malformed or hostile tree must not be able to spin.
 
@@ -182,24 +191,35 @@ does not, `$select` is what makes the feature work. Relying on an unverified def
 mode to avoid. `$select` on a delta query must be set on the **initial** request — the `@odata.nextLink`
 and `@odata.deltaLink` carry it forward, so it must not be re-appended to a followed link.
 
-**Existing installs will not see bodies until their delta link is reset, and that is expected.** A
-stored `@odata.deltaLink` encodes the projection of the query that minted it, so an install upgrading
-into this slice keeps following a link created *without* `body` and keeps receiving body-less
-responses — the feature would look broken. The fix is not a special upgrade path: Outlook's delta
-link **is** the scheduler cursor (`sync(ctx, cursor)` → `SyncResult.cursor`,
-[`outlook-sync.ts:87-126`](../../../packages/gateway/src/connectors/outlook-sync.ts)), and
-`nimbus index rebody --service outlook` clears exactly that cursor, forcing a fresh delta with the
-new `$select`. This is the same contract #1039 established — new bodies apply going forward, `rebody`
-recovers what is already indexed — and it is precisely why `outlook` joins
-`REBODY_IMPROVABLE_SERVICES` in this slice.
+**Existing installs must be reset automatically, via a cursor-prefix bump.** A stored
+`@odata.deltaLink` encodes the projection of the query that minted it, so an install upgrading into
+this slice keeps following a link created *without* `body` and keeps receiving body-less responses.
 
-Auto-clearing the cursor on upgrade was considered and rejected: it would force an unannounced
-full-mailbox re-walk, now with `body` on every page, for every Outlook user at once. `rebody` puts
-that cost under the owner's control. The release notes must say plainly that existing Outlook
-installs need one `rebody` run, or the feature will appear not to work.
+The mechanism is one character. Outlook's cursor carries a version prefix,
+`CURSOR_PREFIX = "nimbus-outl1:"` ([`outlook-sync.ts:16`](../../../packages/gateway/src/connectors/outlook-sync.ts)).
+`decodeMicrosoftGraphDeltaCursor` returns `undefined` when the prefix does not match, and the sync
+does `nextUrl = dec?.nextUrl ?? null`, so an undecodable cursor falls through to the **initial**
+request URL — precisely where `$select` lives. Bumping the prefix to `nimbus-outl2:` therefore forces
+exactly one fresh delta, with the new projection, on the next scheduled sync, with no new machinery
+and no error path.
 
-The same holds for Gmail for the same reason: switching to `format=full` affects messages fetched
-from that point on, and already-indexed messages keep their snippets until a `rebody`.
+**This reverses an earlier decision in this document, and the reason is worth recording.** The first
+draft treated Outlook like Notion and Confluence in #1039: new bodies apply going forward, `rebody`
+recovers the backlog, documented in the release notes. That analogy is wrong. For Notion and
+Confluence, *newly synced items got bodies immediately* and `rebody` only addressed already-indexed
+rows. For Outlook, a stuck delta projection means **even brand-new messages arrive body-less, for
+ever** — the feature is not merely incomplete for the backlog, it is off. Shipping that behind a
+release-note instruction most users will not read is the same "surface promises what the code does
+not do" pattern this slice exists to correct.
+
+The one-time cost — a full mailbox delta re-walk, now with `body` on every page — is the honest price
+of the feature and belongs in the release notes as a heads-up rather than as an instruction the user
+must act on.
+
+**Gmail is genuinely the #1039 case and keeps that treatment.** Switching to `format=full` affects
+every message fetched from that point on, including new ones, so the feature works immediately;
+only already-indexed messages keep their snippets until a `rebody`. No cursor bump, and `rebody`
+remains the documented recovery path — which is why `gmail` joins `REBODY_IMPROVABLE_SERVICES`.
 
 ### The quoted-tail trimmer
 
@@ -236,13 +256,28 @@ non-empty — which is why the tail rule, not the fallback, has to do the work.
 **Markers** (each valid only as the start of a qualifying tail):
 
 - a run of lines beginning `>` (any nesting depth),
-- `On <date>, <someone> wrote:` (and the common localised/wrapped variants),
+- `On <date>, <someone> wrote:` and its localised variants — **including when the client has wrapped
+  it across lines**, which mobile and narrow-viewport clients routinely do:
+
+  ```text
+  On Mon, Aug 3, 2026 at 4:32 PM User
+  <user@example.com> wrote:
+  ```
+
+  Line-at-a-time matching fails both halves — the first does not end in `wrote:`, the second does not
+  begin with `On` — and the failure is worse than it looks: the backward walk stops at the
+  unrecognised continuation line, the boundary check then rejects it as a non-marker, and the trimmer
+  returns the body **completely untrimmed**. So a whole class of clients silently gets no trimming at
+  all. A normalisation pre-pass joins an opener to a following line that closes it (bounded to two
+  continuation lines) before the walk runs,
+
 - `-----Original Message-----`,
 - Outlook's `________________________________` divider,
 - an Outlook-style inline header block — two or more of `From:` / `Sent:` / `To:` / `Subject:` /
   `Cc:` on consecutive lines. Outlook frequently emits these with no divider above them. Requiring
   **two or more adjacent** fields keeps a single `From: ...` line inside a pasted log from
   triggering it, and the tail rule means even a real header block mid-message is ignored,
+
 - a signature delimiter: a line consisting of exactly `--` followed by a single space (the trailing
   space is part of the convention and must not be trimmed away when matching).
 
@@ -259,9 +294,11 @@ shapes rather than argued about.
   [`ipc/index-rebody-rpc.ts`](../../../packages/gateway/src/ipc/index-rebody-rpc.ts) says re-syncing
   Gmail "costs little AND recovers nothing", which stops being true. The membership table gains two
   verified rows.
+
 - Accounting moves **12 full → 14 full**, 1 partial, 2 inert, everywhere it is stated
   (`docs/CHANGELOG.md`, `docs/roadmap.md`, `docs/cli-reference.md`). Dated CHANGELOG entries stay
   historical; the correction goes in the new dated entry.
+
 - `docs/cli-reference.md`'s depth table is corrected: `summary` is a 512-char prefix, and depth is now
   enforced on every sync rather than at reindex time only.
 
