@@ -4,6 +4,7 @@ import os from "node:os";
 import pino from "pino";
 
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
@@ -757,5 +758,32 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     const status = statuses[0];
     expect(status).toBeDefined();
     expect(status!.depth).toBe("full");
+  });
+
+  // Closes the gap the shared-template `this.ctx` (always `depth: "full"` in every fixture) can't
+  // catch: a forced/scheduled run must receive the connector's OWN persisted depth, not the
+  // template's. Regressing `runJob` back to `connector.sync(this.ctx, ...)` would make this fail
+  // (captured depth reverts to "full") while every other test in this file — and the `getStatus`
+  // depth-shape tests in scheduler-status-shape.test.ts — stays green, because none of them read
+  // the depth actually handed to `sync()`.
+  test("a forced sync passes the connector's persisted depth, not the shared template's", async () => {
+    const db = openMemoryIndexDatabase();
+    const idx = new LocalIndex(db);
+    const ctx = testContext(db); // depth: "full"
+    const sched = new SyncScheduler(ctx);
+    let capturedDepth: SyncContext["depth"] | undefined;
+    sched.register({
+      serviceId: "depth-capture",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(runCtx): Promise<SyncResult> {
+        capturedDepth = runCtx.depth;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    });
+    idx.setConnectorDepth("depth-capture", "metadata_only");
+    await sched.forceSync("depth-capture");
+    await sched.stop();
+    expect(capturedDepth).toBe("metadata_only");
   });
 });

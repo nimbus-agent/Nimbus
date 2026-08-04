@@ -97,6 +97,34 @@ test("touching a note re-emits only that note", async () => {
   expect(r2.itemsUpserted).toBe(1);
 });
 
+test("metadata_only depth suppresses note bodies (routed through the depth chokepoint)", async () => {
+  const { root } = buildTempVault();
+  const sync = createObsidianSyncable({
+    roots: [
+      {
+        path: root,
+        gitAware: false,
+        codeIndex: false,
+        dependencyGraph: false,
+        exclude: [],
+      },
+    ],
+  });
+  const db = createMemoryIndexDb();
+  const ctx = { ...syncTestContext(db, EMPTY_NIMBUS_VAULT), depth: "metadata_only" as const };
+  const r = await sync.sync(ctx, null);
+  expect(r.itemsUpserted).toBe(2);
+  const items = db
+    .query("SELECT body, body_preview, body_complete FROM item WHERE service = 'obsidian'")
+    .all() as Array<{ body: string | null; body_preview: string | null; body_complete: number }>;
+  expect(items.length).toBe(2);
+  for (const it of items) {
+    expect(it.body ?? "").toBe("");
+    expect(it.body_preview ?? "").toBe("");
+    expect(it.body_complete).toBe(0);
+  }
+});
+
 test("deleting a note removes its row on next sync (sticky delete)", async () => {
   const { root } = buildTempVault();
   const sync = createObsidianSyncable({
