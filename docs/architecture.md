@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 6.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I30 (I28 reserved); schema V48.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I30 (I28 reserved); schema V49.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
