@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { PairingWindowController } from "./clips/pairing-window.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
@@ -1245,23 +1245,26 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // A source scan of the CALL form, not the bare identifier: matching `appendEgressEntry\(`
     // (with the open paren) means an import (`import { appendEgressEntry } from ...`) or a
     // comment mentioning the name cannot satisfy — or falsely trip — this guard. Only an actual
-    // invocation counts. Mirrors the production D22 static audit's scope
+    // invocation counts. Scans production `.ts` AND `.tsx` (fix 4 — `packages/gateway/src` has no
+    // `.tsx` today, so this is forward-looking hardening; without it, a future `appendEgressEntry(`
+    // call in a production `.tsx` outside `egress/` would silently bypass this guard by extension
+    // alone) and excludes `.test.ts`/`.test.tsx`. The relative path is derived via `relative()` +
+    // `sep` from `node:path` rather than manual slicing/backslash normalization, so it holds up
+    // across platforms. Mirrors the production D22 static audit's scope
     // (`checkEgressChokepointConfinement` in check-nimbus-invariants.ts), which also exempts
-    // `.test.ts` files — egress-adjacent tests (e.g. `ipc/egress-rpc.test.ts`) legitimately call
+    // test files — egress-adjacent tests (e.g. `ipc/egress-rpc.test.ts`) legitimately call
     // it directly to seed fixture rows.
     const dir = resolve(REPO_ROOT, "packages/gateway/src");
     const entries = await readdir(dir, { recursive: true, withFileTypes: true });
     const offenders: string[] = [];
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) {
-        continue;
-      }
+      if (!entry.isFile()) continue;
+      const isSourceFile = entry.name.endsWith(".ts") || entry.name.endsWith(".tsx");
+      const isTestFile = entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx");
+      if (!isSourceFile || isTestFile) continue;
       const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
       const abs = resolve(parentDir, entry.name);
-      const relFromGatewaySrc = abs
-        .slice(dir.length + 1)
-        .split("\\")
-        .join("/");
+      const relFromGatewaySrc = relative(dir, abs).split(sep).join("/");
       const contents = await readFile(abs, "utf8");
       if (contents.includes("appendEgressEntry(") && !relFromGatewaySrc.startsWith("egress/")) {
         offenders.push(relFromGatewaySrc);

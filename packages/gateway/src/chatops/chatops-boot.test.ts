@@ -77,6 +77,14 @@ interface Harness {
   audits: { actionType: string; hitlStatus: string; actionJson: string }[];
   /** Recording fake for `ChatopsBootDeps.egressSink` (now required — I29 fix 3). */
   egressEntries: EgressEntry[];
+  /**
+   * A SINGLE ordered log that both `egressSink.append` and `dispatcher.dispatch` push onto as
+   * they happen (I29 fix 3). Two SEPARATE arrays (or a length check on either) cannot detect a
+   * regression that calls `dispatch()` before `egressSink.append()` — both would still end up
+   * length 1 either way. Only a single shared, order-preserving log can prove append-before-
+   * dispatch, which is the actual I29 guarantee under test.
+   */
+  order: string[];
   boot: ReturnType<typeof buildChatopsBoot>;
 }
 
@@ -86,6 +94,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
   const dispatched: PlannedAction[] = [];
   const audits: Harness["audits"] = [];
   const egressEntries: EgressEntry[] = [];
+  const order: string[] = [];
 
   const runTool: RunChatopsTool = (platform, toolId, args, opts) => {
     if (toolId === "slack_socket_open") return Promise.resolve({ url: "wss://fake" });
@@ -137,13 +146,19 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
     },
     dispatcher: {
       dispatch: (action) => {
+        order.push("dispatch");
         dispatched.push(action);
         return Promise.resolve({ rolledBack: true });
       },
     },
     // Recording fake, not NULL_EGRESS_SINK: this executor is dispatch-capable, so the default
     // harness proves the sink is actually consulted (see the I29 fix-3 regression test below).
-    egressSink: { append: (entry) => void egressEntries.push(entry) },
+    egressSink: {
+      append: (entry) => {
+        order.push("egress");
+        egressEntries.push(entry);
+      },
+    },
     socketFactory: () => socket,
     log: () => {},
     ...overrides,
@@ -153,7 +168,7 @@ function buildHarness(overrides?: Partial<ChatopsBootDeps>): Harness {
   boot.bindAskEngine((query, namespace) =>
     Promise.resolve(`[${namespace}] answer to: ${query} → oncall = alice`),
   );
-  return { socket, posts, dispatched, audits, egressEntries, boot };
+  return { socket, posts, dispatched, audits, egressEntries, order, boot };
 }
 
 describe("buildChatopsBoot — full production graph", () => {
@@ -445,6 +460,12 @@ describe("buildChatopsBoot — full production graph", () => {
     expect(h.egressEntries).toHaveLength(1);
     expect(h.egressEntries[0]?.method).toBe("deployment.rollback");
     expect(h.egressEntries[0]?.resultStatus).toBe("authorized");
+    // The actual I29 guarantee is ORDER, not just that both happened: append-before-dispatch.
+    // Waiting on `h.dispatched.length === 1` alone (as the old version of this test did) passes
+    // whether the append happened before OR after the dispatch — it can't detect a regression that
+    // calls `dispatcher.dispatch()` before `egressSink.append()`. A single shared, order-preserving
+    // log can: it must read exactly `["egress", "dispatch"]`, never the reverse.
+    expect(h.order).toEqual(["egress", "dispatch"]);
     await h.boot.service.stop();
   });
 

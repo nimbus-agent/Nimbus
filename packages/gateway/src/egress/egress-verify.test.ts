@@ -165,4 +165,24 @@ describe("proveWindow", () => {
     const out = proveWindow(db, {});
     expect(out.completeness.outboundEgressEvents).toBe(1);
   });
+
+  // Fix 1 (soundness): a row appended in the SAME MILLISECOND as a covering boot marker is
+  // indistinguishable from it by `timestamp` alone. These regressions insert the egress row FIRST
+  // (lower `id` — the true append order) and the boot marker SECOND at an identical timestamp, so
+  // the marker cannot honestly vouch for having observed that row. Both must report `indeterminate`
+  // — a sound implementation must fail closed on the tie rather than assume the marker came first.
+  test("BOUNDED window: an egress row sharing the covering marker's timestamp is NOT covered", () => {
+    appendEgressEntry(db, e({ timestamp: 500, destination: "email", method: "email.send" }));
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 500); // same millisecond, appended AFTER (higher id)
+    const out = proveWindow(db, { since: 500, until: 1000 });
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
+  });
+  test("UNBOUNDED window: an egress row sharing the first marker's timestamp is NOT covered", () => {
+    appendEgressEntry(db, e({ timestamp: 500, destination: "email", method: "email.send" }));
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 500); // same millisecond, appended AFTER (higher id)
+    const out = proveWindow(db, {});
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
+  });
 });

@@ -187,13 +187,18 @@ export function listEgress(
   return rows.map(toRow);
 }
 
-type MarkerRow = { timestamp: number; source_id: string | null };
+type MarkerRow = { id: number; timestamp: number; source_id: string | null };
 
 /**
  * The single boot-marker row (if any) at or before `ts`. Queried DIRECTLY against
  * `egress_ledger` — NOT via `listEgress`, whose default 1000-row page (oldest-first) would make a
  * marker appended after row 1000 invisible on any ledger past that size (fix 1). Restricted in SQL
  * to `method = BOOT_MARKER_METHOD` so no pagination limit is needed here at all.
+ *
+ * Selects `id` alongside `timestamp` — `timestamp` is millisecond-resolution and a row appended in
+ * the SAME millisecond as this marker is indistinguishable from it by timestamp alone. `id`
+ * (`INTEGER PRIMARY KEY AUTOINCREMENT`) is the true append order; callers use it (via
+ * `hasRowBefore`) to fail closed rather than assume the marker came first when a timestamp ties.
  */
 function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
   // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — normalize so
@@ -205,7 +210,7 @@ function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
   // a genuine `appendBootMarker` row (`source_type='boot'`) may claim coverage.
   const row = db
     .query(
-      `SELECT timestamp, source_id FROM egress_ledger
+      `SELECT id, timestamp, source_id FROM egress_ledger
        WHERE method = ? AND source_type = 'boot' AND timestamp <= ?
        ORDER BY timestamp DESC, id DESC LIMIT 1`,
     )
@@ -215,23 +220,41 @@ function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
 
 /** Every boot-marker row strictly after `sinceExclusive` and at or before `until`, oldest first. */
 function markersInRange(db: Database, sinceExclusive: number, until: number): MarkerRow[] {
-  // See `lastMarkerAtOrBefore` above for why `source_type = 'boot'` must accompany `method = ?`.
+  // See `lastMarkerAtOrBefore` above for why `source_type = 'boot'` must accompany `method = ?`,
+  // and for why `id` is selected alongside `timestamp`.
   return db
     .query(
-      `SELECT timestamp, source_id FROM egress_ledger
+      `SELECT id, timestamp, source_id FROM egress_ledger
        WHERE method = ? AND source_type = 'boot' AND timestamp > ? AND timestamp <= ?
        ORDER BY timestamp ASC, id ASC`,
     )
     .all(BOOT_MARKER_METHOD, sinceExclusive, until) as MarkerRow[];
 }
 
-/** True if ANY ledger row (marker or not) falls in `[since, beforeTs)`. */
-function hasRowBefore(db: Database, since: number, beforeTs: number): boolean {
+/**
+ * True if any ledger row (marker or not) at or after `since` genuinely PRECEDES `boundary` in true
+ * append order — i.e. its `(timestamp, id)` tuple sorts before `boundary`'s. Compares the full
+ * tuple, not `timestamp` alone: `timestamp` is millisecond-resolution, so a row appended in the
+ * same millisecond as `boundary` needs its `id` — the `INTEGER PRIMARY KEY AUTOINCREMENT`, the
+ * true append order — to tell whether it came before or after. This is a fail-closed check: it
+ * flags the tie so the caller can refuse to claim coverage rather than assume `boundary` came
+ * first. A no-op (`false`) whenever `boundary.timestamp > since`, because no row can then both
+ * satisfy `timestamp >= since` and tie `boundary`'s timestamp.
+ */
+function hasRowBefore(
+  db: Database,
+  since: number,
+  boundary: { timestamp: number; id: number },
+): boolean {
   // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — `!= null` catches
   // both so an empty result isn't mistaken for a found row.
   const row = db
-    .query(`SELECT 1 as x FROM egress_ledger WHERE timestamp >= ? AND timestamp < ? LIMIT 1`)
-    .get(since, beforeTs) as { x: number } | null;
+    .query(
+      `SELECT 1 as x FROM egress_ledger
+       WHERE timestamp >= ? AND (timestamp < ? OR (timestamp = ? AND id < ?))
+       LIMIT 1`,
+    )
+    .get(since, boundary.timestamp, boundary.timestamp, boundary.id) as { x: number } | null;
   return row != null;
 }
 
@@ -286,6 +309,13 @@ function coverageOf(r: MarkerRow): CoverageVector {
  * (no `--since`) is the one case that still merges across all history, and that is correct, not a
  * limitation: asking about the whole ledger genuinely requires the weakest coverage across every
  * binary that ever wrote into it.
+ *
+ * SAME-MILLISECOND FAIL-CLOSED RULE (fix 1): `timestamp` is millisecond-resolution, so a row
+ * appended in the same millisecond as a covering marker is indistinguishable from it by timestamp
+ * alone. Both boundary checks (`since`'s covering marker, and the unbounded carve-out's first
+ * in-window marker) additionally compare `id` — `INTEGER PRIMARY KEY AUTOINCREMENT`, the true
+ * append order — via `hasRowBefore`, and fail closed (`ALL_NONE_COVERAGE`) whenever a row shares
+ * the boundary marker's timestamp but has a lower `id`, rather than assume the marker came first.
  */
 export function coverageForWindow(
   db: Database,
@@ -306,11 +336,19 @@ export function coverageForWindow(
       return ALL_NONE_COVERAGE;
     }
     // Unbounded carve-out: only withhold the claim if real rows precede the first in-window
-    // marker — i.e. there is an actual observed gap, not just an unmarked timestamp 0.
-    const firstMarkerTs = inWindow[0]?.timestamp;
-    if (firstMarkerTs !== undefined && hasRowBefore(db, since, firstMarkerTs)) {
+    // marker — i.e. there is an actual observed gap, not just an unmarked timestamp 0. Compares
+    // the full `(timestamp, id)` tuple (fix 1), not `timestamp` alone, so a row sharing the first
+    // marker's millisecond but appended before it (lower `id`) still counts as a gap.
+    const firstMarker = inWindow[0];
+    if (firstMarker !== undefined && hasRowBefore(db, since, firstMarker)) {
       return ALL_NONE_COVERAGE;
     }
+  } else if (hasRowBefore(db, since, priorMarker)) {
+    // `priorMarker` covers `since` by timestamp, but a row shares that exact millisecond and was
+    // appended (by `id` — the true order) BEFORE the marker: the marker cannot vouch for having
+    // observed that row. Fail closed (fix 1) rather than assume the marker came first — this can
+    // only trigger when `priorMarker.timestamp === since`; see `hasRowBefore`'s doc comment.
+    return ALL_NONE_COVERAGE;
   }
 
   const markerRows = priorMarker === undefined ? inWindow : [priorMarker, ...inWindow];

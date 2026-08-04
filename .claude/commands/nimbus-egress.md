@@ -42,10 +42,10 @@ The completeness claim rests on a single structural invariant (`I29`/`D22`): the
 
 ## Security Invariant — I29 / static D22 (the triple)
 
-**Statement:** every gated action appends exactly **one** `egress_ledger` row from `ToolExecutor.gate()` BEFORE `connectors.dispatch` is called — so a 0-row window is structurally impossible to fake.
+**Statement:** every gated CONNECTOR action that can reach `connectors.dispatch` appends exactly **one** `egress_ledger` row from `ToolExecutor.gate()` BEFORE dispatch is called — so a 0-row window from a dispatch-capable executor is structurally impossible to fake. Gate-only executors (vault, teamvault, reindex, data, auto-update, connector.auth, egress.prune) pair with a rejecting dispatcher and perform local mutations, not egress — they are wired with the named `NULL_EGRESS_SINK` and intentionally emit no egress row; this is a documented exclusion, not a gap.
 
 1. **Append-before-dispatch** — in `executor.ts`, after the audit record and before the rejected-return, `gate()` calls `egressSink.append(buildEgressEntry(...))`. `execute()` only reaches `connectors.dispatch(action)` when the gate returns `"proceed"`.
-2. **Blocked row on deny** — a denied gate appends a `result_status='blocked'` row (`hitl_status='rejected'`) and never dispatches. Both approved and denied decisions are ledgered.
+2. **Blocked row on deny** — a denied gate appends a `result_status='blocked'` row (`hitl_status='rejected'`) and never dispatches. Both approved and denied decisions are ledgered for any executor wired with a real sink (`makeEgressSink`); a gate-only executor's `NULL_EGRESS_SINK` records neither.
 3. **Fail-closed on append failure** — if `EgressSink.append` throws, `gate()` throws, `execute()` propagates, and dispatch never runs. NEVER wrap the append in a swallowing `try/catch` that lets dispatch proceed.
 4. **Tamper-evident** — BLAKE3 chain, timing-safe verify (`sha256HexEqualConstantTime`, I10).
 5. **Sole mutation** — `egress.prune` is the only sanctioned edit, a continuing tombstone (not a silent gap), and is a member of the `I2` HITL frozen set.
