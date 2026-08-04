@@ -13,13 +13,13 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@nimbus-dev/sdk": "^1.8.1",
-    "imapflow": "^1.6.1",
+    "imapflow": "^1.6.5",
     "nodemailer": "^9.0.3",
     "tsdav": "^2.3.1",
     "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/nodemailer": "^8.0.0"
+    "@types/nodemailer": "^8.0.1"
   }
 }

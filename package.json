@@ -245,7 +245,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@nimbus-dev/sdk": "^1.11.1",
-    "astro": "^7.1.4",
+    "astro": "^7.1.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -269,7 +269,7 @@
     "istanbul-reports": "3.2.0",
     "js-yaml": "^4.3.1",
     "jscpd": "^5.0.14",
-    "knip": "^6.29.0",
+    "knip": "^6.31.0",
     "markdownlint-cli2": "^0.23.2",
     "tweetnacl": "^1.0.3",
     "typescript": "^6.0.3",
