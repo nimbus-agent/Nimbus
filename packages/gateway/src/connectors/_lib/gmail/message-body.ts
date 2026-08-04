@@ -35,7 +35,14 @@ function leafText(node: MessagePayload): Found {
  * Collect text honouring MIME container semantics.
  *
  * `multipart/alternative` means "these are the SAME content in different
- * representations — pick one", so the first child that yields anything wins.
+ * representations — pick one", and the pick is by TYPE, not by document
+ * position: the first child (in document order) that yielded `text/plain`
+ * wins; only when NO child yielded `text/plain` does the first child that
+ * yielded `text/html` win. A sender is free to list `text/html` before
+ * `text/plain` in the parts array, and html→text conversion is lossy, so
+ * picking whichever representation happens to come first would silently
+ * prefer the lossy one on those messages — the opposite of this function's
+ * documented contract (prefer `text/plain`; fall back to `text/html`).
  * `multipart/mixed` and `multipart/related` mean "these are a SEQUENCE", so
  * their children concatenate in order.
  *
@@ -55,19 +62,25 @@ function collect(node: MessagePayload, depth: number, state: { visited: number }
   }
 
   const isAlternative = (node.mimeType ?? "").startsWith("multipart/alternative");
+  if (isAlternative) {
+    // Every child is visited (state.visited must reflect the whole walk),
+    // but only ONE representation is kept: the first child that produced
+    // plain text, by TYPE not by position — see the docstring above.
+    const childResults = parts.map((part) => collect(part, depth + 1, state));
+    const plainChild = childResults.find((r) => r.plain.length > 0);
+    if (plainChild !== undefined) {
+      return { plain: plainChild.plain, html: [] };
+    }
+    const htmlChild = childResults.find((r) => r.html.length > 0);
+    if (htmlChild !== undefined) {
+      return { plain: [], html: htmlChild.html };
+    }
+    return { plain: [], html: [] };
+  }
+
   const acc: Found = { plain: [], html: [] };
   for (const part of parts) {
     const got = collect(part, depth + 1, state);
-    if (isAlternative) {
-      // First child that produced anything wins; ignore the rest.
-      if (got.plain.length > 0 || got.html.length > 0) {
-        if (acc.plain.length === 0 && acc.html.length === 0) {
-          acc.plain.push(...got.plain);
-          acc.html.push(...got.html);
-        }
-      }
-      continue;
-    }
     acc.plain.push(...got.plain);
     acc.html.push(...got.html);
   }
