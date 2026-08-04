@@ -1,0 +1,115 @@
+import { expect, test } from "bun:test";
+
+import { stripQuotedTail } from "./email-quoted-text.ts";
+
+test("cuts a trailing > quote block", () => {
+  expect(stripQuotedTail("Yes, agreed.\n\n> the original\n> more original")).toBe("Yes, agreed.");
+});
+
+test("does NOT cut an inline quote followed by more prose", () => {
+  const body =
+    "Here's my take.\n\n> quoting the spec\n> more spec\n\nActually I disagree because Z.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("cuts at an attribution line", () => {
+  expect(stripQuotedTail("Sure.\n\nOn Mon, 4 Aug 2026, Ana wrote:\n> hi")).toBe("Sure.");
+});
+
+test("cuts at -----Original Message-----", () => {
+  expect(stripQuotedTail("Done.\n\n-----Original Message-----\nFrom: x")).toBe("Done.");
+});
+
+test("cuts at the Outlook underscore divider", () => {
+  expect(stripQuotedTail(`Ack.\n\n${"_".repeat(32)}\nFrom: x\nSent: y`)).toBe("Ack.");
+});
+
+test("cuts a trailing Outlook header block with no divider", () => {
+  expect(
+    stripQuotedTail("Looks good.\n\nFrom: Ana <a@x.com>\nSent: Tuesday\nTo: Bo\nSubject: Re: spec"),
+  ).toBe("Looks good.");
+});
+
+test("a lone From: line in a pasted log does not trigger the header marker", () => {
+  const body = "Log follows:\n\nFrom: cache\nstatus=200\ndone";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a header block mid-message with prose below is not cut", () => {
+  const body = "See below.\n\nFrom: Ana\nSent: Tue\n\nMy actual point is Z.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("cuts a trailing signature delimiter", () => {
+  expect(stripQuotedTail("Thanks!\n\n-- \nAna\nCTO")).toBe("Thanks!");
+});
+
+test("returns the body unchanged when no marker matches", () => {
+  expect(stripQuotedTail("Just a plain message.")).toBe("Just a plain message.");
+});
+
+test("a wholly-quoted body falls back to the untrimmed text", () => {
+  const body = "> everything\n> is quoted";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("handles CRLF line endings", () => {
+  expect(stripQuotedTail("Yes.\r\n\r\n> quoted")).toBe("Yes.");
+});
+
+test("cuts at an attribution the client wrapped across two lines", () => {
+  const body =
+    "Agreed.\n\nOn Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n> the thread";
+  expect(stripQuotedTail(body)).toBe("Agreed.");
+});
+
+test("an attribution in the KEPT region is not reflowed into one line", () => {
+  // The wrap-join is analysis-only; the returned text must be sliced from the
+  // original lines, not the joined ones.
+  const body = "On Mon, Aug 3, 2026 at 4:32 PM User\n<user@example.com> wrote:\n\nMy actual reply.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("an opener with no closer within the wrap budget is left alone", () => {
+  const body = "On the whole\nI think we should\nship it\nand see.";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("empty input is returned as-is", () => {
+  expect(stripQuotedTail("")).toBe("");
+});
+
+test("a terminal marker followed by a further quote tail cuts at the marker, not below it", () => {
+  const body = "Thanks.\n\n-- \nAna\n\n> old text\n> more old";
+  expect(stripQuotedTail(body)).toBe("Thanks.");
+});
+
+test("a quote tail running into a terminal signature marker cuts at the walk's earlier index", () => {
+  const body = "Reply.\n\n> old quote\n> more quote\n-- ";
+  expect(stripQuotedTail(body)).toBe("Reply.");
+});
+
+test("a body that is ONLY a signature block returns untrimmed, never empty", () => {
+  const body = "-- \nAna\nCTO";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a body that is ONLY an -----Original Message----- block returns untrimmed, never empty", () => {
+  const body = "-----Original Message-----\nFrom: x";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("three hyphens is not a signature delimiter", () => {
+  const body = "Thanks!\n\n---\nnot a delimiter";
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("fewer than 10 underscores is not a divider", () => {
+  const body = `Body.\n\n${"_".repeat(9)}\nnot header`;
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a terminal marker appearing twice cuts at the LAST one", () => {
+  const body = "A.\n\n-----Original Message-----\nFrom: x\n\n-----Original Message-----\nFrom: y";
+  expect(stripQuotedTail(body)).toBe("A.\n\n-----Original Message-----\nFrom: x");
+});
