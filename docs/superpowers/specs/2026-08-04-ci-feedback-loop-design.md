@@ -142,6 +142,17 @@ regime.
 baseline would emit phantom regressions on unrelated changes, which is how a ratchet loses trust and
 gets regenerated blindly.
 
+**Path normalization.** Keys store the repo-relative path with **forward slashes**, normalized
+explicitly by the key generator regardless of host OS, and the baseline is written with **sorted
+keys** (mirroring `scripts/coverage-floor/baseline.ts:132`).
+
+Measured, so the reason is on the record rather than assumed: `tsc` already emits forward slashes on
+Windows — a probe run produced
+`packages/ui/test/components/settings/data/ExportWizard.test.tsx(119,9): error TS2375: …`.
+So this is **defensive, not a live bug fix**. It matters because the baseline is generated on a
+developer machine and validated inside a Linux container, and this repo has a documented history of
+Windows-only path assumptions surviving local verification.
+
 **Rules** (mirroring `coverage-floor`):
 
 | Situation | Result |
@@ -171,7 +182,16 @@ fail on the new-file rule. There is no path where a fresh arity error passes.
 2. Any check with conclusion `failure`.
 3. Any required check still `pending` — "not yet failed" is not "passed".
 
-Missing `gh` auth is a hard **error**, never a silent skip: "could not check" must not render as green.
+**Exit semantics for the "cannot determine" cases.** Both are errors, not clean exits, because the
+whole point of this tool is that an inconclusive result must never read as green:
+
+| State | Behaviour |
+|---|---|
+| `gh` missing or unauthenticated | Hard error. "Could not check" is not "passed". |
+| No open PR for the current branch | Clear message (`no open PR for <branch> — nothing to verify`) and a **non-zero** exit. It does not crash, but it also does not report success: a caller that treats "no PR" as green is the exact confusion this tool exists to prevent. |
+
+A reviewer suggested exiting cleanly in the no-PR case. Rejected on that reasoning — the message
+should be friendly, the exit code should not be.
 
 It is a reporting tool, not a manifest gate — it needs network and `gh` auth, exactly the properties
 `CI_ONLY_GATES` documents as disqualifying. It is therefore **not** added to `PREFLIGHT_GATES`.
@@ -188,6 +208,25 @@ mirror-image error and equally costly.
 
 Both runners enforce this. Where a tool cannot report its unit count, the wrapper asserts a non-zero
 count itself.
+
+**Scope, deliberately narrow.** The assertion is implemented as a small shared helper applied to the
+gates that demonstrably *can* report zero work — `lint` (biome) and `lint:markdown` — not as a
+per-gate field on every manifest entry.
+
+A reviewer proposed extending the `Gate` interface with `workCountRegex` / `minWorkUnits` so the rule
+is declarative for all 28 gates. Rejected for now, on three grounds:
+
+1. **It guards a case we are structurally removing.** §3.1 fixes biome's zero-work condition at the
+   root; adding a general mechanism to detect it afterwards is building a net under a hole we filled.
+2. **A regex over tool output is itself a silent-failure surface.** If a tool changes its progress
+   wording on upgrade, the regex stops matching and the assertion quietly stops asserting — the same
+   class of bug as the `audit:any` false pass, relocated into the manifest.
+3. **Most of the 28 gates emit no parseable count**, so the field would be either mass-annotated with
+   guesses or adopted inconsistently — and the drift test cannot verify that a regex still matches
+   real output.
+
+Revisit if a **third** gate is found that can silently no-op; two cases do not justify a general
+mechanism, and YAGNI applies to gate infrastructure as much as to product code.
 
 ---
 
@@ -245,7 +284,25 @@ Named so the tooling is not mistaken for a complete loop:
 | Risk | Mitigation |
 |---|---|
 | The baseline gets regenerated blindly, hiding real regressions | `--update-baseline` is a separate explicit command, never part of the gate; the plan requires diffing the baseline in review, as `coverage-floor` already does |
+| Baseline diffs churn on unrelated edits | Keys are written **sorted**, mirroring `scripts/coverage-floor/baseline.ts:132`, which already sorts before writing |
 | Docker runner drifts from CI's bun version | Pin `oven/bun:1.3` to match `setup-nimbus-ci`; the existing gate-drift guard keeps the gate list aligned |
 | `verify:pr` gives false comfort when `gh` is unauthenticated | Missing auth is a hard error, never a skip |
 | Fixing `biome.json` surfaces previously-hidden lint errors repo-wide | Measured: **3162 files, zero warnings** on current `main`. No hidden backlog. |
 | The one-line biome fix is reverted by someone "tidying" globs | The plan adds a comment in `biome.json` stating why the pattern is anchored, and the worktree case it protects |
+
+---
+
+## 8. Review disposition
+
+Against [`2026-08-04-ci-feedback-loop-design-review.md`](./2026-08-04-ci-feedback-loop-design-review.md).
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1.1 | Does `"!.claude"` make a **root-level** lint descend into `.claude/worktrees/*`, scanning every checked-out branch? | **Rejected — measured.** With 22 worktrees present: root lint checks **3155 files under `"!**/.claude"` and 3155 under `"!.claude"`** — identical. A bare directory name *is* biome's folder-ignore form (which is why its own `useBiomeIgnoreFolder` rule prefers it), so `.claude/` and everything beneath it stays excluded from the root. Inside a worktree the config root is the worktree, so `.claude` no longer matches the source tree — 0 → 3162 files. Correct in both directions. |
+| 1.2 | Baseline keys must normalize path separators across OSes | **Accepted, with the reason corrected** (§3.3). `tsc` already emits forward slashes on Windows — verified against a real probe run — so this is defensive rather than a live bug. Worth doing anyway: the baseline is generated on a dev machine and validated in a Linux container. |
+| 1.3 | `verify:pr` behaviour when no PR exists | **Accepted, with the exit code changed** (§3.4). It will not crash, but it exits **non-zero**, not cleanly. "No PR" is not "green", and a clean exit invites exactly the misreading this tool exists to prevent. |
+| 2.1 | Sort the baseline JSON to avoid diff churn | **Accepted** (§3.3, §7). Mirrors `scripts/coverage-floor/baseline.ts:132`, which already sorts before writing. |
+| 2.2 | Extend the `Gate` schema with `workCountRegex` / `minWorkUnits` so the zero-work rule is declarative for all gates | **Deferred, with reasoning** (§3.5). It would guard a case §3.1 structurally removes; a regex over tool output is itself a silent-failure surface when a tool changes its wording; and most gates emit no parseable count. Implemented narrowly for the two gates that demonstrably no-op. Revisit on a third case. |
+
+The 1.1 question was the most valuable of the five: had it been right, the headline change would have
+been actively harmful. It was worth measuring rather than reasoning about.
