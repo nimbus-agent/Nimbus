@@ -8,7 +8,10 @@ import {
 
 describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // IDENTITY assertion, never a length check: widening the union must show up as a diff on this
-  // line. `source_type` is BLAKE3-committed, so a new member is a chain break, not a refactor.
+  // line. Widening is NOT a chain break (verifyEgressChain recomputes each row's hash from that
+  // row's own stored source_type, never from this union's current definition) — it's frozen because
+  // a value written today is permanent in the data and isMarkerSourceType depends on the set being
+  // known and closed. See the doc comment on EGRESS_SOURCE_TYPES.
   test("is exactly these eight members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",

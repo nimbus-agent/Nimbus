@@ -172,9 +172,31 @@ describe("runEgressReport", () => {
     }) as any;
     await runEgressReport(c, { json: false, since: 123 });
     expect((c.calls[0]?.params as { since?: number } | undefined)?.since).toBe(123);
-    expect(out.stdout).toContain("outbound egress events during this query: 1");
+    // `runEgressReport` is the `nimbus egress`/`--since` whole-window (or --since-windowed) total,
+    // never a per-query delta — it must be labeled "in this window", NOT "during this query" (the
+    // label `runProve` uses for its own, different, head-count-diff number). Pinned so the two
+    // call sites cannot regress back to sharing an identical, scope-lying label.
+    expect(out.stdout).toContain("outbound egress events in this window: 1");
+    expect(out.stdout).not.toContain("during this query");
     expect(out.stdout).toContain("email.send");
     expect(out.stdout).toContain("receipt: digest=deadbeef");
+  });
+
+  // Fix wave: pins the runEgressReport scope label so it cannot regress to the query-scoped
+  // wording — this is the surface `formatProveResult`'s unit tests alone cannot cover, since both
+  // existing queued fixtures happened to return a delta of 1 either way.
+  test("labels the count 'in this window', never 'during this query'", async () => {
+    const c = fakeClient({
+      "egress.proveWindow": {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: fake client
+    }) as any;
+    await runEgressReport(c, { json: false });
+    expect(out.stdout).toContain("outbound egress events in this window: 0");
+    expect(out.stdout).not.toContain("during this query");
   });
 });
 

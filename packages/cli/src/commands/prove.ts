@@ -11,6 +11,15 @@ export interface ProveCompleteness {
   readonly coverage: Readonly<Record<string, string>>;
   readonly outboundEgressEvents: number;
   readonly indeterminate: boolean;
+  /**
+   * DEPRECATED compatibility shim for `@nimbus-dev/client` <= 0.15.x, whose
+   * `validateEgressCompleteness` throws unless `tier === "authorized-actions"` is present. The
+   * gateway emits it additively (see `EgressCompleteness` in
+   * `packages/gateway/src/egress/egress-verify.ts`) — the CLI tolerates it on the wire but MUST NOT
+   * read it for any decision; all logic here stays on `coverage`/`indeterminate`. Optional because
+   * older/newer gateways are not guaranteed to send it.
+   */
+  readonly tier?: string;
 }
 
 type ProveResult = {
@@ -21,11 +30,25 @@ type ProveResult = {
 };
 type Head = { head: string; count: number };
 
-/** Pure renderer — the whole point is that this is testable without a gateway. */
+/** Friendlier display name for a coverage class; classes without an entry print their raw name. */
+const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
+  task: "gated connector actions",
+};
+
+/**
+ * Pure renderer — the whole point is that this is testable without a gateway.
+ *
+ * `label` names the scope of `delta` in the printed line (e.g. "during this query" for the
+ * `runProve` head-count diff, "in this window" for the `runEgressReport` / `nimbus egress` total)
+ * — the two are DIFFERENT numbers over DIFFERENT scopes, and printing them under the same label is
+ * exactly the "count printed under a scope that does not apply to it" defect this ledger exists to
+ * prevent. Callers must supply the label true for the number they are passing.
+ */
 export function formatProveResult(input: {
   readonly delta: number;
   readonly completeness: ProveCompleteness;
   readonly chainOk: boolean;
+  readonly label: string;
 }): string {
   if (!input.chainOk || input.completeness.indeterminate) {
     const why = !input.chainOk
@@ -41,10 +64,11 @@ export function formatProveResult(input: {
     .filter(([, g]) => g === "none")
     .map(([c]) => c)
     .sort();
-  const scope = observed.includes("task") ? "gated connector actions" : observed.join(", ");
-  const lines = [
-    `outbound egress events during this query: ${String(input.delta)} (scope: ${scope})`,
-  ];
+  // Name EVERY observed class — collapsing to just "gated connector actions" whenever `task` is
+  // among several observed classes would silently drop the others from both this line AND the
+  // "not observed" line below, understating scope.
+  const scope = observed.map((c) => COVERAGE_CLASS_LABELS[c] ?? c).join(", ");
+  const lines = [`outbound egress events ${input.label}: ${String(input.delta)} (scope: ${scope})`];
   if (unobserved.length > 0) {
     lines.push(`  not observed: ${unobserved.join(", ")}`);
   }
@@ -160,6 +184,9 @@ export async function runEgressReport(
       delta: out.completeness.outboundEgressEvents,
       completeness: out.completeness,
       chainOk: out.verify.ok,
+      // This is the whole-ledger or --since-window total, not a query delta — there is no query
+      // here (this is also the `nimbus egress [--since]` surface).
+      label: "in this window",
     }),
   );
   if (out.completeness.indeterminate) {
@@ -195,12 +222,18 @@ export async function runProve(args: string[]): Promise<void> {
         delta,
         completeness: window.completeness,
         chainOk: window.verify.ok,
+        // `delta` is the true before/after head-count diff for THIS query — the only number in
+        // this file that scope legitimately applies to.
+        label: "during this query",
       }),
     );
     if (window.verify.ok === false || window.completeness.indeterminate) {
       process.exitCode = 1;
     }
     if (delta !== 0) {
+      // Prints a SEPARATE report scoped "in this window" (the whole-ledger/--since total, with its
+      // own row table) — deliberately a different label from the line above, since it is a
+      // different number over a different scope.
       await runEgressReport(client, { json: false, sign });
     }
   });

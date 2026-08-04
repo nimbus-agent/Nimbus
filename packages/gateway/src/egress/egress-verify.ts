@@ -205,6 +205,15 @@ export function listEgress(
  * Lives here (not in `egress-boot-marker.ts`) because it consumes `listEgress`, which is defined in
  * this module — keeping it there would create a two-way import cycle between the two files
  * (forbidden by `.dependency-cruiser.cjs` `no-circular`, enforced via `audit:boundaries`).
+ *
+ * KNOWN LIMITATION (recorded, not fixed): this merges the weakest coverage over ALL markers at or
+ * before the window's end — the ENTIRE history, not just markers relevant to the window's start —
+ * so the very first task-only marker ever appended permanently drags every later window's coverage
+ * down. Coverage can never rise after a gateway upgrade, even for a window entirely after a
+ * more-capable binary booted. The correct fix is NOT a plain `since` filter (that would drop the
+ * marker covering the window's start, understating coverage the other way) but "the last marker at
+ * or before `since`, plus all markers within [`since`, `until`]". Left as-is for Phase 1 — do not
+ * rediscover this as a bug in a later phase; it's this comment's known gap.
  */
 export function coverageForWindow(
   db: Database,
@@ -231,6 +240,25 @@ export type EgressCompleteness = {
    * evidence any egress class was being observed. NEVER report a bare zero in this state.
    */
   readonly indeterminate: boolean;
+  /**
+   * DEPRECATED additive compatibility shim, owner-decided, for one cycle: the published
+   * `@nimbus-dev/client@0.15.0`'s `validateEgressCompleteness` hard-throws unless a `tier` field
+   * equal to `"authorized-actions"` is present (it predates the `coverage`/`indeterminate` shape),
+   * so any published-client consumer — including nimbus-vscode — hard-fails against a gateway that
+   * dropped it outright. Emitted ALONGSIDE `coverage`/`outboundEgressEvents`/`indeterminate`, never
+   * in place of them.
+   *
+   * This value is TRUE TODAY ONLY because Phase 1 coverage is task-only (`THIS_BINARY_COVERAGE` has
+   * exactly one non-"none" class, `task`, and only at `"per-call"` granularity) — "authorized
+   * gated-connector actions, one row per call" is in fact the whole of what this binary observes.
+   * It becomes FALSE the moment any later phase raises another coverage class (`session`/`sync`/
+   * `model`/`peer`) above `"none"`, because at that point the binary observes more than
+   * "authorized-actions" describes and this field would misstate coverage exactly the way the old
+   * scalar `tier` used to. It MUST be removed — not merely "deprecated, remove eventually" — before
+   * any phase raises another coverage class. Nothing in the gateway or CLI reads this field for a
+   * decision; it exists solely for old-client wire compatibility.
+   */
+  readonly tier: "authorized-actions";
 };
 
 /**
@@ -262,7 +290,14 @@ export function proveWindow(
   const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
-    completeness: { coverage, outboundEgressEvents: outbound, indeterminate },
+    // `tier: "authorized-actions"` is the deprecated additive compat shim documented on
+    // `EgressCompleteness` — see that doc comment before touching this literal.
+    completeness: {
+      coverage,
+      outboundEgressEvents: outbound,
+      indeterminate,
+      tier: "authorized-actions",
+    },
     verify: verifyEgressChain(db),
   };
 }

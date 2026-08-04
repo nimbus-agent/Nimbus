@@ -130,6 +130,14 @@ describe("proveWindow", () => {
     expect(out.completeness.coverage.task).toBe("per-call");
     expect(out.completeness.coverage.model).toBe("none");
     expect(out.completeness.outboundEgressEvents).toBe(0); // the marker itself is not counted
+    // Whole-shape pin: a field added to (or dropped from) `completeness` shows up here as a visible
+    // diff instead of silently passing the single-field probes above.
+    expect(out.completeness).toEqual({
+      coverage: THIS_BINARY_COVERAGE,
+      outboundEgressEvents: 0,
+      indeterminate: false,
+      tier: "authorized-actions",
+    });
   });
   test("a window with one dispatch reports exactly that row", () => {
     appendEgressEntry(db, e({ timestamp: 50, method: "email.send" }));
