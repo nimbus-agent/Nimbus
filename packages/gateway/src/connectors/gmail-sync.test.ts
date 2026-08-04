@@ -571,6 +571,110 @@ describe("createGmailSyncable", () => {
     }
   });
 
+  test("indexes a real Gmail body with the quoted tail stripped", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const rawBody = "Agreed, ship Tuesday.\n\n> On Mon, Ana wrote:\n> the whole thread";
+    const encodedBody = Buffer.from(rawBody, "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m1", threadId: "th1" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m1")) {
+        return new Response(
+          JSON.stringify({
+            id: "m1",
+            threadId: "th1",
+            snippet: "Agreed, ship Tuesday...",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "text/plain",
+              headers: [
+                { name: "Subject", value: "Ship plan" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              body: { data: encodedBody },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query<{ body: string; body_complete: number }, []>(
+        "SELECT body, body_complete FROM item WHERE service = 'gmail'",
+      )
+      .get();
+    expect(row?.body).toBe("Agreed, ship Tuesday.");
+    expect(row?.body_complete).toBe(1);
+  });
+
+  test("requests format=full, not format=metadata", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+    let seenUrl = "";
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m1", threadId: "th1" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m1")) {
+        seenUrl = url;
+        return new Response(
+          JSON.stringify({
+            id: "m1",
+            threadId: "th1",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: { headers: [{ name: "Subject", value: "Hi" }] },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    expect(seenUrl).toContain("format=full");
+    expect(seenUrl).not.toContain("format=metadata");
+  });
+
   test("delta phase: nextPageToken in history response → hasMore=true with delta cursor", async () => {
     // Covers L155 TRUE branch: nextPage present → returns hasMore=true delta cursor
     const { ctx } = await createOAuthConnectorTestSetup("google");

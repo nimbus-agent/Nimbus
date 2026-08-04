@@ -295,9 +295,10 @@ describe("upsertGmailMessage", () => {
     expect(row?.title).toBe("(no subject)");
   });
 
-  test("snippet set to '' when snippet is not a string (L148/L149 false branches)", async () => {
+  test("body_preview is '' when the payload carries no usable MIME part", async () => {
     const { db, ctx } = await createOAuthConnectorTestSetup("google");
-    // snippet as number through unknown to satisfy no-any
+    // snippet is no longer read for the body — it is irrelevant here even
+    // when malformed (number through unknown to satisfy no-any).
     const m = {
       id: "m-badsnip",
       snippet: 999,
@@ -311,19 +312,26 @@ describe("upsertGmailMessage", () => {
     expect(row?.body_preview).toBe("");
   });
 
-  test("snippet longer than 512 chars is sliced (L149 true branch)", async () => {
+  test("a body longer than 512 chars has body_preview sliced", async () => {
+    // body_preview is derived from the real MIME body (message-body.ts), not
+    // the provider snippet, since the full-body indexing change — see
+    // upsertIndexedItem's body_preview = clampBody(body, BODY_PREVIEW_MAX).
+    const longBody = "x".repeat(600);
+    const encoded = Buffer.from(longBody, "utf8").toString("base64url");
     const { db, ctx } = await createOAuthConnectorTestSetup("google");
-    const longSnippet = "x".repeat(600);
     const m: GmailMessageResource = {
-      id: "m-longsnip",
-      snippet: longSnippet,
+      id: "m-longbody",
       internalDate: "1700000000000",
-      payload: { headers: [{ name: "Subject", value: "S" }] },
+      payload: {
+        mimeType: "text/plain",
+        headers: [{ name: "Subject", value: "S" }],
+        body: { data: encoded },
+      },
     };
     upsertGmailMessage(ctx, m, Date.now());
     const row = db
       .query("SELECT body_preview FROM item WHERE id = ?")
-      .get(itemPrimaryKey("gmail", "m-longsnip")) as { body_preview: string | null } | null;
+      .get(itemPrimaryKey("gmail", "m-longbody")) as { body_preview: string | null } | null;
     expect(row?.body_preview).toHaveLength(512);
   });
 
