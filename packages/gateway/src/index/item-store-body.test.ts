@@ -275,6 +275,28 @@ test("full passes a body through at the per-type cap", () => {
   d.close();
 });
 
+test("an unrecognised depth passes the body through rather than clamping it", () => {
+  // Unreachable through the typed API — `SyncContext["depth"]` is required
+  // and the scheduler always supplies one of the three — but the DIRECTION of
+  // the fallback has to agree with everything else that resolves an
+  // unspecified depth: `getDepthForService()`, the `sync_state` insert in
+  // `connectors/health.ts`, and the V49 backfill all answer `full`. Routing
+  // an unknown value into the `summary` arm instead would silently truncate
+  // to 512 characters. `imap-sync-core.test.ts`'s `fakeCtx()` casts past the
+  // required field, so a shape like this really can reach the chokepoint.
+  const d = db();
+  const unknownDepthCtx = { db: d } as unknown as SyncContext;
+  upsertIndexedItemForSync(unknownDepthCtx, {
+    ...base,
+    externalId: "u1",
+    body: "z".repeat(2_000),
+  });
+  const row = read(d, "slack:u1");
+  expect((row.body ?? "").length).toBe(2_000);
+  expect(row.body_complete).toBe(1);
+  d.close();
+});
+
 test("a bodyPreview: caller is unaffected at full depth", () => {
   const d = db();
   upsertIndexedItemForSync(ctxAt(d, "full"), {
