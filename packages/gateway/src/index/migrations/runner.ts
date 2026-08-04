@@ -14,6 +14,7 @@ import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
+import { DEPTH_DEFAULT_V49_SQL } from "../depth-default-v49-sql.ts";
 import { EGRESS_LEDGER_V44_SQL } from "../egress-ledger-v44-sql.ts";
 import {
   EMBEDDING_V6_MIGRATION_SQL,
@@ -439,6 +440,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     48,
     "item.body + body_complete; item_fts over body (full-body store v48)",
     BODY_STORE_V48_SQL,
+  ),
+  simpleStep(
+    48,
+    49,
+    "connector depth default summary->full (enforced depth v49)",
+    DEPTH_DEFAULT_V49_SQL,
   ),
 ];
 

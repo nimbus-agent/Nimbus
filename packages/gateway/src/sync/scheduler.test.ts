@@ -745,4 +745,16 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     await p;
     await sched.stop();
   });
+
+  test("a connector with no depth row resolves to full", () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    sched.register(okSyncable("no-depth-row"));
+    const statuses = sched.getStatus("no-depth-row");
+    expect(statuses).toHaveLength(1);
+    const status = statuses[0];
+    expect(status).toBeDefined();
+    expect(status!.depth).toBe("full");
+  });
 });

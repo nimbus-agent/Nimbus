@@ -292,9 +292,9 @@ export class SyncScheduler {
       .query(`SELECT depth FROM sync_state WHERE connector_id = ?`)
       .get(serviceId) as { depth: string | null } | null | undefined;
     if (row == null) {
-      return "summary";
+      return "full";
     }
-    return (row.depth ?? "summary") as "metadata_only" | "summary" | "full";
+    return (row.depth ?? "full") as "metadata_only" | "summary" | "full";
   }
 
   private rowToStatus(serviceId: string, row: SchedulerStateRow, itemCount: number): SyncStatus {

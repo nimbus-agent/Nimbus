@@ -10,6 +10,7 @@ import type { NimbusItem } from "@nimbus-dev/sdk";
 import { upsertIndexedItem } from "./item-store.ts";
 import type { SemanticSearchDeps } from "./local-index.ts";
 import { isAllowedMetaKey, LocalIndex } from "./local-index.ts";
+import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1294,6 +1295,58 @@ describe("LocalIndex.setConnectorDepth branches", () => {
   test("getConnectorDepth throws for connector with no sync_state", () => {
     const idx = makeIndex();
     expect(() => idx.getConnectorDepth("no-such-connector")).toThrow(/unknown connector/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V49 migration — connector depth default (summary -> full)
+// ---------------------------------------------------------------------------
+
+describe("LocalIndex schema V49 — connector depth default", () => {
+  function insertSyncState(db: Database, connectorId: string, depth: string): void {
+    db.run(
+      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth) VALUES (?, NULL, NULL, ?)`,
+      [connectorId, depth],
+    );
+  }
+
+  function depthOf(db: Database, connectorId: string): string {
+    const row = db.query(`SELECT depth FROM sync_state WHERE connector_id = ?`).get(connectorId) as
+      | { depth: string }
+      | undefined;
+    if (row === undefined) {
+      throw new Error(`missing sync_state row for ${connectorId}`);
+    }
+    return row.depth;
+  }
+
+  test("V49 backfills summary to full and leaves metadata_only alone", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 48);
+    insertSyncState(db, "svc-summary", "summary");
+    insertSyncState(db, "svc-metadata", "metadata_only");
+    insertSyncState(db, "svc-full", "full");
+
+    runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+
+    expect(depthOf(db, "svc-summary")).toBe("full");
+    expect(depthOf(db, "svc-metadata")).toBe("metadata_only");
+    expect(depthOf(db, "svc-full")).toBe("full");
+    db.close();
+  });
+
+  test("V49 is idempotent", () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 48);
+    insertSyncState(db, "svc-summary", "summary");
+    insertSyncState(db, "svc-metadata", "metadata_only");
+
+    runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+    runIndexedSchemaMigrations(db, LocalIndex.SCHEMA_VERSION);
+
+    expect(depthOf(db, "svc-summary")).toBe("full");
+    expect(depthOf(db, "svc-metadata")).toBe("metadata_only");
+    db.close();
   });
 });
 
