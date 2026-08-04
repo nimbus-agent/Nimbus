@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { appendBootMarker } from "./egress-boot-marker.ts";
+import { THIS_BINARY_COVERAGE } from "./egress-coverage.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import type { EgressEntry } from "./egress-record.ts";
 import { egressHead, listEgress, proveWindow, verifyEgressChain } from "./egress-verify.ts";
@@ -110,14 +112,77 @@ describe("listEgress", () => {
 describe("proveWindow", () => {
   test("a zero-egress window reports outboundEgressEvents 0 and verifies ok", () => {
     const out = proveWindow(db, { since: 0, until: 1000 });
-    expect(out.completeness).toEqual({ tier: "authorized-actions", outboundEgressEvents: 0 });
+    expect(out.completeness.outboundEgressEvents).toBe(0);
     expect(out.verify.ok).toBe(true);
     expect(out.rows).toHaveLength(0);
+  });
+  test("a window with no covering boot marker is indeterminate, never a clean zero", () => {
+    const out = proveWindow(db, {});
+    expect(out.completeness.outboundEgressEvents).toBe(0);
+    // 0 events, intact chain — and STILL not provable, because nothing recorded what was observed.
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
+  });
+  test("with a boot marker, a clean window is determinate and reports its coverage", () => {
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 1_000);
+    const out = proveWindow(db, {});
+    expect(out.completeness.indeterminate).toBe(false);
+    expect(out.completeness.coverage.task).toBe("per-call");
+    expect(out.completeness.coverage.model).toBe("none");
+    expect(out.completeness.outboundEgressEvents).toBe(0); // the marker itself is not counted
+    // Whole-shape pin: a field added to (or dropped from) `completeness` shows up here as a visible
+    // diff instead of silently passing the single-field probes above.
+    expect(out.completeness).toEqual({
+      coverage: THIS_BINARY_COVERAGE,
+      outboundEgressEvents: 0,
+      indeterminate: false,
+      tier: "authorized-actions",
+    });
   });
   test("a window with one dispatch reports exactly that row", () => {
     appendEgressEntry(db, e({ timestamp: 50, method: "email.send" }));
     const out = proveWindow(db, { since: 0, until: 100 });
     expect(out.completeness.outboundEgressEvents).toBe(1);
     expect(out.rows[0]?.method).toBe("email.send");
+  });
+  test("marker rows are not counted as outbound egress events", () => {
+    // One real gated action…
+    appendEgressEntry(
+      db,
+      e({ timestamp: 50, sourceType: "task", destination: "jira", method: "jira.issue.create" }),
+    );
+    // …and one prune tombstone, which carries resultStatus 'authorized' but sends NOTHING.
+    appendEgressEntry(
+      db,
+      e({
+        timestamp: 51,
+        sourceType: "prune",
+        sourceId: "boundary-hash",
+        destination: "local",
+        method: "egress.prune",
+      }),
+    );
+    const out = proveWindow(db, {});
+    expect(out.completeness.outboundEgressEvents).toBe(1);
+  });
+
+  // Fix 1 (soundness): a row appended in the SAME MILLISECOND as a covering boot marker is
+  // indistinguishable from it by `timestamp` alone. These regressions insert the egress row FIRST
+  // (lower `id` — the true append order) and the boot marker SECOND at an identical timestamp, so
+  // the marker cannot honestly vouch for having observed that row. Both must report `indeterminate`
+  // — a sound implementation must fail closed on the tie rather than assume the marker came first.
+  test("BOUNDED window: an egress row sharing the covering marker's timestamp is NOT covered", () => {
+    appendEgressEntry(db, e({ timestamp: 500, destination: "email", method: "email.send" }));
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 500); // same millisecond, appended AFTER (higher id)
+    const out = proveWindow(db, { since: 500, until: 1000 });
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
+  });
+  test("UNBOUNDED window: an egress row sharing the first marker's timestamp is NOT covered", () => {
+    appendEgressEntry(db, e({ timestamp: 500, destination: "email", method: "email.send" }));
+    appendBootMarker(db, THIS_BINARY_COVERAGE, 500); // same millisecond, appended AFTER (higher id)
+    const out = proveWindow(db, {});
+    expect(out.completeness.indeterminate).toBe(true);
+    expect(out.completeness.coverage.task).toBe("none");
   });
 });

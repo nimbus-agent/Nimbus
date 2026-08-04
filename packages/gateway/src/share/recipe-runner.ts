@@ -13,6 +13,7 @@ export type ReplayStepStatus =
   | "diverged"
   | "missing-connector"
   | "skipped-non-read"
+  | "skipped-invalid-params"
   | "error";
 
 export interface ReplayStepResult {
@@ -32,6 +33,8 @@ export interface ReplaySummary {
   readonly diverged: number;
   readonly missingConnector: number;
   readonly skippedNonRead: number;
+  /** Steps whose params failed the shape guard and were NOT executed. Reported, never silent. */
+  readonly skippedInvalidParams: number;
   readonly error: number;
   /** Steps beyond {@link MAX_REPLAY_STEPS} that were NOT executed. Reported, never silent. */
   readonly capped: number;
@@ -47,6 +50,56 @@ export interface ReplaySummary {
  * is its own reporting defect.
  */
 export const MAX_REPLAY_STEPS = 256;
+
+/**
+ * Own-property names that must never appear in replay params. A share file's params are
+ * `JSON.parse`d, and `JSON.parse` creates `__proto__` as an OWN property (an object literal does
+ * not), so an untrusted file can smuggle one into any connector that merges params into an object.
+ */
+const FORBIDDEN_PARAM_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * Shape guard for an untrusted recipe step's params, applied BEFORE the tool executes.
+ *
+ * Params arrive as attacker-controlled `unknown` from a share file and are handed straight to a
+ * mesh tool's `execute`. This is defence in depth, NOT an authorization control: the real bounds on
+ * replay are the positive read-only allowlist ({@link isReadOnlyToolId}), signature verification in
+ * share-rpc, and {@link MAX_REPLAY_STEPS}. A schema-valid but hostile VALUE (someone else's file id)
+ * is not something this can detect — only a per-tool `inputSchema` check could narrow that, and the
+ * mesh tool map does not currently expose schemas.
+ *
+ * Accepts `undefined` (a no-argument tool) or a plain object, recursively free of
+ * {@link FORBIDDEN_PARAM_KEYS}. Rejects arrays, primitives and `null`, none of which any MCP tool
+ * declares as its input.
+ */
+export function hasSafeParamsShape(params: unknown): boolean {
+  if (params === undefined) return true;
+  // The ROOT must be a plain object. Checked here rather than inside the recursive walk, which
+  // deliberately permits primitives and arrays as nested VALUES.
+  if (params === null || typeof params !== "object" || Array.isArray(params)) return false;
+  return isSafeParamValue(params, 0);
+}
+
+/** Depth ceiling: a deeply nested params tree is itself a red flag, and bounds the walk. */
+const MAX_PARAM_DEPTH = 32;
+
+/** Recursive value check. Primitives and arrays are legal here — only the ROOT is constrained. */
+function isSafeParamValue(v: unknown, depth: number): boolean {
+  if (depth > MAX_PARAM_DEPTH) return false;
+  if (v === null) return true;
+  if (typeof v === "function") return false;
+  if (typeof v !== "object") return true;
+  if (Array.isArray(v)) return v.every((el) => isSafeParamValue(el, depth + 1));
+  for (const key of Object.getOwnPropertyNames(v)) {
+    if (FORBIDDEN_PARAM_KEYS.has(key)) return false;
+    if (!isSafeParamValue((v as Record<string, unknown>)[key], depth + 1)) return false;
+  }
+  return true;
+}
 
 export interface ReplayReport {
   readonly sourceSessionId: string;
@@ -136,6 +189,11 @@ export async function replayRecipe(
       results.push({ ...base, status: "skipped-non-read" });
       continue;
     }
+    // Shape-guard untrusted params BEFORE handing them to a mesh tool's `execute`.
+    if (!hasSafeParamsShape(s.params)) {
+      results.push({ ...base, status: "skipped-invalid-params" });
+      continue;
+    }
     const outcome = await deps.run(s.tool, s.params);
     if (outcome.kind === "unavailable") {
       results.push({ ...base, status: "missing-connector", detail: s.service });
@@ -152,6 +210,7 @@ export async function replayRecipe(
     diverged: results.filter((r) => r.status === "diverged").length,
     missingConnector: results.filter((r) => r.status === "missing-connector").length,
     skippedNonRead: results.filter((r) => r.status === "skipped-non-read").length,
+    skippedInvalidParams: results.filter((r) => r.status === "skipped-invalid-params").length,
     error: results.filter((r) => r.status === "error").length,
     capped,
   };

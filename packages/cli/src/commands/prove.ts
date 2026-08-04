@@ -6,13 +6,73 @@ import { getCliPlatformPaths } from "../paths.ts";
 
 type VerifyResult = { ok: boolean; verifiedRows: number; brokenAt?: number; reason?: string };
 type EgressRow = { timestamp: number; destination: string; method: string; resultStatus: string };
+
+export interface ProveCompleteness {
+  readonly coverage: Readonly<Record<string, string>>;
+  readonly outboundEgressEvents: number;
+  readonly indeterminate: boolean;
+  /**
+   * DEPRECATED compatibility shim for `@nimbus-dev/client` <= 0.15.x, whose
+   * `validateEgressCompleteness` throws unless `tier === "authorized-actions"` is present. The
+   * gateway emits it additively (see `EgressCompleteness` in
+   * `packages/gateway/src/egress/egress-verify.ts`) — the CLI tolerates it on the wire but MUST NOT
+   * read it for any decision; all logic here stays on `coverage`/`indeterminate`. Optional because
+   * older/newer gateways are not guaranteed to send it.
+   */
+  readonly tier?: string;
+}
+
 type ProveResult = {
   rows: EgressRow[];
-  completeness: { tier: string; outboundEgressEvents: number };
+  completeness: ProveCompleteness;
   verify: VerifyResult;
   receipt?: { sigB64: string; pubkeyB64: string; digest: string };
 };
-type Head = { head: string; count: number };
+
+/** Friendlier display name for a coverage class; classes without an entry print their raw name. */
+const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
+  task: "gated connector actions",
+};
+
+/**
+ * Pure renderer — the whole point is that this is testable without a gateway.
+ *
+ * `label` names the scope of `delta` in the printed line (e.g. "during this query" for the
+ * `runProve` head-count diff, "in this window" for the `runEgressReport` / `nimbus egress` total)
+ * — the two are DIFFERENT numbers over DIFFERENT scopes, and printing them under the same label is
+ * exactly the "count printed under a scope that does not apply to it" defect this ledger exists to
+ * prevent. Callers must supply the label true for the number they are passing.
+ */
+export function formatProveResult(input: {
+  readonly delta: number;
+  readonly completeness: ProveCompleteness;
+  readonly chainOk: boolean;
+  readonly label: string;
+}): string {
+  if (!input.chainOk || input.completeness.indeterminate) {
+    const why = !input.chainOk
+      ? "the egress chain is unverifiable"
+      : "no boot marker covers this window, so nothing recorded what was being observed";
+    return `indeterminate — cannot prove zero egress: ${why}`;
+  }
+  const observed = Object.entries(input.completeness.coverage)
+    .filter(([, g]) => g !== "none")
+    .map(([c]) => c)
+    .sort((a, b) => a.localeCompare(b));
+  const unobserved = Object.entries(input.completeness.coverage)
+    .filter(([, g]) => g === "none")
+    .map(([c]) => c)
+    .sort((a, b) => a.localeCompare(b));
+  // Name EVERY observed class — collapsing to just "gated connector actions" whenever `task` is
+  // among several observed classes would silently drop the others from both this line AND the
+  // "not observed" line below, understating scope.
+  const scope = observed.map((c) => COVERAGE_CLASS_LABELS[c] ?? c).join(", ");
+  const lines = [`outbound egress events ${input.label}: ${String(input.delta)} (scope: ${scope})`];
+  if (unobserved.length > 0) {
+    lines.push(`  not observed: ${unobserved.join(", ")}`);
+  }
+  return lines.join("\n");
+}
 
 async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   const state = await readGatewayState(getCliPlatformPaths());
@@ -119,8 +179,20 @@ export async function runEgressReport(
     return;
   }
   console.log(
-    `outbound egress events: ${String(out.completeness.outboundEgressEvents)} (tier: ${out.completeness.tier})`,
+    formatProveResult({
+      delta: out.completeness.outboundEgressEvents,
+      completeness: out.completeness,
+      chainOk: out.verify.ok,
+      // This is the whole-ledger or --since-window total, not a query delta — there is no query
+      // here (this is also the `nimbus egress [--since]` surface).
+      label: "in this window",
+    }),
   );
+  if (out.completeness.indeterminate) {
+    // Chain is intact (the `!out.verify.ok` branch above already returned), but no boot marker
+    // covers this window — the count cannot be trusted. An unprovable window must not exit 0.
+    process.exitCode = 1;
+  }
   for (const r of out.rows) {
     const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
     console.log(`  ${ts}  ${r.method.padEnd(28)} ${r.resultStatus}`);
@@ -130,23 +202,50 @@ export async function runEgressReport(
   }
 }
 
-/** `nimbus prove "<query>"` — snapshot head, run the query, print the egress diff (before/after). */
+/** `nimbus prove "<query>"` — snapshot a time window around the query, print the egress delta. */
 export async function runProve(args: string[]): Promise<void> {
   const sign = args.includes("--receipt") || args.includes("--sign");
   const query = args.find((a) => !a.startsWith("--"));
   await withConsentIpc(async (client) => {
-    const before = await client.call<Head>("egress.head", {});
+    const since = Date.now();
     if (query !== undefined && query !== "") {
       // The blocking ask path (mirrors `nimbus ask`): agent.invoke runs the query so the ledger head
       // advances if (and only if) the agent dispatches a real outbound action.
       await client.call("agent.invoke", { input: query, stream: false });
     }
-    const after = await client.call<Head>("egress.head", {});
-    const delta = after.count - before.count;
-    if (delta === 0) {
-      console.log("outbound egress events during this query: 0 ✓");
-    } else {
-      console.log(`outbound egress events during this query: ${String(delta)}`);
+    const until = Date.now();
+    // `egress.proveWindow({ since, until })` — NOT `egress.head` before/after — so the headline
+    // uses the SAME counting rule as the report below: authorized, non-marker rows only. A raw
+    // `head.count` diff would also count blocked rows, boot/degraded markers, and any concurrent
+    // append from another session, silently inflating the number this command exists to keep
+    // honest.
+    //
+    // RESIDUAL LIMITATION: this is a TIME window, not a query-correlation id. There is no per-row
+    // field tying an egress_ledger row to the query that caused it, so a concurrent append from
+    // another gateway session (another CLI invocation, another agent run, a background sync) that
+    // lands inside [since, until] is counted here too, attributed to a query that did not cause
+    // it. This command does not — and structurally cannot, without a correlation id threaded
+    // through the executor and stored per row — prove that the counted egress was CAUSED BY this
+    // query, only that authorized, non-marker egress was appended during the time this query ran.
+    const window = await client.call<ProveResult>("egress.proveWindow", { since, until });
+    const delta = window.completeness.outboundEgressEvents;
+    console.log(
+      formatProveResult({
+        delta,
+        completeness: window.completeness,
+        chainOk: window.verify.ok,
+        // `delta` is the authorized, non-marker row count for the [since, until] window this query
+        // ran in — the same counting rule `runEgressReport` uses below, just windowed narrower.
+        label: "during this query",
+      }),
+    );
+    if (window.verify.ok === false || window.completeness.indeterminate) {
+      process.exitCode = 1;
+    }
+    if (delta !== 0) {
+      // Prints a SEPARATE report scoped "in this window" (the whole-ledger/--since total, with its
+      // own row table) — deliberately a different label from the line above, since it is a
+      // different number over a different scope.
       await runEgressReport(client, { json: false, sign });
     }
   });

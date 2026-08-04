@@ -1,11 +1,14 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { PairingWindowController } from "./clips/pairing-window.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
+import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
+import { egressHead } from "./egress/egress-verify.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
+import { CURRENT_SCHEMA_VERSION } from "./index/local-index.ts";
 import { runIndexedSchemaMigrations } from "./index/migrations/runner.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { type LocalBaseline, PolicyGate } from "./policy/policy-gate.ts";
@@ -1230,10 +1233,98 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(audit).toContain("D22-egress-append");
   });
 
-  test("the egress append symbol is NOT referenced outside egress/* and executor.ts", async () => {
-    // executor wires the SINK (makeEgressSink built in assemble), not appendEgressEntry directly.
-    const exec = await read("packages/gateway/src/engine/executor.ts");
-    expect(exec).toContain("EgressSink");
+  test("I29: the D22 comment does not claim totality it cannot enforce", async () => {
+    // D22 matches a literal string; it cannot see `inner.dispatch(action)`. Claiming otherwise is
+    // the defect Phase 1 fixes — a label that leads its mechanism.
+    const src = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(src).not.toContain("no escape hatch");
+    expect(src).toContain("matches the literal string");
+  });
+
+  test("appendEgressEntry( is called only from files under packages/gateway/src/egress/", async () => {
+    // A source scan of the CALL form, not the bare identifier: matching `appendEgressEntry\(`
+    // (with the open paren) means an import (`import { appendEgressEntry } from ...`) or a
+    // comment mentioning the name cannot satisfy — or falsely trip — this guard. Only an actual
+    // invocation counts. Scans production `.ts` AND `.tsx` (fix 4 — `packages/gateway/src` has no
+    // `.tsx` today, so this is forward-looking hardening; without it, a future `appendEgressEntry(`
+    // call in a production `.tsx` outside `egress/` would silently bypass this guard by extension
+    // alone) and excludes `.test.ts`/`.test.tsx`. The relative path is derived via `relative()` +
+    // `sep` from `node:path` rather than manual slicing/backslash normalization, so it holds up
+    // across platforms. Mirrors the production D22 static audit's scope
+    // (`checkEgressChokepointConfinement` in check-nimbus-invariants.ts), which also exempts
+    // test files — egress-adjacent tests (e.g. `ipc/egress-rpc.test.ts`) legitimately call
+    // it directly to seed fixture rows.
+    const dir = resolve(REPO_ROOT, "packages/gateway/src");
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    const offenders: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const isSourceFile = entry.name.endsWith(".ts") || entry.name.endsWith(".tsx");
+      const isTestFile = entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx");
+      if (!isSourceFile || isTestFile) continue;
+      const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
+      const abs = resolve(parentDir, entry.name);
+      const relFromGatewaySrc = relative(dir, abs).split(sep).join("/");
+      const contents = await readFile(abs, "utf8");
+      if (contents.includes("appendEgressEntry(") && !relFromGatewaySrc.startsWith("egress/")) {
+        offenders.push(relFromGatewaySrc);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
+    // A required parameter makes an unwired sink a compile error rather than a silent no-op. The
+    // named NULL_EGRESS_SINK keeps the "this executor performs no egress" decision on the record.
+    const src = await read("packages/gateway/src/engine/executor.ts");
+    expect(src).toContain("private readonly egressSink: EgressSink,");
+    expect(src).not.toContain("private readonly egressSink?: EgressSink,");
+  });
+
+  test("I29: runAsk's egress sink is a REQUIRED field, and the getDatabase-guarded NULL_EGRESS_SINK fallback is gone", async () => {
+    // runAsk is the agent-action path (nimbus ask / agent.invoke / the ChatOps read path) — the
+    // most dispatch-capable path in the product, and the one `nimbus prove` itself exercises. It
+    // used to silently substitute NULL_EGRESS_SINK whenever `p.localIndex.getDatabase` wasn't a
+    // function, which meant a real dispatch could execute with zero ledger rows and no signal.
+    // `RunAskParams.egressSink` is now a required field, consumed directly (`p.egressSink`) — the
+    // file no longer imports `makeEgressSink`/`NULL_EGRESS_SINK` as VALUES (only `EgressSink` as a
+    // type) or constructs a sink itself, so it cannot silently manufacture a no-op fallback.
+    const src = await read("packages/gateway/src/engine/run-ask.ts");
+    expect(src).toContain("egressSink: EgressSink;");
+    expect(src).not.toContain("egressSink?: EgressSink");
+    expect(src).toContain("p.egressSink");
+    // Neither NULL_EGRESS_SINK nor makeEgressSink is imported as a VALUE from egress-ledger.ts —
+    // only the EgressSink TYPE is imported — so the file has nothing to build a fallback sink from.
+    // (Matched against the import line specifically: both names legitimately appear in doc-comment
+    // prose above, e.g. "a caller ... must pass `NULL_EGRESS_SINK` explicitly".)
+    expect(src).not.toMatch(
+      /import\s*\{[^}]*(NULL_EGRESS_SINK|makeEgressSink)[^}]*\}\s*from\s*"\.\.\/egress\/egress-ledger\.ts"/,
+    );
+  });
+
+  test("NULL_EGRESS_SINK leaves a real ledger untouched, where makeEgressSink writes", () => {
+    // Asserts REAL behaviour against a real ledger — not that a spy counted a call. The two sinks
+    // are handed the identical entry so the only variable is which sink received it.
+    const entry = {
+      timestamp: 1,
+      sourceType: "task",
+      sourceId: null,
+      destination: "d",
+      method: "m",
+      payloadSummary: "{}",
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+    } as const;
+
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+
+    NULL_EGRESS_SINK.append(entry);
+    expect(egressHead(db).count).toBe(0);
+
+    makeEgressSink(db).append(entry);
+    expect(egressHead(db).count).toBe(1);
+    db.close();
   });
 });
 

@@ -1,7 +1,16 @@
 import type { Database } from "bun:sqlite";
 import { GENESIS_HASH } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
+import { BOOT_MARKER_METHOD } from "./egress-boot-marker.ts";
+import {
+  ALL_NONE_COVERAGE,
+  COVERAGE_CLASSES,
+  type CoverageVector,
+  parseCoverage,
+  weakestCoverage,
+} from "./egress-coverage.ts";
 import { computeEgressRowHash } from "./egress-ledger.ts";
+import { isMarkerSourceType } from "./egress-source-type.ts";
 
 /** Hard ceiling on `listEgress` rows — bounds the cost of an IPC-supplied `limit`. */
 const MAX_EGRESS_LIST_LIMIT = 5000;
@@ -178,13 +187,210 @@ export function listEgress(
   return rows.map(toRow);
 }
 
-export type EgressCompleteness = { tier: "authorized-actions"; outboundEgressEvents: number };
+type MarkerRow = { id: number; timestamp: number; source_id: string | null };
 
 /**
- * The `nimbus prove` window: the rows in [since, until], the completeness tier (honest about the
- * "authorized-actions" boundary — does NOT claim raw-syscall capture, per the spec), and the chain
- * verify result. A degraded chain surfaces `verify.ok === false` — the CLI prints `indeterminate`,
- * never a false `0` (the EAF "indeterminate, never a false zero" rule).
+ * The single boot-marker row (if any) at or before `ts`. Queried DIRECTLY against
+ * `egress_ledger` — NOT via `listEgress`, whose default 1000-row page (oldest-first) would make a
+ * marker appended after row 1000 invisible on any ledger past that size (fix 1). Restricted in SQL
+ * to `method = BOOT_MARKER_METHOD` so no pagination limit is needed here at all.
+ *
+ * Selects `id` alongside `timestamp` — `timestamp` is millisecond-resolution and a row appended in
+ * the SAME millisecond as this marker is indistinguishable from it by timestamp alone. `id`
+ * (`INTEGER PRIMARY KEY AUTOINCREMENT`) is the true append order; callers use it (via
+ * `hasRowBefore`) to fail closed rather than assume the marker came first when a timestamp ties.
+ */
+function lastMarkerAtOrBefore(db: Database, ts: number): MarkerRow | undefined {
+  // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — normalize so
+  // callers can use a single `!== undefined` check.
+  //
+  // `AND source_type = 'boot'` is load-bearing, not redundant with `method = ?`: `method` alone
+  // would let ANY ledger row whose method happens to collide with `BOOT_MARKER_METHOD` (a bug, or
+  // a future row class reusing the string) vouch for coverage regardless of its actual class. Only
+  // a genuine `appendBootMarker` row (`source_type='boot'`) may claim coverage.
+  const row = db
+    .query(
+      `SELECT id, timestamp, source_id FROM egress_ledger
+       WHERE method = ? AND source_type = 'boot' AND timestamp <= ?
+       ORDER BY timestamp DESC, id DESC LIMIT 1`,
+    )
+    .get(BOOT_MARKER_METHOD, ts) as MarkerRow | null;
+  return row ?? undefined;
+}
+
+/** Every boot-marker row strictly after `sinceExclusive` and at or before `until`, oldest first. */
+function markersInRange(db: Database, sinceExclusive: number, until: number): MarkerRow[] {
+  // See `lastMarkerAtOrBefore` above for why `source_type = 'boot'` must accompany `method = ?`,
+  // and for why `id` is selected alongside `timestamp`.
+  return db
+    .query(
+      `SELECT id, timestamp, source_id FROM egress_ledger
+       WHERE method = ? AND source_type = 'boot' AND timestamp > ? AND timestamp <= ?
+       ORDER BY timestamp ASC, id ASC`,
+    )
+    .all(BOOT_MARKER_METHOD, sinceExclusive, until) as MarkerRow[];
+}
+
+/**
+ * True if any ledger row (marker or not) at or after `since` genuinely PRECEDES `boundary` in true
+ * append order — i.e. its `(timestamp, id)` tuple sorts before `boundary`'s. Compares the full
+ * tuple, not `timestamp` alone: `timestamp` is millisecond-resolution, so a row appended in the
+ * same millisecond as `boundary` needs its `id` — the `INTEGER PRIMARY KEY AUTOINCREMENT`, the
+ * true append order — to tell whether it came before or after. This is a fail-closed check: it
+ * flags the tie so the caller can refuse to claim coverage rather than assume `boundary` came
+ * first. A no-op (`false`) whenever `boundary.timestamp > since`, because no row can then both
+ * satisfy `timestamp >= since` and tie `boundary`'s timestamp.
+ */
+function hasRowBefore(
+  db: Database,
+  since: number,
+  boundary: { timestamp: number; id: number },
+): boolean {
+  // bun:sqlite `.get()` returns `null` (not `undefined`) for an empty result — `!= null` catches
+  // both so an empty result isn't mistaken for a found row.
+  const row = db
+    .query(
+      `SELECT 1 as x FROM egress_ledger
+       WHERE timestamp >= ? AND (timestamp < ? OR (timestamp = ? AND id < ?))
+       LIMIT 1`,
+    )
+    .get(since, boundary.timestamp, boundary.timestamp, boundary.id) as { x: number } | null;
+  return row != null;
+}
+
+function coverageOf(r: MarkerRow): CoverageVector {
+  // Unreadable/unparseable marker → claim nothing for every class (see doc comment below).
+  return r.source_id === null
+    ? ALL_NONE_COVERAGE
+    : (parseCoverage(r.source_id) ?? ALL_NONE_COVERAGE);
+}
+
+/**
+ * The coverage that can be claimed for a window `[since, until]`: the weakest granularity per
+ * class across the boot marker that covers the window's START, merged with every boot marker that
+ * booted DURING the window.
+ *
+ * Sound rule (fix 4): a window may claim coverage only if a marker covers its start. A window
+ * whose first-ever marker boots mid-window (e.g. `since=500` but the earliest marker is at
+ * `t=1000`) must not silently claim coverage for the unobserved `[500, 1000)` slice just because a
+ * marker eventually shows up before `until` — that slice had no marker vouching for it, so nothing
+ * can be said about it, and the honest answer is `indeterminate`.
+ *
+ * Implementation: `since`'s covering marker (the LAST marker at or before `since`) plus every
+ * marker within `(since, until]`. If no marker covers `since` AND the caller asked for that
+ * specific `since` explicitly, the window claims nothing (`ALL_NONE_COVERAGE`) — the "may claim
+ * coverage only if a marker covers its start" rule applied literally.
+ *
+ * UNBOUNDED-QUERY CARVE-OUT (`since` omitted, e.g. plain `nimbus egress`/`nimbus prove`): an
+ * omitted `since` means "from the beginning of recorded history", and there is by definition
+ * nothing before that beginning to be silently uncovered — UNLESS the ledger's own earliest rows
+ * predate its first-ever boot marker (a real, if rare, gap: e.g. a build old enough not to call
+ * `appendBootMarker`). So for the omitted-`since` case only, the window still claims coverage from
+ * the markers within it as long as no ledger row precedes the earliest of those markers; a fresh
+ * database (whose very first row IS the boot marker) is therefore NOT punished into permanent
+ * `indeterminate` just because `since` defaults to 0 and no marker literally covers timestamp 0.
+ *
+ * An UNPARSEABLE marker (any marker, whether covering `since` or booted mid-window) contributes an
+ * all-`none` vector rather than being skipped. Skipping it would let a sibling marker's richer
+ * claim stand, overstating coverage; contributing all-`none` drives the weakest-merge to `none`
+ * everywhere, so the window reports `indeterminate`. This is the "indeterminate, never a false
+ * zero" rule — NOT a throw, because one unreadable row must not take `nimbus egress` down.
+ * (Deliberate tampering is already caught elsewhere: `source_id` is hashed, so an edited marker
+ * breaks `verifyEgressChain`. The case handled here is a marker written by a NEWER binary using a
+ * class or granularity this one does not know.)
+ *
+ * Lives here (not in `egress-boot-marker.ts`) because a two-way import between the two files is
+ * forbidden by `.dependency-cruiser.cjs` `no-circular` (enforced via `audit:boundaries`).
+ *
+ * RECONCILED (was a recorded known limitation): coverage no longer merges over the ENTIRE ledger
+ * history for a bounded window — only the marker covering `since` plus markers booted within the
+ * window count, so coverage CAN rise for a window entirely after a more-capable binary booted; an
+ * old, weaker marker from long before `since` no longer permanently caps it. The unbounded query
+ * (no `--since`) is the one case that still merges across all history, and that is correct, not a
+ * limitation: asking about the whole ledger genuinely requires the weakest coverage across every
+ * binary that ever wrote into it.
+ *
+ * SAME-MILLISECOND FAIL-CLOSED RULE (fix 1): `timestamp` is millisecond-resolution, so a row
+ * appended in the same millisecond as a covering marker is indistinguishable from it by timestamp
+ * alone. Both boundary checks (`since`'s covering marker, and the unbounded carve-out's first
+ * in-window marker) additionally compare `id` — `INTEGER PRIMARY KEY AUTOINCREMENT`, the true
+ * append order — via `hasRowBefore`, and fail closed (`ALL_NONE_COVERAGE`) whenever a row shares
+ * the boundary marker's timestamp but has a lower `id`, rather than assume the marker came first.
+ */
+export function coverageForWindow(
+  db: Database,
+  opts: { since?: number | undefined; until?: number | undefined },
+): CoverageVector {
+  const since = opts.since ?? 0;
+  const until = opts.until ?? Number.MAX_SAFE_INTEGER;
+  const sinceOmitted = opts.since === undefined;
+
+  const priorMarker = lastMarkerAtOrBefore(db, since);
+  const inWindow = markersInRange(db, since, until);
+
+  if (priorMarker === undefined) {
+    if (inWindow.length === 0) return ALL_NONE_COVERAGE; // no marker anywhere near this window
+    if (!sinceOmitted) {
+      // The caller asked for a specific `since` and no marker covers it — the window's start is
+      // genuinely unobserved. Claim nothing (see "sound rule" above).
+      return ALL_NONE_COVERAGE;
+    }
+    // Unbounded carve-out: only withhold the claim if real rows precede the first in-window
+    // marker — i.e. there is an actual observed gap, not just an unmarked timestamp 0. Compares
+    // the full `(timestamp, id)` tuple (fix 1), not `timestamp` alone, so a row sharing the first
+    // marker's millisecond but appended before it (lower `id`) still counts as a gap.
+    const firstMarker = inWindow[0];
+    if (firstMarker !== undefined && hasRowBefore(db, since, firstMarker)) {
+      return ALL_NONE_COVERAGE;
+    }
+  } else if (hasRowBefore(db, since, priorMarker)) {
+    // `priorMarker` covers `since` by timestamp, but a row shares that exact millisecond and was
+    // appended (by `id` — the true order) BEFORE the marker: the marker cannot vouch for having
+    // observed that row. Fail closed (fix 1) rather than assume the marker came first — this can
+    // only trigger when `priorMarker.timestamp === since`; see `hasRowBefore`'s doc comment.
+    return ALL_NONE_COVERAGE;
+  }
+
+  const markerRows = priorMarker === undefined ? inWindow : [priorMarker, ...inWindow];
+  return weakestCoverage(markerRows.map(coverageOf));
+}
+
+export type EgressCompleteness = {
+  /** What the binaries writing into this window were built to observe (§3.6 of the annex). */
+  readonly coverage: CoverageVector;
+  readonly outboundEgressEvents: number;
+  /**
+   * True when the count cannot be relied on: no boot marker covers the window, so there is no
+   * evidence any egress class was being observed. NEVER report a bare zero in this state.
+   */
+  readonly indeterminate: boolean;
+  /**
+   * DEPRECATED additive compatibility shim, owner-decided, for one cycle: the published
+   * `@nimbus-dev/client@0.15.0`'s `validateEgressCompleteness` hard-throws unless a `tier` field
+   * equal to `"authorized-actions"` is present (it predates the `coverage`/`indeterminate` shape),
+   * so any published-client consumer — including nimbus-vscode — hard-fails against a gateway that
+   * dropped it outright. Emitted ALONGSIDE `coverage`/`outboundEgressEvents`/`indeterminate`, never
+   * in place of them.
+   *
+   * This value is TRUE TODAY ONLY because Phase 1 coverage is task-only (`THIS_BINARY_COVERAGE` has
+   * exactly one non-"none" class, `task`, and only at `"per-call"` granularity) — "authorized
+   * gated-connector actions, one row per call" is in fact the whole of what this binary observes.
+   * It becomes FALSE the moment any later phase raises another coverage class (`session`/`sync`/
+   * `model`/`peer`) above `"none"`, because at that point the binary observes more than
+   * "authorized-actions" describes and this field would misstate coverage exactly the way the old
+   * scalar `tier` used to. It MUST be removed — not merely "deprecated, remove eventually" — before
+   * any phase raises another coverage class. Nothing in the gateway or CLI reads this field for a
+   * decision; it exists solely for old-client wire compatibility.
+   */
+  readonly tier: "authorized-actions";
+};
+
+/**
+ * The `nimbus prove` window: the rows in [since, until], the completeness (a per-source coverage
+ * vector — what the binaries writing into this window were built to observe — plus an
+ * `indeterminate` flag when no boot marker covers the window), and the chain verify result. A
+ * degraded chain surfaces `verify.ok === false` — the CLI prints `indeterminate`, never a false
+ * `0` (the EAF "indeterminate, never a false zero" rule).
  *
  * NOTE — `verify` runs `verifyEgressChain` over the WHOLE ledger (fromId = 0), not just the
  * window rows. This is intentional and fail-closed: the "zero egress in window W" inference is
@@ -201,10 +407,21 @@ export function proveWindow(
     ...(opts.since !== undefined && { since: opts.since }),
     ...(opts.until !== undefined && { until: opts.until }),
   });
-  const outbound = rows.filter((r) => r.resultStatus === "authorized").length;
+  const outbound = rows.filter(
+    (r) => r.resultStatus === "authorized" && !isMarkerSourceType(r.sourceType),
+  ).length;
+  const coverage = coverageForWindow(db, opts);
+  const indeterminate = COVERAGE_CLASSES.every((c) => coverage[c] === "none");
   return {
     rows,
-    completeness: { tier: "authorized-actions", outboundEgressEvents: outbound },
+    // `tier: "authorized-actions"` is the deprecated additive compat shim documented on
+    // `EgressCompleteness` — see that doc comment before touching this literal.
+    completeness: {
+      coverage,
+      outboundEgressEvents: outbound,
+      indeterminate,
+      tier: "authorized-actions",
+    },
     verify: verifyEgressChain(db),
   };
 }

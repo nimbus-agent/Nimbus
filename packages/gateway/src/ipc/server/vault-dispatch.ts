@@ -1,4 +1,5 @@
 import { asRecord } from "../../connectors/unknown-record.ts";
+import { NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { validateVaultKeyOrThrow } from "../../vault/key-format.ts";
@@ -89,6 +90,7 @@ export async function rpcVaultOrMethodNotFound(
       return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
     },
   };
+  // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
   const toolExecutor =
     ctx.options.localIndex === undefined
       ? undefined
@@ -96,6 +98,8 @@ export async function rpcVaultOrMethodNotFound(
           bindConsentChannel(ctx.consentImpl, clientId),
           ctx.options.localIndex,
           stubDispatcher,
+          undefined,
+          NULL_EGRESS_SINK,
         );
   const vaultOutcome = await dispatchVaultGated(ctx.options.vault, toolExecutor, method, params);
   if (vaultOutcome.kind === "hit") {

@@ -4,6 +4,7 @@ import pino from "pino";
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
 import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
+import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { runAsk } from "./engine/run-ask.ts";
@@ -50,6 +51,10 @@ async function main(): Promise<void> {
     createConnectorDispatcher(dispatcherClient),
     platform.connectorWriteDeps,
   );
+  // I29: runAsk is the agent-action path (nimbus ask / agent.invoke / the ChatOps read path below)
+  // — the most dispatch-capable path in the product. RunAskParams.egressSink is a REQUIRED dep, so
+  // it is wired here once and handed to every runAsk call rather than left to an internal fallback.
+  const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
   const engine = createNimbusEngineAgent({
     localIndex: platform.localIndex,
     auditDb: platform.localIndex.getDatabase(),
@@ -76,6 +81,7 @@ async function main(): Promise<void> {
       consentCoordinator: platform.ipc.consent,
       localIndex: platform.localIndex,
       dispatcher,
+      egressSink: askEgressSink,
       conversationalAgent: resolveEngineAgent(ctx.agent),
       llmRouter: platform.llmRegistry.llmRouter,
       ...(platform.sessionMemoryStore === undefined
@@ -99,6 +105,7 @@ async function main(): Promise<void> {
       consentCoordinator: platform.ipc.consent,
       localIndex: platform.localIndex,
       dispatcher,
+      egressSink: askEgressSink,
       sendChunk: () => {},
       conversationalAgent: engine.agentsByName.nimbus,
       llmRouter: platform.llmRegistry.llmRouter,

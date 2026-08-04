@@ -11,6 +11,7 @@
  */
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { NULL_EGRESS_SINK } from "../../../src/egress/egress-ledger.ts";
 import { buildDelegatedRequestRemote } from "../../../src/engine/delegated-request-remote.ts";
 import { DelegationStore } from "../../../src/engine/delegation-store.ts";
 import { ToolExecutor } from "../../../src/engine/executor.ts";
@@ -94,11 +95,17 @@ test("a delegated HITL approval is recorded in BOTH the owner's and the delegate
       index: aIndex,
       selfIdentity: askerKp,
     });
-    const exec = new ToolExecutor(consent, aIndex, noConnector, {
-      store: aStore,
-      isOperatorValid: () => true,
-      requestRemote,
-    });
+    const exec = new ToolExecutor(
+      consent,
+      aIndex,
+      noConnector,
+      {
+        store: aStore,
+        isOperatorValid: () => true,
+        requestRemote,
+      },
+      NULL_EGRESS_SINK,
+    );
 
     // --- Online: the approval routes to B; B approves; both logs record it; no local prompt. ---
     const r = await exec.gate({ type: "email.send", payload: {} });

@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { agentRequestContext } from "./agent-request-context.ts";
 import { redactPayloadForConsentDisplay } from "./executor.ts";
 import { HITL_REQUIRED, ToolExecutor } from "./index.ts";
@@ -19,7 +20,7 @@ function approvingExecutor(auditCalls: AuditRecord[]): ToolExecutor {
   const consent: ConsentChannel = { requestApproval: () => Promise.resolve(true) };
   const audit: AuditSink = { recordAudit: (e) => auditCalls.push(e) };
   const connectors: ConnectorDispatcher = { dispatch: () => Promise.resolve({ ok: true }) };
-  return new ToolExecutor(consent, audit, connectors);
+  return new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
 }
 
 describe("HITL_REQUIRED — frozen-set facade (full surface)", () => {

@@ -94,6 +94,128 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   bytes over the wire per message, most noticeably on a first sync of a large mailbox. Messages already in
   the index keep their old metadata-only snippet until they're next touched at the source or
   recovered explicitly with `nimbus index rebody --service gmail`.
+- **2026-08-04 — Egress ledger (I29) Phase 1: make the completeness claim true, not just stated.**
+  D22's own comment claimed "there is no escape hatch, no 'approved wrapper' carve-out … Any future
+  shortcut or custom-wrapper bypass therefore fails this preflight static check immediately." That
+  was false: D22 is a regex over the literal string `connectors.dispatch`, and a real dispatcher
+  decorator (`connectors/connector-write-dispatch.ts`, calling `inner.dispatch(action)`) already
+  passes it — as would a session façade or a raw lazy-mesh `tool.execute()`. This phase does not
+  close those paths (that's capability removal, Phase 2 of the I29 security spec); it corrects the
+  claim and hardens what D22's mechanism actually covers:
+  - **Fixed a live miscount:** every `egress.prune` retention tombstone was itself counted as an
+    outbound egress event, inflating `nimbus prove`'s reported figure. `EgressSourceType`
+    (`egress-source-type.ts`) is now a FROZEN 8-member union (`task`/`prune`/`session`/`sync`/
+    `model`/`peer`/`boot`/`degraded`), and `MARKER_SOURCE_TYPES`/`isMarkerSourceType` exclude the
+    `prune`/`boot`/`degraded` bookkeeping rows from the outbound count. The union is frozen, but
+    **not** because widening it is a chain break — `verifyEgressChain` recomputes each row's hash
+    from that row's own stored `source_type` column, never from the union's current definition, so
+    a ninth member changes no stored row and no hash input, and every existing row still verifies.
+    It's frozen because a `source_type` value written today is permanent in the data, and
+    `isMarkerSourceType` depends on the set being known and closed. (An earlier draft of this note
+    claimed the chain-break framing; that framing was false and is corrected here per the fix wave
+    below.)
+  - **A per-process boot marker carries a coverage vector.** `egress-coverage.ts` defines
+    `CoverageVector`/`CoverageClass`/`Granularity` and `THIS_BINARY_COVERAGE` (what this binary is
+    built to observe); `egress-boot-marker.ts` `appendBootMarker` writes it, serialized, into the
+    HASHED `source_id` of a `source_type='boot'` row once per process, so the coverage claim is
+    tamper-evident rather than prose. Phase 1 adds **no new coverage** — only `task` is
+    `"per-call"`, every other class is `"none"` — and that is itself the honest part: raising an
+    entry without landing its appender would be the same overclaim in a new place.
+  - **`proveWindow` reports `{ coverage, outboundEgressEvents, indeterminate }`**, replacing the old
+    scalar `tier` as the load-bearing shape. `nimbus prove` / `nimbus egress` never print a bare
+    `0 ✓`: a provable window prints the count with its observed/unobserved scope, and a window with
+    no covering boot marker (or a degraded chain) prints `indeterminate` and exits 1 instead of a
+    hopeful zero.
+  - **The executor's `egressSink` is now a REQUIRED constructor parameter** (no `?`), with a named
+    `NULL_EGRESS_SINK` for the 7 gate-only executors whose actions are local mutations, not egress —
+    an unwired sink is now a compile error, not a silent no-op.
+  - **Documentation now describes the mechanism, not the intent.** The D22 comment, the I29 section
+    of `docs/SECURITY-INVARIANTS.md`, the mirrored `CLAUDE.md`/`GEMINI.md` I29 bullet, and the
+    `nimbus-egress` skill all now state that D22 confines the literal string `connectors.dispatch`
+    to `executor.ts` and `appendEgressEntry` to `egress/*` — not that no wrapper/façade/raw-execute
+    path can exist. No new invariant; I29/D22 unchanged in number and continue to enforce what they
+    always enforced. Spec: [`docs/superpowers/specs/2026-08-02-i29-d22-egress-completeness-design.md`](./superpowers/specs/2026-08-02-i29-d22-egress-completeness-design.md)
+    (security spec of record; Phases 2–5 remain unbuilt), plus the `fetch`-modality annex
+    [`docs/superpowers/specs/2026-08-03-i29-ledger-completeness-design.md`](./superpowers/specs/2026-08-03-i29-ledger-completeness-design.md).
+  - **Fix wave, same day — five residual findings from the final whole-branch review:**
+    - **`tier: "authorized-actions"` is back, additively, as a deprecated cross-repo compat shim.**
+      Dropping it outright breaks the published `@nimbus-dev/client@0.15.0`'s
+      `validateEgressCompleteness`, which hard-throws unless `tier === "authorized-actions"` is
+      present — so any published-client consumer (including nimbus-vscode) would hard-fail against
+      this gateway. Owner-decided: emit it ALONGSIDE `coverage`/`outboundEgressEvents`/
+      `indeterminate` (never in place of them) for one cycle; the CLI's local `ProveCompleteness`
+      type tolerates it but reads only `coverage`/`indeterminate` for any decision. It is TRUE TODAY
+      only because Phase 1 coverage is task-only — it becomes FALSE and MUST be removed the moment
+      any later phase raises another coverage class above `"none"`.
+    - **The union-freeze rationale in `egress-source-type.ts` was wrong** — corrected two bullets
+      above. Widening `EGRESS_SOURCE_TYPES` is not a chain break (`verifyEgressChain` hashes each
+      row from its own stored `source_type`, not from the union), so the real justification is
+      permanence-in-the-data plus `isMarkerSourceType`'s closed-set dependency. Same correction
+      applied to `docs/SECURITY-INVARIANTS.md` and `.claude/commands/nimbus-egress.md`.
+    - **`nimbus egress`'s scope label was wrong.** `formatProveResult` hardcoded "during this query"
+      even when rendering the `nimbus egress`/`--since` whole-window report — and inside `nimbus
+      prove`, a non-zero delta printed that label twice, once for the true query delta and once for
+      the unrelated whole-ledger total. `formatProveResult` now takes a `label`, true per call site
+      (`"during this query"` for the `runProve` delta, `"in this window"` for `runEgressReport`).
+      Also fixed: the scope line collapsed to just `"gated connector actions"` whenever `task` was
+      among several observed classes, silently dropping the others from both the scope line and the
+      "not observed" line (unreachable in Phase 1, since every other class is hardcoded `"none"`,
+      but wrong on its own terms).
+    - **The boot-marker doc overclaimed.** "A build that never wires a sink produces a boot marker
+      claiming nothing" is false — `THIS_BINARY_COVERAGE` is a compile-time constant decoupled from
+      actual sink wiring, so such a build still claims `task=per-call` via the marker regardless.
+      The true statement, now in both `egress-boot-marker.ts` and `docs/SECURITY-INVARIANTS.md`: a
+      *window with no covering boot marker* claims nothing.
+    - **Recorded, not fixed:** `coverageForWindow` merges the weakest coverage over ALL historical
+      boot markers, so the first task-only marker permanently drags every future window's coverage
+      down — it can never rise after a gateway upgrade, even for a window entirely after a
+      more-capable binary booted. The correct fix is not a plain `since` filter (that drops the
+      marker covering the window's start) but "the last marker at or before `since`, plus all
+      markers within the window." Left as a documented known limitation (`nimbus-egress` skill +
+      a code comment on `coverageForWindow`) for a later phase.
+  - **Fix wave 2, same day — four soundness findings from a follow-up code review:**
+    - **`coverageForWindow` now reads boot markers via a dedicated SQL query** (`method =
+      BOOT_MARKER_METHOD`, no pagination), not `listEgress(db, {})` — the latter defaults `limit`
+      to 1000 ordered oldest-first, so on any ledger past 1000 rows a recent boot marker (including
+      an unparseable one that must force `indeterminate`) was invisible.
+    - **`parseCoverage` now rejects what it claimed to reject.** It previously accepted
+      `"task=per-call=extra"` (dropping the extra segment), ignored unknown keys, and let a
+      duplicate key silently overwrite — so a marker from a NEWER binary carrying an unknown
+      coverage class parsed as valid and contributed real coverage instead of forcing
+      `indeterminate`. It now returns `null` for any non-`key=value` segment, any key outside
+      `COVERAGE_CLASSES`, or any duplicate key.
+    - **`ChatopsBootDeps.egressSink` is now required**, dropping the `?? NULL_EGRESS_SINK` default
+      at the construction site — the ChatOps executor is dispatch-capable (real connector actions),
+      so a caller that wants no ledger must say so explicitly (`NULL_EGRESS_SINK`) instead of
+      getting it by omission. Production (`platform/assemble.ts`) already wired a real sink.
+    - **The "recorded, not fixed" limitation two bullets above is now fixed.** `coverageForWindow`
+      merges the marker covering the window's `since` (the last one at or before it) with every
+      marker booted within the window, instead of every marker in all of history — so a bounded
+      window is no longer capped by an old marker from before it starts, and a window whose start
+      has no covering marker honestly reports `indeterminate` instead of borrowing a later marker's
+      claim for an unobserved slice. An omitted `since` (`nimbus egress`/`nimbus prove` with no
+      `--since`) is a deliberate carve-out of that rule: it only withholds the claim when a real
+      ledger row precedes the ledger's first-ever boot marker, so a fresh database isn't punished
+      into permanent `indeterminate` merely because `since` defaults to 0.
+  - **Fix wave 3, same day — two findings from the final pre-push review:**
+    - **`coverageForWindow`'s marker queries now require `source_type = 'boot'`, not `method` alone.**
+      Both `lastMarkerAtOrBefore` and `markersInRange` (`egress-verify.ts`) previously filtered only
+      on `method = BOOT_MARKER_METHOD`, so any ledger row that happened to carry `method='egress.boot'`
+      — a bug, or a future row class colliding with the string — would vouch for coverage regardless
+      of its actual `source_type`. Only a genuine `appendBootMarker` row (`source_type='boot'`) may
+      claim coverage now.
+    - **The startup boot-marker append no longer takes the gateway down with it.** `appendBootMarker`
+      was called bare from `assemblePlatformServices`; `appendEgressEntry` (via `readHeadHash`)
+      deliberately throws on a malformed head `row_hash` (fail-closed against chain corruption) or a
+      read-only/locked database, so either condition previously aborted gateway startup entirely —
+      worse than the degraded-proof state the design already has an honest answer for
+      (`indeterminate`), and self-defeating besides: `egress.verify`/`nimbus egress verify` are only
+      reachable through a running gateway, so an unbootable gateway blocks the user from even
+      diagnosing the corruption. `platform/assemble.ts` now calls the new `appendBootMarkerOrWarn`
+      wrapper instead: it catches the failure, logs a warning naming what failed and stating that
+      egress proofs will read `indeterminate` until the next successful boot marker, and lets
+      assembly continue. The gated-action append in `executor.ts` `gate()` is unaffected and remains
+      hard fail-closed — this change touches only the once-per-process startup marker.
 - **2026-08-03 — Notion + Confluence full-body indexing, and a Teams `body_complete` fix.**
   Closes the two full-body-store (V48, 2026-08-02) follow-ups named at the time: `notion:page` and
   `confluence:page` moved from `bodyPreview: ""` (title and URL only, no text at all) to a

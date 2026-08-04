@@ -4,6 +4,33 @@
 > claims and what `D22` enforces, enumerates every bypass, and proposes phased remediation. One
 > finding exceeds record-honesty and has its own immediate-mitigation section.
 
+<!-- -->
+
+> ## ⚠️ STALE IN PART — re-verified against `8d663237` on 2026-08-03
+>
+> **The `share.replay` execution risk described below is no longer live.** Four of the five
+> immediate mitigations shipped after this document was written. Read that section as history, not
+> as a current finding:
+>
+> | Mitigation (§ *Immediate mitigations*) | Status at `8d663237` |
+> |---|---|
+> | 1. Enforce the signature | ✅ `ipc/share-rpc.ts:298` — throws `ERR_UNVERIFIED_SHARE` unless `allowUnsigned` is passed |
+> | 2. Remove `"preview"` from `READ_VERBS` | ✅ `share/read-tool-registry.ts:24-31` — removed, with the `iac_pulumi_preview` chain documented in-code |
+> | 3. Validate step parameters | ⚠️ **partially closed 2026-08-03** — a shape guard (`hasSafeParamsShape`) now rejects non-object roots and prototype-pollution keys before `execute`. Per-tool `inputSchema` validation remains open: `LazyMeshToolMap` (`connectors/lazy-mesh/tool-map.ts:22-24`) exposes no schema. |
+> | 4. Cap step count | ✅ `MAX_REPLAY_STEPS = 256`, excess reported as `summary.capped` |
+> | 5. Don't spawn the mesh to enumerate tools | ✅ `ipc/share-rpc.ts:305-312` — resolved lazily, with the force-spawn bug cited in the comment |
+>
+> Note also that §*What is not wrong* is corrected by the code: `dataprofile_preview`, cited there
+> as a real read tool, is a name the dataprofile no-row-data contract test asserts must **throw** —
+> so removing the `preview` verb cost zero replay coverage.
+>
+> **Not re-verified:** the eleven-class bypass enumeration and the `ToolExecutor` sink-omission
+> count. Those remain as written and still need confirmation before becoming commits, per this
+> document's own *Verification status* section.
+>
+> Companion: [`2026-08-03-i29-ledger-completeness-design.md`](./2026-08-03-i29-ledger-completeness-design.md)
+> covers the `fetch` modality and defers to this document on taxonomy, sink requirement and tier shape.
+
 ## Summary
 
 `I29` states that the egress ledger is complete over the executor chokepoint, and `D22`'s own source
@@ -213,3 +240,76 @@ construction sites omitting the sink, `mesh.listTools()` having no production ca
 remediation design over the combined enumeration. The threat pass corrected two claims from the
 sweep pass (the `I11` breach and an arbitrary-SQL warehouse tool), both of which are recorded above
 under "What is not wrong."
+
+---
+
+## Reconciliation with the `fetch`-modality annex (2026-08-03)
+
+[`2026-08-03-i29-ledger-completeness-design.md`](./2026-08-03-i29-ledger-completeness-design.md) was
+drafted independently and without consulting this document. It has been reduced to an **annex**
+covering the `fetch` modality; this document remains the spec of record for architecture, phase
+ordering, and the MCP-mesh execute modality.
+
+Four of the five conflicts resolved **to this document**: the frozen `source_type` union, the
+required sink with `NULL_EGRESS_SINK`, the per-source coverage vector, and the prohibition on
+allowlist entries. The annex's `net:`/`local:` prefix taxonomy and scalar tier ladder are withdrawn.
+
+### One resolution goes the other way — Phase 4's "local inference must produce no rows"
+
+**Superseded.** Local inference **does** write rows; they are excluded from the headline count by a
+predicate over the hashed `destination` host, evaluated at read time.
+
+The reasoning, because it overturns a decision recorded here. This document's objection is noise,
+which is a matter of degree and answerable with `egress.prune`. The cost on the other side is not:
+if local inference writes no rows, the local/remote predicate decides *whether evidence exists at
+all*, so a predicate that wrongly judges a remote host local destroys the record of a real egress —
+silently and permanently. With rows written and the split derived at read time, the identical bug
+only mis-*counts*: the row still names the true host, the chain still proves it unedited, and a
+corrected predicate re-derives history. That is this document's own "indeterminate, never a false
+zero" principle applied to its own recommendation.
+
+Phase 4's accompanying requirement — that the predicate be **structural, not convention** — stands
+and remains open; read-time derivation makes adopting it later a non-breaking change.
+
+### Two amendments to this document's Phase 1 — decided 2026-08-03
+
+Both were irreversible-after-Phase-1 decisions, and both are now settled. **Phase 1 as written above
+is amended accordingly.**
+
+**1. The frozen union is eight members, not six.**
+
+```ts
+type EgressSourceType =
+  | "task" | "prune" | "session" | "sync" | "model" | "peer"
+  | "boot"       // per-process marker carrying the coverage vector
+  | "degraded";  // lost-append recovery marker
+```
+
+The annex's boot marker is the mechanism that turns an unwired sink into `indeterminate` rather than
+a false zero, so it is not optional, and neither marker fits the original six. Admitting them now is
+the "land it complete, including members whose appenders do not exist yet" case this document
+argues for; the alternative — overloading `session` with reserved `method` values — was rejected
+because it demotes marker exclusion from a type-level check to a string match.
+
+The identity test this document requires (`toEqual` against the literal list, never a length check)
+now asserts all eight.
+
+**2. The required sink is threaded, not ambient.**
+
+"Required at construction" does not by itself reach `router.ts`'s `llmClassify` or the
+`openai-embedder` closure — they take no `db` and are not constructed through `ToolExecutor`. The
+resolution is an explicit `EgressSink` parameter at each subsystem's own construction boundary,
+wired in `platform/assemble.ts`. No module-global, no `AsyncLocalStorage`.
+
+This strengthens Phase 1's intent rather than qualifying it: a forgotten sink becomes a compile
+error instead of a runtime condition detectable only through the boot marker. `NULL_EGRESS_SINK`
+keeps its role for gate-only construction sites, where a named null is the decision on the record.
+
+### Corrections to this document's counting, from the annex
+
+- `pruneEgress` writes `resultStatus: "authorized"` (`egress-prune.ts:97`), so **prune tombstones
+  are already counted as outbound egress events** by `proveWindow`. Marker exclusion must be
+  explicit; `result_status` alone does not express it.
+- The `fetch`-modality inventory is 24 connector files, 11 non-connector outbound sites and 4
+  inbound false positives — plus two non-`fetch` sites (`Bun.connect`, `WebSocket`) that a
+  `fetch`-only sweep misses entirely.

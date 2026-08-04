@@ -12,6 +12,13 @@ const { resolvePruneBeforeTs, runEgress, runEgressReport, runEgressVerify, runPr
 
 type Call = { method: string; params: unknown };
 
+// Matches EgressCompleteness from Task 4: task is observed per-call, everything else is
+// unobserved in this phase. A correctly-booted gateway with an intact chain looks like this.
+const COVERED_COMPLETENESS = {
+  coverage: { task: "per-call", session: "none", sync: "none", model: "none", peer: "none" },
+  indeterminate: false,
+};
+
 // Direct fake client for the functions that take an IPCClient argument (no withIpc round-trip).
 function fakeClient(responses: Record<string, unknown>): {
   calls: Call[];
@@ -80,7 +87,7 @@ describe("runEgressReport", () => {
     const c = fakeClient({
       "egress.proveWindow": {
         rows: [],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
         verify: { ok: true },
       },
       // biome-ignore lint/suspicious/noExplicitAny: fake client
@@ -94,7 +101,7 @@ describe("runEgressReport", () => {
     const c = fakeClient({
       "egress.proveWindow": {
         rows: [],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
         verify: { ok: false, brokenAt: 4 },
       },
       // biome-ignore lint/suspicious/noExplicitAny: fake client
@@ -102,6 +109,28 @@ describe("runEgressReport", () => {
     await runEgressReport(c, { json: false });
     expect(process.exitCode).toBe(1);
     expect(out.stdout).toContain("indeterminate");
+  });
+
+  // Fix round 1: an intact chain (verify.ok === true) with no boot marker covering the window
+  // (completeness.indeterminate === true) must still exit non-zero — an unprovable window is not
+  // a clean report. Previously exitCode was only set inside the `!out.verify.ok` branch, so this
+  // combination fell through to the default exitCode (0) despite printing "indeterminate".
+  test("an intact chain with no covering boot marker (indeterminate) prints indeterminate and exits non-zero", async () => {
+    const c = fakeClient({
+      "egress.proveWindow": {
+        rows: [],
+        completeness: {
+          coverage: { task: "none", session: "none", sync: "none", model: "none", peer: "none" },
+          outboundEgressEvents: 0,
+          indeterminate: true,
+        },
+        verify: { ok: true },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: fake client
+    }) as any;
+    await runEgressReport(c, { json: false });
+    expect(out.stdout).toContain("indeterminate");
+    expect(process.exitCode).toBe(1);
   });
 
   test("--json prints the raw proveWindow payload and returns early", async () => {
@@ -114,13 +143,13 @@ describe("runEgressReport", () => {
           resultStatus: "authorized",
         },
       ],
-      completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+      completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
       verify: { ok: true },
     };
     // biome-ignore lint/suspicious/noExplicitAny: fake client
     const c = fakeClient({ "egress.proveWindow": payload }) as any;
     await runEgressReport(c, { json: true });
-    expect(out.stdout).toContain('"tier": "authorized-actions"');
+    expect(out.stdout).toContain('"indeterminate": false');
     expect(out.stdout).toContain('"outboundEgressEvents": 1');
   });
 
@@ -135,7 +164,7 @@ describe("runEgressReport", () => {
             resultStatus: "authorized",
           },
         ],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
         verify: { ok: true },
         receipt: { sigB64: "AAAABBBBCCCCDDDDEEEE", pubkeyB64: "pk", digest: "deadbeef" },
       },
@@ -143,9 +172,31 @@ describe("runEgressReport", () => {
     }) as any;
     await runEgressReport(c, { json: false, since: 123 });
     expect((c.calls[0]?.params as { since?: number } | undefined)?.since).toBe(123);
-    expect(out.stdout).toContain("outbound egress events: 1");
+    // `runEgressReport` is the `nimbus egress`/`--since` whole-window (or --since-windowed) total,
+    // never a per-query delta — it must be labeled "in this window", NOT "during this query" (the
+    // label `runProve` uses for its own, different, head-count-diff number). Pinned so the two
+    // call sites cannot regress back to sharing an identical, scope-lying label.
+    expect(out.stdout).toContain("outbound egress events in this window: 1");
+    expect(out.stdout).not.toContain("during this query");
     expect(out.stdout).toContain("email.send");
     expect(out.stdout).toContain("receipt: digest=deadbeef");
+  });
+
+  // Fix wave: pins the runEgressReport scope label so it cannot regress to the query-scoped
+  // wording — this is the surface `formatProveResult`'s unit tests alone cannot cover, since both
+  // existing queued fixtures happened to return a delta of 1 either way.
+  test("labels the count 'in this window', never 'during this query'", async () => {
+    const c = fakeClient({
+      "egress.proveWindow": {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: fake client
+    }) as any;
+    await runEgressReport(c, { json: false });
+    expect(out.stdout).toContain("outbound egress events in this window: 0");
+    expect(out.stdout).not.toContain("during this query");
   });
 });
 
@@ -188,34 +239,79 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     process.exitCode = 0;
   });
 
-  it("prints '0 ✓' when the head does not advance during the query", async () => {
+  // The defect being fixed: a zero-delta window used to print a bare "outbound egress events
+  // during this query: 0 ✓" from a head-count diff alone, with no chain verify and no coverage
+  // check. runProve now ALWAYS consults egress.proveWindow, and the zero case must name its scope
+  // (and list what wasn't observed) instead of asserting a clean checkmark.
+  it("names the scope for a zero-delta window — never prints a bare '0 ✓'", async () => {
     const ipc = createMockIpcClient([
-      { head: "h", count: 5 }, // egress.head (before)
       {}, // agent.invoke
-      { head: "h", count: 5 }, // egress.head (after)
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      }, // egress.proveWindow({ since, until })
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["what time is it"]);
-    expect(out.stdout).toContain("outbound egress events during this query: 0 ✓");
-    expect(ipc.calls.map((c) => c.method)).toEqual(["egress.head", "agent.invoke", "egress.head"]);
+    expect(out.stdout).toContain(
+      "outbound egress events during this query: 0 (scope: gated connector actions)",
+    );
+    expect(out.stdout).toContain("not observed: model, peer, session, sync");
+    expect(out.stdout).not.toContain("0 ✓");
+    expect(ipc.calls.map((c) => c.method)).toEqual(["agent.invoke", "egress.proveWindow"]);
   });
 
-  it("skips agent.invoke when no query is given (flags only)", async () => {
+  // FIX B: the headline must come from `egress.proveWindow`'s own since/until query, using the
+  // SAME counting rule (authorized, non-marker rows) as the report — never a raw `egress.head`
+  // before/after diff, which would also count blocked rows, boot/degraded markers, and any
+  // concurrent append from another session.
+  it("calls egress.proveWindow with a since/until window bracketing the query — never egress.head", async () => {
     const ipc = createMockIpcClient([
-      { head: "h", count: 2 }, // egress.head (before)
-      { head: "h", count: 2 }, // egress.head (after)
+      {}, // agent.invoke
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      }, // egress.proveWindow({ since, until })
+    ]);
+    wiredGateway(ipc.client.call);
+    const t0 = Date.now();
+    await runProve(["what time is it"]);
+    const t1 = Date.now();
+    expect(ipc.calls.map((c) => c.method)).not.toContain("egress.head");
+    const proveCall = ipc.calls.find((c) => c.method === "egress.proveWindow");
+    const params = proveCall?.params as { since?: number; until?: number } | undefined;
+    expect(typeof params?.since).toBe("number");
+    expect(typeof params?.until).toBe("number");
+    expect(params?.since as number).toBeGreaterThanOrEqual(t0);
+    expect(params?.until as number).toBeLessThanOrEqual(t1);
+    expect(params?.since as number).toBeLessThanOrEqual(params?.until as number);
+  });
+
+  it("skips agent.invoke when no query is given (flags only), still consults proveWindow", async () => {
+    const ipc = createMockIpcClient([
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      }, // egress.proveWindow({ since, until })
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["--receipt"]);
-    expect(ipc.calls.map((c) => c.method)).toEqual(["egress.head", "egress.head"]);
-    expect(out.stdout).toContain("0 ✓");
+    expect(ipc.calls.map((c) => c.method)).toEqual(["egress.proveWindow"]);
+    expect(out.stdout).toContain("scope: gated connector actions");
+    expect(out.stdout).not.toContain("0 ✓");
   });
 
   it("reports the egress window when the head advances", async () => {
     const ipc = createMockIpcClient([
-      { head: "h0", count: 5 }, // egress.head (before)
       {}, // agent.invoke
-      { head: "h1", count: 6 }, // egress.head (after)
+      {
+        rows: [],
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
+        verify: { ok: true },
+      }, // egress.proveWindow (runProve's own window check)
       {
         rows: [
           {
@@ -225,14 +321,64 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
             resultStatus: "authorized",
           },
         ],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 1 },
         verify: { ok: true },
-      },
+      }, // egress.proveWindow (via runEgressReport, since delta !== 0)
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["send the email"]);
     expect(out.stdout).toContain("outbound egress events during this query: 1");
+    expect(out.stdout).toContain("email.send");
     expect(ipc.calls.map((c) => c.method)).toContain("egress.proveWindow");
+  });
+
+  it("reports indeterminate and exits 1 when no boot marker covers the window", async () => {
+    const ipc = createMockIpcClient([
+      {}, // agent.invoke
+      {
+        rows: [],
+        completeness: {
+          coverage: { task: "none", session: "none", sync: "none", model: "none", peer: "none" },
+          outboundEgressEvents: 0,
+          indeterminate: true,
+        },
+        verify: { ok: true },
+      }, // egress.proveWindow
+    ]);
+    wiredGateway(ipc.client.call);
+    await runProve(["what time is it"]);
+    expect(out.stdout).toContain("indeterminate");
+    expect(out.stdout).not.toContain("0 ✓");
+    expect(process.exitCode).toBe(1);
+  });
+
+  // Regression: a BLOCKED (denied) row must not inflate the headline. `proveWindow` on the
+  // gateway already excludes non-"authorized" rows from `outboundEgressEvents` — this test pins
+  // that the CLI trusts THAT computed count (`completeness.outboundEgressEvents`) for its
+  // headline rather than deriving a count itself (e.g. from `rows.length`, which would include
+  // the blocked row and silently inflate the number).
+  it("a blocked row present in the window does not inflate the headline count", async () => {
+    const ipc = createMockIpcClient([
+      {}, // agent.invoke
+      {
+        rows: [
+          {
+            timestamp: 1700000000000,
+            destination: "email",
+            method: "email.send",
+            resultStatus: "blocked",
+          },
+        ],
+        // The gateway computed this excluding the blocked row above — one denied action, zero
+        // authorized egress.
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
+        verify: { ok: true },
+      }, // egress.proveWindow
+    ]);
+    wiredGateway(ipc.client.call);
+    await runProve(["send the email"]);
+    expect(out.stdout).toContain("outbound egress events during this query: 0");
+    expect(out.stdout).not.toContain("during this query: 1");
   });
 });
 
@@ -273,7 +419,7 @@ describe("runEgress (dispatcher)", () => {
     const ipc = createMockIpcClient([
       {
         rows: [],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
         verify: { ok: true },
       },
     ]);
@@ -282,14 +428,14 @@ describe("runEgress (dispatcher)", () => {
     expect(ipc.calls[0]?.method).toBe("egress.proveWindow");
     const params = ipc.calls[0]?.params as { since?: number };
     expect(typeof params.since).toBe("number");
-    expect(out.stdout).toContain('"tier": "authorized-actions"');
+    expect(out.stdout).toContain('"indeterminate": false');
   });
 
   it("ignores --since when immediately followed by another flag", async () => {
     const ipc = createMockIpcClient([
       {
         rows: [],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
         verify: { ok: true },
       },
     ]);
@@ -303,7 +449,7 @@ describe("runEgress (dispatcher)", () => {
     const ipc = createMockIpcClient([
       {
         rows: [],
-        completeness: { tier: "authorized-actions", outboundEgressEvents: 0 },
+        completeness: { ...COVERED_COMPLETENESS, outboundEgressEvents: 0 },
         verify: { ok: true },
       },
     ]);

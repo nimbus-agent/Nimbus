@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
-import { makeEgressSink } from "../egress/egress-ledger.ts";
+import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -31,6 +31,15 @@ export type RunAskParams = {
   consentCoordinator: ConsentCoordinator;
   localIndex: LocalIndex;
   dispatcher: ConnectorDispatcher;
+  /**
+   * I29 egress ledger: appends one row before every connector dispatch. This is the agent-action
+   * path (`nimbus ask` / `agent.invoke` / the ChatOps read path) — the most dispatch-capable path
+   * in the product, and the one `nimbus prove` itself exercises. The sink is therefore REQUIRED —
+   * production wires a real one (`makeEgressSink(db)`, see `index.ts`); a caller that genuinely
+   * wants no ledger (e.g. a test exercising a gate-only path) must pass `NULL_EGRESS_SINK`
+   * explicitly so that choice is visible at the call site instead of silently defaulted.
+   */
+  egressSink: EgressSink;
   sendChunk: (text: string) => void;
   conversationalAgent?: Agent;
   llmRouter?: LlmRouter;
@@ -171,11 +180,16 @@ async function runActionsPlan(
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
   // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
   // ledgered; a query answered purely from the local index never reaches here, so it adds 0 rows.
-  const egressSink =
-    typeof p.localIndex.getDatabase === "function"
-      ? makeEgressSink(p.localIndex.getDatabase())
-      : undefined;
-  const executor = new ToolExecutor(consent, p.localIndex, p.dispatcher, p.delegation, egressSink);
+  // `p.egressSink` is REQUIRED (see the doc comment on `RunAskParams.egressSink`) — this used to
+  // silently fall back to `NULL_EGRESS_SINK` whenever `p.localIndex.getDatabase` wasn't a function;
+  // that fallback is gone, so a caller can no longer get a no-op sink without saying so.
+  const executor = new ToolExecutor(
+    consent,
+    p.localIndex,
+    p.dispatcher,
+    p.delegation,
+    p.egressSink,
+  );
   const summaries: string[] = [];
   const structured: unknown[] = [];
 

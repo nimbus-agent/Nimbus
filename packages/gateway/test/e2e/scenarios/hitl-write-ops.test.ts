@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NULL_EGRESS_SINK } from "../../../src/egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../../../src/engine/executor.ts";
 import type {
   AuditSink,
@@ -275,7 +276,14 @@ function buildMocks(approve: boolean): {
     },
   };
 
-  return { consentCalls, dispatchCalls, executor: new ToolExecutor(consent, audit, connectors) };
+  // NOTE: packages/gateway/test/** is not covered by any tsconfig, so a change to ToolExecutor's
+  // constructor signature is NOT caught by `bun run typecheck` here — it only fails at runtime.
+  // Verify by running the suites under this directory directly (see CI regression that caught this).
+  return {
+    consentCalls,
+    dispatchCalls,
+    executor: new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK),
+  };
 }
 
 describe("HITL_REQUIRED covers every Q2 write action", () => {

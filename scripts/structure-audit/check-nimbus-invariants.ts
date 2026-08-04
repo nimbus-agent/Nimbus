@@ -587,15 +587,16 @@ export function checkForwardShareConfinement(files: readonly FileEntry[]): Viola
   return out;
 }
 
-// D22 (I29) — the executor chokepoint must be TOTAL. (a) EVERY `connectors.dispatch` call site in
-// the gateway (the property access on the executor-injected dispatcher) may appear ONLY in
-// engine/executor.ts — with NO wrapper/allowlist exemption: there is no escape hatch, no
-// "approved wrapper" carve-out, no per-file allow entry. Any future shortcut or custom-wrapper
-// bypass (a new dispatcher decorator, a helper that re-exposes dispatch, a "just this once" call)
-// therefore fails this preflight static check immediately, because a reference anywhere else would
-// let an outbound action bypass the ledgered gate, making a 0-row window a false negative.
-// (b) the egress-ledger append symbol (`appendEgressEntry`) is confined to egress/* (the write
-// path's only home). Test files are exempt.
+// D22 — the egress chokepoint confinement.
+//
+// SCOPE, stated precisely because the previous comment overstated it: this rule matches the literal string
+// `connectors.dispatch` line by line. It CANNOT see a dispatcher decorator that calls
+// `inner.dispatch(action)` (see connectors/connector-write-dispatch.ts), a façade that re-exposes
+// execution under another name, or a raw `tool.execute()` on a lazy-mesh tool record. Those paths
+// are addressed by removing the capability (Phase 2 of the I29 security spec), not by this regex.
+//
+// What it does enforce: no NEW site may spell `connectors.dispatch` outside engine/executor.ts, and
+// `appendEgressEntry` stays inside egress/. Test files are exempt.
 const D22_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
 const D22_DISPATCH_RE = /\bconnectors\.dispatch\b/;
 const D22_APPEND_RE = /\bappendEgressEntry\b/;

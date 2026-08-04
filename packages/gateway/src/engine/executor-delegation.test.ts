@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { RemoteApprovalOutcome } from "./delegated-approval.ts";
 import { DelegationStore } from "./delegation-store.ts";
@@ -36,11 +37,17 @@ describe("executor gate — delegation branch", () => {
       peerId: "peer:bob",
       approved: true,
     });
-    const exec = new ToolExecutor(consent, audit, connectors, {
-      store,
-      isOperatorValid: () => true,
-      requestRemote: remote,
-    });
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      {
+        store,
+        isOperatorValid: () => true,
+        requestRemote: remote,
+      },
+      NULL_EGRESS_SINK,
+    );
     const r = await exec.gate({ type: "email.send", payload: {} });
     expect(r).toBe("proceed");
     expect(localPrompted).toBe(false);
@@ -63,11 +70,17 @@ describe("executor gate — delegation branch", () => {
         return true;
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors, {
-      store,
-      isOperatorValid: () => true,
-      requestRemote: async (): Promise<RemoteApprovalOutcome> => ({ kind: "timeout" }),
-    });
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      {
+        store,
+        isOperatorValid: () => true,
+        requestRemote: async (): Promise<RemoteApprovalOutcome> => ({ kind: "timeout" }),
+      },
+      NULL_EGRESS_SINK,
+    );
     const r = await exec.gate({ type: "email.send", payload: {} });
     expect(r).toBe("proceed");
     expect(localPrompted).toBe(true);
@@ -83,14 +96,20 @@ describe("executor gate — delegation branch", () => {
         return true;
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors, {
-      store,
-      isOperatorValid: () => true,
-      // requestRemote must never be reached: activeDelegateePeer() returns undefined first.
-      requestRemote: async (): Promise<RemoteApprovalOutcome> => {
-        throw new Error("requestRemote must not be called when there is no active delegate");
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      {
+        store,
+        isOperatorValid: () => true,
+        // requestRemote must never be reached: activeDelegateePeer() returns undefined first.
+        requestRemote: async (): Promise<RemoteApprovalOutcome> => {
+          throw new Error("requestRemote must not be called when there is no active delegate");
+        },
       },
-    });
+      NULL_EGRESS_SINK,
+    );
     const r = await exec.gate({ type: "email.send", payload: {} });
     expect(r).toBe("proceed");
     expect(localPrompted).toBe(true);
@@ -118,11 +137,17 @@ describe("executor gate — delegation branch", () => {
       peerId: "peer:bob",
       approved: false,
     });
-    const exec = new ToolExecutor(consent, audit, connectors, {
-      store,
-      isOperatorValid: () => true,
-      requestRemote: remote,
-    });
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      {
+        store,
+        isOperatorValid: () => true,
+        requestRemote: remote,
+      },
+      NULL_EGRESS_SINK,
+    );
     const r = await exec.gate({ type: "email.send", payload: {} });
     expect(r).not.toBe("proceed");
     expect((r as { status: string; reason: string }).status).toBe("rejected");
@@ -139,7 +164,7 @@ describe("executor gate — delegation branch", () => {
         return true;
       },
     };
-    const exec = new ToolExecutor(consent, audit, connectors);
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     const r = await exec.gate({ type: "email.send", payload: {} });
     expect(r).toBe("proceed");
     expect(localPrompted).toBe(true);

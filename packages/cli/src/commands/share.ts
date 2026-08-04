@@ -290,6 +290,8 @@ interface ReplayReportShape {
     readonly diverged: number;
     readonly missingConnector: number;
     readonly skippedNonRead: number;
+    /** Steps whose params failed the gateway's shape guard and were not executed. */
+    readonly skippedInvalidParams?: number;
     readonly error: number;
     /** Steps beyond the gateway's per-replay ceiling that were not executed. */
     readonly capped?: number;
@@ -310,7 +312,7 @@ export function formatReplayReport(report: ReplayReportShape): string {
   }
   const m = report.summary;
   lines.push(
-    `Summary: match ${m.match}, diverged ${m.diverged}, missing-connector ${m.missingConnector}, skipped-non-read ${m.skippedNonRead}, error ${m.error}`,
+    `Summary: match ${m.match}, diverged ${m.diverged}, missing-connector ${m.missingConnector}, skipped-non-read ${m.skippedNonRead}, skipped-invalid-params ${m.skippedInvalidParams ?? 0}, error ${m.error}`,
   );
   // Never let a truncated replay read as a complete one.
   if (m.capped !== undefined && m.capped > 0) {

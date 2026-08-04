@@ -93,6 +93,8 @@ import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { rebuildDecisions, runDecisionPass } from "../decisions/decision-extract.ts";
 import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
+import { appendBootMarker } from "../egress/egress-boot-marker.ts";
+import { type CoverageVector, THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
 import {
@@ -1693,15 +1695,55 @@ function loadServiceConfigsOrDegrade(
   }
 }
 
+/**
+ * I29: append this process's boot marker WITHOUT letting a failure abort gateway startup.
+ *
+ * `appendEgressEntry` (via `readHeadHash`) deliberately THROWS when the ledger's head `row_hash`
+ * is malformed — fail-closed against a corrupted chain — and a read-only/locked SQLite file
+ * throws too. Left unguarded, either condition would take the WHOLE GATEWAY down over what is, by
+ * design, a DEGRADED-PROOF condition rather than a fatal one: a window with no covering boot
+ * marker already reports `indeterminate` instead of a false zero (see `egress-boot-marker.ts` /
+ * `coverageForWindow`). Worse, `egress.verify` / `nimbus egress verify` are reachable only
+ * through a running gateway, so aborting boot here would prevent the user from even diagnosing
+ * the corruption that is blocking it.
+ *
+ * Swallowing the failure must never be SILENT: log a warning naming what failed and stating that
+ * egress proofs will read `indeterminate` until the next successful boot marker.
+ */
+export function appendBootMarkerOrWarn(
+  db: Database,
+  coverage: CoverageVector,
+  now: number,
+  logger: Pick<Logger, "warn">,
+): void {
+  try {
+    appendBootMarker(db, coverage, now);
+  } catch (err) {
+    logger.warn(
+      { err },
+      "I29: failed to append the egress boot marker — egress proofs (nimbus prove / " +
+        "egress.verify) will report 'indeterminate' for every window this process observes " +
+        "until the next successful boot marker",
+    );
+  }
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
+  // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
+  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   const vault = await createNimbusVault(paths);
   const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
+  // I29: record what THIS binary is built to observe, before anything can emit egress. Without a
+  // covering marker `proveWindow` reports `indeterminate` rather than a false zero, so this append
+  // is what makes a clean window provable. Safe here: openGatewaySqlite ran LocalIndex.ensureSchema,
+  // so egress_ledger (V44) exists. Non-fatal on failure (see `appendBootMarkerOrWarn`) — a corrupted
+  // or locked ledger degrades proofs to `indeterminate`, it does not stop the gateway from booting.
+  appendBootMarkerOrWarn(db, THIS_BINARY_COVERAGE, Date.now(), syncLogger);
   const notifications = createStubNotifications();
-  const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);

@@ -1,6 +1,7 @@
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
+import type { EgressSourceType } from "./egress-source-type.ts";
 
 /** Max body bytes for `payload_summary` before the redactor appends `…[truncated]`. */
 const EGRESS_SUMMARY_MAX_BYTES = 256;
@@ -10,7 +11,7 @@ export type EgressHitlStatus = "approved" | "not_required" | "rejected";
 
 export interface EgressEntry {
   readonly timestamp: number;
-  readonly sourceType: string;
+  readonly sourceType: EgressSourceType;
   readonly sourceId: string | null;
   readonly destination: string;
   readonly method: string;

@@ -4,7 +4,7 @@ import {
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
-import { makeEgressSink } from "../../egress/egress-ledger.ts";
+import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
@@ -311,10 +311,13 @@ export async function tryDispatchTeamVaultRpc(
     const stubDispatcher: ConnectorDispatcher = {
       dispatch: () => Promise.reject(new Error("team-vault gate does not dispatch to MCP")),
     };
+    // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
       bindConsentChannel(ctx.consentImpl, clientId),
       index,
       stubDispatcher,
+      undefined,
+      NULL_EGRESS_SINK,
     );
     const rec = asRecord(params);
     const entry = rec !== undefined && typeof rec["entry"] === "string" ? rec["entry"] : "";
@@ -501,6 +504,7 @@ export async function tryDispatchReindexRpc(
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
       },
     };
+    // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor =
       ctx.options.localIndex === undefined
         ? undefined
@@ -508,6 +512,8 @@ export async function tryDispatchReindexRpc(
             bindConsentChannel(ctx.consentImpl, clientId),
             ctx.options.localIndex,
             stubDispatcher,
+            undefined,
+            NULL_EGRESS_SINK,
           );
     const out = await dispatchReindexRpc(method, params, {
       index: ctx.options.localIndex,
@@ -697,6 +703,7 @@ export async function tryDispatchDataRpc(
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
       },
     };
+    // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor =
       ctx.options.localIndex === undefined
         ? undefined
@@ -704,6 +711,8 @@ export async function tryDispatchDataRpc(
             bindConsentChannel(ctx.consentImpl, clientId),
             ctx.options.localIndex,
             stubDispatcher,
+            undefined,
+            NULL_EGRESS_SINK,
           );
     const out = await dispatchDataRpc(method, params, {
       index: ctx.options.localIndex,
@@ -1017,10 +1026,13 @@ function makePruneApproval(
         return Promise.reject(new Error("egress prune gate does not dispatch to MCP"));
       },
     };
+    // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const executor = new ToolExecutor(
       bindConsentChannel(ctx.consentImpl, clientId),
       index,
       stubDispatcher,
+      undefined,
+      NULL_EGRESS_SINK,
     );
     const gate = await executor.gate({ type: "egress.prune", payload: { beforeTs } });
     return gate === "proceed";
@@ -1203,10 +1215,13 @@ function buildAutoUpdateDeps(
       return Promise.reject(new Error("auto-update gate does not dispatch to MCP"));
     },
   };
+  // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
   const toolExecutor = new ToolExecutor(
     bindConsentChannel(ctx.consentImpl, clientId),
     ctx.options.localIndex,
     stubDispatcher,
+    undefined,
+    NULL_EGRESS_SINK,
   );
   return {
     ...ctx.options.extensionsAutoUpdate,
@@ -1321,10 +1336,13 @@ export async function tryDispatchConnectorRpc(
         return Promise.reject(new Error("IPC-native gate does not dispatch to MCP"));
       },
     };
+    // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
     const toolExecutor = new ToolExecutor(
       bindConsentChannel(ctx.consentImpl, clientId),
       ctx.options.localIndex,
       stubDispatcher,
+      undefined,
+      NULL_EGRESS_SINK,
     );
     const out = await dispatchConnectorRpc({
       method,
