@@ -92,9 +92,24 @@ coercion rather than new machinery:
 
 | Depth | Coercion | Stored |
 | --- | --- | --- |
-| `metadata_only` | drop the body input entirely | no body; `body_complete = 0` |
+| `metadata_only` | write `body` **and** `body_preview` as NULL explicitly | neither column holds text; `body_complete = 0` |
 | `summary` | force the `bodyPreview` arm | clamped 512, never claims completeness |
 | `full` | pass through unchanged | per-type cap (16 KiB for prose types) |
+
+**`metadata_only` must null both columns, and must do it explicitly rather than by omission.** Two
+reasons, both load-bearing:
+
+1. A 512-character preview of an email body is message content. Leaving `body_preview` populated
+   while calling the mode "metadata only" would leak exactly what the user asked to suppress. This
+   also matches what the existing reindex path already does —
+   [`reindex.ts:63`](../../../packages/gateway/src/connectors/reindex.ts) nulls `body`,
+   `body_preview` and `body_complete` together — so enforcement and reindex agree instead of
+   drifting.
+2. Simply *omitting* the body input does not produce an empty body. `upsertIndexedItem` computes
+   `const raw = row.body ?? row.bodyPreview ?? row.title`
+   ([`item-store.ts:88`](../../../packages/gateway/src/index/item-store.ts)), so dropping both arms
+   falls through to the **title** and the store would write the title as the body. The coercion must
+   therefore set the columns, not withhold the input.
 
 A `summary`-depth connector that passed `body:` is downgraded to `bodyPreview:`, which is exactly
 the pre-V48 behaviour and already well covered by the store's tests.
@@ -167,6 +182,25 @@ does not, `$select` is what makes the feature work. Relying on an unverified def
 mode to avoid. `$select` on a delta query must be set on the **initial** request — the `@odata.nextLink`
 and `@odata.deltaLink` carry it forward, so it must not be re-appended to a followed link.
 
+**Existing installs will not see bodies until their delta link is reset, and that is expected.** A
+stored `@odata.deltaLink` encodes the projection of the query that minted it, so an install upgrading
+into this slice keeps following a link created *without* `body` and keeps receiving body-less
+responses — the feature would look broken. The fix is not a special upgrade path: Outlook's delta
+link **is** the scheduler cursor (`sync(ctx, cursor)` → `SyncResult.cursor`,
+[`outlook-sync.ts:87-126`](../../../packages/gateway/src/connectors/outlook-sync.ts)), and
+`nimbus index rebody --service outlook` clears exactly that cursor, forcing a fresh delta with the
+new `$select`. This is the same contract #1039 established — new bodies apply going forward, `rebody`
+recovers what is already indexed — and it is precisely why `outlook` joins
+`REBODY_IMPROVABLE_SERVICES` in this slice.
+
+Auto-clearing the cursor on upgrade was considered and rejected: it would force an unannounced
+full-mailbox re-walk, now with `body` on every page, for every Outlook user at once. `rebody` puts
+that cost under the owner's control. The release notes must say plainly that existing Outlook
+installs need one `rebody` run, or the feature will appear not to work.
+
+The same holds for Gmail for the same reason: switching to `format=full` affects messages fetched
+from that point on, and already-indexed messages keep their snippets until a `rebody`.
+
 ### The quoted-tail trimmer
 
 A shared pure module, `string/email-quoted-text.ts`, because IMAP and Fastmail are the obvious next
@@ -174,22 +208,49 @@ consumers and this logic must not be duplicated per connector.
 
 Email is heavily self-duplicating: a twenty-message thread quoted in every reply stores the same
 paragraphs twenty times, spends each reply's 16 KiB cap on text already indexed, and skews term
-frequency for the glossary agent. The trimmer cuts at:
+frequency for the glossary agent.
+
+**It removes a quoted TAIL — it does not cut at the first marker.** This distinction is the whole
+correctness argument. A real quoted reply chain runs, by construction, from its marker to the end of
+the message. An inline quotation does not: it is followed by more of the author's own prose. So the
+rule is:
+
+> Find the earliest marker such that **everything from that marker to the end of the message** is
+> quoted lines, attribution lines, header-block lines, signature, or blank. Cut there. If no marker
+> satisfies that, return the body unchanged.
+
+Cutting at the first marker instead would destroy exactly the messages worth reading:
+
+```text
+Here's my take.                 <-- survives either way
+
+> quoting the spec             <-- inline quote, NOT a tail
+> more spec
+
+Actually I disagree because Z.  <-- LOST by first-marker; kept by tail rule
+```
+
+A never-return-empty fallback does not save that case, because the text above the marker is
+non-empty — which is why the tail rule, not the fallback, has to do the work.
+
+**Markers** (each valid only as the start of a qualifying tail):
 
 - a run of lines beginning `>` (any nesting depth),
 - `On <date>, <someone> wrote:` (and the common localised/wrapped variants),
 - `-----Original Message-----`,
 - Outlook's `________________________________` divider,
-- a trailing signature delimiter: a line consisting of exactly `--` followed by a single space
-  (the trailing space is part of the convention and must not be trimmed away when matching).
+- an Outlook-style inline header block — two or more of `From:` / `Sent:` / `To:` / `Subject:` /
+  `Cc:` on consecutive lines. Outlook frequently emits these with no divider above them. Requiring
+  **two or more adjacent** fields keeps a single `From: ...` line inside a pasted log from
+  triggering it, and the tail rule means even a real header block mid-message is ignored,
+- a signature delimiter: a line consisting of exactly `--` followed by a single space (the trailing
+  space is part of the convention and must not be trimmed away when matching).
 
-It returns the text **above** the first such marker. It is deliberately conservative: when no marker
-matches, the body is returned unchanged.
-
-**The risk is cutting real content**, e.g. a message quoting a `>` code block before adding its own
-prose. That is accepted, with two mitigations: the trimmer never returns empty (if trimming would
-leave nothing, the untrimmed body is used), and it is a pure function, so it is cheap to test against
-a corpus of awkward shapes.
+**Remaining risk, accepted.** A message whose genuine final paragraph is itself entirely a quotation —
+"here is the paragraph I object to:" followed by only the quote — loses that quote. The author's own
+words above it survive. The never-return-empty fallback still applies for the degenerate case where
+the whole body is quoted. The function is pure, so this is cheap to pin with a corpus of awkward
+shapes rather than argued about.
 
 ## Fallout
 
@@ -209,6 +270,8 @@ a corpus of awkward shapes.
 | Area | Case |
 | --- | --- |
 | Depth | `metadata_only` writes no body even when the connector passes `body:` — asserted by reading the column |
+| Depth | `metadata_only` leaves `body_preview` NULL too, not just `body` |
+| Depth | `metadata_only` does **not** store the title as the body (the `?? row.title` fallback trap) |
 | Depth | `summary` downgrades a `body:` caller to 512 with `body_complete = 0` |
 | Depth | `full` passes through at the per-type cap |
 | Depth | depth is read once per sync, not once per item (assert query count or inject a counting stub) |
@@ -224,10 +287,14 @@ a corpus of awkward shapes.
 | Outlook | `contentType: html` is stripped; `text` passes through |
 | Outlook | `$select` is present on the initial delta request and NOT re-appended to a followed `nextLink` |
 | Outlook | a message with no `body` still indexes title-only |
-| Trimmer | each marker form cuts at the right place |
+| Trimmer | each marker form cuts at the right place when it starts a genuine tail |
+| Trimmer | **an inline `>` quote followed by more prose is NOT cut** — the reply below it survives |
+| Trimmer | an Outlook `From:`/`Sent:`/`To:`/`Subject:` block at the tail is cut |
+| Trimmer | a single `From:` line inside a pasted log does not trigger the header-block marker |
+| Trimmer | a header block mid-message, with prose below it, is not cut |
 | Trimmer | no marker → body unchanged |
-| Trimmer | trimming to empty falls back to the untrimmed body |
-| Trimmer | a `>` inside a fenced code block before real prose — documents the accepted failure |
+| Trimmer | a wholly-quoted body falls back to the untrimmed text rather than returning empty |
+| Outlook | a body-less response on a pre-upgrade delta link degrades to title-only rather than erroring |
 
 ## Risks
 
@@ -237,5 +304,6 @@ a corpus of awkward shapes.
 | Enforcement silently truncates an install whose row is not backfilled | The migration and the two code sites are the same change; a test asserts a fresh connector resolves to `full` |
 | `$select` on Outlook's delta breaks pagination | Set on the initial request only; a test asserts it is absent from followed links |
 | Gmail `format=full` responses are much larger | Bandwidth only — quota cost is unchanged at 5 units. Attachment bytes are not inlined |
-| The trimmer cuts real content | Conservative markers, never-return-empty fallback, pure and heavily tested. Accepted and documented rather than hidden |
+| The trimmer cuts real content | The tail rule is the mitigation: a marker only counts when everything below it to the end of the message is quoted/attribution/signature, so inline quotations followed by more prose are untouched. Never-return-empty covers the wholly-quoted degenerate case. Pure function, pinned by a corpus of awkward shapes |
+| Existing Outlook installs see no bodies after upgrade | Their stored delta link encodes the pre-`$select` projection. Documented as requiring one `nimbus index rebody --service outlook`, which is why outlook joins the improvable list here. Must be stated in the release notes or the feature reads as broken |
 | Depth enforcement changes every connector's write path | It is one coercion at one site, behind existing store tests; `full` (the post-migration default) is a pass-through, so the common path is unchanged |
