@@ -11,6 +11,22 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  * legacy text that is genuinely GONE from the local index and can only be
  * recovered from the source API.
  *
+ * As of the V49 depth enforcement (2026-08-04), `body_complete = 0` has a
+ * SECOND, orthogonal cause this command does not distinguish: a connector
+ * configured below `full` depth (`metadata_only`/`summary`) is coerced at
+ * `upsertIndexedItemForSync` to never claim completeness, by design, for as
+ * long as that setting holds — even for a service in
+ * `REBODY_IMPROVABLE_SERVICES` below. `computePendingByService` counts both
+ * causes together, so a `--dry-run` for such a service reports a nonzero
+ * pending count that a real run cannot shrink: `forceSync` still pays for a
+ * real re-sync over the network, and the depth chokepoint still discards the
+ * body it fetches. Distinguishing the two — filtering `pending` to rows a
+ * `full`-depth connector could actually complete — is a known gap, not
+ * addressed here; it would require joining `sync_state.depth` into
+ * `computePendingByService`; today the caller has to already know their own
+ * connector depth settings to avoid spending quota on a service that cannot
+ * benefit.
+ *
  * It works by clearing a per-connector sync watermark (`scheduler_state.cursor`)
  * and letting the existing sync run from scratch. Cost is NOT uniform across
  * connectors, and callers should know which kind they have:
