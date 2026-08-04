@@ -699,7 +699,7 @@ describe("createOutlookSyncable", () => {
     "latency &lt; 200ms.<o:p></o:p></p>",
     '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>',
     '<div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">',
-    '<p class="MsoNormal">' + "_".repeat(38) + "<o:p></o:p></p>",
+    `<p class="MsoNormal">${"_".repeat(38)}<o:p></o:p></p>`,
     '<p class="MsoNormal"><b>From:</b> Ana Ruiz &lt;ana@example.com&gt;<br>',
     "<b>Sent:</b> 04 August 2026 09:14<br>",
     "<b>To:</b> Bo Lin &lt;bo@example.com&gt;<br>",
