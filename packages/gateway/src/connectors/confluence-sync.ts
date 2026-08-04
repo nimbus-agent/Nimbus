@@ -301,8 +301,9 @@ export function createConfluenceSyncable(options: ConfluenceSyncableOptions): Sy
           ? `type = page AND lastModified >= now("-${String(initialSyncDepthDays)}d") order by lastModified desc`
           : `type = page AND lastModified > "${watermark}" order by lastModified desc`;
 
-      await ctx.rateLimiter.acquire("confluence");
-
+      // No acquire here: `confluenceRunPagedSearch` acquires once per paging
+      // request, first iteration included. A second acquire at this level would
+      // spend a token that buys nothing.
       return confluenceRunPagedSearch({
         ctx,
         apiBase,
