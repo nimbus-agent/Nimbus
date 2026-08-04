@@ -9,6 +9,14 @@ export interface Gate {
 
 const FAST: readonly Gate[] = [
   { name: "typecheck", cmd: ["bun", "run", "typecheck"], tier: "fast" },
+  {
+    // Test directories are NOT in any package's tsconfig `include`, so `typecheck` is blind to
+    // them: in #1038 five ToolExecutor call sites broke and `bun run typecheck` still exited 0.
+    // Gated against a committed baseline of pre-existing debt; only NEW errors fail.
+    name: "typecheck:tests",
+    cmd: ["bun", "run", "typecheck:tests"],
+    tier: "fast",
+  },
   { name: "lint (biome)", cmd: ["bun", "run", "lint"], tier: "fast" },
   { name: "lint:markdown", cmd: ["bun", "run", "lint:markdown"], tier: "fast" },
   { name: "audit:doc-refs", cmd: ["bun", "run", "audit:doc-refs"], tier: "fast" },

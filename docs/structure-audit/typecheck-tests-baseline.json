@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "generated_at": "2026-08-04T17:43:34.168Z",
+  "files": {
+    "packages/gateway/test/benchmark/item-list-query-latency.test.ts": {
+      "TS4111": 2
+    },
+    "packages/gateway/test/e2e/chatops-e2e.test.ts": {
+      "TS2554": 1
+    },
+    "packages/gateway/test/e2e/scenarios/cross-service-query.test.ts": {
+      "TS2322": 1,
+      "TS2345": 1
+    },
+    "packages/gateway/test/e2e/scenarios/decisions.e2e.test.ts": {
+      "TS2353": 1
+    },
+    "packages/gateway/test/e2e/scenarios/extension-auto-update.e2e.test.ts": {
+      "TS2314": 1
+    },
+    "packages/gateway/test/e2e/share-e2e.test.ts": {
+      "TS2769": 1
+    },
+    "packages/gateway/test/fixtures/pagerduty/build-incident.ts": {
+      "TS4111": 4
+    },
+    "packages/gateway/test/helpers/connector-sync-harness.ts": {
+      "TS2739": 1
+    },
+    "packages/gateway/test/helpers/mock-fetch.ts": {
+      "TS2304": 1,
+      "TS2379": 2,
+      "TS2741": 1
+    },
+    "packages/gateway/test/helpers/mock-spawn.test.ts": {
+      "TS2532": 3
+    },
+    "packages/gateway/test/helpers/mock-spawn.ts": {
+      "TS2379": 1
+    },
+    "packages/gateway/test/integration/connectors/airflow-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/argocd-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/bitrise-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/canva-sync-fake-server.test.ts": {
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/codemagic-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/dagster-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/databricks-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/dbt-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/dependencytrack-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/figma-sync-fake-server.test.ts": {
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/flagsmith-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/flux-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/greenhouse-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/hubspot-sync-fake-server.test.ts": {
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/intercom-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/launchdarkly-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/lever-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/mercury-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/metabase-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/miro-sync-fake-server.test.ts": {
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/mlflow-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/netlify-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/pipedrive-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2379": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/prefect-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/raindrop-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/ramp-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/readwise-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/salesforce-sync-fake-server.test.ts": {
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/semgrep-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/snyk-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/sonarqube-sync-fake-server.test.ts": {
+      "TS2314": 2,
+      "TS2739": 1,
+      "TS2741": 2
+    },
+    "packages/gateway/test/integration/connectors/stackoverflow-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2552": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/stripe-sync-fake-server.test.ts": {
+      "TS2304": 1,
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/superset-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/vercel-sync-fake-server.test.ts": {
+      "TS2304": 1,
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/wiz-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/connectors/zendesk-sync-fake-server.test.ts": {
+      "TS2314": 1,
+      "TS2739": 1
+    },
+    "packages/gateway/test/integration/connectors/zotero-sync-fake-server.test.ts": {
+      "TS2304": 1,
+      "TS2314": 1,
+      "TS2698": 1,
+      "TS2739": 1,
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/extensions/auto-update-roundtrip.test.ts": {
+      "TS2314": 1
+    },
+    "packages/gateway/test/integration/extensions/sync-with-mock-registry.test.ts": {
+      "TS2314": 1
+    },
+    "packages/gateway/test/integration/http/deployments-post-route.test.ts": {
+      "TS2532": 2
+    },
+    "packages/gateway/test/integration/http/openapi-route.test.ts": {
+      "TS18046": 4
+    },
+    "packages/gateway/test/integration/lan/lan-rpc.test.ts": {
+      "TS2322": 1
+    },
+    "packages/gateway/test/integration/preflight/preflight-real-db.test.ts": {
+      "TS2769": 1
+    },
+    "packages/gateway/test/integration/share/share-create-denied.integration.test.ts": {
+      "TS2741": 1
+    },
+    "packages/gateway/test/integration/teamvault/two-gateway-invoke.integration.test.ts": {
+      "TS6133": 1
+    },
+    "packages/gateway/test/unit/auth/pkce.test.ts": {
+      "TS2769": 10
+    },
+    "packages/gateway/test/unit/connectors/athena-table-mapping.test.ts": {
+      "TS4111": 8
+    },
+    "packages/gateway/test/unit/connectors/aws-sync.test.ts": {
+      "TS4111": 4
+    },
+    "packages/gateway/test/unit/connectors/azure-sync.test.ts": {
+      "TS4111": 2
+    },
+    "packages/gateway/test/unit/connectors/bigquery-sync.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/connectors/bigquery-table-mapping.test.ts": {
+      "TS4111": 8
+    },
+    "packages/gateway/test/unit/connectors/bitbucket-sync.test.ts": {
+      "TS2532": 12
+    },
+    "packages/gateway/test/unit/connectors/canva-design-mapping.test.ts": {
+      "TS2698": 2
+    },
+    "packages/gateway/test/unit/connectors/circleci-sync.test.ts": {
+      "TS4111": 4
+    },
+    "packages/gateway/test/unit/connectors/data-profile-mapping.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/connectors/discord-sync.test.ts": {
+      "TS2532": 6
+    },
+    "packages/gateway/test/unit/connectors/elasticsearch-index-mapping.test.ts": {
+      "TS4111": 19
+    },
+    "packages/gateway/test/unit/connectors/elasticsearch-sync.test.ts": {
+      "TS4111": 6
+    },
+    "packages/gateway/test/unit/connectors/fastmail-email-mapping.test.ts": {
+      "TS2379": 1,
+      "TS4111": 5
+    },
+    "packages/gateway/test/unit/connectors/gcp-sync.test.ts": {
+      "TS4111": 1
+    },
+    "packages/gateway/test/unit/connectors/github-actions-sync.test.ts": {
+      "TS4111": 8
+    },
+    "packages/gateway/test/unit/connectors/github-sync-mergeable.test.ts": {
+      "TS4111": 9
+    },
+    "packages/gateway/test/unit/connectors/github-sync-pr-metadata.test.ts": {
+      "TS4111": 11
+    },
+    "packages/gateway/test/unit/connectors/github-sync.test.ts": {
+      "TS2532": 15
+    },
+    "packages/gateway/test/unit/connectors/gitlab-sync.test.ts": {
+      "TS2532": 15,
+      "TS2741": 1
+    },
+    "packages/gateway/test/unit/connectors/great-expectations-result-mapping.test.ts": {
+      "TS4111": 10
+    },
+    "packages/gateway/test/unit/connectors/great-expectations-sync.test.ts": {
+      "TS4111": 2
+    },
+    "packages/gateway/test/unit/connectors/hubspot-deal-mapping.test.ts": {
+      "TS2698": 1
+    },
+    "packages/gateway/test/unit/connectors/imap-email-mapping.test.ts": {
+      "TS2379": 1,
+      "TS4111": 8
+    },
+    "packages/gateway/test/unit/connectors/jenkins-sync.test.ts": {
+      "TS2532": 2,
+      "TS4111": 5
+    },
+    "packages/gateway/test/unit/connectors/kubernetes-sync.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/connectors/lazy-mesh/connector-spawns.test.ts": {
+      "TS2741": 1,
+      "TS4111": 4
+    },
+    "packages/gateway/test/unit/connectors/lazy-mesh/credential-orchestration.test.ts": {
+      "TS2739": 1
+    },
+    "packages/gateway/test/unit/connectors/localdb-query-mapping.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/connectors/miro-board-mapping.test.ts": {
+      "TS2698": 1
+    },
+    "packages/gateway/test/unit/connectors/protonmail-email-mapping.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/connectors/ramp-transaction-mapping.test.ts": {
+      "TS2698": 1
+    },
+    "packages/gateway/test/unit/connectors/sagemaker-model-mapping.test.ts": {
+      "TS4111": 2
+    },
+    "packages/gateway/test/unit/connectors/slack-sync.test.ts": {
+      "TS2532": 2
+    },
+    "packages/gateway/test/unit/connectors/storybook-story-mapping.test.ts": {
+      "TS4111": 2
+    },
+    "packages/gateway/test/unit/db/latency-ring-buffer.test.ts": {
+      "TS2345": 1
+    },
+    "packages/gateway/test/unit/db/metrics.test.ts": {
+      "TS4111": 3
+    },
+    "packages/gateway/test/unit/db/repair.test.ts": {
+      "TS2345": 1
+    },
+    "packages/gateway/test/unit/deployment/annotate.test.ts": {
+      "TS2345": 1,
+      "TS4111": 4
+    },
+    "packages/gateway/test/unit/ipc/connector-rpc-handlers/auth.test.ts": {
+      "TS4111": 30
+    },
+    "packages/gateway/test/unit/preflight/preflight.test.ts": {
+      "TS4111": 7
+    },
+    "packages/gateway/test/unit/sync/connectivity-guard.test.ts": {
+      "TS2578": 5
+    },
+    "packages/gateway/test/unit/sync/rate-limit-aware-scheduler.test.ts": {
+      "TS2739": 1
+    },
+    "packages/ui/test/components/settings/data/ExportWizard.test.tsx": {
+      "TS2375": 1,
+      "TS2739": 1
+    },
+    "packages/ui/test/components/settings/model/PullDialog.test.tsx": {
+      "TS2349": 1
+    },
+    "packages/ui/test/e2e/desktop-smoke.e2e.test.ts": {
+      "TS2307": 1
+    },
+    "packages/ui/test/pages/QuickQuery.test.tsx": {
+      "TS2345": 1
+    },
+    "packages/ui/test/pages/Workflows.test.tsx": {
+      "TS2532": 2
+    },
+    "packages/ui/test/pages/settings/ConnectorsPanel.test.tsx": {
+      "TS2349": 1
+    },
+    "packages/ui/test/pages/settings/DataPanel.test.tsx": {
+      "TS2739": 6
+    },
+    "packages/ui/test/pages/settings/UpdatesPanel.test.tsx": {
+      "TS2322": 1
+    },
+    "packages/ui/test/pages/settings/audit/audit-row-utils.test.ts": {
+      "TS18048": 1
+    },
+    "packages/ui/test/store/dashboard.test.ts": {
+      "TS2322": 1,
+      "TS2339": 13,
+      "TS7006": 2
+    },
+    "packages/ui/test/store/hitl.test.ts": {
+      "TS2322": 1,
+      "TS2339": 12
+    },
+    "packages/ui/test/store/slices/connectors-plan3.test.ts": {
+      "TS18048": 2
+    },
+    "packages/ui/test/store/slices/updater.test.ts": {
+      "TS2345": 2,
+      "TS2353": 2,
+      "TS2561": 1,
+      "TS2741": 2
+    },
+    "packages/ui/test/store/tray.extended.test.ts": {
+      "TS2322": 1,
+      "TS2339": 12
+    }
+  }
+}

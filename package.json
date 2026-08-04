@@ -139,6 +139,8 @@
     "build:release": "bun scripts/build-release.ts",
     "typecheck": "bun run --filter '*' --sequential typecheck && tsc -p scripts/tsconfig.json",
     "typecheck:no-docs": "bun run --filter '!@nimbus/docs' --sequential typecheck && tsc -p scripts/tsconfig.json",
+    "typecheck:tests": "bun scripts/typecheck-tests/check.ts",
+    "typecheck:tests:update-baseline": "bun scripts/typecheck-tests/check.ts --update-baseline",
     "audit:high": "bun audit --audit-level high",
     "audit:advisories": "bun scripts/structure-audit/check-accepted-advisories.ts",
     "check-package": "bun scripts/check-package.ts",
