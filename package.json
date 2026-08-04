@@ -194,6 +194,7 @@
     "lint:markdown": "bun scripts/lib/run-gate-with-work-check.ts lint:markdown markdownlint-cli2",
     "preflight": "bun scripts/preflight.ts",
     "preflight:fast": "bun scripts/preflight.ts --fast",
+    "verify:docker": "bash scripts/ci/verify-in-docker.sh",
     "hooks:install": "bun scripts/install-hooks.ts",
     "platform:link": "bun run scripts/platform-link.ts",
     "format": "biome format --write .",
