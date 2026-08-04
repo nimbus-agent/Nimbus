@@ -55,6 +55,7 @@ Provide a transition path for existing delta links:
 ### Issue
 
 The table under *Depth semantics* states:
+
 - `metadata_only` -> "drop the body input entirely; no body; `body_complete = 0`"
 
 It is not explicitly stated whether the `bodyPreview` field (the 512-character preview) is also dropped or preserved under `metadata_only`. If privacy is the driving factor for `metadata_only`, storing a 512-character snippet of the body still leaks message contents into the database, violating the user's intent.
@@ -62,6 +63,7 @@ It is not explicitly stated whether the `bodyPreview` field (the 512-character p
 ### Recommendation
 
 Explicitly clarify in the design and store tests that under `metadata_only` depth coercion:
+
 - Both `body` and `bodyPreview` inputs are completely stripped/coerced to `null`/empty before being stored.
 
 ---
