@@ -77,7 +77,18 @@ In `biome.json`, inside `files.includes`:
 +      "!.claude",
 ```
 
-Add a comment immediately above it in the surrounding JSON is not possible (`biome.json` is strict JSON, not JSONC — verify: if the file parses with comments elsewhere it is JSONC and a comment is fine; otherwise record the rationale in the commit body instead and do NOT add a comment).
+**Do NOT add an explanatory comment to `biome.json`.** Put the rationale in the commit message instead.
+
+This was tested, because a reviewer asserted biome parses JSONC here and that a comment would be fine. It is not fine, and it fails in the worst possible way:
+
+| `biome.json` contents | `biome check .` result |
+|---|---|
+| `"!.claude"` alone | **3162 files checked** |
+| `"!.claude"` + a `//` comment above it | **0 files checked, NO parse error** |
+
+With a comment present biome reports `No files were processed` and prints its generic "check your biome.json or biome.jsonc" hint — it never says the comment is the problem. That is a silent config mis-parse, exactly the failure class this whole plan exists to remove, so introducing one here would be self-defeating.
+
+(Biome does support comments in a file named `biome.jsonc`. Renaming the config is out of scope for this task and would touch every tool that references it by name.)
 
 - [ ] **Step 3: Verify the worktree case is fixed**
 
@@ -246,6 +257,18 @@ describe("parseTscOutput", () => {
   test("ignores lines that are not error records", () => {
     expect(parseTscOutput("Found 3 errors.\n\n").size).toBe(0);
   });
+
+  test("strips an absolute repo-root prefix so keys stay repo-relative", () => {
+    const raw = "C:/gitrep/Nimbus/packages/gateway/test/a.ts(1,1): error TS2554: nope.";
+    const out = parseTscOutput(raw, "C:/gitrep/Nimbus");
+    expect([...out.keys()]).toEqual(["packages/gateway/test/a.ts"]);
+  });
+
+  test("leaves already-relative paths untouched when a root is supplied", () => {
+    const raw = "packages/gateway/test/a.ts(1,1): error TS2554: nope.";
+    const out = parseTscOutput(raw, "C:/gitrep/Nimbus");
+    expect([...out.keys()]).toEqual(["packages/gateway/test/a.ts"]);
+  });
 });
 ```
 
@@ -277,12 +300,18 @@ const LINE_RE = /^(.+?)\((\d+),(\d+)\): error (TS\d+):/;
  * slashes on Windows in practice, but the baseline is generated on a developer machine and
  * validated inside a Linux container — a separator mismatch there would fail every key at once.
  */
-export function parseTscOutput(raw: string): ErrorCounts {
+export function parseTscOutput(raw: string, repoRoot?: string): ErrorCounts {
+  const rootPrefix =
+    repoRoot === undefined ? undefined : `${repoRoot.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
   const out: ErrorCounts = new Map();
   for (const line of raw.split("\n")) {
     const m = LINE_RE.exec(line);
     if (m === null) continue;
-    const file = (m[1] ?? "").replaceAll("\\", "/").trim();
+    let file = (m[1] ?? "").replaceAll("\\", "/").trim();
+    // Strip an absolute prefix if tsc emitted one. Keys MUST be repo-relative: the baseline is
+    // generated on a developer machine (C:/gitrep/Nimbus/...) and validated inside a container
+    // (/src/...). An absolute key would mismatch every entry at once and read as total regression.
+    if (rootPrefix !== undefined && file.startsWith(rootPrefix)) file = file.slice(rootPrefix.length);
     const code = m[4] ?? "";
     if (file === "" || code === "") continue;
     let byCode = out.get(file);
@@ -522,7 +551,8 @@ async function collect(): Promise<ErrorCounts> {
       stderr: "pipe",
     });
     const raw = `${p.stdout.toString()}\n${p.stderr.toString()}`;
-    for (const [file, byCode] of parseTscOutput(raw)) {
+    // Pass REPO_ROOT so an absolute path from tsc is reduced to a repo-relative key.
+    for (const [file, byCode] of parseTscOutput(raw, REPO_ROOT)) {
       const target = merged.get(file) ?? new Map<string, number>();
       for (const [code, n] of byCode) target.set(code, (target.get(code) ?? 0) + n);
       merged.set(file, target);
@@ -810,6 +840,10 @@ git commit -m "feat(tooling): fail gates that process zero units of work"
 
 **Model it on `scripts/coverage-floor/reseed-docker.sh`** — read that file first. It already solves every environmental problem here and documents why: `MSYS_NO_PATHCONV` for Git Bash, tar-stream instead of bind-mount (a bind mount produced garbage results), a named cache volume, and the apt packages CI has (`git libsecret-tools gnome-keyring dbus`) without which vault/PAL tests fail and falsely un-cover whole subsystems.
 
+**Deviate from it in one respect: bake the apt layer into a cached image.** `reseed-docker.sh` runs `apt-get install` inside `docker run --rm`, so the work is discarded every invocation. **Measured: 49.5 seconds, every run.** That is acceptable for a coverage reseed you run occasionally; it is not acceptable for a loop meant to be routine, and a 50-second tax is exactly what makes a tool get skipped — which is the root cause this plan exists to fix.
+
+Build a tiny local image once and reuse it. First run pays ~50s; subsequent runs pay nothing.
+
 - [ ] **Step 1: Write the runner**
 
 ```bash
@@ -827,13 +861,30 @@ export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-IMAGE="oven/bun:latest"
+BASE_IMAGE="oven/bun:latest"     # matches CI (bun 1.3.x)
+IMAGE="nimbus-verify:local"      # BASE_IMAGE + the apt layer, built once
 CACHE_VOL="nimbus-bun-cache"
 TIER="fast"
 [[ "${1:-}" == "--full" ]] && TIER="full"
+[[ "${1:-}" == "--rebuild" ]] && docker image rm -f "${IMAGE}" >/dev/null 2>&1 || true
 
 cd "${REPO_ROOT}"
 docker volume create "${CACHE_VOL}" >/dev/null
+
+# Build the apt layer ONCE. Running apt inside `docker run --rm` discards it every invocation —
+# measured at 49.5s per run, which is precisely the kind of tax that makes a tool get skipped.
+if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+  echo "--- building ${IMAGE} (one-time, ~1 min) ---"
+  docker build -t "${IMAGE}" -f - . <<DOCKERFILE
+FROM ${BASE_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+# Same packages CI's ubuntu runner has. Without libsecret/gnome-keyring/dbus the vault and PAL
+# tests fail, which falsely un-covers every subsystem they exercise.
+RUN apt-get update -qq \\
+ && apt-get install -y -qq git libsecret-tools gnome-keyring dbus \\
+ && rm -rf /var/lib/apt/lists/*
+DOCKERFILE
+fi
 
 echo "--- docker: running ${TIER}-tier manifest gates (${IMAGE}) ---"
 tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
@@ -845,13 +896,13 @@ tar --exclude=node_modules --exclude=.git --exclude=./coverage --exclude=dist \
       "${IMAGE}" \
       bash -c '
         set -euo pipefail
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq && apt-get install -y -qq git libsecret-tools gnome-keyring dbus >/dev/null
         mkdir -p /src && tar -x -C /src
         bun install --frozen-lockfile
         bun scripts/ci/run-manifest-gates.ts "$TIER"
       '
 ```
+
+`--rebuild` forces the image to be rebuilt when the base image or package set changes. Document it in the script header; a stale cached image silently pinning an old bun version is the obvious failure mode of this optimisation, and `--rebuild` is the escape hatch.
 
 - [ ] **Step 2: Write the in-container gate runner**
 
@@ -1000,6 +1051,26 @@ export function evaluatePrState(s: PrState): PrVerdict {
 
 Then a `main()` that shells out to `gh pr view --json mergeable,mergeStateStatus` and `gh pr checks`, maps them into `PrState`, prints the verdict, and exits per the table below.
 
+**Wrap every `gh` call defensively.** `gh` prints human-readable text to stderr on rate limits, network failures, GitHub outages and auth problems — feeding that to `JSON.parse` produces an unreadable `SyntaxError: Unexpected token` stack trace that tells the user nothing about what actually went wrong. Required shape:
+
+```ts
+function ghJson(args: readonly string[]): unknown {
+  const p = Bun.spawnSync(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
+  const out = p.stdout.toString().trim();
+  const err = p.stderr.toString().trim();
+  if (p.exitCode !== 0) {
+    throw new Error(`gh ${args.join(" ")} failed (exit ${String(p.exitCode)}): ${err || "no output"}`);
+  }
+  try {
+    return JSON.parse(out) as unknown;
+  } catch {
+    throw new Error(`gh ${args.join(" ")} returned non-JSON output: ${out.slice(0, 200)}`);
+  }
+}
+```
+
+`main()` catches these and exits **2** with the message — never 0, and never a raw stack trace. A failure to query GitHub is "could not determine", which is a distinct outcome from both green and red.
+
 - [ ] **Step 4: Exit semantics**
 
 | State | Exit |
@@ -1039,3 +1110,19 @@ git commit -m "feat(tooling): verify:pr — a conflicted or pending PR is never 
 **Every task ends red-proved where it adds a gate** — Tasks 2, 4, 5 and 6 each require watching the new check fail before trusting it. This repo has a history of guards that pass because they match the wrong thing.
 
 **Known limitation carried from the spec:** the `(file, code)` baseline key means fixing one error while adding another of the same code in the same file nets zero and passes. Stated in `baseline.ts`'s doc comment so the next reader does not discover it by surprise.
+
+---
+
+## Review Disposition
+
+Against [`2026-08-04-ci-feedback-loop-review.md`](./2026-08-04-ci-feedback-loop-review.md).
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1.1 | `apt-get` runs on every `verify:docker` invocation; estimated 15–30s | **Fixed — and it was worse than estimated. Measured 49.5s per run.** Task 6 now builds a cached `nimbus-verify:local` image containing the apt layer, with a `--rebuild` escape hatch. First run pays it once; every later run pays nothing. |
+| 1.2 | `tsc` may emit absolute paths in some environments, mismatching baseline keys | **Fixed.** `parseTscOutput` takes an optional `repoRoot` and strips it; `check.ts` passes `REPO_ROOT`. Two regression tests added (absolute stripped, already-relative untouched). The baseline is generated on a dev machine and validated in a container, so this is a live risk, not theoretical. |
+| 2.1 | "Biome natively parses JSONC for `biome.json`, so a comment is fine" | **Rejected — measured, and the opposite is true.** With a `//` comment in `biome.json`, biome checks **0 files and emits no parse error**; without it, the same config checks **3162**. It is a *silent* config mis-parse, the exact failure class this plan exists to remove. The plan now carries that evidence and keeps the rationale in the commit body. (`biome.jsonc` does support comments; renaming the config is out of scope.) |
+| 2.2 | Wrap `gh` calls; validate JSON before parsing | **Fixed.** Task 7 specifies a `ghJson()` helper that checks the exit code, reports stderr, and converts a non-JSON body into a clear message instead of a `SyntaxError` stack. Failure exits **2** — "could not determine", distinct from both green and red. |
+
+Two of the four were worth measuring rather than reasoning about: 1.1 was understated by ~2×, and 2.1
+was confidently backwards. The other two were correct as written and are now in the plan.
