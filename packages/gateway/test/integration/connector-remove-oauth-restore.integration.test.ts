@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { NULL_EGRESS_SINK } from "../../src/egress/egress-ledger.ts";
 import { ToolExecutor } from "../../src/engine/executor.ts";
 import { LocalIndex } from "../../src/index/local-index.ts";
 import { dispatchConnectorRpc } from "../../src/ipc/connector-rpc.ts";
@@ -15,6 +16,8 @@ const autoApproveExecutor = new ToolExecutor(
       return Promise.reject(new Error("stub — should not be called"));
     },
   },
+  undefined,
+  NULL_EGRESS_SINK,
 );
 
 const OAUTH_BACKUP = '{"access_token":"redacted-for-test","refresh_token":"also-redacted"}';

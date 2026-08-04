@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { vaultIdFromAbsolutePath } from "../../../src/connectors/obsidian-vault-id.ts";
+import { NULL_EGRESS_SINK } from "../../../src/egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "../../../src/engine/executor.ts";
 
 function buildVault(): { root: string; vaultId: string } {
@@ -33,7 +34,13 @@ test("audit log entry is written before the dispatcher executes the append", asy
     requestApproval: async (_prompt: string, _details?: Record<string, unknown>) => true,
   };
   // biome-ignore lint/suspicious/noExplicitAny: mock spies are simpler than typed mocks here
-  const exec = new ToolExecutor(consent as any, audit as any, dispatch as any);
+  const exec = new ToolExecutor(
+    consent as any,
+    audit as any,
+    dispatch as any,
+    undefined,
+    NULL_EGRESS_SINK,
+  );
   const result = await exec.execute({
     type: "obsidian.note.append",
     payload: {
@@ -68,7 +75,13 @@ test("rejecting the consent prompt returns rejected and never dispatches", async
     },
   };
   // biome-ignore lint/suspicious/noExplicitAny: mock spies are simpler than typed mocks here
-  const exec = new ToolExecutor(consent as any, audit as any, dispatch as any);
+  const exec = new ToolExecutor(
+    consent as any,
+    audit as any,
+    dispatch as any,
+    undefined,
+    NULL_EGRESS_SINK,
+  );
 
   const result = await exec.execute({
     type: "obsidian.note.append",
