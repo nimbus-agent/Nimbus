@@ -917,8 +917,21 @@ const skip = new Set(CI_ONLY_GATES);
 const failures: string[] = [];
 const skipped: string[] = [];
 
+/**
+ * Gate ids are NOT uniformly at cmd[2]. The manifest holds both shapes:
+ *   ["bun", "run", "audit:any", "--check"]  -> id is cmd[2]
+ *   ["bunx", "jscpd", "packages"]           -> id is cmd[1]
+ * Reading cmd[2] blindly would yield "packages" for the jscpd gate, so a `bunx` gate could never
+ * be matched against CI_ONLY_GATES — and a gate whose third argument happened to collide with a
+ * CI_ONLY name would be wrongly skipped, silently reducing coverage.
+ */
+function gateId(cmd: readonly string[]): string {
+  if (cmd[0] === "bunx") return cmd[1] ?? "";
+  return cmd[2] ?? "";
+}
+
 for (const gate of selectGates(tier)) {
-  const id = gate.cmd[2] ?? gate.name; // `bun run <id>` / `bunx <id>`
+  const id = gateId(gate.cmd) || gate.name;
   if (skip.has(id)) {
     skipped.push(gate.name);
     continue;
