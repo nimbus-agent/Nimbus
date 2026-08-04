@@ -52,11 +52,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `github`, `jira`, `linear`, `notion`, `obsidian`, `slack`, `snyk`, `teams`.
 
   The full-body-store connector accounting (2026-08-02 entry below) moves from 10 full / 1 partial
-  / 2 inert to **12 full body @ 16 KiB / 1 partial / 2 inert** — the partial (`nimbus:research_brief`)
-  and inert (Bitbucket, `github:pr`) counts are unchanged. This also makes true, as of today, a
-  previously-false claim in [`docs/roadmap.md`](./roadmap.md) Wave 5: `nimbus glossary` mining
-  "Confluence/Notion pages" had nothing to mine before this landed. No new security invariant.
-  Design: `docs/superpowers/specs/2026-08-03-notion-confluence-full-body-design.md`. (#1032)
+  / 2 inert to **12 full body @ 16 KiB (Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk,
+  Obsidian, Zoom transcripts, `nimbus:web_clip`, Notion pages, Confluence pages) / 1 partial
+  (`nimbus:research_brief`) / 2 inert (Bitbucket, `github:pr`)** — the partial and inert counts are
+  unchanged; this entry is the current statement of that accounting, superseding the (10) figure in
+  the 2026-08-02 entry below. This also makes true, as of 2026-08-03, a previously-false claim in
+  [`docs/roadmap.md`](./roadmap.md) Wave 5: `nimbus glossary` mining "Confluence/Notion pages" had
+  nothing to mine before this landed. No new security invariant. Design:
+  `docs/superpowers/specs/2026-08-03-notion-confluence-full-body-design.md`.
 - **2026-08-02 — `nimbus index rebody` — recover full bodies for already-indexed items.**
   A backfill for the full-body store below: re-fetches item bodies for rows the V48 migration (or
   a connector not yet migrated) left with `body_complete = 0`, by clearing a per-connector sync
@@ -90,22 +93,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   migration touches — completeness is a claim a connector makes about its own fetch and cannot be
   inferred from stored text length.
 
-  The implementation plan named "twelve connectors." Verified against the tree at the time, it was
-  not twelve — it took a follow-up PR the next day (2026-08-03, above) to reach twelve, and for a
-  different set of reasons than the plan assumed. Current accounting:
+  The implementation plan named "twelve connectors." Verified against the tree, it is not twelve:
 
   | | Sources |
   | --- | --- |
-  | **Full body @ 16 KiB (12)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip`, Notion pages, Confluence pages |
+  | **Full body @ 16 KiB (10)** | Slack, Teams, Discord, Linear, Jira, `github:issue`, Snyk, Obsidian, Zoom transcripts, `nimbus:web_clip` |
   | **Partial — 2,000-char cap, not full-body (1)** | `nimbus:research_brief` — bounded upstream by `MAX_SUMMARY_CHARS` (`briefs/brief-report.ts`) at synthesis, in the only path that builds a `Report`; a real gain (512 → 2,000) but not full-body indexing |
   | **Inert, still 512 (2)** | Bitbucket — emits only `type: "pr"`, while `PROSE_HEAVY_TYPES` lists `bitbucket:issue`, which no connector emits (dead configuration); `github:pr` — never added to `PROSE_HEAVY_TYPES` (only `github:issue` was), though the `body:` swap in `github-sync.ts` touches both `upsertPr` and `upsertFromIssue` |
-
-  (Notion and Confluence were not in this row until 2026-08-03 — see the entry above. At ship time
-  on 2026-08-02 this row read **(10)** without them.)
 
   Schema **V48**. No new security invariant — this widens a storage field and introduces no new
   chokepoint. Spec: `docs/superpowers/specs/2026-08-02-full-body-store-design.md`; plan:
   `docs/superpowers/plans/2026-08-02-full-body-store.md`. (#1023)
+
+  **Superseded 2026-08-03:** this (10) accounting was correct for what shipped on 2026-08-02; the
+  2026-08-03 entry above brought Notion and Confluence into the full-body group, moving the live
+  count to 12 full / 1 partial / 2 inert. See that entry for the current accounting.
 - **2026-08-02 — `nimbus decisions` — implicit ADR extractor.** The third and final member of the
   implicit-knowledge triad, after `nimbus why` (2026-07-24) and `nimbus glossary` (2026-07-30):
   recovers decisions buried in Slack/Discord/Teams messages, Notion/Confluence/Obsidian pages, and
