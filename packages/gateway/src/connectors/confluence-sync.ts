@@ -225,6 +225,7 @@ async function confluenceRunPagedSearch(p: ConfluencePagedSearchParams): Promise
   let shouldStop = false;
 
   for (;;) {
+    await ctx.rateLimiter.acquire("confluence");
     const { results, bytes } = await confluenceFetchSearchPageBatch(ctx, {
       apiBase,
       email,

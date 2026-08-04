@@ -18,24 +18,33 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  *   - Delta-capable / bounded-window (Slack, Gmail via history ids; Jira via
  *     a cold-start `updated >= -Nd` JQL floor — see `jiraJqlFromCursor` in
  *     `connectors/jira-sync.ts`, where `decodeCursor(null)` yields
- *     `hasFloor = false`): even from a fully cleared watermark, the re-sync
- *     walks a bounded recent window, not the whole account.
- *   - Full-scan (Notion, Confluence): clearing the watermark re-walks EVERY
- *     page in the account. Both reset `watermarkMs` to `-1` on a null cursor
- *     (`connectors/notion-sync.ts`, `connectors/confluence-sync.ts`) and their
- *     stop condition (`watermarkMs >= 0 && ...`) never fires at `-1`, so the
- *     walk never early-exits. On a large workspace that is tens of thousands
- *     of requests to recover bodies for a subset of items.
+ *     `hasFloor = false`; Confluence via the same shape — a cold-start CQL
+ *     floor, `type = page AND lastModified >= now("-30d")`, built in
+ *     `createConfluenceSyncable` in `connectors/confluence-sync.ts` from its
+ *     own `initialSyncDepthDays = 30`): even from a fully cleared watermark,
+ *     the re-sync walks a bounded recent window, not the whole account. A
+ *     Confluence `rebody` therefore recovers roughly the last 30 days of page
+ *     edits, not the whole wiki — a page untouched longer than that stays
+ *     `body_complete = 0` until it is next edited at the source.
+ *   - Full-scan (Notion only): clearing the watermark re-walks EVERY page in
+ *     the account. Notion resets `watermarkMs` to `-1` on a null cursor
+ *     (`connectors/notion-sync.ts`) and its search request sends only an
+ *     `object` filter and a sort — no server-side time floor at all (its
+ *     declared `initialSyncDepthDays: 30` is never read) — so the walk never
+ *     early-exits. On a large workspace that is tens of thousands of requests
+ *     to recover bodies for a subset of items.
  *
  * Cost is a separate axis from completeness — do not assume "bounded window"
  * implies "will complete". `REBODY_IMPROVABLE_SERVICES` below tracks
  * completeness: Gmail is bounded-window (cheap) but its connector still never
  * declares a full `body:`, so re-syncing it costs little AND recovers
- * nothing. Notion and Confluence are both full-scan (expensive) but both now
- * complete: Confluence recovers a page's whole body in the search response it
- * already pays for, and Notion recovers bodies over successive budgeted
- * passes, converging once no pass is cut short. Both were the "expensive AND
- * cannot complete" worst case until 2026-08-03.
+ * nothing. Confluence is bounded-window (cheap, ~30 days) and complete within
+ * that window: it recovers a page's whole body in the search response it
+ * already pays for. Notion is full-scan (expensive) and complete over
+ * successive budgeted passes, converging once no pass is cut short. Notion
+ * was the "expensive AND cannot complete" worst case until 2026-08-03;
+ * Confluence's fix that same day was completeness-only — it was never
+ * full-scan.
  *
  * There is deliberately no `--only-truncated` mode today, and it is not an
  * oversight — it is not implementable given how syncs work. A sync fetches by

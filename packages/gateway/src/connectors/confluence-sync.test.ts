@@ -529,9 +529,9 @@ describeWithFetchRestore("confluence-sync", () => {
 
   // -------------------------------------------------------------------------
   // Pagination: two pages of results (lines 225-234)
-  // First batch full (50 items), second batch shorter → stops
+  // First batch full (25 items — the page-fetch limit), second batch shorter → stops
   // -------------------------------------------------------------------------
-  test("fetches multiple pages when first batch is full (limit=50)", async () => {
+  test("fetches multiple pages when first batch is full (limit=25)", async () => {
     const ctx = makeCtx();
     let callCount = 0;
 
@@ -539,8 +539,10 @@ describeWithFetchRestore("confluence-sync", () => {
       callCount += 1;
       let results: unknown[];
       if (callCount === 1) {
-        // Full batch of 50 pages
-        results = Array.from({ length: 50 }, (_, i) =>
+        // Full batch of 25 pages — the server can never return more than the
+        // requested `limit`, so this pins the `results.length === limit`
+        // boundary that keeps pagination going.
+        results = Array.from({ length: 25 }, (_, i) =>
           makePageResult({ id: String(i + 1), title: `Page ${String(i + 1)}` }),
         );
       } else {
@@ -553,8 +555,8 @@ describeWithFetchRestore("confluence-sync", () => {
     const sync = createConfluenceSyncable({ ensureConfluenceMcpRunning: async () => {} });
     const r = await sync.sync(ctx, null);
     expect(callCount).toBe(2);
-    expect(r.itemsUpserted).toBe(51);
-    expectServiceItemCount(ctx.db, "confluence", 51);
+    expect(r.itemsUpserted).toBe(26);
+    expectServiceItemCount(ctx.db, "confluence", 26);
   });
 
   // -------------------------------------------------------------------------

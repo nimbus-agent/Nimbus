@@ -249,7 +249,8 @@ function printPlannedRebody(p: RebodyOptions): void {
   console.log(
     "rebody re-fetches item bodies by clearing a connector's sync watermark and letting it " +
       "re-sync from scratch — this is real outbound API traffic, potentially tens of thousands " +
-      "of requests for a full-scan connector (e.g. Notion, Confluence).",
+      "of requests for a full-scan connector (e.g. Notion). Bounded-window connectors cost less " +
+      "but recover less too — e.g. Confluence only re-walks roughly the last 30 days.",
   );
   console.log(
     "Re-run with --yes to execute, or --dry-run to see the per-service pending counts first.",

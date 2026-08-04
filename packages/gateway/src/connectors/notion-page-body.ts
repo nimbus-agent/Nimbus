@@ -208,8 +208,13 @@ async function collectChildren(
 
 /**
  * Never throws. A failure returns whatever text was gathered with
- * `outcome: "errored"`, so the page still indexes with its title and URL —
- * exactly today's behaviour for that page, never worse.
+ * `outcome: "errored"`, so the page still indexes with its title, URL, and
+ * any partial text recovered before the failure — not worse than a page
+ * that was never fetched. Note this is not "never worse" in every sense: a
+ * page that previously held a COMPLETE body and is edited again will have
+ * that stored body overwritten by the new, possibly-empty errored fetch —
+ * the edit made the old body stale regardless, but the replacement text can
+ * still read shorter than what was there a moment ago.
  */
 export async function fetchNotionPageText(
   deps: NotionBlockFetchDeps,

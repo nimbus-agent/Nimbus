@@ -24,10 +24,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   separate block tree — so it walks `blocks/children` recursively (depth capped at 3, a cycle
   guard, not a cost bound) under two budgets: `NOTION_BODY_FETCH_BUDGET_PER_SYNC` (200 requests,
   shared across every page in one sync pass) and `NOTION_BODY_REQUESTS_PER_PAGE_MAX` (10 requests,
-  per page — without it one list-heavy page could dominate a whole pass). A page that exhausts its
-  per-page budget gets `outcome: "capped"` (permanent — never re-fetched, since it would hit the
-  same cap again) or `"errored"` (transient — retried on a later pass or an explicit `nimbus index
-  rebody`); either way the page still indexes with its title and URL rather than failing outright.
+  per page — without it one list-heavy page could dominate a whole pass). A page that runs out of
+  its own per-page budget gets `outcome: "capped"` — permanent, since a re-fetch of unchanged text
+  would hit the same cap again, and skip-if-fresh means it is not re-attempted while the page
+  itself stays unedited. A page whose fetch fails outright (not the per-page budget — a network
+  error, 403/404, bad JSON) gets `outcome: "errored"` instead; a 429 additionally zeroes the
+  pass's remaining budget, which discards that whole pass's watermark advance, so a 429-errored
+  page is retried on the very next pass, while any other error is only retried when the page is
+  edited again at the source or via an explicit `nimbus index rebody`. Either way the page still
+  indexes with its title, URL, and whatever text was recovered, rather than failing outright.
   Pages that don't fit in one pass converge over Notion's existing 5-minute sync cadence
   (`defaultIntervalMs: 5 * 60 * 1000`) rather than in a single run. The Notion rate-limit quota
   (`sync/rate-limiter.ts` `DEFAULT_QUOTAS.notion`) was raised from 30 to 120 requests/minute
@@ -67,9 +72,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   outbound API traffic, not a local recompute. `index.rebody`/`index.rebodyCancel` (long-running job
   pattern, `index.rebodyProgress`/`Done`/`Error` notifications) plus `nimbus index rebody
   [--service <name>] [--type <t>] [--limit N] [--dry-run] [--yes] [--json]`. An inclusion list,
-  `REBODY_IMPROVABLE_SERVICES` (as of 2026-08-03, eleven services: `bitbucket`, `confluence`,
-  `discord`, `github`, `jira`, `linear`, `notion`, `obsidian`, `slack`, `snyk`, `teams`), decides
-  what a dry run reports as improvable — a mixed-migration
+  `REBODY_IMPROVABLE_SERVICES` (nine services: `bitbucket`, `discord`, `github`, `jira`, `linear`,
+  `obsidian`, `slack`, `snyk`, `teams`), decides what a dry run reports as improvable — a mixed-migration
   service (`zoom`: `transcript` migrated, `meeting` not; the local `nimbus` bucket: `web_clip` and
   `research_brief` migrated, `glossary_term` not) is deliberately excluded, because the pending count
   is grouped by service only, not by `(service, type)`. Deliberately **no `--only-truncated` flag** —
