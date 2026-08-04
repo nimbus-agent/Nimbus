@@ -204,7 +204,7 @@ other provider's quota.
 Before spending budget on a page, a local read checks whether we already have everything we
 are ever going to fetch for it:
 
-```
+```text
 modified_at == isoMs(<this page's last_edited_time>)
   AND json_extract(metadata, '$.bodyFetch') IS NOT NULL
   -> skip the block fetch entirely, and skip the upsert (it would be a no-op write)
@@ -243,7 +243,7 @@ from a length.
 A budget-exhausted pass returns `hasMore: false` with the watermark **unadvanced**, and
 Notion's existing 5-minute `defaultIntervalMs` carries the next pass:
 
-```
+```text
 pass 1: search walk, 200 bodies fetched, 800 pending  -> hasMore:false, watermark PINNED
   ...5 min...
 pass 2: search walk, skip 200 complete, fetch 200     -> hasMore:false, watermark PINNED
@@ -446,7 +446,7 @@ result set from the beginning. The re-walk is cheap **per page** — skip-if-fre
 read, not an API call — but the search requests themselves are real, and they are quadratic in
 workspace size:
 
-```
+```text
 passes           = N / BUDGET
 search reqs/pass = N / 100          (page_size = 100)
 total search     = N² / (100 · BUDGET)

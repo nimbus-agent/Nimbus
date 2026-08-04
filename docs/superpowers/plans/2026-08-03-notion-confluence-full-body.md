@@ -44,12 +44,14 @@ Task order matters: 1 and 2 are independent leaves; 3 needs 1; 5 needs 2 and 4; 
 ### Task 1: Non-truncating HTML→text, and the two call sites that pre-truncate
 
 **Files:**
+
 - Modify: `packages/gateway/src/string/html-plain-text.ts:39-42`
 - Modify: `packages/gateway/src/connectors/_lib/teams/api.ts:55`
 - Modify: `packages/gateway/src/connectors/bitbucket-sync.ts:138`
 - Test: `packages/gateway/src/string/html-plain-text.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `plainTextFromHtml(raw: string): string` — strips tags and collapses whitespace with **no length limit**. Task 3 uses it.
 
@@ -169,11 +171,13 @@ git commit -m "fix: pre-truncating HTML defeated the body_complete check"
 ### Task 2: Store support — `bodyTruncated` input and the fetch-state read
 
 **Files:**
+
 - Modify: `packages/gateway/src/index/item-store.ts:40-56` (the union + its comment), `:85` (the verdict)
 - Modify: `packages/gateway/src/index/item-store.ts` (append `selectItemBodyFetchState`)
 - Test: `packages/gateway/src/index/item-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `IndexedItemBodyInput` gains `bodyTruncated?: boolean` on the `body` arm only.
@@ -263,7 +267,7 @@ export type IndexedItemBodyInput =
 
 Add to the doc comment above it (do not delete the existing text — it documents why the union must not be relaxed to a runtime check):
 
-```
+```ts
  * `bodyTruncated` rides the `body` arm only. It lets a connector say "I
  * fetched a body, and I know it is not all of it" — the one thing the
  * length-vs-cap test cannot express, because such a body is usually well
@@ -348,10 +352,12 @@ git commit -m "feat: bodyTruncated input flag and item body-fetch state read"
 ### Task 3: Confluence — expand `body.storage`
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/confluence-sync.ts` (imports, `:104-151`, `:169`, `:205`)
 - Test: `packages/gateway/src/connectors/confluence-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `plainTextFromHtml` (Task 1).
 - Produces: `confluenceBodyText(row: Record<string, unknown>): string | null` — `null` when the row carries no `body.storage.value` at all.
 
@@ -522,10 +528,12 @@ git commit -m "feat: index Confluence page bodies via the body.storage expand"
 ### Task 4: `notion-page-body.ts` — the bounded block walk
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/notion-page-body.ts`
 - Test: `packages/gateway/src/connectors/notion-page-body.test.ts`
 
 **Interfaces:**
+
 - Consumes: `asRecord`, `stringField` from `./unknown-record.ts`; `ProviderRateLimiter` from `../sync/rate-limiter.ts`.
 - Produces (all used by Task 5):
   - `NOTION_BODY_FETCH_BUDGET_PER_SYNC = 200`
@@ -1073,15 +1081,18 @@ git commit -m "feat: bounded Notion block walk with permanent-vs-transient outco
 ### Task 5: Wire the walk into `notion-sync.ts`
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/notion-sync.ts:136-224` (the row/accumulator path), `:236-297` (the sync body)
 - Modify: `packages/gateway/src/sync/rate-limiter.ts:103`
 - Test: `packages/gateway/src/connectors/notion-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `fetchNotionPageText`, `NOTION_BODY_FETCH_BUDGET_PER_SYNC`, `NOTION_BODY_REQUESTS_PER_PAGE_MAX`, `NotionBlockFetchDeps` (Task 4); `selectItemBodyFetchState` (Task 2); `itemPrimaryKey` from `../index/item-store.ts`.
 - Produces: nothing consumed by later tasks.
 
 **The three rules this task implements, in the order they must be checked per page:**
+
 1. **Skip-if-fresh** — `bodyFetch` present and `modified_at` unchanged → no fetch, no upsert.
 2. **Start-or-stop** — fewer than `NOTION_BODY_REQUESTS_PER_PAGE_MAX` budget left → stop the pass, leave the page untouched. This is what guarantees the budget can never truncate a page mid-walk.
 3. **Pin-on-budget-stop** — a pass stopped by rule 2 returns the *original* watermark, so nothing older is skipped.
@@ -1455,10 +1466,12 @@ git commit -m "feat: index Notion page bodies with a budgeted resumable block wa
 ### Task 6: `nimbus index rebody` — add both services, rewrite the stale comment
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/index-rebody-rpc.ts:31-37` (the comment), `:167-177` (the set)
 - Test: `packages/gateway/src/ipc/index-rebody-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: nothing.
 
@@ -1505,7 +1518,7 @@ export const REBODY_IMPROVABLE_SERVICES: ReadonlySet<string> = new Set([
 
 The block at `:31-37` currently claims *"Notion/Confluence are full-scan (expensive) AND cannot complete — the worst combination"*. Replace that sentence (keep the surrounding paragraphs about Gmail and about `--only-truncated`, which are still accurate):
 
-```
+```ts
  * completeness: Gmail is bounded-window (cheap) but its connector still never
  * declares a full `body:`, so re-syncing it costs little AND recovers
  * nothing. Notion and Confluence are both full-scan (expensive) but both now
@@ -1532,6 +1545,7 @@ git commit -m "feat: notion and confluence are rebody-improvable"
 ### Task 7: Documentation — correct the accounting everywhere it is stated
 
 **Files:**
+
 - Modify: `docs/roadmap.md:912`, `docs/roadmap.md:1118`
 - Modify: `docs/CHANGELOG.md:18`, `docs/CHANGELOG.md:47`, plus a new dated entry
 - Modify: `docs/cli-reference.md:2125`
