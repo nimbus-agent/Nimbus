@@ -71,12 +71,14 @@ Explicitly clarify in the design and store tests that under `metadata_only` dept
 ### Issue
 
 In addition to `________________________________` and `-----Original Message-----`, Outlook inline replies frequently use localized or structured table headers for quoted emails:
+
 ```text
 From: User Name <user@example.com>
 Sent: Tuesday, August 4, 2026 6:00 AM
 To: Another User <another@example.com>
 Subject: Re: Spec Review
 ```
+
 Sometimes these inline headers do not have a divider line preceding them.
 
 ### Recommendation
