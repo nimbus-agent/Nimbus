@@ -63,7 +63,15 @@ function upsertMessage(ctx: SyncContext, m: GraphMessage, now: number): void {
   const raw = typeof m.body?.content === "string" ? m.body.content : "";
   const text = m.body?.contentType?.toLowerCase() === "text" ? raw : plainTextFromHtmlLines(raw);
   const body = stripQuotedTail(text);
-  const bodyInput: IndexedItemBodyInput = body === "" ? { bodyPreview: "" } : { body };
+  // Empty-body handling is a PAIR with `connectors/_lib/gmail/api.ts` — keep
+  // the two arms in step. The `bodyPreview` arm is what stops a body-less
+  // message from claiming completeness (a declared-full `body: ""` would
+  // latch `body_complete = 1` and permanently hide the item from
+  // `index.rebody`). Graph's ~255-char `bodyPreview` is still in the
+  // `$select` projection and still fetched, so handing it over here costs
+  // nothing and keeps the message searchable at `body_complete = 0`.
+  const preview = typeof m.bodyPreview === "string" ? m.bodyPreview : "";
+  const bodyInput: IndexedItemBodyInput = body === "" ? { bodyPreview: preview } : { body };
   const url = typeof m.webLink === "string" ? m.webLink : null;
   const modified = modifiedMsFromIso(m.lastModifiedDateTime ?? m.receivedDateTime, now);
   const addr = m.from?.emailAddress?.address;

@@ -1,4 +1,4 @@
-import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
+import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../../../index/item-store.ts";
 import { resolvePersonForSync } from "../../../people/linker.ts";
 import { parseFromHeaderForPerson } from "../../../people/parse-from-header.ts";
 import { stripQuotedTail } from "../../../string/email-quoted-text.ts";
@@ -155,6 +155,17 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
   const subject = headerFrom(m.payload, "Subject") ?? "(no subject)";
   const rawBody = gmailMessageBodyText(m.payload ?? {});
   const body = stripQuotedTail(rawBody);
+  // Empty-body handling is a PAIR with `connectors/outlook-sync.ts` — keep
+  // the two arms in step. `gmailMessageBodyText` legitimately yields nothing
+  // for S/MIME mail, attachment-only mail, an unusual MIME shape, or a tree
+  // exceeding its MAX_DEPTH / MAX_PARTS bounds. Passing `body: ""` there
+  // would be a DECLARED-full empty body: `upsertIndexedItem` sees
+  // `declaredFull = true`, raw length 0 <= cap and no `bodyTruncated`, so it
+  // latches `body_complete = 1` — the message loses the snippet it used to
+  // have AND is marked complete, so `index.rebody` never revisits it. The
+  // `bodyPreview` arm keeps the snippet searchable at `body_complete = 0`.
+  const snippet = typeof m.snippet === "string" ? m.snippet : "";
+  const bodyInput: IndexedItemBodyInput = body === "" ? { bodyPreview: snippet } : { body };
   const internal = m.internalDate === undefined ? now : Number(m.internalDate);
   const modifiedAt = Number.isFinite(internal) ? internal : now;
   const threadId = typeof m.threadId === "string" ? m.threadId : "";
@@ -178,7 +189,7 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
     type: "email",
     externalId: id,
     title: subject.length > 512 ? subject.slice(0, 512) : subject,
-    body,
+    ...bodyInput,
     url,
     canonicalUrl: url,
     modifiedAt,

@@ -694,6 +694,79 @@ describe("createGmailSyncable", () => {
     expect(row?.body).toBe("Agreed, ship Tuesday.");
   });
 
+  test("an S/MIME message with no extractable text keeps its snippet and stays incomplete", async () => {
+    // Representative input, not a fixture shaped to the code: a real
+    // signed-and-encrypted message whose only part is opaque PKCS#7 bytes.
+    // `gmailMessageBodyText` correctly yields "" (it indexes text/plain and
+    // text/html only, and skips parts that defer to an attachment fetch).
+    // Passing that "" as a declared-full `body` would latch
+    // `body_complete = 1` — losing the snippet the message used to have AND
+    // making `index.rebody` skip it forever. Attachment-only mail, unusual
+    // MIME shapes and trees past MAX_DEPTH/MAX_PARTS all land here too.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({ messages: [{ id: "smime1", threadId: "ths" }], nextPageToken: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/smime1")) {
+        return new Response(
+          JSON.stringify({
+            id: "smime1",
+            threadId: "ths",
+            snippet: "Q3 close: signed contract attached for counter-signature.",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "multipart/mixed",
+              headers: [
+                { name: "Subject", value: "Signed contract" },
+                { name: "From", value: "legal@example.com" },
+                {
+                  name: "Content-Type",
+                  value: 'application/pkcs7-mime; smime-type="enveloped-data"',
+                },
+              ],
+              parts: [
+                {
+                  mimeType: "application/pkcs7-mime",
+                  body: { attachmentId: "att-1" },
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "900" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body, body_preview, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("gmail", "smime1")) as
+      | { body: string | null; body_preview: string | null; body_complete: number }
+      | undefined;
+    expect(row?.body_preview).toBe("Q3 close: signed contract attached for counter-signature.");
+    expect(row?.body).toBe("Q3 close: signed contract attached for counter-signature.");
+    // The load-bearing half: never claim completeness for a body we failed to
+    // extract, or `nimbus index rebody --service gmail` will skip it.
+    expect(row?.body_complete).toBe(0);
+  });
+
   test("requests format=full, not format=metadata", async () => {
     const { ctx } = await createOAuthConnectorTestSetup("google");
     const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
