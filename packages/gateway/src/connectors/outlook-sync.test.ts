@@ -36,7 +36,7 @@ describe("Outlook sync cursor codec", () => {
       samples,
       encodeOutlookSyncCursor,
       decodeOutlookSyncCursor,
-      "nimbus-outl1:",
+      "nimbus-outl2:",
     );
   });
 });
@@ -610,5 +610,147 @@ describe("createOutlookSyncable", () => {
 
     // null nextUrl means no continuation, should use the default initial URL
     expect(capturedUrls.some((u) => u.includes("/me/messages/delta?$top="))).toBe(true);
+  });
+
+  // ── real Graph `body` indexing (Task 5) ───────────────────────────────────
+
+  test("indexes the Graph body with the quoted tail stripped", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "htmlbody",
+            subject: "Ship it",
+            body: { contentType: "html", content: "<p>Ship it.</p><p>On Mon, Ana wrote:</p>" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "htmlbody")) as { body: string } | undefined;
+    expect(row?.body).toBe("Ship it.");
+  });
+
+  test("contentType text passes through without HTML stripping", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "textbody",
+            subject: "Plain",
+            body: { contentType: "text", content: "plain & simple" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "textbody")) as { body: string } | undefined;
+    expect(row?.body).toBe("plain & simple");
+  });
+
+  test("a message with no body still indexes title-only", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        // Pre-upgrade delta-link shape: no `body` field on the message at all.
+        return deltaResponse([{ id: "nobody2", subject: "No body field" }]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "nobody2")) as { body_complete: number } | undefined;
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("$select including body is on the initial delta request", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    expect(seenUrl).toContain("$select=");
+    expect(decodeURIComponent(seenUrl)).toContain("body");
+  });
+
+  test("$select is NOT re-appended to a followed nextLink", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    const storedNextLink =
+      "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuePage";
+    const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl: storedNextLink });
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      return deltaResponse([]);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, cursor);
+
+    expect(seenUrl).toBe(storedNextLink);
+  });
+
+  test("a pre-upgrade outl1 cursor is ignored and the initial delta URL is used", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    // Built with the OLD "nimbus-outl1:" prefix — must decode to undefined
+    // under the bumped "nimbus-outl2:" CURSOR_PREFIX and fall through to the
+    // initial (i.e. $select-bearing) request URL.
+    const oldPrefixCursor = `nimbus-outl1:${Buffer.from(
+      JSON.stringify({ v: 1, nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?x=1" }),
+    ).toString("base64url")}`;
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, oldPrefixCursor);
+
+    expect(seenUrl).toContain("/me/messages/delta");
+    expect(decodeURIComponent(seenUrl)).toContain("body");
   });
 });
