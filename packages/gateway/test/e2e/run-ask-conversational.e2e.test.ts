@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
+import { NULL_EGRESS_SINK } from "../../src/egress/egress-ledger.ts";
 import type { LocalIndex } from "../../src/index/local-index.ts";
 
 const routerModuleAbs = join(import.meta.dir, "..", "..", "src", "engine", "router.ts");
@@ -38,6 +39,10 @@ function baseParams(
     dispatcher: {
       dispatch: async () => ({}),
     },
+    // I29: RunAskParams.egressSink is a REQUIRED dep now (no more implicit NULL_EGRESS_SINK
+    // fallback inside run-ask.ts). This mock-heavy e2e-style test isn't exercising the real
+    // egress ledger, so it states that choice explicitly rather than inheriting a silent default.
+    egressSink: NULL_EGRESS_SINK,
     sendChunk,
   };
 }

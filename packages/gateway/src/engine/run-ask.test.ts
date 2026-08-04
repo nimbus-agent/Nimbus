@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 
+import { makeEgressSink, NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import type { LlmRouter } from "../llm/router.ts";
@@ -102,6 +103,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
     });
     expect(out.reply).toContain("No data indexed yet");
@@ -127,6 +129,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("ok, draft created"),
         sessionMemoryStore: store,
@@ -171,6 +174,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("ok, draft created"),
       sessionMemoryStore: store,
@@ -204,6 +208,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "Use the GitHub issue context."),
       classify: async () => {
@@ -252,6 +257,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts),
       classify: async () => {
@@ -296,6 +302,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "found local issues"),
       classify: async () => ({
@@ -337,6 +344,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("remote agent answer"),
       llmRouter: fakeLocalRouter(routerPrompts, "local answer", false),
@@ -377,6 +385,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -391,7 +400,7 @@ describe("runAsk", () => {
     localIndex.close();
   });
 
-  test("I29: a dispatched action writes an egress_ledger row (sink wired into the ask executor)", async () => {
+  test("I29: a dispatched action writes an egress_ledger row when the caller wires a real sink (egressSink is REQUIRED — no implicit fallback)", async () => {
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
     db.run(
@@ -416,6 +425,11 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      // Explicit, real sink — `RunAskParams.egressSink` has no `?? NULL_EGRESS_SINK` fallback
+      // inside run-ask.ts any more, so this call site must state its own choice. If that fallback
+      // were reintroduced, this test would keep passing but would no longer be PROVING anything —
+      // which is why the companion source-shape test below asserts the fallback text is absent.
+      egressSink: makeEgressSink(db),
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -431,6 +445,49 @@ describe("runAsk", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.method).toBe("filesystem_search_files");
     expect(rows[0]?.result_status).toBe("authorized");
+    localIndex.close();
+  });
+
+  test("I29: a dispatch-capable call with no egressSink at all throws, instead of silently degrading to a no-op sink", async () => {
+    // `RunAskParams.egressSink` is required at the TYPE level, so a normal caller can't omit it —
+    // `bun run typecheck` catches that. This test proves the RUNTIME contract too: the old code
+    // path (`typeof p.localIndex.getDatabase === "function" ? makeEgressSink(...) : NULL_EGRESS_SINK`)
+    // would have silently substituted a no-op sink here and returned a clean reply. The fixed code
+    // reads `p.egressSink` directly with no `??`/ternary fallback, so an omitted sink is a loud
+    // `TypeError`, not a quiet zero-row ledger. If the `?? NULL_EGRESS_SINK`-shaped fallback were
+    // ever reintroduced, this call would stop throwing and the assertion below would fail.
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES ('x:1', 'x', 'note', '1', 't', 1, 1)",
+    );
+    const localIndex = new LocalIndex(db);
+    const dispatcher: ConnectorDispatcher = {
+      async dispatch() {
+        return { hits: [] };
+      },
+    };
+
+    const paramsMissingEgressSink = {
+      input: "find files named *.md",
+      stream: false,
+      clientId: "test-client",
+      paths: stubPaths,
+      consentCoordinator: stubConsent,
+      localIndex,
+      dispatcher,
+      sendChunk: () => {},
+      classify: async () => ({
+        intent: "file_search" as const,
+        entities: { pattern: "*.md" },
+        requiresHITL: false,
+        confidence: 0.9,
+      }),
+      // egressSink deliberately omitted — `as unknown as Parameters<typeof runAsk>[0]` bypasses the
+      // compile-time requirement to exercise the runtime path directly.
+    } as unknown as Parameters<typeof runAsk>[0];
+
+    await expect(runAsk(paramsMissingEgressSink)).rejects.toThrow();
     localIndex.close();
   });
 
@@ -458,6 +515,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent, // requestConsent -> false: the gate denies the move
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_organize",
@@ -491,6 +549,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: (t) => chunks.push(t),
     });
 
@@ -514,6 +573,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("blank-input reply"),
       classify: async () => ({
@@ -547,6 +607,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         classify: async () => {
           throw new GatewayAgentUnavailableError({ reason: "insufficient_quota" });
@@ -576,6 +637,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         classify: async () => {
           throw new Error("unexpected network blip");
@@ -605,6 +667,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         classify: async () => {
           throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
@@ -635,6 +698,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         llmRouter: fakeLocalRouter(calls, "local answer", true),
         classify: async () => {
@@ -664,6 +728,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local fallback reply", true),
       classify: async () => {
@@ -693,6 +758,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_organize",
@@ -721,6 +787,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
     });
 
@@ -740,6 +807,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
     });
 
@@ -772,6 +840,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex: partialIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("no-db reply"),
       classify: async () => ({
@@ -811,6 +880,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -852,6 +922,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -897,6 +968,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local answer for blank", true),
       classify: async () => {
@@ -938,6 +1010,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "no context found", true),
       classify: async () => {
@@ -977,6 +1050,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "searched", true),
       classify: async () => {
@@ -1009,6 +1083,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "ok", true),
       classify: async () => {
@@ -1040,6 +1115,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "ok", true),
       classify: async () => {
@@ -1073,6 +1149,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "found bare issue", true),
       classify: async () => {
@@ -1102,6 +1179,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "found full issue", true),
       classify: async () => {
@@ -1135,6 +1213,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "clipped", true),
       classify: async () => {
@@ -1170,6 +1249,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_search",
@@ -1212,6 +1292,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("reply"),
         sessionMemoryStore: store,
@@ -1253,6 +1334,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("fallback reply"),
         sessionMemoryStore: store,
@@ -1295,6 +1377,7 @@ describe("runAsk", () => {
         consentCoordinator: stubConsent,
         localIndex,
         dispatcher: stubDispatcher,
+        egressSink: NULL_EGRESS_SINK,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("persisted reply"),
         sessionMemoryStore: store,
@@ -1334,6 +1417,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "dedup ok", true),
       classify: async () => {
@@ -1371,6 +1455,7 @@ describe("runAsk", () => {
       consentCoordinator: stubConsent,
       localIndex,
       dispatcher: stubDispatcher,
+      egressSink: NULL_EGRESS_SINK,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local context answer", true),
       classify: async () => ({

@@ -1278,6 +1278,27 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(src).not.toContain("private readonly egressSink?: EgressSink,");
   });
 
+  test("I29: runAsk's egress sink is a REQUIRED field, and the getDatabase-guarded NULL_EGRESS_SINK fallback is gone", async () => {
+    // runAsk is the agent-action path (nimbus ask / agent.invoke / the ChatOps read path) — the
+    // most dispatch-capable path in the product, and the one `nimbus prove` itself exercises. It
+    // used to silently substitute NULL_EGRESS_SINK whenever `p.localIndex.getDatabase` wasn't a
+    // function, which meant a real dispatch could execute with zero ledger rows and no signal.
+    // `RunAskParams.egressSink` is now a required field, consumed directly (`p.egressSink`) — the
+    // file no longer imports `makeEgressSink`/`NULL_EGRESS_SINK` as VALUES (only `EgressSink` as a
+    // type) or constructs a sink itself, so it cannot silently manufacture a no-op fallback.
+    const src = await read("packages/gateway/src/engine/run-ask.ts");
+    expect(src).toContain("egressSink: EgressSink;");
+    expect(src).not.toContain("egressSink?: EgressSink");
+    expect(src).toContain("p.egressSink");
+    // Neither NULL_EGRESS_SINK nor makeEgressSink is imported as a VALUE from egress-ledger.ts —
+    // only the EgressSink TYPE is imported — so the file has nothing to build a fallback sink from.
+    // (Matched against the import line specifically: both names legitimately appear in doc-comment
+    // prose above, e.g. "a caller ... must pass `NULL_EGRESS_SINK` explicitly".)
+    expect(src).not.toMatch(
+      /import\s*\{[^}]*(NULL_EGRESS_SINK|makeEgressSink)[^}]*\}\s*from\s*"\.\.\/egress\/egress-ledger\.ts"/,
+    );
+  });
+
   test("NULL_EGRESS_SINK leaves a real ledger untouched, where makeEgressSink writes", () => {
     // Asserts REAL behaviour against a real ledger — not that a spy counted a call. The two sinks
     // are handed the identical entry so the only variable is which sink received it.
