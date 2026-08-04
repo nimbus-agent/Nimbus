@@ -117,6 +117,22 @@ test("three hyphens is not a signature delimiter", () => {
   expect(stripQuotedTail(body)).toBe(body);
 });
 
+test("an author's own horizontal rule with prose below is NOT treated as terminal", () => {
+  // A 10+ underscore rule is an ordinary human formatting idiom. Treating it
+  // as unconditionally terminal (as `-----Original Message-----` and `-- `
+  // genuinely are) silently deleted the whole rest of the message. Its
+  // Outlook meaning is "a quoted header block follows" — nothing follows here
+  // but the author's own prose, so nothing may be cut.
+  const body = `Intro\n\n${"_".repeat(10)}\n\nSection two body text\nmore text`;
+  expect(stripQuotedTail(body)).toBe(body);
+});
+
+test("a divider followed by a > quote block IS terminal", () => {
+  // The other half of the gate: the divider does introduce a quoted block, so
+  // it keeps its terminal status.
+  expect(stripQuotedTail(`Ack.\n\n${"_".repeat(32)}\n> the original thread`)).toBe("Ack.");
+});
+
 test("fewer than 10 underscores is not a divider", () => {
   const body = `Body.\n\n${"_".repeat(9)}\nnot header`;
   expect(stripQuotedTail(body)).toBe(body);

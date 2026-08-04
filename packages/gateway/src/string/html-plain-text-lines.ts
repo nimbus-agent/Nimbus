@@ -13,15 +13,21 @@ import { stripHtmlTagsToSpaces } from "./html-plain-text.ts";
  * flattened single-line body hides every marker inside running prose where it
  * can never match.
  *
- * This module inserts a newline at each recognised HTML block boundary
- * BEFORE handing off to the existing (frozen, unmodified) `stripHtmlTagsToSpaces`,
- * then normalises horizontal whitespace within each resulting line and
- * collapses runs of blank lines — without ever merging two structural lines
- * into one.
+ * The pipeline, in order (the order is load-bearing — see each step):
+ *
+ *  1. neutralise source newlines,
+ *  2. drop `<style>` / `<script>` / `<head>` SECTIONS (contents included),
+ *  3. escape a stray `<` that is not a tag start,
+ *  4. insert a newline at each recognised block boundary,
+ *  5. hand off to the existing (frozen, unmodified) `stripHtmlTagsToSpaces`,
+ *  6. decode character references, per line,
+ *  7. normalise horizontal whitespace within each line and collapse runs of
+ *     blank lines — without ever merging two structural lines into one.
  *
  * `plainTextFromHtml`, `collapseWhitespace`, and `stripHtmlTagsToSpaces`
  * (`html-plain-text.ts`) are NOT modified here; their other consumers must
- * stay bit-identical.
+ * stay bit-identical. Steps 2, 3 and 6 are therefore local to this module,
+ * not pushed down into the shared helpers.
  */
 
 /**
@@ -61,6 +67,177 @@ import { stripHtmlTagsToSpaces } from "./html-plain-text.ts";
 const BLOCK_BOUNDARY_RE =
   /<\/li\s*>\s*<li(?:\s[^<>]*)?>|<\/(?:p|div|tr|li|h[1-6]|blockquote)\s*>|<br(?:\s[^<>]*)?\/?>|<li(?:\s[^<>]*)?>/gi;
 
+/**
+ * Sections whose TEXT is markup, not prose.
+ *
+ * `stripHtmlTagsToSpaces` removes tags but keeps everything between them, so
+ * a `<style>` block's CSS survives as "body text". Every other consumer of
+ * these helpers is handed an HTML FRAGMENT (Confluence storage format,
+ * Bitbucket/Teams rendered snippets), but Outlook hands us a complete Word-
+ * composed DOCUMENT whose `<head><style>` routinely carries kilobytes of
+ * `mso-` CSS — which would land AHEAD of the actual prose, eat the 16 KiB
+ * body cap, and pollute `item_fts`, the glossary miner and the decisions
+ * extractor with CSS tokens.
+ */
+const HIDDEN_SECTION_NAMES = ["style", "script", "head"] as const;
+type HiddenSectionName = (typeof HIDDEN_SECTION_NAMES)[number];
+
+/**
+ * The OPENING tag of a hidden section. `[^<>]*` for the attribute skip, for
+ * exactly the reason spelled out on `BLOCK_BOUNDARY_RE` above. `\b` keeps
+ * `<header>` from reading as `<head`.
+ */
+const HIDDEN_SECTION_OPEN_RE = /<(style|script|head)\b[^<>]*>/gi;
+
+/** Pre-compiled closers, so a document with many sections compiles nothing. */
+const HIDDEN_SECTION_CLOSE_RE: Readonly<Record<HiddenSectionName, RegExp>> = {
+  style: /<\/style\s*>/gi,
+  script: /<\/script\s*>/gi,
+  head: /<\/head\s*>/gi,
+};
+
+/**
+ * Drop `<style>` / `<script>` / `<head>` sections, contents included.
+ *
+ * Deliberately NOT the obvious one-regex form
+ * `/<(style|script|head)\b[^<>]*>[\s\S]*?<\/\1\s*>/gi`. That is QUADRATIC on
+ * unterminated openers: every `<style>` with no `</style>` after it makes the
+ * lazy `[\s\S]*?` scan to end-of-string before failing, and the global
+ * `replace` then retries at the next opener. Measured on
+ * `"<script a>zzzzzzzzzz".repeat(n)`: 100 KB → 285 ms, 200 KB → 1150 ms,
+ * 400 KB → 4608 ms, 800 KB → 17977 ms — a clean 4x per doubling. Email
+ * bodies are remote-attacker-controlled and this runs synchronously on every
+ * indexed message BEFORE any body cap applies, so that shape is a denial of
+ * service, not a slow path.
+ *
+ * This scan is linear instead, and the two properties that make it so are:
+ *
+ *  - `cursor` and the opener regex's `lastIndex` only ever move FORWARD, so
+ *    each character is visited O(1) times by the opener search; and
+ *  - a close-tag search that reaches end-of-string without a hit marks that
+ *    tag name EXHAUSTED. "No `</style>` after position p" implies no
+ *    `</style>` after any later position either, so no subsequent `<style>`
+ *    can pay for that scan again. With three names, at most three
+ *    full-length failed scans over the whole input.
+ *
+ * An unterminated section is left in place (fail-open) rather than treated as
+ * "hidden to end of document": truncating a message body on malformed markup
+ * would destroy author content, which is strictly worse than indexing some
+ * CSS.
+ */
+function stripHiddenSections(input: string): string {
+  HIDDEN_SECTION_OPEN_RE.lastIndex = 0;
+  const exhausted = new Set<string>();
+  let out = "";
+  let cursor = 0;
+  let match = HIDDEN_SECTION_OPEN_RE.exec(input);
+  while (match !== null) {
+    const name = match[1]?.toLowerCase() as HiddenSectionName;
+    const openEnd = match.index + match[0].length;
+    let closeEnd = -1;
+    if (!exhausted.has(name)) {
+      const closeRe = HIDDEN_SECTION_CLOSE_RE[name];
+      closeRe.lastIndex = openEnd;
+      const close = closeRe.exec(input);
+      if (close === null) {
+        exhausted.add(name);
+      } else {
+        closeEnd = close.index + close[0].length;
+      }
+    }
+    if (closeEnd === -1) {
+      // Unterminated: keep the section, and resume scanning past its opener
+      // so `lastIndex` still advances monotonically.
+      HIDDEN_SECTION_OPEN_RE.lastIndex = openEnd;
+    } else {
+      out += `${input.slice(cursor, match.index)} `;
+      cursor = closeEnd;
+      HIDDEN_SECTION_OPEN_RE.lastIndex = closeEnd;
+    }
+    match = HIDDEN_SECTION_OPEN_RE.exec(input);
+  }
+  return out === "" ? input : out + input.slice(cursor);
+}
+
+/**
+ * A `<` that starts no tag.
+ *
+ * `stripHtmlTagsToSpaces` enters tag mode at EVERY `<` and stays there until
+ * the next `>`, so an ordinary comparison in author prose is not merely
+ * mis-parsed, it DELETES text: `"<p>if a < b</p>"` loses `" b"` along with
+ * the `</p>` that was swallowed as the "tag" — and the block boundary that
+ * `</p>` would have produced is lost with it, so a following attribution line
+ * gets glued onto the prose and `stripQuotedTail` can no longer see it.
+ * `"if a < b"` is common in exactly the technical mail this module exists to
+ * index, so the `<` is escaped here and restored by the entity decode below.
+ *
+ * A real tag name, a closing tag, a comment/doctype (`<!`) and a processing
+ * instruction (`<?`) are the only things that may follow a genuine tag start.
+ */
+const STRAY_LT_RE = /<(?![A-Za-z/!?])/g;
+
+/**
+ * Character references, decoded AFTER tag stripping.
+ *
+ * Before this branch, Outlook indexed Graph's `bodyPreview`, which is already
+ * DECODED plain text; indexing `body.content` instead means the raw entities
+ * (`&nbsp;` above all) would otherwise reach the index verbatim — a body-
+ * quality regression on the connector this feature targets. It also breaks
+ * the trimmer: an HTML-quoted block rendered as `&gt; original` never matches
+ * `stripQuotedTail`'s `QUOTE_RE`, so quoted-tail stripping never fires.
+ *
+ * Decoding must come AFTER `stripHtmlTagsToSpaces`, never before: an authored
+ * `&lt;p&gt;` (a person writing about a `<p>` tag) would otherwise turn into
+ * a real tag and be stripped as markup.
+ *
+ * Every quantifier is bounded and the alternation is disjoint on the first
+ * character after `&#`, so there is nothing to backtrack over. An UNKNOWN
+ * named entity is deliberately left literal — inert text is a better outcome
+ * than a guess, and the five XML predefined names plus `&nbsp;` plus numeric
+ * references cover what real mail actually carries.
+ */
+const ENTITY_RE = /&(?:#(?:[xX]([0-9a-fA-F]{1,6})|([0-9]{1,7}))|([a-zA-Z]{2,8}));/g;
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  // U+00A0, not a plain space: `collapseHorizontalWhitespace`'s `\s+` already
+  // matches it, so it normalises to a space exactly like any other run.
+  nbsp: " ",
+};
+
+function characterFromCodePoint(code: number, fallback: string): string {
+  // Reject NUL, out-of-range, and lone surrogates — `String.fromCodePoint`
+  // throws on the last two, and a NUL in indexed text helps nobody.
+  if (code < 1 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) {
+    return fallback;
+  }
+  return String.fromCodePoint(code);
+}
+
+function decodeCharacterReferences(line: string): string {
+  return line.replace(
+    ENTITY_RE,
+    (
+      whole: string,
+      hex: string | undefined,
+      dec: string | undefined,
+      name: string | undefined,
+    ): string => {
+      if (hex !== undefined) {
+        return characterFromCodePoint(Number.parseInt(hex, 16), whole);
+      }
+      if (dec !== undefined) {
+        return characterFromCodePoint(Number.parseInt(dec, 10), whole);
+      }
+      return NAMED_ENTITIES[String(name).toLowerCase()] ?? whole;
+    },
+  );
+}
+
 function collapseHorizontalWhitespace(line: string): string {
   return line.replace(/\s+/g, " ").trim();
 }
@@ -95,8 +272,15 @@ export function plainTextFromHtmlLines(raw: string): string {
   // any of our own — otherwise incidental source formatting would be
   // mistaken for an intentional block boundary.
   const normalizedRaw = raw.replace(/\r\n|\r|\n/g, " ");
-  const withBreaks = normalizedRaw.replace(BLOCK_BOUNDARY_RE, "\n");
+  const visible = stripHiddenSections(normalizedRaw);
+  const escaped = visible.replace(STRAY_LT_RE, "&lt;");
+  const withBreaks = escaped.replace(BLOCK_BOUNDARY_RE, "\n");
   const stripped = stripHtmlTagsToSpaces(withBreaks);
-  const lines = stripped.split("\n").map(collapseHorizontalWhitespace);
+  // Decode per LINE, after the split: a `&#10;` in the source is an authored
+  // whitespace character, not a block boundary, and must collapse like one
+  // rather than fabricate a structural line.
+  const lines = stripped
+    .split("\n")
+    .map((line) => collapseHorizontalWhitespace(decodeCharacterReferences(line)));
   return collapseBlankLineRuns(lines).join("\n");
 }

@@ -26,6 +26,17 @@
 const ATTRIBUTION_RE =
   /^\s*(on\s+.{1,400}\bwrote:\s*$|am\s+.{1,400}\bschrieb\s+.{1,400}:\s*$|le\s+.{1,400}\ba\s+écrit\s*:\s*$)/i;
 const ORIGINAL_MESSAGE_RE = /^\s*-{2,}\s*original message\s*-{2,}\s*$/i;
+/**
+ * The Outlook horizontal rule that precedes a quoted header block.
+ *
+ * Unlike `-----Original Message-----` and `-- `, a row of underscores is NOT
+ * intrinsically terminal — it is also an ordinary human formatting idiom for
+ * separating two sections of one's OWN message. Its Outlook meaning is
+ * specifically "a quoted header block follows", so that is what
+ * `dividerIntroducesQuotedBlock` checks before the divider is allowed to end
+ * the message. Ungated, `"Intro\n\n__________\n\nSection two"` silently
+ * deleted everything from the rule down.
+ */
 const DIVIDER_RE = /^\s*_{10,}\s*$/;
 /**
  * A signature delimiter is exactly two hyphens and a single trailing space
@@ -58,6 +69,24 @@ function isMarker(line: string, headerish: boolean): boolean {
 function headerBlockFlags(lines: readonly string[]): boolean[] {
   const isField = lines.map((l) => HEADER_FIELD_RE.test(l));
   return isField.map((f, i) => f && (isField[i - 1] === true || isField[i + 1] === true));
+}
+
+/**
+ * Does the region BELOW an underscore divider actually look like the quoted
+ * block the divider claims to introduce? One `>` line or one line of a
+ * `From:`/`Sent:` header block is enough; an author's own prose is not.
+ */
+function dividerIntroducesQuotedBlock(
+  lines: readonly string[],
+  headerish: readonly boolean[],
+  at: number,
+): boolean {
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (headerish[i] === true || QUOTE_RE.test(lines[i] ?? "")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Openers that may have been wrapped away from their `wrote:`-style closer. */
@@ -153,17 +182,26 @@ export function stripQuotedTail(body: string): string {
   }
 
   // T: the LAST original line matching a TERMINAL marker. Unlike `>` and
-  // attribution lines, an -----Original Message-----, a `-- ` signature
-  // delimiter, or an underscore divider by their nature run to the END of
-  // the message — whatever follows is quoted original or a signature, not
-  // the author's prose — even when that trailing content (a lone `From:`
-  // line, a signature body like a name/title) is itself neither blank nor a
-  // marker, and so is invisible to the backward walk above. Scanned over the
-  // ORIGINAL lines, not the joined analysis lines — the join is analysis-only.
+  // attribution lines, an -----Original Message----- or a `-- ` signature
+  // delimiter by their nature run to the END of the message — whatever
+  // follows is quoted original or a signature, not the author's prose — even
+  // when that trailing content (a lone `From:` line, a signature body like a
+  // name/title) is itself neither blank nor a marker, and so is invisible to
+  // the backward walk above. Scanned over the ORIGINAL lines, not the joined
+  // analysis lines — the join is analysis-only.
+  //
+  // An underscore divider is terminal only CONDITIONALLY: it is also an
+  // ordinary formatting idiom, so it must actually be followed by the quoted
+  // header block it claims to introduce (see `dividerIntroducesQuotedBlock`).
+  const originalHeaderish = headerBlockFlags(original);
   let terminalCut: number | undefined;
   for (let i = original.length - 1; i >= 0; i -= 1) {
     const line = original[i] ?? "";
-    if (ORIGINAL_MESSAGE_RE.test(line) || SIGNATURE_RE.test(line) || DIVIDER_RE.test(line)) {
+    const terminal =
+      ORIGINAL_MESSAGE_RE.test(line) ||
+      SIGNATURE_RE.test(line) ||
+      (DIVIDER_RE.test(line) && dividerIntroducesQuotedBlock(original, originalHeaderish, i));
+    if (terminal) {
       terminalCut = i;
       break;
     }
