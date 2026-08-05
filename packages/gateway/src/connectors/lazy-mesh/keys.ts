@@ -1,12 +1,13 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { selfSpawn } from "../../platform/runtime-layout.ts";
 
-const _LAZY_MESH_DIR = dirname(fileURLToPath(import.meta.url));
-
-export const MCP_CONNECTORS_ROOT = join(_LAZY_MESH_DIR, "..", "..", "..", "..", "mcp-connectors");
-
-export function mcpConnectorServerScript(packageDir: string): string {
-  return join(MCP_CONNECTORS_ROOT, packageDir, "src", "server.ts");
+/**
+ * The command+args that run a first-party connector. In a dev tree this is
+ * `bun <gateway>/src/index.ts __nimbus-connector <pkg>`; in a compiled binary it is the binary
+ * re-executing itself. It is never `bun <path-into-the-source-tree>` — a released binary ships
+ * with neither bun nor that tree.
+ */
+export function connectorSpawn(packageDir: string): { command: string; args: string[] } {
+  return selfSpawn("connector", [packageDir]);
 }
 
 export const LAZY_MESH = {

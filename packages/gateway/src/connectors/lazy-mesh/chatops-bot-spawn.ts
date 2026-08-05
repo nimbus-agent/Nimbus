@@ -3,7 +3,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
-import { mcpConnectorServerScript } from "./keys.ts";
+import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -42,8 +42,7 @@ export async function chatopsSlackBotServers(
   return {
     slack: wrapServerSpec(
       {
-        command: "bun",
-        args: [mcpConnectorServerScript("slack")],
+        ...connectorSpawn("slack"),
         env: extensionProcessEnv({ SLACK_BOT_TOKEN: botToken, SLACK_APP_TOKEN: appToken }),
       },
       manifestForFirstParty("slack"),
@@ -76,8 +75,7 @@ export async function chatopsTeamsBotServers(
   return {
     teams: wrapServerSpec(
       {
-        command: "bun",
-        args: [mcpConnectorServerScript("teams")],
+        ...connectorSpawn("teams"),
         env: extensionProcessEnv({
           TEAMS_BOT_APP_ID: appId,
           TEAMS_BOT_APP_PASSWORD: appPassword,

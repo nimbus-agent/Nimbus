@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import type { ServerSpec } from "./slot.ts";
-import { SANDBOX_WRAPPER_PATH, wrapServerSpec } from "./wrap-server-spec.ts";
+import { wrapServerSpec } from "./wrap-server-spec.ts";
 
 // Real, unique temp root for the fake sandbox cwd args (S5443). wrapServerSpec
 // only string-copies the cwd into env — it is never written to.
@@ -42,18 +42,18 @@ describe("wrapServerSpec", () => {
     expect(wrapped.command).toBe(process.execPath);
   });
 
-  test("args[0] is the sandbox-wrapper path", () => {
+  test("args lead with the gateway entry and the sandbox sentinel (dev tree)", () => {
     const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
-    expect(wrapped.args[0]).toBe(SANDBOX_WRAPPER_PATH);
-    expect(wrapped.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
+    expect(wrapped.args[0]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(wrapped.args[1]).toBe("__nimbus-sandbox");
   });
 
-  test("preserves the original command + args after the wrapper path", () => {
+  test("preserves the original command + args after the sentinel", () => {
     const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
-    expect(wrapped.args[1]).toBe("bun");
-    expect(wrapped.args[2]).toBe("packages/mcp-connectors/github/src/server.ts");
-    expect(wrapped.args[3]).toBe("--mode");
-    expect(wrapped.args[4]).toBe("stdio");
+    expect(wrapped.args[2]).toBe("bun");
+    expect(wrapped.args[3]).toBe("packages/mcp-connectors/github/src/server.ts");
+    expect(wrapped.args[4]).toBe("--mode");
+    expect(wrapped.args[5]).toBe("stdio");
   });
 
   test("preserves caller-supplied env keys", () => {
@@ -109,12 +109,5 @@ describe("wrapServerSpec", () => {
     expect(parsed.id).toBe("com.nimbus.test");
     expect(parsed.permissions.network).toEqual(["api.github.com"]);
     expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe(LEGIT_CWD);
-  });
-});
-
-describe("SANDBOX_WRAPPER_PATH", () => {
-  test("resolves to an absolute path under platform/sandbox/", () => {
-    expect(SANDBOX_WRAPPER_PATH).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    expect(SANDBOX_WRAPPER_PATH).toMatch(/^([A-Za-z]:[\\/]|[\\/])/);
   });
 });

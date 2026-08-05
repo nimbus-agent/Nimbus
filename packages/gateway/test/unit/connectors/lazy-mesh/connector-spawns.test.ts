@@ -307,9 +307,13 @@ describe("ensureLinearMcp", () => {
     expect(capturedClients).toHaveLength(1);
     const linearSpec = capturedClients[0]?.servers["linear"];
     expect(linearSpec?.command).toBe(process.execPath);
-    expect(linearSpec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    expect(linearSpec?.args[1]).toBe("bun");
-    expect(linearSpec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]linear[\\/]src[\\/]server\.ts$/);
+    expect(linearSpec?.args[0]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(linearSpec?.args[1]).toBe("__nimbus-sandbox");
+    // The inner command is the gateway re-executing itself in its connector role.
+    expect(linearSpec?.args[2]).toBe(process.execPath);
+    expect(linearSpec?.args[3]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(linearSpec?.args[4]).toBe("__nimbus-connector");
+    expect(linearSpec?.args[5]).toBe("linear");
     expect(linearSpec?.env["LINEAR_API_KEY"]).toBe("lin_test_key");
     expect(linearSpec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expectNoProcessEnvLeak(linearSpec?.env ?? {});
@@ -419,18 +423,14 @@ describe("ensureGithubMcp", () => {
     expect(servers["github_actions"]?.env["GITHUB_PAT"]).toBe("ghp_test");
     expect(servers["github"]?.command).toBe(process.execPath);
     expect(servers["github_actions"]?.command).toBe(process.execPath);
-    expect(servers["github"]?.args[0]).toMatch(
-      /[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/,
-    );
-    expect(servers["github_actions"]?.args[0]).toMatch(
-      /[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/,
-    );
-    expect(servers["github"]?.args[2]).toMatch(
-      /[\\/]mcp-connectors[\\/]github[\\/]src[\\/]server\.ts$/,
-    );
-    expect(servers["github_actions"]?.args[2]).toMatch(
-      /[\\/]mcp-connectors[\\/]github-actions[\\/]src[\\/]server\.ts$/,
-    );
+    expect(servers["github"]?.args[1]).toBe("__nimbus-sandbox");
+    expect(servers["github_actions"]?.args[1]).toBe("__nimbus-sandbox");
+    // The sandboxed command is the gateway re-executing itself in its connector role, with the
+    // connector id as the final argument — never a path into a source tree the binary lacks.
+    expect(servers["github"]?.args[4]).toBe("__nimbus-connector");
+    expect(servers["github"]?.args[5]).toBe("github");
+    expect(servers["github_actions"]?.args[4]).toBe("__nimbus-connector");
+    expect(servers["github_actions"]?.args[5]).toBe("github-actions");
     expect(servers["github"]?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expect(servers["github_actions"]?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expectNoProcessEnvLeak(servers["github"]?.env ?? {});
@@ -578,8 +578,10 @@ describe("ensureAppleMcp (iCloud Mail+Calendar, two-key gate)", () => {
 
     const spec = capturedClients[0]?.servers["apple"];
     expect(spec?.command).toBe(process.execPath);
-    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]apple[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[0]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(spec?.args[1]).toBe("__nimbus-sandbox");
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("apple");
     expect(spec?.env["APPLE_ICLOUD_EMAIL"]).toBe("me@icloud.com");
     expect(spec?.env["APPLE_ICLOUD_APP_PASSWORD"]).toBe("abcd-efgh-ijkl-mnop");
     // The fixed iCloud IMAP/SMTP host:port endpoints are folded into the sandbox manifest.
@@ -1091,8 +1093,10 @@ describe("ensureHubspotMcp (Tier-2 OAuth dedicated spawn)", () => {
 
     const spec = capturedClients[0]?.servers["hubspot"];
     expect(spec?.command).toBe(process.execPath);
-    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]hubspot[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[0]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(spec?.args[1]).toBe("__nimbus-sandbox");
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("hubspot");
     expect(spec?.env["HUBSPOT_TOKEN"]).toBe("fake-hubspot-access-token");
     expect(spec?.env["NIMBUS_SANDBOX_MANIFEST_JSON"]).toBeDefined();
     expectNoProcessEnvLeak(spec?.env ?? {});
@@ -1136,7 +1140,8 @@ describe("ensureMiroMcp (Tier-2 OAuth dedicated spawn)", () => {
     await ensureMiroMcp(ctx);
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.miro);
     const spec = capturedClients[0]?.servers["miro"];
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]miro[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("miro");
     expect(spec?.env["MIRO_TOKEN"]).toBe("fake-miro-access-token");
     expectNoProcessEnvLeak(spec?.env ?? {});
   });
@@ -1178,7 +1183,8 @@ describe("ensureCanvaMcp (Tier-2 OAuth dedicated spawn)", () => {
     await ensureCanvaMcp(ctx);
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.canva);
     const spec = capturedClients[0]?.servers["canva"];
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]canva[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("canva");
     expect(spec?.env["CANVA_TOKEN"]).toBe("fake-canva-access-token");
     expectNoProcessEnvLeak(spec?.env ?? {});
   });
@@ -1229,7 +1235,8 @@ describe("ensureFigmaMcp (Tier-2 OAuth dedicated spawn, two-key)", () => {
     await ensureFigmaMcp(ctx);
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.figma);
     const spec = capturedClients[0]?.servers["figma"];
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]figma[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("figma");
     expect(spec?.env["FIGMA_TOKEN"]).toBe("fake-figma-access-token");
     expect(spec?.env["FIGMA_TEAM_ID"]).toBe("team-123");
     expectNoProcessEnvLeak(spec?.env ?? {});
@@ -1275,7 +1282,8 @@ describe("ensureSalesforceMcp (Tier-2 OAuth + per-tenant instance host)", () => 
     await ensureSalesforceMcp(ctx);
     expect(calls.setLazyClient[0]?.key).toBe(LAZY_MESH.salesforce);
     const spec = capturedClients[0]?.servers["salesforce"];
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]salesforce[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("salesforce");
     expect(spec?.env["SALESFORCE_ACCESS_TOKEN"]).toBe("fake-salesforce-access-token");
     expect(spec?.env["SALESFORCE_INSTANCE_URL"]).toBe("https://acme.my.salesforce.com");
     // The per-tenant instance host is folded into the sandbox manifest.
@@ -1338,8 +1346,10 @@ describe("ensureWorkdayMcp (Tier-2 OAuth + per-tenant host sandbox allowlisting)
     expect(capturedClients).toHaveLength(1);
     const spec = capturedClients[0]?.servers["workday"];
     expect(spec?.command).toBe(process.execPath);
-    expect(spec?.args[0]).toMatch(/[\\/]platform[\\/]sandbox[\\/]sandbox-wrapper\.ts$/);
-    expect(spec?.args[2]).toMatch(/[\\/]mcp-connectors[\\/]workday[\\/]src[\\/]server\.ts$/);
+    expect(spec?.args[0]).toMatch(/[\\/]packages[\\/]gateway[\\/]src[\\/]index\.ts$/);
+    expect(spec?.args[1]).toBe("__nimbus-sandbox");
+    expect(spec?.args[4]).toBe("__nimbus-connector");
+    expect(spec?.args[5]).toBe("workday");
     expect(spec?.env["WORKDAY_ACCESS_TOKEN"]).toBe("fake-workday-access-token");
     expect(spec?.env["WORKDAY_TENANT_HOST"]).toBe("https://acme.workday.com");
     expect(spec?.env["WORKDAY_TENANT"]).toBe("acme");

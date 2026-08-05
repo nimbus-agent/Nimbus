@@ -28,7 +28,7 @@ import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
 } from "./first-party-manifests.ts";
-import { LAZY_MESH, mcpConnectorServerScript } from "./keys.ts";
+import { connectorSpawn, LAZY_MESH } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
 import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -87,8 +87,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     if (id === "google_drive") {
       googleServers["google_drive"] = wrap(
         {
-          command: "bun",
-          args: [mcpConnectorServerScript("google-drive")],
+          ...connectorSpawn("google-drive"),
           env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
         },
         "google_drive",
@@ -97,8 +96,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     } else if (id === "gmail") {
       googleServers["gmail"] = wrap(
         {
-          command: "bun",
-          args: [mcpConnectorServerScript("gmail")],
+          ...connectorSpawn("gmail"),
           env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
         },
         "gmail",
@@ -107,8 +105,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     } else if (id === "google_photos") {
       googleServers["google_photos"] = wrap(
         {
-          command: "bun",
-          args: [mcpConnectorServerScript("google-photos")],
+          ...connectorSpawn("google-photos"),
           env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
         },
         "google_photos",
@@ -117,8 +114,7 @@ export async function ensureGoogleDriveMcp(ctx: MeshSpawnContext): Promise<void>
     } else {
       googleServers["google_meet"] = wrap(
         {
-          command: "bun",
-          args: [mcpConnectorServerScript("google-meet")],
+          ...connectorSpawn("google-meet"),
           env: extensionProcessEnv({ GOOGLE_OAUTH_ACCESS_TOKEN: token }),
         },
         "google_meet",
@@ -164,8 +160,7 @@ export async function ensureMicrosoftBundleMcp(ctx: MeshSpawnContext): Promise<v
       servers: {
         onedrive: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("onedrive")],
+            ...connectorSpawn("onedrive"),
             env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
           },
           "onedrive",
@@ -173,8 +168,7 @@ export async function ensureMicrosoftBundleMcp(ctx: MeshSpawnContext): Promise<v
         ),
         outlook: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("outlook")],
+            ...connectorSpawn("outlook"),
             env: outlookEnv,
           },
           "outlook",
@@ -182,8 +176,7 @@ export async function ensureMicrosoftBundleMcp(ctx: MeshSpawnContext): Promise<v
         ),
         teams: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("teams")],
+            ...connectorSpawn("teams"),
             env: extensionProcessEnv({ MICROSOFT_OAUTH_ACCESS_TOKEN: token }),
           },
           "teams",
@@ -218,8 +211,7 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         github: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("github")],
+            ...connectorSpawn("github"),
             env: extensionProcessEnv({ GITHUB_PAT: pat }),
           },
           "github",
@@ -227,8 +219,7 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
         ),
         github_actions: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("github-actions")],
+            ...connectorSpawn("github-actions"),
             env: extensionProcessEnv({ GITHUB_PAT: pat }),
           },
           "github_actions",
@@ -271,8 +262,7 @@ export async function ensureGitlabMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         gitlab: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("gitlab")],
+            ...connectorSpawn("gitlab"),
             env: gitlabServerEnv,
           },
           "gitlab",
@@ -304,8 +294,7 @@ export async function ensureBitbucketMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         bitbucket: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("bitbucket")],
+            ...connectorSpawn("bitbucket"),
             env: extensionProcessEnv({
               BITBUCKET_USERNAME: user,
               BITBUCKET_APP_PASSWORD: pass,
@@ -348,8 +337,7 @@ export async function ensureSlackMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         slack: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("slack")],
+            ...connectorSpawn("slack"),
             env: extensionProcessEnv({ SLACK_USER_ACCESS_TOKEN: token }),
           },
           "slack",
@@ -384,8 +372,7 @@ export async function ensureLinearMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         linear: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("linear")],
+            ...connectorSpawn("linear"),
             env: extensionProcessEnv({ LINEAR_API_KEY: apiKey }),
           },
           "linear",
@@ -425,8 +412,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         jira: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("jira")],
+            ...connectorSpawn("jira"),
             env: extensionProcessEnv({
               JIRA_API_TOKEN: token,
               JIRA_EMAIL: email,
@@ -474,8 +460,7 @@ export async function ensureNotionMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         notion: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("notion")],
+            ...connectorSpawn("notion"),
             env: extensionProcessEnv({ NOTION_ACCESS_TOKEN: accessToken }),
           },
           "notion",
@@ -519,8 +504,7 @@ export async function ensureMendeleyMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         mendeley: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("mendeley")],
+            ...connectorSpawn("mendeley"),
             env: extensionProcessEnv({ MENDELEY_ACCESS_TOKEN: accessToken }),
           },
           "mendeley",
@@ -560,8 +544,7 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
       servers: {
         confluence: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("confluence")],
+            ...connectorSpawn("confluence"),
             env: extensionProcessEnv({
               CONFLUENCE_API_TOKEN: token,
               CONFLUENCE_EMAIL: em,
@@ -597,8 +580,7 @@ export async function ensureDiscordMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         discord: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("discord")],
+            ...connectorSpawn("discord"),
             env: extensionProcessEnv({ DISCORD_BOT_TOKEN: token }),
           },
           "discord",
@@ -644,8 +626,7 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         jenkins: wrapServerSpec(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("jenkins")],
+            ...connectorSpawn("jenkins"),
             env: extensionProcessEnv({
               JENKINS_BASE_URL: base,
               JENKINS_USERNAME: user.trim(),
@@ -680,8 +661,7 @@ export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         circleci: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("circleci")],
+            ...connectorSpawn("circleci"),
             env: extensionProcessEnv({ CIRCLECI_API_TOKEN: tok.trim() }),
           },
           "circleci",
@@ -712,8 +692,7 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         pagerduty: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("pagerduty")],
+            ...connectorSpawn("pagerduty"),
             env: extensionProcessEnv({ PAGERDUTY_API_TOKEN: tok.trim() }),
           },
           "pagerduty",
@@ -749,8 +728,7 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
       servers: {
         kubernetes: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("kubernetes")],
+            ...connectorSpawn("kubernetes"),
             env: extensionProcessEnv(kubeExtra),
           },
           "kubernetes",
@@ -792,8 +770,7 @@ export async function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         obsidian: wrapServerSpec(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("obsidian")],
+            ...connectorSpawn("obsidian"),
             env: extensionProcessEnv({ OBSIDIAN_VAULT_PATHS_JSON: JSON.stringify(vaultPaths) }),
           },
           obsidianManifest,
@@ -837,8 +814,7 @@ export async function ensureZoomMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         zoom: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("zoom")],
+            ...connectorSpawn("zoom"),
             env: extensionProcessEnv({ ZOOM_TOKEN: accessToken }),
           },
           "zoom",
@@ -882,8 +858,7 @@ export async function ensureHubspotMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         hubspot: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("hubspot")],
+            ...connectorSpawn("hubspot"),
             env: extensionProcessEnv({ HUBSPOT_TOKEN: accessToken }),
           },
           "hubspot",
@@ -927,8 +902,7 @@ export async function ensureMiroMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         miro: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("miro")],
+            ...connectorSpawn("miro"),
             env: extensionProcessEnv({ MIRO_TOKEN: accessToken }),
           },
           "miro",
@@ -972,8 +946,7 @@ export async function ensureCanvaMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         canva: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("canva")],
+            ...connectorSpawn("canva"),
             env: extensionProcessEnv({ CANVA_TOKEN: accessToken }),
           },
           "canva",
@@ -1019,8 +992,7 @@ export async function ensureFigmaMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         figma: wrap(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("figma")],
+            ...connectorSpawn("figma"),
             env: extensionProcessEnv({ FIGMA_TOKEN: accessToken, FIGMA_TEAM_ID: teamId }),
           },
           "figma",
@@ -1069,8 +1041,7 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
       servers: {
         salesforce: wrapServerSpec(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("salesforce")],
+            ...connectorSpawn("salesforce"),
             env: extensionProcessEnv({
               SALESFORCE_ACCESS_TOKEN: auth.accessToken,
               SALESFORCE_INSTANCE_URL: auth.instanceUrl,
@@ -1127,8 +1098,7 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         workday: wrapServerSpec(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("workday")],
+            ...connectorSpawn("workday"),
             env: extensionProcessEnv({
               WORKDAY_ACCESS_TOKEN: accessToken,
               WORKDAY_TENANT_HOST: tenantHost,
@@ -1182,8 +1152,7 @@ export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
       servers: {
         apple: wrapServerSpec(
           {
-            command: "bun",
-            args: [mcpConnectorServerScript("apple")],
+            ...connectorSpawn("apple"),
             env: extensionProcessEnv({
               APPLE_ICLOUD_EMAIL: email,
               APPLE_ICLOUD_APP_PASSWORD: appPw,
