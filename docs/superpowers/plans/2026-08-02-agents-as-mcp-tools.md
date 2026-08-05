@@ -6,7 +6,7 @@
 
 **Architecture:** Ten async agents plus the synchronous `whyPeek` are registered as tools in the existing `TOOL_SPECS` array in the CLI's MCP adapter. Correctness prerequisites land first: a brief router that correlates `briefReady` notifications by `sessionId` (today they are broadcast and matched by agent name alone), and a per-connection client-kind declaration so the gateway can tell an MCP-originated agent call from a CLI one. Every MCP-originated agent invocation appends one `egress_ledger` row before the brief is returned, fail-closed, through a new chokepoint confined by an extended `D22` static rule.
 
-**Tech Stack:** Bun v1.2+, TypeScript 6.x strict, `bun:test`, Biome, `@modelcontextprotocol/sdk`, zod, `bun:sqlite`, BLAKE3 via `@noble/hashes`.
+**Tech Stack:** Bun v1.2+, TypeScript 7.x strict, `bun:test`, Biome, `@modelcontextprotocol/sdk`, zod, `bun:sqlite`, BLAKE3 via `@noble/hashes`.
 
 ## Global Constraints
 
@@ -19,9 +19,71 @@
 - **Before pushing:** `bun run preflight:fast`. Never `git add -A` — `settings.local.json` is tracked.
 - **Commits:** conventional-commit prefixes. Commit messages are discarded on squash-merge; the PR title and body become the commit.
 
-## Known unknown, resolve in Task 1
+## Resolved: the client's handler surface (was "Known unknown, resolve in Task 1")
 
-`@nimbus-dev/client` is **not installed** in this checkout (`node_modules/@nimbus-dev/` contains only `sdk`). Whether `IPCClient` exposes handler removal (`offNotification` or similar) is therefore unverified. **The design in Task 1 deliberately does not require it:** the router binds at most one listener per agent-notification name for the client's lifetime, so handler count is bounded by the agent count (24 total), not by invocation count. If an unsubscribe API does turn out to exist, it is an optimisation, not a correction. Run `bun install` before starting.
+`@nimbus-dev/client` **is installed** and `IPCClient` exposes more than this plan originally assumed. Verified against `node_modules/@nimbus-dev/client/dist/ipc-transport.d.ts`:
+
+- `onNotification(method, handler)` / **`offNotification(method, handler)`** — handler removal exists.
+- **`onClose(handler)` / `offClose(handler)`** — a handler for an *unexpected* transport close. Its own doc comment describes exactly the failure this plan works around: "A caller awaiting a NOTIFICATION has no such bound… If the gateway dies in between, nothing further ever arrives and the wait hangs forever — there is no pending `call()` left for `failAll` to reject. `onClose` is the escape hatch for exactly that shape." It deliberately does **not** fire on an ordinary `disconnect()`, and fires at most once per connection.
+
+Consequences for the tasks below:
+
+1. **Task 6 Step 7 loses its "known limitation" entirely.** The `invalidate`-hook workaround bounded a solitary in-flight brief only by its 60-second timeout; driving `failAll` from `onClose` is the complete fix the plan wished for, and it exists. The wrapper-identity subtlety survives — the router is keyed on the wrapper `getClient()` returns, while `onClose` lives on the raw client — so the bridge must still pass the wrapper.
+
+2. **Task 1 is unchanged, and its bounded-listener design was never a workaround.** `offNotification` existing does *not* argue for per-invocation subscribe/unsubscribe, because it does not remove the reason the router is shaped this way: a `briefReady` can arrive *before* `bindSession` is called, since the gateway may emit before the `agents.*` call returns its sessionId. Per-invocation subscription would still need the sessionId matching and the pre-bind buffer, while adding a handler add/remove per call and a new way to leak one. Keeping a bounded listener pair per agent name is both simpler and safer. Do not "modernise" this into unsubscription. `BriefNotificationSource` therefore stays a one-method interface — widening it to demand `offNotification` would only make the router harder to fake in tests for no behavioural gain.
+
+   A `dispose()` on the router would likewise be dead code: both consumers (the one-shot CLI dispatcher and the MCP adapter's invalidate-and-replace) discard the entire client object, so the router and its handlers become unreachable together.
+
+## Amendment: `IpcCallable` does not declare the notification surface
+
+Verified in `packages/cli/src/mcp/adapter.ts:125-128` — `IpcCallable` is exactly `call` + `disconnect`. It has **no** `onNotification`, `onClose` or `offClose`. The real `IPCClient` has all four, but the adapter's interface does not say so, and Tasks 5 and 6 both assume it does. The plan's original `routerFor(client as unknown as object)` hid this behind a cast through `unknown` — which is the `any` ban in a costume, and would hand `AgentBriefRouter` an object the type system has no evidence carries `onNotification`.
+
+Do **not** widen `IpcCallable` itself with required members: eight `connect:` implementations and the existing adapter fakes would all have to grow no-op methods, and Task 5's `peekWhy` fake legitimately needs neither. Instead add a narrow extension plus a guard.
+
+**Where it goes matters.** `supportsNotifications` is a *runtime* value, and `agent-tools.ts` needs it while `adapter.ts` imports `AGENT_TOOL_SPECS` from `agent-tools.ts` — putting it in `adapter.ts` re-creates precisely the cycle Task 6 Step 3 exists to break (a type-only import would be erased and fine; a function import is not). Create **`packages/cli/src/mcp/client-surface.ts`** to hold the client-shape contract, and have `adapter.ts` re-export `IpcCallable` from it so existing importers are undisturbed:
+
+```typescript
+// packages/cli/src/mcp/client-surface.ts
+export interface IpcCallable {
+  call<T>(method: string, params?: unknown): Promise<T>;
+  disconnect(): Promise<void>;
+}
+
+/**
+ * The transport features the agent tools need beyond call/disconnect. The production `IPCClient`
+ * has them; a minimal test fake may not. Declared separately and CHECKED rather than asserted, so
+ * a client that cannot deliver notifications produces a clean tool error instead of a waiter that
+ * silently never settles.
+ */
+export interface NotifyingClient extends IpcCallable {
+  onNotification(method: string, handler: (params: unknown) => void): void;
+}
+
+export function supportsNotifications(c: IpcCallable): c is NotifyingClient {
+  return typeof (c as Partial<NotifyingClient>).onNotification === "function";
+}
+
+/** The unexpected-close surface, guarded the same way — see Task 6 Step 7. */
+export interface ClosableClient extends IpcCallable {
+  onClose(handler: (err: Error) => void): void;
+  offClose(handler: (err: Error) => void): void;
+}
+
+export function supportsClose(c: IpcCallable): c is ClosableClient {
+  return typeof (c as Partial<ClosableClient>).onClose === "function";
+}
+```
+
+In `adapter.ts`, delete the local `IpcCallable` declaration and replace it with a re-export plus an import, exactly as Task 6 Step 3 does for the error surface:
+
+```typescript
+export type { ClosableClient, IpcCallable, NotifyingClient } from "./client-surface.ts";
+import { type IpcCallable, supportsClose } from "./client-surface.ts";
+```
+
+Task 6's `runAgent` takes a `NotifyingClient`, and `runAgentTool` applies `supportsNotifications` to what `getClient()` returned, returning an `isError` result naming the problem when the guard fails. That branch needs its own test — it is reachable, and an untested error path in the only code that can report a broken transport is worth one assertion.
+
+Task 6 Step 7's `onClose` bridge uses `supportsClose(raw)` and skips the bridge when the guard fails, so a fake without `onClose` cannot crash `openConnection`. Both guards belong in `client-surface.ts`, which imports nothing from `adapter.ts` or `agent-tools.ts` and therefore cannot participate in a cycle.
 
 ## File Structure
 
@@ -38,6 +100,9 @@
 | `scripts/structure-audit/check-nimbus-invariants.ts` | **Modify.** New `D22(c)` rule confining the new chokepoint's caller. |
 | `docs/SECURITY-INVARIANTS.md` | **Modify.** `I29` section records the second append path. |
 | `packages/cli/src/mcp/errors.ts` | **Create.** `GATEWAY_DOWN_MESSAGE`, `GatewayUnavailableError`, `isDisconnectError`, moved out of `adapter.ts` so the agent tools can use them without a cycle. |
+| `packages/cli/src/mcp/client-surface.ts` | **Create.** `IpcCallable` + the `NotifyingClient` / `ClosableClient` extensions and their guards, moved out of `adapter.ts` for the same cycle reason. See § "Amendment: `IpcCallable` does not declare the notification surface". |
+| `packages/gateway/src/egress/egress-source-type.ts` | **Modify.** Add `"mcp"` as the ninth `source_type`; rewrite the freeze note to record the decision. |
+| `packages/gateway/src/egress/egress-coverage.ts` | **Modify.** Add `"mcp"` to `COVERAGE_CLASSES` and both vectors; claim `per-call`. |
 | `packages/cli/src/mcp/agent-tools.ts` | **Create.** The ten async agent tool specs and the brief-awaiting glue. |
 | `packages/cli/src/mcp/adapter.ts` | **Modify.** Registers `peekWhy`, spreads in the agent specs, declares the client kind, wires transport-death rejection. |
 | `packages/mcp-launcher/` | **Create.** MIT launcher package. |
@@ -759,6 +824,10 @@ git commit -m "feat(gateway): thread the calling client into the agents dispatch
 
 **Files:**
 
+- Modify: `packages/gateway/src/egress/egress-source-type.ts` — add `"mcp"`, rewrite the freeze note
+- Modify: `packages/gateway/src/egress/egress-source-type.test.ts`
+- Modify: `packages/gateway/src/egress/egress-coverage.ts` — add `"mcp"` to `COVERAGE_CLASSES`, both vectors
+- Modify: `packages/gateway/src/egress/egress-coverage.test.ts`
 - Create: `packages/gateway/src/egress/mcp-brief-egress.ts`
 - Create: `packages/gateway/src/egress/mcp-brief-egress.test.ts`
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts:542-560` (`dispatchAgentsRpc`)
@@ -770,6 +839,45 @@ git commit -m "feat(gateway): thread the calling client into the agents dispatch
 
 - Consumes: `AgentsRpcContext.caller` (Task 3); `appendEgressEntry`, `EgressEntry`, `redactEgressSummary` (existing, `egress/`).
 - Produces: `recordMcpBriefEgress(db: Database, args: { method: string; params: unknown; clientId: string; now: number }): void`. Called from exactly one site, enforced by `D22(c)`.
+
+#### Ruling of record: `"mcp"` is a NEW `source_type` (decided 2026-08-05)
+
+`#1038` (2026-08-04) landed a **frozen** 8-member `EGRESS_SOURCE_TYPES` whose header says a ninth class must instead reuse `session` with a reserved `method`. That instruction is **overridden for this task**, deliberately, by the repo owner. Do not "fix" this back toward the header — rewrite the header, as Step 0 requires.
+
+Why the override, so a reviewer can check the reasoning rather than the conclusion:
+
+- The freeze note weighed only the *marker/non-marker exclusion* cost of a new member. It did not weigh **coverage**. `COVERAGE_CLASSES` (`egress-coverage.ts:11`) is defined as "the egress-BEARING source types", and `THIS_BINARY_COVERAGE` must claim `"none"` for any class whose appender has not landed — raising an entry without its appender is named in-file as "the exact defect this vector exists to prevent". Filing MCP briefs under `session` would put them in a class that must keep claiming `session: "none"`, because the real `session` appenders (telemetry, updater, JWKS) still do not exist. The rows would be recorded and simultaneously disclaimed.
+- Widening the union is **not** a chain break, as the file's own header states: `verifyEgressChain` recomputes each row's hash from that row's stored column values, never from the union's current definition.
+- `docs/ecosystem-roadmap.md` § "Cross-cutting decisions to make once" asks to "close the union before the first new appender". This *is* the first new appender, so this is that decision, made once and recorded.
+
+**Accepted cost, state it in the docs:** `parseCoverage` rejects a vector with an unknown or missing key by design, so once `COVERAGE_CLASSES` grows to 6, a `prove` window spanning a pre-change and a post-change binary yields `ALL_NONE_COVERAGE` → `indeterminate` on **every** class, not just `mcp`. That is the conservative direction the strictness was built to produce; it is not a regression to work around, and it must not be softened by making `parseCoverage` lenient.
+
+- [ ] **Step 0: Extend the taxonomy (union + coverage vector, one commit with the rest of the triple)**
+
+In `packages/gateway/src/egress/egress-source-type.ts`, add the member:
+
+```typescript
+  "mcp", // agent brief served to an MCP-connected client
+```
+
+and **replace** the header's closing paragraph — the one beginning "If a ninth class is ever wanted" — with:
+
+```
+ * The union was frozen at eight members in #1038. `mcp` was added deliberately in the
+ * agents-as-MCP-tools work as the ninth and, per `docs/ecosystem-roadmap.md` § "Cross-cutting
+ * decisions to make once", as the taxonomy decision that closes the union. The freeze's own
+ * prescription — reuse `session` with a reserved `method` — was rejected because `session` must go
+ * on claiming `none` coverage until its real appenders (telemetry, updater, JWKS) land, which would
+ * have recorded MCP briefs and disclaimed them in the same breath. A further class still needs an
+ * explicit decision recorded here; it is not a casual append.
+```
+
+In `packages/gateway/src/egress/egress-coverage.ts`, add `"mcp"` to `COVERAGE_CLASSES`, set `THIS_BINARY_COVERAGE.mcp = "per-call"` (its appender lands in this same commit, so the claim is true when written), and add `mcp: "none"` to `ALL_NONE_COVERAGE`.
+
+Update `egress-source-type.test.ts` and `egress-coverage.test.ts` for the new member: any test asserting the union's length, the class list, or a serialized-coverage string will fail, and each of those assertions is load-bearing — update the expected value, never delete the assertion. `serializeCoverage` is key-sorted by `COVERAGE_CLASSES` order, so the canonical string changes; fix the expectations to match the new order rather than reordering the constant to preserve them.
+
+Run: `bun test packages/gateway/src/egress/`
+Expected: PASS.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1053,6 +1161,21 @@ hands the result to whatever model the calling client uses — so one `egress_le
 `D22` is extended, not exempted: rule (c) pins the *caller* of `recordMcpBriefEgress` to
 `ipc/agents-rpc.ts`, in the same shape as rule (a) pinning `connectors.dispatch` to `executor.ts`.
 A CLI-originated call appends nothing, because a brief rendered locally never leaves the machine.
+
+`mcp` is the NINTH member of `EGRESS_SOURCE_TYPES`, added deliberately here. #1038 froze the union
+at eight and prescribed reusing `session` with a reserved `method` for any further class; that
+prescription is overridden for this class because it weighed only the marker/non-marker exclusion
+and not coverage. `COVERAGE_CLASSES` is by definition the set of egress-bearing source types, and
+`THIS_BINARY_COVERAGE` may only claim a granularity for a class whose appender exists — `session`'s
+appenders (telemetry, updater, JWKS) do not, so `session` must keep claiming `none`, and filing MCP
+briefs there would have recorded them and disclaimed them at once. `mcp` therefore lands in both
+lists, claiming `per-call`, in the same commit as its appender. Widening the union is not a chain
+break: `verifyEgressChain` recomputes each row's hash from that row's own stored column values.
+
+**Consequence, accepted:** `parseCoverage` rejects a coverage vector carrying an unknown key or
+missing a known one, by design, so a `prove` window spanning a pre-`mcp` and a post-`mcp` binary
+resolves to `indeterminate` on every class. This is the intended fail-safe direction — do not
+relax `parseCoverage` to avoid it.
 ```
 
 In `packages/gateway/src/security-invariants.test.ts`, add:
@@ -1067,7 +1190,24 @@ test("I29: recordMcpBriefEgress is called from exactly one file", async () => {
     "packages/gateway/src/ipc/agents-rpc.ts",
   ]);
 });
+
+test("I29: COVERAGE_CLASSES is exactly the non-marker source types", () => {
+  // The two lists are separate declarations, so a tenth source type can land in one and not the
+  // other. That mismatch is silent: an egress-bearing class with no coverage entry is never
+  // claimed and never noticed. This is the assertion that makes adding a class a deliberate act.
+  const nonMarker = EGRESS_SOURCE_TYPES.filter((t) => !MARKER_SOURCE_TYPES.has(t));
+  expect([...COVERAGE_CLASSES].sort()).toEqual([...nonMarker].sort());
+});
+
+test("I29: every coverage class claiming non-none has a landed appender", () => {
+  // `mcp` is per-call because recordMcpBriefEgress ships in the same commit. The others stay none
+  // until theirs do. Raising an entry without its appender is the defect the vector exists to catch.
+  const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
+  expect([...claimed].sort()).toEqual(["mcp", "task"]);
+});
 ```
+
+Import `EGRESS_SOURCE_TYPES`, `MARKER_SOURCE_TYPES`, `COVERAGE_CLASSES` and `THIS_BINARY_COVERAGE` in that test file. If the last assertion's expected list ever needs widening, that is a real review moment, not a test to re-bank.
 
 - [ ] **Step 10: Run the invariant suite**
 
@@ -1077,7 +1217,7 @@ Expected: PASS.
 - [ ] **Step 11: Commit (the full triple in one commit)**
 
 ```bash
-git add packages/gateway/src/egress/mcp-brief-egress.ts packages/gateway/src/egress/mcp-brief-egress.test.ts packages/gateway/src/ipc/agents-rpc.ts packages/gateway/src/ipc/agents-rpc.test.ts scripts/structure-audit/check-nimbus-invariants.ts docs/SECURITY-INVARIANTS.md packages/gateway/src/security-invariants.test.ts
+git add packages/gateway/src/egress/egress-source-type.ts packages/gateway/src/egress/egress-source-type.test.ts packages/gateway/src/egress/egress-coverage.ts packages/gateway/src/egress/egress-coverage.test.ts packages/gateway/src/egress/mcp-brief-egress.ts packages/gateway/src/egress/mcp-brief-egress.test.ts packages/gateway/src/ipc/agents-rpc.ts packages/gateway/src/ipc/agents-rpc.test.ts scripts/structure-audit/check-nimbus-invariants.ts docs/SECURITY-INVARIANTS.md packages/gateway/src/security-invariants.test.ts
 git commit -m "feat(gateway): record MCP-originated agent briefs in the egress ledger"
 ```
 
@@ -1211,9 +1351,10 @@ git commit -m "feat(cli): expose the why-peek agent as an MCP tool"
 **Files:**
 
 - Create: `packages/cli/src/mcp/errors.ts`
+- Create: `packages/cli/src/mcp/client-surface.ts`
 - Create: `packages/cli/src/mcp/agent-tools.ts`
 - Create: `packages/cli/src/mcp/agent-tools.test.ts`
-- Modify: `packages/cli/src/mcp/adapter.ts` (`TOOL_SPECS`, error re-exports, `invalidate`)
+- Modify: `packages/cli/src/mcp/adapter.ts` (`TOOL_SPECS`, error + client-surface re-exports, `onClose` bridge)
 
 **Interfaces:**
 
@@ -1228,7 +1369,7 @@ Create `packages/cli/src/mcp/agent-tools.test.ts`:
 
 ```typescript
 import { expect, test } from "bun:test";
-import { AGENT_TOOL_SPECS } from "./agent-tools.ts";
+import { AGENT_TOOL_SPECS, agentTimeoutMs, failBriefsForClient } from "./agent-tools.ts";
 
 /** A fake client that answers the agents.* call and then emits the matching briefReady. */
 function briefClient(sessionId: string, brief: string) {
@@ -1379,8 +1520,13 @@ Create `packages/cli/src/mcp/agent-tools.ts`:
 
 ```typescript
 import { z } from "zod";
-import { AgentBriefRouter, type BriefNotificationSource } from "../lib/agent-brief-router.ts";
-import type { AdapterDeps, IpcCallable, ToolResult, ToolSpec } from "./adapter.ts";
+import { AgentBriefRouter } from "../lib/agent-brief-router.ts";
+import type { AdapterDeps, ToolResult, ToolSpec } from "./adapter.ts";
+import {
+  type IpcCallable,
+  type NotifyingClient,
+  supportsNotifications,
+} from "./client-surface.ts";
 import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
@@ -1408,10 +1554,11 @@ export function agentTimeoutMs(
 /** One router per client object, so listeners bind once per agent name per connection. */
 const routers = new WeakMap<object, AgentBriefRouter>();
 
-function routerFor(client: object): AgentBriefRouter {
+function routerFor(client: NotifyingClient): AgentBriefRouter {
   const existing = routers.get(client);
   if (existing !== undefined) return existing;
-  const created = new AgentBriefRouter(client as BriefNotificationSource);
+  // No cast: NotifyingClient structurally satisfies BriefNotificationSource.
+  const created = new AgentBriefRouter(client);
   routers.set(client, created);
   return created;
 }
@@ -1441,17 +1588,13 @@ function briefResult(brief: string, findings: unknown): ToolResult {
  * mistaken for this one.
  */
 async function runAgent(
-  client: IpcCallable,
+  client: NotifyingClient,
   agentName: string,
   ipcMethod: string,
   params: Record<string, unknown>,
 ): Promise<ToolResult> {
   // No guard: findings are returned verbatim as JSON, so there is nothing to validate against.
-  const pending = routerFor(client as unknown as object).expect<unknown>(
-    agentName,
-    undefined,
-    agentTimeoutMs(),
-  );
+  const pending = routerFor(client).expect<unknown>(agentName, undefined, agentTimeoutMs());
   try {
     const { sessionId } = await client.call<{ sessionId: string }>(ipcMethod, params);
     pending.bindSession(sessionId);
@@ -1601,6 +1744,20 @@ async function runAgentTool(
       isError: true,
     };
   }
+  if (!supportsNotifications(client)) {
+    // Cannot happen with the production IPCClient; reachable with a minimal fake. Reported rather
+    // than asserted, because the alternative is a waiter that never settles and a 60 s timeout
+    // blaming the agent for a transport that was never capable of delivering the brief.
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Nimbus: this connection cannot receive agent notifications, so no brief can be delivered.",
+        },
+      ],
+      isError: true,
+    };
+  }
   try {
     return await runAgent(client, def.agent, `agents.${def.agent}`, def.build(args));
   } catch (e) {
@@ -1684,14 +1841,36 @@ function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCa
 Referencing `wrapper` inside `call` is safe: the closure runs long after the `const` is
 initialised.
 
-**Known limitation, deliberately accepted.** This hook only fires when a `call` fails, and during
-the await for a brief there is no call in flight. So a solitary in-flight brief on a dying
-connection is still bounded by its timeout rather than failing immediately; what this buys is that
-a *concurrent* failing call now fails every waiter at once instead of letting each grind out its
-own timeout. The complete fix is to drive `failAll` from a transport close event — which could not
-be designed here, because `@nimbus-dev/client` is not installed in this checkout and its event
-surface is unverified. If `IPCClient` turns out to expose a close or error event, wire `failAll` to
-it and this limitation disappears.
+**Also wire the close event — this is the part that actually closes the hole.** The `call`-failure
+hook above only fires when a call fails, and while awaiting a brief there is no call in flight, so
+on its own it leaves a solitary in-flight brief bounded by the 60-second timeout. `@nimbus-dev/client`
+exposes `onClose(handler)` / `offClose(handler)` for exactly this shape (see § "Resolved: the
+client's handler surface"): it fires on an *unexpected* transport close, at most once per
+connection, and deliberately does not fire on an ordinary `disconnect()`.
+
+In `createDeps`'s `openConnection`, after building the wrapper, bridge the raw client's close event
+to the router keyed on the wrapper:
+
+```typescript
+    const client = makeReconnectingClient(raw, invalidate);
+    // The router is keyed on `client` (the wrapper) because that is what getClient() returns, while
+    // onClose lives on `raw`. Passing `raw` here would look up a key that was never inserted, miss
+    // silently, and leave every waiter to time out.
+    if (supportsClose(raw)) {
+      raw.onClose((err: Error) => {
+        failBriefsForClient(client, err);
+        invalidate();
+      });
+    }
+```
+
+`onClose` not firing on `disconnect()` is what makes this safe to leave bound: an ordinary teardown
+does not reject waiters that already settled. Per this repo's removable-handler rule, if the adapter
+grows an explicit teardown path for a connection, call `offClose` with the same handler reference
+there — so bind it to a named `const` rather than an inline arrow if you add that path.
+
+Widen the local `IpcCallable`-shaped type used for `raw` to carry `onClose`, or type the connect
+result as the client's own interface; do not cast through `any`.
 
 Append to `packages/cli/src/mcp/agent-tools.test.ts`:
 
@@ -1760,8 +1939,47 @@ The 5-second test timeout is the assertion that matters: keyed on `raw` instead 
 test does not fail an assertion — it hangs for 60 seconds and then times out. Confirm it fails that
 way before applying the fix.
 
+Add a second adapter test for the close-event path, which is the one that covers a *solitary*
+in-flight brief — the case the `call`-failure hook cannot reach:
+
+```typescript
+test("an unexpected transport close fails a solitary brief in flight", async () => {
+  let fireClose: ((err: Error) => void) | undefined;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    offNotification(_m: string, _h: (p: unknown) => void): void {},
+    onClose(h: (err: Error) => void): void {
+      fireClose = h;
+    },
+    offClose(_h: (err: Error) => void): void {},
+    async call<T>(): Promise<T> {
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const explain = TOOL_SPECS.find((s) => s.name === "explainWhy");
+  const inFlight = explain?.run(deps, { fileOrPrUrl: "x" });
+  await Promise.resolve();
+
+  // No second call is made — the connection simply dies. Only onClose can observe this.
+  expect(fireClose).toBeDefined();
+  fireClose?.(new Error("IPC connection closed"));
+
+  const out = await inFlight;
+  expect(out?.isError).toBe(true);
+}, 5000);
+```
+
+As with the test above, the 5-second budget is the real assertion: without the `onClose` bridge this
+hangs out the full 60-second agent timeout rather than failing an expectation.
+
 Run: `bun test packages/cli/src/mcp/`
-Expected: PASS — 7 tests in `agent-tools.test.ts`, plus the new adapter test.
+Expected: PASS — 7 tests in `agent-tools.test.ts`, plus the two new adapter tests.
 
 - [ ] **Step 8: Assert the registered tool count**
 
@@ -1786,7 +2004,7 @@ Expected: PASS, clean.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add packages/cli/src/mcp/errors.ts packages/cli/src/mcp/agent-tools.ts packages/cli/src/mcp/agent-tools.test.ts packages/cli/src/mcp/adapter.ts packages/cli/src/mcp/adapter.test.ts
+git add packages/cli/src/mcp/errors.ts packages/cli/src/mcp/client-surface.ts packages/cli/src/mcp/agent-tools.ts packages/cli/src/mcp/agent-tools.test.ts packages/cli/src/mcp/adapter.ts packages/cli/src/mcp/adapter.test.ts
 git commit -m "feat(cli): expose ten read-only agents as MCP tools"
 ```
 
