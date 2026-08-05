@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -89,7 +89,10 @@ describe("the entry shim", () => {
   // edge, so a shim using any of them would pull the gateway graph back in while the isolation
   // assertion above still passed.
   test("detects static edges in both quote styles and via re-export", () => {
-    const probe = join(tmpdir(), `nimbus-entry-graph-probe-${String(process.pid)}.ts`);
+    // `mkdtempSync` rather than a predictable name in the shared temp dir: a fixed/pid-derived
+    // path in a world-writable directory is a symlink-swap surface (CodeQL js/insecure-temporary-file).
+    const probeDir = mkdtempSync(join(tmpdir(), "nimbus-entry-graph-"));
+    const probe = join(probeDir, "probe.ts");
     // Relative specifiers, because the walker only follows relative edges — an absolute specifier
     // is correctly ignored. Written outside src/ so a crash cannot leave a stray module behind.
     const rel = (...seg: string[]): string =>
@@ -108,7 +111,7 @@ describe("the entry shim", () => {
       expect(deps).toContain(resolve(SRC, "platform", "runtime-layout.ts")); // export * from
       expect(deps).not.toContain(resolve(SRC, "version.ts")); // `import type` is erased
     } finally {
-      rmSync(probe, { force: true });
+      rmSync(probeDir, { recursive: true, force: true });
     }
   });
 });
