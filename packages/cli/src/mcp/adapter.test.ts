@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import {
   type AdapterDeps,
   buildMcpServer,
   type ConnectionEnv,
   clampLimit,
   createDeps,
+  GATEWAY_DOWN_MESSAGE,
   GatewayUnavailableError,
   type IpcCallable,
   isDisconnectError,
@@ -309,7 +310,7 @@ function spec(name: string) {
 }
 
 describe("TOOL_SPECS", () => {
-  it("exposes exactly the six read-only tools", () => {
+  it("exposes exactly the seven read-only tools", () => {
     expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "getConnectorStatus",
@@ -317,6 +318,7 @@ describe("TOOL_SPECS", () => {
         "getRecentDeployments",
         "getRecentIncidents",
         "getRecentPullRequests",
+        "peekWhy",
         "searchIndex",
       ].sort((a, b) => a.localeCompare(b)),
     );
@@ -390,7 +392,7 @@ describe("TOOL_SPECS", () => {
 });
 
 describe("buildMcpServer", () => {
-  it("registers all six tools without throwing", () => {
+  it("registers all seven tools without throwing", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
@@ -590,4 +592,34 @@ describe("TOOL_SPECS — additional branch arms", () => {
     const params = calls[0]?.params as Record<string, unknown>;
     expect(params["service"]).toBe("");
   });
+});
+
+test("peekWhy is registered and calls agents.whyPeek", async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const deps = {
+    getClient: async () => ({
+      call: async <T>(method: string, params?: unknown): Promise<T> => {
+        calls.push({ method, params });
+        return { summary: "because of PR #412" } as T;
+      },
+      disconnect: async (): Promise<void> => {},
+    }),
+  };
+  const spec = TOOL_SPECS.find((s) => s.name === "peekWhy");
+  expect(spec).toBeDefined();
+  const out = await spec?.run(deps, { fileOrPrUrl: "src/a.ts" });
+  expect(calls[0]?.method).toBe("agents.whyPeek");
+  expect(calls[0]?.params).toEqual({ fileOrPrUrl: "src/a.ts" });
+  expect(out?.isError).toBeUndefined();
+  expect(out?.content[0]?.text).toContain("because of PR #412");
+});
+
+test("peekWhy reports a stopped gateway without throwing", async () => {
+  const deps = {
+    getClient: (): Promise<never> => Promise.reject(new GatewayUnavailableError()),
+  };
+  const spec = TOOL_SPECS.find((s) => s.name === "peekWhy");
+  const out = await spec?.run(deps, { fileOrPrUrl: "src/a.ts" });
+  expect(out?.isError).toBe(true);
+  expect(out?.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
 });

@@ -187,6 +187,19 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
       throw new GatewayUnavailableError();
     }
     const client = makeReconnectingClient(raw, invalidate);
+    // I29: identify this connection as MCP so the gateway records briefs served over it as egress.
+    // Best-effort — an older gateway without `session.declareKind` must not break the adapter.
+    try {
+      await client.call("session.declareKind", { kind: "mcp" });
+    } catch {
+      // Older gateway: it will still serve briefs, but it cannot attribute them, so nothing is
+      // recorded in the egress ledger. Say so on stderr — silently serving unrecorded briefs would
+      // make `nimbus prove` quietly wrong, which is the exact failure this feature exists to close.
+      // stderr is safe here: the MCP protocol channel is stdout.
+      process.stderr.write(
+        "nimbus-mcp: gateway does not support session.declareKind; agent briefs served over MCP will NOT appear in the egress ledger. Upgrade the gateway.\n",
+      );
+    }
     cached = client;
     return client;
   };
@@ -401,9 +414,21 @@ export const TOOL_SPECS: ToolSpec[] = [
         return jsonResult(await c.call("metrics.dora", params));
       }),
   },
+  {
+    name: "peekWhy",
+    description:
+      "Fast why-lens probe for a file or PR URL: returns a compact explanation of why the code is the way it is, drawn from the local relationship graph (authorship, PRs, incidents, decisions). Synchronous — use explainWhy for the full brief.",
+    schema: { fileOrPrUrl: z.string() },
+    run: (deps, args) =>
+      runTool(deps, async (c) =>
+        jsonResult(
+          await c.call("agents.whyPeek", { fileOrPrUrl: optString(args, "fileOrPrUrl") ?? "" }),
+        ),
+      ),
+  },
 ];
 
-/** Build the MCP server with all six read-only tools registered. */
+/** Build the MCP server with all seven read-only tools registered. */
 export function buildMcpServer(deps: AdapterDeps): McpServer {
   const server = new McpServer({ name: "nimbus", version: "0.1.0" });
   for (const s of TOOL_SPECS) {
