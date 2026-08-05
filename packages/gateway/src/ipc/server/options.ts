@@ -36,6 +36,7 @@ import type { ClientSession } from "../session.ts";
 import type { ShareRpcCtx } from "../share-rpc.ts";
 import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
+import type { ClientKindStore } from "./client-kind.ts";
 
 export type BunSessionData = { session: ClientSession };
 
@@ -63,6 +64,12 @@ export type CreateIpcServerOptions = {
   dataDir?: string;
   configDir?: string;
   onClientConnected?: (clientId: string) => void;
+  // Per-connection client-kind store (Task 2, S1 agents-as-MCP-tools). Optional DI seam: when
+  // omitted, `createIpcServer` constructs its own. Tests inject their own instance so they can
+  // observe `declare()`/`forget()` firing from the real wiring (attachSession's disconnect
+  // callback, dispatchMethod's `session.declareKind` arm) without reaching into server.ts internals
+  // or calling the store's mutators directly from the test.
+  clientKinds?: ClientKindStore;
   llmRegistry?: LlmRegistry;
   voiceService?: VoiceService;
   updater?: Updater;

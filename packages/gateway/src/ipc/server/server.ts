@@ -59,7 +59,7 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   let agentInvokeHandler: AgentInvokeHandler | undefined = options.agentInvoke;
   let workflowRunHandler: WorkflowRunHandler | undefined = options.workflowRun;
   const sessions = new Map<string, ClientSession>();
-  const clientKinds = new ClientKindStore();
+  const clientKinds = options.clientKinds ?? new ClientKindStore();
   const consentImpl = new ConsentCoordinatorImpl((clientId) => {
     const session = sessions.get(clientId);
     return session === undefined ? undefined : (n) => session.writeNotification(n);

@@ -10,6 +10,7 @@ import { LocalIndex } from "../../index/local-index.ts";
 import { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { IPCServer } from "../types.ts";
+import { ClientKindStore } from "./client-kind.ts";
 import { createIpcServer } from "./server.ts";
 
 function makeMinimalServer() {
@@ -196,6 +197,71 @@ async function exchangeFirstNdjsonLine(listenPath: string, lineToWrite: string):
           buf = next;
           if (line !== undefined) {
             resolve(line);
+            socket.end();
+          }
+        },
+        error() {
+          reject(new Error("socket error"));
+        },
+      },
+    }).catch(reject);
+  });
+}
+
+/**
+ * Like `exchangeFirstNdjsonLine`, but keeps one connection open across several requests and
+ * resolves once `expectedCount` NDJSON lines have come back — for arms (e.g. `session.declareKind`
+ * immutability) that can only be proven by two requests sharing the same connection/clientId.
+ */
+async function exchangeNdjsonLines(
+  listenPath: string,
+  linesToWrite: string[],
+  expectedCount: number,
+): Promise<string[]> {
+  if (platform() === "win32") {
+    return await new Promise<string[]>((resolve, reject) => {
+      let buf = "";
+      const collected: string[] = [];
+      const sock = net.createConnection(listenPath);
+      sock.on("connect", () => {
+        for (const l of linesToWrite) sock.write(l);
+      });
+      sock.on("data", (b: Buffer) => {
+        buf += b.toString("utf8");
+        let nl = buf.indexOf("\n");
+        while (nl >= 0) {
+          collected.push(buf.slice(0, nl));
+          buf = buf.slice(nl + 1);
+          nl = buf.indexOf("\n");
+        }
+        if (collected.length >= expectedCount) {
+          resolve(collected);
+          sock.end();
+        }
+      });
+      sock.on("error", reject);
+    });
+  }
+
+  return await new Promise<string[]>((resolve, reject) => {
+    let buf = "";
+    const collected: string[] = [];
+    Bun.connect({
+      unix: listenPath,
+      socket: {
+        open(socket) {
+          for (const l of linesToWrite) socket.write(l);
+        },
+        data(socket, chunk: Uint8Array) {
+          buf += new TextDecoder().decode(chunk);
+          let nl = buf.indexOf("\n");
+          while (nl >= 0) {
+            collected.push(buf.slice(0, nl));
+            buf = buf.slice(nl + 1);
+            nl = buf.indexOf("\n");
+          }
+          if (collected.length >= expectedCount) {
+            resolve(collected);
             socket.end();
           }
         },
@@ -667,4 +733,115 @@ describe("createIpcServer — RPC dispatch arms", () => {
       expect(parsed.params?.requestId).toBe("req-consent-1");
     },
   );
+
+  // Task 2 (S1 agents-as-MCP-tools) wiring: session.declareKind through the real dispatchMethod,
+  // not the bare ClientKindStore unit (see client-kind.test.ts for that).
+  test("session.declareKind through dispatchMethod returns the recorded kind", async () => {
+    server = createIpcServer({ listenPath, vault: createMockVault(), version: "0.0.0-test" });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 40,
+        method: "session.declareKind",
+        params: { kind: "mcp" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: { kind?: string } };
+    expect(res.result?.kind).toBe("mcp");
+  });
+
+  test("an unrecognised kind through session.declareKind resolves to unknown", async () => {
+    server = createIpcServer({ listenPath, vault: createMockVault(), version: "0.0.0-test" });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 41,
+        method: "session.declareKind",
+        params: { kind: "totally-made-up" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: { kind?: string } };
+    expect(res.result?.kind).toBe("unknown");
+  });
+
+  test("session.declareKind is immutable across two calls on the same connection", async () => {
+    server = createIpcServer({ listenPath, vault: createMockVault(), version: "0.0.0-test" });
+    await server.start();
+
+    const lines = await exchangeNdjsonLines(
+      listenPath,
+      [
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 42,
+          method: "session.declareKind",
+          params: { kind: "cli" },
+        })}\n`,
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 43,
+          method: "session.declareKind",
+          params: { kind: "mcp" },
+        })}\n`,
+      ],
+      2,
+    );
+    const first = JSON.parse(lines[0] ?? "{}") as { result?: { kind?: string } };
+    const second = JSON.parse(lines[1] ?? "{}") as { result?: { kind?: string } };
+    expect(first.result?.kind).toBe("cli");
+    // First declaration wins: the second call on the same connection is a no-op that returns
+    // the ORIGINAL kind, not the one it asked for.
+    expect(second.result?.kind).toBe("cli");
+  });
+
+  // Proves the wiring, not the class: `client-kind.test.ts` already proves ClientKindStore.forget()
+  // clears an entry when called directly. This test proves the production callsite — attachSession's
+  // real disconnect callback in server.ts — actually calls it when a live connection closes. A test
+  // that called `store.forget()` itself would keep passing even if that callsite were deleted; this
+  // one can't, because it never touches the store's mutators — only `declare` (via the wire) to seed
+  // state and `get` (a pure read) to observe it. `clientKinds` is injected via `CreateIpcServerOptions`
+  // (DI, not `mock.module`) so the test holds the exact same instance the real disconnect path forgets.
+  test("clientKinds.forget fires from the real disconnect callback when a connection closes", async () => {
+    const clientKinds = new ClientKindStore();
+    let capturedClientId: string | undefined;
+    server = createIpcServer({
+      listenPath,
+      vault: createMockVault(),
+      version: "0.0.0-test",
+      clientKinds,
+      onClientConnected: (id) => {
+        capturedClientId = id;
+      },
+    });
+    await server.start();
+
+    const line = await exchangeFirstNdjsonLine(
+      listenPath,
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 44,
+        method: "session.declareKind",
+        params: { kind: "mcp" },
+      })}\n`,
+    );
+    const res = JSON.parse(line) as { result?: { kind?: string } };
+    expect(res.result?.kind).toBe("mcp");
+    expect(capturedClientId).toBeDefined();
+    const cid = capturedClientId as string;
+    expect(clientKinds.get(cid)).toBe("mcp");
+
+    // exchangeFirstNdjsonLine already ends the socket once the response arrives; the server-side
+    // close is async, so poll (bounded) rather than assert immediately.
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && clientKinds.get(cid) !== "unknown") {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(clientKinds.get(cid)).toBe("unknown");
+  });
 });
