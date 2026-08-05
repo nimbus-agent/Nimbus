@@ -86,15 +86,32 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const baseline = parseBaseline(await Bun.file(BASELINE).text());
-  const violations = evaluate(actual, baseline);
+  const violations = evaluate(actual, baseline, (file) => existsSync(resolve(REPO_ROOT, file)));
 
   if (violations.length > 0) {
     for (const v of violations) {
-      console.error(
-        v.kind === "new_file"
-          ? `::error file=${v.file}::typecheck-tests: NEW file with errors — ${v.code} ×${String(v.actual)}`
-          : `::error file=${v.file}::typecheck-tests: ${v.code} regressed ${String(v.baseline)} -> ${String(v.actual)}`,
-      );
+      switch (v.kind) {
+        case "new_file":
+          console.error(
+            `::error file=${v.file}::typecheck-tests: NEW file with errors — ${v.code} ×${String(v.actual)}`,
+          );
+          break;
+        case "regression":
+          console.error(
+            `::error file=${v.file}::typecheck-tests: ${v.code} regressed ${String(v.baseline)} -> ${String(v.actual)}`,
+          );
+          break;
+        case "must_raise":
+          console.error(
+            `::error file=${v.file}::typecheck-tests: ${v.code} improved ${String(v.baseline)} -> ${String(v.actual)} — bank it: bun run typecheck:tests:update-baseline`,
+          );
+          break;
+        case "must_remove":
+          console.error(
+            `::error file=${v.file}::typecheck-tests: baselined file no longer exists — remove the entry: bun run typecheck:tests:update-baseline`,
+          );
+          break;
+      }
     }
     console.error(`typecheck-tests: ${String(violations.length)} violation(s)`);
     process.exit(1);
