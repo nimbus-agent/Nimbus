@@ -46,9 +46,10 @@ written, not inferred from documentation.
   to join a relative path against.
 - Re-executing `process.execPath` with a sentinel argument works: the child received
   `argv.slice(2) === ["__child", "alpha", "beta"]`.
-- A binary compiled from a gateway-rooted entry that bundles five connector `server.ts` modules
-  builds cleanly (243 modules) and answers a real MCP `initialize` and `tools/list` over stdio,
-  returning `serverInfo.name === "nimbus-github"` and the full tool list.
+- A binary compiled from a gateway-rooted entry bundling **all 94** connector `server.ts` modules
+  builds cleanly (676 modules, 0.44 s) and answers a real MCP `initialize` and `tools/list` over
+  stdio, returning `serverInfo.name === "nimbus-github"` and the full tool list. Booting every
+  connector in it found the ten-connector `import.meta.main` defect recorded in component 3.
 
 ## Approach
 
@@ -89,25 +90,49 @@ Dispatch on `process.argv[2]` **before** `createPlatformServices()`:
 | `argv[2]` | Role |
 |---|---|
 | `__nimbus-sandbox` | today's `sandbox-wrapper.ts` `main()`, extracted to a function |
-| `__nimbus-connector <id>` | `await BUNDLED_CONNECTORS[id]()`; the connector's `server.ts` self-starts on import |
+| `__nimbus-connector <id>` | `await BUNDLED_CONNECTORS[id]()`; the connector's `server.ts` starts on import |
 | anything else | the gateway |
 
 An unknown id exits non-zero with a message naming the known ids — never a silent fall-through to
 the gateway role, which is the failure mode this design exists to remove.
 
-**Enforcement test:** neither sentinel role may touch the vault, the database or the IPC socket. The
-roles create no new privilege — anyone able to exec the binary could already exec anything — but
-they must not become a second way into gateway state.
+`index.ts` is a **thin shim**: it reads `argv[2]` and then **dynamically** imports exactly one of
+three role modules (`gateway-main.ts`, the sandbox wrapper, the connector registry). Its current
+static imports of the whole gateway graph move into `gateway-main.ts`. This is load-bearing, not
+tidiness: dispatching inside today's `index.ts` would prevent the `createPlatformServices()` *call*
+but not module *evaluation*, and that graph has import-time side effects —
+`connectors/registry.ts:8`, `engine/run-ask.ts:21` and `index/sqlite-vec-load.ts:7` construct pino
+loggers at module scope, and `Config` freezes every `NIMBUS_*` variable at first import.
+
+**Enforcement test:** a module-graph assertion that the connector role's transitive imports exclude
+`db/`, `vault/` and `ipc/`. The roles create no new privilege — anyone able to exec the binary could
+already exec anything — but they must not become a second way into gateway state, and a structural
+claim is checked structurally rather than with a runtime tripwire.
 
 ### 3. `connectors/bundled-connector-registry.ts` (new)
 
 `Record<string, () => Promise<unknown>>` mapping connector id to a dynamic import of its
 `server.ts`. Lazy, so only the requested connector evaluates; statically enumerated, so the bundler
-retains them all.
+retains them all. All **94** connector packages with a `src/server.ts` are members.
 
 A drift test derives the expected key set from the connector packages that `connector-spawns.ts`
 and `chatops-bot-spawn.ts` actually reference, rather than hand-listing it. Hand-listed connector
 membership tables in this repo have drifted three times.
+
+**The connector entry contract becomes explicit.** Ten connectors (`argocd`, `bigeye`, `flux`,
+`looker`, `mlflow`, `monte-carlo`, `powerbi`, `snowflake`, `tableau`, `workday`) end with
+`if (import.meta.main) { await runReadOnlyMcpConnector(...) }`. That guard is true under
+`bun server.ts` and **false under a registry import**: measured, all ten load, start nothing and
+exit 0 in silence while answering normally in dev mode. They are converted to the unguarded form the
+other 84 already use, and `import.meta.main` is forbidden in connector entrypoints by a static audit
+in `scripts/structure-audit`. Verified safe: no test in any package imports any of those ten
+`server.ts` files, so the guard's stated rationale is exercised by nothing.
+
+A second audit asserts connector `dependencies` stay within an allowlist. The union across all 94 is
+`@modelcontextprotocol/sdk`, `@nimbus-dev/sdk` and `zod`, plus `hyparquet`, `imapflow`, `nodemailer`
+and `tsdav` — all pure JavaScript, so nothing is broken today. A future connector adding a native
+dependency would break the compiled gateway silently, visible only as a failed sync on a user's
+machine.
 
 ### 4. Spawn-site migration
 
@@ -124,6 +149,9 @@ enforces it — is untouched.
 
 `ipc/embedded-assets.ts` holds four `{ type: "file" }` imports: `openapi/v1.yaml` and the console's
 `index.html`, `main.js` and `styles.css` (the console's entire build output is those three files).
+No build-time codegen is involved: such an import **evaluates to the content-hashed bunfs path at
+runtime** and the bundler substitutes the value, so the map is four literal import statements and no
+generator.
 
 `resolveConsoleDist(baseDir)` becomes `resolveConsoleAsset(rel)`, because embedded files carry
 content-hashed names in a flat root and there is no dist directory to join against. In compiled mode
@@ -144,11 +172,16 @@ No code change. `tryLoadFromSidecar()` already resolves `dirname(process.execPat
 the sidecar ships in every archive and installer. The current failure is `log.debug` level — silent
 semantic-memory loss — so the smoke test asserts its presence positively.
 
-### 7. `install-smoke.yml` outside the checkout
+### 7. `install-smoke.yml` assertion coverage
 
-The smoke copies the binaries and the sidecar to a temp directory **outside the repo** and runs the
-quickstart there, with the sandboxed `HOME` / `LOCALAPPDATA` the workflow already sets up. Four new
-assertions, none of which touches a cloud API:
+The roadmap's "move install-smoke outside the repo checkout" is an inaccurate premise, and this
+spec repeated it before checking. **Both legs already stage outside the checkout**: they copy the
+binaries into `$RUNNER_TEMP/stage` (`install-smoke.yml:147` and `:454`) and run against a sandboxed
+`HOME` / `LOCALAPPDATA`. The gap is coverage, not location — nothing asserted today exercises a
+connector spawn, the console, the OpenAPI route or sqlite-vec, so the whole class is invisible.
+
+The sidecar joins the staged directory, and four assertions are added, none of which touches a cloud
+API:
 
 1. `GET /admin` returns 200 with known console content.
 2. The OpenAPI route returns 200.
@@ -167,12 +200,17 @@ Add the contributor documentation to the status-drift scanner's scanned set so i
 
 ## Testing
 
-- **Unit** — `runtime-layout` across both runtime shapes; the registry drift test; the
-  sentinel-roles-touch-no-gateway-state enforcement test; embedded-asset map completeness;
-  `resolveConsoleAsset` traversal rejection in dev mode.
-- **Integration** — a CI job that compiles the gateway and drives one bundled connector through
-  `initialize` + `tools/list`, which is the probe already proven to work.
-- **E2E** — the relocated `install-smoke.yml` with its four assertions.
+- **Unit** — `runtime-layout` across both runtime shapes; the registry drift test; the connector-role
+  module-graph assertion; embedded-asset map completeness; `resolveConsoleAsset` traversal rejection
+  in dev mode.
+- **Static** — `import.meta.main` forbidden in connector entrypoints; the connector dependency
+  allowlist; the `import.meta.dir` confinement rule.
+- **Integration — the all-connector boot smoke, a required gate.** Every registry entry is spawned
+  from the compiled binary with no credentials and fed one `initialize`. Each must either answer with
+  a valid `serverInfo` or exit non-zero naming a missing environment variable. **Silence and hangs
+  fail.** This is not optional coverage: run once during design it found ten connectors that load,
+  start nothing and exit 0.
+- **E2E** — `install-smoke.yml` with its four new assertions.
 
 Coverage gates in force are unchanged; new files under `packages/gateway` are subject to the
 per-file floor (≥85% line, ≥80% branch), which is Linux-authoritative.
@@ -181,19 +219,44 @@ per-file floor (≥85% line, ≥80% branch), which is Linux-authoritative.
 
 Three stacked PRs:
 
-1. `runtime-layout` + sentinel dispatch + bundled connector registry + the ~90-site spawn migration.
+1. The thin `index.ts` shim + `runtime-layout` + the bundled connector registry + the ten connector
+   entry conversions + the two static audits + the boot smoke + the ~90-site spawn migration.
 2. Embedded assets + console build wiring + the vec0 release step.
-3. Smoke relocation and assertions + the documentation pass + the status-drift scanner extension.
+3. `install-smoke.yml` assertions + the documentation pass + the status-drift scanner extension.
+
+PR 1 is larger than the original three-way split implied. The addition is what stops ten connectors
+from shipping silently dead.
+
+## Measurements
+
+Taken on Windows against this tree, and recorded so they are not re-derived.
+
+| Quantity | Value |
+|---|---|
+| Connector packages with a `src/server.ts` | 94 |
+| Bun runtime baseline binary (trivial entry) | 93.9 MB |
+| Binary with all 94 connectors bundled | 97.7 MB (**+4.0%**) |
+| Bundle of all 94 | 676 modules, 0.44 s |
+| Connectors answering `initialize` with no credentials | 79 of 94 |
+
+No CI size-budget gate is built. It would guard a 4% delta while adding a per-platform baseline to
+maintain, and this repository's ratcheted baselines have produced false greens before. Revisit if
+the number moves materially.
 
 ## Risks, to be measured rather than assumed
 
-- **Binary size** after bundling roughly 40 connectors. Report before and after; the 243-module
-  five-connector probe suggests the TypeScript is small relative to the embedded runtime, but the
-  full set is unmeasured.
 - **`release.yml` per-matrix compile** surviving the enlarged build graph, including the Windows leg
   with its line continuations.
 - **Any connector that reads a file relative to its own source at import time** — such a connector
-  would fail in exactly the way this design fixes elsewhere.
+  would fail in exactly the way this design fixes elsewhere. The boot smoke is the detector.
+
+## Known limitations
+
+`install-smoke.yml` runs as the runner's default user, which is an administrator on the hosted
+Windows and macOS images. Running it as a freshly created standard user would mean creating the
+account, initialising its profile and getting DPAPI or the login keychain to work under it — a new
+flake class in the workflow's most delicate area, for near-zero signal given the Windows installer is
+already per-user and the smoke already sandboxes `HOME` and `LOCALAPPDATA`.
 
 ## Explicitly out of scope
 
