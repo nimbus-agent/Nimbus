@@ -155,3 +155,74 @@ jobs:
               --add-label "autorelease: tagged" --remove-label "autorelease: pending"
             echo "Relabelled PR #${num}: autorelease: pending → tagged."
           done <<< "$pending"
+
+      # Silent-drop guard. DISTINCT from the phantom-release step above: that one recovers a
+      # release PR that merged without a tag. This one catches the opposite failure — no
+      # release PR is ever produced, and the run still reports success.
+      #
+      # release-please parses each commit with the conventional-commits grammar and SKIPS any
+      # commit it cannot parse, then decides from what is left. On 2026-08-05 it logged:
+      #
+      #   ❯ commit could not be parsed: dd98484b … feat(index): … (#1047)
+      #   ❯ error message: Error: unexpected token '(' at 155:42, valid tokens [)]
+      #   ❯ commits: 2                                        <- was 3
+      #   ✔ No user facing commits found since b561a9d… - skipping
+      #
+      # Line 155 of that message was `collapseWhitespace(stripHtmlTagsToSpaces(…))` — a nested
+      # call containing an ellipsis, inside PROSE. Parens were balanced; the grammar simply
+      # rejects `(` there. The feat was dropped, only docs/chore remained, and v1.20.0 stayed
+      # the latest release while schema V49 sat on main. Nothing went red.
+      #
+      # This is structural, not bad luck: squash-merge puts the ENTIRE PR description into the
+      # commit body (see CLAUDE.md), so any prose token the grammar dislikes can silently cost
+      # a release. The invariant below is the one thing that cannot be true on a healthy run:
+      # a user-facing commit exists since the last release, yet there is neither a new release
+      # nor an open release PR.
+      - name: Guard — a user-facing commit must produce a release or a release PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          RELEASES_CREATED: ${{ steps.release-please.outputs.releases_created }}
+        run: |
+          set -euo pipefail
+
+          # No release yet => nothing to compare against; the first release is not this step's
+          # business. Any other read failure is fatal rather than silently "clean".
+          set +e
+          tag=$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            if grep -qE '\(HTTP 404\)' <<<"$tag"; then
+              echo "No published release yet — nothing to compare against."
+              exit 0
+            fi
+            echo "::error::could not read the latest release, refusing to guess: ${tag}"
+            exit 1
+          fi
+
+          # Subjects only: a body line can look like a conventional header and would inflate
+          # the count, which would make this guard fire on runs that are actually healthy.
+          subjects=$(gh api "repos/${REPO}/compare/${tag}...main" \
+                       --jq '.commits[].commit.message | split("\n")[0]')
+          facing=$(grep -cE '^(feat|fix)(\([^)]*\))?!?:' <<<"$subjects" || true)
+
+          echo "Since ${tag}: $(wc -l <<<"$subjects") commit(s), ${facing} user-facing."
+          if [ "$facing" -eq 0 ]; then
+            echo "No feat/fix since ${tag} — release-please correctly produced nothing."
+            exit 0
+          fi
+
+          pending=$(gh pr list --repo "$REPO" --state open \
+                      --label "autorelease: pending" --json number --jq 'length')
+          if [ "${RELEASES_CREATED:-false}" = "true" ] || [ "$pending" -gt 0 ]; then
+            echo "Healthy: releases_created=${RELEASES_CREATED:-false}, open release PR(s)=${pending}."
+            exit 0
+          fi
+
+          echo "::error::${facing} user-facing commit(s) since ${tag}, but release-please produced neither a release nor a release PR."
+          echo "::error::Most likely it could not PARSE one of them and skipped it. Open this run's release-please step and look for 'commit could not be parsed' and a 'commits: N' lower than the count above."
+          echo "::error::Unstick with a 'Release-As: X.Y.Z' trailer as the LAST line of a PR description, and keep prose with nested parens out of commit bodies."
+          grep -E '^(feat|fix)(\([^)]*\))?!?:' <<<"$subjects" | sed 's/^/  dropped-or-unreleased: /'
+          exit 1
