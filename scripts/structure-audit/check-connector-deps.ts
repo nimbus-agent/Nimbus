@@ -25,6 +25,25 @@ export interface DepViolation {
   readonly dependency: string;
 }
 
+/**
+ * Every manifest field that can put a package into a connector's runtime graph. Checking only
+ * `dependencies` would let a native module in via `optionalDependencies` or `peerDependencies`.
+ */
+const RUNTIME_DEP_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"] as const;
+
+/** Read the runtime dependency names out of unvalidated external JSON. */
+function runtimeDepNames(parsed: unknown): string[] {
+  if (typeof parsed !== "object" || parsed === null) return [];
+  const record = parsed as Record<string, unknown>;
+  const names: string[] = [];
+  for (const field of RUNTIME_DEP_FIELDS) {
+    const value = record[field];
+    if (typeof value !== "object" || value === null) continue;
+    names.push(...Object.keys(value as Record<string, unknown>));
+  }
+  return names;
+}
+
 export function checkConnectorDeps(dir: string = CONNECTORS_DIR): DepViolation[] {
   const allowed = new Set(ALLOWED_CONNECTOR_DEPS);
   const out: DepViolation[] = [];
@@ -32,10 +51,17 @@ export function checkConnectorDeps(dir: string = CONNECTORS_DIR): DepViolation[]
     if (!entry.isDirectory()) continue;
     const pkgPath = join(dir, entry.name, "package.json");
     if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-      dependencies?: Record<string, string>;
-    };
-    for (const dep of Object.keys(pkg.dependencies ?? {})) {
+    // An unreadable or malformed manifest is an OBSERVATION failure, not a dependency violation —
+    // reporting it as a violation would name an innocent package. Fail loudly instead.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(pkgPath, "utf8"));
+    } catch (e) {
+      throw new Error(
+        `check-connector-deps: cannot read ${pkgPath}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    for (const dep of runtimeDepNames(parsed)) {
       if (!allowed.has(dep)) out.push({ connector: entry.name, dependency: dep });
     }
   }

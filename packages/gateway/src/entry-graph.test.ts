@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 
 const SRC = import.meta.dir;
 
-/** Value imports only — `import type` is erased and cannot cause module evaluation. */
-const FROM_RE = /^\s*import\s+(?!type\b)[^;]*?from\s+"(\.[^"]+)"/gm;
+// Every syntax that creates a STATIC module edge, in either quote style. `export … from` counts:
+// a re-export evaluates the target exactly like an import, so `export * from "./gateway-main.ts"`
+// in the shim would drag the gateway graph back in — and a guard that missed it would still pass.
+// `import type` / `export type` are erased and cannot cause evaluation, so they are excluded.
+/** `import … from "./x.ts"` */
+const FROM_RE = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](\.[^"']+)["']/gm;
 /** Bare side-effect imports: `import "./x.ts";` */
-const BARE_RE = /^\s*import\s+"(\.[^"]+)"/gm;
+const BARE_RE = /^\s*import\s+["'](\.[^"']+)["']/gm;
+/** `export … from "./x.ts"` and `export * from "./x.ts"` */
+const REEXPORT_RE = /^\s*export\s+(?!type\b)[^;]*?from\s+["'](\.[^"']+)["']/gm;
 
 /**
  * Most of the tree writes explicit `.ts` specifiers, but not all of it — e.g.
@@ -27,7 +34,7 @@ function resolveSpecifier(fromFile: string, spec: string): string | undefined {
 function staticDepsOf(file: string): string[] {
   const src = readFileSync(file, "utf8");
   const out: string[] = [];
-  for (const re of [FROM_RE, BARE_RE]) {
+  for (const re of [FROM_RE, BARE_RE, REEXPORT_RE]) {
     re.lastIndex = 0;
     for (const m of src.matchAll(re)) {
       const resolved = resolveSpecifier(file, m[1] as string);
@@ -76,5 +83,32 @@ describe("the entry shim", () => {
     const graph = [...transitiveStaticGraph(resolve(SRC, "gateway-main.ts"))];
     expect(graph.length).toBeGreaterThan(20);
     expect(graph.some((f) => STATEFUL.test(f))).toBe(true);
+  });
+
+  // The bypasses a quote/keyword-specific regex would miss. Each of these creates a real static
+  // edge, so a shim using any of them would pull the gateway graph back in while the isolation
+  // assertion above still passed.
+  test("detects static edges in both quote styles and via re-export", () => {
+    const probe = join(tmpdir(), `nimbus-entry-graph-probe-${String(process.pid)}.ts`);
+    // Relative specifiers, because the walker only follows relative edges — an absolute specifier
+    // is correctly ignored. Written outside src/ so a crash cannot leave a stray module behind.
+    const rel = (...seg: string[]): string =>
+      relative(dirname(probe), resolve(SRC, ...seg)).replaceAll("\\", "/");
+    writeFileSync(
+      probe,
+      [
+        `import { main } from '${rel("gateway-main.ts")}';`,
+        `export * from "${rel("platform", "runtime-layout.ts")}";`,
+        `import type { X } from "${rel("version.ts")}";`,
+      ].join("\n"),
+    );
+    try {
+      const deps = staticDepsOf(probe);
+      expect(deps).toContain(resolve(SRC, "gateway-main.ts")); // single-quoted import
+      expect(deps).toContain(resolve(SRC, "platform", "runtime-layout.ts")); // export * from
+      expect(deps).not.toContain(resolve(SRC, "version.ts")); // `import type` is erased
+    } finally {
+      rmSync(probe, { force: true });
+    }
   });
 });

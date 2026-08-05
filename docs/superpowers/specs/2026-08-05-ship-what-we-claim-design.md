@@ -215,7 +215,9 @@ Add the contributor documentation to the status-drift scanner's scanned set so i
 - **Unit** — `runtime-layout` across both runtime shapes; the registry drift test; the connector-role
   module-graph assertion; embedded-asset map completeness; `resolveConsoleAsset` traversal rejection
   in dev mode.
-- **Static** — `import.meta.main` forbidden in connector entrypoints; the connector dependency
+- **Static** — a connector entrypoint containing `import.meta.main` must export `startConnector`
+  (the guard is retained, not forbidden — it is what keeps those modules importable by tests); the
+  connector dependency
   allowlist; the `import.meta.dir` confinement rule.
 - **Integration — the all-connector boot smoke, a required gate.** Every registry entry is spawned
   from the compiled binary with no credentials and fed one `initialize`. Each must either answer with

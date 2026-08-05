@@ -11,20 +11,42 @@ afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
 });
 
-function fixture(name: string, dependencies: Record<string, string>): void {
+function fixture(name: string, manifest: Record<string, unknown>): void {
   const dir = join(ROOT, name);
   mkdirSync(join(dir, "src"), { recursive: true });
   writeFileSync(join(dir, "src", "server.ts"), "// entry\n");
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name, dependencies }));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name, ...manifest }));
 }
 
-fixture("clean", { zod: "^4.0.0", "@nimbus-dev/sdk": "^1.8.1" });
-fixture("native", { "better-sqlite3": "^11.0.0" });
+fixture("clean", { dependencies: { zod: "^4.0.0", "@nimbus-dev/sdk": "^1.8.1" } });
+fixture("native", { dependencies: { "better-sqlite3": "^11.0.0" } });
+fixture("optional-native", { optionalDependencies: { keytar: "^7.9.0" } });
+fixture("peer-native", { peerDependencies: { "node-gyp": "^10.0.0" } });
 
 describe("checkConnectorDeps", () => {
   test("flags a dependency outside the allowlist", () => {
+    expect(checkConnectorDeps(ROOT)).toContainEqual({
+      connector: "native",
+      dependency: "better-sqlite3",
+    });
+  });
+
+  test("also inspects optionalDependencies and peerDependencies", () => {
     const v = checkConnectorDeps(ROOT);
-    expect(v).toEqual([{ connector: "native", dependency: "better-sqlite3" }]);
+    expect(v).toContainEqual({ connector: "optional-native", dependency: "keytar" });
+    expect(v).toContainEqual({ connector: "peer-native", dependency: "node-gyp" });
+  });
+
+  test("a malformed manifest is an observation failure, never a dependency violation", () => {
+    const dir = join(ROOT, "malformed");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "server.ts"), "// entry\n");
+    writeFileSync(join(dir, "package.json"), "{ not json");
+    try {
+      expect(() => checkConnectorDeps(ROOT)).toThrow(/cannot read/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("accepts allowlisted dependencies", () => {

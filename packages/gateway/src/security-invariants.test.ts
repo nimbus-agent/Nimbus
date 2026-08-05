@@ -476,6 +476,22 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
     expect(src).toMatch(/export function wrapServerSpec\b/);
   });
 
+  test("wrapServerSpec routes the sandbox hop through selfSpawn, carrying the inner command", async () => {
+    // The I15 wrapper used to be `process.execPath` + a path to sandbox-wrapper.ts, which does not
+    // exist inside a compiled binary. It now re-executes the gateway in its `__nimbus-sandbox`
+    // role. Assert the new mechanism so a regression to a source-path spawn fails here, not in a
+    // released binary.
+    const src = await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts");
+    expect(src).toMatch(
+      /selfSpawn\(\s*"sandbox"\s*,\s*\[\s*spec\.command\s*,\s*\.\.\.spec\.args\s*\]/,
+    );
+    // Strip comments before the negative assertion: the docblock legitimately NAMES the old
+    // sandbox-wrapper.ts path while explaining why it is gone. Asserting against prose would fail
+    // on an accurate comment and pass on a regression that quietly restored the source-path spawn.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/sandbox-wrapper\.ts/);
+  });
+
   for (const file of [
     "packages/gateway/src/connectors/lazy-mesh/mesh.ts",
     "packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts",

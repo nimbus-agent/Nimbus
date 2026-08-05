@@ -35,6 +35,20 @@ type Outcome =
   | { id: string; ok: true; how: "answered" | "refused" }
   | { id: string; ok: false; why: string };
 
+/**
+ * The ONLY stderr shape that counts as a legitimate refusal: `requireProcessEnv` throwing
+ * `Error: <VAR> is not set` because no credential was supplied.
+ *
+ * Accepting "non-zero exit with any stderr" instead would be a hole straight through this gate — a
+ * connector that crashes during import or startup also exits non-zero and writes to stderr, so the
+ * smoke would report success while compiled-binary connector boot is broken.
+ */
+const CREDENTIAL_REFUSAL_RE = /\b[A-Z][A-Z0-9_]* is not set\b/;
+
+function firstLine(text: string): string {
+  return (text.split("\n").find((l) => l.trim() !== "") ?? "").trim().slice(0, 160);
+}
+
 async function boot(id: string): Promise<Outcome> {
   const proc = Bun.spawn([BINARY as string, "__nimbus-connector", id], {
     stdin: "pipe",
@@ -75,14 +89,14 @@ async function boot(id: string): Promise<Outcome> {
   const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   if (timedOut) return { id, ok: false, why: `hung for ${String(TIMEOUT_MS)}ms without answering` };
-  if (code !== 0 && stderr.trim() !== "") {
+  if (code !== 0 && CREDENTIAL_REFUSAL_RE.test(stderr)) {
     return { id, ok: true, how: "refused" };
   }
-  return {
-    id,
-    ok: false,
-    why: `exited ${String(code)} with no serverInfo and no error — its startup is unreachable from the registry`,
-  };
+  const detail =
+    stderr.trim() === ""
+      ? "no serverInfo and no error — its startup is unreachable from the registry"
+      : `no serverInfo, and stderr is not a credential refusal: ${firstLine(stderr)}`;
+  return { id, ok: false, why: `exited ${String(code)} with ${detail}` };
 }
 
 const ids = Object.keys(BUNDLED_CONNECTORS).sort((a, b) => a.localeCompare(b));
