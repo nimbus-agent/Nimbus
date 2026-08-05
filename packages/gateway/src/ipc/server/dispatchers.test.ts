@@ -156,6 +156,7 @@ function makeCtx(overrides: Partial<ServerCtx["options"]> = {}): {
     },
     getAgentInvokeHandler: () => undefined,
     getWorkflowRunHandler: () => undefined,
+    getClientKind: () => "unknown",
   };
   return { ctx, notifications };
 }
