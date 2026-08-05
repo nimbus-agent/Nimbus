@@ -779,6 +779,19 @@ ${entries}
 if (import.meta.main) {
   const ids = bundledConnectorIds();
   writeFileSync(OUT, render(ids));
+  // Biome's FORMATTER strips unnecessary quotes from object keys, and it is the authority on which
+  // ids need them (`"monte-carlo"` does, `airflow` does not). Formatting the output here keeps the
+  // generated file canonical by construction rather than duplicating that policy in `render()`,
+  // which would silently rot the next time the formatter's rules change. Without this the file
+  // fails `bun run lint`.
+  const fmt = Bun.spawnSync(["bunx", "biome", "check", "--write", OUT], {
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (fmt.exitCode !== 0) {
+    console.error("gen-bundled-connector-registry: biome failed to format the generated file");
+    process.exit(1);
+  }
   console.log(`wrote ${OUT} with ${ids.length} connectors`);
 }
 ```
@@ -790,11 +803,22 @@ bun scripts/gen-bundled-connector-registry.ts
 head -12 packages/gateway/src/connectors/bundled-connector-registry.ts
 ```
 
-Expected: `wrote … with 94 connectors`, and the head shows the banner followed by the first entry:
+Expected: `wrote … with 94 connectors`, and the head shows the banner followed by the first entry
+with the key **unquoted** (Biome's formatter having run):
 
 ```typescript
-  "airflow": () => import("../../../mcp-connectors/airflow/src/server.ts"),
+  airflow: () => import("../../../mcp-connectors/airflow/src/server.ts"),
 ```
+
+Hyphenated ids keep their quotes — confirm with
+`grep -n '"monte-carlo"' packages/gateway/src/connectors/bundled-connector-registry.ts`. Then prove
+the file is lint-clean, since an unformatted generated file fails the `lint` gate:
+
+```bash
+bunx biome check packages/gateway/src/connectors/bundled-connector-registry.ts; echo "exit=$?"
+```
+
+Expected: `exit=0`.
 
 In `package.json` `scripts`:
 
@@ -827,7 +851,15 @@ function idsOnDisk(): string[] {
 describe("BUNDLED_CONNECTORS", () => {
   test("contains exactly the connector packages that have an entrypoint", () => {
     const registered = Object.keys(BUNDLED_CONNECTORS).sort((a, b) => a.localeCompare(b));
-    expect(registered).toEqual(idsOnDisk());
+    const onDisk = idsOnDisk();
+    const missing = onDisk.filter((id) => !registered.includes(id));
+    const extra = registered.filter((id) => !onDisk.includes(id));
+    // Name the fix in the failure itself: this test fires when someone adds a connector, and the
+    // remedy is one command they have no reason to know about.
+    expect(
+      { missing, extra },
+      "registry is stale — run `bun run gen:connector-registry`",
+    ).toEqual({ missing: [], extra: [] });
   });
 
   test("covers every connector — a shrinking registry is the drift this guards", () => {
@@ -1127,6 +1159,11 @@ function transitiveStaticGraph(entry: string): Set<string> {
 
 const STATEFUL = /[\\/](db|vault|ipc)[\\/]/;
 
+// SCOPE: this walker follows STATIC imports only, so it stops at the registry's `() => import(...)`
+// thunks and never enters a connector's own graph. That half of the guarantee — no connector
+// reaching into the gateway — is enforced by the `mcp-connectors-only-import-sdk` rule in
+// .dependency-cruiser.cjs, run by `bun run audit:boundaries` in the fast preflight tier. Do not
+// read these assertions as covering connector sources.
 describe("the entry shim", () => {
   test("statically imports exactly one module — the runtime layout", () => {
     expect(staticDepsOf(resolve(SRC, "index.ts"))).toEqual([
@@ -1418,6 +1455,10 @@ import { BUNDLED_CONNECTORS } from "../packages/gateway/src/connectors/bundled-c
  * whose startup is unreachable from the registry looks like.
  */
 const BINARY = process.argv[2];
+// Reached only by a genuine hang: a healthy connector answers in ~110 ms and a credential-less one
+// exits immediately, so this bounds failures, not the run. Deliberately not env-configurable —
+// there is no load under which a 15 s budget for one process start is tight, and a knob here would
+// invite raising it instead of diagnosing the hang.
 const TIMEOUT_MS = 15_000;
 const CONCURRENCY = 8;
 
@@ -1456,15 +1497,31 @@ async function boot(id: string): Promise<Outcome> {
     proc.kill();
   }, TIMEOUT_MS);
 
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  // Read stdout INCREMENTALLY and stop at the first answer. Draining to EOF instead
+  // (`new Response(proc.stdout).text()`) would wait for stdout to close — which a healthy MCP
+  // server never does — so every SUCCESSFUL connector would burn the full timeout. Measured:
+  // 5023 ms draining versus 107 ms streaming, per connector.
+  const decoder = new TextDecoder();
+  let stdout = "";
+  let answered = false;
+  for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (stdout.includes('"serverInfo"')) {
+      answered = true;
+      break;
+    }
+  }
   clearTimeout(timer);
 
-  if (stdout.includes('"serverInfo"')) return { id, ok: true, how: "answered" };
-  if (timedOut) return { id, ok: false, why: `hung for ${TIMEOUT_MS}ms without answering` };
+  if (answered) {
+    proc.kill();
+    return { id, ok: true, how: "answered" };
+  }
+
+  // stdout ended without an answer: the process is dying or already dead.
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  if (timedOut) return { id, ok: false, why: `hung for ${String(TIMEOUT_MS)}ms without answering` };
   if (code !== 0 && stderr.trim() !== "") {
     return { id, ok: true, how: "refused" };
   }
@@ -1506,9 +1563,10 @@ echo "exit=$?"
 ```
 
 Expected: `connector boot smoke: 94 connectors — 89 answered, 5 refused without credentials, 0
-failed` and `exit=0`. The five refusals are the IMAP-family connectors (`apple`, `fastmail`, `imap`,
-`obsidian`, `protonmail`), which throw `Error: <VAR> is not set` from `requireProcessEnv` — correct
-behaviour, identical in a dev tree.
+failed` and `exit=0`, **in under 5 seconds** (measured: 1.8 s for 94 on Windows). A run that takes
+minutes means the streaming read regressed to draining. The five refusals are the IMAP-family
+connectors (`apple`, `fastmail`, `imap`, `obsidian`, `protonmail`), which throw
+`Error: <VAR> is not set` from `requireProcessEnv` — correct behaviour, identical in a dev tree.
 
 - [ ] **Step 3: Red-prove the smoke**
 
