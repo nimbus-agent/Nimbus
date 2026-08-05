@@ -147,9 +147,13 @@ local index. It is set per connector and enforced on **every** sync — not only
 
 | Depth | What lands in the index |
 |---|---|
-| `full` | Title, metadata, and the item body — up to **16 KiB** for prose-heavy types (mail, chat messages, tickets, wiki pages). This is the default. |
-| `summary` | Title, metadata, and the body clamped to **512 characters**. Never marked complete. |
+| `full` | Title, metadata, and the item body — up to **16,384 UTF-16 code units** for prose-heavy types (mail, chat messages, tickets, wiki pages). |
+| `summary` | Title, metadata, and the body clamped to **512 UTF-16 code units**. Never marked complete. |
 | `metadata_only` | Title and metadata only. The body and its preview are both suppressed. |
+
+Limits are counted in **UTF-16 code units, not bytes** — 16,384 units is 16 KiB of plain ASCII, but
+up to four times that in UTF-8 for scripts outside the Basic Multilingual Plane. Clamping never
+splits a surrogate pair.
 
 Set it with `reindex`:
 
@@ -160,9 +164,11 @@ nimbus connector reindex gmail --depth full
 
 Two behaviours worth knowing before you choose:
 
-- **Omitting `--depth` lowers the connector to `metadata_only`.** The CLI passes that explicitly when
-  the flag is absent, and it is persisted. Pass `--depth full` to reindex without changing the
-  setting.
+- **There are two different "defaults" here — do not confuse them.** A newly added connector
+  persists **`full`**, so it indexes bodies from its first sync. But `nimbus connector reindex`
+  persists **`metadata_only`** when you omit `--depth` — the CLI passes that explicitly rather than
+  leaving the setting alone. So running `reindex` without the flag *lowers* a connector from its
+  starting point. Pass `--depth full` to reindex without changing the setting.
 - **Deepening is not retroactive.** Lowering the depth strips or clamps existing rows immediately;
   raising it cannot bring back text that was never stored, so it reports `0` items affected and
   applies to future syncs only. To recover discarded bodies, force a fresh sync
@@ -173,7 +179,7 @@ Two behaviours worth knowing before you choose:
 Depth was not enforced for body content before schema V49. Every connector's stored depth was
 whatever the column default happened to be, and `summary` had always behaved identically to `full`
 in practice — so the V49 migration resets `summary` to `full` rather than silently truncating every
-existing index to 512 characters on its next sync. Connectors you had set to `metadata_only` are
+existing index to 512 UTF-16 code units on its next sync. Connectors you had set to `metadata_only` are
 untouched and need no action.
 :::
 

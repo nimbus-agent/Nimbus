@@ -13,7 +13,7 @@ Tools are **registered conditionally** based on the granted Microsoft Graph scop
 
 - **Service id:** `outlook`
 - **Item types:** `email` (sync only indexes mail; calendar and contacts are MCP-only surfaces)
-- **Body:** the message body, up to **16 KiB**. The sync `$select`s Graph's `body` alongside
+- **Body:** the message body, up to **16,384 UTF-16 code units**. The sync `$select`s Graph's `body` alongside
   `bodyPreview`, converts HTML to plain text, and strips quoted reply chains and signature blocks.
   A message with no extractable body falls back to Graph's ~255-character `bodyPreview`, which stays
   searchable but is marked incomplete (`body_complete = 0`) rather than claiming to be the whole

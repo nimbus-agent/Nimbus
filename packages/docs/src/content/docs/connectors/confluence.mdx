@@ -11,7 +11,7 @@ The Confluence connector indexes pages — titles **and full page bodies** — i
 
 - **Service id:** `confluence`
 - **Item types:** `page`
-- **Body:** the page's storage-format content converted to plain text, up to **16 KiB**.
+- **Body:** the page's storage-format content converted to plain text, up to **16,384 UTF-16 code units**.
 
 :::note[The initial sync reaches back 30 days, not the whole space]
 Confluence's first sync indexes pages modified in the last **30 days**. Running

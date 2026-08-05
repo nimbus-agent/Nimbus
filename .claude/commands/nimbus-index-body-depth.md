@@ -2,7 +2,7 @@
 name: nimbus-index-body-depth
 description: >
   The full-body store and the connector index-depth chokepoint (schema V48 + V49):
-  `item.body` / `item.body_preview` / `item.body_complete`, the `BODY_MAX_PROSE` 16 KiB vs
+  `item.body` / `item.body_preview` / `item.body_complete`, the `BODY_MAX_PROSE` 16,384 vs
   512 cap split, the two-arm `IndexedItemBodyInput` union, and
   `upsertIndexedItemForSync` — the single site every connector's item write must go
   through so `metadata_only` / `summary` / `full` is enforced on EVERY sync, not just at
@@ -114,7 +114,7 @@ the `summary` arm instead would clamp to 512 — the opposite of every other res
 V21 declared `depth TEXT NOT NULL DEFAULT 'summary'`, so every row already held `'summary'`
 materialised rather than NULL — and because depth was never enforced for bodies, a stored
 `'summary'` expressed no intent and had always behaved as `'full'`. Enforcing depth without the
-backfill would have silently truncated every existing index to 512 characters on its next sync.
+backfill would have silently truncated every existing index to 512 code units on its next sync.
 `metadata_only` rows are deliberately untouched.
 
 **Suppression covers vectors, not only stored text.** `SqliteEmbeddingPipeline.embedItem` deletes
@@ -131,12 +131,12 @@ as vectors after its text was gone.
 hand-written one you find.** Two independent axes get conflated:
 
 1. **`PROSE_HEAVY_TYPES` membership** (`embedding/routing.ts`) — raises the cap from 512 to
-   16 KiB. **It does not mean the connector writes a body.** There are 23 members; only 14 write a
+   16,384 UTF-16 code units. **It does not mean the connector writes a body.** There are 23 members; only 14 write a
    full body.
 2. **The connector actually passing the `{ body }` arm** — this is what puts text in the column.
 
 A type in `PROSE_HEAVY_TYPES` whose connector still passes `bodyPreview` is *inert*: it has a
-16 KiB cap and nothing to put in it. `bitbucket:issue` is inert because Bitbucket emits only
+16,384-unit cap and nothing to put in it. `bitbucket:issue` is inert because Bitbucket emits only
 `type: "pr"`; `github:pr` is capped at 512 because it was never added to `PROSE_HEAVY_TYPES`.
 
 When you need the current membership, derive it from the tree and **count the result** — do not

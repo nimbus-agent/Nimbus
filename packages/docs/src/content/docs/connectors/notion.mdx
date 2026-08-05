@@ -11,7 +11,7 @@ The Notion connector indexes pages — titles **and full page bodies** — into 
 
 - **Service id:** `notion`
 - **Item types:** `page`
-- **Body:** the page's block text, up to **16 KiB**. Fetching a body costs an extra API call per
+- **Body:** the page's block text, up to **16,384 UTF-16 code units**. Fetching a body costs an extra API call per
   page, so an initial workspace sync is meaningfully slower and more quota-hungry than a
   title-only one.
 
