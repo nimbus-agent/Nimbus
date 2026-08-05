@@ -1,17 +1,19 @@
 import { IPCClient } from "../ipc-client/index.ts";
 import { getCliPlatformPaths } from "../paths.ts";
-import { awaitAgentBrief, renderAgentBrief } from "./agent-brief-render.ts";
+import { awaitAgentBrief, type PendingBrief, renderAgentBrief } from "./agent-brief-render.ts";
 import { readGatewayState } from "./gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "./interactive-ipc-handlers.ts";
 
 /**
  * Run an agent CLI command: read the gateway state (exit 1 if not running),
- * connect the IPC client, await the agent's brief (guarded by `guard`), invoke
- * `ipcMethod` with `callParams`, then render the brief. On error: stderr + exit 2.
- * Always clears the brief timeout + disconnects in `finally`. The per-command
- * code supplies only the agent name, IPC method, call params, brief guard, and
- * the `--json` flag — this collapses the byte-identical dispatcher body shared by
- * the agent commands (catchup, impact, …).
+ * connect the IPC client, start awaiting the agent's brief (guarded by `guard`),
+ * invoke `ipcMethod` with `callParams`, bind the returned sessionId to the
+ * waiter so the router can tell this call's brief apart from a concurrent one,
+ * then render the brief. On error: stderr + exit 2. Always cancels the pending
+ * waiter + disconnects in `finally`. The per-command code supplies only the
+ * agent name, IPC method, call params, brief guard, and the `--json` flag —
+ * this collapses the byte-identical dispatcher body shared by the agent
+ * commands (catchup, impact, …).
  */
 export async function runAgentCli<B extends { gaps: readonly { category: string }[] }>(opts: {
   agentName: string;
@@ -28,7 +30,7 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
   }
 
   const client = new IPCClient(state.socketPath);
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let pending: PendingBrief<B> | undefined;
 
   try {
     // Connect + handler registration live inside the boundary so a stale
@@ -36,17 +38,16 @@ export async function runAgentCli<B extends { gaps: readonly { category: string 
     // finally disconnect, rather than escaping uncaught.
     await client.connect();
     registerInteractiveCliIpcHandlers(client);
-    const briefPromise = awaitAgentBrief(client, opts.agentName, opts.guard, (t) => {
-      timeout = t;
-    });
-    await client.call<{ sessionId: string }>(opts.ipcMethod, opts.callParams);
-    const { brief, findings } = await briefPromise;
+    pending = awaitAgentBrief(client, opts.agentName, opts.guard);
+    const { sessionId } = await client.call<{ sessionId: string }>(opts.ipcMethod, opts.callParams);
+    pending.bindSession(sessionId);
+    const { brief, findings } = await pending.result;
     renderAgentBrief(brief, findings, opts.json);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    pending?.cancel();
     await client.disconnect();
   }
 }

@@ -88,20 +88,18 @@ describe("awaitAgentBrief — resolves on briefReady with valid guard", () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      timers.push(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief);
+    pending.bindSession("s1");
 
     handlers.get("fake.briefReady")?.({
+      sessionId: "s1",
       brief: "some summary",
       findings: makeValidFakeBrief(),
     });
 
-    const result = await resultPromise;
+    const result = await pending.result;
     expect(result.brief).toBe("some summary");
     expect(result.findings.kind).toBe("fake");
-    for (const t of timers) clearTimeout(t);
   });
 });
 
@@ -110,36 +108,32 @@ describe("awaitAgentBrief — rejects on malformed payload", () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      timers.push(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief);
+    pending.bindSession("s1");
 
     handlers.get("fake.briefReady")?.({
+      sessionId: "s1",
       findings: makeValidFakeBrief(),
       // brief intentionally missing
     });
 
-    await expect(resultPromise).rejects.toThrow("Malformed fake.briefReady payload");
-    for (const t of timers) clearTimeout(t);
+    await expect(pending.result).rejects.toThrow("Malformed fake.briefReady payload");
   });
 
   it("rejects when findings fails the guard", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      timers.push(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief);
+    pending.bindSession("s1");
 
     handlers.get("fake.briefReady")?.({
+      sessionId: "s1",
       brief: "ok",
       findings: { kind: "wrong" }, // fails isFakeBrief
     });
 
-    await expect(resultPromise).rejects.toThrow("Malformed fake.briefReady payload");
-    for (const t of timers) clearTimeout(t);
+    await expect(pending.result).rejects.toThrow("Malformed fake.briefReady payload");
   });
 });
 
@@ -148,53 +142,39 @@ describe("awaitAgentBrief — rejects on briefError", () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      timers.push(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief);
+    pending.bindSession("s1");
 
-    handlers.get("fake.briefError")?.({ error: "index not ready" });
+    handlers.get("fake.briefError")?.({ sessionId: "s1", error: "index not ready" });
 
-    await expect(resultPromise).rejects.toThrow("index not ready");
-    for (const t of timers) clearTimeout(t);
+    await expect(pending.result).rejects.toThrow("index not ready");
   });
 
-  it("rejects with the default message when error is absent", async () => {
+  it("rejects with the default malformed-payload message when error is absent", async () => {
+    // `error` is absent and `brief` is not a string, so this is indistinguishable
+    // from a malformed briefError payload — there is no "Agent failed" fallback
+    // once routing is sessionId-based; the router only ever rejects with a
+    // concrete cause (malformed payload, explicit error, timeout, or fail()).
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      timers.push(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief);
+    pending.bindSession("s1");
 
-    handlers.get("fake.briefError")?.({});
+    handlers.get("fake.briefError")?.({ sessionId: "s1" });
 
-    await expect(resultPromise).rejects.toThrow("Agent failed");
-    for (const t of timers) clearTimeout(t);
+    await expect(pending.result).rejects.toThrow("Malformed fake.briefReady payload");
   });
 });
 
 describe("awaitAgentBrief — timeout", () => {
-  it("the timeout rejects the promise after the timer fires", async () => {
+  it("rejects once the timeout elapses without a matching notification", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
-    // Inject a fake timer that fires immediately
-    const capturedTimers: ReturnType<typeof setTimeout>[] = [];
-    const resultPromise = awaitAgentBrief(client, "fake", isFakeBrief, (t) => {
-      capturedTimers.push(t);
-      // Trigger the callback synchronously by clearing and manually invoking
-      clearTimeout(t);
-    });
+    const pending = awaitAgentBrief(client, "fake", isFakeBrief, 5);
+    pending.bindSession("s1");
 
-    // Since we cleared the real timer, we resolve directly by firing briefError
-    // to simulate a timed-out path (we just need the reject branch tested).
-    // Instead, use a zero-delay timer to confirm the onTimer callback is invoked.
-    expect(capturedTimers).toHaveLength(1);
-
-    // Clean up: fire an error to settle the promise so the test ends
-    handlers.get("fake.briefError")?.({ error: "done" });
-    await expect(resultPromise).rejects.toThrow("done");
+    await expect(pending.result).rejects.toThrow("timed out");
   });
 });

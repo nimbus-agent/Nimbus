@@ -1,34 +1,38 @@
-import type { IPCClient } from "../ipc-client/index.ts";
+import {
+  AgentBriefRouter,
+  type BriefNotificationSource,
+  type PendingBrief,
+} from "./agent-brief-router.ts";
+
+// Re-exported so callers (agent-cli-dispatcher.ts) can import the return type of
+// `awaitAgentBrief` from this module instead of reaching into the router directly.
+export type { PendingBrief };
 
 const TIMEOUT_MS = 30_000;
 
+/** One router per client, so listeners are registered once per agent name per connection. */
+const routers = new WeakMap<object, AgentBriefRouter>();
+
+function routerFor(client: BriefNotificationSource): AgentBriefRouter {
+  const existing = routers.get(client as object);
+  if (existing !== undefined) return existing;
+  const created = new AgentBriefRouter(client);
+  routers.set(client as object, created);
+  return created;
+}
+
 /**
- * Waits for an agent brief notification from the gateway. Parameterizes the
- * notification names (`${agentName}.briefReady` / `${agentName}.briefError`)
- * and the type guard so that catchup, impact, and future agents share one
- * implementation.
+ * Start awaiting an agent brief. The caller MUST call `bindSession` with the sessionId returned
+ * by the `agents.*` call — notifications are broadcast to every session, so without it a
+ * concurrent caller's brief can be mistaken for this one.
  */
 export function awaitAgentBrief<T>(
-  client: IPCClient,
+  client: BriefNotificationSource,
   agentName: string,
   guard: (x: unknown) => x is T,
-  onTimer: (t: ReturnType<typeof setTimeout>) => void,
-): Promise<{ brief: string; findings: T }> {
-  return new Promise<{ brief: string; findings: T }>((resolve, reject) => {
-    onTimer(setTimeout(() => reject(new Error("Agent timed out after 30 s")), TIMEOUT_MS));
-    client.onNotification(`${agentName}.briefReady`, (params: unknown) => {
-      const p = params as { sessionId?: string; brief?: string; findings?: unknown };
-      if (typeof p.brief !== "string" || !guard(p.findings)) {
-        reject(new Error(`Malformed ${agentName}.briefReady payload`));
-        return;
-      }
-      resolve({ brief: p.brief, findings: p.findings });
-    });
-    client.onNotification(`${agentName}.briefError`, (params: unknown) => {
-      const p = params as { error?: string };
-      reject(new Error(p.error ?? "Agent failed"));
-    });
-  });
+  timeoutMs: number = TIMEOUT_MS,
+): PendingBrief<T> {
+  return routerFor(client).expect(agentName, guard, timeoutMs);
 }
 
 /**
