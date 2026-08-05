@@ -160,6 +160,7 @@
     "audit:any": "bun scripts/structure-audit/count-any-usage.ts",
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
     "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
+    "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",
     "audit:openapi-drift": "bun scripts/structure-audit/check-openapi-drift.ts --check",
     "audit:release-please": "bun scripts/structure-audit/check-release-please-manifest.ts",

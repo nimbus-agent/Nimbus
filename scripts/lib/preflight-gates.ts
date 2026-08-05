@@ -31,6 +31,13 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:connector-entrypoints"],
     tier: "fast",
   },
+  {
+    // Connectors are bundled into the gateway binary. A native dependency would break the
+    // compile or the runtime load, and the only symptom is a sync that never works.
+    name: "audit:connector-deps",
+    cmd: ["bun", "run", "audit:connector-deps"],
+    tier: "fast",
+  },
   { name: "audit:any", cmd: ["bun", "run", "audit:any", "--check"], tier: "fast" },
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
   {
