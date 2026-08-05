@@ -72,6 +72,18 @@ async function main(): Promise<void> {
   assertAllProjectsRan(runs);
 
   if (update) {
+    // Refuse to bank a baseline off Linux. tsc's diagnostic codes are platform-dependent (see the
+    // note below), so a Windows- or macOS-generated baseline reports phantom deltas on CI — which
+    // is how this was discovered. Regenerate inside the container instead, where CI's tsc runs.
+    if (process.platform !== "linux") {
+      console.error(
+        `typecheck-tests: refusing to write a baseline on ${process.platform} — it is Linux-authoritative.`,
+      );
+      console.error(
+        "  Regenerate it on Linux (the same image CI uses):  bun run verify:docker --rebuild",
+      );
+      process.exit(2);
+    }
     await Bun.write(BASELINE, serializeBaseline(actual, new Date().toISOString()));
     console.log(
       `typecheck-tests: baseline updated (${String(totalErrors(actual))} errors across ${String(actual.size)} files)`,
@@ -114,6 +126,22 @@ async function main(): Promise<void> {
       }
     }
     console.error(`typecheck-tests: ${String(violations.length)} violation(s)`);
+    // The baseline is Linux-authoritative, because tsc's diagnostic CODE is platform-dependent:
+    // the same unresolved symbol reports TS2304 on Windows and TS2552 ("did you mean") on Linux,
+    // where the filesystem is case-sensitive. A Windows-generated baseline therefore reports ~9
+    // phantom deltas on CI, and a Linux one reports the inverse locally.
+    //
+    // Blocking on that locally would make every Windows preflight red for reasons the developer
+    // cannot fix, and a gate that always fails is a gate that gets ignored — the exact failure
+    // this gate exists to prevent. So off Linux the violations are printed in full and the gate
+    // does NOT block, while saying plainly that it did not gate. CI is Linux and blocks there.
+    // Same posture as audit:coverage-floor, which is likewise CI-Linux-authoritative.
+    if (process.platform !== "linux") {
+      console.error(
+        `typecheck-tests: ADVISORY on ${process.platform} — not gating. The baseline is Linux-authoritative; gate with \`bun run verify:docker\`.`,
+      );
+      return;
+    }
     process.exit(1);
   }
 
