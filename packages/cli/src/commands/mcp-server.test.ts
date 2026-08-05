@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
-import type { AdapterDeps } from "../mcp/adapter.ts";
+import { type AdapterDeps, TOOL_SPECS } from "../mcp/adapter.ts";
 import {
   formatConfigBlock,
+  formatHelp,
   type MCP_SERVER_CONFIG,
   parseMcpServerArgs,
   type RunMcpServerDeps,
@@ -72,6 +73,9 @@ describe("runMcpServer", () => {
     const { deps, ran } = fakeRunDeps();
     await runMcpServer(["--help"], deps);
     expect(out.stdout).toContain("nimbus mcp-server");
+    // The agent tools must be discoverable here: --help is where an operator looks first, and a
+    // hardcoded list went stale twice before it was derived from TOOL_SPECS.
+    expect(out.stdout).toContain("explainWhy");
     expect(ran.count).toBe(0);
   });
 
@@ -80,5 +84,21 @@ describe("runMcpServer", () => {
     const { deps, ran } = fakeRunDeps();
     await runMcpServer(["--stdio"], deps);
     expect(ran.count).toBe(1);
+  });
+});
+
+describe("formatHelp", () => {
+  it("lists every registered tool, derived from TOOL_SPECS rather than restated", () => {
+    const help = formatHelp();
+    for (const s of TOOL_SPECS) {
+      expect(help).toContain(s.name);
+    }
+    expect(help).toContain(`Read-only tools (${String(TOOL_SPECS.length)}):`);
+  });
+
+  it("wraps the tool list so no line runs past the terminal width", () => {
+    for (const line of formatHelp().split("\n")) {
+      expect(line.length).toBeLessThanOrEqual(90);
+    }
   });
 });

@@ -23,6 +23,13 @@ export interface IpcCallable {
  */
 export interface NotifyingClient extends IpcCallable {
   onNotification(method: string, handler: (params: unknown) => void): void;
+  /**
+   * Optional, and deliberately not part of `supportsNotifications`: `AgentBriefRouter` binds at
+   * most one listener pair per agent name per connection and never unbinds, so a transport that
+   * can only add handlers is still fully usable. Any wrapper must still forward it when the raw
+   * client has it — see `makeReconnectingClient`.
+   */
+  offNotification?(method: string, handler: (params: unknown) => void): void;
 }
 
 /**

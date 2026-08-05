@@ -7,6 +7,14 @@ import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from
 const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
 
 /**
+ * Ceilings the gateway's own validators enforce, mirrored into the zod schemas so the calling
+ * model reads the bound off the tool definition instead of discovering it through a -32602.
+ * Kept next to each other so a change in `ipc/agents-rpc.ts` has one place to land here.
+ */
+const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
+const MAX_EXPERT_LIMIT = 25;
+
+/**
  * How long to wait for a brief. The default is 60 s rather than the CLI's 30 s because the
  * federation-touching agents (`getPeerContext`, `getTeamHuddle`) wait on paired peers, not just the
  * local index.
@@ -126,16 +134,22 @@ const DEFS: readonly AgentToolDef[] = [
     tool: "getCatchup",
     agent: "catchup",
     description:
-      "Retrospective digest of what happened across connected services while the user was away, personalized to their work. `sinceMs` is a lookback window in milliseconds (max 90 days).",
-    schema: { sinceMs: z.number().int().nonnegative().optional() },
+      "Retrospective digest of what happened across connected services while the user was away, personalized to their work. `sinceMs` is a lookback window in milliseconds, capped at 90 days.",
+    // Bound mirrors MAX_SINCE_MS in the gateway's requireCatchupParams: over it the call is
+    // rejected -32602, and the model can otherwise only learn the ceiling by tripping it.
+    schema: { sinceMs: z.number().int().nonnegative().max(MAX_SINCE_MS).optional() },
     build: (a) => withOptional({}, { sinceMs: optNum(a, "sinceMs") }),
   },
   {
     tool: "findExpert",
     agent: "expert",
     description:
-      "Answer 'who has the most context on this?' — a ranked list of people drawn from indexed PRs, reviews, incidents and discussions.",
-    schema: { topicOrFile: z.string(), limit: z.number().int().positive().optional() },
+      "Answer 'who has the most context on this?' — a ranked list of people drawn from indexed PRs, reviews, incidents and discussions. `limit` is capped at 25.",
+    // Bound mirrors MAX_LIMIT in the gateway's requireExpertParams.
+    schema: {
+      topicOrFile: z.string(),
+      limit: z.number().int().positive().max(MAX_EXPERT_LIMIT).optional(),
+    },
     build: (a) =>
       withOptional({ topicOrFile: str(a, "topicOrFile") }, { limit: optNum(a, "limit") }),
   },

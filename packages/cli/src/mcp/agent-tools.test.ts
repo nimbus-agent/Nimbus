@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { TOOL_SPECS } from "./adapter.ts";
 import { AGENT_TOOL_SPECS, agentTimeoutMs, failBriefsForClient } from "./agent-tools.ts";
 import type { IpcCallable } from "./client-surface.ts";
 import { GatewayUnavailableError } from "./errors.ts";
@@ -376,11 +377,29 @@ const AGENTS_RPC_ACCEPTED_KEYS: ReadonlyArray<{
     accepted: ["sinceMs", "namespace", "namespaces"],
     args: { namespace: "team" },
   },
+  {
+    // The eleventh `agents.*` caller. It lives in TOOL_SPECS rather than AGENT_TOOL_SPECS, so
+    // nothing else in this file can see it — and it shipped with the same `fileOrPrUrl` defect.
+    // `agents.whyPeek` is validated by the very same `requireWhyParams` as `agents.why`.
+    tool: "peekWhy",
+    method: "agents.whyPeek",
+    accepted: ["ref", "line"],
+    args: { ref: "src/a.ts" },
+  },
 ];
 
-test("the contract table covers exactly the registered agent tools", () => {
+/** Resolve from TOOL_SPECS, which is a superset of AGENT_TOOL_SPECS and also holds `peekWhy`. */
+function registeredSpec(name: string) {
+  const s = TOOL_SPECS.find((t) => t.name === name);
+  if (s === undefined) {
+    throw new Error(`no registered tool spec ${name}`);
+  }
+  return s;
+}
+
+test("the contract table covers every registered agents.* caller", () => {
   expect(AGENTS_RPC_ACCEPTED_KEYS.map((r) => r.tool).sort()).toEqual(
-    AGENT_TOOL_SPECS.map((s) => s.name).sort(),
+    [...AGENT_TOOL_SPECS.map((s) => s.name), "peekWhy"].sort(),
   );
 });
 
@@ -389,7 +408,7 @@ test("every tool's SCHEMA names only parameters its gateway validator reads", ()
   // schema, so a schema key the validator never reads is a parameter the model can never make
   // count. `explainWhy`'s brief schema (`fileOrPrUrl`) fails here against ["ref", "line"].
   for (const row of AGENTS_RPC_ACCEPTED_KEYS) {
-    const schemaKeys = Object.keys(specFor(row.tool).schema);
+    const schemaKeys = Object.keys(registeredSpec(row.tool).schema);
     const unknownKeys = schemaKeys.filter((k) => !row.accepted.includes(k));
     expect({ tool: row.tool, unknownKeys }).toEqual({ tool: row.tool, unknownKeys: [] });
   }
@@ -406,11 +425,16 @@ test("every tool's BUILT params reach its own agents.* method with only accepted
         return await inner.call<T>(method, params);
       },
     };
-    await specFor(row.tool).run({ getClient: async () => client }, row.args);
+    await registeredSpec(row.tool).run({ getClient: async () => client }, row.args);
     expect(calls[0]?.method).toBe(row.method);
     const sent = Object.keys(calls[0]?.params as Record<string, unknown>);
     const unknownKeys = sent.filter((k) => !row.accepted.includes(k));
     expect({ tool: row.tool, unknownKeys }).toEqual({ tool: row.tool, unknownKeys: [] });
+    // `args` is hand-authored, so pin it to the schema first: a future schema key with no `args`
+    // entry would otherwise slip past the reaches-the-wire assertion below unexercised.
+    expect(Object.keys(row.args).sort()).toEqual(
+      Object.keys(registeredSpec(row.tool).schema).sort(),
+    );
     // A parameter the model can set must actually reach the wire, or it is decoration.
     expect(sent.sort()).toEqual(Object.keys(row.args).sort());
   }

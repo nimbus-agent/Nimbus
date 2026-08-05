@@ -13,6 +13,7 @@ import {
   projectRankedItems,
   TOOL_SPECS,
 } from "./adapter.ts";
+import { supportsClose, supportsNotifications } from "./client-surface.ts";
 
 describe("clampLimit", () => {
   it("defaults to 20 when undefined", () => {
@@ -824,6 +825,10 @@ test("an unexpected transport close fails a solitary brief in flight", async () 
 
   const out = await inFlight;
   expect(out.isError).toBe(true);
+  // Asserted exactly, not just `isError`: this message is what proves the brief was rejected by
+  // the disconnect path rather than by an incapable-transport report, so it is also what pins the
+  // wrapper's `onNotification` forwarding. Concentrating that in one test would be fragile.
+  expect(out.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
 }, 5000);
 
 test("a connection with no onClose still connects (guard's false arm)", async () => {
@@ -838,4 +843,89 @@ test("a connection with no onClose still connects (guard's false arm)", async ()
     connect: async () => raw,
   });
   await expect(deps.getClient()).resolves.toBeDefined();
+});
+
+test("the client getClient hands out carries every capability the raw client has", async () => {
+  // Asserted as a property rather than inferred from an error string. The wrapper is the only
+  // object consumers ever see, so a capability that does not cross it does not exist as far as
+  // they are concerned — which is exactly how all ten agent tools once reported a healthy
+  // connection as incapable of delivering briefs.
+  const seen: string[] = [];
+  const raw = {
+    onNotification(m: string, _h: (p: unknown) => void): void {
+      seen.push(`on:${m}`);
+    },
+    offNotification(m: string, _h: (p: unknown) => void): void {
+      seen.push(`off:${m}`);
+    },
+    onClose(_h: (err: Error) => void): void {
+      seen.push("onClose");
+    },
+    offClose(_h: (err: Error) => void): void {
+      seen.push("offClose");
+    },
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+
+  expect(supportsNotifications(client)).toBe(true);
+  expect(supportsClose(client)).toBe(true);
+
+  // openConnection binds its own close handler on `raw` during connect; drop that so what follows
+  // measures only the wrapper's forwarding.
+  expect(seen).toEqual(["onClose"]);
+  seen.length = 0;
+
+  // …and each forwarded member actually reaches the raw client, rather than being a present-but-
+  // inert stub that would satisfy the guards and drop every registration on the floor.
+  const noop = (): void => {};
+  if (supportsNotifications(client)) {
+    client.onNotification("why.briefReady", noop);
+    client.offNotification?.("why.briefReady", noop);
+  }
+  if (supportsClose(client)) {
+    client.onClose(noop);
+    client.offClose(noop);
+  }
+  expect(seen).toEqual(["on:why.briefReady", "off:why.briefReady", "onClose", "offClose"]);
+});
+
+test("a raw client with no handler methods still yields a usable client", async () => {
+  const raw: IpcCallable = {
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+  expect(supportsNotifications(client)).toBe(false);
+  expect(supportsClose(client)).toBe(false);
+  await expect(client.call("gateway.ping")).resolves.toBeDefined();
+});
+
+test("a notification-capable client without offNotification does not gain a stub", async () => {
+  // Forwarding an inert `offNotification` would advertise a capability the transport lacks — the
+  // same lie as omitting one it has, in the other direction.
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+  expect(supportsNotifications(client)).toBe(true);
+  expect("offNotification" in client).toBe(false);
 });

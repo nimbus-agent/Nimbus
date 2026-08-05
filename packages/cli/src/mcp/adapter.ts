@@ -6,6 +6,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
 import {
+  type ClosableClient,
   type IpcCallable,
   type NotifyingClient,
   supportsClose,
@@ -144,12 +145,16 @@ export interface ConnectionEnv {
  * agent tools need `onNotification` to receive `<agent>.briefReady`. A wrapper that forwarded only
  * `call`/`disconnect` would leave `supportsNotifications` false on the ONLY object the tools ever
  * touch, and all ten agent tools would report an incapable transport on a perfectly healthy
- * connection. It is forwarded conditionally rather than required, so a `ConnectionEnv.connect`
- * implementation that cannot deliver notifications still yields a usable client for the six
- * request/response tools.
+ * connection.
+ *
+ * So EVERY handler-registration method is forwarded, symmetrically and conditionally — a wrapper
+ * that silently lacks a capability its raw client has is the whole bug class, and forwarding only
+ * the one member that happens to be needed today just relocates it one call site away. Conditional
+ * rather than required, so a `ConnectionEnv.connect` implementation with none of them still yields
+ * a usable client for the request/response tools.
  */
 function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCallable {
-  const wrapper: IpcCallable & Partial<NotifyingClient> = {
+  const wrapper: IpcCallable & Partial<NotifyingClient> & Partial<ClosableClient> = {
     async call<T>(method: string, params?: unknown): Promise<T> {
       try {
         return await raw.call<T>(method, params);
@@ -170,6 +175,20 @@ function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCa
   if (supportsNotifications(raw)) {
     wrapper.onNotification = (method: string, handler: (params: unknown) => void): void => {
       raw.onNotification(method, handler);
+    };
+    const rawOff = raw.offNotification;
+    if (rawOff !== undefined) {
+      wrapper.offNotification = (method: string, handler: (params: unknown) => void): void => {
+        rawOff.call(raw, method, handler);
+      };
+    }
+  }
+  if (supportsClose(raw)) {
+    wrapper.onClose = (handler: (err: Error) => void): void => {
+      raw.onClose(handler);
+    };
+    wrapper.offClose = (handler: (err: Error) => void): void => {
+      raw.offClose(handler);
     };
   }
   return wrapper;
