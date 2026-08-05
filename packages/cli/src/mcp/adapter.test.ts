@@ -273,6 +273,117 @@ describe("createDeps", () => {
   });
 });
 
+/**
+ * Replaces `process.stderr.write` / `process.stdout.write` with recording stubs for the duration
+ * of the callback, restoring the originals in a `finally` even if the callback throws. Chosen
+ * over `mock.module` (which contaminates the combined `bun test packages/cli/src` run on CI
+ * Linux) and over threading a writer through `ConnectionEnv`/`AdapterDeps` (neither has a seam for
+ * one today, and the only caller of `session.declareKind` is this one block).
+ */
+async function captureStdio<T>(fn: () => Promise<T>): Promise<{
+  result: T;
+  stderr: string[];
+  stdout: string[];
+}> {
+  const stderr: string[] = [];
+  const stdout: string[] = [];
+  const origErr = process.stderr.write;
+  const origOut = process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const result = await fn();
+    return { result, stderr, stdout };
+  } finally {
+    process.stderr.write = origErr;
+    process.stdout.write = origOut;
+  }
+}
+
+describe("session.declareKind", () => {
+  it("is called with exactly { kind: 'mcp' } before a healthy connection is handed off, and writes nothing to stdio", async () => {
+    const calls: Array<{ method: string; params?: unknown }> = [];
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () =>
+        fakeClient(async (method, params) => {
+          calls.push({ method, params });
+          return "ok";
+        }),
+    };
+    const {
+      result: client,
+      stderr,
+      stdout,
+    } = await captureStdio(() => createDeps(env).getClient());
+    // declareKind is the only call made so far — proof it happens strictly before getClient()
+    // resolves and hands the client to any caller, not merely "at some point".
+    expect(calls).toEqual([{ method: "session.declareKind", params: { kind: "mcp" } }]);
+    expect(client).toBeDefined();
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([]);
+  });
+
+  it("writes the exact upgrade warning to stderr (never stdout) when an older gateway rejects declareKind, and still caches a usable client", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw new Error("Method not found");
+          }
+          return "ok";
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const { result: client, stderr, stdout } = await captureStdio(() => deps.getClient());
+    expect(stderr).toEqual([
+      "nimbus-mcp: gateway does not support session.declareKind; agent briefs served over MCP will NOT appear in the egress ledger. Upgrade the gateway.\n",
+    ]);
+    expect(stdout).toEqual([]);
+    // Still usable: a subsequent real call on the returned client succeeds.
+    await expect(client.call("index.searchRanked", {})).resolves.toBe("ok");
+    // And it was cached despite the warning — a second getClient() does not reconnect.
+    await deps.getClient();
+    expect(connects).toBe(1);
+  });
+
+  it("does not print the upgrade warning and does not re-cache when declareKind fails with a disconnect-class error", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw new Error("IPC connection closed");
+          }
+          return "ok";
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const { stderr, stdout } = await captureStdio(() => deps.getClient());
+    // Distinguishing behaviour from the older-gateway case above: no misdiagnosed "upgrade the
+    // gateway" warning for what is actually a dead transport.
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([]);
+    expect(connects).toBe(1);
+    // Not re-cached: the next getClient() reconnects rather than reusing the known-dead client.
+    await deps.getClient();
+    expect(connects).toBe(2);
+  });
+});
+
 type RecordedCall = { method: string; params?: unknown };
 
 function recordingDeps(opts: { result?: unknown; fail?: "down" | "drop" }): {

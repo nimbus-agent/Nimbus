@@ -212,7 +212,17 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
     // Best-effort — an older gateway without `session.declareKind` must not break the adapter.
     try {
       await client.call("session.declareKind", { kind: "mcp" });
-    } catch {
+    } catch (e) {
+      if (isDisconnectError(e)) {
+        // `client.call`'s own catch (inside `makeReconnectingClient`) already invalidated the
+        // cache and disconnected `raw` — this is a dead connection, not an old gateway. Printing
+        // the "upgrade the gateway" warning here would misdiagnose a transport drop as a missing
+        // RPC method, and re-caching `client` below would hand out a connection already known
+        // dead. Return it uncached instead: the caller's next real call on it fails with the same
+        // disconnect error and self-heals via `invalidate()` on the `getClient()` after that — the
+        // same path an ordinary mid-call disconnect already takes.
+        return client;
+      }
       // Older gateway: it will still serve briefs, but it cannot attribute them, so nothing is
       // recorded in the egress ledger. Say so on stderr — silently serving unrecorded briefs would
       // make `nimbus prove` quietly wrong, which is the exact failure this feature exists to close.
