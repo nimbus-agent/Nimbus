@@ -2,11 +2,40 @@
 import { describe, expect, test } from "bun:test";
 import { formatProveResult } from "./prove.ts";
 
+/**
+ * The REAL production vector: the gateway's six-class `THIS_BINARY_COVERAGE`
+ * (`gateway/src/egress/egress-coverage.ts`), with `task` and `mcp` observed per-call.
+ *
+ * Hand-maintained mirror — `ProveCompleteness.coverage` is `Record<string, string>` because the
+ * CLI may not import gateway source, so `tsc` cannot catch this going stale. It DID go stale once:
+ * it modelled five classes after `mcp` shipped, and the assertions below kept passing against a
+ * scope line no shipped gateway could produce, which is how a missing `COVERAGE_CLASS_LABELS`
+ * entry reached production. Change this whenever `COVERAGE_CLASSES` changes.
+ */
 const COVERED = {
-  coverage: { task: "per-call", session: "none", sync: "none", model: "none", peer: "none" },
+  coverage: {
+    mcp: "per-call",
+    task: "per-call",
+    session: "none",
+    sync: "none",
+    model: "none",
+    peer: "none",
+  },
   outboundEgressEvents: 0,
   indeterminate: false,
 } as const;
+
+/**
+ * The scope clause a real gateway produces today, spelled out literally.
+ *
+ * `observed` is sorted by CLASS KEY before mapping to display names, so `mcp` (< `task`) leads even
+ * though its label starts with "agents.*". The `mcp` label is deliberately narrow: that class
+ * covers only `agents.*` briefs served to a client that declared `kind: "mcp"`, NOT everything an
+ * MCP client can call on the socket. A class with no `COVERAGE_CLASS_LABELS` entry falls back to
+ * its raw key, which reads as a far broader claim than the appender makes — see the comment on
+ * that map in prove.ts.
+ */
+const REAL_SCOPE = "agents.* briefs served to MCP clients, gated connector actions";
 
 describe("formatProveResult", () => {
   test("a zero window never prints a bare 0 — it names what was observed", () => {
@@ -18,10 +47,16 @@ describe("formatProveResult", () => {
     });
     // Assert the whole first line, not just that a "0" appears somewhere: the defect being fixed
     // is a count printed WITHOUT its scope, so the scope must be on the same line as the number.
+    // Pinned to the REAL six-class gateway output — every observed class is named with a label,
+    // never a raw key.
     expect(out.split("\n")[0]).toBe(
-      "outbound egress events during this query: 0 (scope: gated connector actions)",
+      `outbound egress events during this query: 0 (scope: ${REAL_SCOPE})`,
     );
     expect(out).toContain("not observed: model, peer, session, sync");
+    // No observed class fell through to its raw key. `mcp` alone in the scope clause would read as
+    // "everything this MCP client does"; the label exists to stop exactly that.
+    expect(out).not.toContain("scope: mcp");
+    expect(out).not.toMatch(/scope:.*\bmcp\b,/);
   });
 
   // Fix wave: the label must be the caller-supplied scope, not a hardcoded "during this query" —
@@ -35,20 +70,22 @@ describe("formatProveResult", () => {
       label: "in this window",
     });
     expect(out.split("\n")[0]).toBe(
-      "outbound egress events in this window: 3 (scope: gated connector actions)",
+      `outbound egress events in this window: 3 (scope: ${REAL_SCOPE})`,
     );
     expect(out).not.toContain("during this query");
   });
 
-  // Fix wave: when MULTIPLE classes are observed (unreachable in Phase 1, since every non-task
-  // class is hardcoded "none" — but the collapsing logic was wrong regardless), the scope line
-  // must name every observed class, not collapse to just "gated connector actions" and silently
-  // drop the others from both the scope line AND the "not observed" line.
+  // Fix wave: the scope line must name every observed class, not collapse to just "gated connector
+  // actions" and silently drop the others from both the scope line AND the "not observed" line.
+  // Two observed classes is now the SHIPPED state (`task` + `mcp`), not a hypothetical; this case
+  // adds a third, `session`, which has no label yet and therefore prints its raw key — the mixed
+  // labelled/unlabelled rendering a future coverage class will hit on its first day.
   test("scope names every observed class when more than one is observed", () => {
     const out = formatProveResult({
       delta: 0,
       completeness: {
         coverage: {
+          mcp: "per-call",
           task: "per-call",
           session: "per-run",
           sync: "none",
@@ -61,10 +98,10 @@ describe("formatProveResult", () => {
       chainOk: true,
       label: "during this query",
     });
-    // `observed` is alphabetically sorted before mapping to display names, so "session" (< "task")
-    // sorts ahead of the "gated connector actions" label task maps to.
+    // `observed` is sorted by CLASS KEY before mapping to display names: mcp < session < task, so
+    // the bare "session" lands between the two labelled entries rather than after them.
     expect(out.split("\n")[0]).toBe(
-      "outbound egress events during this query: 0 (scope: session, gated connector actions)",
+      "outbound egress events during this query: 0 (scope: agents.* briefs served to MCP clients, session, gated connector actions)",
     );
     expect(out).toContain("not observed: model, peer, sync");
   });
