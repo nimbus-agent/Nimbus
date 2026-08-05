@@ -33,6 +33,7 @@
   },
   "workspaces": [
     "packages/admin-console",
+    "packages/mcp-launcher",
     "packages/gateway",
     "packages/cli",
     "packages/ui",

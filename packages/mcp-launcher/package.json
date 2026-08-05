@@ -1,0 +1,21 @@
+{
+  "name": "@nimbus-dev/mcp",
+  "version": "0.1.0",
+  "description": "Launcher for the Nimbus MCP server — exposes your local Nimbus index and agents to any MCP client.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "nimbus-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --target node --outdir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
