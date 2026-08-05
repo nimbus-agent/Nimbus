@@ -38,15 +38,21 @@ trap cleanup EXIT INT TERM
 
 TIER="fast"
 REBUILD=0
-for arg in "$@"; do
-  case "$arg" in
+# `while [[ $# -gt 0 ]]` rather than `for arg in "$@"`: under `set -u`, bash 3.2 (which is what
+# /bin/bash is on macOS — 3.2.57, frozen at the last GPLv2 release) treats an EMPTY "$@" as an
+# unbound variable and aborts. `bun run verify:docker` with no flags is the documented default
+# usage, so on macOS the tool would die before doing anything. Not reproduced here (no macOS
+# available); this is a defensive fix against bash 3.2 semantics.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --full) TIER="full" ;;
     --rebuild) REBUILD=1 ;;
     *)
-      echo "verify-in-docker.sh: unknown flag '$arg' (expected --full and/or --rebuild)" >&2
+      echo "verify-in-docker.sh: unknown flag '$1' (expected --full and/or --rebuild)" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 if [[ "${REBUILD}" == "1" ]]; then
@@ -67,7 +73,11 @@ docker volume create "${CACHE_VOL}" >/dev/null
 # it a stale cached image would silently keep pinning an old bun version forever.
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   echo "--- building ${IMAGE} (one-time, ~1 min) ---"
-  docker build -t "${IMAGE}" -f - . <<DOCKERFILE
+  # `-` (not `-f - .`) reads the Dockerfile from stdin with an EMPTY build context. The Dockerfile
+  # below has no COPY — the repo is streamed in by `tar | docker run` further down — so `.` only
+  # served to ship the entire working tree (node_modules included, ~1 GB) to the daemon on every
+  # cache miss for nothing.
+  docker build -t "${IMAGE}" - <<DOCKERFILE
 FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 # Same packages CI's ubuntu runner has. Without libsecret/gnome-keyring/dbus the vault and PAL
