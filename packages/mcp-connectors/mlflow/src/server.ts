@@ -141,6 +141,8 @@ export function registerMlflowTools(reg: ZodToolRegistrar): void {
   );
 }
 
-if (import.meta.main) {
+export async function startConnector(): Promise<void> {
   await runReadOnlyMcpConnector("nimbus-mlflow", registerMlflowTools);
 }
+
+if (import.meta.main) await startConnector();
