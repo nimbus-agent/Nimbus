@@ -790,8 +790,11 @@ bun scripts/gen-bundled-connector-registry.ts
 head -12 packages/gateway/src/connectors/bundled-connector-registry.ts
 ```
 
-Expected: `wrote … with 94 connectors`, and the head shows the banner plus
-`  "airflow": () => import("../../../mcp-connectors/airflow/src/server.ts"),`.
+Expected: `wrote … with 94 connectors`, and the head shows the banner followed by the first entry:
+
+```typescript
+  "airflow": () => import("../../../mcp-connectors/airflow/src/server.ts"),
+```
 
 In `package.json` `scripts`:
 
