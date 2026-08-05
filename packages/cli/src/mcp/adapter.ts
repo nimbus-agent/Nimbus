@@ -4,6 +4,20 @@ import { z } from "zod";
 import { IPCClient } from "../ipc-client/index.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
+import {
+  type IpcCallable,
+  type NotifyingClient,
+  supportsClose,
+  supportsNotifications,
+} from "./client-surface.ts";
+import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
+
+export type { ClosableClient, IpcCallable, NotifyingClient } from "./client-surface.ts";
+// Re-exported so existing importers (and tests) keep reaching these through `adapter.ts`. The
+// declarations themselves live in `errors.ts` / `client-surface.ts` to keep `agent-tools.ts` free
+// of a runtime import back into this module.
+export { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError };
 
 const MCP_LIMIT_DEFAULT = 20;
 const MCP_LIMIT_MAX = 50;
@@ -111,22 +125,6 @@ export function projectRankedItems(rows: unknown): Array<Record<string, unknown>
   return rows.map(projectRankedItem);
 }
 
-export const GATEWAY_DOWN_MESSAGE = "Nimbus Gateway is not running. Start it with: nimbus start";
-
-/** Thrown when the adapter cannot reach the Gateway (no state file, or connect failed). */
-export class GatewayUnavailableError extends Error {
-  constructor() {
-    super(GATEWAY_DOWN_MESSAGE);
-    this.name = "GatewayUnavailableError";
-  }
-}
-
-/** Minimal IPC surface the adapter needs — structurally satisfied by IPCClient. */
-export interface IpcCallable {
-  call<T>(method: string, params?: unknown): Promise<T>;
-  disconnect(): Promise<void>;
-}
-
 export interface AdapterDeps {
   /** Returns a connected client, reusing a cached connection while it is healthy. */
   getClient(): Promise<IpcCallable>;
@@ -138,25 +136,27 @@ export interface ConnectionEnv {
   connect(socketPath: string): Promise<IpcCallable>;
 }
 
-const DISCONNECT_MESSAGES: ReadonlySet<string> = new Set([
-  "IPC client is not connected",
-  "IPC connection closed",
-  "IPC connection error",
-]);
-
-/** True when an error is one of IPCClient's transport-dead messages and a reconnect is warranted. */
-export function isDisconnectError(e: unknown): boolean {
-  return e instanceof Error && DISCONNECT_MESSAGES.has(e.message);
-}
-
-/** Wrap a raw client so a transport-dead call invalidates the cache, forcing the next getClient to reconnect. */
+/**
+ * Wrap a raw client so a transport-dead call invalidates the cache, forcing the next getClient to
+ * reconnect.
+ *
+ * The wrapper is what `getClient()` hands out, so it is also what every consumer sees — and the
+ * agent tools need `onNotification` to receive `<agent>.briefReady`. A wrapper that forwarded only
+ * `call`/`disconnect` would leave `supportsNotifications` false on the ONLY object the tools ever
+ * touch, and all ten agent tools would report an incapable transport on a perfectly healthy
+ * connection. It is forwarded conditionally rather than required, so a `ConnectionEnv.connect`
+ * implementation that cannot deliver notifications still yields a usable client for the six
+ * request/response tools.
+ */
 function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCallable {
-  return {
+  const wrapper: IpcCallable & Partial<NotifyingClient> = {
     async call<T>(method: string, params?: unknown): Promise<T> {
       try {
         return await raw.call<T>(method, params);
       } catch (e) {
         if (isDisconnectError(e)) {
+          // `wrapper`, never `raw` — the brief router is keyed on what getClient() returned.
+          failBriefsForClient(wrapper, e);
           invalidate();
           void raw.disconnect().catch(() => {});
         }
@@ -167,6 +167,12 @@ function makeReconnectingClient(raw: IpcCallable, invalidate: () => void): IpcCa
       return raw.disconnect();
     },
   };
+  if (supportsNotifications(raw)) {
+    wrapper.onNotification = (method: string, handler: (params: unknown) => void): void => {
+      raw.onNotification(method, handler);
+    };
+  }
+  return wrapper;
 }
 
 export function createDeps(env: ConnectionEnv): AdapterDeps {
@@ -187,6 +193,21 @@ export function createDeps(env: ConnectionEnv): AdapterDeps {
       throw new GatewayUnavailableError();
     }
     const client = makeReconnectingClient(raw, invalidate);
+    // The `call`-failure hook above only fires when a call fails, and while awaiting a brief there
+    // is no call in flight — a solitary in-flight brief would otherwise sit out the full agent
+    // timeout after the gateway dies. `onClose` fires on an UNEXPECTED transport close only (never
+    // on an ordinary `disconnect()`), at most once per connection, which is what makes it safe to
+    // leave bound with no teardown path.
+    //
+    // The router is keyed on `client` (the wrapper) because that is what getClient() returns, while
+    // onClose lives on `raw`. Passing `raw` here would look up a key that was never inserted, miss
+    // silently, and leave every waiter to time out.
+    if (supportsClose(raw)) {
+      raw.onClose((err: Error) => {
+        failBriefsForClient(client, err);
+        invalidate();
+      });
+    }
     // I29: identify this connection as MCP so the gateway records briefs served over it as egress.
     // Best-effort — an older gateway without `session.declareKind` must not break the adapter.
     try {
@@ -417,18 +438,17 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: "peekWhy",
     description:
-      "Fast why-lens probe for a file or PR URL: returns a compact explanation of why the code is the way it is, drawn from the local relationship graph (authorship, PRs, incidents, decisions). Synchronous — use explainWhy for the full brief.",
-    schema: { fileOrPrUrl: z.string() },
+      "Fast why-lens probe: returns a one-line explanation of why code is the way it is (author, commit, date, subject, PR, ticket), drawn from the local relationship graph. `ref` is a repo-relative `path[:line]` or a bare symbol name. Synchronous — use explainWhy for the full brief.",
+    schema: { ref: z.string() },
     run: (deps, args) =>
       runTool(deps, async (c) =>
-        jsonResult(
-          await c.call("agents.whyPeek", { fileOrPrUrl: optString(args, "fileOrPrUrl") ?? "" }),
-        ),
+        jsonResult(await c.call("agents.whyPeek", { ref: optString(args, "ref") ?? "" })),
       ),
   },
+  ...AGENT_TOOL_SPECS,
 ];
 
-/** Build the MCP server with all seven read-only tools registered. */
+/** Build the MCP server with all read-only tools registered. */
 export function buildMcpServer(deps: AdapterDeps): McpServer {
   const server = new McpServer({ name: "nimbus", version: "0.1.0" });
   for (const s of TOOL_SPECS) {

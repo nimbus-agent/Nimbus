@@ -310,14 +310,24 @@ function spec(name: string) {
 }
 
 describe("TOOL_SPECS", () => {
-  it("exposes exactly the seven read-only tools", () => {
+  it("exposes exactly the seventeen read-only tools", () => {
     expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
+        "assessImpact",
+        "checkResourceUsage",
+        "explainWhy",
+        "findConflicts",
+        "findDecisions",
+        "findExpert",
+        "getCatchup",
         "getConnectorStatus",
         "getDoraMetrics",
+        "getGlossary",
+        "getPeerContext",
         "getRecentDeployments",
         "getRecentIncidents",
         "getRecentPullRequests",
+        "getTeamHuddle",
         "peekWhy",
         "searchIndex",
       ].sort((a, b) => a.localeCompare(b)),
@@ -392,7 +402,7 @@ describe("TOOL_SPECS", () => {
 });
 
 describe("buildMcpServer", () => {
-  it("registers all seven tools without throwing", () => {
+  it("registers all seventeen tools without throwing", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
@@ -607,9 +617,9 @@ test("peekWhy is registered and calls agents.whyPeek", async () => {
   };
   const spec = TOOL_SPECS.find((s) => s.name === "peekWhy");
   expect(spec).toBeDefined();
-  const out = await spec?.run(deps, { fileOrPrUrl: "src/a.ts" });
+  const out = await spec?.run(deps, { ref: "src/a.ts" });
   expect(calls[0]?.method).toBe("agents.whyPeek");
-  expect(calls[0]?.params).toEqual({ fileOrPrUrl: "src/a.ts" });
+  expect(calls[0]?.params).toEqual({ ref: "src/a.ts" });
   expect(out?.isError).toBeUndefined();
   expect(out?.content[0]?.text).toContain("because of PR #412");
 });
@@ -622,4 +632,99 @@ test("peekWhy reports a stopped gateway without throwing", async () => {
   const out = await spec?.run(deps, { fileOrPrUrl: "src/a.ts" });
   expect(out?.isError).toBe(true);
   expect(out?.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+});
+
+test("peekWhy sends `ref` — the key agents.whyPeek's validator actually reads", () => {
+  // `requireWhyParams` reads `ref`; a `fileOrPrUrl` here is rejected -32602 on every real call.
+  expect(Object.keys(spec("peekWhy").schema)).toEqual(["ref"]);
+});
+
+test("the registered tool set is the six index tools plus peekWhy plus ten agents", () => {
+  expect(TOOL_SPECS).toHaveLength(17);
+  const names = new Set(TOOL_SPECS.map((s) => s.name));
+  expect(names.has("searchIndex")).toBe(true);
+  expect(names.has("peekWhy")).toBe(true);
+  expect(names.has("explainWhy")).toBe(true);
+  expect(names.has("runPreflight")).toBe(false);
+});
+
+/** Drain every pending microtask, so a lazily-opened connection is fully established. */
+function flush(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+test("a disconnect on one call fails briefs in flight on the same connection", async () => {
+  let failNext = false;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    async call<T>(method: string): Promise<T> {
+      if (failNext && method === "connector.listStatus") {
+        throw new Error("IPC connection closed");
+      }
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const inFlight = spec("explainWhy").run(deps, { ref: "x" });
+  await flush();
+
+  // A second, failing call on the same connection trips the disconnect branch.
+  failNext = true;
+  await spec("getConnectorStatus").run(deps, {});
+
+  // Resolves well inside the 60 s timeout, because failAll found the WRAPPER in the WeakMap.
+  // Keyed on `raw` instead, this does not fail an assertion — it hangs out the agent timeout and
+  // trips the 5 s budget below. That budget IS the assertion.
+  const out = await inFlight;
+  expect(out.isError).toBe(true);
+  expect(out.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+}, 5000);
+
+test("an unexpected transport close fails a solitary brief in flight", async () => {
+  let fireClose: ((err: Error) => void) | undefined;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    offNotification(_m: string, _h: (p: unknown) => void): void {},
+    onClose(h: (err: Error) => void): void {
+      fireClose = h;
+    },
+    offClose(_h: (err: Error) => void): void {},
+    async call<T>(): Promise<T> {
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const inFlight = spec("explainWhy").run(deps, { ref: "x" });
+  await flush();
+
+  // No second call is made — the connection simply dies. Only onClose can observe this.
+  expect(fireClose).toBeDefined();
+  fireClose?.(new Error("IPC connection closed"));
+
+  const out = await inFlight;
+  expect(out.isError).toBe(true);
+}, 5000);
+
+test("a connection with no onClose still connects (guard's false arm)", async () => {
+  const raw: IpcCallable = {
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+  await expect(deps.getClient()).resolves.toBeDefined();
 });
