@@ -642,3 +642,54 @@ test("dispatchAgentsRpc accepts and retains a caller descriptor", async () => {
   expect(out.kind).toBe("hit");
   expect(ctx.caller.kind).toBe("mcp");
 });
+
+// I29/D22(c) — the MCP brief egress chokepoint. `freshDb()` runs the real migration set
+// (LocalIndex.ensureSchema → V44), so `egress_ledger` is the shipped table, not a fixture copy.
+describe("I29 — MCP-originated agent briefs are ledgered", () => {
+  test("a CLI-originated agents call appends NO egress row", async () => {
+    const db = freshDb();
+    await dispatchAgentsRpc(
+      "agents.expert",
+      { topicOrFile: "x" },
+      { ...makeCtx(db), caller: { clientId: "c1", kind: "cli" as const } },
+    );
+    const n = db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number };
+    expect(n.n).toBe(0);
+  });
+
+  test("a callerless (in-process/test) agents call appends NO egress row", async () => {
+    const db = freshDb();
+    await dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, makeCtx(db));
+    const n = db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number };
+    expect(n.n).toBe(0);
+  });
+
+  test("an MCP-originated agents call appends exactly one egress row", async () => {
+    const db = freshDb();
+    await dispatchAgentsRpc(
+      "agents.expert",
+      { topicOrFile: "x" },
+      { ...makeCtx(db), caller: { clientId: "c1", kind: "mcp" as const } },
+    );
+    const rows = db
+      .query(`SELECT source_type, source_id, method FROM egress_ledger`)
+      .all() as Array<{ source_type: string; source_id: string | null; method: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.source_type).toBe("mcp");
+    expect(rows[0]?.source_id).toBe("c1");
+    expect(rows[0]?.method).toBe("agents.expert");
+  });
+
+  test("the append happens BEFORE the brief work — a failed append emits no brief (fail-closed)", async () => {
+    // Drop the ledger table so the append throws. The dispatch must propagate the error rather
+    // than serve an unrecorded brief; a ledger the brief can outrun is decorative.
+    const db = freshDb();
+    db.exec(`DROP TABLE egress_ledger`);
+    const ctx = { ...makeCtx(db), caller: { clientId: "c1", kind: "mcp" as const } };
+    await expect(
+      dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx),
+    ).rejects.toBeInstanceOf(Error);
+    // Nothing was emitted: no briefReady (or any) notification fired.
+    expect((ctx.notify as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+  });
+});

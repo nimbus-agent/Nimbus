@@ -5,7 +5,9 @@ import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
 import { PairingWindowController } from "./clips/pairing-window.ts";
 import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
+import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
+import { EGRESS_SOURCE_TYPES, MARKER_SOURCE_TYPES } from "./egress/egress-source-type.ts";
 import { egressHead } from "./egress/egress-verify.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
 import { CURRENT_SCHEMA_VERSION } from "./index/local-index.ts";
@@ -1227,10 +1229,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
   });
 
-  test("D22 confines connectors.dispatch to executor.ts and the egress append to egress/*", async () => {
+  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, and the MCP brief append to agents-rpc.ts", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22-connectors-dispatch");
     expect(audit).toContain("D22-egress-append");
+    expect(audit).toContain("D22-mcp-brief-egress");
   });
 
   test("I29: the D22 comment does not claim totality it cannot enforce", async () => {
@@ -1271,6 +1274,70 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  test("I29/D22(c): recordMcpBriefEgress is named by exactly two production files", async () => {
+    // The MCP brief chokepoint is TOTAL only if the appender has one caller. Scanned the same way
+    // as the `appendEgressEntry(` guard above — a `readdir` walk of production `.ts`/`.tsx` under
+    // `packages/gateway/src`, with `relative()` + `sep` so the paths hold up on every platform —
+    // rather than shelling out to `rg`, which is not guaranteed present on a CI runner.
+    //
+    // The BARE identifier is matched, not the call form: a file that merely imports the appender
+    // has already acquired the capability. That is the same regex the production D22 rule (c)
+    // uses, with ONE deliberate difference — the static audit strips comments first, this scan
+    // does not. So naming the appender in a doc comment elsewhere fails HERE and not there. That
+    // asymmetry is the conservative direction and is kept on purpose (it also keeps this guard
+    // free of a comment-stripper of its own to drift); refer to the module path
+    // `egress/mcp-brief-egress.ts` in prose rather than the bare symbol.
+    const dir = resolve(REPO_ROOT, "packages/gateway/src");
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    const namers: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const isSourceFile = entry.name.endsWith(".ts") || entry.name.endsWith(".tsx");
+      const isTestFile = entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx");
+      if (!isSourceFile || isTestFile) continue;
+      const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
+      const abs = resolve(parentDir, entry.name);
+      const contents = await readFile(abs, "utf8");
+      if (contents.includes("recordMcpBriefEgress")) {
+        namers.push(relative(dir, abs).split(sep).join("/"));
+      }
+    }
+    expect(namers.sort()).toEqual(["egress/mcp-brief-egress.ts", "ipc/agents-rpc.ts"]);
+  });
+
+  test("I29: the MCP brief append runs BEFORE the dispatch and is not swallowed", async () => {
+    // Ordering and the absence of a try/catch are the whole property: an append that runs after
+    // the handler, or one whose failure is caught, records a brief that has already been served.
+    const src = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    const appendAt = src.indexOf("recordMcpBriefEgress(ctx.db");
+    const dispatchAt = src.indexOf("dispatchByMethod<AgentsRpcContext>");
+    expect(appendAt).toBeGreaterThan(-1);
+    expect(dispatchAt).toBeGreaterThan(-1);
+    expect(appendAt).toBeLessThan(dispatchAt);
+    expect(src.slice(appendAt, dispatchAt)).not.toContain("catch");
+    // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params.
+    expect(src).toContain('ctx.caller?.kind === "mcp"');
+  });
+
+  test("I29: COVERAGE_CLASSES is exactly the non-marker source types", () => {
+    // The two lists are separate declarations, so a tenth source type can land in one and not the
+    // other. That mismatch is silent: an egress-bearing class with no coverage entry is never
+    // claimed and never noticed. This is the assertion that makes adding a class a deliberate act.
+    // Compared as plain strings: the two arrays have different (deliberately non-overlapping)
+    // literal-union element types, so `toEqual` would not typecheck on the narrow types.
+    const nonMarker: string[] = EGRESS_SOURCE_TYPES.filter((t) => !MARKER_SOURCE_TYPES.has(t));
+    const classes: string[] = [...COVERAGE_CLASSES];
+    expect(classes.sort()).toEqual(nonMarker.sort());
+  });
+
+  test("I29: every coverage class claiming non-none has a landed appender", () => {
+    // `mcp` is per-call because recordMcpBriefEgress ships in the same commit. The others stay none
+    // until theirs do. Raising an entry without its appender is the defect the vector exists to
+    // catch, so widening this expected list is a review moment, not a test to re-bank.
+    const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
+    expect([...claimed].sort()).toEqual(["mcp", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

@@ -20,6 +20,7 @@ import {
   loadNimbusDecisionsFromConfigDir,
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
+import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -547,6 +548,17 @@ export async function dispatchAgentsRpc(
   params: unknown,
   ctx: AgentsRpcContext,
 ): Promise<RpcMissOrHit> {
+  // I29/D22(c): an MCP-originated brief is egress — the gateway synthesises from the private index
+  // and hands the result to whatever model the calling client uses. Append BEFORE any work, and let
+  // a failure propagate: no row, no brief.
+  if (ctx.caller?.kind === "mcp" && method.startsWith("agents.")) {
+    recordMcpBriefEgress(ctx.db, {
+      method,
+      params,
+      clientId: ctx.caller.clientId,
+      now: Date.now(),
+    });
+  }
   return dispatchByMethod<AgentsRpcContext>(method, params, ctx, {
     "agents.expert": handleExpert,
     "agents.impact": handleImpact,

@@ -10,6 +10,7 @@ import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verif
 
 const RICH_COVERAGE = {
   task: "per-call",
+  mcp: "per-call",
   session: "per-call",
   sync: "per-run",
   model: "per-call",
@@ -30,7 +31,9 @@ describe("boot marker", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
-    expect(rows[0]?.sourceId).toBe("model=none;peer=none;session=none;sync=none;task=per-call");
+    expect(rows[0]?.sourceId).toBe(
+      "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call",
+    );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
   });
@@ -46,6 +49,7 @@ describe("boot marker", () => {
     appendBootMarker(db, RICH_COVERAGE, 1_000);
     expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
       task: "per-call", // both non-none
+      mcp: "per-call", // both non-none
       session: "none", // the covering marker (400) saw nothing here
       sync: "none",
       model: "none",
@@ -129,10 +133,17 @@ describe("boot marker", () => {
     // treated as a coverage claim. Append a `task` row that reuses the boot-marker method string
     // and assert it is ignored: the window must stay indeterminate (all-none), exactly as if no
     // marker existed at all.
+    //
+    // The `source_id` below MUST be a COMPLETE, parseable coverage vector (every COVERAGE_CLASSES
+    // member, `mcp` included). If it were missing a class, `parseCoverage` would return null and
+    // the window would read all-none for THAT reason — the assertion would still pass even if the
+    // `source_type = 'boot'` filter regressed, which is precisely the regression this test exists
+    // to catch.
     appendEgressEntry(db, {
       timestamp: 500,
       sourceType: "task",
-      sourceId: "task=per-call;session=per-call;sync=per-call;model=per-call;peer=per-call",
+      sourceId:
+        "mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
       destination: "local",
       method: "egress.boot",
       payloadSummary: "{}",

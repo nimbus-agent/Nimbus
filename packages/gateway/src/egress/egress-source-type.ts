@@ -6,7 +6,7 @@
  * `source_type` IS one of the fields `computeEgressRowHash` hashes, but widening this union later
  * is NOT a chain break: `verifyEgressChain` recomputes each row's hash from that row's OWN STORED
  * column values (`sourceType: r.source_type`, `egress-verify.ts`), never from the current union
- * definition, so adding a ninth TypeScript member changes no stored row and no hash input — every
+ * definition, so adding a TypeScript member changes no stored row and no hash input — every
  * existing row still verifies exactly as before. (What WOULD be a chain break: changing
  * `computeEgressRowHash`'s input set, or rewriting a stored row's values.)
  *
@@ -19,16 +19,22 @@
  * appenders do not exist yet (`boot`, `degraded` arrive with the boot marker; `sync`, `model`, `peer`
  * arrive in later phases).
  *
- * If a ninth class is ever wanted, the answer is NOT to extend this union — it is to reuse
- * `session` with a reserved `method` value, accepting the weaker string-match exclusion.
+ * The union was frozen at eight members in #1038. `mcp` was added deliberately in the
+ * agents-as-MCP-tools work as the ninth and, per `docs/ecosystem-roadmap.md` § "Cross-cutting
+ * decisions to make once", as the taxonomy decision that closes the union. The freeze's own
+ * prescription — reuse `session` with a reserved `method` — was rejected because `session` must go
+ * on claiming `none` coverage until its real appenders (telemetry, updater, JWKS) land, which would
+ * have recorded MCP briefs and disclaimed them in the same breath. A further class still needs an
+ * explicit decision recorded here; it is not a casual append.
  */
 export const EGRESS_SOURCE_TYPES = [
-  "task", // gated connector action (the only appender today)
+  "task", // gated connector action
   "prune", // retention tombstone
   "session", // gateway housekeeping egress (telemetry, updater, JWKS, …)
   "sync", // connector sync run
   "model", // inference + embeddings, local or remote
   "peer", // federated send
+  "mcp", // agent brief served to an MCP-connected client
   "boot", // per-process marker carrying the coverage vector
   "degraded", // lost-append recovery marker
 ] as const;

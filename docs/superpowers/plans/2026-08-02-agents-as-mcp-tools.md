@@ -862,7 +862,7 @@ In `packages/gateway/src/egress/egress-source-type.ts`, add the member:
 
 and **replace** the header's closing paragraph — the one beginning "If a ninth class is ever wanted" — with:
 
-```
+```text
  * The union was frozen at eight members in #1038. `mcp` was added deliberately in the
  * agents-as-MCP-tools work as the ninth and, per `docs/ecosystem-roadmap.md` § "Cross-cutting
  * decisions to make once", as the taxonomy decision that closes the union. The freeze's own
