@@ -26,25 +26,30 @@ description: >
 
 ## File Naming & Location
 
+**Colocation is the default, and it is the majority.** ~843 tests sit next to the code they test as `packages/*/src/**/<module>.test.ts`; ~453 live under a package's `test/` tree. A new unit test for a source module goes **beside that module**, not into `test/unit/`:
+
 ```
-packages/<pkg>/test/
-  unit/
-    <subsystem>/
-      <module>.test.ts          e.g. engine/hitl-executor.test.ts
-  integration/
-    <subsystem>/
-      <module>.test.ts          e.g. db/migration-rollback.test.ts
-  e2e/
-    scenarios/
-      <scenario>.e2e.test.ts    e.g. multi-agent-hitl.e2e.test.ts
+packages/gateway/src/engine/executor.ts
+packages/gateway/src/engine/executor.test.ts        ← here
 ```
 
-UI tests (Vitest):
+Every engine test lives in `packages/gateway/src/engine/` — `packages/gateway/test/unit/` has **no** `engine` subdirectory at all. Its actual subdirectories are `auth`, `config`, `connectors`, `db`, `deployment`, `ipc`, `metrics`, `people`, `preflight`, `sync`, `telemetry`; that tree is for tests that are not about a single source module (multi-module integration, fixture-heavy, or subprocess-driven):
+
+```
+packages/<pkg>/test/
+  unit/<subsystem>/<module>.test.ts        e.g. ipc/deployment-rpc.test.ts
+  integration/<subsystem>/<module>.test.ts e.g. db/migration-v28.test.ts
+  e2e/scenarios/<scenario>.e2e.test.ts     e.g. scenarios/decisions.e2e.test.ts
+```
+
+UI tests (Vitest) are grouped by kind — there are **no** flat files directly under `packages/ui/test/`:
 ```
 packages/ui/test/
-  <Component>.test.tsx          e.g. HitlDialog.test.tsx
-  ipc-client.test.ts
+  components/   e.g. components/GatewayOfflineBanner.test.tsx, components/hitl/HitlPopupPage.test.tsx
+  hooks/  ipc/  layouts/  lib/  pages/  providers/  store/  e2e/
 ```
+
+**Verify before you place a file.** These trees move; `ls` the sibling directory and copy whatever the neighbours do rather than trusting the shape above.
 
 **Rule:** the test file lives in the same package as the code it tests. Never reach across packages in a test.
 
@@ -86,6 +91,7 @@ Test that the `HITL_REQUIRED` set contains what it should, and that the gate fir
 
 ```ts
 import { HITL_REQUIRED, ToolExecutor } from '../../engine/executor.ts';
+import { NULL_EGRESS_SINK } from '../../egress/egress-ledger.ts';
 
 describe('HITL gate', () => {
   it('requires consent for write actions', () => {
@@ -97,14 +103,17 @@ describe('HITL gate', () => {
   });
 
   it('routes a HITL action through the consent gate', async () => {
-    // new ToolExecutor(consent, audit, connectors, delegation?)
-    const exec = new ToolExecutor(consent, audit, connectors);
+    // FIVE required positional params — all of them, in order:
+    //   (consent, audit, connectors, delegation | undefined, egressSink)
+    const exec = new ToolExecutor(consent, audit, connectors, undefined, NULL_EGRESS_SINK);
     const result = await exec.gate({ type: 'email.send', payload: {} });
     // gate() returns "proceed" on approval, or an ActionResult on rejection
     expect(consent.requestApproval).toHaveBeenCalled();
   });
 });
 ```
+
+**The 4th and 5th params are required, not optional.** `delegation` takes an explicit `undefined` when there is none, and `egressSink` became required in #1038 (invariant `I29`) — a test that omits it does not compile. Use `NULL_EGRESS_SINK` (the *named* "this executor performs no egress" sink) when the test is not asserting on ledger rows, and a capturing fake when it is; an omitted optional would have been indistinguishable from forgetting to wire one, which is exactly why the parameter is positional and mandatory. Real call sites to copy: `packages/gateway/src/engine/audit-payload-safety.test.ts:55` and `engine.test.ts:537`.
 
 The audit-before-dispatch ordering is enforced inside `gate()`; see `executor-delegation.test.ts` for the full `ToolExecutor` wiring (consent/audit/connector dependency injection).
 
@@ -113,7 +122,7 @@ The audit-before-dispatch ordering is enforced inside `gate()`; see `executor-de
 Mock the Gateway internals; test request/response serialisation and notification emission:
 
 ```ts
-// packages/gateway/test/unit/ipc/engine-stream.test.ts
+// packages/gateway/src/ipc/engine-ask-stream.test.ts
 it('emits streamToken notifications then streamDone', async () => {
   const { notifications } = setupMockIpcSession();
   mockLlmRouter.setTokens(['hello', ' world']);
@@ -132,7 +141,7 @@ it('emits streamToken notifications then streamDone', async () => {
 ### Tauri UI `ALLOWED_METHODS` (unit — Vitest)
 
 ```ts
-// packages/ui/test/ipc-client.test.ts
+// packages/ui/test/ipc/client.test.ts
 it('rejects vault.get from the frontend', async () => {
   const result = await invoke('rpc_call', { method: 'vault.get', params: { key: 'x' } });
   expect(result.error.code).toBe(-32000); // ERR_METHOD_NOT_ALLOWED
@@ -221,7 +230,7 @@ it('transitions to rate_limited on 429', async () => {
 ### UI Component (Vitest + Testing Library)
 
 ```tsx
-// packages/ui/test/HitlDialog.test.tsx
+// packages/ui/test/components/hitl/HitlPopupPage.test.tsx
 import { render, screen, fireEvent } from '@testing-library/react';
 import { HitlDialog } from '../../src/components/HitlDialog';
 
@@ -267,10 +276,11 @@ cd packages/ui && bunx vitest run
 cd packages/ui && bunx vitest run --coverage
 
 # Specific test file
-bun test packages/gateway/test/unit/engine/hitl-executor.test.ts
+bun test packages/gateway/src/engine/executor.test.ts
 
-# E2E desktop (CI only — requires Tauri WebDriver)
-bun run test:e2e:desktop
+# E2E desktop (CI only — requires a built Tauri app + WebDriver).
+# There is NO test:e2e:desktop script; CI runs the directory directly.
+bun test packages/ui/test/e2e/
 
 # Query latency benchmark (strict mode)
 NIMBUS_RUN_QUERY_BENCH=1 bun test

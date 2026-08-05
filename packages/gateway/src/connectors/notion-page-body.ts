@@ -156,6 +156,48 @@ async function fetchChildrenPage(
   };
 }
 
+/**
+ * One block: append its own text, then descend into it when it has children
+ * the walk is both allowed and able to follow.
+ *
+ * Every early return here was a `continue` in the caller's block loop — a
+ * block the walk has nothing more to do with — so returning is the same skip.
+ * The one that is NOT merely a skip is the depth bound: it also records
+ * `capped`, because text was genuinely left unread.
+ */
+async function collectBlock(
+  deps: NotionBlockFetchDeps,
+  state: WalkState,
+  raw: unknown,
+  depth: number,
+  out: string[],
+): Promise<void> {
+  const block = asRecord(raw);
+  if (block === undefined) {
+    return;
+  }
+  const type = stringField(block, "type");
+  if (type === undefined) {
+    return;
+  }
+  const own = notionBlockOwnText(block);
+  if (own !== "") {
+    out.push(own);
+  }
+  if (block["has_children"] !== true || NOT_FOLLOWED_BLOCK_TYPES.has(type)) {
+    return;
+  }
+  if (depth >= MAX_DEPTH) {
+    state.capped = true;
+    return;
+  }
+  const childId = stringField(block, "id");
+  if (childId === undefined || childId === "") {
+    return;
+  }
+  await collectChildren(deps, state, childId, depth + 1, out);
+}
+
 async function collectChildren(
   deps: NotionBlockFetchDeps,
   state: WalkState,
@@ -174,30 +216,7 @@ async function collectChildren(
     deps.budget.left -= 1;
     const page = await fetchChildrenPage(deps, blockId, cursor, state);
     for (const raw of page.results) {
-      const block = asRecord(raw);
-      if (block === undefined) {
-        continue;
-      }
-      const type = stringField(block, "type");
-      if (type === undefined) {
-        continue;
-      }
-      const own = notionBlockOwnText(block);
-      if (own !== "") {
-        out.push(own);
-      }
-      if (block["has_children"] !== true || NOT_FOLLOWED_BLOCK_TYPES.has(type)) {
-        continue;
-      }
-      if (depth >= MAX_DEPTH) {
-        state.capped = true;
-        continue;
-      }
-      const childId = stringField(block, "id");
-      if (childId === undefined || childId === "") {
-        continue;
-      }
-      await collectChildren(deps, state, childId, depth + 1, out);
+      await collectBlock(deps, state, raw, depth, out);
     }
     if (page.nextCursor === undefined) {
       return;

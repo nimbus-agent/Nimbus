@@ -143,7 +143,7 @@ describeWithFetchRestore("notion-page-body", () => {
       );
     }) as typeof fetch;
     const r = await fetchNotionPageText(deps(), "p1");
-    expect(seen.length).toBe(1);
+    expect(seen).toHaveLength(1);
     expect(r.outcome).toBe("complete");
   });
 

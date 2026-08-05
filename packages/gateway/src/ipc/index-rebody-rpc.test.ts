@@ -214,7 +214,7 @@ describe("dispatchIndexRebodyRpc", () => {
 
     expect(loadSchedulerState(db, "figma")?.cursor).toBeNull();
     const progressEvents = events.filter((e) => e.method === "index.rebodyProgress");
-    expect(progressEvents.length).toBe(1);
+    expect(progressEvents).toHaveLength(1);
     const done = events.find((e) => e.method === "index.rebodyDone");
     expect(done).toBeDefined();
     const payload = done?.params as Record<string, unknown> | undefined;

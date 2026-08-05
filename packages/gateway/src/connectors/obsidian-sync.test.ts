@@ -117,7 +117,7 @@ test("metadata_only depth suppresses note bodies (routed through the depth choke
   const items = db
     .query("SELECT body, body_preview, body_complete FROM item WHERE service = 'obsidian'")
     .all() as Array<{ body: string | null; body_preview: string | null; body_complete: number }>;
-  expect(items.length).toBe(2);
+  expect(items).toHaveLength(2);
   for (const it of items) {
     expect(it.body ?? "").toBe("");
     expect(it.body_preview ?? "").toBe("");

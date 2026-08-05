@@ -26,7 +26,10 @@ export type ReindexResult = {
  * did not.
  */
 function isMissingVecTableError(err: unknown, table: string): boolean {
-  return err instanceof Error && new RegExp(`no such table:\\s*${table}\\b`, "i").test(err.message);
+  return (
+    err instanceof Error &&
+    new RegExp(String.raw`no such table:\s*${table}\b`, "i").test(err.message)
+  );
 }
 
 export async function reindexConnector(input: ReindexInput): Promise<ReindexResult> {

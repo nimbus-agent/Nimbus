@@ -349,7 +349,7 @@ export function createNotionSyncable(options: NotionSyncableOptions): Syncable {
       // A pass stopped by the budget must NOT advance the watermark: pages
       // older than the stopping point are unprocessed, and advancing would
       // skip them forever.
-      const nextW = budgetStopped ? watermark : maxEdited === "" ? watermark : maxEdited;
+      const nextW = budgetStopped || maxEdited === "" ? watermark : maxEdited;
 
       // A multi-pass backfill is otherwise invisible: the sync reports success
       // with hasMore:false every time, so nothing distinguishes "converged"

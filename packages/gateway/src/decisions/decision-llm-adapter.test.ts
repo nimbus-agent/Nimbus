@@ -124,6 +124,60 @@ test("extractDecision still throws on malformed non-null output", async () => {
   ).rejects.toThrow();
 });
 
+// ---------------------------------------------------------------------------
+// Growth-shape regression: the fenced-block extractor.
+//
+// `extractJsonObject`'s fence pattern used to capture the body as a bare lazy
+// `[\s\S]*?` directly after a greedy `\s*`. Both match whitespace, so on a
+// fence followed by a long whitespace run with no closing fence the engine
+// tries every way of splitting that run between them and rescans the remainder
+// each time — Σ(n−i), quadratic. Measured on Bun 1.3 against that exact
+// pattern: 2 KB 0.9 ms, 4 KB 3.6 ms, 8 KB 15 ms, 16 KB 57 ms, 32 KB 220 ms, a
+// clean 4x per doubling. A correctness test cannot see it — the throw is the
+// same either way — so the SHAPE of the curve is what is asserted here.
+// ---------------------------------------------------------------------------
+
+/** Four sizes = three doublings. Linear predicts ~8x end to end, quadratic ~64x. */
+const GROWTH_SIZES = [4_000, 8_000, 16_000, 32_000] as const;
+/** Repeats per size, so the linear timings are milliseconds rather than noise. */
+const GROWTH_REPEATS = 500;
+const GROWTH_MAX_END_TO_END = 16;
+/** The quadratic form blows this at the FIRST size, so a regression fails fast. */
+const GROWTH_PER_SIZE_CEILING_MS = 1000;
+
+test("an unterminated fence followed by whitespace costs linear, not quadratic, time", () => {
+  // No closing fence, so the pattern fails and the raw text is searched for a
+  // JSON object instead — which is the throw path, exercised at every size.
+  const build = (n: number): string => `\`\`\`${" ".repeat(n)}`;
+  expect(() => parseExtraction(build(8))).toThrow("model output was not parseable JSON");
+
+  const timings: number[] = [];
+  for (const n of GROWTH_SIZES) {
+    const raw = build(n);
+    let thrown = 0;
+    const count = (): void => {
+      try {
+        parseExtraction(raw);
+      } catch {
+        thrown += 1;
+      }
+    };
+    count(); // warm the JIT outside the measured batch
+    const startedAt = performance.now();
+    for (let i = 0; i < GROWTH_REPEATS; i += 1) count();
+    const elapsedMs = performance.now() - startedAt;
+    expect(thrown).toBe(GROWTH_REPEATS + 1);
+    expect(elapsedMs).toBeLessThan(GROWTH_PER_SIZE_CEILING_MS);
+    timings.push(elapsedMs);
+  }
+
+  const first = timings[0] ?? 0;
+  const last = timings[timings.length - 1] ?? 0;
+  // Floor the baseline so a fast machine measuring the smallest size near the
+  // clock's resolution cannot manufacture a huge ratio out of noise.
+  expect(last / Math.max(first, 0.5)).toBeLessThan(GROWTH_MAX_END_TO_END);
+});
+
 describe("createDecisionLlm", () => {
   it("returns the raw text from an available local provider", async () => {
     const llm = createDecisionLlm(

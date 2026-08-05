@@ -257,7 +257,7 @@ test("summary downgrades a body: caller to 512 and never claims completeness", (
     body: "x".repeat(20_000),
   });
   const row = read(d, "slack:s1");
-  expect((row.body ?? "").length).toBe(512);
+  expect(row.body ?? "").toHaveLength(512);
   expect(row.body_complete).toBe(0);
   d.close();
 });
@@ -270,7 +270,7 @@ test("full passes a body through at the per-type cap", () => {
     body: "y".repeat(20_000),
   });
   const row = read(d, "slack:f1");
-  expect((row.body ?? "").length).toBe(16_384);
+  expect(row.body ?? "").toHaveLength(16_384);
   expect(row.body_complete).toBe(0); // over cap
   d.close();
 });
@@ -292,7 +292,7 @@ test("an unrecognised depth passes the body through rather than clamping it", ()
     body: "z".repeat(2_000),
   });
   const row = read(d, "slack:u1");
-  expect((row.body ?? "").length).toBe(2_000);
+  expect(row.body ?? "").toHaveLength(2_000);
   expect(row.body_complete).toBe(1);
   d.close();
 });

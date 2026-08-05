@@ -89,13 +89,25 @@ function matchesRepo(
   return false;
 }
 
+/**
+ * Jira's `metadata.key`, else Linear's `metadata.identifier`. No real item
+ * carries both — the two connectors write disjoint metadata — so the
+ * precedence only ever settles a case that cannot occur; it is spelled out
+ * rather than left to a nested ternary so it stays settled.
+ */
+function ticketIdentifier(m: { key?: unknown; identifier?: unknown }): string | null {
+  if (typeof m.key === "string") return m.key;
+  if (typeof m.identifier === "string") return m.identifier;
+  return null;
+}
+
 /** Jira stores `metadata.key`, Linear `metadata.identifier`; both look like `BILLING-123`. */
 function matchesTicketKey(db: Database, sourceItemId: string, service: string): boolean {
   const row = db.query("SELECT service, metadata FROM item WHERE id = ?").get(sourceItemId) as {
     service: string;
     metadata: string | null;
   } | null;
-  if (row === null || row.metadata === null) return false;
+  if (row?.metadata == null) return false;
   if (row.service !== "jira" && row.service !== "linear") return false;
 
   let raw: unknown;
@@ -106,9 +118,7 @@ function matchesTicketKey(db: Database, sourceItemId: string, service: string): 
   }
   if (raw === null || typeof raw !== "object") return false;
 
-  const m = raw as { key?: unknown; identifier?: unknown };
-  const ident =
-    typeof m.key === "string" ? m.key : typeof m.identifier === "string" ? m.identifier : null;
+  const ident = ticketIdentifier(raw as { key?: unknown; identifier?: unknown });
   if (ident === null) return false;
 
   const prefix = ident.split("-")[0] ?? "";

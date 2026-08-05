@@ -46,19 +46,52 @@ function parseMinConfidence(raw: string): number {
   return n;
 }
 
+type BooleanFlagName = "explain" | "json" | "refresh" | "rebuild" | "yes";
+
+/**
+ * The value-less flags, each naming the boolean it sets.
+ *
+ * A `Map`, not an object literal: an object lookup inherits `Object.prototype`,
+ * so `args = ["constructor"]` would resolve to a truthy value and be accepted
+ * as a flag instead of rejected as an unexpected argument.
+ */
+const BOOLEAN_FLAGS: ReadonlyMap<string, BooleanFlagName> = new Map([
+  ["--explain", "explain"],
+  ["--json", "json"],
+  ["--refresh", "refresh"],
+  ["--rebuild", "rebuild"],
+  ["--yes", "yes"],
+]);
+
+/**
+ * Everything the loop below does not recognise. `--help`/`-h` is a request for
+ * the usage text rather than an error in kind, but both leave through a throw,
+ * so the CLI's single "print the message, exit non-zero" path handles them.
+ */
+function rejectUnrecognisedArg(a: string | undefined): never {
+  if (a === "--help" || a === "-h") {
+    throw new Error(USAGE);
+  }
+  if (typeof a === "string" && a.startsWith("--")) {
+    throw new Error(`Unknown flag: ${a}\n${USAGE}`);
+  }
+  throw new Error(`Unexpected argument: ${String(a)}\n${USAGE}`);
+}
+
 export function parseDecisionsArgs(args: string[]): DecisionsCliArgs {
   let since = DEFAULT_SINCE;
   let service: string | undefined;
   let minConfidence: number | undefined;
-  let explain = false;
-  let json = false;
-  let refresh = false;
-  let rebuild = false;
-  let yes = false;
+  const flags = { explain: false, json: false, refresh: false, rebuild: false, yes: false };
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--since") {
+    // `?? ""` is not a key, so a hole in `args` falls through to the same
+    // "unexpected argument" rejection it always did.
+    const boolFlag = BOOLEAN_FLAGS.get(a ?? "");
+    if (boolFlag !== undefined) {
+      flags[boolFlag] = true;
+    } else if (a === "--since") {
       since = flagValue(args, i, "--since");
       i += 1;
     } else if (a === "--service") {
@@ -67,26 +100,12 @@ export function parseDecisionsArgs(args: string[]): DecisionsCliArgs {
     } else if (a === "--min-confidence") {
       minConfidence = parseMinConfidence(flagValue(args, i, "--min-confidence"));
       i += 1;
-    } else if (a === "--explain") {
-      explain = true;
-    } else if (a === "--json") {
-      json = true;
-    } else if (a === "--refresh") {
-      refresh = true;
-    } else if (a === "--rebuild") {
-      rebuild = true;
-    } else if (a === "--yes") {
-      yes = true;
-    } else if (a === "--help" || a === "-h") {
-      throw new Error(USAGE);
-    } else if (typeof a === "string" && a.startsWith("--")) {
-      throw new Error(`Unknown flag: ${a}\n${USAGE}`);
     } else {
-      throw new Error(`Unexpected argument: ${String(a)}\n${USAGE}`);
+      rejectUnrecognisedArg(a);
     }
   }
 
-  if (refresh && rebuild) {
+  if (flags.refresh && flags.rebuild) {
     throw new Error(`--refresh and --rebuild cannot be combined\n${USAGE}`);
   }
 
@@ -94,11 +113,7 @@ export function parseDecisionsArgs(args: string[]): DecisionsCliArgs {
     sinceMs: parseDurationToMs(since),
     ...(service === undefined ? {} : { service }),
     ...(minConfidence === undefined ? {} : { minConfidence }),
-    explain,
-    json,
-    refresh,
-    rebuild,
-    yes,
+    ...flags,
   };
 }
 

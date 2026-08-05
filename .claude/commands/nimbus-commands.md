@@ -34,8 +34,19 @@ bun run test:e2e:cli                      # E2E CLI scenarios
 cd packages/ui && bunx vitest run                     # UI components (Vitest, separate runner)
 cd packages/ui && bunx vitest run --coverage          # UI with coverage
 
-bun run test:ci                           # full CI parity — same sequence as .github/workflows/_test-suite.yml
+bun run test:ci                           # the TEST SUITE only — same sequence as .github/workflows/_test-suite.yml
 ```
+
+## Pre-flight (what to actually run before pushing)
+
+**`test:ci` is not the full gate set — `preflight` is.** `test:ci` is `bun scripts/run-tests.ts`: the test suite and nothing else. `preflight` is `bun scripts/preflight.ts`, which drives the gate manifest in `scripts/lib/preflight-gates.ts` (28 gates today: 24 `tier: "fast"` + 4 `tier: "full"`, plus `CI_ONLY_GATES` that preflight intentionally skips). Running only `test:ci` is the historical #1 cause of PRs that fail on gates the author never ran locally.
+
+```bash
+bun run preflight                         # full CI parity — every gate in PREFLIGHT_GATES
+bun run preflight:fast                    # the 24 fast static gates (~2-3 min); catches most PR failures
+```
+
+Derive gate commands from `PREFLIGHT_GATES` rather than retyping them — several gates are no-ops without their exact flags (`audit:any` without `--check` always exits 0). Depth: the `nimbus-preflight` skill.
 
 ## Coverage gates (enforced in CI)
 
@@ -219,13 +230,45 @@ nimbus lan revoke <peerId>
 nimbus lan remove <peerId>
 ```
 
+### First run
+
+```bash
+nimbus init [--no-sync]                   # index the git repo in the CWD — no credentials, no API key, no LLM
+```
+
+Appends a `[[filesystem.roots]]` block to `nimbus.toml` (never rewrites; backs up to `nimbus.toml.bak`), starts the Gateway, syncs the `filesystem` connector, then prints a real `file:line` from your own repo to try with `nimbus why`. Idempotent.
+
 ### Phase 5 T3 — Team Intelligence built-in agents
 
 ```bash
-nimbus expert <topic-or-file>             # IPC: agents.expert;  emits agents.expert.briefReady
-nimbus impact <file-or-PR-url>            # IPC: agents.impact;  emits agents.impact.briefReady
-nimbus catchup [--since <duration>]       # IPC: agents.catchup; emits agents.catchup.briefReady
+nimbus expert <topic-or-file>             # IPC: agents.expert;  emits expert.briefReady
+nimbus impact <file-or-PR-url>            # IPC: agents.impact;  emits impact.briefReady
+nimbus catchup [--since <duration>]       # IPC: agents.catchup; emits catchup.briefReady
 ```
+
+The notification prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`.
+
+### Spine S1 — implicit-knowledge triad
+
+```bash
+nimbus why <ref> [--line <n>] [--peek] [--json]                                    # IPC: agents.why / agents.whyPeek
+nimbus glossary [<term>] [--limit <n>] [--json] [--refresh | --rebuild [--yes]]    # IPC: agents.glossary; passes via glossary.refresh/rebuild
+nimbus decisions [--since <dur>] [--service <name>] [--min-confidence <0..1>] [--explain] [--json] [--refresh | --rebuild [--yes]]
+```
+
+The `USAGE` constant in each command file (`packages/cli/src/commands/{glossary,decisions}.ts`) is canonical — copy it, do not reassemble it from the flag parser. `nimbus glossary` **hard-rejects** an unrecognised flag rather than ignoring it. `--refresh`/`--rebuild` drive a long-running, write-class pass (`glossary.*` / `decisions.*`), are mutually exclusive, and `--rebuild` needs `--yes`; both namespaces are LAN-forbidden and not Tauri-exposed.
+
+### Index maintenance
+
+```bash
+nimbus index add <path>
+nimbus index reembed --model <id> [--service <s>] [--item-type <t>] [--dry-run | --yes] [--json]   # local recompute
+nimbus index rebody --dry-run                                 # per-service pending body_complete = 0 counts; no network call
+nimbus index rebody --service <name> --yes [--limit N] [--json]
+nimbus index regraph [--json]                                 # re-run the graph populator over existing rows; idempotent
+```
+
+**`rebody` is not a local recompute.** It clears a connector's sync watermark and lets the sync run from scratch — real outbound API traffic against the owner's credentials and rate-limit quota. Neither `--dry-run` nor `--yes` ⇒ it makes no IPC call at all and just prints the plan. Depth: the `nimbus-index-body-depth` skill.
 
 ### Phase 5 T4 — CI/CD data layer
 

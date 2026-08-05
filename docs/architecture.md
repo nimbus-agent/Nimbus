@@ -1,7 +1,7 @@
 # Nimbus Architecture
 
 **Version:** 1.0
-**Runtime:** Bun v1.2+ / TypeScript 6.x (strict)
+**Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
 **Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants through I30 (I28 reserved); schema V49.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
@@ -1077,6 +1077,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | 6b | `preflight` | `nimbus preflight <ref> --namespace <ns> [--strict] [--json]` | `agents.preflight` | ✅ Shipped 2026-06-12 — blast-radius preflight over a peer namespace before a change lands (`nimbus preflight approve <request-id>` responds to a federated request); read-only |
 | S1 | `why` | `nimbus why <ref> [--line <n>] [--peek] [--json]` | `agents.why` / `agents.whyPeek` | ✅ Shipped 2026-07-24 — six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, plus a sub-300ms `--peek` one-liner; on-demand root-fenced cached single-line `git blame` (not a connector call); emits `why.briefReady` |
 | S1 | `glossary` | `nimbus glossary [<term>] [--limit <n>] [--json] [--refresh \| --rebuild [--yes]]` | `agents.glossary` (read); `glossary.refresh` / `glossary.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-07-30, LLM wiring + `--refresh`/`--rebuild` 2026-07-31, manual term authoring 2026-08-01 — two-lane brief over a materialized `glossary_term` table (V46): term resolution (exact → synonym → near-miss, with authored terms sorted first) and coverage stats; the extraction pass consolidates via a local LLM when configured and available, runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; a `[glossary.terms]`/`[glossary.synonyms]` pre-pass upserts authored definitions with `definition_source='manual'`, exempt from demotion and veto but not from the statistics sweep; emits `glossary.briefReady` |
+| S1 | `decisions` | `nimbus decisions [--since <duration>] [--service <name>] [--min-confidence <0..1>] [--explain] [--json] [--refresh \| --rebuild [--yes]]` | `agents.decisions` (read); `decisions.refresh` / `decisions.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-02 — the third member of the implicit-knowledge triad, after `why` and `glossary`: recovers "we decided X because Y, alternatives were Z" statements buried in chat / wiki / issue prose and corroborates each against downstream PRs, commits and ADRs already in the Phase 3 relationship graph; the brief is a chronological, confidence-scored list read straight from the materialized `decision_record` table (V47) — no model call on the read path; the extraction pass (discover → extract → corroborate) runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; emits `decisions.briefReady` |
 | 7 | `excellence` | `nimbus excellence [--service \| --team]` | `agents.excellence` | Planned — parallel sub-agents over service catalog, DORA, feature flags, recent activity |
 | 8 | `security` | `nimbus security <repo\|service>` | `agents.security` | Planned — vulns, CVEs, secrets, IaC misconfigs, license issues for a repo or service |
 | 8 | `posture` | `nimbus posture <cloud-account\|cluster>` | `agents.posture` | Planned — CSPM findings + IaC drift + over-privileged identities + exposure ranked by exploitability × blast radius |
@@ -1309,6 +1310,26 @@ const streamReq: JSONRPCRequest = {
 //   Both glossary.refresh / glossary.rebuild: write-class (rebuild is destructive), so the whole
 //   `glossary` namespace is LAN-forbidden (I5) and NEITHER is in Tauri's ALLOWED_METHODS (I7) —
 //   local/CLI-only, unlike the read-only agents.glossary above.
+//
+// Phase 6 S1 surfaces — decisions agent (implicit ADR extractor; V47 `decision_record` /
+// `decision_evidence` / `decision_pass_state`):
+// agents.decisions  — async, returns { sessionId } immediately, emits decisions.briefReady /
+//   decisions.briefError; renderer-exposed (Tauri count 103).
+//   Read-only, never HITL, never `connectors.dispatch` — zero `egress_ledger` rows.
+// decisions.refresh — drives an on-demand extraction pass now (`nimbus decisions --refresh`);
+//   long-running job via LongRunningJobRegistry, returns { jobId } and emits decisions.passDone /
+//   decisions.passError. Unlike glossary there is NO decisions.passProgress payload in practice:
+//   `DecisionRefresher.run()` carries no `onProgress` hook, so the registry's progress channel has
+//   nothing to relay. The "already running" guard lives inside `run()` and is async, so a caller
+//   can receive { jobId } and then an immediate decisions.passError (ERR_DECISIONS_PASS_RUNNING),
+//   rather than never receiving a jobId at all as with glossary.
+// decisions.rebuild — same job shape, but clears the decision store — including every `vetoed`
+//   row — resets the watermark and re-mines from scratch (`nimbus decisions --rebuild [--yes]`).
+//   Both decisions.refresh / decisions.rebuild: write-class (rebuild is destructive), so the whole
+//   `decisions` namespace is LAN-forbidden (I5) and NEITHER is in Tauri's ALLOWED_METHODS (I7) —
+//   asserted by name, not by count — local/CLI-only, unlike the read-only agents.decisions above.
+//   Both exist only when `[decisions].enabled`; otherwise the refresher is never constructed and
+//   the methods surface as "Method not found".
 ```
 
 ### AbortController scope in `engine.cancelStream`

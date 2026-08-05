@@ -36,7 +36,7 @@ canonical_url }`.
 
 `sonarqube.url` defaults to `https://sonarcloud.io`. Self-hosted
 SonarQube users supply their own URL via that vault key — see
-[`docs/sandbox.md`](../../../../docs/sandbox.md) for the Task 14
+[`docs/sandbox.md`](../../../docs/sandbox.md) for the Task 14
 runtime-merge follow-up that will allow the sandbox's network allow-list
 to extend beyond `sonarcloud.io` at runtime; until then, self-hosted
 syncs run with the broader manifest network permission.

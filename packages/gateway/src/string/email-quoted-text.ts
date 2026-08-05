@@ -14,6 +14,15 @@
  */
 
 /**
+ * The three attribution shapes, one pattern each rather than a single
+ * `^\s*(en|de|fr)` alternation.
+ *
+ * Splitting is behaviour-preserving — `^\s*(A|B|C)` and "A or B or C, each
+ * carrying its own `^\s*`" accept exactly the same lines, and this is only
+ * ever used through `.test()` — but the combined form scored 29 on the
+ * regex-complexity gate (max 20) purely from wrapping a three-way alternation
+ * around six quantifiers. Each language is legible on its own line here.
+ *
  * Every `.+` is bounded to 400 chars, consistently across all three
  * alternatives. The German alternative has two unbounded `.+` separated by a
  * literal (`schrieb`), which backtracks quadratically on a long attacker-
@@ -23,8 +32,10 @@
  * than 400 chars simply stops matching, which only means it's a very unusual
  * attribution line and is not one of this heuristic's target cases anyway.
  */
-const ATTRIBUTION_RE =
-  /^\s*(on\s+.{1,400}\bwrote:\s*$|am\s+.{1,400}\bschrieb\s+.{1,400}:\s*$|le\s+.{1,400}\ba\s+écrit\s*:\s*$)/i;
+const ATTRIBUTION_EN_RE = /^\s*on\s+.{1,400}\bwrote:\s*$/i;
+const ATTRIBUTION_DE_RE = /^\s*am\s+.{1,400}\bschrieb\s+.{1,400}:\s*$/i;
+const ATTRIBUTION_FR_RE = /^\s*le\s+.{1,400}\ba\s+écrit\s*:\s*$/i;
+
 const ORIGINAL_MESSAGE_RE = /^\s*-{2,}\s*original message\s*-{2,}\s*$/i;
 /**
  * The Outlook horizontal rule that precedes a quoted header block.
@@ -61,10 +72,17 @@ const HEADER_FIELD_RE = /^\s*(from|sent|to|cc|subject|date)\s*:\s*\S/i;
  * everything after it that the walk also treats as marker/blank) into the
  * "quoted tail", which can delete authored content that never was quoted.
  */
+/** True for an attribution line in any of the three supported languages. */
+function isAttributionLine(line: string): boolean {
+  return (
+    ATTRIBUTION_EN_RE.test(line) || ATTRIBUTION_DE_RE.test(line) || ATTRIBUTION_FR_RE.test(line)
+  );
+}
+
 function isMarker(line: string, headerish: boolean, dividerBelowQualifies: boolean): boolean {
   return (
     QUOTE_RE.test(line) ||
-    ATTRIBUTION_RE.test(line) ||
+    isAttributionLine(line) ||
     ORIGINAL_MESSAGE_RE.test(line) ||
     (DIVIDER_RE.test(line) && dividerBelowQualifies) ||
     SIGNATURE_RE.test(line) ||
@@ -149,6 +167,33 @@ const ATTRIBUTION_MAX_WRAP = 2;
  */
 type AnalysisLine = { readonly text: string; readonly origIndex: number };
 
+/**
+ * Pull up to `ATTRIBUTION_MAX_WRAP` continuation lines onto the opener at
+ * `start`, stopping at a blank line, a quote line, or the closer itself.
+ *
+ * `consumed: 0` means nothing was joined, which is what tells the caller to
+ * leave the opener exactly as it found it.
+ */
+function joinContinuationLines(
+  lines: readonly string[],
+  start: number,
+): { joined: string; consumed: number } {
+  let joined = lines[start] ?? "";
+  let consumed = 0;
+  while (consumed < ATTRIBUTION_MAX_WRAP && start + consumed + 1 < lines.length) {
+    const next = lines[start + consumed + 1] ?? "";
+    if (next.trim() === "" || QUOTE_RE.test(next)) {
+      break;
+    }
+    consumed += 1;
+    joined = `${joined} ${next.trim()}`;
+    if (ATTRIBUTION_CLOSER_RE.test(next)) {
+      break;
+    }
+  }
+  return { joined, consumed };
+}
+
 function joinWrappedAttributions(lines: readonly string[]): AnalysisLine[] {
   const out: AnalysisLine[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -157,19 +202,7 @@ function joinWrappedAttributions(lines: readonly string[]): AnalysisLine[] {
       out.push({ text: line, origIndex: i });
       continue;
     }
-    let joined = line;
-    let consumed = 0;
-    while (consumed < ATTRIBUTION_MAX_WRAP && i + consumed + 1 < lines.length) {
-      const next = lines[i + consumed + 1] ?? "";
-      if (next.trim() === "" || QUOTE_RE.test(next)) {
-        break;
-      }
-      consumed += 1;
-      joined = `${joined} ${next.trim()}`;
-      if (ATTRIBUTION_CLOSER_RE.test(next)) {
-        break;
-      }
-    }
+    const { joined, consumed } = joinContinuationLines(lines, i);
     if (consumed > 0 && ATTRIBUTION_CLOSER_RE.test(joined)) {
       out.push({ text: joined, origIndex: i });
       i += consumed;
@@ -178,6 +211,119 @@ function joinWrappedAttributions(lines: readonly string[]): AnalysisLine[] {
     }
   }
   return out;
+}
+
+/**
+ * Walk backwards over everything that could belong to a quoted tail, and
+ * return the index the trailing block starts at (`lines.length` when the body
+ * does not end in one at all).
+ */
+function tailWalkStart(
+  lines: readonly string[],
+  headerish: readonly boolean[],
+  dividerBelowQualifies: readonly boolean[],
+): number {
+  let start = lines.length;
+  while (start > 0) {
+    const line = lines[start - 1] ?? "";
+    if (
+      line.trim() === "" ||
+      isMarker(line, headerish[start - 1] === true, dividerBelowQualifies[start - 1] === true)
+    ) {
+      start -= 1;
+      continue;
+    }
+    break;
+  }
+  return start;
+}
+
+/**
+ * W: the walk-derived cut index, valid only when the walk found a genuine
+ * trailing block — not "nothing at the end" (start === lines.length) and
+ * not "the whole body is quoted" (start === 0) — and that block's first
+ * real line (skipping leading blanks) is itself a marker.
+ */
+function walkCutIndex(
+  analysis: readonly AnalysisLine[],
+  lines: readonly string[],
+  headerish: readonly boolean[],
+  dividerBelowQualifies: readonly boolean[],
+  originalLength: number,
+): number | undefined {
+  const start = tailWalkStart(lines, headerish, dividerBelowQualifies);
+  if (start === lines.length || start === 0) {
+    return undefined;
+  }
+  // The tail must BEGIN with a real marker, not merely blank lines.
+  let firstIdx = start;
+  while (firstIdx < lines.length && (lines[firstIdx] ?? "").trim() === "") {
+    firstIdx += 1;
+  }
+  if (
+    firstIdx < lines.length &&
+    isMarker(
+      lines[firstIdx] ?? "",
+      headerish[firstIdx] === true,
+      dividerBelowQualifies[firstIdx] === true,
+    )
+  ) {
+    return analysis[start]?.origIndex ?? originalLength;
+  }
+  return undefined;
+}
+
+/**
+ * T: the LAST original line matching a TERMINAL marker. Unlike `>` and
+ * attribution lines, an -----Original Message----- or a `-- ` signature
+ * delimiter by their nature run to the END of the message — whatever
+ * follows is quoted original or a signature, not the author's prose — even
+ * when that trailing content (a lone `From:` line, a signature body like a
+ * name/title) is itself neither blank nor a marker, and so is invisible to
+ * the backward walk above. Scanned over the ORIGINAL lines, not the joined
+ * analysis lines — the join is analysis-only.
+ *
+ * An underscore divider is terminal only CONDITIONALLY: it is also an
+ * ordinary formatting idiom, so it must actually be followed by the quoted
+ * header block it claims to introduce. The answer for EVERY line is
+ * precomputed in one suffix pass (`quotedBlockBelowFlags`) so this loop
+ * stays O(n) — consulting it per divider instead would be quadratic when no
+ * divider qualifies and the loop therefore never breaks.
+ */
+function terminalCutIndex(original: readonly string[]): number | undefined {
+  const originalHeaderish = headerBlockFlags(original);
+  const quotedBelow = quotedBlockBelowFlags(original, originalHeaderish);
+  for (let i = original.length - 1; i >= 0; i -= 1) {
+    const line = original[i] ?? "";
+    const terminal =
+      ORIGINAL_MESSAGE_RE.test(line) ||
+      SIGNATURE_RE.test(line) ||
+      (DIVIDER_RE.test(line) && quotedBelow[i] === true);
+    if (terminal) {
+      return i;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Cut at the EARLIER of the two candidates when both exist: the smaller
+ * index is always at least as conservative as either mechanism alone, so a
+ * currently-correct walk cut never regresses just because a terminal
+ * marker also happens to be present further down (e.g. the underscore
+ * divider, which the walk already reaches before the divider line itself).
+ */
+function earlierCut(
+  walkCut: number | undefined,
+  terminalCut: number | undefined,
+): number | undefined {
+  if (walkCut === undefined) {
+    return terminalCut;
+  }
+  if (terminalCut === undefined) {
+    return walkCut;
+  }
+  return Math.min(walkCut, terminalCut);
 }
 
 export function stripQuotedTail(body: string): string {
@@ -198,92 +344,30 @@ export function stripQuotedTail(body: string): string {
   // attribution can shift those indices apart.
   const dividerBelowQualifies = quotedBlockBelowFlags(lines, headerish);
 
-  // Walk backwards over everything that could belong to a quoted tail.
-  let start = lines.length;
-  while (start > 0) {
-    const line = lines[start - 1] ?? "";
-    if (
-      line.trim() === "" ||
-      isMarker(line, headerish[start - 1] === true, dividerBelowQualifies[start - 1] === true)
-    ) {
-      start -= 1;
-      continue;
-    }
-    break;
-  }
-
-  // W: the walk-derived cut index, valid only when the walk found a genuine
-  // trailing block — not "nothing at the end" (start === lines.length) and
-  // not "the whole body is quoted" (start === 0) — and that block's first
-  // real line (skipping leading blanks) is itself a marker.
-  let walkCut: number | undefined;
-  if (start !== lines.length && start !== 0) {
-    // The tail must BEGIN with a real marker, not merely blank lines.
-    let firstIdx = start;
-    while (firstIdx < lines.length && (lines[firstIdx] ?? "").trim() === "") {
-      firstIdx += 1;
-    }
-    if (
-      firstIdx < lines.length &&
-      isMarker(
-        lines[firstIdx] ?? "",
-        headerish[firstIdx] === true,
-        dividerBelowQualifies[firstIdx] === true,
-      )
-    ) {
-      walkCut = analysis[start]?.origIndex ?? original.length;
-    }
-  }
-
-  // T: the LAST original line matching a TERMINAL marker. Unlike `>` and
-  // attribution lines, an -----Original Message----- or a `-- ` signature
-  // delimiter by their nature run to the END of the message — whatever
-  // follows is quoted original or a signature, not the author's prose — even
-  // when that trailing content (a lone `From:` line, a signature body like a
-  // name/title) is itself neither blank nor a marker, and so is invisible to
-  // the backward walk above. Scanned over the ORIGINAL lines, not the joined
-  // analysis lines — the join is analysis-only.
-  //
-  // An underscore divider is terminal only CONDITIONALLY: it is also an
-  // ordinary formatting idiom, so it must actually be followed by the quoted
-  // header block it claims to introduce. The answer for EVERY line is
-  // precomputed in one suffix pass (`quotedBlockBelowFlags`) so this loop
-  // stays O(n) — consulting it per divider instead would be quadratic when no
-  // divider qualifies and the loop therefore never breaks.
-  const originalHeaderish = headerBlockFlags(original);
-  const quotedBelow = quotedBlockBelowFlags(original, originalHeaderish);
-  let terminalCut: number | undefined;
-  for (let i = original.length - 1; i >= 0; i -= 1) {
-    const line = original[i] ?? "";
-    const terminal =
-      ORIGINAL_MESSAGE_RE.test(line) ||
-      SIGNATURE_RE.test(line) ||
-      (DIVIDER_RE.test(line) && quotedBelow[i] === true);
-    if (terminal) {
-      terminalCut = i;
-      break;
-    }
-  }
-
-  // Cut at the EARLIER of the two candidates when both exist: the smaller
-  // index is always at least as conservative as either mechanism alone, so a
-  // currently-correct walk cut never regresses just because a terminal
-  // marker also happens to be present further down (e.g. the underscore
-  // divider, which the walk already reaches before the divider line itself).
-  let cutAt: number | undefined;
-  if (walkCut !== undefined && terminalCut !== undefined) {
-    cutAt = Math.min(walkCut, terminalCut);
-  } else if (walkCut !== undefined) {
-    cutAt = walkCut;
-  } else {
-    cutAt = terminalCut;
-  }
+  const cutAt = earlierCut(
+    walkCutIndex(analysis, lines, headerish, dividerBelowQualifies, original.length),
+    terminalCutIndex(original),
+  );
 
   if (cutAt === undefined) {
     // No trailing block at all, or the whole body is quoted — never return empty.
     return body;
   }
 
-  const kept = original.slice(0, cutAt).join("\n").replace(/\s+$/, "");
+  // `trimEnd()`, deliberately NOT `.replace(/\s+$/, "")`. `\s+$` has no start
+  // anchor, so a backtracking engine restarts the greedy `\s+` at EVERY
+  // position of a whitespace run and re-fails the `$` check after each —
+  // Σ(n−i), quadratic in the run length, on remote-attacker-controlled text
+  // that reaches here synchronously from `gmail/api.ts` and `outlook-sync.ts`
+  // before any body cap applies. (Measured on Bun 1.3: `/\s+$/.test()` really
+  // is quadratic on that shape — 4 KB 5.6 ms, 8 KB 24 ms, 16 KB 94 ms, 32 KB
+  // 380 ms — while `String.replace` with the same pattern happens to hit a
+  // JSC fast path and stays linear. The guarantee must not rest on an engine
+  // optimisation that a `.test()`/`.exec()` refactor would silently lose.)
+  // `trimEnd` strips exactly the same character set — JS `\s` and the
+  // ECMAScript trim set are both WhiteSpace ∪ LineTerminator — in one
+  // backward scan, so this is a pure shape change. See the growth-ratio
+  // regression test in `email-quoted-text.test.ts`.
+  const kept = original.slice(0, cutAt).join("\n").trimEnd();
   return kept === "" ? body : kept;
 }

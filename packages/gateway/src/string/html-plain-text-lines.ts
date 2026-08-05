@@ -63,9 +63,26 @@ import { stripHtmlTagsToSpaces } from "./html-plain-text.ts";
  * very long unterminated attribute, and many long unterminated attributes)
  * and confirmed sub-millisecond at every size tested, see
  * `html-plain-text-lines.test.ts`'s ReDoS regression test.
+ *
+ * The four alternatives are named separately and composed rather than written
+ * as one line: the inlined form scored 36 on the regex-complexity gate (max
+ * 20), and the `[^<>]` argument above had to be re-read out of three places to
+ * be checked. The composed pattern is character-for-character what the literal
+ * was — the alternation order, which the `</li><li>` note above depends on, is
+ * the order of the array.
  */
-const BLOCK_BOUNDARY_RE =
-  /<\/li\s*>\s*<li(?:\s[^<>]*)?>|<\/(?:p|div|tr|li|h[1-6]|blockquote)\s*>|<br(?:\s[^<>]*)?\/?>|<li(?:\s[^<>]*)?>/gi;
+/** A space then anything up to this tag's `>` — the `[^<>]*` bound is the ReDoS argument above. */
+const TAG_ATTRS = String.raw`(?:\s[^<>]*)?`;
+/** `</li>` immediately followed by the next `<li ...>` — matched as ONE unit. */
+const LI_PAIR = String.raw`</li\s*>\s*<li${TAG_ATTRS}>`;
+/** A closing block-level tag. */
+const BLOCK_CLOSE = String.raw`</(?:p|div|tr|li|h[1-6]|blockquote)\s*>`;
+/** `<br>`, `<br/>`, `<br />`. (No `String.raw`: the literal parts carry no escape.) */
+const LINE_BREAK = `<br${TAG_ATTRS}/?>`;
+/** A standalone opening `<li ...>`, for the frequently-unclosed real-world case. */
+const LI_OPEN = `<li${TAG_ATTRS}>`;
+
+const BLOCK_BOUNDARY_RE = new RegExp([LI_PAIR, BLOCK_CLOSE, LINE_BREAK, LI_OPEN].join("|"), "gi");
 
 /**
  * Sections whose TEXT is markup, not prose.
@@ -196,7 +213,7 @@ const STRAY_LT_RE = /<(?![A-Za-z/!?])/g;
  * than a guess, and the five XML predefined names plus `&nbsp;` plus numeric
  * references cover what real mail actually carries.
  */
-const ENTITY_RE = /&(?:#(?:[xX]([0-9a-fA-F]{1,6})|([0-9]{1,7}))|([a-zA-Z]{2,8}));/g;
+const ENTITY_RE = /&(?:#(?:[xX]([0-9a-fA-F]{1,6})|(\d{1,7}))|([a-zA-Z]{2,8}));/g;
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
@@ -257,7 +274,7 @@ function collapseBlankLineRuns(lines: readonly string[]): string[] {
   while (out.length > 0 && out[0] === "") {
     out.shift();
   }
-  while (out.length > 0 && out[out.length - 1] === "") {
+  while (out.length > 0 && out.at(-1) === "") {
     out.pop();
   }
   return out;
