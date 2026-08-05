@@ -18,6 +18,13 @@ description: >
 
 **`bun run test:ci` runs only the test suite — it is NOT the full gate set.** `preflight` is. The historical habit of running just `test:ci` is the #1 cause of PRs that fail on gates the author never ran locally.
 
+## When your local green still doesn't match CI
+
+- `bun run verify:docker` — runs the manifest's **fast**-tier gates inside `oven/bun:1.3` (the CI bun) at `/src`, a normal path. Reach for it when a gate is green locally for a reason that isn't correctness: a path exclusion (a worktree under `.claude/` excluded itself from Biome) or an OS difference. `--full` adds build + `test:ci` + coverage floor; `--rebuild` refreshes the cached image after a `BASE_IMAGE`/apt change.
+- `bun run verify:pr` — reads the PR's real check state via `gh` and refuses to call a **conflicted or still-pending** PR green. A merge-conflicting PR runs no `pull_request` workflows at all and looks passing.
+- `bun run typecheck:tests` — typechecks `packages/{gateway,ui}/test/**`, which no package's tsconfig `include` covers, so plain `typecheck` is blind to them (#1038). Ratchets against `docs/structure-audit/typecheck-tests-baseline.json`: only NEW errors fail. Part of `preflight:fast`; also runs in the ubuntu PR gate.
+- `bun run typecheck:tests:update-baseline` — rewrite that baseline. Run it when you legitimately add debt, and when you **pay debt down** (the ratchet fails on an improvement so the slack gets banked rather than left as future allowance). Review the diff; it must never grow silently.
+
 ## The gate manifest (single source of truth)
 
 `scripts/lib/preflight-gates.ts` — `PREFLIGHT_GATES` (each `{ name, cmd, tier }`) + `CI_ONLY_GATES` (gates CI runs that preflight intentionally skips: publish, packaging, external services, perf benches).

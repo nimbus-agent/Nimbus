@@ -17,9 +17,19 @@ Resolution order for ambiguous commands: `package.json` `scripts` is authoritati
 ```bash
 bun install                     # install all workspace deps
 bun run typecheck               # tsc --noEmit across all packages
+bun run typecheck:tests         # packages/{gateway,ui}/test/** — NOT in any tsconfig include, so `typecheck` is blind to them (#1038); ratchets against docs/structure-audit/typecheck-tests-baseline.json
+bun run typecheck:tests:update-baseline   # rewrite that baseline — needed both when adding debt AND when paying it down (the ratchet fails on an unbanked improvement)
 bun run lint                    # Biome — format + lint
 bun run lint:fix                # auto-fix
 bun run dev-doctor              # contributor env health (Bun version, node_modules, Rust, gcloud, libsecret on Linux)
+```
+
+## Verify against CI, not just locally
+
+```bash
+bun run verify:docker           # manifest fast-tier gates inside oven/bun:1.3 at /src — kills the "green locally because of a path exclusion / OS difference" class
+bun run verify:docker --full    # + build, test:ci, coverage floor   (--rebuild refreshes the cached image)
+bun run verify:pr               # reads the PR's real check state via gh; a conflicted or still-pending PR is never reported green
 ```
 
 ## Test
