@@ -139,7 +139,7 @@ describe("tryDispatchAgentsRpc — body coverage with localIndex", () => {
     const localIndex = new LocalIndex(db);
     const ctx = makeCtx({ localIndex });
     try {
-      await tryDispatchAgentsRpc(ctx, "agents.bogus", {});
+      await tryDispatchAgentsRpc(ctx, "agents.bogus", {}, "test-client");
       throw new Error("expected throw");
     } catch (e) {
       expect(e).toBeInstanceOf(RpcMethodError);
@@ -151,7 +151,7 @@ describe("tryDispatchAgentsRpc — body coverage with localIndex", () => {
     const localIndex = new LocalIndex(db);
     const ctx = makeCtx({ localIndex, configDir: tmpDir });
     try {
-      await tryDispatchAgentsRpc(ctx, "agents.unknown", {});
+      await tryDispatchAgentsRpc(ctx, "agents.unknown", {}, "test-client");
     } catch (e) {
       expect(e).toBeInstanceOf(RpcMethodError);
     }

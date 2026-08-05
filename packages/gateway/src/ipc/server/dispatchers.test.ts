@@ -202,11 +202,13 @@ describe("tryDispatchLlmRpc", () => {
 describe("tryDispatchAgentsRpc", () => {
   test("skips non-agents methods", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchAgentsRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchAgentsRpc(ctx, "engine.ask", {}, "test-client")).toBe(phase4RpcSkipped);
   });
   test("skips when localIndex is undefined", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchAgentsRpc(ctx, "agents.expert", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchAgentsRpc(ctx, "agents.expert", {}, "test-client")).toBe(
+      phase4RpcSkipped,
+    );
   });
 });
 

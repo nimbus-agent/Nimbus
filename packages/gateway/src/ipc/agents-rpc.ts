@@ -25,6 +25,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
+import type { ClientKind } from "./server/client-kind.ts";
 
 export class AgentsRpcError extends Error {
   readonly rpcCode: number;
@@ -43,6 +44,8 @@ export type AgentsRpcContext = {
   index?: LocalIndex;
   selfIdentity?: BoxKeypair;
   sendOverWire?: typeof sendFederatedOverWire;
+  /** Who is calling. Server-derived; absent in unit tests and non-socket callers. */
+  caller?: { clientId: string; kind: ClientKind };
 };
 
 const MIN_TOPIC_LEN = 1;

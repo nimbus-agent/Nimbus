@@ -627,3 +627,18 @@ describe("dispatchAgentsRpc — agents.decisions", () => {
     }
   });
 });
+
+test("dispatchAgentsRpc accepts and retains a caller descriptor", async () => {
+  const db = freshDb();
+  const seen: unknown[] = [];
+  const ctx = {
+    ...makeCtx(db),
+    caller: { clientId: "c1", kind: "mcp" as const },
+    notify: (m: string, p: unknown) => {
+      seen.push({ m, p });
+    },
+  };
+  const out = await dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx);
+  expect(out.kind).toBe("hit");
+  expect(ctx.caller.kind).toBe("mcp");
+});

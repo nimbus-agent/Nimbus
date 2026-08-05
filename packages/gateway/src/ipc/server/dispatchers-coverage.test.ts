@@ -167,7 +167,7 @@ describe("tryDispatchAgentsRpc — error remapping", () => {
     // agents.expert with missing required fields → inner AgentsRpcError → RpcMethodError
     let caught: unknown;
     try {
-      await tryDispatchAgentsRpc(ctx, "agents.expert", { query: null });
+      await tryDispatchAgentsRpc(ctx, "agents.expert", { query: null }, "test-client");
     } catch (e) {
       caught = e;
     }
@@ -181,7 +181,7 @@ describe("tryDispatchAgentsRpc — error remapping", () => {
     const ctx = makeCtx({ localIndex });
     // agents.list is a known method that should return a hit with a valid response
     try {
-      const out = await tryDispatchAgentsRpc(ctx, "agents.list", {});
+      const out = await tryDispatchAgentsRpc(ctx, "agents.list", {}, "test-client");
       // If it succeeds, it should be an object
       expect(out).toBeDefined();
     } catch (e) {

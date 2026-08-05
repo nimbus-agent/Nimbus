@@ -121,6 +121,7 @@ export async function tryDispatchAgentsRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   if (!method.startsWith("agents.") || ctx.options.localIndex === undefined) {
     return phase4RpcSkipped;
@@ -134,6 +135,7 @@ export async function tryDispatchAgentsRpc(
       ...(ctx.options.federationIdentity === undefined
         ? {}
         : { selfIdentity: ctx.options.federationIdentity }),
+      caller: { clientId, kind: ctx.getClientKind(clientId) },
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -1072,10 +1074,11 @@ async function dispatchPhase4CoreGroup(
   ctx: ServerCtx,
   method: string,
   params: unknown,
+  clientId: string,
 ): Promise<unknown> {
   const llmOutcome = await tryDispatchLlmRpc(ctx, method, params);
   if (llmOutcome !== phase4RpcSkipped) return llmOutcome;
-  const agentsOutcome = await tryDispatchAgentsRpc(ctx, method, params);
+  const agentsOutcome = await tryDispatchAgentsRpc(ctx, method, params, clientId);
   if (agentsOutcome !== phase4RpcSkipped) return agentsOutcome;
   const voiceOutcome = await tryDispatchVoiceRpc(ctx, method, params);
   if (voiceOutcome !== phase4RpcSkipped) return voiceOutcome;
@@ -1160,7 +1163,7 @@ export async function tryDispatchPhase4Rpc(
   params: unknown,
   clientId: string,
 ): Promise<unknown> {
-  const coreOutcome = await dispatchPhase4CoreGroup(ctx, method, params);
+  const coreOutcome = await dispatchPhase4CoreGroup(ctx, method, params, clientId);
   if (coreOutcome !== phase4RpcSkipped) return coreOutcome;
   const teamMetricsOutcome = await dispatchPhase4TeamMetricsGroup(ctx, method, params, clientId);
   if (teamMetricsOutcome !== phase4RpcSkipped) return teamMetricsOutcome;
