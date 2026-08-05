@@ -89,6 +89,13 @@ const FAST: readonly Gate[] = [
 
 const FULL: readonly Gate[] = [
   { name: "build", cmd: ["bun", "run", "build"], tier: "full" },
+  {
+    // Proves the headline claim: an installed binary can actually start every connector it ships.
+    // Requires `dist/nimbus-gateway` to exist — the `build` gate above produces it.
+    name: "test:connector-boot",
+    cmd: ["bun", "run", "test:connector-boot"],
+    tier: "full",
+  },
   { name: "test:ci (suite + coverage)", cmd: ["bun", "run", "test:ci"], tier: "full" },
   {
     name: "coverage-floor: build lcov",
