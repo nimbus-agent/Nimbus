@@ -68,6 +68,22 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Typecheck test/** (baseline ratchet)
+        # `typecheck` is blind to test directories — they are in no package's
+        # tsconfig `include`, which is how #1038 broke five ToolExecutor call
+        # sites under packages/gateway/test/** and still exited 0. This gate
+        # covers them against a committed baseline of pre-existing debt; only
+        # NEW errors fail, and it emits `::error file=...::` annotations that
+        # render inline on the PR diff.
+        #
+        # Linux-only, mirroring `audit:coverage-floor`: the baseline is a
+        # per-(file, code) count and the ratchet now fails in BOTH directions,
+        # so a host-specific tsc count difference would red a required check
+        # rather than report anything useful. This job runs on ubuntu for every
+        # PR (pr-quality-ts), which is the gate that matters.
+        if: runner.os == 'Linux'
+        run: bun run typecheck:tests
+
       - name: Lint + format (Biome)
         run: bun run lint
 
