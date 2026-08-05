@@ -29,6 +29,15 @@ interface BriefEnvelope {
   error?: unknown;
 }
 
+/** Which notification channel an envelope arrived on — threaded through so a malformed-payload
+ * error names the channel it actually came from, rather than always saying `briefReady`. */
+type NotificationKind = "briefReady" | "briefError";
+
+interface BufferedEnvelope {
+  readonly env: BriefEnvelope;
+  readonly kind: NotificationKind;
+}
+
 /** Cap on notifications held for a not-yet-bound waiter, so a misbehaving gateway cannot grow memory. */
 const MAX_BUFFERED_PER_AGENT = 32;
 
@@ -41,11 +50,17 @@ const MAX_BUFFERED_PER_AGENT = 32;
  *    cannot receive each other's briefs;
  *  - at most one listener pair is registered per agent name for the source's lifetime, so a
  *    long-lived server does not accumulate a handler per invocation.
+ *
+ * A gateway can emit an envelope with no sessionId at all (a legacy/malformed payload, or a
+ * `briefError` that fired before the caller round-trip that would have supplied one). That
+ * envelope is attributable exactly when there is exactly one waiter in flight for the agent —
+ * see `route()` — so the real error surfaces immediately for the single-caller case that
+ * dominates real usage, without ever guessing across two-or-more concurrent callers.
  */
 export class AgentBriefRouter {
   private readonly bound = new Set<string>();
   private readonly waiters = new Set<Waiter>();
-  private readonly buffered = new Map<string, BriefEnvelope[]>();
+  private readonly buffered = new Map<string, BufferedEnvelope[]>();
 
   constructor(private readonly source: BriefNotificationSource) {}
 
@@ -107,38 +122,61 @@ export class AgentBriefRouter {
     if (this.bound.has(agentName)) return;
     this.bound.add(agentName);
     this.source.onNotification(`${agentName}.briefReady`, (params: unknown) => {
-      this.route(agentName, params as BriefEnvelope);
+      this.route(agentName, params as BriefEnvelope, "briefReady");
     });
     this.source.onNotification(`${agentName}.briefError`, (params: unknown) => {
-      this.route(agentName, params as BriefEnvelope);
+      this.route(agentName, params as BriefEnvelope, "briefError");
     });
   }
 
-  private route(agentName: string, env: BriefEnvelope): void {
+  private route(agentName: string, env: BriefEnvelope, kind: NotificationKind): void {
     const sessionId = typeof env.sessionId === "string" ? env.sessionId : undefined;
-    for (const w of this.waiters) {
-      if (w.agentName === agentName && w.sessionId !== undefined && w.sessionId === sessionId) {
-        this.apply(w, env);
+
+    if (sessionId !== undefined) {
+      for (const w of this.waiters) {
+        if (w.agentName === agentName && w.sessionId === sessionId) {
+          this.apply(w, env, kind);
+          return;
+        }
+      }
+    } else {
+      // No sessionId to key on. Attribution is only unambiguous when exactly one waiter is
+      // in flight for this agent — deliver to it whether or not it has bound yet, since it is
+      // the sole possible recipient either way. With zero or two-or-more waiters the envelope
+      // genuinely cannot be attributed, so it is buffered (and the waiter(s) time out) rather
+      // than guessed at: guessing would defeat the no-cross-delivery guarantee this router
+      // exists to provide.
+      let sole: Waiter | undefined;
+      let count = 0;
+      for (const w of this.waiters) {
+        if (w.agentName === agentName) {
+          count += 1;
+          sole = w;
+        }
+      }
+      if (count === 1 && sole !== undefined) {
+        this.apply(sole, env, kind);
         return;
       }
     }
-    // No bound waiter yet — buffer for a waiter that has not learned its sessionId.
+
+    // No unambiguous recipient yet — buffer for a waiter that binds this exact sessionId later.
     const list = this.buffered.get(agentName) ?? [];
     if (list.length >= MAX_BUFFERED_PER_AGENT) list.shift();
-    list.push(env);
+    list.push({ env, kind });
     this.buffered.set(agentName, list);
   }
 
   private drainBuffered(waiter: Waiter): void {
     const list = this.buffered.get(waiter.agentName);
     if (list === undefined) return;
-    const idx = list.findIndex((e) => e.sessionId === waiter.sessionId);
+    const idx = list.findIndex((e) => e.env.sessionId === waiter.sessionId);
     if (idx === -1) return;
-    const [env] = list.splice(idx, 1);
-    if (env !== undefined) this.apply(waiter, env);
+    const [entry] = list.splice(idx, 1);
+    if (entry !== undefined) this.apply(waiter, entry.env, entry.kind);
   }
 
-  private apply(waiter: Waiter, env: BriefEnvelope): void {
+  private apply(waiter: Waiter, env: BriefEnvelope, kind: NotificationKind): void {
     if (typeof env.error === "string") {
       this.finish(waiter, new Error(env.error));
       return;
@@ -147,7 +185,7 @@ export class AgentBriefRouter {
       typeof env.brief !== "string" ||
       (waiter.guard !== undefined && !waiter.guard(env.findings))
     ) {
-      this.finish(waiter, new Error(`Malformed ${waiter.agentName}.briefReady payload`));
+      this.finish(waiter, new Error(`Malformed ${waiter.agentName}.${kind} payload`));
       return;
     }
     this.finish(waiter, { brief: env.brief, findings: env.findings });

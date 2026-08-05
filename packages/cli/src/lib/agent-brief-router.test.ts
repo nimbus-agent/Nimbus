@@ -125,3 +125,32 @@ test("failAll rejects every in-flight waiter — the transport-death path", asyn
   await expect(a.result).rejects.toThrow("IPC connection closed");
   await expect(b.result).rejects.toThrow("IPC connection closed");
 });
+
+test("a sessionId-less briefError with exactly one waiter rejects it with the real message", async () => {
+  const src = fakeSource();
+  const router = new AgentBriefRouter(src);
+  // Unbound on purpose: the sole-waiter rule must apply whether or not bindSession ran yet —
+  // this is exactly the shape of a real briefError that fires before the agents.* call returns.
+  const p = router.expect("why", anyFindings, 1000);
+
+  src.emit("why.briefError", { error: "blame lookup failed" });
+
+  await expect(p.result).rejects.toThrow("blame lookup failed");
+});
+
+test("a sessionId-less envelope with two waiters delivers to neither — the confidentiality guarantee", async () => {
+  const src = fakeSource();
+  const router = new AgentBriefRouter(src);
+  const a = router.expect("why", anyFindings, 1000);
+  const b = router.expect("why", anyFindings, 1000);
+
+  // No sessionId, and two candidates — the router must not guess which one this belongs to.
+  src.emit("why.briefError", { error: "ambiguous" });
+
+  const stillPending = new Promise((resolve) => setTimeout(() => resolve("pending"), 20));
+  await expect(Promise.race([a.result, stillPending])).resolves.toBe("pending");
+  await expect(Promise.race([b.result, stillPending])).resolves.toBe("pending");
+
+  a.cancel();
+  b.cancel();
+});

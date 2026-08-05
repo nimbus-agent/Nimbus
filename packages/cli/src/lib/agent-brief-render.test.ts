@@ -150,11 +150,13 @@ describe("awaitAgentBrief — rejects on briefError", () => {
     await expect(pending.result).rejects.toThrow("index not ready");
   });
 
-  it("rejects with the default malformed-payload message when error is absent", async () => {
+  it("rejects with a malformed-payload message naming the briefError channel when error is absent", async () => {
     // `error` is absent and `brief` is not a string, so this is indistinguishable
     // from a malformed briefError payload — there is no "Agent failed" fallback
     // once routing is sessionId-based; the router only ever rejects with a
-    // concrete cause (malformed payload, explicit error, timeout, or fail()).
+    // concrete cause (malformed payload, explicit error, timeout, or fail()). The
+    // message must name `briefError` (the channel it actually arrived on), not
+    // `briefReady`.
     const handlers = new Map<string, (params: unknown) => void>();
     const { client } = createMockIpcClient([], handlers);
 
@@ -163,7 +165,7 @@ describe("awaitAgentBrief — rejects on briefError", () => {
 
     handlers.get("fake.briefError")?.({ sessionId: "s1" });
 
-    await expect(pending.result).rejects.toThrow("Malformed fake.briefReady payload");
+    await expect(pending.result).rejects.toThrow("Malformed fake.briefError payload");
   });
 });
 
