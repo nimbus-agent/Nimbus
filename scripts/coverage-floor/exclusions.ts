@@ -26,7 +26,11 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   { kind: "exact", path: "packages/gateway/src/platform/sandbox/sandbox-runner.ts" },
 
   // ── Boot orchestrators / index barrels / factories / process entry points ──
+  // `index.ts` is now a thin argv shim that dynamically imports one of three role modules; the
+  // boot orchestrator it used to contain moved to `gateway-main.ts`. Both are the same
+  // process-entry class this block exempts — the exemption follows the code, it is not a new one.
   { kind: "exact", path: "packages/gateway/src/index.ts" },
+  { kind: "exact", path: "packages/gateway/src/gateway-main.ts" },
   { kind: "exact", path: "packages/cli/src/index.ts" },
   // `assemble.ts` is the boot-assembly I/O orchestrator (opens SQLite, spawns sidecars,
   // wires every runtime together) — same untestable shell class as `gateway/src/index.ts`
