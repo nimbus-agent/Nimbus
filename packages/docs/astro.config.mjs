@@ -40,6 +40,7 @@ export default defineConfig({
           items: [
             { label: "Run from source", link: "/getting-started/" },
             { label: "Query & HTTP", link: "/query-and-http/" },
+            { label: "Monitoring", link: "/monitoring/" },
             { label: "Telemetry", link: "/telemetry/" },
             { label: "Performance benchmarks", link: "/perf/" },
             {

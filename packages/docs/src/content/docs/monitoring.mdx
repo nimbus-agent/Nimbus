@@ -1,0 +1,134 @@
+---
+title: Monitoring
+description: Scrape the Gateway's Prometheus metrics from Datadog, Grafana, or any OpenMetrics collector
+---
+
+The Gateway can expose its own health as **Prometheus text exposition (v0.0.4)**, so an autonomous
+Nimbus agent is observable by any OpenMetrics-compatible collector — Prometheus, Grafana Agent, the
+Datadog Agent, or `curl`.
+
+Both surfaces are **off by default**: no environment variable, no listener. Neither emits indexed
+content or credentials — only counts, gauges, and identifiers (service names, connector ids, peer ids).
+
+## Two surfaces
+
+| | Index & performance | Governance |
+| --- | --- | --- |
+| Enabled by | `NIMBUS_METRICS_PORT` | `NIMBUS_HTTP_PORT` |
+| Path | `GET /metrics`, `GET /healthz` | `GET /metrics` |
+| Bind | `127.0.0.1` (hard-coded) | per the HTTP sidecar |
+| Auth | none — loopback only | bearer token, fails closed |
+| Source | `gateway/src/ipc/metrics-server.ts` | `gateway/src/status/prometheus-format.ts` |
+
+### Index & performance
+
+```bash
+NIMBUS_METRICS_PORT=9464 nimbus serve
+curl http://127.0.0.1:9464/metrics
+```
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `nimbus_index_items_total` | gauge | `service` |
+| `nimbus_index_size_bytes` | gauge | — |
+| `nimbus_embedding_coverage_ratio` | gauge | — |
+| `nimbus_query_latency_ms` | gauge | `quantile` (`p50`, `p95`, `p99`) |
+| `nimbus_connector_health_state` | gauge | `connector`, `state` |
+
+This surface has **no authentication**. It binds to loopback and must stay there — do not forward the
+port off the machine.
+
+### Governance
+
+These are the agent-behaviour signals: is the policy intact, is a human approval outstanding, is the
+audit chain growing, is the data fresh.
+
+```bash
+nimbus vault set http_api.deployment_token <token>
+NIMBUS_HTTP_PORT=8787 nimbus serve
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/metrics
+```
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `nimbus_policy_signature_valid` | gauge | — | `1` if the active org policy signature verifies |
+| `nimbus_hitl_pending` | gauge | — | approvals waiting on a human |
+| `nimbus_audit_chain_length` | gauge | — | entries in the local audit chain |
+| `nimbus_connector_enabled` | gauge | `connector` | `1` if enabled and not blocked by policy |
+| `nimbus_peer_reachable` | gauge | `peer` | `1` if a federated peer is reachable |
+| `nimbus_sync_freshness_ms` | gauge | — | ms since the last successful sync |
+
+The bearer is the same vault-held token that guards the HTTP write surface
+(`http_api.deployment_token`, invariant `I13`). It is compared in constant time (`I10`). If the key is
+unset the token resolves to `""` and every request gets `401` — the surface fails closed, it does not
+fall open.
+
+:::caution[Partial metric]
+`nimbus_hitl_pending` sums pending approvals and pending quorum requests, but the quorum term is
+currently hard-coded to `0` — the quorum coordinator exposes no pending-count accessor yet. Treat the
+gauge as *pending approvals* until that lands.
+:::
+
+## Alerts worth setting
+
+Whatever collector you use, these are the four that matter for an agent running unattended:
+
+- `nimbus_policy_signature_valid == 0` — the org policy no longer verifies. Page.
+- `nimbus_hitl_pending > 0` for longer than your response SLA — the agent is blocked on a human and
+  nobody noticed.
+- `rate(nimbus_audit_chain_length[1h]) == 0` while syncs are running — actions are happening without
+  audit growth. Investigate.
+- `nimbus_sync_freshness_ms` above your tolerance — the index is stale, so answers are stale.
+
+## Datadog Agent
+
+The Datadog Agent scrapes OpenMetrics directly; no Nimbus-side change is needed. In
+`conf.d/openmetrics.d/conf.yaml`:
+
+```yaml
+instances:
+  - openmetrics_endpoint: http://127.0.0.1:9464/metrics
+    namespace: nimbus
+    metrics:
+      - nimbus_*
+
+  - openmetrics_endpoint: http://127.0.0.1:8787/metrics
+    namespace: nimbus
+    headers:
+      Authorization: "Bearer <token>"
+    metrics:
+      - nimbus_*
+```
+
+Confirm the option names against the current
+[OpenMetrics check documentation](https://docs.datadoghq.com/integrations/openmetrics/) — the
+collector-side schema is Datadog's, not ours, and it changes independently of Nimbus.
+
+## Prometheus
+
+```yaml
+scrape_configs:
+  - job_name: nimbus
+    static_configs:
+      - targets: ["127.0.0.1:9464"]
+
+  - job_name: nimbus-governance
+    static_configs:
+      - targets: ["127.0.0.1:8787"]
+    authorization:
+      type: Bearer
+      credentials: "<token>"
+```
+
+## Local-first note
+
+Scraping these endpoints into a hosted monitoring product sends Nimbus operational metadata off the
+machine: connector ids, service names, peer ids, counts, and latencies. It never sends indexed
+content, message bodies, or credentials.
+
+That is still a deliberate trade against the local-first default, which is why both surfaces require
+an explicit environment variable to exist at all. If you want the signal without the egress, point a
+local Prometheus or `curl` at the same endpoints — the exposition format is identical.
+
+See also: [Telemetry](/telemetry/) (a separate, aggregate, opt-in reporting channel) and
+[Query & HTTP](/query-and-http/) for the rest of the local HTTP API.
