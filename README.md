@@ -4,7 +4,7 @@
 
 **Cross-service incident context in under 100 ms. Consent-gated automation. Your credentials never leave the machine.**
 
-A local-first, HITL-gated AI agent over your dev tools — it builds a private index of your work across 80+ services and answers questions and runs multi-step workflows entirely on your machine.
+A local-first, HITL-gated AI agent over your dev tools — it builds a private index of your work across 90+ services and answers questions and runs multi-step workflows entirely on your machine.
 
 [![CI](https://github.com/nimbus-agent/Nimbus/actions/workflows/ci.yml/badge.svg)](https://github.com/nimbus-agent/Nimbus/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
@@ -18,7 +18,7 @@ A local-first, HITL-gated AI agent over your dev tools — it builds a private i
 ---
 
 > [!NOTE]
-> Nimbus is a **headless Gateway + CLI** (plus a VS Code extension and a browser web clipper). It runs on your machine and talks to ~80 cloud services through first-party MCP connectors. Nothing about your data — the index, your credentials, the audit log — leaves your box.
+> Nimbus is a **headless Gateway + CLI** (plus a VS Code extension and a browser web clipper). It runs on your machine and talks to ~90 cloud services through first-party MCP connectors. Nothing about your data — the index, your credentials, the audit log — leaves your box.
 
 ## What it does
 
@@ -106,7 +106,7 @@ See [Local & air-gapped LLM setup](https://nimbus-agent.dev/user-guide/first-run
 
 ### Optional: connect a cloud service
 
-To correlate across GitHub, Jira, PagerDuty, Slack and ~80 others, add a connector. The fastest path is a token-based one like GitHub:
+To correlate across GitHub, Jira, PagerDuty, Slack and ~90 others, add a connector. The fastest path is a token-based one like GitHub:
 
 ```bash
 nimbus connector auth github --token <your_PAT>
@@ -119,7 +119,7 @@ nimbus ask "what PRs did I open in the last 7 days?"
 ## How it works
 
 ```text
-80+ cloud services ─▶ first-party MCP connectors ─▶ local SQLite index (+ embeddings)
+90+ cloud services ─▶ first-party MCP connectors ─▶ local SQLite index (+ embeddings)
                                                           │
                               your question ─▶ engine ─▶ HITL consent gate ─▶ action
                                                           │
@@ -130,7 +130,7 @@ A headless **Bun Gateway** maintains the private index and runs the agent; clien
 
 ## Connectors
 
-80+ first-party MCP connectors across Google, Microsoft, GitHub/GitLab, Slack, Jira, Notion, plus observability, CI/CD, security/quality, feature-flags, GitOps, data/BI, deploy, finance, and support tools. Browse the full roster in the [connector docs](https://nimbus-agent.dev/connectors/); building your own is covered in [CONTRIBUTING](./docs/CONTRIBUTING.md).
+90+ first-party MCP connectors across Google, Microsoft, GitHub/GitLab, Slack, Jira, Notion, plus observability, CI/CD, security/quality, feature-flags, GitOps, data/BI, deploy, finance, and support tools. Browse the full roster in the [connector docs](https://nimbus-agent.dev/connectors/); building your own is covered in [CONTRIBUTING](./docs/CONTRIBUTING.md).
 
 ## Security & trust
 

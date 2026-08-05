@@ -1,5 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
-import ts from "typescript";
+// TypeScript 7 is the native port: its `typescript` package exports only lib/version.cjs at
+// the root, and the compiler API moved to the explicitly UNSTABLE `typescript/unstable/*`
+// subpaths. This script drives the compiler API directly, so it resolves a pinned TypeScript 6
+// through the `typescript-compiler-api` alias rather than build repo tooling on an API its own
+// maintainers label unstable. Everything else in the repo typechecks with 7.
+import ts from "typescript-compiler-api";
 import { iterateSourceFiles, REPO_ROOT, relPath } from "./lib.ts";
 
 const PRESERVE_PRAGMAS = [

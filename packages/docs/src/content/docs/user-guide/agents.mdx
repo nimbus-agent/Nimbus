@@ -1,23 +1,43 @@
 ---
 title: Built-in agents
-description: Read-only agents for team intelligence — nimbus expert, nimbus impact, and nimbus catchup.
+description: The eleven read-only agents that ship inside the Gateway — expert, impact, catchup, why, glossary, decisions, ghost, conflicts, huddle, janitor, and preflight.
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 
 Built-in agents are first-party, read-only multi-agent flows that ship inside
-the Gateway. Each one decomposes a query into parallel sub-agents over your
-local index and returns a structured Markdown brief.
+the Gateway. Each one decomposes a query into sub-agents over your local index
+and returns a structured Markdown brief.
 
 Three properties hold for every built-in agent:
 
 - **Read-only.** No write tools in scope. The HITL consent gate is never
   triggered.
-- **Parallel sub-agents.** The coordinator runs sub-tasks concurrently against
-  isolated tool scopes — typically 3–5 in parallel — so a brief assembles in
-  seconds rather than the sum of every sub-step.
+- **Parallel where possible.** The coordinator runs independent sub-tasks
+  concurrently against isolated tool scopes — typically 3–6 at a time — so a
+  brief assembles in seconds rather than the sum of every sub-step.
 - **Local-first.** Every sub-agent reads from the local SQLite index. No live
   API call is made unless a connector explicitly resolves a missing reference.
+
+Eleven ship today:
+
+| Agent | Answers | Needs |
+|---|---|---|
+| [`nimbus expert`](#nimbus-expert-topic-or-file) | Who has the most context on this? | Local index |
+| [`nimbus impact`](#nimbus-impact-file-or-pr-url) | If I change this, what breaks? | Local index |
+| [`nimbus catchup`](#nimbus-catchup---since-duration) | What changed while I was away that matters to me? | Local index |
+| [`nimbus why`](#nimbus-why-ref) | Why is this line the way it is? | Local index (+ local `git blame`) |
+| [`nimbus glossary`](#nimbus-glossary-term) | What does this term mean on this team? | Local index (+ optional local LLM) |
+| [`nimbus decisions`](#nimbus-decisions) | What did we decide, and why? | Local index (+ optional local LLM) |
+| [`nimbus ghost`](#nimbus-ghost-file) | Who else knows this file? | Paired peers |
+| [`nimbus conflicts`](#nimbus-conflicts-file) | Is someone already working on this? | Paired peers |
+| [`nimbus huddle`](#nimbus-huddle) | What did the team do yesterday? | Paired peers |
+| [`nimbus janitor`](#nimbus-janitor-resource-ref) | Is this cloud resource still in use? | Local index |
+| [`nimbus preflight`](#nimbus-preflight-ref---namespace-ns) | Will this change break a downstream owner? | Paired peers |
+
+The four peer-backed agents return an honest gap note rather than a wrong
+answer when you have no paired peers — see
+[Cross-colleague agents](#cross-colleague-agents) below.
 
 ---
 
@@ -41,9 +61,9 @@ machine-readable output.
 **No new connectors required.** The agent uses the people graph already
 populated by the Phase 2 cross-service identity linker.
 
-**Notification:** The Gateway emits `agents.expert.briefReady { sessionId,
-brief }` on completion. The CLI subscribes to this and renders the brief to
-stdout, respecting `NO_COLOR`.
+**Notification:** The Gateway emits `expert.briefReady { sessionId, brief }`
+on completion. The CLI subscribes to this and renders the brief to stdout,
+respecting `NO_COLOR`.
 
 ---
 
@@ -72,7 +92,7 @@ Use `--json` for CI integration — the structure is stable and suitable for
 gating deploys based on impact thresholds. The optional `--service` filter
 narrows the report to a single owning service.
 
-**Notification:** `agents.impact.briefReady { sessionId, brief }`.
+**Notification:** `impact.briefReady { sessionId, brief }`.
 
 ---
 
@@ -116,16 +136,235 @@ round-trips through `JSON.parse`.
 
 ---
 
+## Implicit-knowledge agents
+
+Three agents recover knowledge nobody ever wrote down, from content already in
+your index. They are read-only like every other built-in agent, but two of
+them (`glossary` and `decisions`) own a **persisted extraction pass** with its
+own watermark: the brief you read is a materialised table, and the mining
+happens in the background, debounced after a successful connector sync.
+
+### `nimbus why <ref>`
+
+Answers *why is this line the way it is?* — six parallel lanes over the local
+relationship graph:
+
+- **authorship** — who last touched the line, and when
+- **pull request** — the PR that merged it
+- **ticket** — the issue it resolves
+- **discussion** — Slack / Teams messages mentioning the commit, PR, or ticket
+- **driver** — a temporally correlated incident within a 48 h window (a
+  correlation, explicitly *never* a causal claim)
+- **downstream** — reverse `depends_on` edges from the file's indexed symbols
+
+```bash
+nimbus why src/billing/retry.ts:42
+nimbus why retryPayment --peek
+nimbus why src/billing/retry.ts --line 42 --json
+```
+
+`<ref>` is a `path[:line]` or a bare symbol name resolved against indexed code
+symbols. A lane with nothing to show degrades to a gap note naming the missing
+connector or graph relation rather than going silent.
+
+`--peek` returns a sub-300 ms one-liner (author · short SHA · date · subject ·
+PR # · ticket) through a separate synchronous method, `agents.whyPeek` — the
+one built-in that answers in the response rather than via a notification.
+
+**One local read outside the index:** an unblamed line triggers a single,
+cached, root-fenced local `git blame` subprocess, scoped to a configured
+`[[filesystem.roots]]` repo and cached forever after. That is a local git
+read, not a connector dispatch — no live API call.
+
+**Notification:** `why.briefReady { sessionId, brief, findings }` (the `--peek`
+path emits none).
+
+### `nimbus glossary [<term>]`
+
+Turns terminology the team already uses — but has never written down — into a
+queryable glossary, extracted entirely from the local index. With no argument
+it prints terms sorted by frequency; with a term it prints the team's
+consolidated definition, resolved against an exact match, then a known
+synonym, then (on a miss) a "did you mean" list of near-misses.
+
+```bash
+nimbus glossary
+nimbus glossary CDR
+nimbus glossary --limit 50 --json
+nimbus glossary --refresh
+nimbus glossary --rebuild --yes
+```
+
+Candidates are mined deterministically from indexed titles and bodies and must
+appear across at least `min_doc_freq` (default 3) source items before a term is
+considered; a local LLM then consolidates or vetoes each candidate. Without a
+local model, the pass falls back to a verbatim **snippet** definition — honest
+and attributable, but not synthesized — which a later pass automatically
+re-consolidates once a model is available. You can also author or correct a
+definition by hand in `[glossary.terms]` / `[glossary.synonyms]` in
+`nimbus.toml`; a manual definition wins on collision and never auto-changes.
+
+`--refresh` runs an on-demand pass instead of waiting for the next sync;
+`--rebuild --yes` truncates the store and re-derives from scratch.
+
+**Notification:** `glossary.briefReady { sessionId, brief, findings }`.
+
+### `nimbus decisions`
+
+Answers *what did we decide, and why?* — recovers decisions buried in Slack /
+Discord / Teams messages, Notion / Confluence / Obsidian pages, and Linear /
+Jira / GitHub / GitLab issues ("we decided X because Y, alternatives were Z"),
+then corroborates each one against downstream PRs, commits, and ADRs already
+in the local relationship graph.
+
+```bash
+nimbus decisions
+nimbus decisions --since 30d --service billing
+nimbus decisions --explain --min-confidence 0.5
+nimbus decisions --refresh
+nimbus decisions --json
+```
+
+The read path is pure SQLite — it never calls a model — and prints a
+chronological, confidence-scored list with evidence links and a `⚠ no ADR
+found` marker where one is missing. `--explain` shows the four confidence
+terms (`cue_strength`, `corroboration`, `source_authority`, `completeness`)
+behind each score.
+
+**Two limits the brief states out loud rather than hiding:** the confidence
+ceiling is **0.86, not 1.0**, because `migration` / `iac` evidence is in the
+schema but no connector indexes a change's file paths yet; and a brief reports
+how many of its sources were indexed with a truncated body, so a decision
+stated deep in a long document is never silently missed.
+
+**Notification:** `decisions.briefReady { sessionId, brief, findings }`.
+
+---
+
+## Cross-colleague agents
+
+Three agents surface what *other people* are doing, by fanning the federated
+query primitives across peers you have explicitly paired with. Every fan-out
+goes through the consent-scoped federated query gate — a peer only ever answers
+within a namespace it published and granted to you.
+
+**They need paired peers.** On a solo install these agents return a gap note
+explaining the empty sweep rather than an empty brief that looks broken. See
+[HITL & safety](/user-guide/hitl-and-safety/) for how pairing and consent work.
+
+### `nimbus ghost <file>`
+
+Ranks teammates by their expertise on a file across paired peers, surfacing
+their recent PRs, issues, and commits touching it — so you know who to ask
+before you start. **No message is ever sent**; this is a suggestion surface.
+
+```bash
+nimbus ghost src/auth/session.ts
+nimbus ghost src/auth/session.ts --namespace project:zurich
+nimbus ghost src/auth/session.ts --json
+```
+
+Omit `--namespace` for an ambient sweep across every paired peer.
+
+**Notification:** `ghost.briefReady`.
+
+### `nimbus conflicts <file>`
+
+Warns of work-in-progress collisions *before* you edit a file — teammates with
+an open PR, an assigned ticket, a recent commit, or an open branch touching the
+same path.
+
+```bash
+nimbus conflicts src/auth/session.ts
+nimbus conflicts src/auth/session.ts --namespace project:zurich
+```
+
+Output is ordered by recency, with a gap note for any peer that was
+unreachable.
+
+**Notification:** `conflicts.briefReady`.
+
+### `nimbus huddle`
+
+A team-scoped morning briefing: each teammate's recently merged PRs, closed
+tickets, and resolved incidents from across paired peers — a status summary
+nobody had to write.
+
+```bash
+nimbus huddle
+nimbus huddle --since 86400000
+nimbus huddle --namespace project:zurich --json
+```
+
+`--since` is a lookback in milliseconds (default 86 400 000 = 24 h).
+
+**Notification:** `huddle.briefReady`.
+
+---
+
+## Change-safety agents
+
+### `nimbus janitor <resource-ref>`
+
+Answers *is this cloud resource still in use, and what breaks if I delete it?*
+— cross-references a resource against indexed deployments, dashboards, alerts,
+and on-call rotations, and reports how long it has been idle.
+
+```bash
+nimbus janitor arn:aws:s3:::legacy-reports
+nimbus janitor legacy-reports --idle-days 30
+nimbus janitor legacy-reports --cleanup aws.s3.bucket_delete
+nimbus janitor legacy-reports --allow-gaps --json
+```
+
+`--allow-gaps` lets it reach a verdict even when some evidence lanes are
+missing; by default an incomplete sweep is called out rather than concluded
+from.
+
+**Read-only until you approve.** The brief itself deletes nothing. A
+`--cleanup <action.type>` proposal is a *proposal*: it still passes your HITL
+consent gate before anything executes.
+
+**Notification:** `janitor.briefReady`.
+
+### `nimbus preflight <ref> --namespace <ns>`
+
+Blast-radius preflight before a change lands: asks each paired downstream owner
+in a namespace to run their own verification against your candidate ref, then
+merges the answers.
+
+```bash
+nimbus preflight src/billing/retry.ts --namespace project:zurich
+nimbus preflight src/billing/retry.ts --namespace project:zurich --strict
+nimbus preflight approve req_8f3c21
+```
+
+`--namespace` is **required**. Each downstream owner approves the request behind
+their *own* consent gate, so the call blocks on human responses for up to ten
+minutes. The exit code is non-zero if any downstream's verification failed —
+with `--strict`, also on incomplete coverage — which makes it usable as a CI
+gate. `nimbus preflight approve <request-id>` responds to an inbound request as
+the local owner.
+
+**Not the same command as `nimbus deploy preflight`,** which runs *local*
+pre-deploy checks for a service.
+
+**Notification:** `preflight.briefReady`.
+
+---
+
 ## Implementation reference
 
 Built-in agents live at `packages/gateway/src/agents/` in the repository. Each
-agent is a single file that uses `AgentCoordinator` to decompose into parallel
-sub-agents over scoped tool sets, then synthesises the results into a Markdown
-brief (deterministic renderer, with optional LLM polish when a model is
-configured).
+agent is a single file; the ones that fan out use `AgentCoordinator` to
+decompose into parallel sub-agents over scoped tool sets, then synthesise the
+results into a Markdown brief (deterministic renderer, with optional LLM polish
+when a model is configured).
 
-Authoring guidelines for new built-in agents live in the contributor reference
-at `.claude/commands/nimbus-agent-patterns.md`.
+Full flag-by-flag detail for every command above lives in the CLI reference in
+the repository at `docs/cli-reference.md`. Authoring guidelines for new
+built-in agents live in the contributor reference at
+`.claude/commands/nimbus-agent-patterns.md`.
 
 ---
 

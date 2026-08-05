@@ -1,8 +1,13 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
+import type { SyncContext } from "../sync/types.ts";
 import { BODY_MAX_PROSE } from "./body-caps.ts";
-import { selectItemBodyFetchState, upsertIndexedItem } from "./item-store.ts";
+import {
+  selectItemBodyFetchState,
+  upsertIndexedItem,
+  upsertIndexedItemForSync,
+} from "./item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "./local-index.ts";
 import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
 
@@ -192,5 +197,115 @@ test("selectItemBodyFetchState returns null bodyFetch when the key is absent", (
 test("selectItemBodyFetchState returns null for an unknown id", () => {
   const d = db();
   expect(selectItemBodyFetchState(d, "notion:nope")).toBeNull();
+  d.close();
+});
+
+function ctxAt(d: Database, depth: "metadata_only" | "summary" | "full") {
+  // Minimal SyncContext for the store call — mirror the shape the file's
+  // neighbours use; only db + depth are read by upsertIndexedItemForSync.
+  return { db: d, depth } as unknown as SyncContext;
+}
+
+test("metadata_only writes no body even when the connector passes body:", () => {
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "metadata_only"), {
+    ...base,
+    externalId: "m1",
+    title: "Subject line",
+    body: "secret contents",
+  });
+  const row = read(d, "slack:m1");
+  expect(row.body ?? "").toBe("");
+  expect(row.body_complete).toBe(0);
+  d.close();
+});
+
+test("metadata_only leaves body_preview empty too", () => {
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "metadata_only"), {
+    ...base,
+    externalId: "m2",
+    title: "Subject line",
+    body: "secret contents",
+  });
+  expect(read(d, "slack:m2").body_preview ?? "").toBe("");
+  d.close();
+});
+
+test("metadata_only does NOT store the title as the body", () => {
+  // Regression guard: upsertIndexedItem computes
+  //   raw = row.body ?? row.bodyPreview ?? row.title
+  // so merely OMITTING the body input falls through to the title.
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "metadata_only"), {
+    ...base,
+    externalId: "m3",
+    title: "Quarterly numbers",
+    body: "secret",
+  });
+  const row = read(d, "slack:m3");
+  expect(row.body ?? "").not.toBe("Quarterly numbers");
+  expect(row.body_preview ?? "").not.toBe("Quarterly numbers");
+  d.close();
+});
+
+test("summary downgrades a body: caller to 512 and never claims completeness", () => {
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "summary"), {
+    ...base,
+    externalId: "s1",
+    body: "x".repeat(20_000),
+  });
+  const row = read(d, "slack:s1");
+  expect(row.body ?? "").toHaveLength(512);
+  expect(row.body_complete).toBe(0);
+  d.close();
+});
+
+test("full passes a body through at the per-type cap", () => {
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "full"), {
+    ...base,
+    externalId: "f1",
+    body: "y".repeat(20_000),
+  });
+  const row = read(d, "slack:f1");
+  expect(row.body ?? "").toHaveLength(16_384);
+  expect(row.body_complete).toBe(0); // over cap
+  d.close();
+});
+
+test("an unrecognised depth passes the body through rather than clamping it", () => {
+  // Unreachable through the typed API — `SyncContext["depth"]` is required
+  // and the scheduler always supplies one of the three — but the DIRECTION of
+  // the fallback has to agree with everything else that resolves an
+  // unspecified depth: `getDepthForService()`, the `sync_state` insert in
+  // `connectors/health.ts`, and the V49 backfill all answer `full`. Routing
+  // an unknown value into the `summary` arm instead would silently truncate
+  // to 512 characters. `imap-sync-core.test.ts`'s `fakeCtx()` casts past the
+  // required field, so a shape like this really can reach the chokepoint.
+  const d = db();
+  const unknownDepthCtx = { db: d } as unknown as SyncContext;
+  upsertIndexedItemForSync(unknownDepthCtx, {
+    ...base,
+    externalId: "u1",
+    body: "z".repeat(2_000),
+  });
+  const row = read(d, "slack:u1");
+  expect(row.body ?? "").toHaveLength(2_000);
+  expect(row.body_complete).toBe(1);
+  d.close();
+});
+
+test("a bodyPreview: caller is unaffected at full depth", () => {
+  const d = db();
+  upsertIndexedItemForSync(ctxAt(d, "full"), {
+    ...base,
+    externalId: "p1",
+    bodyPreview: "short",
+  });
+  const row = read(d, "slack:p1");
+  expect(row.body).toBe("short");
+  expect(row.body_complete).toBe(0);
   d.close();
 });

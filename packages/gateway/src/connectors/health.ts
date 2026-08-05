@@ -96,9 +96,23 @@ function upsertHealthRow(
     last_error: string | null;
   },
 ): void {
+  // `depth` is written explicitly, and this is the ONLY `sync_state` insert
+  // that runs in production for a connector whose depth was never set: it is
+  // reached from `transitionHealth()`, which the scheduler calls on
+  // `sync_success`, on pause/resume, and on every error path. Omitting the
+  // column lets the row inherit V21's stale `DEFAULT 'summary'` — and since
+  // V49 only backfilled rows that already EXISTED, every connector added
+  // after the upgrade would index at `full` for exactly one sync (no row yet
+  // → `getDepthForService` falls back to `full`) and then permanently at
+  // `summary`: 512-char bodies, `body_complete` pinned to 0, and
+  // `nimbus index rebody` permanently disarmed for that service.
+  // `'full'` matches the V49 backfill, `getDepthForService`'s no-row
+  // fallback, and `recordSync`'s insert — one value across every path that
+  // materialises a depth nobody chose.
   dbRun(
     db,
-    `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token) VALUES (?, NULL, NULL)`,
+    `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token, depth)
+     VALUES (?, NULL, NULL, 'full')`,
     [connectorId],
   );
   dbRun(

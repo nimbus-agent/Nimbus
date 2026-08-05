@@ -4,6 +4,7 @@ import os from "node:os";
 import pino from "pino";
 
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
@@ -53,6 +54,7 @@ function testContext(db: Database): SyncContext {
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    depth: "full",
   };
 }
 
@@ -744,5 +746,81 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     release?.();
     await p;
     await sched.stop();
+  });
+
+  test("a connector with no depth row resolves to full", () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    sched.register(okSyncable("no-depth-row"));
+    const statuses = sched.getStatus("no-depth-row");
+    expect(statuses).toHaveLength(1);
+    const status = statuses[0];
+    expect(status).toBeDefined();
+    expect(status!.depth).toBe("full");
+  });
+
+  // Closes the gap the shared-template `this.ctx` (always `depth: "full"` in every fixture) can't
+  // catch: a forced/scheduled run must receive the connector's OWN persisted depth, not the
+  // template's. Regressing `runJob` back to `connector.sync(this.ctx, ...)` would make this fail
+  // (captured depth reverts to "full") while every other test in this file — and the `getStatus`
+  // depth-shape tests in scheduler-status-shape.test.ts — stays green, because none of them read
+  // the depth actually handed to `sync()`.
+  test("a forced sync passes the connector's persisted depth, not the shared template's", async () => {
+    const db = openMemoryIndexDatabase();
+    const idx = new LocalIndex(db);
+    const ctx = testContext(db); // depth: "full"
+    const sched = new SyncScheduler(ctx);
+    let capturedDepth: SyncContext["depth"] | undefined;
+    sched.register({
+      serviceId: "depth-capture",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(runCtx): Promise<SyncResult> {
+        capturedDepth = runCtx.depth;
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    });
+    idx.setConnectorDepth("depth-capture", "metadata_only");
+    await sched.forceSync("depth-capture");
+    await sched.stop();
+    expect(capturedDepth).toBe("metadata_only");
+  });
+
+  // The regression the test ABOVE structurally cannot catch: it calls
+  // `setConnectorDepth` first, which creates the `sync_state` row, so the
+  // `INSERT OR IGNORE` inside `transitionHealth()` -> `upsertHealthRow()` is
+  // a no-op and its column list is never exercised. A connector whose depth
+  // was NEVER set takes the other path: run 1 sees no row at all (
+  // `getDepthForService` falls back to "full"), then the success transition
+  // CREATES the row — and if that insert omits `depth`, the row inherits
+  // V21's stale `DEFAULT 'summary'` and every later run silently indexes at
+  // 512 chars with `body_complete` pinned to 0. Only a SECOND run observes
+  // it, hence the two forced syncs.
+  test("a connector whose depth was never set still syncs at full on the SECOND run", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx);
+    const seenDepths: Array<SyncContext["depth"]> = [];
+    sched.register({
+      serviceId: "never-configured",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(runCtx): Promise<SyncResult> {
+        seenDepths.push(runCtx.depth);
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    });
+
+    await sched.forceSync("never-configured");
+    await sched.forceSync("never-configured");
+    await sched.forceSync("never-configured");
+    await sched.stop();
+
+    expect(seenDepths).toEqual(["full", "full", "full"]);
+    const row = db
+      .query(`SELECT depth FROM sync_state WHERE connector_id = ?`)
+      .get("never-configured") as { depth: string } | null;
+    expect(row?.depth).toBe("full");
   });
 });

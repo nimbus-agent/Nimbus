@@ -11,7 +11,7 @@ function setup(): { idx: LocalIndex; db: Database } {
 }
 
 describe("LocalIndex.persistedConnectorStatuses — depth + enabled shape (V21)", () => {
-  test("fresh connector returns depth='summary' and enabled=true", () => {
+  test("fresh connector returns depth='full' and enabled=true", () => {
     const { idx, db } = setup();
     db.run(
       `INSERT INTO scheduler_state
@@ -23,7 +23,7 @@ describe("LocalIndex.persistedConnectorStatuses — depth + enabled shape (V21)"
     expect(statuses).toHaveLength(1);
     const s = statuses[0];
     expect(s).toBeDefined();
-    expect(s!.depth).toBe("summary");
+    expect(s!.depth).toBe("full");
     expect(s!.enabled).toBe(true);
   });
 

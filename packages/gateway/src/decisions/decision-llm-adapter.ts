@@ -33,8 +33,29 @@ export function buildExtractionPrompt(sentence: string, context: string): string
   ].join("\n");
 }
 
+/**
+ * A ```-fenced block, with the body captured.
+ *
+ * The body is `(?:\S[\s\S]*?)?` — "empty, or something that does NOT start
+ * with whitespace" — rather than a bare `[\s\S]*?`. With a bare lazy body the
+ * preceding `\s*` and the body both match whitespace, so on a fence followed
+ * by a long whitespace run and no closer the engine tries every split of that
+ * run and rescans the remainder after each: Σ(n−i), quadratic. Measured on
+ * Bun 1.3 against the exact prior pattern, on ` ``` ` + `" ".repeat(n)`: 2 KB
+ * 0.9 ms, 4 KB 3.6 ms, 8 KB 15 ms, 16 KB 57 ms, 32 KB 220 ms — a clean 4x per
+ * doubling. `raw` here is model output, which for a local model is only as
+ * trustworthy as whatever text was fed into the prompt, i.e. indexed item
+ * bodies.
+ *
+ * Requiring a non-whitespace first character makes the split point between
+ * `\s*` and the body unique, and changes nothing about what is captured:
+ * `\s*` is greedy and a match with it maximal always exists whenever any
+ * match does, so a captured body never began with whitespace anyway.
+ */
+const FENCED_BLOCK_RE = /```(?:json)?\s*((?:\S[\s\S]*?)?)```/iu;
+
 function extractJsonObject(raw: string): string {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/iu.exec(raw);
+  const fenced = FENCED_BLOCK_RE.exec(raw);
   const body = fenced?.[1] ?? raw;
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
@@ -61,7 +82,9 @@ export function parseExtraction(raw: string): ExtractionOutcome {
     alternatives?: unknown;
   };
   if (typeof o.is_decision !== "boolean") {
-    throw new Error("model output had a non-boolean is_decision");
+    // A TypeError, not a bare Error: this rejects a value of the wrong TYPE,
+    // and `TypeError extends Error`, so every existing catch still catches it.
+    throw new TypeError("model output had a non-boolean is_decision");
   }
   if (!o.is_decision) return { kind: "veto" };
 

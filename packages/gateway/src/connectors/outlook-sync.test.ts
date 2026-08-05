@@ -36,7 +36,7 @@ describe("Outlook sync cursor codec", () => {
       samples,
       encodeOutlookSyncCursor,
       decodeOutlookSyncCursor,
-      "nimbus-outl1:",
+      "nimbus-outl2:",
     );
   });
 });
@@ -610,5 +610,308 @@ describe("createOutlookSyncable", () => {
 
     // null nextUrl means no continuation, should use the default initial URL
     expect(capturedUrls.some((u) => u.includes("/me/messages/delta?$top="))).toBe(true);
+  });
+
+  // ── real Graph `body` indexing (Task 5) ───────────────────────────────────
+
+  test("indexes the Graph body with the quoted tail stripped", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "htmlbody",
+            subject: "Ship it",
+            body: { contentType: "html", content: "<p>Ship it.</p><p>On Mon, Ana wrote:</p>" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "htmlbody")) as { body: string } | undefined;
+    expect(row?.body).toBe("Ship it.");
+  });
+
+  test("contentType text passes through without HTML stripping", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    // "plain & simple" is a FIXED POINT of plainTextFromHtmlLines (no tags, no
+    // newlines, no whitespace runs) -- it round-trips identically whether or
+    // not the text arm is (wrongly) routed through the html path, so it can't
+    // discriminate. A fixture with a real newline can: plainTextFromHtmlLines's
+    // first step neutralises every source newline to a space, so if the text
+    // arm were ever routed through it, "line one\nline two" would come back as
+    // "line one line two" instead of unchanged.
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "textbody",
+            subject: "Plain",
+            body: { contentType: "text", content: "line one\nline two" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "textbody")) as { body: string } | undefined;
+    expect(row?.body).toBe("line one\nline two");
+  });
+
+  // A REPRESENTATIVE input rather than a fragment shaped to the code: what
+  // Graph actually returns for a Word-composed Outlook reply — a complete
+  // HTML document with a `<head><style>` block of `mso-` CSS, `&nbsp;`
+  // padding, an `&lt;`-escaped comparison in the prose, the underscore
+  // divider, and a quoted header block. Every other consumer of the shared
+  // HTML helpers is handed a FRAGMENT, so Outlook is the first caller that
+  // ever sees `<head>`/`<style>` at all.
+  const WORD_HTML_REPLY = [
+    '<html xmlns:o="urn:schemas-microsoft-com:office:office">',
+    "<head>",
+    '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">',
+    '<style type="text/css"><!--',
+    '@font-face{font-family:"Cambria Math";panose-1:2 4 5 3 5 4 6 3 2 4;}',
+    "p.MsoNormal, li.MsoNormal, div.MsoNormal",
+    "{mso-style-unhide:no;mso-style-qformat:yes;margin:0cm;font-size:11.0pt;",
+    'font-family:"Calibri",sans-serif;mso-fareast-language:EN-US;}',
+    "a:link, span.MsoHyperlink{mso-style-priority:99;color:#0563C1;}",
+    "--></style>",
+    "</head>",
+    '<body lang="EN-GB" link="#0563C1">',
+    '<div class="WordSection1">',
+    '<p class="MsoNormal">Approved &#8212; ship it.&nbsp;&nbsp;Note the guard only fires when',
+    "latency &lt; 200ms.<o:p></o:p></p>",
+    '<p class="MsoNormal"><o:p>&nbsp;</o:p></p>',
+    '<div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">',
+    `<p class="MsoNormal">${"_".repeat(38)}<o:p></o:p></p>`,
+    '<p class="MsoNormal"><b>From:</b> Ana Ruiz &lt;ana@example.com&gt;<br>',
+    "<b>Sent:</b> 04 August 2026 09:14<br>",
+    "<b>To:</b> Bo Lin &lt;bo@example.com&gt;<br>",
+    "<b>Subject:</b> Re: rollout guard<o:p></o:p></p>",
+    '<p class="MsoNormal">Can we ship the guard on Tuesday?<o:p></o:p></p>',
+    "</div></div></body></html>",
+  ].join("\r\n");
+
+  test("a Word-composed HTML document indexes its prose, not its mso- CSS", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "word1",
+            subject: "Re: rollout guard",
+            bodyPreview: "Approved — ship it.",
+            body: { contentType: "html", content: WORD_HTML_REPLY },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "word1")) as
+      | { body: string; body_complete: number }
+      | undefined;
+    const body = row?.body ?? "";
+
+    // The CSS must not reach the index: it lands AHEAD of the prose, eats the
+    // 16 KiB cap, and pollutes item_fts / the glossary miner / the decisions
+    // extractor with style tokens.
+    expect(body).not.toContain("mso-style-unhide");
+    expect(body).not.toContain("font-family");
+    expect(body).not.toContain("Cambria Math");
+    // Entities decoded: `&nbsp;` padding normalised, `&#8212;` and `&lt;`
+    // rendered. Before this branch Outlook indexed Graph's already-decoded
+    // `bodyPreview`, so leaving them raw was a body-quality regression.
+    expect(body).toContain("Approved — ship it. Note the guard only fires when latency < 200ms.");
+    expect(body).not.toContain("&nbsp;");
+    // The quoted reply chain below the divider is stripped, and the divider
+    // here IS followed by a From:/Sent: header block, so it is genuinely
+    // terminal.
+    expect(body).not.toContain("Can we ship the guard on Tuesday?");
+    expect(body).not.toContain("From:");
+    expect(row?.body_complete).toBe(1);
+  });
+
+  test("a body-less message keeps Graph's bodyPreview instead of discarding it", async () => {
+    // `$select` already fetches `bodyPreview`, so throwing it away bought
+    // nothing: the `bodyPreview` arm gives `body_complete = 0` either way,
+    // and keeping the ~255-char preview keeps the message searchable.
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "prevonly",
+            subject: "Invoice attached",
+            bodyPreview: "Please find the September invoice attached.",
+            // An attachment-only message: Graph returns an empty body.
+            body: { contentType: "html", content: "" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    const row = db
+      .query("SELECT body_preview, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "prevonly")) as
+      | { body_preview: string | null; body_complete: number }
+      | undefined;
+    expect(row?.body_preview).toBe("Please find the September invoice attached.");
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("a non-string contentType (external JSON) does not throw and falls through to the HTML path", async () => {
+    // CodeRabbit finding C: `parseODataDeltaPage` validates only the
+    // top-level `value` array and casts each element to `GraphMessage`
+    // without runtime validation. Graph is external JSON, so `contentType`
+    // could be any JSON type. `m.body?.contentType?.toLowerCase()` on a
+    // non-string (e.g. a number) throws a TypeError and aborts the whole
+    // sync page. A non-string contentType must be treated as non-"text" and
+    // routed through `plainTextFromHtmlLines`, which is a safe no-op-ish
+    // pass for content with no HTML markup.
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([
+          {
+            id: "badcontenttype",
+            subject: "Weird payload",
+            // contentType is a number, not the string the GraphMessage type
+            // promises — this is what a malformed/unexpected Graph response
+            // looks like at runtime.
+            body: { contentType: 12345, content: "plain enough text" },
+          },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "badcontenttype")) as { body: string } | undefined;
+    expect(row?.body).toBe("plain enough text");
+  });
+
+  test("a message with no body still indexes title-only", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/messages/delta")) {
+        // Pre-upgrade delta-link shape: no `body` field on the message at all.
+        return deltaResponse([{ id: "nobody2", subject: "No body field" }]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const r = await syncable.sync(ctx, null);
+    expect(r.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("outlook", "nobody2")) as { body_complete: number } | undefined;
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("$select including body is on the initial delta request", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    expect(seenUrl).toContain("$select=");
+    expect(decodeURIComponent(seenUrl)).toContain("body");
+  });
+
+  test("$select is NOT re-appended to a followed nextLink", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    const storedNextLink =
+      "https://graph.microsoft.com/v1.0/me/messages/delta?$skiptoken=continuePage";
+    const cursor = encodeOutlookSyncCursor({ v: 1, nextUrl: storedNextLink });
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      return deltaResponse([]);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, cursor);
+
+    expect(seenUrl).toBe(storedNextLink);
+  });
+
+  test("a pre-upgrade outl1 cursor is ignored and the initial delta URL is used", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("microsoft");
+    const syncable = createOutlookSyncable({ ensureMicrosoftMcpRunning: async () => {} });
+    // Built with the OLD "nimbus-outl1:" prefix — must decode to undefined
+    // under the bumped "nimbus-outl2:" CURSOR_PREFIX and fall through to the
+    // initial (i.e. $select-bearing) request URL.
+    const oldPrefixCursor = `nimbus-outl1:${Buffer.from(
+      JSON.stringify({ v: 1, nextUrl: "https://graph.microsoft.com/v1.0/me/messages/delta?x=1" }),
+    ).toString("base64url")}`;
+
+    let seenUrl = "";
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      seenUrl = url;
+      if (url.includes("/messages/delta")) {
+        return deltaResponse([]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, oldPrefixCursor);
+
+    expect(seenUrl).toContain("/me/messages/delta");
+    expect(decodeURIComponent(seenUrl)).toContain("body");
   });
 });

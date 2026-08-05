@@ -1,9 +1,11 @@
-import { upsertIndexedItemForSync } from "../../../index/item-store.ts";
+import { type IndexedItemBodyInput, upsertIndexedItemForSync } from "../../../index/item-store.ts";
 import { resolvePersonForSync } from "../../../people/linker.ts";
 import { parseFromHeaderForPerson } from "../../../people/parse-from-header.ts";
+import { stripQuotedTail } from "../../../string/email-quoted-text.ts";
 import type { SyncContext } from "../../../sync/types.ts";
 import { fetchGoogleJson } from "../../google-sync-shared.ts";
 import { asUnknownObjectRecord } from "../../json-unknown.ts";
+import { gmailMessageBodyText } from "./message-body.ts";
 
 export const GMAIL_SERVICE_ID = "gmail";
 
@@ -17,9 +19,17 @@ export type MessagesListResponse = {
 
 type MessageHeader = { name?: string; value?: string };
 
+export type MessagePartBody = {
+  data?: string;
+  /** Present when the bytes live in a separate attachment fetch — skip these. */
+  attachmentId?: string;
+};
+
 export type MessagePayload = {
   mimeType?: string;
   headers?: MessageHeader[];
+  body?: MessagePartBody;
+  parts?: MessagePayload[];
 };
 
 export type GmailMessageResource = {
@@ -72,10 +82,7 @@ export async function fetchMessageMetadata(
   const u = new URL(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`,
   );
-  u.searchParams.set("format", "metadata");
-  u.searchParams.append("metadataHeaders", "Subject");
-  u.searchParams.append("metadataHeaders", "From");
-  u.searchParams.append("metadataHeaders", "To");
+  u.searchParams.set("format", "full");
   const { json } = await gmailFetchJson(ctx, token, u.toString());
   return asUnknownObjectRecord(json);
 }
@@ -146,8 +153,19 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
     return;
   }
   const subject = headerFrom(m.payload, "Subject") ?? "(no subject)";
+  const rawBody = gmailMessageBodyText(m.payload ?? {});
+  const body = stripQuotedTail(rawBody);
+  // Empty-body handling is a PAIR with `connectors/outlook-sync.ts` — keep
+  // the two arms in step. `gmailMessageBodyText` legitimately yields nothing
+  // for S/MIME mail, attachment-only mail, an unusual MIME shape, or a tree
+  // exceeding its MAX_DEPTH / MAX_PARTS bounds. Passing `body: ""` there
+  // would be a DECLARED-full empty body: `upsertIndexedItem` sees
+  // `declaredFull = true`, raw length 0 <= cap and no `bodyTruncated`, so it
+  // latches `body_complete = 1` — the message loses the snippet it used to
+  // have AND is marked complete, so `index.rebody` never revisits it. The
+  // `bodyPreview` arm keeps the snippet searchable at `body_complete = 0`.
   const snippet = typeof m.snippet === "string" ? m.snippet : "";
-  const preview = snippet.length > 512 ? snippet.slice(0, 512) : snippet;
+  const bodyInput: IndexedItemBodyInput = body === "" ? { bodyPreview: snippet } : { body };
   const internal = m.internalDate === undefined ? now : Number(m.internalDate);
   const modifiedAt = Number.isFinite(internal) ? internal : now;
   const threadId = typeof m.threadId === "string" ? m.threadId : "";
@@ -171,7 +189,7 @@ export function upsertGmailMessage(ctx: SyncContext, m: GmailMessageResource, no
     type: "email",
     externalId: id,
     title: subject.length > 512 ? subject.slice(0, 512) : subject,
-    bodyPreview: preview,
+    ...bodyInput,
     url,
     canonicalUrl: url,
     modifiedAt,

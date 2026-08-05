@@ -571,6 +571,311 @@ describe("createGmailSyncable", () => {
     }
   });
 
+  test("indexes a real Gmail body with the quoted tail stripped", async () => {
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const rawBody = "Agreed, ship Tuesday.\n\n> On Mon, Ana wrote:\n> the whole thread";
+    const encodedBody = Buffer.from(rawBody, "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m1", threadId: "th1" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m1")) {
+        return new Response(
+          JSON.stringify({
+            id: "m1",
+            threadId: "th1",
+            snippet: "Agreed, ship Tuesday...",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "text/plain",
+              headers: [
+                { name: "Subject", value: "Ship plan" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              body: { data: encodedBody },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query<{ body: string; body_complete: number }, []>(
+        "SELECT body, body_complete FROM item WHERE service = 'gmail'",
+      )
+      .get();
+    expect(row?.body).toBe("Agreed, ship Tuesday.");
+    expect(row?.body_complete).toBe(1);
+  });
+
+  test("indexes an HTML-only Gmail body with the quoted tail stripped", async () => {
+    // The html fallback in `gmailMessageBodyText` used to flatten everything
+    // through `plainTextFromHtml`, which collapses all newlines into a single
+    // space — `stripQuotedTail`'s line-anchored markers can never match a
+    // single-line body. It now routes through the line-preserving
+    // `plainTextFromHtmlLines` instead.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const htmlBody =
+      "<p>Agreed, ship Tuesday.</p><p>> On Mon, Ana wrote:</p><p>> the whole thread</p>";
+    const encodedBody = Buffer.from(htmlBody, "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m2", threadId: "th2" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m2")) {
+        return new Response(
+          JSON.stringify({
+            id: "m2",
+            threadId: "th2",
+            snippet: "Agreed, ship Tuesday...",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "text/html",
+              headers: [
+                { name: "Subject", value: "Ship plan" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              body: { data: encodedBody },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db.query("SELECT body FROM item WHERE id = ?").get(itemPrimaryKey("gmail", "m2")) as
+      | { body: string }
+      | undefined;
+    expect(row?.body).toBe("Agreed, ship Tuesday.");
+  });
+
+  test("a blank text/plain alternative does not suppress the real text/html body end-to-end", async () => {
+    // CodeRabbit finding A, exercised through the full sync path: a sender
+    // that emits a whitespace-only text/plain alternative beside a real
+    // text/html part used to end up with `gmailMessageBodyText` returning ""
+    // after `.trim()` (the `found.plain.length > 0` branch won on the blank
+    // part), so `upsertGmailMessage` stored the snippet with
+    // `body_complete = 0` and the HTML body was never indexed — permanently,
+    // since a later `index.rebody` reproduces the same result.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    const blankPlain = Buffer.from("   \n  ", "utf8").toString("base64url");
+    const htmlBody = Buffer.from("<p>Real content lives here.</p>", "utf8").toString("base64url");
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({ messages: [{ id: "m3", threadId: "th3" }], nextPageToken: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m3")) {
+        return new Response(
+          JSON.stringify({
+            id: "m3",
+            threadId: "th3",
+            snippet: "Real content lives here.",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "multipart/alternative",
+              headers: [
+                { name: "Subject", value: "Blank plain alt" },
+                { name: "From", value: "a@b.com" },
+                { name: "To", value: "c@d.com" },
+              ],
+              parts: [
+                { mimeType: "text/plain", body: { data: blankPlain } },
+                { mimeType: "text/html", body: { data: htmlBody } },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("gmail", "m3")) as { body: string; body_complete: number } | undefined;
+    expect(row?.body).toBe("Real content lives here.");
+    expect(row?.body_complete).toBe(1);
+  });
+
+  test("an S/MIME message with no extractable text keeps its snippet and stays incomplete", async () => {
+    // Representative input, not a fixture shaped to the code: a real
+    // signed-and-encrypted message whose only part is opaque PKCS#7 bytes.
+    // `gmailMessageBodyText` correctly yields "" (it indexes text/plain and
+    // text/html only, and skips parts that defer to an attachment fetch).
+    // Passing that "" as a declared-full `body` would latch
+    // `body_complete = 1` — losing the snippet the message used to have AND
+    // making `index.rebody` skip it forever. Attachment-only mail, unusual
+    // MIME shapes and trees past MAX_DEPTH/MAX_PARTS all land here too.
+    const { db, ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({ messages: [{ id: "smime1", threadId: "ths" }], nextPageToken: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/smime1")) {
+        return new Response(
+          JSON.stringify({
+            id: "smime1",
+            threadId: "ths",
+            snippet: "Q3 close: signed contract attached for counter-signature.",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: {
+              mimeType: "multipart/mixed",
+              headers: [
+                { name: "Subject", value: "Signed contract" },
+                { name: "From", value: "legal@example.com" },
+                {
+                  name: "Content-Type",
+                  value: 'application/pkcs7-mime; smime-type="enveloped-data"',
+                },
+              ],
+              parts: [
+                {
+                  mimeType: "application/pkcs7-mime",
+                  body: { attachmentId: "att-1" },
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "900" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await syncable.sync(ctx, null);
+    expect(result.itemsUpserted).toBe(1);
+
+    const row = db
+      .query("SELECT body, body_preview, body_complete FROM item WHERE id = ?")
+      .get(itemPrimaryKey("gmail", "smime1")) as
+      | { body: string | null; body_preview: string | null; body_complete: number }
+      | undefined;
+    expect(row?.body_preview).toBe("Q3 close: signed contract attached for counter-signature.");
+    expect(row?.body).toBe("Q3 close: signed contract attached for counter-signature.");
+    // The load-bearing half: never claim completeness for a body we failed to
+    // extract, or `nimbus index rebody --service gmail` will skip it.
+    expect(row?.body_complete).toBe(0);
+  });
+
+  test("requests format=full, not format=metadata", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const syncable = createGmailSyncable({ ensureGoogleMcpRunning: async () => {} });
+    let seenUrl = "";
+
+    globalThis.fetch = (async (input: FetchInput) => {
+      const url = requestUrlString(input);
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return new Response(
+          JSON.stringify({
+            messages: [{ id: "m1", threadId: "th1" }],
+            nextPageToken: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/messages/m1")) {
+        seenUrl = url;
+        return new Response(
+          JSON.stringify({
+            id: "m1",
+            threadId: "th1",
+            internalDate: "1700000000000",
+            labelIds: ["INBOX"],
+            payload: { headers: [{ name: "Subject", value: "Hi" }] },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/gmail/v1/users/me/profile")) {
+        return new Response(JSON.stringify({ historyId: "999" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    await syncable.sync(ctx, null);
+
+    expect(seenUrl).toContain("format=full");
+    expect(seenUrl).not.toContain("format=metadata");
+  });
+
   test("delta phase: nextPageToken in history response → hasMore=true with delta cursor", async () => {
     // Covers L155 TRUE branch: nextPage present → returns hasMore=true delta cursor
     const { ctx } = await createOAuthConnectorTestSetup("google");

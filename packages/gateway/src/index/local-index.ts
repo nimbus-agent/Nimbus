@@ -262,7 +262,7 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 48;
+export const CURRENT_SCHEMA_VERSION = 49;
 
 const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed"]);
 
@@ -321,7 +321,7 @@ export class LocalIndex {
     const depthRow = db
       .query(`SELECT depth FROM sync_state WHERE connector_id = ?`)
       .get(row.service_id) as { depth: string | null } | null | undefined;
-    const depth = (depthRow?.depth ?? "summary") as ReindexDepth;
+    const depth = (depthRow?.depth ?? "full") as ReindexDepth;
     return {
       serviceId: row.service_id,
       status,
@@ -729,12 +729,21 @@ export class LocalIndex {
     return rows.map((row) => ({ ...rowToItem(row), indexPrimaryKey: String(row.id) }));
   }
 
+  /**
+   * NOT the live sync-state write path — this method has no production
+   * callers (only its own definition and tests reference it); the scheduler
+   * records a sync through `sync/scheduler-store.ts`, and the row that
+   * materialises `depth` for a never-configured connector is created by
+   * `connectors/health.ts` `upsertHealthRow()`. The explicit `depth 'full'`
+   * below is kept consistent with those sites so a future caller does not
+   * reintroduce V21's stale `DEFAULT 'summary'`.
+   */
   recordSync(connectorId: string, token: string): void {
     const now = Date.now();
     dbRun(
       this.db,
-      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token)
-       VALUES (?, ?, ?)
+      `INSERT INTO sync_state (connector_id, last_sync_at, next_sync_token, depth)
+       VALUES (?, ?, ?, 'full')
        ON CONFLICT(connector_id) DO UPDATE SET
          last_sync_at = excluded.last_sync_at,
          next_sync_token = excluded.next_sync_token`,

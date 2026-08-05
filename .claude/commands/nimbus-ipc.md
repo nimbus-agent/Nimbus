@@ -253,15 +253,108 @@ Available to LAN peers. Never mutates data.
 
 ---
 
-### `agents.*` — Built-in read-only agents (Phase 5 T3)
+### `agents.*` — Built-in read-only agents (Phase 5 T3 → Spine S1)
 
-Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief. Read-only — never fires HITL.
+**Twelve methods are registered**, not three — `packages/gateway/src/ipc/agents-rpc.ts` `dispatchAgentsRpc` is the authoritative list; re-read it before assuming an agent is missing. Each returns immediately and emits a `<agent>.briefReady { sessionId, brief }` notification with a Markdown brief (note the prefix is the **agent** name, not `agents.` — `expert.briefReady`, not `agents.expert.briefReady`). All are read-only and never fire HITL. `agents.whyPeek` is the one exception to the notification contract: it answers synchronously in the response.
 
 | Method | Type | Description |
 |---|---|---|
 | `agents.expert` | request | "Who has the most context on this?" — ranked contributors + evidence |
 | `agents.impact` | request | Reverse-dependency blast radius across five categories |
 | `agents.catchup` | request | Personalized retrospective digest weighted by your involvement |
+| `agents.ghost` | request | Slice 6a — teammate file-expertise across paired peers (`federation.expertise` fan-out) |
+| `agents.conflicts` | request | Slice 6a — WIP collisions (open PR / ticket / branch / recent commit) before editing a file |
+| `agents.huddle` | request | Slice 6a — team-scoped morning briefing across paired peers |
+| `agents.janitor` | request | Slice 6b — idle cloud-resource verdict; a `--cleanup` proposal is HITL-gated at the executor (`I24`) |
+| `agents.preflight` | request | Slice 6b — blast-radius preflight over a peer namespace; each downstream owner approves behind their own gate (`I24`/`D18`) |
+| `agents.why` | request | S1 — six-lane provenance brief; one cached root-fenced local `git blame`, not a connector dispatch |
+| `agents.whyPeek` | request | S1 — **synchronous** sub-300 ms one-liner; emits no notification |
+| `agents.glossary` | request | S1 — read over the materialized `glossary_term` table (V45/V46) |
+| `agents.decisions` | request | S1 — read over the materialized `decision_record` table (V47) |
+
+**The read agent is not the whole surface.** `glossary` and `decisions` each own a *second*, write-class namespace that drives their extraction pass — see below. Do not add a pass-driving method to `agents.*`; that namespace is renderer-exposed and read-only by construction.
+
+---
+
+### `glossary.*` / `decisions.*` — Implicit-knowledge extraction passes (S1)
+
+Write-class companions to the read-only `agents.glossary` / `agents.decisions` briefs. Both are **`FORBIDDEN_OVER_LAN` at the whole-namespace level** (`lan-rpc.ts`; the denylist is default-allow, so omitting the namespace would leave a paired peer able to wipe the store) and **neither is in Tauri's `ALLOWED_METHODS`** (`I7`) — local/CLI-only. Both use `LongRunningJobRegistry`: they return `{ jobId }` and report via notifications.
+
+| Method | Type | Description |
+|---|---|---|
+| `glossary.refresh` | request | On-demand incremental pass. Emits `glossary.passProgress` / `passDone` / `passError`. Fails fast with `ERR_GLOSSARY_PASS_RUNNING` (shares the single-flight guard with the debounced post-sync trigger) |
+| `glossary.rebuild` | request | Truncates `glossary_term` + `glossary_pass_state`, deletes projected items, re-mines from a zero watermark |
+| `decisions.refresh` | request | On-demand pass. Emits `decisions.passDone` / `passError` — **no meaningful `passProgress`**: `DecisionRefresher.run()` carries no `onProgress` hook |
+| `decisions.rebuild` | request | Clears `decision_record` / `decision_evidence` / the watermark — **vetoes included** — and re-mines |
+
+**One asymmetry that bites:** glossary checks "already running" *synchronously* before `registry.start()`, so a busy gateway never returns a jobId. Decisions enforces it *inside* the async `run()`, so a caller gets `{ jobId }` and then an immediate `decisions.passError`. Both namespaces exist only when their `[glossary]` / `[decisions]` config block is enabled; otherwise the refresher is never constructed and the method surfaces as "Method not found".
+
+---
+
+### `index.rebody` — Connector body re-index (S1)
+
+Registered in `packages/gateway/src/ipc/index-rebody-rpc.ts`, catalogued in `docs/architecture.md`. Listed separately from `index.*` because its LAN posture is stricter.
+
+| Method | Type | Description |
+|---|---|---|
+| `index.rebody` | request | Long-running re-index of connector bodies at the configured depth (V48/V49). Returns `{ jobId }` |
+| `index.rebodyCancel` | request | Paired cancel for the running job |
+
+**A stronger LAN case than `index.reembed`.** Reembed only recomputes local embeddings (pure local CPU). `rebody` clears a connector's sync watermark and drives an **outbound re-sync** against the owner's third-party services — potentially tens of thousands of API requests spent against the owner's own credentials and rate-limit quota. Both methods are fully `FORBIDDEN_OVER_LAN`. Pair with the `nimbus-index-body-depth` skill before touching either.
+
+---
+
+### `tribal.*` — Tribal-knowledge capture (Phase 6 Slice 6c)
+
+| Method | Type | Description |
+|---|---|---|
+| `tribal.status` / `tribal.list` | request | Detector status and repeat-question clusters. **Renderer-callable** |
+| `tribal.start` / `tribal.stop` / `tribal.dismiss` / `tribal.scan` | request | Detector lifecycle + cluster triage. NOT in the Tauri allowlist (`I7`) |
+| `tribal.capture` | request | **Deliberately NOT in the `tribal-rpc.ts` handler table** — it needs a per-call HITL consent channel bound to the initiating client, which only the dispatcher has (`tryDispatchTribalRpc`). Writes only to the config-pinned KB destination (`I25` / `D19`) |
+
+`tribal.capture` is the pattern to copy whenever a method needs the *caller's own* consent channel: register it in the dispatcher, not the static handler map.
+
+---
+
+### `policy.*` — Signed org policy (Phase 6 Slice 4)
+
+| Method | Type | Description |
+|---|---|---|
+| `policy.show` | request | Current `PolicyState`. **Renderer-callable** |
+| `policy.verify` | request | Signature + anchor-pin verification |
+| `policy.sign` / `policy.trust` / `policy.refetch` | request | Sign a policy file / pin a publisher pubkey / re-fetch from the peer. NOT in the Tauri allowlist (`I7`) |
+| `team.purge` | request | GDPR right-to-erasure orchestration — registered in `policy-rpc.ts` despite the `team.` prefix |
+
+Enforcement always reads the resolved `EnforcedPolicy` from `policy-gate.ts`, never raw policy TOML (`I22` / `D16`).
+
+---
+
+### `chatops.*` — Slack / Teams `@nimbus` bot (Phase 6 Slice 5)
+
+| Method | Type | Description |
+|---|---|---|
+| `chatops.status` | request | Transport + binding status. **Renderer-callable** |
+| `chatops.start` / `chatops.stop` / `chatops.test` | request | Lifecycle + parser dry-run. NOT in the Tauri allowlist (`I7`) |
+
+Operational (non-HITL) posts go only through `chatops/reply-dispatcher.ts` to a **server-derived** `ReplyTarget` — the destination is never caller-supplied (`I23` / `D17`).
+
+---
+
+### `teamvault.*` — Team-scoped credential store (Phase 6 Slice 2)
+
+| Method | Type | Description |
+|---|---|---|
+| `teamvault.list` | request | Entry + grant metadata (never secret values). **Renderer-callable** |
+| `teamvault.put` / `teamvault.delete` | request | Entry lifecycle. NOT in the Tauri allowlist (`I7`) |
+| `teamvault.grant` / `teamvault.revoke` | request | Per-peer, per-tool-id grants |
+
+Team-vault secrets are **consumed** only via `federation/invoke-gate.ts` `answerFederatedInvoke` (reached by `federation.invoke`), which mints an ephemeral team-credentialed connector and returns a leak-proof result, fail-closed on a missing secret (`I19` / `D15`). Never read a team secret from an RPC handler directly.
+
+---
+
+### Research briefs — HTTP-only, no JSON-RPC namespace (S1)
+
+`packages/gateway/src/briefs/` has **no `briefs.*` IPC namespace**. Its surface is four routes on the HTTP write allowlist (`POST /v1/briefs`, `/v1/briefs/{id}/sources`, `/v1/briefs/{id}/run`, `/v1/briefs/{id}/save`) plus a bearer-gated `GET /v1/briefs/{id}`, all default-off behind `[briefs]` in `nimbus.toml` (absent config ⇒ every route 404s). Run state is in-memory only (`BriefRunController`) — a restart drops in-flight runs. Adding to it is an `I13` question, not an IPC one: use the `nimbus-http-write-surface` skill.
 
 ---
 

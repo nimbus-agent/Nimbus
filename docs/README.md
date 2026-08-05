@@ -599,7 +599,7 @@ nimbus extension list
 | Layer | Technology |
 |---|---|
 | **Runtime** | [Bun v1.2+](https://bun.sh) — native TypeScript, fast startup, built-in SQLite |
-| **Language** | TypeScript 6.x strict mode |
+| **Language** | TypeScript 7.x strict mode |
 | **Agent Framework** | [Mastra](https://mastra.ai) — structured agents, tool registration, workflow orchestration |
 | **Integration Protocol** | [Model Context Protocol](https://modelcontextprotocol.io) — all connectors speak MCP; Engine never calls cloud APIs directly |
 | **Local Database** | `bun:sqlite` + [sqlite-vec](https://github.com/asg017/sqlite-vec) — metadata index + vector search |

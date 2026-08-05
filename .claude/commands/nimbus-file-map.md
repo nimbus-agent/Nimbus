@@ -116,6 +116,11 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/embedding/create-routing-runtime.ts` | `tryCreateRoutingEmbeddingRuntime` — hybrid factory; MiniLM fallback |
 | `packages/gateway/src/search/dual-search.ts` | `vectorSearchChunksDual` — KNN over both `vec_items_*` tables |
 | `packages/gateway/src/ipc/index-reembed-rpc.ts` | `dispatchIndexReembedRpc` — `index.reembed` / `index.reembedCancel`; CLI-only |
+| `packages/gateway/src/index/item-store.ts` | **`upsertIndexedItemForSync` — the single depth chokepoint every connector's item write goes through** (see `nimbus-index-body-depth` skill) |
+| `packages/gateway/src/index/body-caps.ts` | `BODY_MAX_PROSE = 16_384` / 512 for everything else; surrogate-safe clamp |
+| `packages/gateway/src/index/body-store-v48-sql.ts` | V48 — `item.body` + `item.body_complete`; `item_fts` repointed off `body_preview` |
+| `packages/gateway/src/index/depth-default-v49-sql.ts` | V49 — backfills `sync_state.depth` `'summary'` → `'full'` (leaves `metadata_only`) |
+| `packages/gateway/src/ipc/index-rebody-rpc.ts` | `index.rebody` / `index.rebodyCancel` — body backfill; CLI-only, FORBIDDEN_OVER_LAN |
 | `packages/gateway/src/automation/graph-predicate.ts` | Graph predicate types/parser/evaluator |
 | `packages/gateway/src/automation/watcher-engine.ts` | Watcher loop; applies `graph_predicate_json` post-filter |
 | `packages/gateway/src/db/verify.ts` | `nimbus db verify` — non-destructive integrity checks |
@@ -148,6 +153,9 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/agents/_lib/gap-notes.ts` | Gap-note detectors (empty index, missing connector/entity/relation) |
 | `packages/gateway/src/agents/_lib/render.ts` | Deterministic Markdown fallback renderer |
 | `packages/gateway/src/agents/_lib/synthesize.ts` | LLM synthesis layer with deterministic fallback |
+| `packages/gateway/src/agents/why.ts` + `why-peek.ts` | `nimbus why <ref>` — six-lane provenance briefs over the relationship graph |
+| `packages/gateway/src/agents/glossary.ts` | `nimbus glossary [<term>]` — implicit-knowledge glossary; `glossary_term` + `glossary_pass_state` (V45/V46) |
+| `packages/gateway/src/agents/decisions.ts` | `nimbus decisions` — implicit ADR extractor; `decision_record`/`_evidence`/`_pass_state` (V47) |
 
 ## Metrics + CI/CD
 
@@ -303,6 +311,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/share/share-gate.ts` | `createShare` — invariant `I27`/`D21` sole outbound-share chokepoint (see `nimbus-share-virality` skill) |
 | `packages/gateway/src/egress/egress-ledger.ts` | `appendEgressEntry` + `EgressSink` — invariant `I29`/`D22` egress-ledger append before `connectors.dispatch` (see `nimbus-egress` skill) |
 | `packages/gateway/src/egress/{egress-record,egress-verify,egress-prune,egress-sign}.ts` | Entry builder (`serviceOf` destination) / BLAKE3-chain verify (timing-safe, I10) / HITL-gated prune tombstone / Vault-reused receipt sign |
+| `packages/gateway/src/egress/{egress-coverage,egress-boot-marker,egress-source-type}.ts` | `THIS_BINARY_COVERAGE` (the machine-readable claim) / per-process boot marker hashed into `source_id` / the FROZEN 8-member `source_type` union |
 | `packages/gateway/src/ipc/egress-rpc.ts` | `egress.{head,list,verify,proveWindow,prune}` — 4 renderer-exposed reads + CLI-only HITL-gated prune |
 | `packages/cli/src/commands/prove.ts` | `nimbus prove "<query>"` + `nimbus egress [verify\|prune]` CLI |
 | `packages/gateway/src/index/egress-ledger-v44-sql.ts` | V44 `egress_ledger` migration SQL |

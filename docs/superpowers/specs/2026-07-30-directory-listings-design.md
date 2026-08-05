@@ -21,7 +21,7 @@ Recording these so they are not re-litigated:
 
 | Target | Why not |
 | --- | --- |
-| The ~80 MCP connectors, listed individually | Not publishable as standalone servers: unpublished on npm, and no `bin` / `main` / `exports` / `files` in their `package.json`. They load via `nimbus.extension.json` inside the gateway. Adding entry points and publishing ~80 packages multiplies the maintenance surface and routes users to the connectors rather than to Nimbus. |
+| The ~90 MCP connectors, listed individually | Not publishable as standalone servers: unpublished on npm, and no `bin` / `main` / `exports` / `files` in their `package.json`. They load via `nimbus.extension.json` inside the gateway. Adding entry points and publishing ~90 packages multiplies the maintenance surface and routes users to the connectors rather than to Nimbus. |
 | mcpdirectory.com | Could not verify the site exists. Not added on an unverified reference — re-evaluate if a working URL turns up. |
 | awesome-selfhosted | Inclusion criteria require self-hostable **server** software. Nimbus is a local CLI + gateway. A PR would be rejected on criteria, not merit. |
 
@@ -194,7 +194,7 @@ Listing as Client **and** Server is a different matter and is legitimate: they a
 genuinely distinct surfaces (one consumes MCP servers, the other *is* one), and on a
 site carrying separate client and server directories both entries are accurate. Keep
 the descriptions distinct so each entry stands on its own — the client entry is about
-indexing ~80 services, the server entry is about the six read-only tools.
+indexing ~90 services, the server entry is about the six read-only tools.
 
 ### Before opening any pull request
 
@@ -287,7 +287,7 @@ Alternative to: Glean, Onyx — AI search over work tools, but local-first,
 Description (one paragraph):
 
 > Nimbus is a local-first AI agent for on-call and platform engineers. It builds a
-> private SQLite index over ~80 developer and infrastructure services (GitHub, Jira,
+> private SQLite index over 90+ developer and infrastructure services (GitHub, Jira,
 > Slack, PagerDuty, Google, and more) through MCP connectors, and every outbound
 > action passes a human-in-the-loop consent gate. Credentials live in the OS keystore
 > and never leave the machine; pointing it at a local Ollama model keeps prompts local

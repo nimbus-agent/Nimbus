@@ -11,21 +11,40 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  * legacy text that is genuinely GONE from the local index and can only be
  * recovered from the source API.
  *
+ * As of the V49 depth enforcement (2026-08-04), `body_complete = 0` has a
+ * SECOND, orthogonal cause this command does not distinguish: a connector
+ * configured below `full` depth (`metadata_only`/`summary`) is coerced at
+ * `upsertIndexedItemForSync` to never claim completeness, by design, for as
+ * long as that setting holds — even for a service in
+ * `REBODY_IMPROVABLE_SERVICES` below. `computePendingByService` counts both
+ * causes together, so a `--dry-run` for such a service reports a nonzero
+ * pending count that a real run cannot shrink: `forceSync` still pays for a
+ * real re-sync over the network, and the depth chokepoint still discards the
+ * body it fetches. Distinguishing the two — filtering `pending` to rows a
+ * `full`-depth connector could actually complete — is a known gap, not
+ * addressed here; it would require joining `sync_state.depth` into
+ * `computePendingByService`; today the caller has to already know their own
+ * connector depth settings to avoid spending quota on a service that cannot
+ * benefit.
+ *
  * It works by clearing a per-connector sync watermark (`scheduler_state.cursor`)
  * and letting the existing sync run from scratch. Cost is NOT uniform across
  * connectors, and callers should know which kind they have:
  *
- *   - Delta-capable / bounded-window (Slack, Gmail via history ids; Jira via
- *     a cold-start `updated >= -Nd` JQL floor — see `jiraJqlFromCursor` in
- *     `connectors/jira-sync.ts`, where `decodeCursor(null)` yields
- *     `hasFloor = false`; Confluence via the same shape — a cold-start CQL
- *     floor, `type = page AND lastModified >= now("-30d")`, built in
- *     `createConfluenceSyncable` in `connectors/confluence-sync.ts` from its
- *     own `initialSyncDepthDays = 30`): even from a fully cleared watermark,
- *     the re-sync walks a bounded recent window, not the whole account. A
- *     Confluence `rebody` therefore recovers roughly the last 30 days of page
- *     edits, not the whole wiki — a page untouched longer than that stays
- *     `body_complete = 0` until it is next edited at the source.
+ *   - Delta-capable / bounded-window (Slack; Gmail via history ids; Outlook
+ *     via Microsoft Graph `@odata.deltaLink` — a cold-start cursor falls
+ *     through to the initial `$select`-ed list request in
+ *     `connectors/outlook-sync.ts`; Jira via a cold-start `updated >= -Nd`
+ *     JQL floor — see `jiraJqlFromCursor` in `connectors/jira-sync.ts`, where
+ *     `decodeCursor(null)` yields `hasFloor = false`; Confluence via the same
+ *     shape — a cold-start CQL floor, `type = page AND lastModified >=
+ *     now("-30d")`, built in `createConfluenceSyncable` in
+ *     `connectors/confluence-sync.ts` from its own `initialSyncDepthDays =
+ *     30`): even from a fully cleared watermark, the re-sync walks a bounded
+ *     recent window, not the whole account. A Confluence `rebody` therefore
+ *     recovers roughly the last 30 days of page edits, not the whole wiki —
+ *     a page untouched longer than that stays `body_complete = 0` until it
+ *     is next edited at the source.
  *   - Full-scan (Notion only): clearing the watermark re-walks EVERY page in
  *     the account. Notion resets `watermarkMs` to `-1` on a null cursor
  *     (`connectors/notion-sync.ts`) and its search request sends only an
@@ -36,15 +55,17 @@ import { LongRunningJobRegistry } from "./_lib/long-running.ts";
  *
  * Cost is a separate axis from completeness — do not assume "bounded window"
  * implies "will complete". `REBODY_IMPROVABLE_SERVICES` below tracks
- * completeness: Gmail is bounded-window (cheap) but its connector still never
- * declares a full `body:`, so re-syncing it costs little AND recovers
- * nothing. Confluence is bounded-window (cheap, ~30 days) and complete within
- * that window: it recovers a page's whole body in the search response it
- * already pays for. Notion is full-scan (expensive) and complete over
- * successive budgeted passes, converging once no pass is cut short. Notion
- * was the "expensive AND cannot complete" worst case until 2026-08-03;
- * Confluence's fix that same day was completeness-only — it was never
- * full-scan.
+ * completeness: as of 2026-08-04, Gmail and Outlook are both bounded-window
+ * (cheap, same request cost as before — `format=full` and the Graph
+ * `$select=...,body` addition are free relative to the existing
+ * `format=metadata`/`$select` request) AND complete: each now declares a full
+ * `body:` for every message. Confluence is bounded-window (cheap, ~30 days)
+ * and complete within that window: it recovers a page's whole body in the
+ * search response it already pays for. Notion is full-scan (expensive) and
+ * complete over successive budgeted passes, converging once no pass is cut
+ * short. Notion was the "expensive AND cannot complete" worst case until
+ * 2026-08-03; Confluence's fix that same day, and Gmail/Outlook's on
+ * 2026-08-04, were completeness-only — none of the three was ever full-scan.
  *
  * There is deliberately no `--only-truncated` mode today, and it is not an
  * oversight — it is not implementable given how syncs work. A sync fetches by
@@ -101,10 +122,10 @@ export type RebodyParams = {
  * (`REBODY_CANNOT_IMPROVE_SERVICES`, an exception list of 3 names), which was
  * wrong by construction: as of 2026-08-02, 74 files under
  * `packages/gateway/src/connectors/` call `upsertIndexedItem`/
- * `upsertIndexedItemForSync`, and only the ~10 services listed below have
- * been migrated to pass `body:` — every other connector is therefore
- * permanently `body_complete = 0`, which an exception list of 3 grossly
- * undercounted. An inclusion list is correct by construction instead: an
+ * `upsertIndexedItemForSync`, and only the ~13 services listed below (as of
+ * 2026-08-04) have been migrated to pass `body:` — every other connector is
+ * therefore permanently `body_complete = 0`, which an exception list of 3
+ * grossly undercounted. An inclusion list is correct by construction instead: an
  * unknown or newly-added connector defaults to cannot-improve — an
  * over-cautious warning, never a false promise — until it is deliberately
  * added here in the same change that migrates its sync handler.
@@ -113,7 +134,7 @@ export type RebodyParams = {
  *
  *   grep -rln "body:" packages/gateway/src/connectors/ --include=*.ts | grep -v "\.test\."
  *
- * then read each hit — do NOT trust the grep alone, for three reasons found
+ * then read each hit — do NOT trust the grep alone, for four reasons found
  * while building this list:
  *
  *   1. Most connectors build their upsert row via a shared
@@ -143,21 +164,51 @@ export type RebodyParams = {
  *      improvable at that granularity — `zoom` and `nimbus` are deliberately
  *      EXCLUDED here (the safe direction) until/unless the pending grouping
  *      is made type-aware.
+ *   4. The declared-full field itself can be object-shorthand, which drops it
+ *      from the grep's RESULT SET entirely rather than just miscategorizing
+ *      it within a hit — the failure mode is silent omission, not a
+ *      misleading match. `_lib/gmail/api.ts` (`body,`) and `outlook-sync.ts`
+ *      (`{ body }` inside the `bodyInput` ternary) both write a real,
+ *      declared-full body and neither contains the literal substring
+ *      `"body:"` anywhere in the file — `grep -rln "body:"
+ *      packages/gateway/src/connectors/` does not even list them as
+ *      candidates. Gmail and Outlook were found and added on 2026-08-04 by
+ *      reading the connector, not by trusting an empty grep result.
  *
- * Membership verified 2026-08-03 — every item-writing code path for each of
+ * Membership verified 2026-08-04 — every item-writing code path for each of
  * these services passes `body:`:
  *
  *   bitbucket   bitbucket-sync.ts:137        body: plainTextFromHtml(desc)
  *   confluence  confluence-sync.ts:150       body: text (declared-full branch of the bodyInput ternary)
  *   discord     discord-sync.ts:203          body: full
  *   github      github-sync.ts:207,247       body: body ?? "" (pr AND issue — both checked)
+ *   gmail       _lib/gmail/api.ts:168        body (declared-full branch of the bodyInput ternary)
  *   jira        jira-sync.ts:268             body: d.bodyPrev
  *   linear      linear-sync.ts:175           body: desc ?? ""
  *   notion      notion-sync.ts:245           body: fetched.text
- *   obsidian    obsidian-sync.ts:75          body: note.body
+ *   obsidian    obsidian-sync.ts:78          body: note.body
+ *   outlook     outlook-sync.ts:74           body: text (declared-full branch of the bodyInput ternary,
+ *                                            mirroring confluence — `body === ""` falls back to
+ *                                            `{ bodyPreview: preview }` instead of a hardcoded `""`)
  *   slack       slack-sync.ts:282            body: full
  *   snyk        snyk-issue-mapping.ts:117    body: description
  *   teams       _lib/teams/api.ts:88         body: full
+ *
+ * (`obsidian` corrected from :75 to :78 on 2026-08-04 — `e07264f9` inserted a
+ * three-line comment above `upsertNote` explaining why it now routes through
+ * `upsertIndexedItemForSync`, shifting the `body:` line without changing the
+ * expression. Re-verifying every row, not just the two being added, is what
+ * caught it — a grep alone would not have, since `body: note.body` still
+ * matches; only opening the file and counting lines does.
+ *
+ * `gmail` corrected from :181 — an unrelated `resolvePersonForSync` spread —
+ * to :168, and its description from "shorthand; unconditional, not a ternary
+ * branch" to "declared-full branch of the bodyInput ternary": the final fix
+ * wave introduced the `body === "" ? { bodyPreview: snippet } : { body }`
+ * ternary and this citation was never updated to match. `outlook` had drifted
+ * the same way, from :74 to a stale :66 (a comment line, not code) — found by
+ * re-verifying every row while fixing gmail's, the exact discipline the
+ * obsidian correction above already established.)
  *
  * Add an entry only when you migrate a connector's LAST remaining
  * bodyPreview-only item type to pass `body:` — not when only some of its
@@ -173,19 +224,23 @@ export type RebodyParams = {
  * PR body of <= 512 chars — a large share of real PRs, many with a one-line
  * or empty description — still satisfies `declaredFull && raw.length <= cap`
  * and flips 0 -> 1 on `rebody`. A shorter cap does not disqualify a
- * connector; ZERO declared-full call sites does (see notion/confluence/gmail
- * above). Do not conflate "inert" in the CHANGELOG/roadmap (did not get the
- * 16 KiB prose-cap lift) with "cannot complete" — they are different claims.
+ * connector; ZERO declared-full call sites does — the reason Notion and
+ * Confluence were excluded until 2026-08-03, and Gmail and Outlook until
+ * 2026-08-04. Do not conflate "inert" in the CHANGELOG/roadmap (did not get
+ * the 16 KiB prose-cap lift) with "cannot complete" — they are different
+ * claims.
  */
 export const REBODY_IMPROVABLE_SERVICES: ReadonlySet<string> = new Set([
   "bitbucket",
   "confluence",
   "discord",
   "github",
+  "gmail",
   "jira",
   "linear",
   "notion",
   "obsidian",
+  "outlook",
   "slack",
   "snyk",
   "teams",

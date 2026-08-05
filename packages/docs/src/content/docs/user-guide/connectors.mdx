@@ -139,6 +139,52 @@ Override the interval per connector in **Settings → Connectors** — click the
 
 ---
 
+## Indexing depth
+
+Each connector has an **indexing depth** that controls how much of an item's text is written to your
+local index. It is set per connector and enforced on **every** sync — not only when you run
+`reindex` — so a connector below `full` never accumulates bodies between reindexes.
+
+| Depth | What lands in the index |
+|---|---|
+| `full` | Title, metadata, and the item body — up to **16,384 UTF-16 code units** for prose-heavy types (mail, chat messages, tickets, wiki pages). |
+| `summary` | Title, metadata, and the body clamped to **512 UTF-16 code units**. Never marked complete. |
+| `metadata_only` | Title and metadata only. The body and its preview are both suppressed. |
+
+Limits are counted in **UTF-16 code units, not bytes** — 16,384 units is 16 KiB of plain ASCII, but
+up to four times that in UTF-8 for scripts outside the Basic Multilingual Plane. Clamping never
+splits a surrogate pair.
+
+Set it with `reindex`:
+
+```bash
+nimbus connector reindex slack --depth metadata_only
+nimbus connector reindex gmail --depth full
+```
+
+Two behaviours worth knowing before you choose:
+
+- **There are two different "defaults" here — do not confuse them.** A newly added connector
+  persists **`full`**, so it indexes bodies from its first sync. But `nimbus connector reindex`
+  persists **`metadata_only`** when you omit `--depth` — the CLI passes that explicitly rather than
+  leaving the setting alone. So running `reindex` without the flag *lowers* a connector from its
+  starting point. Pass `--depth full` to reindex without changing the setting.
+- **Deepening is not retroactive.** Lowering the depth strips or clamps existing rows immediately;
+  raising it cannot bring back text that was never stored, so it reports `0` items affected and
+  applies to future syncs only. To recover discarded bodies, force a fresh sync
+  (`nimbus connector sync <name> --full`) or run `nimbus index rebody --service <name>` on the
+  connectors that support it.
+
+:::caution[If you deliberately chose `summary`, re-apply it]
+Depth was not enforced for body content before schema V49. Every connector's stored depth was
+whatever the column default happened to be, and `summary` had always behaved identically to `full`
+in practice — so the V49 migration resets `summary` to `full` rather than silently truncating every
+existing index to 512 UTF-16 code units on its next sync. Connectors you had set to `metadata_only` are
+untouched and need no action.
+:::
+
+---
+
 ## Adding a connector
 
 See [Connect your first service](/user-guide/connect-your-first-service/) for the full OAuth flow walkthrough, including how to handle the browser redirect on Windows and WSL.

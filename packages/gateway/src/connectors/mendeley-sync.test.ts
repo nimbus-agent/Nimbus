@@ -29,6 +29,7 @@ function makeCtx(hasSecret: boolean) {
     sandboxCwd: dir,
     credentialFor: () => ({ credential: "personal" as const }),
     runTeamList: async () => [],
+    depth: "full" as const,
   };
 }
 
@@ -47,6 +48,7 @@ function makeCtxWithSecret(secret: string) {
     sandboxCwd: dir,
     credentialFor: () => ({ credential: "personal" as const }),
     runTeamList: async () => [],
+    depth: "full" as const,
   };
 }
 

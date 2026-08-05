@@ -6,7 +6,6 @@ import { type DecisionLlm, extractDecision } from "./decision-llm-adapter.ts";
 import { decisionSourceFilter } from "./decision-source-types.ts";
 import {
   clearDecisions,
-  countByStatus,
   markExtracted,
   markVetoed,
   readPassState,
@@ -242,7 +241,7 @@ function discoverPhase(
 
   for (let batch = 0; batch < maxBatches; batch++) {
     const rows = scanDelta(db, cursor, batchLimit);
-    const last = rows[rows.length - 1];
+    const last = rows.at(-1);
     if (last === undefined) {
       discoveryComplete = true;
       break;
@@ -397,17 +396,54 @@ async function extractOne(
   }
 }
 
+/** The five per-pass counters, folded across both model-backed queues. */
+type PassTally = {
+  extracted: number;
+  vetoed: number;
+  upgraded: number;
+  failed: number;
+  noModel: number;
+};
+
+/**
+ * Drain ONE model-backed queue into `tally`.
+ *
+ * `successCounter` is the whole difference between the two queues: a pending
+ * row the model extracts is an `extracted`; a snippet-sourced row the model
+ * re-extracts is an `upgraded`. The no-model fallback follows from the same
+ * distinction — `extractOne` has already written the snippet, so a PENDING row
+ * genuinely became extracted this pass (counted in both `extracted` and
+ * `noModel`, so `extracted` stays a true "rows extracted this pass" total
+ * while `noModel` breaks out how many took the fallback), whereas an UPGRADE
+ * row is still snippet-sourced and is therefore NOT an upgrade — only the
+ * breakdown counter moves.
+ */
+async function runModelQueue(
+  db: Database,
+  rows: readonly DecisionRecord[],
+  llm: DecisionLlm,
+  opts: DecisionPassOptions,
+  tally: PassTally,
+  successCounter: "extracted" | "upgraded",
+): Promise<void> {
+  for (const row of rows) {
+    const r = await extractOne(db, row, llm, opts);
+    if (r === "extracted") tally[successCounter]++;
+    else if (r === "no-model") {
+      tally.noModel++;
+      if (successCounter === "extracted") tally.extracted++;
+    } else if (r === "vetoed") tally.vetoed++;
+    else tally.failed++;
+  }
+}
+
 export async function runDecisionPass(
   db: Database,
   opts: DecisionPassOptions,
 ): Promise<DecisionPassSummary> {
   const { scanned, discovered, discoveryComplete } = discoverPhase(db, opts);
 
-  let extracted = 0;
-  let vetoed = 0;
-  let upgraded = 0;
-  let failed = 0;
-  let noModel = 0;
+  const tally: PassTally = { extracted: 0, vetoed: 0, upgraded: 0, failed: 0, noModel: 0 };
 
   const cooldownBefore = opts.nowMs - opts.retryCooldownMs;
 
@@ -432,30 +468,8 @@ export async function runDecisionPass(
     const pendingTake = Math.min(pendingAll.length, Math.max(0, budget - reserve));
     const upgradeTake = Math.min(upgradeAll.length, budget - pendingTake);
 
-    for (const row of pendingAll.slice(0, pendingTake)) {
-      const r = await extractOne(db, row, llm, opts);
-      if (r === "extracted") extracted++;
-      else if (r === "no-model") {
-        // No model was available for this call; extractOne already fell back
-        // to the snippet path, so the row IS extracted this pass — just not
-        // via a model. Counted in both so `extracted` stays a true "rows
-        // extracted this pass" total while `noModel` breaks out how many of
-        // those took the fallback.
-        extracted++;
-        noModel++;
-      } else if (r === "vetoed") vetoed++;
-      else failed++;
-    }
-    for (const row of upgradeAll.slice(0, upgradeTake)) {
-      const r = await extractOne(db, row, llm, opts);
-      if (r === "extracted") upgraded++;
-      else if (r === "no-model") {
-        // Still no model available — the row stays snippet-sourced, so this
-        // is NOT a real upgrade. Only the breakdown counter moves.
-        noModel++;
-      } else if (r === "vetoed") vetoed++;
-      else failed++;
-    }
+    await runModelQueue(db, pendingAll.slice(0, pendingTake), llm, opts, tally, "extracted");
+    await runModelQueue(db, upgradeAll.slice(0, upgradeTake), llm, opts, tally, "upgraded");
   } else {
     // `use_llm = false` (or no model wired). Every row here takes the snippet
     // fallback, so each one is BOTH an extraction and a no-model extraction —
@@ -465,12 +479,12 @@ export async function runDecisionPass(
     // LLM ran and never learns every statement is a verbatim snippet.
     for (const row of selectPendingByPriority(db, passBudget(opts.maxLlmCalls), cooldownBefore)) {
       extractAsSnippet(db, row, opts);
-      extracted++;
-      noModel++;
+      tally.extracted++;
+      tally.noModel++;
     }
   }
 
-  return { scanned, discovered, extracted, vetoed, upgraded, failed, noModel, discoveryComplete };
+  return { scanned, discovered, ...tally, discoveryComplete };
 }
 
 /**
@@ -487,4 +501,4 @@ export async function rebuildDecisions(
   return await runDecisionPass(db, opts);
 }
 
-export { countByStatus };
+export { countByStatus } from "./decision-store.ts";

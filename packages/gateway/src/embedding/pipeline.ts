@@ -92,6 +92,16 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     const fullText = itemTextForEmbedding(item);
     const pieces = chunkText(fullText, this.chunkOptions);
     if (pieces.length === 0) {
+      // No embeddable text (e.g. a depth downgrade suppressed body_preview and
+      // the title is also blank). Any previously-computed chunks for this
+      // item+model were derived from the now-suppressed text and must not
+      // survive — the per-row AFTER DELETE triggers on embedding_chunk (V30)
+      // cascade this into the dim-matched vec table, same as the non-empty
+      // path below.
+      dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ? AND model = ?`, [
+        item.id,
+        this.embedder.model,
+      ]);
       return;
     }
 

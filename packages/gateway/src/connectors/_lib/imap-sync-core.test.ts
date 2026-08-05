@@ -36,6 +36,11 @@ function fakeCtx(): { ctx: SyncContext; warns: unknown[]; acquired: string[] } {
         acquired.push(p);
       },
     },
+    // `depth` is a REQUIRED field of `SyncContext`; the `as unknown as` cast
+    // below hides its absence, and this file is the email core the Gmail /
+    // Outlook body work extends. Supply it explicitly so the fixture matches
+    // the depth a real run resolves for an unconfigured connector.
+    depth: "full",
   } as unknown as SyncContext;
   return { ctx, warns, acquired };
 }

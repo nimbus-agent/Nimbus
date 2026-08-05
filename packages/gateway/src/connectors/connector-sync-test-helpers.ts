@@ -32,7 +32,7 @@ export function createStubVault(entries: Readonly<Record<string, string | null>>
 
 export function silentSyncContextExtras(): Pick<
   SyncContext,
-  "logger" | "rateLimiter" | "sandboxCwd" | "credentialFor" | "runTeamList"
+  "logger" | "rateLimiter" | "sandboxCwd" | "credentialFor" | "runTeamList" | "depth"
 > {
   return {
     logger: pino({ level: "silent" }),
@@ -41,6 +41,8 @@ export function silentSyncContextExtras(): Pick<
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    // Connector sync tests exercise the full-body path unless a test overrides it.
+    depth: "full",
   };
 }
 

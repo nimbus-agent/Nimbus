@@ -21,6 +21,7 @@ function setup(): { idx: LocalIndex; sched: SyncScheduler; db: Database } {
     sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
+    depth: "full",
   };
   const sched = new SyncScheduler(ctx, {}, { initialOnline: false });
   return { idx, sched, db };
@@ -36,14 +37,14 @@ const noop: Syncable = {
 };
 
 describe("SyncScheduler.getStatus — depth + enabled shape (V21)", () => {
-  test("returns depth='summary' and enabled=true for a fresh connector", () => {
+  test("returns depth='full' and enabled=true for a fresh connector", () => {
     const { sched } = setup();
     sched.register(noop);
     const statuses = sched.getStatus("github");
     expect(statuses).toHaveLength(1);
     const s = statuses[0];
     expect(s).toBeDefined();
-    expect(s!.depth).toBe("summary");
+    expect(s!.depth).toBe("full");
     expect(s!.enabled).toBe(true);
   });
 

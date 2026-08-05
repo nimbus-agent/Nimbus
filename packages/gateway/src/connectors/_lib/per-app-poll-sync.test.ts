@@ -22,6 +22,7 @@ function makeCtx(): { ctx: SyncContext; db: Database; cleanup: () => void } {
     sandboxCwd: "/tmp",
     credentialFor: () => ({ credential: "personal" as const }),
     runTeamList: async () => [],
+    depth: "full",
   } as unknown as SyncContext;
   return { ctx, db, cleanup: () => db.close() };
 }

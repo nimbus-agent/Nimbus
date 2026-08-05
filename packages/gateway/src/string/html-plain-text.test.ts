@@ -37,7 +37,7 @@ describe("plainTextPreviewFromHtml", () => {
 
 test("plainTextFromHtml does not truncate", () => {
   const long = `<p>${"a".repeat(20_000)}</p>`;
-  expect(plainTextFromHtml(long).length).toBe(20_000);
+  expect(plainTextFromHtml(long)).toHaveLength(20_000);
 });
 
 test("plainTextFromHtml strips tags and collapses whitespace", () => {
@@ -46,5 +46,5 @@ test("plainTextFromHtml strips tags and collapses whitespace", () => {
 
 test("plainTextPreviewFromHtml still truncates to maxLen", () => {
   const long = `<p>${"a".repeat(20_000)}</p>`;
-  expect(plainTextPreviewFromHtml(long, 512).length).toBe(512);
+  expect(plainTextPreviewFromHtml(long, 512)).toHaveLength(512);
 });

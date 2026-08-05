@@ -140,16 +140,30 @@ test("always emits a 'source' evidence row for the originating item", () => {
   expect(ev.filter((e) => e.kind === "source")).toHaveLength(1);
 });
 
-test("detects an ADR page sharing most of its tokens with the statement", () => {
+/**
+ * ADR detection needs BOTH halves: the page title has to carry the ADR shape
+ * AND share enough tokens with the statement. Each row drops one of the two.
+ */
+const ADR_TITLE_CASES: Array<[string, string, boolean]> = [
+  [
+    "an ADR page sharing most of its tokens with the statement",
+    "ADR: move billing to Postgres",
+    true,
+  ],
+  ["a page whose title carries no ADR shape", "move billing to Postgres", false],
+  ["an ADR page about something else entirely", "ADR: retire the legacy cron runner", false],
+];
+
+test.each(ADR_TITLE_CASES)("ADR evidence for %s -> %j", (_name, pageTitle, expected) => {
   seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedItem("adr1", "notion", "page", "ADR: move billing to Postgres", DECIDED_AT);
+  seedItem("page1", "notion", "page", pageTitle, DECIDED_AT);
   const ev = corroborate(db, {
     decisionId: "d1",
     sourceItemId: "src",
     decidedAt: DECIDED_AT,
     statement: "move billing to Postgres",
   });
-  expect(hasAdrEvidence(ev)).toBe(true);
+  expect(hasAdrEvidence(ev)).toBe(expected);
 });
 
 test("ADR candidate selection is deterministic under the cap", () => {
@@ -172,30 +186,6 @@ test("ADR candidate selection is deterministic under the cap", () => {
   expect(first.filter((e) => e.kind === "adr").map((e) => e.label)).toEqual(
     second.filter((e) => e.kind === "adr").map((e) => e.label),
   );
-});
-
-test("a page whose title carries no ADR shape is never considered", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedItem("p1", "notion", "page", "move billing to Postgres", DECIDED_AT);
-  const ev = corroborate(db, {
-    decisionId: "d1",
-    sourceItemId: "src",
-    decidedAt: DECIDED_AT,
-    statement: "move billing to Postgres",
-  });
-  expect(hasAdrEvidence(ev)).toBe(false);
-});
-
-test("an unrelated ADR page is not matched", () => {
-  seedItem("src", "slack", "message", "thread", DECIDED_AT);
-  seedItem("adr1", "notion", "page", "ADR: retire the legacy cron runner", DECIDED_AT);
-  const ev = corroborate(db, {
-    decisionId: "d1",
-    sourceItemId: "src",
-    decidedAt: DECIDED_AT,
-    statement: "move billing to Postgres",
-  });
-  expect(hasAdrEvidence(ev)).toBe(false);
 });
 
 // The OUTGOING code-evidence query, which the `resolves` fixtures above never

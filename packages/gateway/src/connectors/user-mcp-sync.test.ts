@@ -38,6 +38,7 @@ function makeCapturingContext(): {
       sandboxCwd: os.tmpdir(),
       credentialFor: () => ({ credential: "personal" }),
       runTeamList: async () => [],
+      depth: "full",
     },
     warns,
   };

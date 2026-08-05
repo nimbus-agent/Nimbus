@@ -1728,6 +1728,102 @@ export function appendBootMarkerOrWarn(
   }
 }
 
+/**
+ * Audit shipper (Task 19, I22): when policy configures an org SIEM endpoint
+ * (`enforced().auditShipTo`), ship audit_log entries there as metadata-only
+ * NDJSON — NEVER `action_json` (the no-leak guarantee; the SELECT omits it).
+ * Forward-only: the shipper baselines on the current MAX(id) at start and
+ * ships only entries created afterwards, so no persisted-cursor migration is
+ * needed. Must be called after the policy gate is built, so the caller passes
+ * the already-enforced value rather than the gate.
+ *
+ * Extracted from `assemblePlatformServices` to keep that function's cognitive
+ * complexity in budget (S3776); the guard is the same one it inlined.
+ */
+function maybeStartAuditShipper(
+  db: Database,
+  auditShipTo: string | undefined,
+  sidecarStops: Array<() => void>,
+): void {
+  if (auditShipTo === undefined || auditShipTo.length === 0) {
+    return;
+  }
+  const auditShipper = startAuditShipper(db, { shipTo: auditShipTo });
+  sidecarStops.push(() => auditShipper.stop());
+}
+
+// Research-briefs boot (Spine S1), extracted verbatim from assemblePlatformServices to keep that
+// function's cognitive complexity in budget (S3776) — the same reason bootTribalKnowledge above
+// exists. This is a BEHAVIOUR-PRESERVING extraction: the `[briefs].enabled` gate moved in here with
+// the block it guards, so a disabled install still reaches none of this and the caller still owns
+// the unconditional `ipcOpts.briefsEnabled` echo. The three `httpSidecarOpts` seams are assigned on
+// the caller's own object, so the wiring order relative to the identity/chatops boots is unchanged.
+function bootBriefsIntoHttpSidecar(deps: {
+  briefsToml: ReturnType<typeof loadNimbusBriefsFromPath>;
+  llmRouter: Parameters<typeof createBriefLlm>[0];
+  localIndex: LocalIndex;
+  db: Database;
+  scheduleItemEmbedding: ((itemId: string) => void) | undefined;
+  httpSidecarOpts: HttpSidecarOpts;
+}): void {
+  const { briefsToml, llmRouter, localIndex, db, scheduleItemEmbedding, httpSidecarOpts } = deps;
+  if (!briefsToml.enabled) {
+    return;
+  }
+  const briefRuns = new BriefRunController({
+    nowMs: () => Date.now(),
+    ttlMs: briefsToml.ttlMinutes * 60_000,
+  });
+  const briefLlm = createBriefLlm(llmRouter, briefsToml.preferLocal);
+  const briefSearch: IndexSearch = async (query, limit) => {
+    const hits = await localIndex.searchRankedAsync(
+      { name: query, itemType: "web_clip", limit },
+      { semantic: true, contextChunks: 2 },
+    );
+    return {
+      // NOTE: RankedIndexItem extends the SDK's NimbusItem, whose title field is `name`
+      // — there is no `title` and no `body_preview` on it (see index/ranked-item.ts and
+      // @nimbus-dev/sdk types.d.ts). The only body text available here is the matched
+      // chunk in `semanticSnippet`, which is absent on the BM25 fallback path.
+      hits: hits.map((h) => ({
+        itemId: h.indexPrimaryKey,
+        title: h.name,
+        url: h.url ?? h.canonicalUrl ?? null,
+        snippet: h.semanticSnippet ?? h.name,
+      })),
+      // A hit with no vectorRank anywhere means the hybrid path did not run.
+      semanticAvailable: hits.some((h) => h.vectorRank !== undefined && h.vectorRank !== null),
+    };
+  };
+  httpSidecarOpts.briefRuns = briefRuns;
+  httpSidecarOpts.briefStartRun = (runId: string): void => {
+    const run = briefRuns.get(runId);
+    if (run === null) return;
+    briefRuns.markRunning(run);
+    void (async () => {
+      const { registry, indexHits, semanticAvailable, searchFailed } = await buildRegistry(
+        run,
+        briefSearch,
+      );
+      const out = await runSynthesis({
+        run,
+        registry,
+        indexHits,
+        semanticAvailable,
+        searchFailed,
+        llm: briefLlm,
+      });
+      if ("error" in out) briefRuns.fail(run, out.error);
+      else briefRuns.finish(run, out.report);
+    })().catch(() => briefRuns.fail(run, "internal_error"));
+  };
+  httpSidecarOpts.briefSave = (runId: string) => {
+    const run = briefRuns.get(runId);
+    if (run === null) throw new Error("run not found");
+    return saveBriefReport(db, run, scheduleItemEmbedding);
+  };
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
@@ -1809,6 +1905,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     logger: syncLogger,
     rateLimiter,
     resolveServiceId,
+    // Shared template context — the scheduler overrides this per run
+    // (sync/scheduler.ts `runJob`) with the connector's actual persisted
+    // depth; this is only the safe pass-through default for any other caller.
+    depth: "full",
     ...teamCredentialExtras,
   };
   const syncContext: SyncContext = scheduleItemEmbedding
@@ -1848,17 +1948,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   const gdprPurgeRetry = startGdprPurgeRetry(db, { anchorPrivkeyB64 });
   sidecarStops.push(() => gdprPurgeRetry.stop());
 
-  // Audit shipper (Task 19, I22): when policy configures an org SIEM endpoint
-  // (`enforced().auditShipTo`), ship audit_log entries there as metadata-only
-  // NDJSON — NEVER `action_json` (the no-leak guarantee; the SELECT omits it).
-  // Forward-only: the shipper baselines on the current MAX(id) at start and
-  // ships only entries created afterwards, so no persisted-cursor migration is
-  // needed. Started after the gate so it reads the enforced policy.
-  const auditShipTo = policyGate.enforced().auditShipTo;
-  if (auditShipTo !== undefined && auditShipTo.length > 0) {
-    const auditShipper = startAuditShipper(db, { shipTo: auditShipTo });
-    sidecarStops.push(() => auditShipper.stop());
-  }
+  // Started after the policy gate so it reads the enforced policy (see
+  // `maybeStartAuditShipper`).
+  maybeStartAuditShipper(db, policyGate.enforced().auditShipTo, sidecarStops);
 
   const { syncScheduler, connectorMesh, glossaryRefresher, decisionsRefresher } =
     await createSchedulerWithMesh({
@@ -1960,60 +2052,15 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // Always set (not gated on briefsToml.enabled) so `clip.status` can always echo the real
   // enable-state — a paired user's first `nimbus clip status` should never see it silently absent.
   ipcOpts.briefsEnabled = briefsToml.enabled;
-  if (briefsToml.enabled) {
-    const briefRuns = new BriefRunController({
-      nowMs: () => Date.now(),
-      ttlMs: briefsToml.ttlMinutes * 60_000,
-    });
-    const briefLlm = createBriefLlm(llmRegistry.llmRouter, briefsToml.preferLocal);
-    const briefSearch: IndexSearch = async (query, limit) => {
-      const hits = await localIndex.searchRankedAsync(
-        { name: query, itemType: "web_clip", limit },
-        { semantic: true, contextChunks: 2 },
-      );
-      return {
-        // NOTE: RankedIndexItem extends the SDK's NimbusItem, whose title field is `name`
-        // — there is no `title` and no `body_preview` on it (see index/ranked-item.ts and
-        // @nimbus-dev/sdk types.d.ts). The only body text available here is the matched
-        // chunk in `semanticSnippet`, which is absent on the BM25 fallback path.
-        hits: hits.map((h) => ({
-          itemId: h.indexPrimaryKey,
-          title: h.name,
-          url: h.url ?? h.canonicalUrl ?? null,
-          snippet: h.semanticSnippet ?? h.name,
-        })),
-        // A hit with no vectorRank anywhere means the hybrid path did not run.
-        semanticAvailable: hits.some((h) => h.vectorRank !== undefined && h.vectorRank !== null),
-      };
-    };
-    httpSidecarOpts.briefRuns = briefRuns;
-    httpSidecarOpts.briefStartRun = (runId: string): void => {
-      const run = briefRuns.get(runId);
-      if (run === null) return;
-      briefRuns.markRunning(run);
-      void (async () => {
-        const { registry, indexHits, semanticAvailable, searchFailed } = await buildRegistry(
-          run,
-          briefSearch,
-        );
-        const out = await runSynthesis({
-          run,
-          registry,
-          indexHits,
-          semanticAvailable,
-          searchFailed,
-          llm: briefLlm,
-        });
-        if ("error" in out) briefRuns.fail(run, out.error);
-        else briefRuns.finish(run, out.report);
-      })().catch(() => briefRuns.fail(run, "internal_error"));
-    };
-    httpSidecarOpts.briefSave = (runId: string) => {
-      const run = briefRuns.get(runId);
-      if (run === null) throw new Error("run not found");
-      return saveBriefReport(db, run, scheduleItemEmbedding);
-    };
-  }
+  // No-op unless `[briefs].enabled` — the gate lives in the helper, with the block it guards.
+  bootBriefsIntoHttpSidecar({
+    briefsToml,
+    llmRouter: llmRegistry.llmRouter,
+    localIndex,
+    db,
+    scheduleItemEmbedding,
+    httpSidecarOpts,
+  });
 
   const identityBoot = bootIdentityIntoIpcOpts({
     configDir: paths.configDir,

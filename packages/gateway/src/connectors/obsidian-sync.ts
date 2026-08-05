@@ -3,7 +3,7 @@ import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import { dbRun } from "../db/write.ts";
-import { upsertIndexedItem } from "../index/item-store.ts";
+import { upsertIndexedItemForSync } from "../index/item-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 
 import { discoverNotesInVault, discoverVaults } from "./obsidian-discovery.ts";
@@ -62,12 +62,15 @@ type IndexedNote = {
 };
 
 function upsertNote(
-  db: Database,
+  ctx: SyncContext,
   note: IndexedNote,
   resolvedWikilinkIds: readonly string[],
   syncedAt: number,
 ): void {
-  upsertIndexedItem(db, {
+  // Routed through the depth chokepoint (upsertIndexedItemForSync), not the raw
+  // upsertIndexedItem — a `metadata_only`/`summary` vault must not keep getting
+  // full note bodies indexed on every sync.
+  upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "obsidian_note",
     externalId: externalIdFor(note.vaultId, note.relPath),
@@ -86,6 +89,7 @@ function upsertNote(
     },
     syncedAt,
   });
+  const db = ctx.db;
   dbRun(
     db,
     `INSERT INTO obsidian_notes (
@@ -243,7 +247,7 @@ function ingestVault(
         continue;
       }
       const { resolved } = resolveWikilinks(n.rawWikilinks, byFilenameLower, byTitleLower);
-      upsertNote(ctx.db, n, resolved, now);
+      upsertNote(ctx, n, resolved, now);
       upserted++;
       if (n.mtimeMs > nextTip) {
         nextTip = n.mtimeMs;

@@ -145,11 +145,47 @@ export function upsertIndexedItem(
   );
 }
 
-export function upsertIndexedItemForSync(
-  ctx: SyncContext,
-  row: Parameters<typeof upsertIndexedItem>[1],
-): void {
-  upsertIndexedItem(ctx.db, row, ctx.resolveServiceId);
+type BodyRow = Parameters<typeof upsertIndexedItem>[1];
+
+/**
+ * Coerce a connector's body input to the connector's configured depth.
+ *
+ * `metadata_only` passes `body: ""` rather than omitting the input, because
+ * `upsertIndexedItem` computes `raw = row.body ?? row.bodyPreview ?? row.title`
+ * — omission would fall through to the TITLE and store it as the body. The
+ * empty string is not nullish, so it wins that chain and both `body` and
+ * `body_preview` land empty. `bodyTruncated` keeps `body_complete` at 0 so a
+ * suppressed body is never reported as a complete one.
+ */
+function applyDepth(depth: SyncContext["depth"], row: BodyRow): BodyRow {
+  // Suppression is OPT-IN: only the two depths that actually mean "hold text
+  // back" touch the row; anything else — including a depth that somehow
+  // arrives undefined — passes through unchanged. `SyncContext["depth"]` is
+  // required and the scheduler always supplies it, so this is unreachable in
+  // production, but the direction matters: routing an unknown depth into the
+  // `summary` arm would clamp to 512 characters, which is the opposite of
+  // `sync/scheduler.ts` `getDepthForService()`, `connectors/health.ts`'s
+  // `sync_state` insert and the V49 backfill, all of which resolve an
+  // unspecified depth to `full`. One direction for one unknown input.
+  if (depth !== "metadata_only" && depth !== "summary") {
+    return row;
+  }
+  const { body, bodyPreview, bodyTruncated, ...rest } = row as BodyRow & {
+    body?: string;
+    bodyPreview?: string;
+    bodyTruncated?: boolean;
+  };
+  if (depth === "metadata_only") {
+    return { ...rest, body: "", bodyTruncated: true } as BodyRow;
+  }
+  // summary: force the legacy preview arm, which clamps to 512 and never
+  // claims completeness.
+  const text = body ?? bodyPreview ?? "";
+  return { ...rest, bodyPreview: text } as BodyRow;
+}
+
+export function upsertIndexedItemForSync(ctx: SyncContext, row: BodyRow): void {
+  upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }

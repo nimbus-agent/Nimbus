@@ -25,7 +25,13 @@ export function clampBody(text: string, max: number): string {
   if (text.length <= max) {
     return text;
   }
-  const last = text.charCodeAt(max - 1);
-  const isHighSurrogate = last >= 0xd8_00 && last <= 0xdb_ff;
+  // `codePointAt`, and the `> 0xFFFF` arm is load-bearing: on the FULL string
+  // it returns the COMBINED code point when a low surrogate follows, which is
+  // precisely the split being guarded against — so a value above the BMP is
+  // itself the answer "the unit at `max - 1` is a high surrogate". The
+  // explicit range then covers the other case, a LONE high surrogate with no
+  // low partner, which is equally unrepresentable in UTF-8.
+  const last = text.codePointAt(max - 1) ?? 0;
+  const isHighSurrogate = last > 0xff_ff || (last >= 0xd8_00 && last <= 0xdb_ff);
   return text.slice(0, isHighSurrogate ? max - 1 : max);
 }

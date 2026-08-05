@@ -292,9 +292,9 @@ export class SyncScheduler {
       .query(`SELECT depth FROM sync_state WHERE connector_id = ?`)
       .get(serviceId) as { depth: string | null } | null | undefined;
     if (row == null) {
-      return "summary";
+      return "full";
     }
-    return (row.depth ?? "summary") as "metadata_only" | "summary" | "full";
+    return (row.depth ?? "full") as "metadata_only" | "summary" | "full";
   }
 
   private rowToStatus(serviceId: string, row: SchedulerStateRow, itemCount: number): SyncStatus {
@@ -647,7 +647,11 @@ export class SyncScheduler {
     const startedAt = Date.now();
     let result: SyncResult;
     try {
-      result = await connector.sync(this.ctx, row.cursor);
+      const runCtx: SyncContext = {
+        ...this.ctx,
+        depth: this.getDepthForService(job.serviceId),
+      };
+      result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
       if (err instanceof RateLimitError) {
         transitionHealth(this.db, job.serviceId, {

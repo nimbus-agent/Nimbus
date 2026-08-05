@@ -536,6 +536,7 @@ describeWithFetchRestore("zoom-sync", () => {
       db,
       vault: makeZoomVault("supersecrettoken"),
       rateLimiter: new ProviderRateLimiter(),
+      depth: "full",
       logger: {
         info: (...args: unknown[]) => logged.push(JSON.stringify(args)),
         warn: (...args: unknown[]) => logged.push(JSON.stringify(args)),
