@@ -55,18 +55,31 @@ naming a missing environment variable. Silence and hangs both fail.
 
 Consequence of the finding above, and not in the original spec.
 
-`import.meta.main` is **forbidden in connector entrypoints**, enforced by a static audit in
-`scripts/structure-audit`. The ten guarded connectors are converted to the unguarded form the other
-84 already use. Verified safe: no test, in any package, imports any of those ten `server.ts` files —
-the guard's stated rationale ("not when imported by tests") is exercised by nothing.
+**Correction to an earlier draft of this response.** It claimed the guard could simply be deleted
+because "no test imports those ten `server.ts` files". That was wrong — the grep behind it matched
+only absolute-style paths and missed relative ones. All ten connectors' tests **do** import their
+`server.ts` for the register function (for example `snowflake/test/server-list-pagination.test.ts:3`,
+`argocd/test/server-writes.test.ts:3`). The guard is load-bearing: deleting it would connect a real
+`StdioServerTransport` to the test runner's own stdin/stdout.
 
-Two enforcement layers, because either alone leaves a gap: the static audit catches a
-re-introduction at review time, and the boot smoke catches any other way a connector can fail to
-start.
+Measured shapes across all 94 entrypoints:
 
-The alternative — giving all 94 connectors an exported entry function and having the registry call
-it — is a 94-file change for the same guarantee. Ten file edits plus a lint rule is the cheaper
-route to the identical contract.
+| Shape | Count | Tail |
+|---|---|---|
+| guarded, helper bootstrap | 10 | `if (import.meta.main) { await runReadOnlyMcpConnector(...) }` |
+| unguarded, helper bootstrap | 50 | top-level `await runReadOnlyMcpConnector(...)` |
+| unguarded, explicit connect | 34 | top-level `await server.connect(transport)` |
+
+**Adopted:** the ten guarded connectors gain `export async function startConnector(): Promise<void>`
+wrapping their existing bootstrap, and keep the guard as `if (import.meta.main) await
+startConnector();`. The registry awaits the import and then calls `startConnector` when the module
+exports it; the 84 unguarded connectors start on import as they do today. A static audit enforces
+the one rule that closes the drift: **a `server.ts` containing `import.meta.main` must export
+`startConnector`.** The boot smoke covers every other way a connector can fail to start.
+
+**Rejected:** normalising all 94 onto an exported entry. It is a 94-file change across two distinct
+tail shapes for a guarantee the boot smoke already provides, and it would improve testability in 84
+packages that this cluster was not asked to touch. Worth doing on its own merits, not here.
 
 ## B — Dependency audit: accepted in a cheaper form
 

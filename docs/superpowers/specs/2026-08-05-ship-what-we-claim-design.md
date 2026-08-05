@@ -123,10 +123,22 @@ membership tables in this repo have drifted three times.
 `looker`, `mlflow`, `monte-carlo`, `powerbi`, `snowflake`, `tableau`, `workday`) end with
 `if (import.meta.main) { await runReadOnlyMcpConnector(...) }`. That guard is true under
 `bun server.ts` and **false under a registry import**: measured, all ten load, start nothing and
-exit 0 in silence while answering normally in dev mode. They are converted to the unguarded form the
-other 84 already use, and `import.meta.main` is forbidden in connector entrypoints by a static audit
-in `scripts/structure-audit`. Verified safe: no test in any package imports any of those ten
-`server.ts` files, so the guard's stated rationale is exercised by nothing.
+exit 0 in silence while answering normally in dev mode.
+
+The guard cannot simply be deleted — it is load-bearing. Those ten are the only entrypoints a test
+can import, and their tests do import them for the register function
+(`snowflake/test/server-list-pagination.test.ts:3`, `argocd/test/server-writes.test.ts:3`); removing
+the guard would connect a real `StdioServerTransport` to the test runner's stdin/stdout. So each of
+the ten gains `export async function startConnector(): Promise<void>` wrapping its existing
+bootstrap and keeps the guard as `if (import.meta.main) await startConnector();`. The registry
+awaits the import and then calls `startConnector` when the module exports it; the other 84 start on
+import as they do today.
+
+A static audit enforces the rule that closes the drift: **a connector `server.ts` containing
+`import.meta.main` must export `startConnector`.** Everything else is covered by the boot smoke.
+Normalising all 94 onto an exported entry was considered and rejected — a 94-file change across two
+distinct tail shapes (50 helper-bootstrap, 34 explicit-connect) for a guarantee the boot smoke
+already gives.
 
 A second audit asserts connector `dependencies` stay within an allowlist. The union across all 94 is
 `@modelcontextprotocol/sdk`, `@nimbus-dev/sdk` and `zod`, plus `hyparquet`, `imapflow`, `nodemailer`
