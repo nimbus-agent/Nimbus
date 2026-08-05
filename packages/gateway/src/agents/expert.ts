@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { Evidence, ExpertBrief, ExpertFinding, GapNote } from "./_lib/findings.ts";
 import {
   detectEmptyIndex,
@@ -8,7 +9,7 @@ import {
   detectMissingRelationEmit,
   detectMissingRelationToEntityType,
 } from "./_lib/gap-notes.ts";
-import { type SynthesizerLlm, synthesize } from "./_lib/synthesize.ts";
+import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type ExpertInput = {
   topicOrFile: string;
@@ -150,25 +151,18 @@ export async function runExpert(input: ExpertInput, ctx: ExpertContext): Promise
   return brief;
 }
 
-export async function emitExpertBrief(
+export function emitExpertBrief(
   input: ExpertInput,
   ctx: ExpertContext,
 ): Promise<{ sessionId: string }> {
-  void (async () => {
-    const brief = await runExpert(input, ctx);
-    const markdown = await synthesize(brief, ctx.llm === undefined ? {} : { llm: ctx.llm });
-    ctx.notify("expert.briefReady", {
-      sessionId: ctx.sessionId,
-      brief: markdown,
-      findings: brief,
-    });
-  })().catch((err: unknown) => {
-    ctx.notify("expert.briefError", {
-      sessionId: ctx.sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  return emitBriefWithSynthesis({
+    sessionId: ctx.sessionId,
+    briefReadyMethod: "expert.briefReady",
+    briefErrorMethod: "expert.briefError",
+    notify: ctx.notify,
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    buildBrief: () => runExpert(input, ctx),
   });
-  return { sessionId: ctx.sessionId };
 }
 
 async function subBlame(db: Database, input: string): Promise<SubAgentResult> {
