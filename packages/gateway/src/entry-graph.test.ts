@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const SRC = import.meta.dir;
 
@@ -31,15 +30,26 @@ function resolveSpecifier(fromFile: string, spec: string): string | undefined {
   return undefined;
 }
 
-function staticDepsOf(file: string): string[] {
-  const src = readFileSync(file, "utf8");
+/**
+ * The specifier-recognition half, kept pure so it can be tested against source text directly —
+ * no temp file, no path arithmetic, and therefore nothing to break when the repo and the temp
+ * directory sit on different Windows drive letters (`path.relative` returns an ABSOLUTE path
+ * across drives, which this walker then correctly ignores as non-relative).
+ */
+function staticSpecifiersOf(source: string): string[] {
   const out: string[] = [];
   for (const re of [FROM_RE, BARE_RE, REEXPORT_RE]) {
     re.lastIndex = 0;
-    for (const m of src.matchAll(re)) {
-      const resolved = resolveSpecifier(file, m[1] as string);
-      if (resolved !== undefined) out.push(resolved);
-    }
+    for (const m of source.matchAll(re)) out.push(m[1] as string);
+  }
+  return out;
+}
+
+function staticDepsOf(file: string): string[] {
+  const out: string[] = [];
+  for (const spec of staticSpecifiersOf(readFileSync(file, "utf8"))) {
+    const resolved = resolveSpecifier(file, spec);
+    if (resolved !== undefined) out.push(resolved);
   }
   return out;
 }
@@ -89,29 +99,28 @@ describe("the entry shim", () => {
   // edge, so a shim using any of them would pull the gateway graph back in while the isolation
   // assertion above still passed.
   test("detects static edges in both quote styles and via re-export", () => {
-    // `mkdtempSync` rather than a predictable name in the shared temp dir: a fixed/pid-derived
-    // path in a world-writable directory is a symlink-swap surface (CodeQL js/insecure-temporary-file).
-    const probeDir = mkdtempSync(join(tmpdir(), "nimbus-entry-graph-"));
-    const probe = join(probeDir, "probe.ts");
-    // Relative specifiers, because the walker only follows relative edges — an absolute specifier
-    // is correctly ignored. Written outside src/ so a crash cannot leave a stray module behind.
-    const rel = (...seg: string[]): string =>
-      relative(dirname(probe), resolve(SRC, ...seg)).replaceAll("\\", "/");
-    writeFileSync(
-      probe,
+    const specs = staticSpecifiersOf(
       [
-        `import { main } from '${rel("gateway-main.ts")}';`,
-        `export * from "${rel("platform", "runtime-layout.ts")}";`,
-        `import type { X } from "${rel("version.ts")}";`,
+        `import { main } from './gateway-main.ts';`, // single-quoted
+        `import { x } from "./platform/runtime-layout.ts";`, // double-quoted
+        `export * from "./gateway-main.ts";`, // re-export star
+        `export { y } from './connectors/run-bundled-connector.ts';`, // re-export named, single-quoted
+        `import "./side-effect.ts";`, // bare side-effect
+        `import type { X } from "./version.ts";`, // erased — must NOT be an edge
+        `export type { Y } from "./version.ts";`, // erased — must NOT be an edge
+        `import { z } from "@mastra/core/agent";`, // bare specifier — not a relative edge
       ].join("\n"),
     );
-    try {
-      const deps = staticDepsOf(probe);
-      expect(deps).toContain(resolve(SRC, "gateway-main.ts")); // single-quoted import
-      expect(deps).toContain(resolve(SRC, "platform", "runtime-layout.ts")); // export * from
-      expect(deps).not.toContain(resolve(SRC, "version.ts")); // `import type` is erased
-    } finally {
-      rmSync(probeDir, { recursive: true, force: true });
-    }
+
+    expect(specs).toContain("./gateway-main.ts");
+    expect(specs).toContain("./platform/runtime-layout.ts");
+    expect(specs).toContain("./connectors/run-bundled-connector.ts");
+    expect(specs).toContain("./side-effect.ts");
+    // `import type` / `export type` are erased at compile time and cannot cause module evaluation,
+    // so they must not count as edges — otherwise the isolation assertion would fail on a type-only
+    // reference that is provably inert.
+    expect(specs).not.toContain("./version.ts");
+    // Bare specifiers are package imports, not intra-tree edges.
+    expect(specs).not.toContain("@mastra/core/agent");
   });
 });
