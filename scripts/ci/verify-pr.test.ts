@@ -21,6 +21,11 @@ describe("evaluatePrState", () => {
       checks: [{ name: "y", state: "pending" }],
     });
     expect(v.green).toBe(false);
+    // Pin the REASON, not just the verdict: a pending check must be reported as still running,
+    // never folded into the generic failure text. Without this the test passes against an
+    // implementation that mislabels every unrecognised state as a failure.
+    expect(v.reasons.join(" ")).toContain("y");
+    expect(v.reasons.join(" ")).toMatch(/pending/i);
   });
 
   test("all pass + mergeable is green", () => {
