@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { childExitCode } from "./exit-status.ts";
 import { explain, type Platform, resolveNimbusBinary } from "./resolve-binary.ts";
 
 const resolution = resolveNimbusBinary({
@@ -17,8 +18,8 @@ if (resolution.kind !== "found") {
 }
 
 const child = spawn(resolution.path, ["mcp-server", "--stdio"], { stdio: "inherit" });
-child.on("exit", (code) => {
-  process.exit(code ?? 0);
+child.on("exit", (code, signal) => {
+  process.exit(childExitCode(code, signal));
 });
 child.on("error", (err) => {
   process.stderr.write(`Failed to start the Nimbus MCP server: ${err.message}\n`);
