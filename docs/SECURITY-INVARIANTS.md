@@ -44,7 +44,7 @@ Inline comments at `connectors/lazy-mesh/connector-spawns.ts:29–53` and `phase
 
 ### Migrated rationale (2026-05-28)
 
-The connector registry comment block at `connectors/registry.ts:50–123` is the canonical per-connector dispatch table mapping each logical `action.type` to its `payload.mcpToolId` counterpart (e.g. `email.send` → `gmail_gmail_message_send`, `repo.pr.merge` → `github_github_pr_merge`). This table is the most comprehensive enumeration of the HITL surface outside the executor itself and should be consulted whenever a new connector write tool is added. Comments at `engine/executor.ts:16–17` and `gateway/src/index.ts:62` restate that `HITL_REQUIRED_BACKING` is the sole runtime gate; comments across `mcp-connectors/*/src/server.ts` files (aws, azure, bitbucket, circleci, confluence, gcp, github, github-actions, gitlab, iac, jenkins, jira, kubernetes, linear, notion, obsidian, onedrive, outlook, pagerduty, slack, teams) confirm that connector-side write tools rely entirely on the structural gate in `executor.ts` rather than any per-connector guard. The comment at `mcp-connectors/obsidian/src/server.ts:11–16` specifically notes that `assertHitlRequired()` is not used in that codebase and that the defense lives in `executor.ts` — clarifying that MCP connectors are not responsible for gating their own HITL writes.
+The connector registry comment block at `connectors/registry.ts:50–123` is the canonical per-connector dispatch table mapping each logical `action.type` to its `payload.mcpToolId` counterpart (e.g. `email.send` → `gmail_gmail_message_send`, `repo.pr.merge` → `github_github_pr_merge`). This table is the most comprehensive enumeration of the HITL surface outside the executor itself and should be consulted whenever a new connector write tool is added. Comments at `engine/executor.ts:16–17` and `gateway/src/gateway-main.ts` restate that `HITL_REQUIRED_BACKING` is the sole runtime gate; comments across `mcp-connectors/*/src/server.ts` files (aws, azure, bitbucket, circleci, confluence, gcp, github, github-actions, gitlab, iac, jenkins, jira, kubernetes, linear, notion, obsidian, onedrive, outlook, pagerduty, slack, teams) confirm that connector-side write tools rely entirely on the structural gate in `executor.ts` rather than any per-connector guard. The comment at `mcp-connectors/obsidian/src/server.ts:11–16` specifically notes that `assertHitlRequired()` is not used in that codebase and that the defense lives in `executor.ts` — clarifying that MCP connectors are not responsible for gating their own HITL writes.
 
 ---
 
@@ -657,7 +657,7 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/extensions/auto-update-types.ts:40` | I2 | extension.autoUpdate action type added to HITL_REQUIRED_BACKING |
 | `packages/gateway/src/extensions/auto-update-types.ts:47` | I2 | extension.downgrade action type added to HITL_REQUIRED_BACKING |
 | `packages/gateway/src/extensions/permissions-validator.ts:29` | I2 | Permissions validator gates any extension that requests write capabilities |
-| `packages/gateway/src/index.ts:62` | I2 | Gateway entrypoint confirms HITL_REQUIRED is wired before first IPC request |
+| `packages/gateway/src/gateway-main.ts:166` | I2 | Gateway entrypoint confirms HITL_REQUIRED is wired before first IPC request — everything above `ipc.start()` is the wiring |
 | `packages/gateway/src/ipc/consent.ts:29` | I4 | consent.respond is the only IPC handler that supplies approved status |
 | `packages/gateway/src/ipc/data-rpc.ts:23` | I4 | data.delete routes through ToolExecutor; hitlStatus set by gate only |
 | `packages/gateway/src/ipc/reindex-rpc.test.ts:56` | I5 | connector.reindex listed in FORBIDDEN_OVER_LAN |
@@ -727,9 +727,9 @@ Reverse-lookup table for inline comments migrated from source files during the 2
 | `packages/gateway/src/connectors/lazy-mesh/slot.ts:27` | I15 | MeshSpawnContext.sandboxCwd is the working-directory anchor for every I15-wrapped spawn |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:15` | I15 | user-mcp.ts spawn site routes through wrapServerSpec |
 | `packages/gateway/src/connectors/lazy-mesh/user-mcp.ts:74` | I15 | user-mcp ensureUserMcpClient uses wrapServerSpec for user-installed MCP servers |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:3` | I15 | Module docblock: why MCPClient internals require the wrapper-shim approach |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:29` | I15 | Env contract: NIMBUS_SANDBOX_MANIFEST_JSON and NIMBUS_SANDBOX_CWD are consumed and stripped by wrapper |
-| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:33` | I15 | SANDBOX_WRAPPER_PATH exported for I15 enforcement test |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:6` | I15 | Module docblock: every connector ServerSpec passes through here, so the sandbox is not optional |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:15` | I15 | The wrapper runs as the `__nimbus-sandbox` role of the gateway executable itself — a compiled binary has no `sandbox-wrapper.ts` path to spawn |
+| `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts:21` | I15 | Env contract: NIMBUS_SANDBOX_MANIFEST_JSON and NIMBUS_SANDBOX_CWD are consumed and stripped by wrapper |
 | `packages/gateway/src/deployment/types.ts:5` | I13 | DeploymentAnnotateInput types used by the HTTP write surface |
 | `packages/gateway/src/engine/agent.ts:446` | I11 | Second I11 wiring site in agent.ts (mesh.ts MCP tool wrapper) |
 | `packages/gateway/src/extensions/auto-update-orchestrate.ts:50` | I16 | Auto-update orchestrator re-runs signature verification on new version before activating |
