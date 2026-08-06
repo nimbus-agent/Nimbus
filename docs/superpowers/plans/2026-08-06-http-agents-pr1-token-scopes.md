@@ -590,6 +590,24 @@ describe("http-route-auth", () => {
     expect(stale).toEqual([]);
   });
 
+  test("no route is matched by a form the scanner cannot see", async () => {
+    // The scanner reads two forms: `path === "…"` and `path.startsWith("…")`. Any OTHER way of
+    // matching a path is invisible to it, which would make the completeness guard fail OPEN for
+    // that route — it would pass while protecting nothing.
+    //
+    // So the unseen forms are themselves forbidden, with the known exceptions named. A comment
+    // asking developers to remember this would not fail; this does.
+    const src = await Bun.file(SERVER_SRC).text();
+    const UNSEEN_FORMS = [/path\.includes\(/, /path\.match\(/, /\.test\(path\)/];
+    for (const form of UNSEEN_FORMS) {
+      expect(src).not.toMatch(form);
+    }
+    // `RE.exec(...)` IS used (BRIEF_GET_RE). Pin the count so a SECOND regex-matched route has to
+    // be added to REGEX_ROUTED_GET deliberately rather than joining the surface unguarded.
+    const execMatches = [...src.matchAll(/\w+_RE\.exec\(/g)];
+    expect(execMatches.length).toBe(REGEX_ROUTED_GET.size);
+  });
+
   test("hasScope is exact membership, never a prefix or superset match", () => {
     expect(hasScope(["clip", "briefs"], "clip")).toBe(true);
     expect(hasScope(["clip", "briefs"], "agents")).toBe(false);
@@ -622,6 +640,17 @@ import type { ApiScope } from "../clips/api-scopes.ts";
  * (`clip`), the admin token, the SCIM token and the deployment token. Collapsing them into
  * "bearer" would let a scope check appear to cover a route that a different credential guards.
  */
+/**
+ * Route keys for the two bearer-authed reads that are mounted inline in the `fetch` handler
+ * rather than resolved through `dispatchWriteRoute`.
+ *
+ * Exported as constants because their handlers must look their scope up by key. A literal typed
+ * twice — once in the table, once at the call site — is a rename away from silently disagreeing;
+ * a constant makes that a compile error.
+ */
+export const ROUTE_KEY_BRIEF_GET = "GET /v1/briefs/*";
+export const ROUTE_KEY_CLIPS_RELATED = "POST /v1/clips/related";
+
 export type RouteAuth =
   | { readonly kind: "public" }
   | { readonly kind: "clip"; readonly scope: ApiScope }
@@ -657,14 +686,17 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   "GET /admin": { kind: "admin" },
   "GET /admin/*": { kind: "admin" },
 
-  // --- Client-token reads.
-  "GET /v1/briefs/*": { kind: "clip", scope: "briefs" },
+  // --- Client-token reads. Exported constants, NOT bare literals: the two read handlers look
+  // their requirement up by these keys, so the table is genuinely the single source of truth.
+  [ROUTE_KEY_BRIEF_GET]: { kind: "clip", scope: "briefs" },
+  [ROUTE_KEY_CLIPS_RELATED]: { kind: "clip", scope: "clip" },
 
-  // --- Writes (must cover WRITE_ROUTE_ALLOWLIST exactly).
+  // --- Writes. Keys are the `ROUTE_*` constant VALUES from http-write-routes.ts, verbatim.
+  // Note `{id}`, not `:id` — copied from source, not guessed.
   "POST /v1/deployments": { kind: "deploy" },
   "POST /scim/v2/Users": { kind: "scim" },
-  "PATCH /scim/v2/Users/:id": { kind: "scim" },
-  "DELETE /scim/v2/Users/:id": { kind: "scim" },
+  "PATCH /scim/v2/Users/{id}": { kind: "scim" },
+  "DELETE /scim/v2/Users/{id}": { kind: "scim" },
   "PUT /v1/admin/policy": { kind: "admin" },
   "POST /v1/messaging/teams/events": { kind: "teams" },
   "POST /v1/clips": { kind: "clip", scope: "clip" },
@@ -672,15 +704,25 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // cannot require one.
   "POST /v1/clips/pair/confirm": { kind: "pairing" },
   "POST /v1/briefs": { kind: "clip", scope: "briefs" },
-  "POST /v1/briefs/:id/sources": { kind: "clip", scope: "briefs" },
-  "POST /v1/briefs/:id/run": { kind: "clip", scope: "briefs" },
-  "POST /v1/briefs/:id/save": { kind: "clip", scope: "briefs" },
-  // Bearer-authed read mounted in the fetch handler, not the GET table.
-  "POST /v1/clips/related": { kind: "clip", scope: "clip" },
+  "POST /v1/briefs/{id}/sources": { kind: "clip", scope: "briefs" },
+  "POST /v1/briefs/{id}/run": { kind: "clip", scope: "briefs" },
+  "POST /v1/briefs/{id}/save": { kind: "clip", scope: "briefs" },
 });
 
 export function hasScope(granted: readonly ApiScope[], required: ApiScope): boolean {
   return granted.includes(required);
+}
+
+/**
+ * The scope a clip-token route requires, or null when the route is not clip-authenticated.
+ *
+ * Every enforcement site calls THIS rather than naming a scope inline. A hardcoded
+ * `hasScope(scopes, "briefs")` at a call site would make the table decorative — it would still
+ * pass the completeness test while the actual requirement lived somewhere else.
+ */
+export function clipScopeFor(routeKey: string): ApiScope | null {
+  const auth = HTTP_ROUTE_AUTH[routeKey];
+  return auth !== undefined && auth.kind === "clip" ? auth.scope : null;
 }
 
 export function insufficientScopeBody(
@@ -709,7 +751,16 @@ Then temporarily add `"GET /v1/nonexistent": { kind: "public" },`.
 
 Run again. Expected: FAIL on "no table entry is a route that no longer exists".
 
-Restore the table. **A guard that has never failed is a guard nobody has checked.**
+Then temporarily add `if (path.includes("/v1/whatever")) return json({}, 200);` to
+`dispatchReadOnlyDataGet`.
+
+Run again. Expected: FAIL on "no route is matched by a form the scanner cannot see".
+
+Restore all three. **A guard that has never failed is a guard nobody has checked.**
+
+> Baseline confirmed in source before this plan was written: `http-server.ts` contains exactly one
+> `_RE.exec(` (`BRIEF_GET_RE`, line 759) and none of `path.includes(` / `path.match(` /
+> `.test(path)`. So `REGEX_ROUTED_GET.size` is 1 and the pin holds on an unmodified tree.
 
 - [ ] **Step 6: Commit**
 
@@ -814,34 +865,68 @@ function scopeRefusal(
   granted: readonly ApiScope[],
   limit: RateLimitCheck,
 ): Response | null {
-  const auth = HTTP_ROUTE_AUTH[routeKey];
-  if (auth === undefined || auth.kind !== "clip") return null;
-  if (hasScope(granted, auth.scope)) return null;
-  return jsonResponse(insufficientScopeBody(auth.scope, granted), 403, rateLimitHeaders(limit));
+  const required = clipScopeFor(routeKey);
+  if (required === null || hasScope(granted, required)) return null;
+  return jsonResponse(insufficientScopeBody(required, granted), 403, rateLimitHeaders(limit));
 }
 ```
 
-Call it at each clip-token-authenticated write route, using the same route key the dispatcher already resolved. Also call `recordRejection` on refusal, matching how the existing 401/403 paths audit — read the neighbouring `recordRejection` calls and mirror their `actionType` / `reason` shape rather than inventing fields.
+**Pass `route.key`, never the request path.** `ResolvedRoute.key` (`http-write-routes.ts:229`) is the static route constant — `"POST /v1/briefs/{id}/sources"` — and the request's actual id is captured separately into `route.id`. A raw path such as `POST /v1/briefs/abc123/sources` would miss every templated key and `clipScopeFor` would return null, silently waving the request through. That is the one way this helper can fail open, so it is the one thing to get right.
+
+Also call `recordRejection` on refusal, matching how the existing 401/403 paths audit — read the neighbouring `recordRejection` calls and mirror their `actionType` / `reason` shape rather than inventing fields.
 
 - [ ] **Step 5: Enforce at the two bearer reads**
 
-In `packages/gateway/src/ipc/http-server.ts`:
+In `packages/gateway/src/ipc/http-server.ts`. Both sites read their requirement **from the table**
+via the exported key constant — they must not name a scope inline, or the table becomes decorative
+while the real requirement lives at the call site:
 
 ```ts
-// handleClipRelated (~line 483)
-const presented = bearerToken(req);
-const verified = presented === undefined ? null : await verifyApiToken(clipsVault, presented);
-if (verified === null) return json({ error: "unauthorized" }, 401);
-if (!hasScope(verified.scopes, "clip")) {
-  return json(insufficientScopeBody("clip", verified.scopes), 403);
+import {
+  clipScopeFor,
+  insufficientScopeBody,
+  hasScope,
+  ROUTE_KEY_BRIEF_GET,
+  ROUTE_KEY_CLIPS_RELATED,
+} from "./http-route-auth.ts";
+```
+
+```ts
+/**
+ * Shared gate for the two inline bearer reads: 401 when the token is unknown, 403 when it is
+ * known but out of scope. Returns the verified principal on success.
+ */
+async function requireScopedClipToken(
+  req: Request,
+  clipsVault: NimbusVault,
+  routeKey: string,
+): Promise<{ ok: true; scopes: readonly ApiScope[] } | { ok: false; response: Response }> {
+  const presented = bearerToken(req);
+  const verified = presented === undefined ? null : await verifyApiToken(clipsVault, presented);
+  if (verified === null) {
+    return { ok: false, response: json({ error: "unauthorized" }, 401) };
+  }
+  const required = clipScopeFor(routeKey);
+  if (required !== null && !hasScope(verified.scopes, required)) {
+    return {
+      ok: false,
+      response: json(insufficientScopeBody(required, verified.scopes), 403),
+    };
+  }
+  return { ok: true, scopes: verified.scopes };
 }
 ```
 
 ```ts
-// handleBriefGet (~line 553) — same shape, requiring "briefs"
-if (!hasScope(verified.scopes, "briefs")) {
-  return json(insufficientScopeBody("briefs", verified.scopes), 403);
-}
+// handleClipRelated (~line 483)
+const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_CLIPS_RELATED);
+if (!auth.ok) return auth.response;
+```
+
+```ts
+// handleBriefGet (~line 553) — identical shape, different key
+const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_BRIEF_GET);
+if (!auth.ok) return auth.response;
 ```
 
 - [ ] **Step 6: Update the two seam builders**
@@ -909,16 +994,22 @@ Add to `packages/gateway/src/ipc/clip-rpc.test.ts`:
 ```ts
   test("clip.pair with no scopes opens the window with LEGACY_SCOPES", async () => {
     // Conservative default: an operator who does not think about scopes gets today's capability,
-    // never tomorrow's.
+    // never tomorrow's. ABSENT is a decision; MISSPELLED is not — see the next two tests.
   });
 
-  test("clip.pair passes only RECOGNISED scopes to the window", async () => {
-    // params.scopes = ["clip", "telepathy"] => window opened with ["clip"]
+  test("clip.pair REJECTS an unrecognised scope instead of dropping it", async () => {
+    // params.scopes = ["clip", "telepathy"] => throws AgentsRpcError-style -32602, mints nothing.
+    // The error message must NAME the invalid scope and list the valid set.
   });
 
-  test("clip.pair with an empty recognised set still opens with LEGACY_SCOPES", async () => {
-    // ["telepathy"] filters to [] — minting a token that can do nothing is a support ticket,
-    // not a security win.
+  test("clip.pair rejects a wholly-invalid list rather than falling back to LEGACY_SCOPES", async () => {
+    // ["telepathy"] must NOT silently become ["clip","briefs"]: an operator asking for something
+    // narrow and being handed the default set is a silent over-grant.
+  });
+
+  test("clip.pair rejects an explicitly EMPTY scope list", async () => {
+    // params.scopes = [] is an operator statement, not an omission. Refuse it rather than
+    // guessing which of "no capability" or "default capability" was meant.
   });
 
   test("clip.scopes updates an existing label and reports the stored set", async () => {
@@ -952,18 +1043,38 @@ import { listApiTokens, revokeClipToken, setApiTokenScopes } from "../clips/clip
 
 ```ts
 /**
- * Reads a caller-supplied scope list, dropping anything unrecognised.
+ * Reads an OPERATOR-supplied scope list, rejecting anything unrecognised.
  *
- * An empty result falls back to LEGACY_SCOPES rather than minting a scope-less token: a token
- * that can reach nothing is a support ticket, not a safety property, and the operator's intent
- * when they typo a scope name is plainly not "give me a dead credential".
+ * Absent (`undefined`) means "I did not specify", and defaults to LEGACY_SCOPES. Everything else
+ * is a statement, and a statement that cannot be honoured is refused rather than reinterpreted:
+ * `--scopes telepathy` silently becoming `clip,briefs` would hand an operator who asked for
+ * something narrow the default set instead — a silent over-grant, which is the exact failure this
+ * whole change exists to prevent. An empty array is likewise refused rather than guessed at.
+ *
+ * NOTE the deliberate asymmetry with `parseEntry` in clip-token-store.ts, which DROPS unknown
+ * scopes silently. Different source, different policy: a stored record may come from a newer
+ * binary and must degrade closed without failing the load, whereas operator input is a typo and
+ * deserves an error naming the valid set.
  */
 function readScopes(v: unknown): readonly ApiScope[] {
-  if (!Array.isArray(v)) return LEGACY_SCOPES;
-  const picked = v.filter(isApiScope);
-  return picked.length === 0 ? LEGACY_SCOPES : picked;
+  if (v === undefined) return LEGACY_SCOPES;
+  if (!Array.isArray(v)) {
+    throw new Error(`scopes must be an array of: ${API_SCOPES.join(", ")}`);
+  }
+  const invalid = v.filter((s) => !isApiScope(s));
+  if (invalid.length > 0) {
+    throw new Error(
+      `unknown scope(s): ${invalid.map((s) => String(s)).join(", ")} — valid scopes are: ${API_SCOPES.join(", ")}`,
+    );
+  }
+  if (v.length === 0) {
+    throw new Error(`scopes must name at least one of: ${API_SCOPES.join(", ")}`);
+  }
+  return v as readonly ApiScope[];
 }
 ```
+
+Import `API_SCOPES` alongside `isApiScope` and `LEGACY_SCOPES`. Check how `clip-rpc.ts`'s existing handlers surface a bad-params error — if the dispatcher maps a thrown `Error` to a JSON-RPC error, a plain `throw` is right; if it expects a typed error, mirror the neighbouring handler rather than inventing a shape.
 
 `handleClipPair` — replace the `open` call:
 
@@ -1025,6 +1136,17 @@ Add to `packages/cli/src/commands/clip.test.ts`:
     expect(parseScopesFlag("clip, agents")).toEqual(["clip", "agents"]);
     expect(parseScopesFlag(undefined)).toBeUndefined();
   });
+
+  test("parseScopesFlag does NOT validate names — the gateway is the only validator", () => {
+    // A second copy of the scope vocabulary in the CLI would drift from the gateway's.
+    expect(parseScopesFlag("telepathy")).toEqual(["telepathy"]);
+  });
+
+  test("an explicitly empty --scopes yields [] so the gateway can refuse it", () => {
+    // NOT undefined: passing the flag is a statement, and "unspecified" is a different thing.
+    expect(parseScopesFlag("")).toEqual([]);
+    expect(parseScopesFlag("  ,  ")).toEqual([]);
+  });
 ```
 
 - [ ] **Step 6: Run to confirm they fail**
@@ -1050,14 +1172,24 @@ Scopes: clip, briefs, agents, resolve, fetch (default: clip,briefs)`;
 ```
 
 ```ts
-/** `--scopes clip,agents` → ["clip","agents"]. Undefined when the flag is absent. */
+/**
+ * `--scopes clip,agents` → ["clip","agents"]. Undefined only when the flag is ABSENT.
+ *
+ * Deliberately does NOT validate the names. `packages/cli` may not import gateway source, so
+ * validating here would mean a second copy of the scope vocabulary that agrees with the gateway
+ * on the day it is written and drifts thereafter — the mirrored-contract failure that put four
+ * wrong param shapes into #1059. The gateway is the single validator; its error names the valid
+ * set, and this command prints it.
+ *
+ * `--scopes ""` yields `[]`, not `undefined`: an operator who passed the flag said something, and
+ * the gateway refuses an empty list rather than quietly treating it as "unspecified".
+ */
 export function parseScopesFlag(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
-  const parts = raw
+  return raw
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s !== "");
-  return parts.length === 0 ? undefined : parts;
 }
 ```
 
@@ -1202,6 +1334,7 @@ git commit -m "docs: HTTP API token scopes — CLI reference, I30 refinement, ch
 | Scope edit in place without re-pair | 1 (`setApiTokenScopes`), 5 (`clip.scopes`) |
 | Route→scope table + completeness guard | 3 |
 | Table total over public GETs too | 3 |
+| Table is the SSoT — every gate reads it via `clipScopeFor`, none names a scope inline | 3, 4 |
 | `constantTimeStringEqual` loop preserved | 1 Step 7 |
 | `I13` posture (body caps, rate limiter) | unchanged in PR 1 — no new routes land here |
 
@@ -1210,3 +1343,14 @@ git commit -m "docs: HTTP API token scopes — CLI reference, I30 refinement, ch
 **Type consistency:** `ApiScope` / `ApiTokenRecord` / `ApiTokenMap` are defined in Task 1 and used unchanged in 2–5. `verifyToken`'s resolved shape is `{ label: string; scopes: readonly ApiScope[] } | null` in Tasks 1, 3 and 4 alike. `mintToken` takes `(label, scopes)` in Task 4 Steps 3 and 6. `open(label, scopes)` / `confirm → {label, scopes}` match between Tasks 2 and 4.
 
 **Known follow-through:** Task 1 Step 10 deliberately leaves the tree failing `typecheck`; Task 4 Step 8 and Task 5 Step 9 close it. An implementer stopping between tasks will see red, and that is expected rather than a defect.
+
+**Two deliberate asymmetries, so neither reads as an oversight:**
+
+- **Unknown scopes are DROPPED when loading a stored record, and REJECTED when supplied by an
+  operator.** A stored record may have been written by a newer binary and must degrade closed
+  without failing the load; operator input is a typo and deserves an error naming the valid set.
+  Same word, two sources, two policies.
+- **The gateway validates scope names; the CLI does not.** `packages/cli` may not import gateway
+  source, so a CLI-side check would mean a second copy of the vocabulary — the mirrored-contract
+  drift that produced four wrong param shapes in #1059. The round trip is the price of one
+  source of truth.
