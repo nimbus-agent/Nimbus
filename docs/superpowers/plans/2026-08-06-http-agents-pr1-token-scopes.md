@@ -54,11 +54,13 @@
 ### Task 1: Scope vocabulary and token-record parsing
 
 **Files:**
+
 - Create: `packages/gateway/src/clips/api-scopes.ts`
 - Modify: `packages/gateway/src/clips/clip-token-store.ts`
 - Test: `packages/gateway/src/clips/clip-token-store.test.ts` (modify), `packages/gateway/src/clips/api-scopes.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces:
   - `API_SCOPES: readonly ["clip","briefs","agents","resolve","fetch"]`, `type ApiScope`
@@ -395,6 +397,7 @@ export function generateClipToken(): string {
 - [ ] **Step 8: Update the pre-existing tests in that file to the new names and shape**
 
 In `clip-token-store.test.ts`, update the imports and these existing assertions:
+
 - `loadClipTokens` → `loadApiTokens` everywhere.
 - `addClipToken(v, "chrome-work", "tok-abc")` → `addApiToken(v, "chrome-work", "tok-abc", ["clip"])`, and the expectation becomes `{ "chrome-work": { token: "tok-abc", scopes: ["clip"] } }`.
 - The rotation test: both `addApiToken(v, "chrome", "tok-1", ["clip"])` and `…"tok-2", ["clip"]`; expectation `{ chrome: { token: "tok-2", scopes: ["clip"] }, firefox: { token: "tok-3", scopes: ["clip"] } }`.
@@ -424,10 +427,12 @@ git commit -m "feat(clips): scope field on HTTP API tokens, legacy tokens capped
 ### Task 2: The pairing window carries the scopes it will mint
 
 **Files:**
+
 - Modify: `packages/gateway/src/clips/pairing-window.ts`
 - Test: `packages/gateway/src/clips/pairing-window.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ApiScope` from `clips/api-scopes.ts` (Task 1).
 - Produces: `PairingWindowController.open(label: string, scopes: readonly ApiScope[]): { code: string; expiresAtMs: number }` and `confirm(code: string): { label: string; scopes: readonly ApiScope[] } | null`.
 
@@ -522,10 +527,12 @@ git commit -m "feat(clips): pairing window records the scopes its token will be 
 ### Task 3: Route→auth table and the completeness guard
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/http-route-auth.ts`
 - Test: `packages/gateway/src/ipc/http-route-auth.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ApiScope` from `clips/api-scopes.ts`; `WRITE_ROUTE_ALLOWLIST` from `ipc/http-write-routes.ts`.
 - Produces:
   - `type RouteAuth` (discriminated union on `kind`)
@@ -826,11 +833,13 @@ git commit -m "feat(ipc): total route-to-auth table with a source-scanned comple
 ### Task 4: Enforce scopes at the three verification sites
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-write-routes.ts` (the `ClipsWriteSurface` / `BriefsWriteSurface` `verifyToken` types + the brief auth helper)
 - Modify: `packages/gateway/src/ipc/http-server.ts` (`handleClipRelated` ~line 483, `handleBriefGet` ~line 553, `buildClipsSeam` ~line 583, `buildBriefsSeam` ~line 611)
 - Test: `packages/gateway/src/ipc/http-scope-enforcement.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: `verifyApiToken` (Task 1), `hasScope` / `insufficientScopeBody` / `HTTP_ROUTE_AUTH` (Task 3).
 - Produces: `verifyToken` on both write surfaces now resolves `{ label: string; scopes: readonly ApiScope[] } | null`.
 
@@ -1121,11 +1130,13 @@ git commit -m "feat(ipc): refuse an out-of-scope token with 403 at every clip-to
 ### Task 5: `clip.pair --scopes`, `nimbus clip scopes`, and scopes in `clip status`
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/clip-rpc.ts`
 - Modify: `packages/cli/src/commands/clip.ts`
 - Test: `packages/gateway/src/ipc/clip-rpc.test.ts`, `packages/cli/src/commands/clip.test.ts`
 
 **Interfaces:**
+
 - Consumes: `setApiTokenScopes`, `listApiTokens` (Task 1); `PairingWindowController.open(label, scopes)` (Task 2); `API_SCOPES`, `isApiScope`, `LEGACY_SCOPES` (Task 1).
 - Produces: IPC `clip.scopes` → `{ updated: boolean; scopes: string[] }`; `clip.pair` accepts optional `scopes: string[]`; `clip.status` devices gain `scopes: string[]`.
 
@@ -1466,6 +1477,7 @@ git commit -m "feat(cli): nimbus clip pair --scopes and nimbus clip scopes"
 ### Task 6: Documentation and full pre-flight
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`, `docs/cli-reference.md`, `docs/SECURITY-INVARIANTS.md` (the `I30` section)
 
 - [ ] **Step 1: Update `docs/cli-reference.md`**

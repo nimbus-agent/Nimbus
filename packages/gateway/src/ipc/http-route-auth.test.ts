@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { HTTP_ROUTE_AUTH, hasScope, insufficientScopeBody } from "./http-route-auth.ts";
+import {
+  clipScopeFor,
+  HTTP_ROUTE_AUTH,
+  hasScope,
+  insufficientScopeBody,
+} from "./http-route-auth.ts";
 import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
 const SERVER_SRC = "packages/gateway/src/ipc/http-server.ts";
@@ -146,5 +151,25 @@ describe("http-route-auth", () => {
   test("the 403 body names what was required and what was granted, and no token value", () => {
     const body = insufficientScopeBody("agents", ["clip"]);
     expect(body).toEqual({ error: "insufficient_scope", required: "agents", granted: ["clip"] });
+  });
+
+  test("clipScopeFor returns null for a route key with no auth decision at all", () => {
+    // Every other call site only ever passes a key that IS in the table (a route it is actually
+    // guarding), so without this the "auth !== undefined" false arm never fires.
+    expect(clipScopeFor("GET /v1/this-route-does-not-exist")).toBeNull();
+  });
+
+  test("clipScopeFor returns null for a route key present but not clip-kind", () => {
+    expect(HTTP_ROUTE_AUTH["GET /v1/health"]).toEqual({ kind: "public" });
+    expect(clipScopeFor("GET /v1/health")).toBeNull();
+    expect(HTTP_ROUTE_AUTH["PUT /v1/admin/policy"]).toEqual({ kind: "admin" });
+    expect(clipScopeFor("PUT /v1/admin/policy")).toBeNull();
+  });
+
+  test("clipScopeFor returns the table's scope for a clip-kind route key", () => {
+    // The positive case: a wrong null here would silently drop the scope check for a route that
+    // is supposed to have one — just as dangerous as a wrong non-null on the negative cases above.
+    expect(clipScopeFor("POST /v1/clips")).toBe("clip");
+    expect(clipScopeFor("POST /v1/briefs")).toBe("briefs");
   });
 });

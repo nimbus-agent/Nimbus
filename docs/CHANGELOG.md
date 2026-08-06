@@ -8,6 +8,26 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-06 — HTTP API bearer tokens are now scoped.** First PR of the HTTP-agents route work.
+  A minted token used to be an all-or-nothing bearer secret; it now carries an explicit `scopes[]`
+  drawn from a five-name vocabulary (`clip`, `briefs`, `agents`, `resolve`, `fetch` —
+  `clips/api-scopes.ts`). Only `clip` and `briefs` are consumed by a route today — `agents`,
+  `resolve` and `fetch` exist so a legacy token can be *denied* those scopes before the routes that
+  will honour them (PRs 2–4) exist. `nimbus clip pair` gained `--scopes <a,b>` to set the scopes at
+  mint time, and a new `nimbus clip scopes <label> --set <a,b>` rewrites an already-paired client's
+  scopes in place without a new token or re-pair; `nimbus clip status` now prints each device's
+  scopes alongside its label and fingerprint. Scopes are recorded on the owner-opened pairing
+  window at `nimbus clip pair` time and read back at confirm — never taken from the confirming
+  request — so the granted set stays server-derived (I30). **A legacy bare-string token** (the
+  storage shape every already-paired browser's entry is still in) parses as exactly `clip,briefs`
+  on load and gains nothing from the new vocabulary automatically; `nimbus clip scopes` is the only
+  upgrade path. Enforcement is per-route via a total `HTTP_ROUTE_AUTH` table
+  (`ipc/http-route-auth.ts`) with a source-scanned completeness guard: an unrecognised token gets
+  401, and a valid token missing the route's required scope gets 403 `insufficient_scope`. Vault key
+  is unchanged (`http_api.web_clipper_tokens`) — the name is historical, the map now backs every
+  bearer-authed HTTP surface, not only clips. No new invariant number: this is a refinement of I30,
+  documented in place.
+
 - **2026-08-06 — The admin console, the OpenAPI document and semantic memory work in a released
   binary.** Second of three PRs in the "what we ship is what we claim" cluster; the first
   (2026-08-05) made connectors spawnable from a compiled binary.

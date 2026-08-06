@@ -2494,15 +2494,36 @@ nimbus people link person:abc123 person:def456
 > (Chrome + Firefox, MV3). The `nimbus clip …` commands below manage the gateway-side
 > pairing tokens it uses.
 
-### `nimbus clip pair [--label <device>]`
+### `nimbus clip pair [--label <device>] [--scopes <a,b>]`
 
 Open a browser-extension pairing session and print the one-time code **plus the gateway URL** to enter in the extension's Options page. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
+
+`--scopes` sets what the minted token is allowed to reach. It takes a comma-separated list drawn
+from five names:
+
+| Scope | Unlocks |
+|---|---|
+| `clip` | `POST /v1/clips` (save a clip) and `POST /v1/clips/related` (related-items read) |
+| `briefs` | The research-briefs write routes (`POST /v1/briefs`, `.../sources`, `.../run`, `.../save`) and `GET /v1/briefs/*` |
+| `agents` | Reserved for a browser-reachable agent-invocation route — no route consumes it yet |
+| `resolve` | Reserved for a resolve-by-URL read — no route consumes it yet |
+| `fetch` | Reserved for a future fetch surface — no route consumes it yet |
+
+If `--scopes` is omitted, the minted token is granted `clip,briefs` — the two surfaces that shipped
+before scopes existed. **A client paired before this change holds exactly `clip,briefs` and gains
+nothing new automatically** — its token was minted (or is read back) as a bare string, which parses
+as that same pair. Use `nimbus clip scopes` (below) to grant it more without re-pairing.
+
+The scope set you pass here is what actually gets minted: it is recorded on the pairing window at
+the moment you run this command and is not something the browser extension can influence when it
+redeems the code.
 
 The printed URL is the gateway's loopback HTTP origin (`http://127.0.0.1:<port>`), derived from `NIMBUS_HTTP_PORT`. If the gateway is running without the HTTP surface, the command instead warns you to restart it with `nimbus serve --port 7474` — without that surface the extension has nothing to reach.
 
 ```bash
 nimbus clip pair
 nimbus clip pair --label work-chrome
+nimbus clip pair --label work-chrome --scopes clip,briefs
 ```
 
 ```text
@@ -2510,6 +2531,25 @@ Pairing "work-chrome" — in the browser extension's Options page, enter:
   Gateway URL:  http://127.0.0.1:7474
   Pairing code: 429040
 Enter it within 2 minutes.
+```
+
+---
+
+### `nimbus clip scopes <label> --set <a,b>`
+
+Change a paired client's scopes in place — no re-pairing, no new token. `<label>` must match an
+existing paired device (see `nimbus clip status`); `--set` takes the same comma-separated scope list
+as `pair --scopes` above and replaces the label's scope set entirely (it is not additive).
+
+This is how a client paired before scopes existed picks up `agents`/`resolve`/`fetch` once a route
+consumes them, or how you narrow an over-broad grant without disrupting the device's existing token.
+
+```bash
+nimbus clip scopes work-chrome --set clip,briefs,agents
+```
+
+```text
+Scopes for "work-chrome" are now: clip,briefs,agents
 ```
 
 ---
@@ -2546,10 +2586,16 @@ nimbus clip delete --all --yes
 
 ### `nimbus clip status`
 
-List all paired browser devices — shows each device's label and its token fingerprint (never the raw token).
+List all paired browser devices — shows each device's label, its token fingerprint (never the raw
+token), and its granted scopes, plus whether research briefs are enabled.
 
 ```bash
 nimbus clip status
+```
+
+```text
+  work-chrome   3f9a1c2e...   clip,briefs
+briefs: enabled
 ```
 
 ---

@@ -31,7 +31,7 @@ Verified in the tree rather than assumed:
 
 `docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md` is
 **committed but unmerged**, on branch `dev/asafgolombek/spec-browser-client`
-(`d8b4d93d`) — so it is deliberately *not* linked here: the path does not resolve
+(`d8b4d93d`) — so it is deliberately _not_ linked here: the path does not resolve
 on this branch and a relative link to it would fail the link gate.
 `docs/roadmap.md` calls it "planned, not yet written"; that is stale. It owns the **extension side** — recogniser, panel, notify-when-ready —
 and this document owns the **gateway side**.
@@ -47,7 +47,7 @@ Answered in §1 and §5 respectively.
 
 **Three of its assumptions are wrong and are corrected here.** All three were
 checked against source, not reasoned about — the failure mode recorded in the
-#1059 retrospective, where a plan was confidently wrong in four places and every
+\#1059 retrospective, where a plan was confidently wrong in four places and every
 test still passed.
 
 | Assumption | Reality |
@@ -142,10 +142,10 @@ adapter's `client.call(method, params)` would be unchanged, a pure transport swa
 and the MCP server's six index tools would get a home. Two objections against it
 do **not** survive checking and are recorded as rejected reasoning:
 
-- *"Larger threat model."* `hostname: "127.0.0.1"` is a hardcoded literal in
+- _"Larger threat model."_ `hostname: "127.0.0.1"` is a hardcoded literal in
   `Bun.serve` (`http-server.ts:738`), not config. The HTTP surface sits on the
   same trust boundary as the IPC socket.
-- *"Method allowlists are weaker than route allowlists."* `I7`'s `ALLOWED_METHODS`
+- _"Method allowlists are weaker than route allowlists."_ `I7`'s `ALLOWED_METHODS`
   is a method allowlist this codebase treats as load-bearing.
 
 The objection that does survive is `I29`. Route-shaped, the only new
@@ -165,7 +165,7 @@ route, and a method allowlist over HTTP is one array edit from `vault.*` — `I7
 chain C1's shape.
 
 **The bridge is sequenced, not rejected.** If the index tools need HTTP, the
-decision reopens *with the coverage question answered first*.
+decision reopens _with the coverage question answered first_.
 
 Cost of the route-shaped choice, stated plainly: the index tools stay on the
 socket, so an adapter migration would speak two transports, and that migration
@@ -182,10 +182,10 @@ and still pass `audit:invariants` green. **This slice is that second entry point
 ### The append site does not move
 
 `dispatchAgentsRpc` already appends before dispatch (`ipc/agents-rpc.ts:584`), and
-the HTTP route reaches agents *through it*. No second appender is built. The
+the HTTP route reaches agents _through it_. No second appender is built. The
 condition generalises from an equality to a lookup:
 
-```
+```text
 EGRESS_BEARING_CLIENT_KINDS: mcp → "mcp", http → "http"
 ```
 
@@ -210,7 +210,7 @@ no row, no brief.
 
 ### `D22(d)` — the tightening
 
-`D22(c)` pins *one known caller*. That is not the property `I29` needs, and the
+`D22(c)` pins _one known caller_. That is not the property `I29` needs, and the
 MCP design said so itself: "A test that only proves 'this file is allowed to
 append' is not an enforcement test." So the rule becomes total:
 
@@ -224,8 +224,8 @@ Verified to land green today: the only non-test importers of `agents/*` are
 
 `D22(d)` converts "one caller is pinned" into "the chokepoint is the only door."
 A third entry point — the eventual `POST /v1/rpc`, a ChatOps path — then cannot
-bypass the ledger without a static failure. This is the answer to *how the static
-rule is tightened so the next entry point cannot repeat this*.
+bypass the ledger without a static failure. This is the answer to _how the static
+rule is tightened so the next entry point cannot repeat this_.
 
 **Where and how it is enforced.** In `scripts/structure-audit/check-nimbus-invariants.ts`,
 beside `D22(a)`–`(c)`, so it runs in `audit:invariants` — before the test suite,
@@ -261,7 +261,7 @@ granularity: a sync is a paginated run, not a call.
   hand-maintained CLI mirror the coverage file warns about; it gains two entries
   in the same commit.
 - **Every `nimbus prove` window spanning this upgrade reports `indeterminate` on
-  every class**, because `parseCoverage` rejects unknown *and* missing keys. That
+  every class**, because `parseCoverage` rejects unknown _and_ missing keys. That
   is the intended fail-safe. Do not soften it.
 
 ## §3 — Token scopes, and the `I13` posture
@@ -286,7 +286,7 @@ invocation over the whole index. New capability requires a re-pair.
 
 **Scopes are owner-set, never requester-set.** `nimbus clip pair --scopes
 agents,resolve` records them on the `PairingWindowController` window; `POST
-/v1/clips/pair/confirm` mints with *the window's* scopes and ignores anything in
+/v1/clips/pair/confirm` mints with _the window's_ scopes and ignores anything in
 the request body. `I30` is unchanged, and the rule is the same server-derived one
 as §2 — a caller that could name its own scopes would grant itself the set.
 
@@ -358,15 +358,15 @@ were checked in `index/migrations/runner.ts` rather than assumed:
 
 - **Arbitrary JS is the native shape, not an exception.** A step is
   `apply: (db: Database, now: number) => void`, and `simpleStep` is a declarative
-  *convenience* wrapper over it. The runner's own docstring names "a custom data
+  _convenience_ wrapper over it. The runner's own docstring names "a custom data
   backfill alongside the schema change" as the reason to write a bespoke
   `migrateIndexedV*` function; `backfillAuditChain` and `backfillMigrationsLedger`
   are existing precedents. No two-phase schema-then-startup-backfill is needed.
 - **`apply` is synchronous.** An `async` backfill cannot be awaited by the runner.
   Both `canonicalizeUrl` and `bun:sqlite` are synchronous, so this costs nothing —
   but it forecloses a batching design built on promises.
-- **The whole step runs inside one `db.transaction`.** So "batched" means *chunked
-  reads to bound memory*, *never a commit per batch*. Committing per batch would
+- **The whole step runs inside one `db.transaction`.** So "batched" means _chunked
+  reads to bound memory_, _never a commit per batch_. Committing per batch would
   break the step's atomicity and could leave `resolve_key` half-populated with
   `PRAGMA user_version` already advanced — a silently partial index that resolves
   some URLs and not others, which is worse than not shipping the column.
@@ -384,7 +384,7 @@ drift. A trimmed match must be **unique** or the answer is `ambiguous` — trimm
 can over-reach, and guessing between candidates is worse than declining.
 
 **`ambiguous` carries its candidates.** Declining to guess is right; declining to
-*say what the choices were* would push the client into a dead end, and the panel
+_say what the choices were_ would push the client into a dead end, and the panel
 is the one place a human can resolve the ambiguity in one click. So the response
 carries the matches as metadata — the same shape and the same privacy class a
 successful resolve already returns to the same bearer-scoped caller, so it
@@ -395,7 +395,7 @@ broadly; an uncapped list would turn a mis-trimmed URL into a bulk index read.
 Over the cap the answer stays `ambiguous` with `truncated: true` and no candidates,
 since a truncated choice menu is a misleading one.
 
-```
+```text
 {found:true, item:{id,service,type,title,url,modified_at},
  matchKind:"exact"|"query_stripped"|"path_trimmed"}
 {found:false, reason:"not_indexed"|"unresolvable_url", service, fetchable}
@@ -416,7 +416,7 @@ that.
 row, exactly as the six MCP index tools append none. So the `http` coverage class,
 like `mcp` before it, covers less than its name suggests: it is `per-call` over
 `agents.*` briefs served on the HTTP API, not over "everything on the HTTP API" —
-even though `POST /v1/items/fetch` on the same surface *does* append, under `sync`.
+even though `POST /v1/items/fetch` on the same surface _does_ append, under `sync`.
 `egress-coverage.ts` requires this to be said where the claim is made, not only
 where it is rendered, so the narrowing goes in the `THIS_BINARY_COVERAGE` comment
 and in `COVERAGE_CLASS_LABELS`. The alternative is a narrower class name; `http`
@@ -544,9 +544,9 @@ Four PRs. Each carries wiring + docs + tests in one commit per the triple rule.
    `POST /v1/items/fetch`. Updates `SECURITY-INVARIANTS.md` (`I29`).
 
 **One sequencing property, load-bearing and non-obvious: there is exactly one
-`prove` blackout, in PR 2.** `parseCoverage` returns null on an unknown *or*
+`prove` blackout, in PR 2.** `parseCoverage` returns null on an unknown _or_
 missing key, so adding `http` breaks marker parsing in both directions. But
-raising `sync` from `none` to `per-run` in PR 4 changes only a *value*, and
+raising `sync` from `none` to `per-run` in PR 4 changes only a _value_, and
 `weakestCoverage` degrades that gracefully to `sync=none` across a mixed window.
 So splitting the appenders across PRs costs nothing extra, and PR 4 need not ride
 with PR 2.
