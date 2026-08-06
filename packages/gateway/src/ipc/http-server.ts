@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import type { BriefRunController } from "../briefs/brief-run-store.ts";
+import type { ApiScope } from "../clips/api-scopes.ts";
 import { ingestClip, validateClipInput } from "../clips/clip-ingest.ts";
 import { type RelatedHit, type RelatedInput, runClipRelated } from "../clips/clip-related.ts";
-import { addClipToken, generateClipToken, verifyClipToken } from "../clips/clip-token-store.ts";
+import { addApiToken, generateClipToken, verifyApiToken } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
@@ -20,6 +21,13 @@ import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
 import { EMBEDDED_OPENAPI_YAML } from "./embedded-assets.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
+import {
+  clipScopeFor,
+  hasScope,
+  insufficientScopeBody,
+  ROUTE_KEY_BRIEF_GET,
+  ROUTE_KEY_CLIPS_RELATED,
+} from "./http-route-auth.ts";
 import {
   dispatchWriteRoute,
   type PolicyAuthorResult,
@@ -76,6 +84,33 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+/**
+ * Shared gate for the two inline bearer reads: 401 when the token is unknown, 403 when it is
+ * known but out of scope. Returns the verified principal on success.
+ *
+ * `routeKey` must be the STATIC route constant (`ROUTE_KEY_BRIEF_GET` / `ROUTE_KEY_CLIPS_RELATED`),
+ * never the raw request path — `clipScopeFor` looks the requirement up by that literal key.
+ */
+async function requireScopedClipToken(
+  req: Request,
+  clipsVault: NimbusVault,
+  routeKey: string,
+): Promise<{ ok: true; scopes: readonly ApiScope[] } | { ok: false; response: Response }> {
+  const presented = bearerToken(req);
+  const verified = presented === undefined ? null : await verifyApiToken(clipsVault, presented);
+  if (verified === null) {
+    return { ok: false, response: json({ error: "unauthorized" }, 401) };
+  }
+  const required = clipScopeFor(routeKey);
+  if (required !== null && !hasScope(verified.scopes, required)) {
+    return {
+      ok: false,
+      response: json(insufficientScopeBody(required, verified.scopes), 403),
+    };
+  }
+  return { ok: true, scopes: verified.scopes };
 }
 
 function parsePositiveInt(raw: string | null, fallback: number, max: number): number {
@@ -479,10 +514,8 @@ async function handleClipRelated(
   if (clipsVault === undefined) {
     return new Response("Not Found", { status: 404 });
   }
-  const presented = bearerToken(req);
-  if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
-    return json({ error: "unauthorized" }, 401);
-  }
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_CLIPS_RELATED);
+  if (!auth.ok) return auth.response;
   let parsed: unknown;
   try {
     parsed = await req.json();
@@ -549,10 +582,8 @@ async function handleBriefGet(
     return json({ error: "briefs_disabled", hint: BRIEFS_DISABLED_HINT }, 404);
   }
   // Shared parser from http-auth.ts (Task 1) — same header handling as the write dispatcher.
-  const presented = bearerToken(req);
-  if (presented === undefined || (await verifyClipToken(clipsVault, presented)) === null) {
-    return json({ error: "unauthorized" }, 401);
-  }
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_BRIEF_GET);
+  if (!auth.ok) return auth.response;
   const run = runs.get(id);
   if (run === null) {
     return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
@@ -580,10 +611,10 @@ function buildClipsSeam(writeDb: Database, opts: ReadOnlyHttpServerOptions) {
   if (clipsVault === undefined || pairingController === undefined) return undefined;
   return {
     pairing: pairingController,
-    verifyToken: (t: string) => verifyClipToken(clipsVault, t),
-    mintToken: async (label: string): Promise<string> => {
+    verifyToken: (t: string) => verifyApiToken(clipsVault, t),
+    mintToken: async (label: string, scopes: readonly ApiScope[]): Promise<string> => {
       const token = generateClipToken();
-      await addClipToken(clipsVault, label, token);
+      await addApiToken(clipsVault, label, token, scopes);
       return token;
     },
     ingest: (input: unknown) => ingestClip(writeDb, validateClipInput(input), scheduleEmbedding),
@@ -608,7 +639,7 @@ function buildBriefsSeam(opts: ReadOnlyHttpServerOptions) {
   }
   return {
     controller,
-    verifyToken: (t: string) => verifyClipToken(clipsVault, t),
+    verifyToken: (t: string) => verifyApiToken(clipsVault, t),
     startRun,
     save,
   };

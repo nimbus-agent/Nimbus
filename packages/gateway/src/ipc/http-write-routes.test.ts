@@ -769,7 +769,8 @@ function clipsSurface(over: Partial<ClipsWriteSurface> = {}): ClipsWriteSurface 
   const pairing = new PairingWindowController({ nowMs: () => 1000, genCode: () => "123456" });
   return {
     pairing,
-    verifyToken: async (t) => (t === "good-token" ? { label: "chrome" } : null),
+    verifyToken: async (t) =>
+      t === "good-token" ? { label: "chrome", scopes: ["clip", "briefs"] } : null,
     mintToken: async () => "minted-token",
     ingest: () => ({ id: "nimbus:clip:abc", status: "created" }),
     ...over,
@@ -844,7 +845,11 @@ test("pair/confirm with the right code mints a token (window open)", async () =>
   });
   const res = await dispatchWriteRoute(req, clipCtx({ clips: surface }));
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ token: "minted-token", label: "chrome-work" });
+  expect(await res.json()).toEqual({
+    token: "minted-token",
+    label: "chrome-work",
+    scopes: ["clip"],
+  });
 });
 
 test("pair/confirm fail-closed: no window open → 403, no mint", async () => {
@@ -1168,7 +1173,9 @@ function briefsSurface(over: Partial<BriefsWriteSurface> = {}): BriefsWriteSurfa
   return {
     controller: over.controller ?? new BriefRunController({ nowMs: () => 1000 }),
     verifyToken:
-      over.verifyToken ?? (async (t: string) => (t === BRIEF_TOKEN ? { label: "chrome" } : null)),
+      over.verifyToken ??
+      (async (t: string) =>
+        t === BRIEF_TOKEN ? { label: "chrome", scopes: ["clip", "briefs"] } : null),
     startRun: over.startRun ?? (() => {}),
     save: over.save ?? (() => ({ itemId: "nimbus:research_brief:abc" })),
   };

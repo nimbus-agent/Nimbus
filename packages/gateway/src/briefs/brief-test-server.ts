@@ -28,11 +28,13 @@ import { runSynthesis } from "./brief-synthesis.ts";
 const KNOWN_TOKEN = "brief-test-token-0123456789abcdef0123456789abcdef";
 const KNOWN_LABEL = "brief-test-harness";
 
-function makeInMemoryVault(): NimbusVault {
+function makeInMemoryVault(tokensJson?: string): NimbusVault {
   const store = new Map<string, string>();
   store.set(
     "http_api.web_clipper_tokens",
-    JSON.stringify({ [KNOWN_LABEL]: KNOWN_TOKEN } satisfies Record<string, string>),
+    // Default stays the LEGACY bare-string shape on purpose: every existing test that uses this
+    // harness then proves, for free, that a pre-scopes token still works.
+    tokensJson ?? JSON.stringify({ [KNOWN_LABEL]: KNOWN_TOKEN } satisfies Record<string, string>),
   );
   return {
     get: async (k: string) => store.get(k) ?? null,
@@ -106,6 +108,8 @@ export async function startBriefTestServer(opts?: {
   ttlMs?: number;
   /** false => omit briefRuns, so the seam is absent (every /v1/briefs route 404s). */
   enabled?: boolean;
+  /** Raw JSON for `http_api.web_clipper_tokens`. Omit for the legacy single-token default. */
+  tokensJson?: string;
 }): Promise<BriefTestServer> {
   const enabled = opts?.enabled ?? true;
   const llm = opts?.llm ?? null;
@@ -126,7 +130,7 @@ export async function startBriefTestServer(opts?: {
   let clockMs = Date.now();
   const nowMs = (): number => clockMs;
 
-  const vault = makeInMemoryVault();
+  const vault = makeInMemoryVault(opts?.tokensJson);
   const controller = new BriefRunController({
     nowMs,
     ...(opts?.ttlMs === undefined ? {} : { ttlMs: opts.ttlMs }),

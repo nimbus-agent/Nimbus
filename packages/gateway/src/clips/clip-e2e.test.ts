@@ -97,7 +97,7 @@ describe("web clipper E2E", () => {
     const base = `http://127.0.0.1:${handle.port}`;
 
     // ── Step 1: open the pairing window directly (no IPC needed) ────────────
-    const { code } = pairing.open("e2e-browser");
+    const { code } = pairing.open("e2e-browser", ["clip", "briefs"]);
 
     // ── Step 2: POST /v1/clips/pair/confirm { code } → { token, label } ────
     const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
@@ -167,7 +167,7 @@ describe("web clipper E2E", () => {
   // 413 payload_too_large. The 44-byte body above is too small to catch that — this one is not.
   test("pair → POST /v1/clips with a realistically-sized article body (>8 KiB) round-trips", async () => {
     const base = `http://127.0.0.1:${handle.port}`;
-    const { code } = pairing.open("e2e-big-article");
+    const { code } = pairing.open("e2e-big-article", ["clip", "briefs"]);
     const confirmRes = await fetch(`${base}/v1/clips/pair/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -222,7 +222,7 @@ describe("web clipper E2E", () => {
 
   test("POST /v1/clips/related with malformed JSON → 400", async () => {
     const base = `http://127.0.0.1:${handle.port}`;
-    const { code } = pairing.open("e2e-badjson");
+    const { code } = pairing.open("e2e-badjson", ["clip", "briefs"]);
     const confirm = await fetch(`${base}/v1/clips/pair/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
