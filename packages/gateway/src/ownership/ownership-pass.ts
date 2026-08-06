@@ -107,6 +107,36 @@ function clearOwnershipEdgesForRoot(db: Database, rootMarker: string): void {
 }
 
 /**
+ * Retire EVERY `person --owns--> service` edge, unconditionally, once per pass.
+ *
+ * The root-scoped clear above cannot reach these: a service-ownership edge has a
+ * `person` endpoint (`service = 'filesystem'`) and a `service` endpoint
+ * (`service = 'nimbus'`), so neither side carries an `ownership:<root>` marker.
+ * Left alone the edge survives forever with its last computed share, and the
+ * graph keeps asserting someone owns a service long after they stopped touching
+ * any of its code — a wrong answer that never self-corrects, and one an
+ * edge-COUNT check cannot see, because the re-emit upserts the same row.
+ *
+ * Wholesale clear-then-re-emit is safe because this pass is the ONLY writer of
+ * this edge class, so it owns it outright — the same discipline the root-scoped
+ * clear uses.
+ *
+ * Being UNCONDITIONAL, rather than folded into the per-service emission loop, is
+ * load-bearing: it must also retire edges for a service whose config binding was
+ * REMOVED, and that service is by definition absent from `serviceWeights`, so
+ * the loop would never visit it. Scoping by TARGET ENTITY TYPE rather than by a
+ * list of currently-known service ids is what makes that reachable.
+ */
+function clearServiceOwnershipEdges(db: Database): void {
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE type = 'owns'
+        AND to_id IN (SELECT id FROM graph_entity WHERE type = 'service')`,
+  );
+}
+
+/**
  * Delete this root's `source_file` / `directory` entities that now have NO
  * relations at all, in one statement. Returns the row count via `changes`.
  *
@@ -332,6 +362,8 @@ export async function runOwnershipPass(
 
     entitiesReaped += reapOrphansForRoot(db, rootMarker);
   }
+
+  clearServiceOwnershipEdges(db);
 
   for (const [serviceId, weights] of serviceWeights) {
     const svcId = upsertGraphEntity(db, {

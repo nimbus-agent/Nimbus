@@ -224,6 +224,70 @@ describe("runOwnershipPass", () => {
     expect(belongs.n).toBe(1);
   });
 
+  // A stale service-ownership edge is invisible to an edge-COUNT check, because
+  // the re-emit upserts the same row — so this asserts on the OWNER identity.
+  test("retires a service-ownership edge whose owner stopped touching the code", async () => {
+    const bound = {
+      spawn: fakeSpawn("origin\n", "git@github.com:acme/api.git"),
+      serviceRepoUrns: new Map([["checkout", ["github:acme/api"]]]),
+    };
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(d, baseOpts(bound));
+
+    const serviceOwners = (): string[] =>
+      (
+        d
+          .query(
+            `SELECT p.external_id AS owner FROM graph_relation r
+               JOIN graph_entity p ON p.id = r.from_id
+               JOIN graph_entity s ON s.id = r.to_id
+              WHERE r.type = 'owns' AND s.type = 'service'`,
+          )
+          .all() as { owner: string }[]
+      ).map((x) => x.owner);
+    expect(serviceOwners()).toEqual(["git:a@x.com"]);
+
+    // A hands the file over entirely to B.
+    d.run("DELETE FROM git_blame_line WHERE repo_root = ?", [ROOT]);
+    seedLine(d, "src/a.ts", 1, "b@x.com", "B", 0);
+    await runOwnershipPass(d, baseOpts(bound));
+    expect(serviceOwners()).toEqual(["git:b@x.com"]);
+  });
+
+  // THE UNCONDITIONAL-PLACEMENT TEST. A service dropped from `serviceRepoUrns`
+  // never appears in `serviceWeights`, so a clear folded into the per-service
+  // emission loop would never visit it and its edges would survive forever.
+  test("retires service-ownership edges when the config binding is removed", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(
+      d,
+      baseOpts({
+        spawn: fakeSpawn("origin\n", "git@github.com:acme/api.git"),
+        serviceRepoUrns: new Map([["checkout", ["github:acme/api"]]]),
+      }),
+    );
+    const countServiceOwns = (): number =>
+      (
+        d
+          .query(
+            `SELECT COUNT(*) AS n FROM graph_relation r
+               JOIN graph_entity s ON s.id = r.to_id
+              WHERE r.type = 'owns' AND s.type = 'service'`,
+          )
+          .get() as { n: number }
+      ).n;
+    expect(countServiceOwns()).toBeGreaterThan(0);
+
+    await runOwnershipPass(
+      d,
+      baseOpts({
+        spawn: fakeSpawn("origin\n", "git@github.com:acme/api.git"),
+        serviceRepoUrns: new Map<string, readonly string[]>(),
+      }),
+    );
+    expect(countServiceOwns()).toBe(0);
+  });
+
   test("no remote still emits file ownership, just no service rollup", async () => {
     seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
     const s = await runOwnershipPass(d, baseOpts());
