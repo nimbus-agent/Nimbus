@@ -28,10 +28,15 @@ const DEV_ONLY_PREFIX = "perf/surfaces/";
  * `new Worker(new URL("./worker.ts", import.meta.url))` is the form Bun's bundler rewrites and
  * embeds, and `db/query-guard.ts` + `embedding/worker-bridge.ts` depend on it. Only its
  * path-producing use — `fileURLToPath(import.meta.url)` — is forbidden.
+ *
+ * These are matched against the WHOLE comment-stripped source, not line by line, and every
+ * separator tolerates whitespace. A line-by-line scan misses the formatter-produced shape
+ * `fileURLToPath(\n  import.meta.url,\n)` — measured: it passed the audit silently — which would
+ * let the very defect class this gate exists to close walk straight back in.
  */
 const FORBIDDEN: readonly RegExp[] = [
-  /\bimport\.meta\.(?:dir|dirname|path|file)\b/,
-  /\bfileURLToPath\s*\(\s*import\.meta\.url\s*\)/,
+  /\bimport\s*\.\s*meta\s*\.\s*(?:dir|dirname|path|file)\b/g,
+  /\bfileURLToPath\s*\(\s*import\s*\.\s*meta\s*\.\s*url\s*,?\s*\)/g,
 ];
 
 export interface PathDerivationViolation {
@@ -51,11 +56,30 @@ function* walkTypeScript(dir: string): Generator<string> {
   }
 }
 
+/**
+ * The complete skip list — four entries, each deliberate, NO production module among them:
+ *   1. tests           — fixtures legitimately construct the forbidden shapes.
+ *   2. `.d.ts`         — declarations emit nothing, so they derive no runtime path.
+ *   3. `perf/surfaces/**` — bench drivers that spawn source entrypoints; unreachable from a build.
+ *   4. `runtime-layout.ts` — the canonical module the rule confines derivation TO. This is the
+ *      rule's definition, not an exemption from it; if it ever stops being the only such module,
+ *      the constant is what has to change.
+ * Enumerated here so the gate cannot silently grow a fifth.
+ */
 function isExempt(rel: string): boolean {
   if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx")) return true;
   if (rel.endsWith(".d.ts")) return true;
   if (rel.startsWith(DEV_ONLY_PREFIX)) return true;
   return rel === CANONICAL_MODULE;
+}
+
+/** 1-based line of `index` within `source`. */
+function lineOf(source: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index; i++) {
+    if (source[i] === "\n") line++;
+  }
+  return line;
 }
 
 export function checkImportMetaDir(root: string = GATEWAY_SRC): PathDerivationViolation[] {
@@ -64,14 +88,20 @@ export function checkImportMetaDir(root: string = GATEWAY_SRC): PathDerivationVi
     const rel = relative(root, full).replaceAll("\\", "/");
     if (isExempt(rel)) continue;
     // stripComments preserves newlines inside block comments, so line numbers stay accurate.
-    const lines = stripComments(readFileSync(full, "utf8")).split("\n");
-    lines.forEach((text, i) => {
-      if (FORBIDDEN.some((re) => re.test(text))) {
-        out.push({ file: rel, line: i + 1, snippet: text.trim() });
+    // Matched against the WHOLE source, not per line: see the note on FORBIDDEN.
+    const src = stripComments(readFileSync(full, "utf8"));
+    for (const re of FORBIDDEN) {
+      re.lastIndex = 0; // module-scope /g patterns: reset before each reuse
+      for (const m of src.matchAll(re)) {
+        out.push({
+          file: rel,
+          line: lineOf(src, m.index),
+          snippet: m[0].replace(/\s+/g, " ").trim(),
+        });
       }
-    });
+    }
   }
-  return out;
+  return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 }
 
 if (import.meta.main) {

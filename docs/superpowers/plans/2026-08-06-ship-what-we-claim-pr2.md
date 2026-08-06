@@ -40,7 +40,7 @@ Measurement 4 is the load-bearing one. `_test-suite.yml`'s "Unit + Coverage" and
 2. **The OpenAPI import needs no build.** `packages/gateway/openapi/v1.yaml` is committed, so its embedded import is safe in every runtime shape. Only the three console assets depend on a build step.
 3. **The dev-mode dist directory is derived from the embedded import, not from `import.meta.dir`.** In dev, `dirname(EMBEDDED_CONSOLE_ASSETS["index.html"])` **is** `packages/admin-console/dist` (measurement 2). That is what lets the confinement audit ship with nothing to exempt.
 4. **`NIMBUS_ADMIN_CONSOLE_DIST` is a dev-only affordance.** A compiled binary ignores it and answers from the map. That is the "structurally impossible rather than rejected" property; honouring an override there would re-open the traversal surface the map closes.
-5. **The audit forbids `import.meta.{dir,dirname,path,file}` and `fileURLToPath(import.meta.url)`, not `import.meta.url` itself.** `db/query-guard.ts:54` and `embedding/worker-bridge.ts:46` use `new URL("./worker.ts", import.meta.url)`, which Bun's bundler rewrites and embeds — those are correct and must keep working. With that rule the allowlist is **`perf/surfaces/**` and `*.test.ts` only**; `platform/runtime-layout.ts` is named as the rule's canonical module, not exempted from it.
+5. **The audit forbids `import.meta.{dir,dirname,path,file}` and `fileURLToPath(import.meta.url)`, not `import.meta.url` itself.** `db/query-guard.ts:54` and `embedding/worker-bridge.ts:46` use `new URL("./worker.ts", import.meta.url)`, which Bun's bundler rewrites and embeds — those are correct and must keep working. The checker skips exactly four things, and each is named explicitly in the source rather than left implicit: `perf/surfaces/**` (dev-tree-only bench drivers), `*.test.ts`/`*.test.tsx`, `*.d.ts` (declarations emit no runtime path), and `platform/runtime-layout.ts` — the canonical module the rule confines *to*, which is a definition of the rule rather than an exemption from it. No production module is exempted, which was the bar for shipping this audit at all.
 6. **`packages/cli/src/commands/bench.ts:31` is out of scope.** It derives `packages/gateway/src/perf/bench-runner.ts` from `import.meta.dir` — the same dev-tree-only class as `perf/surfaces/**`. The audit therefore scopes to `packages/gateway/src/**`; widening it to the CLI is a separate change, recorded in the PR body rather than exempted here.
 
 ## File Structure
@@ -514,12 +514,19 @@ export interface ConsoleAssetDeps {
   readonly exists: (path: string) => boolean;
 }
 
-export const DEFAULT_CONSOLE_ASSET_DEPS: ConsoleAssetDeps = {
-  compiled: isCompiledBinary(),
-  assets: EMBEDDED_CONSOLE_ASSETS,
-  distOverride: process.env["NIMBUS_ADMIN_CONSOLE_DIST"],
-  exists: existsSync,
-};
+/**
+ * Built per call, not once at module load: `NIMBUS_ADMIN_CONSOLE_DIST` is read at request time so
+ * a value set after this module was imported still takes effect. A module-scope snapshot would
+ * silently ignore it — which is exactly how the previous `process.env` read behaved.
+ */
+export function defaultConsoleAssetDeps(): ConsoleAssetDeps {
+  return {
+    compiled: isCompiledBinary(),
+    assets: EMBEDDED_CONSOLE_ASSETS,
+    distOverride: process.env["NIMBUS_ADMIN_CONSOLE_DIST"],
+    exists: existsSync,
+  };
+}
 
 /** The dev-tree dist directory: the override when it names a built console, else the directory
  * holding the embedded `index.html` — which under `bun` is the real
@@ -546,8 +553,9 @@ function devConsoleDist(deps: ConsoleAssetDeps): string | undefined {
  */
 export function resolveConsoleAsset(
   rel: string,
-  deps: ConsoleAssetDeps = DEFAULT_CONSOLE_ASSET_DEPS,
+  overrideDeps?: ConsoleAssetDeps,
 ): ConsoleAssetResult {
+  const deps = overrideDeps ?? defaultConsoleAssetDeps();
   if (deps.compiled) {
     // hasOwn, not `deps.assets[rel] !== undefined`: `"constructor"` and `"toString"` are truthy
     // on any plain object and would otherwise resolve to a function.
@@ -899,7 +907,7 @@ git commit -m "refactor(build): extract the vec0 sidecar copy so the release can
 - Consumes: `stripComments` from `scripts/structure-audit/lib.ts`.
 - Produces: `export interface PathDerivationViolation { file: string; line: number; snippet: string }` and `export function checkImportMetaDir(dir?: string): PathDerivationViolation[]`; root script id `audit:import-meta-dir`.
 
-PR 1 deferred this audit because its only two violations were the ones Task 4 just removed. It ships now with **nothing exempted but `perf/surfaces/**` and test files** — if implementing it makes you want to add a third exemption, something in Tasks 2-4 was missed.
+PR 1 deferred this audit because its only two violations were the ones Task 4 just removed. It ships with **no production module exempted**. The four explicit skips are `perf/surfaces/**`, `*.test.ts`/`*.test.tsx`, `*.d.ts`, and the canonical `platform/runtime-layout.ts` (see Global Constraints item 5) — if implementing it makes you want a fifth, something in Tasks 2-4 was missed.
 
 - [ ] **Step 1: Write the failing test**
 

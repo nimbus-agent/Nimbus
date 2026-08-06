@@ -3,9 +3,10 @@
 .SYNOPSIS
   Build the per-user Nimbus .msi with WiX v5. Run on a Windows runner.
 .PARAMETER BinDir
-  Directory containing nimbus.exe + nimbus-gateway.exe.
+  Directory containing nimbus.exe + nimbus-gateway.exe + vec0.dll (the sqlite-vec sidecar,
+  a required MSI payload — nimbus.wxs installs it beside the gateway).
 .PARAMETER Version
-  Release version (tag with/without leading 'v'; prerelease suffix is stripped —
+  Release version (tag with/without leading 'v'; prerelease suffix is stripped --
   MSI ProductVersion must be numeric x.y.z).
 .PARAMETER Out
   Output .msi path.
@@ -43,4 +44,4 @@ New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)." }
 if (-not (Test-Path $Out)) { throw "wix reported success but $Out is missing." }
 
-Write-Host "✓ Built $Out (ProductVersion $pv)"
+Write-Host "OK: Built $Out (ProductVersion $pv)"

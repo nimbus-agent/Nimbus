@@ -94,10 +94,10 @@ public static extern IntPtr SendMessageTimeout(
     $SMTO_ABORTIFHUNG = 0x0002
     $type::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null
   } catch {
-    Write-Warning "Could not broadcast environment change (likely Constrained Language Mode). PATH was updated successfully — open a new shell to pick it up."
+    Write-Warning "Could not broadcast environment change (likely Constrained Language Mode). PATH was updated successfully -- open a new shell to pick it up."
   }
 }
 
 Write-Host ""
-Write-Host "✓ Nimbus installed."
+Write-Host "OK: Nimbus installed."
 Write-Host "  Open a new shell, then run: nimbus --version"
