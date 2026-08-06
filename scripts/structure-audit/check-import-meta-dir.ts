@@ -41,6 +41,47 @@ const FORBIDDEN: readonly RegExp[] = [
   /\bfileURLToPath\s*\(\s*import\s*\.\s*meta\s*\.\s*url\s*[,)]/g,
 ];
 
+const WORD_CHAR = /[A-Za-z0-9_$]/;
+
+/**
+ * Keywords after which a `/` opens a regex literal rather than dividing. A keyword cannot end an
+ * operand, so `return /x/` and `typeof /x/` are regexes while `count / 2` is division.
+ */
+const KEYWORD_BEFORE_REGEX = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+
+/** Tokens that DO end an operand, so a following `/` divides. */
+const OPERAND_END = new Set([")", "]"]);
+
+/**
+ * Does a `/` following `prevToken` begin a regex literal?
+ *
+ * Stated as "what cannot precede a regex" rather than an allow-list of operators, because the
+ * allow-list form silently mis-classified everything it forgot — `=>` (whose last character is
+ * `>`) and every keyword. The failure is asymmetric and dangerous in one direction: reading a
+ * regex as division lets its quote open a phantom string, which blanks the rest of the file and
+ * turns a real violation into a silent miss.
+ */
+export function startsRegex(prevToken: string): boolean {
+  if (prevToken === "") return true; // start of file
+  if (WORD_CHAR.test(prevToken)) return KEYWORD_BEFORE_REGEX.has(prevToken);
+  return !OPERAND_END.has(prevToken);
+}
+
 /**
  * Blank the CONTENTS of string and regex literals, preserving length and newlines so match
  * offsets and line numbers stay exact.
@@ -61,11 +102,9 @@ export function blankLiterals(src: string): string {
       if (out[k] !== "\n") out[k] = " ";
     }
   };
-  // A `/` starts a regex (not division) when the previous non-space token can't end an operand.
-  const regexAllowedAfter = new Set(["(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";"]);
   const templateStack: number[] = []; // ${} nesting depth per open template literal
   let i = 0;
-  let prev = "";
+  let prevToken = "";
   while (i < src.length) {
     const c = src[i] as string;
     if (c === "'" || c === '"') {
@@ -73,7 +112,7 @@ export function blankLiterals(src: string): string {
       while (i < src.length && src[i] !== c) i += src[i] === "\\" ? 2 : 1;
       blank(start, i);
       i += 1;
-      prev = c;
+      prevToken = c;
       continue;
     }
     if (c === "`") {
@@ -94,7 +133,7 @@ export function blankLiterals(src: string): string {
       } else {
         i += 1;
       }
-      prev = "`";
+      prevToken = "`";
       continue;
     }
     if (c === "}" && templateStack.length > 0) {
@@ -119,14 +158,14 @@ export function blankLiterals(src: string): string {
         } else {
           i += 1;
         }
-        prev = "`";
+        prevToken = "`";
         continue;
       }
       templateStack[templateStack.length - 1] = depth - 1;
     } else if (c === "{" && templateStack.length > 0) {
       templateStack[templateStack.length - 1] = (templateStack[templateStack.length - 1] ?? 0) + 1;
     }
-    if (c === "/" && (prev === "" || regexAllowedAfter.has(prev))) {
+    if (c === "/" && startsRegex(prevToken)) {
       const start = ++i;
       let closed = false;
       while (i < src.length && src[i] !== "\n") {
@@ -146,12 +185,22 @@ export function blankLiterals(src: string): string {
       if (closed) {
         blank(start, i);
         i += 1;
-        prev = "/";
+        prevToken = "/";
         continue;
       }
-      i = start; // not a regex after all (e.g. division); fall through
+      i = start; // unterminated on this line — not a regex after all; fall through
     }
-    if (!/\s/.test(c)) prev = c;
+    // Consume a whole identifier/number so `prevToken` is a TOKEN, not one character. Classifying
+    // on the last character alone read `return` as `n` and mistook `return /"/.test(v)` for
+    // division, after which the quote opened a phantom string and blanked the rest of the file.
+    if (WORD_CHAR.test(c)) {
+      let j = i;
+      while (j < src.length && WORD_CHAR.test(src[j] as string)) j += 1;
+      prevToken = src.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (!/\s/.test(c)) prevToken = c;
     i += 1;
   }
   return out.join("");

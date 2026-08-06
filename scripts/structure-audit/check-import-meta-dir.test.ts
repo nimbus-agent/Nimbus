@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { blankLiterals, checkImportMetaDir } from "./check-import-meta-dir.ts";
+import { blankLiterals, checkImportMetaDir, startsRegex } from "./check-import-meta-dir.ts";
 
 const ROOT = mkdtempSync(join(tmpdir(), "nimbus-meta-dir-audit-"));
 afterAll(() => {
@@ -47,6 +47,13 @@ fixture("ipc/ok-string-single.ts", `const msg = 'import.meta.path is forbidden';
 fixture("ipc/ok-template-text.ts", "const msg = `avoid import.meta.dirname`;\n");
 // A regex literal holding a quote must not swallow the code after it.
 fixture("ipc/ok-regex-quote.ts", `const r = s.replace(/"/g, "");\nexport const x = r;\n`);
+// Same hazard, but the regex follows a KEYWORD and an arrow — the two shapes a
+// last-character-only classifier reads as division, blanking every line below.
+fixture(
+  "ipc/bad-after-return.ts",
+  `function f(v) {\n  return /"/.test(v);\n}\nconst p = import.meta.dir;\n`,
+);
+fixture("ipc/bad-after-arrow.ts", `const f = (v) => /"/.test(v);\nconst p = import.meta.path;\n`);
 fixture("ipc/ok-comment.ts", `// baseDir is the caller's import.meta.dir\nexport const x = 1;\n`);
 fixture("ipc/ok-worker.ts", `new Worker(new URL("./w.ts", import.meta.url).href);\n`);
 fixture("ipc/ok-asset.ts", `import p from "./a.html" with { type: "file" };\n`);
@@ -64,6 +71,8 @@ function flagged(): string[] {
 describe("checkImportMetaDir", () => {
   test("flags every filesystem-path form of import.meta", () => {
     expect(flagged()).toEqual([
+      "ipc/bad-after-arrow.ts",
+      "ipc/bad-after-return.ts",
       "ipc/bad-dir-multiline.ts",
       "ipc/bad-dir.ts",
       "ipc/bad-dirname.ts",
@@ -176,5 +185,46 @@ describe("blankLiterals", () => {
 
   test("leaves division alone", () => {
     expect(blankLiterals("const r = a / b / c;")).toBe("const r = a / b / c;");
+  });
+
+  test("recognises a regex after a keyword or an arrow, not just after punctuation", () => {
+    // Classifying on the last character read `return` as `n` and `=>` as `>`, called both
+    // division, and let the quote blank every line below.
+    for (const src of [
+      `return /"/.test(v);\nconst p = import.meta.dir;`,
+      `const f = (v) => /"/.test(v);\nconst p = import.meta.dir;`,
+      `if (typeof x === "s" || /"/.test(x)) { }\nconst p = import.meta.dir;`,
+    ]) {
+      expect(blankLiterals(src)).toContain("import.meta.dir");
+    }
+  });
+});
+
+describe("startsRegex", () => {
+  test("a keyword cannot end an operand, so a regex may follow", () => {
+    for (const kw of ["return", "typeof", "case", "in", "of", "new", "throw", "await", "yield"]) {
+      expect(startsRegex(kw)).toBe(true);
+    }
+  });
+
+  test("an identifier or number ends an operand, so `/` divides", () => {
+    for (const t of ["count", "x", "_priv", "$el", "42"]) {
+      expect(startsRegex(t)).toBe(false);
+    }
+  });
+
+  test("a closing paren or bracket ends an operand", () => {
+    expect(startsRegex(")")).toBe(false);
+    expect(startsRegex("]")).toBe(false);
+  });
+
+  test("operators and openers admit a regex, including the arrow's `>`", () => {
+    for (const t of [">", "=", "(", ",", "[", "{", "}", ";", ":", "!", "&", "|", "?", "+"]) {
+      expect(startsRegex(t)).toBe(true);
+    }
+  });
+
+  test("start of file admits a regex", () => {
+    expect(startsRegex("")).toBe(true);
   });
 });
