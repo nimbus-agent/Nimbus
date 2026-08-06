@@ -132,35 +132,42 @@ export class AgentBriefRouter {
   private route(agentName: string, env: BriefEnvelope, kind: NotificationKind): void {
     const sessionId = typeof env.sessionId === "string" ? env.sessionId : undefined;
 
-    if (sessionId !== undefined) {
-      for (const w of this.waiters) {
-        if (w.agentName === agentName && w.sessionId === sessionId) {
-          this.apply(w, env, kind);
-          return;
-        }
-      }
-    } else {
-      // No sessionId to key on. Attribution is only unambiguous when exactly one waiter is
-      // in flight for this agent — deliver to it whether or not it has bound yet, since it is
-      // the sole possible recipient either way. With zero or two-or-more waiters the envelope
-      // genuinely cannot be attributed, so it is buffered (and the waiter(s) time out) rather
-      // than guessed at: guessing would defeat the no-cross-delivery guarantee this router
-      // exists to provide.
-      let sole: Waiter | undefined;
-      let count = 0;
-      for (const w of this.waiters) {
-        if (w.agentName === agentName) {
-          count += 1;
-          sole = w;
-        }
-      }
-      if (count === 1 && sole !== undefined) {
-        this.apply(sole, env, kind);
+    let sole: Waiter | undefined;
+    let waitersForAgent = 0;
+    for (const w of this.waiters) {
+      if (w.agentName !== agentName) continue;
+      waitersForAgent += 1;
+      sole = w;
+      if (sessionId !== undefined && w.sessionId === sessionId) {
+        this.apply(w, env, kind);
         return;
       }
     }
 
-    // No unambiguous recipient yet — buffer for a waiter that binds this exact sessionId later.
+    // No sessionId to key on. Attribution is only unambiguous when exactly one waiter is
+    // in flight for this agent — deliver to it whether or not it has bound yet, since it is
+    // the sole possible recipient either way. With two-or-more waiters the envelope genuinely
+    // cannot be attributed, so it is buffered (and the waiter(s) time out) rather than guessed
+    // at: guessing would defeat the no-cross-delivery guarantee this router exists to provide.
+    if (sessionId === undefined && waitersForAgent === 1 && sole !== undefined) {
+      this.apply(sole, env, kind);
+      return;
+    }
+
+    // Nothing is waiting on this agent, so there is no future recipient to buffer FOR. Agent
+    // notifications are broadcast to every session, and this router's listeners stay bound for the
+    // connection's life — so in a long-lived MCP server every subsequent CLI-originated brief for
+    // an agent used once would otherwise be retained here, full markdown plus full findings, up to
+    // 32 per agent across 11 agents, holding another session's content in memory indefinitely.
+    //
+    // Provably useless rather than merely wasteful: `expect()` registers the waiter BEFORE the
+    // `agents.*` call is made, so the gateway cannot emit a sessionId before its waiter exists. A
+    // future waiter therefore cannot be the addressee of an envelope that arrived while none
+    // existed. (The same guard disposes of the ≥2-waiter buffer entry that could never be
+    // redelivered, since it drops once the last of those waiters finishes.)
+    if (waitersForAgent === 0) return;
+
+    // A waiter for this agent exists but has not bound its sessionId yet — buffer for it.
     const list = this.buffered.get(agentName) ?? [];
     if (list.length >= MAX_BUFFERED_PER_AGENT) list.shift();
     list.push({ env, kind });

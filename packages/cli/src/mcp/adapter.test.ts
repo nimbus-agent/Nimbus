@@ -1,12 +1,18 @@
 import { describe, expect, it, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   type AdapterDeps,
+  AGENT_TOOLS_UNSUPPORTED_MESSAGE,
+  agentToolsSupported,
   buildMcpServer,
   type ConnectionEnv,
   clampLimit,
   createDeps,
   GATEWAY_DOWN_MESSAGE,
   GatewayUnavailableError,
+  INDEX_TOOL_SPECS,
   type IpcCallable,
   isDisconnectError,
   projectRankedItem,
@@ -348,14 +354,18 @@ describe("session.declareKind", () => {
     const deps = createDeps(env);
     const { result: client, stderr, stdout } = await captureStdio(() => deps.getClient());
     expect(stderr).toEqual([
-      "nimbus-mcp: gateway does not support session.declareKind; agent briefs served over MCP will NOT appear in the egress ledger. Upgrade the gateway.\n",
+      "nimbus-mcp: gateway does not support session.declareKind; agent briefs served over MCP would NOT appear in the egress ledger, so the agent tools are DISABLED on this connection. The read-only index tools still work. Upgrade the gateway.\n",
     ]);
     expect(stdout).toEqual([]);
-    // Still usable: a subsequent real call on the returned client succeeds.
+    // Still usable: a subsequent real call on the returned client succeeds — the INDEX tools are
+    // unaffected by the degraded mode.
     await expect(client.call("index.searchRanked", {})).resolves.toBe("ok");
     // And it was cached despite the warning — a second getClient() does not reconnect.
     await deps.getClient();
     expect(connects).toBe(1);
+    // The machine-readable half of the same fact, which is what withdraws the agent tools. stderr
+    // alone was the whole defect: an editor-spawned MCP server usually discards it.
+    expect(deps.agentToolsDisabledReason?.()).toBe(AGENT_TOOLS_UNSUPPORTED_MESSAGE);
   });
 
   it("does not print the upgrade warning and does not re-cache when declareKind fails with a disconnect-class error", async () => {
@@ -382,6 +392,10 @@ describe("session.declareKind", () => {
     // Not re-cached: the next getClient() reconnects rather than reusing the known-dead client.
     await deps.getClient();
     expect(connects).toBe(2);
+    // And NOT degraded: a disconnect-class failure is a dead transport, not an old gateway, so the
+    // agent tools stay registered and stay reachable. Collapsing the two would report "upgrade the
+    // gateway" at every transient drop.
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
   });
 });
 
@@ -518,6 +532,114 @@ describe("buildMcpServer", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
+  });
+});
+
+/**
+ * Owner decision: on a gateway that rejects `session.declareKind` as an unsupported method, the
+ * eleven agent-classified tools are withdrawn and the six read-only index tools are kept. The
+ * previous behaviour — warn on stderr, serve the briefs anyway — handed the operator unrecorded
+ * briefs while `nimbus prove` reported a clean scope, and editor-spawned MCP servers usually
+ * discard stderr, so nothing said otherwise.
+ */
+describe("degraded mode on a gateway without session.declareKind", () => {
+  /** A `ConnectionEnv` whose gateway fails `declareKind` with the given error. */
+  function envRejectingDeclareKind(err: Error): ConnectionEnv {
+    return {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () =>
+        fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw err;
+          }
+          return "ok";
+        }),
+    };
+  }
+
+  /** Ask a real MCP client, over an in-memory transport, what this server actually lists. */
+  async function listToolNames(server: McpServer): Promise<string[]> {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const listed = await client.listTools();
+    await client.close();
+    return listed.tools.map((t) => t.name).sort();
+  }
+
+  it("lists exactly the six read-only index tools, and no agent tool", async () => {
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    await captureStdio(() => deps.getClient());
+    expect(await agentToolsSupported(deps)).toBe(false);
+
+    const names = await listToolNames(buildMcpServer(deps, false));
+    expect(names).toEqual([
+      "getConnectorStatus",
+      "getDoraMetrics",
+      "getRecentDeployments",
+      "getRecentIncidents",
+      "getRecentPullRequests",
+      "searchIndex",
+    ]);
+    // Derived, not retyped: the withheld set is exactly TOOL_SPECS minus INDEX_TOOL_SPECS, and it
+    // includes peekWhy — synchronous, but still `agents.whyPeek` and still ledgered gateway-side.
+    const withheld = TOOL_SPECS.filter((s) => !names.includes(s.name)).map((s) => s.name);
+    expect(withheld).toHaveLength(11);
+    expect(withheld).toContain("peekWhy");
+    expect(withheld).toContain("explainWhy");
+    expect(INDEX_TOOL_SPECS.map((s) => s.name).sort()).toEqual(names);
+  });
+
+  it("an agent tool reached anyway returns an actionable error naming the cause and the fix", async () => {
+    // Reachable in production when the gateway was healthy at spawn time and an older one answered
+    // a later reconnect — registration alone cannot cover that, so the run path checks too.
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    await captureStdio(() => deps.getClient());
+
+    for (const name of ["peekWhy", "explainWhy", "getCatchup"]) {
+      const spec = TOOL_SPECS.find((s) => s.name === name);
+      const got = await spec?.run(deps, { ref: "src/a.ts", sinceMs: 1 });
+      expect({ name, isError: got?.isError }).toEqual({ name, isError: true });
+      expect(got?.content[0]?.text).toBe(AGENT_TOOLS_UNSUPPORTED_MESSAGE);
+    }
+  });
+
+  it("says what is wrong and what to do about it — not merely that something failed", () => {
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("session.declareKind");
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("egress ledger");
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("upgrade the Nimbus gateway");
+  });
+
+  it("a DISCONNECT-class declareKind failure is not degraded mode — all seventeen tools stay", async () => {
+    // The distinction shipped earlier on this branch: a dead transport must not be reported as an
+    // old gateway. It keeps its behaviour exactly, including full tool registration.
+    const deps = createDeps(envRejectingDeclareKind(new Error("IPC connection closed")));
+    const { stderr } = await captureStdio(() => deps.getClient());
+    expect(stderr).toEqual([]);
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
+    expect(await agentToolsSupported(deps)).toBe(true);
+    expect(await listToolNames(buildMcpServer(deps, true))).toHaveLength(TOOL_SPECS.length);
+  });
+
+  it("a gateway that is merely DOWN keeps its tools — not running is not out of date", async () => {
+    const deps: AdapterDeps = {
+      getClient: (): Promise<never> => Promise.reject(new GatewayUnavailableError()),
+    };
+    expect(await agentToolsSupported(deps)).toBe(true);
+    const got = await TOOL_SPECS.find((s) => s.name === "explainWhy")?.run(deps, {
+      ref: "src/a.ts",
+    });
+    expect(got?.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+  });
+
+  it("a healthy gateway is never degraded", async () => {
+    const deps = createDeps({
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => fakeClient(async () => "ok"),
+    });
+    await deps.getClient();
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
+    expect(await agentToolsSupported(deps)).toBe(true);
   });
 });
 

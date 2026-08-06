@@ -14,10 +14,11 @@ const TIMEOUT_MS = 30_000;
 const routers = new WeakMap<object, AgentBriefRouter>();
 
 function routerFor(client: BriefNotificationSource): AgentBriefRouter {
-  const existing = routers.get(client as object);
+  // No cast: an interface with a method member is assignable to `object`.
+  const existing = routers.get(client);
   if (existing !== undefined) return existing;
   const created = new AgentBriefRouter(client);
-  routers.set(client as object, created);
+  routers.set(client, created);
   return created;
 }
 

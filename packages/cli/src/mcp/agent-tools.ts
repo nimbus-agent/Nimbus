@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { AgentBriefRouter } from "../lib/agent-brief-router.ts";
-import type { AdapterDeps, ToolResult, ToolSpec } from "./adapter.ts";
-import { type IpcCallable, type NotifyingClient, supportsNotifications } from "./client-surface.ts";
-import { GATEWAY_DOWN_MESSAGE, GatewayUnavailableError, isDisconnectError } from "./errors.ts";
+import { type NotifyingClient, supportsNotifications } from "./client-surface.ts";
+import {
+  type AdapterDeps,
+  errorResult,
+  runAgentClassifiedTool,
+  type ToolResult,
+  type ToolSpec,
+} from "./tool-runtime.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
 
@@ -13,6 +18,7 @@ const DEFAULT_AGENT_TIMEOUT_MS = 60_000;
  */
 const MAX_SINCE_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_EXPERT_LIMIT = 25;
+const MAX_SERVICE_LEN = 64;
 
 /**
  * How long to wait for a brief. The default is 60 s rather than the CLI's 30 s because the
@@ -108,6 +114,16 @@ function optNum(o: Record<string, unknown>, k: string): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
+function optStr(o: Record<string, unknown>, k: string): string | undefined {
+  const v = o[k];
+  return typeof v === "string" ? v : undefined;
+}
+
+function optBool(o: Record<string, unknown>, k: string): boolean | undefined {
+  const v = o[k];
+  return typeof v === "boolean" ? v : undefined;
+}
+
 function withOptional(
   base: Record<string, unknown>,
   extra: Record<string, unknown>,
@@ -134,11 +150,16 @@ const DEFS: readonly AgentToolDef[] = [
     tool: "getCatchup",
     agent: "catchup",
     description:
-      "Retrospective digest of what happened across connected services while the user was away, personalized to their work. `sinceMs` is a lookback window in milliseconds, capped at 90 days.",
-    // Bound mirrors MAX_SINCE_MS in the gateway's requireCatchupParams: over it the call is
-    // rejected -32602, and the model can otherwise only learn the ceiling by tripping it.
-    schema: { sinceMs: z.number().int().nonnegative().max(MAX_SINCE_MS).optional() },
-    build: (a) => withOptional({}, { sinceMs: optNum(a, "sinceMs") }),
+      "Retrospective digest of what happened across connected services while the user was away, personalized to their work. `sinceMs` is a lookback window in milliseconds, capped at 90 days. `service` narrows the digest to one connected service (e.g. 'github', 'slack').",
+    // Bounds mirror the gateway's requireCatchupParams: MAX_SINCE_MS, and a non-empty `service` of
+    // at most MAX_SERVICE_LEN chars. Over either the call is rejected -32602, and the model can
+    // otherwise only learn the ceiling by tripping it.
+    schema: {
+      sinceMs: z.number().int().nonnegative().max(MAX_SINCE_MS).optional(),
+      service: z.string().min(1).max(MAX_SERVICE_LEN).optional(),
+    },
+    build: (a) =>
+      withOptional({}, { sinceMs: optNum(a, "sinceMs"), service: optStr(a, "service") }),
   },
   {
     tool: "findExpert",
@@ -174,9 +195,30 @@ const DEFS: readonly AgentToolDef[] = [
     tool: "findDecisions",
     agent: "decisions",
     description:
-      "Recover decision records that were made but never written down, reconstructed from discussions, PRs and issues. There is no topic filter — the agent returns the highest-confidence decisions it reconstructed.",
-    schema: { limit: z.number().int().positive().optional() },
-    build: (a) => withOptional({}, { limit: optNum(a, "limit") }),
+      "Recover decision records that were made but never written down, reconstructed from discussions, PRs and issues. There is no topic filter, but the result can be narrowed: `sinceMs` is a lookback window in milliseconds, `service` restricts to one connected service, `minConfidence` (0..1) raises the floor above the configured default, and `explain` adds the per-decision breakdown of what drove its confidence score.",
+    // Bounds mirror the gateway's requireDecisionsParams EXACTLY, including where it is laxer than
+    // its siblings: `sinceMs` there is any non-negative integer with NO 90-day cap (unlike catchup
+    // and huddle), and `service` is any string with NO length or non-empty check (unlike catchup
+    // and impact). A zod bound stricter than the validator would silently reject input the gateway
+    // accepts, so those asymmetries are mirrored rather than tidied up here.
+    schema: {
+      sinceMs: z.number().int().nonnegative().optional(),
+      minConfidence: z.number().min(0).max(1).optional(),
+      service: z.string().optional(),
+      explain: z.boolean().optional(),
+      limit: z.number().int().positive().optional(),
+    },
+    build: (a) =>
+      withOptional(
+        {},
+        {
+          sinceMs: optNum(a, "sinceMs"),
+          minConfidence: optNum(a, "minConfidence"),
+          service: optStr(a, "service"),
+          explain: optBool(a, "explain"),
+          limit: optNum(a, "limit"),
+        },
+      ),
   },
   {
     tool: "getGlossary",
@@ -220,47 +262,28 @@ export const AGENT_TOOL_SPECS: ToolSpec[] = DEFS.map((d) => ({
     runAgentTool(deps, d, args),
 }));
 
-/** Mirrors the adapter's `runTool` contract: never throws, always returns a ToolResult. */
+/**
+ * Runs one agent tool. Never throws; always returns a `ToolResult`.
+ *
+ * The gateway-down / disconnect / degraded-gateway envelopes all come from
+ * `runAgentClassifiedTool` (→ `runTool`), which is the SINGLE construction site for an error
+ * result. This function used to rebuild that shape inline four times, leaving `ToolResult`'s error
+ * form with two independent constructors and only the adapter's behind `runTool`'s tests.
+ */
 async function runAgentTool(
   deps: AdapterDeps,
   def: AgentToolDef,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  let client: IpcCallable;
-  try {
-    client = await deps.getClient();
-  } catch (e) {
-    if (e instanceof GatewayUnavailableError) {
-      return { content: [{ type: "text", text: e.message }], isError: true };
+  return await runAgentClassifiedTool(deps, async (client) => {
+    if (!supportsNotifications(client)) {
+      // Cannot happen with the production IPCClient; reachable with a minimal fake. Reported rather
+      // than asserted, because the alternative is a waiter that never settles and a 60 s timeout
+      // blaming the agent for a transport that was never capable of delivering the brief.
+      return errorResult(
+        "Nimbus: this connection cannot receive agent notifications, so no brief can be delivered.",
+      );
     }
-    return {
-      content: [{ type: "text", text: `Nimbus: ${e instanceof Error ? e.message : String(e)}` }],
-      isError: true,
-    };
-  }
-  if (!supportsNotifications(client)) {
-    // Cannot happen with the production IPCClient; reachable with a minimal fake. Reported rather
-    // than asserted, because the alternative is a waiter that never settles and a 60 s timeout
-    // blaming the agent for a transport that was never capable of delivering the brief.
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Nimbus: this connection cannot receive agent notifications, so no brief can be delivered.",
-        },
-      ],
-      isError: true,
-    };
-  }
-  try {
     return await runAgent(client, def.agent, `agents.${def.agent}`, def.build(args));
-  } catch (e) {
-    if (isDisconnectError(e)) {
-      return { content: [{ type: "text", text: GATEWAY_DOWN_MESSAGE }], isError: true };
-    }
-    return {
-      content: [{ type: "text", text: `Nimbus: ${e instanceof Error ? e.message : String(e)}` }],
-      isError: true,
-    };
-  }
+  });
 }

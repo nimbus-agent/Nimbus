@@ -1,6 +1,7 @@
 import {
   type AdapterDeps,
   createProductionDeps,
+  INDEX_TOOL_SPECS,
   runMcpServerStdio,
   TOOL_SPECS,
 } from "../mcp/adapter.ts";
@@ -47,9 +48,16 @@ function wrapList(names: readonly string[], width: number): string {
  * `--help` is the primary discovery surface for this command: an operator who sees no agent tools
  * here concludes the feature does not exist. The list was hardcoded and went stale twice — once
  * when `peekWhy` landed and again when the ten agents did — which is exactly why it is derived now.
+ *
+ * The degraded-gateway note is stated as POLICY, not as this gateway's observed state: `--help` is
+ * answered without connecting to anything (`parseMcpServerArgs` → print → return), so the gateway's
+ * `session.declareKind` support is not knowable here. Printing a live verdict would mean opening a
+ * connection just to render help. The counts are derived from the spec lists, so they cannot drift.
  */
 export function formatHelp(): string {
   const names = TOOL_SPECS.map((s) => s.name);
+  const indexToolCount = INDEX_TOOL_SPECS.length;
+  const agentToolCount = TOOL_SPECS.length - indexToolCount;
   return `nimbus mcp-server — expose the Nimbus local index to editor AIs over MCP
 
 Usage:
@@ -60,7 +68,13 @@ Read-only tools (${String(names.length)}):
 ${wrapList(names, HELP_WIDTH)}
 
 Every tool is read-only: none reaches a write or HITL-gated action. The Gateway
-must be running (start it with: nimbus start).`;
+must be running (start it with: nimbus start).
+
+On a Gateway too old to support session.declareKind, the ${String(agentToolCount)} agent tools are
+withheld and only the ${String(indexToolCount)} index tools are served: such a Gateway cannot record an
+MCP-served brief in the egress ledger, and serving one unrecorded would make
+\`nimbus prove\` report a clean scope over output it never saw. Upgrade the
+Gateway to get them back.`;
 }
 
 export type McpServerArgs = { kind: "help" } | { kind: "config" } | { kind: "stdio" };

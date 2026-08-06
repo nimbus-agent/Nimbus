@@ -327,7 +327,7 @@ const AGENTS_RPC_ACCEPTED_KEYS: ReadonlyArray<{
     tool: "getCatchup",
     method: "agents.catchup",
     accepted: ["sinceMs", "service"],
-    args: { sinceMs: 86_400_000 },
+    args: { sinceMs: 86_400_000, service: "github" },
   },
   {
     tool: "findExpert",
@@ -351,7 +351,13 @@ const AGENTS_RPC_ACCEPTED_KEYS: ReadonlyArray<{
     tool: "findDecisions",
     method: "agents.decisions",
     accepted: ["sinceMs", "minConfidence", "service", "explain", "limit"],
-    args: { limit: 5 },
+    args: {
+      sinceMs: 86_400_000,
+      minConfidence: 0.7,
+      service: "github",
+      explain: true,
+      limit: 5,
+    },
   },
   {
     tool: "getGlossary",

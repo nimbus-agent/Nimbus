@@ -154,3 +154,44 @@ test("a sessionId-less envelope with two waiters delivers to neither — the con
   a.cancel();
   b.cancel();
 });
+
+test("a broadcast for an agent with NO waiter is dropped, never retained", async () => {
+  const src = fakeSource();
+  const router = new AgentBriefRouter(src);
+
+  // Bind the listener pair the way real use does — one call, then done. In a long-lived MCP server
+  // the listeners stay bound for the connection's life, and agent notifications are broadcast to
+  // EVERY session, so from here on every CLI-originated brief for this agent arrives here with
+  // nothing waiting on it.
+  const first = router.expect("catchup", anyFindings, 1000);
+  first.bindSession("s-mine");
+  src.emit("catchup.briefReady", { sessionId: "s-mine", brief: "mine", findings: { gaps: [] } });
+  expect((await first.result).brief).toBe("mine");
+
+  // Another session's brief, full body and findings, with no waiter of ours in flight.
+  src.emit("catchup.briefReady", {
+    sessionId: "s-other",
+    brief: "SOMEONE ELSE'S BRIEF",
+    findings: { gaps: [], secret: "x" },
+  });
+
+  // If it had been buffered it would be replayed to the next waiter that happens to bind that
+  // sessionId — a stale envelope resurfacing under a later call. Nothing is delivered instead.
+  const later = router.expect("catchup", anyFindings, 1000);
+  later.bindSession("s-other");
+  const stillPending = new Promise((resolve) => setTimeout(() => resolve("pending"), 20));
+  await expect(Promise.race([later.result, stillPending])).resolves.toBe("pending");
+  later.cancel();
+});
+
+test("a waiter that has not bound yet still buffers — the drop applies only to zero waiters", async () => {
+  const src = fakeSource();
+  const router = new AgentBriefRouter(src);
+  const p = router.expect("glossary", anyFindings, 1000);
+
+  // Registered but unbound: this envelope has a real future recipient, so it must be kept.
+  src.emit("glossary.briefReady", { sessionId: "s1", brief: "kept", findings: { gaps: [] } });
+  p.bindSession("s1");
+
+  expect((await p.result).brief).toBe("kept");
+});
