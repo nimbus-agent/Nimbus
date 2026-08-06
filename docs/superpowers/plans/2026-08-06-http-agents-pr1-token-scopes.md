@@ -24,6 +24,14 @@
   exactly two files — `packages/gateway/src/ipc/http-server.ts` and
   `packages/gateway/src/ipc/clip-rpc.ts` — which Tasks 4 and 5 own. Task 1's definition of done is
   therefore: **its own tests green, and `bun run typecheck` failing ONLY in those two files.**
+  **One test file also fails at RUNTIME during this window, and that is expected.**
+  `packages/gateway/src/clips/clip-e2e.test.ts` imports `startReadOnlyHttpServer` from
+  `ipc/http-server.ts` (lines 27–28), and Bun resolves ESM named imports regardless of TypeScript,
+  so it throws `SyntaxError: Export named 'addClipToken' not found` at module load — the same root
+  cause, one directory over. Task 1's test bar is therefore
+  `bun test packages/gateway/src/clips/api-scopes.test.ts packages/gateway/src/clips/clip-token-store.test.ts`
+  green, with `clip-e2e.test.ts` failing until Task 4 lands. Do not chase it and do not edit it.
+
   Errors anywhere else mean something went wrong. Do not "fix" the two files during Task 1: that
   is Task 4's and Task 5's work, and doing it early lands it without the tests that prove it.
 
