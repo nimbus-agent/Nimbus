@@ -13,7 +13,7 @@
 
 ## Global Constraints
 
-- **Schema version is V51.** V50 is reserved for the HTTP-agents PR 3 (`resolve_key` column). Do not use V50. `CURRENT_SCHEMA_VERSION` is currently `49` in `packages/gateway/src/index/local-index.ts:265`.
+- **Schema version is V51.** Do not use V50: it is a deliberate no-op step that exists only so the ladder can reach 51, and it is **not** a slot the parallel HTTP-agents work can backfill later — the runner applies a step only while `user_version === fromVersion`, so a database already at V51 never re-enters 49→50. That work must take a NEW version (V52+). `CURRENT_SCHEMA_VERSION` is `49` at plan-writing time in `packages/gateway/src/index/local-index.ts:265`.
 - **No `any`.** Use `unknown` for external data. TypeScript strict mode.
 - **All SQLite writes go through `dbRun` / `dbExec`** from `packages/gateway/src/db/write.ts` (invariant I14 / static D12). A raw `db.run(...)` fails the static audit.
 - **All SQL uses bound parameters** (invariant I9). No string interpolation of values into SQL.
@@ -182,7 +182,7 @@ Create `packages/gateway/src/index/ownership-v51-sql.ts`:
  * so its column, index and batched backfill reach both populations.
  */
 export const SCHEMA_V50_RESERVED_SQL = `
--- V50 reserved for the HTTP agents resolve-by-URL work; intentionally empty.
+-- V50: intentionally empty. NOT a slot to backfill later — a DB already at V51 never re-enters this step.
 SELECT 1;
 `;
 
@@ -2502,7 +2502,7 @@ Two edits:
 2. The migration-runner paragraph (~line 1379): change `**Latest applied migration: V49**` to `**Latest applied migration: V51**` and prepend a clause describing V51 ahead of the existing V49 clause:
 
 ```text
-V51 added the ownership relation types (`owns` / `contains` / `tracks_remote`) + `ownership_pass_state` — the ownership graph derived from git blame — S1 "Local Brain"; V50 is reserved for the HTTP agents resolve-by-URL work and is a deliberate no-op step;
+V51 added the ownership relation types (`owns` / `contains` / `tracks_remote`) + `ownership_pass_state` — the ownership graph derived from git blame — S1 "Local Brain"; V50 is a deliberate no-op step (it bumps `user_version` and writes a ledger row, nothing else) — it is NOT available to backfill later, because the runner applies a step only while `user_version === fromVersion`, so a database already at V51 never re-enters it; parallel work must take a NEW version;
 ```
 
 Also update the trailing `` `CURRENT_SCHEMA_VERSION = 49` `` in that same paragraph to `51`. That one is not caught by the audit's regex, which makes it exactly the kind of stale prose that survives a gate and misleads the next reader.

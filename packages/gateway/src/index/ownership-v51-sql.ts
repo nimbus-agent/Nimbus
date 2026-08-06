@@ -15,7 +15,7 @@
  * so its column, index and batched backfill reach both populations.
  */
 export const SCHEMA_V50_RESERVED_SQL = `
--- V50 reserved for the HTTP agents resolve-by-URL work; intentionally empty.
+-- V50: intentionally empty. NOT a slot to backfill later — a DB already at V51 never re-enters this step.
 SELECT 1;
 `;
 
