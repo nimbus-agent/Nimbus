@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, renameSync, statSync, unlinkSync } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { copyVec0Sidecar } from "../../scripts/copy-vec0-sidecar.ts";
 import { terminateCompiledGatewayBinary } from "./terminate-gateway-binary.ts";
 
 const gatewayPkgDir = dirname(fileURLToPath(import.meta.url));
@@ -31,42 +31,6 @@ function rotateExistingBinaryOrThrow(): void {
   if (existsSync(outfileAbs)) {
     renameSync(outfileAbs, prevAbs);
   }
-}
-
-function npmOsSegment(platform: NodeJS.Platform): string {
-  if (platform === "win32") return "windows";
-  if (platform === "darwin") return "darwin";
-  return "linux";
-}
-
-function vec0Filename(platform: NodeJS.Platform): string {
-  if (platform === "win32") return "vec0.dll";
-  if (platform === "darwin") return "vec0.dylib";
-  return "vec0.so";
-}
-
-function resolveVec0SourceOrThrow(): string {
-  const pkg = `sqlite-vec-${npmOsSegment(process.platform)}-${process.arch}`;
-  const fname = vec0Filename(process.platform);
-  try {
-    const sqliteVecIndex = createRequire(import.meta.url).resolve("sqlite-vec");
-    const reqFromVec = createRequire(sqliteVecIndex);
-    return reqFromVec.resolve(`${pkg}/${fname}`);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `compile-gateway: native dep "${pkg}" not found in node_modules (${msg}); ` +
-        `bun install may have skipped it on this platform — the resulting gateway binary cannot load semantic memory.`,
-    );
-  }
-}
-
-function copyVec0Sidecar(): void {
-  const src = resolveVec0SourceOrThrow();
-  const dest = join(distDir, vec0Filename(process.platform));
-  copyFileSync(src, dest);
-  const size = statSync(dest).size;
-  process.stdout.write(`compile-gateway: copied ${src} → ${dest} (${String(size)} bytes)\n`);
 }
 
 async function main(): Promise<void> {
@@ -122,7 +86,10 @@ async function main(): Promise<void> {
   if (status !== 0) {
     process.exit(status);
   }
-  copyVec0Sidecar();
+  const sidecar = copyVec0Sidecar(distDir);
+  process.stdout.write(
+    `compile-gateway: copied sqlite-vec sidecar → ${sidecar} (${String(statSync(sidecar).size)} bytes)\n`,
+  );
   process.exit(0);
 }
 
