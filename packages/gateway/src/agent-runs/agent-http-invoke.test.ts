@@ -1,8 +1,11 @@
 // packages/gateway/src/agent-runs/agent-http-invoke.test.ts
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LocalIndex } from "../index/local-index.ts";
-import { buildAgentHttpInvoker } from "./agent-http-invoke.ts";
+import { buildAgentHttpInvoker, requireRunId } from "./agent-http-invoke.ts";
 import { AgentRunController, MAX_CONCURRENT_AGENT_RUNS } from "./agent-run-store.ts";
 
 /** Mirrors `freshDb()` in ipc/agents-rpc.test.ts — the real migration set, not a fixture copy. */
@@ -20,7 +23,54 @@ function countLedger(db: Database): number {
   return (db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number }).n;
 }
 
+describe("requireRunId — the defensive paths, exercised directly", () => {
+  // Both paths are unreachable through the public API (the resolver and the dispatcher consult the
+  // same handler map; all ten exposed agents return {sessionId}). They are tested here rather than
+  // left unverified: defensive code no test can reach is indistinguishable from defensive code that
+  // does not work.
+  test("returns the sessionId from a hit", () => {
+    expect(requireRunId("expert", { kind: "hit", value: { sessionId: "expert_1_aaaa" } })).toBe(
+      "expert_1_aaaa",
+    );
+  });
+
+  test("throws on a miss rather than opening a run under undefined", () => {
+    expect(() => requireRunId("expert", { kind: "miss" })).toThrow(TypeError);
+  });
+
+  test("throws when the hit carries no usable sessionId", () => {
+    // Every shape a handler could return that the run store cannot key on. Opening a run under any
+    // of them would strand the caller polling an id that names nothing.
+    for (const value of [{}, { sessionId: "" }, { sessionId: 42 }, null, "str"]) {
+      expect(() => requireRunId("expert", { kind: "hit", value })).toThrow(TypeError);
+    }
+  });
+
+  test("names the agent in the message, so the failure is diagnosable", () => {
+    expect(() => requireRunId("catchup", { kind: "miss" })).toThrow(/catchup/);
+  });
+});
+
 describe("buildAgentHttpInvoker", () => {
+  test("threads index, configDir and selfIdentity into the dispatch context", async () => {
+    // The optional-deps arms. Production always supplies all three (assemble.ts), so leaving them
+    // unexercised would mean the only tested path is the one production never takes.
+    const db = freshDb();
+    const runs = makeRuns();
+    const out = await buildAgentHttpInvoker({
+      db,
+      runs,
+      index: new LocalIndex(db),
+      configDir: mkdtempSync(join(tmpdir(), "nimbus-agent-cfg-")),
+      selfIdentity: { publicKey: new Uint8Array(32), secretKey: new Uint8Array(32) },
+    })("expert", { topicOrFile: "auth.ts" }, "chrome");
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    expect(runs.get(out.runId)).not.toBeNull();
+    // Still exactly one row: the extra context changes what the agent can see, not what is recorded.
+    expect(countLedger(db)).toBe(1);
+  });
+
   test("an unknown agent is refused before any admission is spent", async () => {
     const db = freshDb();
     const runs = makeRuns();

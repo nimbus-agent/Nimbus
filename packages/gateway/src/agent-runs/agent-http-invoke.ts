@@ -2,6 +2,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { LocalIndex } from "../index/local-index.ts";
+import type { RpcMissOrHit } from "../ipc/_lib/dispatch-by-method.ts";
 import { AgentsRpcError, dispatchAgentsRpc, resolveHttpAgentMethod } from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
 import type { AgentRunController } from "./agent-run-store.ts";
@@ -39,6 +40,27 @@ function readSessionId(value: unknown): string | null {
   if (value === null || typeof value !== "object") return null;
   const v = value as { sessionId?: unknown };
   return typeof v.sessionId === "string" && v.sessionId !== "" ? v.sessionId : null;
+}
+
+/**
+ * The run id for a completed dispatch, or a thrown TypeError.
+ *
+ * Both failure paths are unreachable BY CONSTRUCTION — `resolveHttpAgentMethod` and
+ * `dispatchByMethod` consult the same handler map, so a `miss` cannot follow a resolved method; and
+ * all ten exposed agents return `{sessionId}`. They are kept because the alternative to a loud
+ * throw is opening a run under `undefined`, which would strand the caller polling an id that names
+ * nothing.
+ *
+ * Exported ONLY so those paths can be exercised directly. Defensive code that no test can reach is
+ * indistinguishable from defensive code that does not work, and this is cheaper than either
+ * deleting the checks or carrying them unverified.
+ */
+export function requireRunId(agent: string, out: RpcMissOrHit): string {
+  const runId = out.kind === "hit" ? readSessionId(out.value) : null;
+  if (runId === null) {
+    throw new TypeError(`agent ${agent} returned no sessionId; cannot open a run`);
+  }
+  return runId;
 }
 
 /**
@@ -95,17 +117,14 @@ export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvo
       throw e;
     }
 
-    if (out.kind === "miss") {
-      // Unreachable — resolveHttpAgentMethod already checked membership of the same map — but a
-      // silently leaked reservation would be worse than a redundant branch.
+    let runId: string;
+    try {
+      runId = requireRunId(agent, out);
+    } catch (e) {
+      // Release the reservation before propagating: a leaked slot would shrink the cap for the
+      // lifetime of the process, turning a one-off bug into a permanent capacity loss.
       deps.runs.abandon();
-      return { ok: false, reason: "unknown_agent" };
-    }
-
-    const runId = readSessionId(out.value);
-    if (runId === null) {
-      deps.runs.abandon();
-      throw new TypeError(`agent ${agent} returned no sessionId; cannot open a run`);
+      throw e;
     }
     deps.runs.open(runId);
     return { ok: true, runId };
