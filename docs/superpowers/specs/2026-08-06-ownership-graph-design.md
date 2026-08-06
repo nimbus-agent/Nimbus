@@ -187,8 +187,10 @@ CREATE TABLE IF NOT EXISTS ownership_pass_state (
   roots_covered   INTEGER NOT NULL DEFAULT 0,
   roots_with_remote INTEGER NOT NULL DEFAULT 0,
   files_covered   INTEGER NOT NULL DEFAULT 0,
+  files_excluded  INTEGER NOT NULL DEFAULT 0,
   services_bound  INTEGER NOT NULL DEFAULT 0,
-  owners_emitted  INTEGER NOT NULL DEFAULT 0
+  owners_emitted  INTEGER NOT NULL DEFAULT 0,
+  entities_reaped INTEGER NOT NULL DEFAULT 0
 );
 ```
 
@@ -225,7 +227,47 @@ Capping is safe here in a way it explicitly was not for `correlates_with`: the c
 destroys edges the *other* side legitimately created. That hazard does not apply — the pass owns
 `owns` and `contains` outright, and no other writer emits them.
 
-Ties are broken by person id ascending, so the emitted set is deterministic.
+Ties are broken by the **graph entity external id** ascending — not by "person id" loosely — so
+the emitted set is deterministic regardless of whether an owner resolved to a `person` row or
+fell back to `git:<email>`. Both key kinds are already `TEXT`: `person.id` is
+`TEXT PRIMARY KEY` (`index/unified-item-v3-sql.ts:3`), so there is no integer-vs-string sort
+hazard to reconcile. Naming the sort key explicitly keeps it that way if person ids ever change
+shape.
+
+### 5.5.1 Path exclusion
+
+Blame indexing applies **no path filtering at all**: `gitBlameWindowFiles`
+(`connectors/blame-index-sync.ts:70`) is `git log --since=Nd --name-only --pretty=format: -z`
+and does not consult a filesystem root's `exclude` list. Lock files, generated output and
+vendored trees are therefore fully present in `git_blame_line`.
+
+Left alone this dominates the rollups: a churning `package-lock.json` is thousands of lines
+attributed to whoever last ran the installer, and a directory rollup would report them as its
+principal owner.
+
+The ownership pass therefore filters **at aggregation time**, via an `ignore_globs` config key
+matched with `Bun.Glob` against the root-relative path. Filtering here rather than in the blame
+sync is deliberate and load-bearing: `git_blame_line` is shared with `nimbus why`'s provenance
+lanes, which legitimately need to answer "who last touched this lock-file line". Narrowing what
+gets blamed would silently degrade an unrelated shipped feature.
+
+`Bun.Glob` is used rather than hand-rolled regex on purpose — a user-supplied pattern compiled
+into a backtracking regex is a ReDoS surface, and glob-to-regex translation is exactly where
+that bug is usually introduced.
+
+Default `ignore_globs`:
+
+```
+**/package-lock.json  **/yarn.lock  **/pnpm-lock.yaml  **/bun.lock  **/bun.lockb
+**/Cargo.lock  **/poetry.lock  **/Gemfile.lock  **/composer.lock  **/go.sum
+**/vendor/**  **/node_modules/**  **/dist/**  **/build/**  **/*.min.js  **/*.min.css
+**/*.snap  **/__snapshots__/**  **/*.generated.*  **/*.pb.go  **/*_pb2.py
+```
+
+Excluded lines are removed from **both** numerator and denominator, so a file that is entirely
+ignored simply produces no ownership edge rather than a degenerate 100% one. The count of
+excluded files is recorded in `ownership_pass_state.files_excluded`, so the filter is auditable
+rather than invisible. Setting `ignore_globs = []` disables filtering entirely.
 
 ### 5.6 Identity resolution
 
@@ -255,6 +297,23 @@ already invokes on the same roots — no new connector, no network egress.
 Host is used only to pick the `repo` entity's service prefix (`github` / `gitlab` /
 `bitbucket`); an unrecognised host yields no `tracks_remote` edge.
 
+**When `origin` is absent**, the pass falls back to the sole configured remote **if and only if
+exactly one exists**. With two or more non-`origin` remotes it emits no edge and logs the
+ambiguity. "First available remote" is deliberately rejected: in a fork workflow `origin` is the
+user's fork and `upstream` is canonical, so guessing binds a service to the wrong repository —
+and it would do so silently, which is worse than no binding. Failing closed on ambiguity while
+making it observable follows the `AmbiguousBindingWarning` precedent already in
+`metrics/service-identity.ts:38`, where the resolver reports a contested binding rather than
+letting the tie-break disappear.
+
+**Remote URLs are not cached** between passes. One `git remote get-url` per root per debounced
+pass (default 30s) is a single spawn against roots the blame sync is already spawning `git blame`
+against up to 400 times. A cache would buy back a few milliseconds in exchange for an
+invalidation rule and a staleness failure mode where a changed remote keeps a service bound to
+the wrong repo until something evicts it — a silent-wrong-answer bug traded for an unmeasured
+win. Revisit only if `ownership_pass_state.last_duration_ms` shows remote resolution to be
+material.
+
 ---
 
 ## 6. Components and data flow
@@ -282,11 +341,36 @@ Five modules, each independently testable:
    same threshold and cap.
 7. For each configured service, match its repo URNs against `tracks_remote` edges; emit
    `repo --belongs_to--> service` and the rolled-up `person --owns--> service`.
-8. Write `ownership_pass_state`.
+8. Reap orphaned entities (below).
+9. Write `ownership_pass_state`.
 
 **Clearing discipline.** The pass clears `owns` / `contains` for the roots it processes and
 re-emits wholesale, matching the populator's clear-then-emit pattern applied at pass scope. A
 root that is processed and yields nothing correctly ends with zero edges rather than stale ones.
+
+**Orphan reaping.** Clearing relations alone is not enough. `graph_relation` cascades on
+`graph_entity` deletion, but not the reverse — so a deleted or moved file would leave its
+`source_file` entity, and every ancestor `directory` entity, stranded forever. Nothing else
+would ever collect them: `deleteGraphEntitiesForItemKeys` (`graph/relationship-graph.ts:120`)
+deletes only `ITEM_LINKED_ENTITY_TYPES`, a list containing neither `source_file` nor
+`directory`. Over a few months of refactoring, the graph would accumulate a shadow tree of paths
+that no longer exist.
+
+The pass therefore reaps, under two strict conditions that make it safe:
+
+1. **Candidate set is explicit, never a path pattern.** Before clearing, the pass records the
+   entity ids that held `owns` / `contains` edges for this root; after re-emitting, it deletes
+   those that are now **degree-0**. It never issues a `LIKE 'file:<root>:%'` prefix delete — a
+   `repoRoot` containing `%` or `_` would silently widen such a pattern into other roots, and
+   escaping LIKE wildcards around a user-supplied absolute path is a trap worth not entering.
+2. **Degree-0 across *all* relation types, not just this pass's.** A `source_file` may still
+   carry `defined_in` edges from `syncCodeSymbolGraph`, which owns them. Deleting an entity that
+   still has any edge would destroy another populator's work and cascade its relations away. The
+   zero-degree test is what makes reaping the two populators' shared `source_file` entity safe
+   from either side.
+
+Because a degree-0 entity has, by definition, no relations to cascade, the delete is inert
+beyond removing the row itself.
 
 **Wiring.** `platform/assemble.ts` constructs the refresher gated on `[ownership].enabled`
 (the `decisionsRefresher` pattern — construction-gated, so a disabled pass leaves it `undefined`
@@ -305,6 +389,7 @@ lines 1533 and 1636 — these live *in* `nimbus-toml.ts`, not in per-feature con
 | `half_life_days` | `365` | Recency decay half-life |
 | `min_share` | `0.05` | Emission threshold |
 | `max_owners_per_path` | `10` | Emission cap |
+| `ignore_globs` | see §5.5.1 | Paths excluded from aggregation |
 
 Defaulting to enabled matches **both** existing derivation passes: `DEFAULT_NIMBUS_GLOSSARY_TOML`
 and `DEFAULT_NIMBUS_DECISIONS_TOML` are each `enabled: true`. (`[briefs]` is the default-off one,
@@ -326,8 +411,11 @@ Every degradation is **partial and recorded**, never fatal. The pass never block
 | --- | --- |
 | No git-aware `[[filesystem.roots]]` | No-op; `roots_total = 0` recorded |
 | Root is not a git repo | Skipped; counted in `roots_total`, not `roots_covered` |
-| No origin remote | File + directory ownership still emitted; no service rollup for that root |
+| No origin remote, exactly one other remote | That remote is used |
+| No origin remote, two or more others | No `tracks_remote` edge; ambiguity logged, never guessed |
+| No remotes at all | File + directory ownership still emitted; no service rollup for that root |
 | Unrecognised remote host | Same as no remote |
+| All of a file's lines excluded by `ignore_globs` | No edge for that file, not a degenerate 100% owner |
 | Email resolves to no person | `git:<email>` entity; the line still counts toward denominators |
 | `git` absent from PATH | Empty result, pass completes |
 | No `[ci.service.<id>]` declared | File + directory ownership only; `services_bound = 0` |
@@ -344,8 +432,11 @@ read surface can report it as a fact rather than a disclaimer:
    ownership and every read must say so.
 4. Service rollup requires *both* a `[ci.service.<id>]` declaration *and* a matching origin
    remote.
-5. Vendored and generated files inflate a single author's share — whoever ran the generator
-   owns the output by this measure.
+5. Vendored, generated and lock files inflate a single author's share — whoever ran the
+   generator owns the output by this measure. The default `ignore_globs` (§5.5.1) covers the
+   common cases, but a project-specific generated path that is not listed still skews its
+   directory. `files_excluded` reports how much was filtered, so the mitigation is visible
+   rather than assumed total.
 
 ---
 
@@ -413,7 +504,12 @@ Per the `nimbus-testing` layering; real SQLite and fresh temp dirs, no DB-layer 
   recorded in metadata. Tie-break determinism.
 - Identity: resolved, unresolved-`git:` fallback, `[bot]` filtering, and the explicit
   `*@users.noreply.github.com` **non**-filtering case.
-- Remote-URL normalization across ssh / https / `.git`-suffixed / suffix-less / unrecognised-host.
+- Remote-URL normalization across ssh / https / `.git`-suffixed / suffix-less / unrecognised-host,
+  plus remote selection: `origin` present; `origin` absent with exactly one other remote; `origin`
+  absent with two others (**must** emit nothing and log, not pick one); no remotes.
+- `ignore_globs`: a matched path is removed from numerator **and** denominator; a fully-excluded
+  file yields no edge rather than a 100% owner; `ignore_globs = []` disables filtering; a
+  `repoRoot` or path containing glob metacharacters does not corrupt matching.
 - Config parsing: `min_share = 0.05` survives the float branch (a regression here silently
   truncates to `0`, disabling the threshold entirely rather than erroring), and every key
   falls back to its default when absent or malformed.
@@ -424,6 +520,14 @@ Per the `nimbus-testing` layering; real SQLite and fresh temp dirs, no DB-layer 
   `contains` chains and the service rollup.
 - **Idempotence:** run twice, assert an identical graph — clear-and-re-emit must not accumulate.
 - **Retirement:** a file whose blame is removed loses its edges.
+- **Orphan reaping:** a deleted file's `source_file` entity and its now-childless `directory`
+  ancestors are gone after the next pass, and `entities_reaped` counts them.
+- **Reaping safety (the load-bearing one):** a `source_file` that still carries a `defined_in`
+  edge from `syncCodeSymbolGraph` **survives** reaping with that edge intact, even after its
+  `owns` edges are cleared. Red-prove this one by weakening the degree-0 test to a
+  degree-0-in-`owns`/`contains` test and watching the code-symbol edge vanish.
+- **Reaping scope:** a second root whose `repoRoot` contains `%` and `_` is untouched by the
+  first root's reap — the regression test for the `LIKE`-prefix delete that §6 rejects.
 
 **Degradation** — one test per row of the §7 table, each asserting partial success plus the
 correct recorded state.
