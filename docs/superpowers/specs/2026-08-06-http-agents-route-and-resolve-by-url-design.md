@@ -115,6 +115,26 @@ The gateway's `sessionId` (`<agent>_<ts>_<uuid8>`) becomes the `runId` rather th
 minting a second identifier, so a ledger row, a brief and an HTTP poll all name
 the same thing.
 
+**Runs are in-memory and a restart drops them — deliberately.** `BriefRunController`
+makes the same choice and says why: it "makes 'source text is ephemeral' a
+structural property rather than a promise." The argument is stronger here.
+Persisting agent runs would write **synthesised brief text** — derived from the
+private index — into a new on-disk table, which is a privacy expansion, and it
+would buy little: a brief is reproducible from the index by re-issuing the call,
+unlike a research brief's captured source bodies.
+
+The cost is that a client polling across a restart sees `404`, not `410`, because
+the tombstone set dies with the process. That is a contract, so it is stated
+rather than left to be discovered:
+
+- `200` — run known; `status` is `running`, `done` or `failed`.
+- `404` — unknown **or lost to a restart**. The client must treat this as
+  terminal-unknown and re-issue the call, never as "still running."
+- `410` — known and expired past TTL within this process lifetime.
+
+A client cannot distinguish "never existed" from "lost to a restart," and does not
+need to: the response to both is to re-issue.
+
 ### Why not a generic `POST /v1/rpc` bridge
 
 The bridge is the more elegant answer to the recorded successor — the stdio
@@ -207,6 +227,22 @@ A third entry point — the eventual `POST /v1/rpc`, a ChatOps path — then can
 bypass the ledger without a static failure. This is the answer to *how the static
 rule is tightened so the next entry point cannot repeat this*.
 
+**Where and how it is enforced.** In `scripts/structure-audit/check-nimbus-invariants.ts`,
+beside `D22(a)`–`(c)`, so it runs in `audit:invariants` — before the test suite,
+failing first. Like its siblings it is a per-line regex, and it must match **both**
+`import … from ".../agents/<name>.ts"` and a dynamic `import("…/agents/<name>.ts")`,
+or the rule is trivially sidestepped by the one-character change from static to
+dynamic import.
+
+**What it cannot see, stated because `D22`'s existing weakness is exactly this.**
+A regex over import specifiers does not follow re-export chains: were an emitter
+re-exported through `agents/_lib/`, a file could import it from the excluded path
+and the rule would miss. That is not a hypothetical class so much as the same shape
+as the recorded `D22` limit — "wrapper/façade/raw-execute paths are out of its
+reach and are addressed by capability removal." The mitigation is the same:
+`agents/_lib/` must not re-export emitters, and the enforcement test asserts that
+directly rather than trusting the import rule to cover it.
+
 ### The `sync` class
 
 Rises `none` → `per-run`, appended at the scheduler's sync-run boundary and by
@@ -254,6 +290,16 @@ agents,resolve` records them on the `PairingWindowController` window; `POST
 the request body. `I30` is unchanged, and the rule is the same server-derived one
 as §2 — a caller that could name its own scopes would grant itself the set.
 
+**Scopes are editable in place, without a re-pair.** `nimbus clip scopes <label>
+--set clip,briefs,agents` rewrites one entry's scope list; it can narrow as well
+as widen. This is not a convenience: if the only way to add a scope were to delete
+and re-pair, the rational move at mint time becomes "grant everything, so I never
+have to do this again" — which reproduces the exact over-granting the scope work
+exists to end. Both paths are equally owner-controlled, since both require local
+CLI access, so there is no security difference to trade for the ergonomics. The
+change is Vault-side only; the token value never changes, so a paired client keeps
+working.
+
 **The structural guard matters more than the scopes.** A per-route check a new
 route can forget to call is fail-open, which is the shape both recent invariant
 reviews turned on. So the mapping is a table — route → required scope — and
@@ -261,6 +307,15 @@ reviews turned on. So the mapping is a table — route → required scope — an
 completeness test asserting **every** `WRITE_ROUTE_ALLOWLIST` entry and every
 bearer-gated read appears in it. Adding a route without a scope fails the suite
 rather than defaulting to "any token works."
+
+The table is **total over the surface, not just the gated part**: the
+unauthenticated GET routes (`/v1/health`, `/v1/items`, `/v1/connectors`,
+`/v1/people`, `/v1/audit`, `/v1/metrics/dora`, `/v1/openapi.json`) are listed
+explicitly as `public`. Enumerating them costs nothing and buys the one thing a
+gated-only table cannot give: a route that is public **by decision** becomes
+distinguishable from a route that is public **by omission**. That distinction is
+the whole failure mode here — today's GET table is ungated by convention, and a
+convention is exactly what a new route silently joins.
 
 `constantTimeStringEqual`'s no-short-circuit loop over every entry is preserved
 verbatim (`I10`); the scope lookup happens only after a match is recorded, so it
@@ -291,12 +346,30 @@ cannot run `canonicalizeUrl`.
 docstring records that `externalIdFor` hashes its output, so changing its rules
 changes clip identity.
 
-**Migration V50** adds column + index, then backfills as a bespoke batched step:
-`canonicalizeUrl` is JS, so the backfill reads, computes and updates in batches
+**Migration V50** adds column + index, then backfills as a bespoke step:
+`canonicalizeUrl` is JS, so the backfill reads, computes and updates row-wise
 rather than being expressible as one `UPDATE`. It backfills in the migration
 rather than deferring to a CLI, because a resolve read that silently misses the
 entire pre-existing index until someone runs a command is a wrong answer, not a
 pending one.
+
+Three properties of the runner constrain how that step is written, and all three
+were checked in `index/migrations/runner.ts` rather than assumed:
+
+- **Arbitrary JS is the native shape, not an exception.** A step is
+  `apply: (db: Database, now: number) => void`, and `simpleStep` is a declarative
+  *convenience* wrapper over it. The runner's own docstring names "a custom data
+  backfill alongside the schema change" as the reason to write a bespoke
+  `migrateIndexedV*` function; `backfillAuditChain` and `backfillMigrationsLedger`
+  are existing precedents. No two-phase schema-then-startup-backfill is needed.
+- **`apply` is synchronous.** An `async` backfill cannot be awaited by the runner.
+  Both `canonicalizeUrl` and `bun:sqlite` are synchronous, so this costs nothing —
+  but it forecloses a batching design built on promises.
+- **The whole step runs inside one `db.transaction`.** So "batched" means *chunked
+  reads to bound memory*, *never a commit per batch*. Committing per batch would
+  break the step's atomicity and could leave `resolve_key` half-populated with
+  `PRAGMA user_version` already advanced — a silently partial index that resolves
+  some URLs and not others, which is worse than not shipping the column.
 
 **Matching is a bounded ladder, not a rule set.** `canonicalizeUrl` strips
 fragment, `utm_*`/click-ids and a non-root trailing slash — nothing else — so
@@ -310,10 +383,24 @@ That covers `?tab=files` and `/pull-requests/42/diff` with no per-service rule t
 drift. A trimmed match must be **unique** or the answer is `ambiguous` — trimming
 can over-reach, and guessing between candidates is worse than declining.
 
+**`ambiguous` carries its candidates.** Declining to guess is right; declining to
+*say what the choices were* would push the client into a dead end, and the panel
+is the one place a human can resolve the ambiguity in one click. So the response
+carries the matches as metadata — the same shape and the same privacy class a
+successful resolve already returns to the same bearer-scoped caller, so it
+discloses nothing new.
+
+The list is **capped at five**, because rung 3 trims path segments and can match
+broadly; an uncapped list would turn a mis-trimmed URL into a bulk index read.
+Over the cap the answer stays `ambiguous` with `truncated: true` and no candidates,
+since a truncated choice menu is a misleading one.
+
 ```
 {found:true, item:{id,service,type,title,url,modified_at},
  matchKind:"exact"|"query_stripped"|"path_trimmed"}
-{found:false, reason:"not_indexed"|"ambiguous"|"unresolvable_url", service, fetchable}
+{found:false, reason:"not_indexed"|"unresolvable_url", service, fetchable}
+{found:false, reason:"ambiguous", service, fetchable,
+ candidates:[{id,service,type,title,url}], truncated:boolean}
 ```
 
 `fetchable` is the seam to §5: it tells the panel whether `POST /v1/items/fetch`
@@ -412,13 +499,17 @@ guard nobody has checked.
 | Ledger totality | an HTTP brief appends exactly one `source_type='http'` row |
 | Attribution | a **CLI** call still appends none — #1059's false-positive guard extended, not replaced |
 | Fail-closed | a throwing append yields 500, **no run created**, no brief |
-| `D22(d)` red-prove | an emitter import planted outside `agents-rpc.ts` fails `audit:invariants`; passing green today is not evidence |
+| `D22(d)` red-prove | an emitter import planted outside `agents-rpc.ts` fails `audit:invariants` — planted **twice**, once static and once dynamic; passing green today is not evidence |
+| `_lib` no-re-export | `agents/_lib/` re-exports no emitter, closing the one gap the import regex cannot see |
 | Coverage skew | a pre-`http` boot marker parsed by this binary → `indeterminate`, asserted as the accepted cost rather than discovered later |
-| Scope completeness | every `WRITE_ROUTE_ALLOWLIST` entry and every bearer read appears in the route→scope table |
+| Scope completeness | every `WRITE_ROUTE_ALLOWLIST` entry, every bearer read **and every public GET** appears in the route→scope table |
 | Legacy token | a bare-string token gets exactly `clip+briefs` and is **rejected** on `/v1/agents` |
 | Scope provenance | scopes in the pair-confirm body are ignored; the window's win |
+| Scope edit | `nimbus clip scopes` narrows and widens in place; the token value is unchanged, so a paired client keeps working |
 | Resolve ladder | each rung matches; an ambiguous trim returns `ambiguous`, never a guess |
+| Ambiguity cap | >5 candidates yields `truncated:true` and **no** candidate list, never a partial menu |
 | Migration | the V50 backfill makes pre-existing rows resolvable |
+| Migration atomicity | a backfill that throws mid-way leaves `user_version` **unadvanced** and `resolve_key` unpopulated — no half-migrated index |
 | Host boundary | an arbitrary host, an unconfigured service, and a configured Vault `base_url` host each get their own outcome |
 | Run lifecycle | 404 unknown, 410 expired, concurrency cap, TTL expiry without polling |
 
@@ -467,6 +558,10 @@ All four update [`docs/CHANGELOG.md`](../../CHANGELOG.md).
 - **Agent cancellation.** No `AbortController` exists on the agent path, so a
   cancel route would be a lie. Recorded against the 2026-08-01 spec's assumption
   that it was free.
+- **Persisting agent runs to SQLite.** Considered and rejected in review: it would
+  write synthesised brief text derived from the private index into a new on-disk
+  table — a privacy expansion — to buy resumption of something reproducible by
+  re-issuing the call. The `404`-on-restart contract in §1 is the answer instead.
 - **A generic `POST /v1/rpc` bridge.** Sequenced behind the per-method egress
   coverage question it depends on (§1), not rejected.
 - **Migrating the stdio MCP adapter to HTTP.** The route makes it possible; doing
