@@ -440,41 +440,41 @@ describe("D22 — egress chokepoint confinement", () => {
     expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
   });
 
-  test("(c) flags recordMcpBriefEgress named outside its definition and single caller", () => {
+  test("(c) flags recordAgentBriefEgress named outside its definition and single caller", () => {
     const files: FileEntry[] = [
       {
         relPath: "packages/gateway/src/ipc/clip-rpc.ts",
-        contents: "recordMcpBriefEgress(db, args);\n",
+        contents: "recordAgentBriefEgress(db, args);\n",
       },
     ];
     const v = checkEgressChokepointConfinement(files);
-    expect(v.some((x) => x.rule === "D22-mcp-brief-egress")).toBe(true);
+    expect(v.some((x) => x.rule === "D22-agent-brief-egress")).toBe(true);
   });
 
-  test("(c) allows recordMcpBriefEgress in its definition file and in agents-rpc.ts", () => {
+  test("(c) allows recordAgentBriefEgress in its definition file and in agents-rpc.ts", () => {
     const files: FileEntry[] = [
       {
-        relPath: "packages/gateway/src/egress/mcp-brief-egress.ts",
-        contents: "export function recordMcpBriefEgress(db, args) {}\n",
+        relPath: "packages/gateway/src/egress/agent-brief-egress.ts",
+        contents: "export function recordAgentBriefEgress(db, args) {}\n",
       },
       {
         relPath: "packages/gateway/src/ipc/agents-rpc.ts",
-        contents: "recordMcpBriefEgress(ctx.db, { method, params });\n",
+        contents: "recordAgentBriefEgress(ctx.db, { method, params });\n",
       },
     ];
     expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
   });
 
-  test("(c) an IMPORT of recordMcpBriefEgress elsewhere is flagged too — the name is pinned, not just the call", () => {
+  test("(c) an IMPORT of recordAgentBriefEgress elsewhere is flagged too — the name is pinned, not just the call", () => {
     // The rule matches the bare identifier deliberately: a file that imports the appender has
     // already acquired the capability, whether or not the call sits on the same line.
     const files: FileEntry[] = [
       {
         relPath: "packages/gateway/src/ipc/rogue-rpc.ts",
-        contents: 'import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";\n',
+        contents: 'import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";\n',
       },
     ];
     const v = checkEgressChokepointConfinement(files);
-    expect(v.some((x) => x.rule === "D22-mcp-brief-egress")).toBe(true);
+    expect(v.some((x) => x.rule === "D22-agent-brief-egress")).toBe(true);
   });
 });

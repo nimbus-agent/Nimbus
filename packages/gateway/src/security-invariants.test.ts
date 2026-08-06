@@ -1264,7 +1264,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22-connectors-dispatch");
     expect(audit).toContain("D22-egress-append");
-    expect(audit).toContain("D22-mcp-brief-egress");
+    expect(audit).toContain("D22-agent-brief-egress");
   });
 
   test("I29: the D22 comment does not claim totality it cannot enforce", async () => {
@@ -1307,7 +1307,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(offenders).toEqual([]);
   });
 
-  test("I29/D22(c): recordMcpBriefEgress is named by exactly two production files", async () => {
+  test("I29/D22(c): recordAgentBriefEgress is named by exactly two production files", async () => {
     // The MCP brief chokepoint is TOTAL only if the appender has one caller. Scanned the same way
     // as the `appendEgressEntry(` guard above — a `readdir` walk of production `.ts`/`.tsx` under
     // `packages/gateway/src`, with `relative()` + `sep` so the paths hold up on every platform —
@@ -1319,7 +1319,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // does not. So naming the appender in a doc comment elsewhere fails HERE and not there. That
     // asymmetry is the conservative direction and is kept on purpose (it also keeps this guard
     // free of a comment-stripper of its own to drift); refer to the module path
-    // `egress/mcp-brief-egress.ts` in prose rather than the bare symbol.
+    // `egress/agent-brief-egress.ts` in prose rather than the bare symbol.
     const dir = resolve(REPO_ROOT, "packages/gateway/src");
     const entries = await readdir(dir, { recursive: true, withFileTypes: true });
     const namers: string[] = [];
@@ -1331,11 +1331,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
       const abs = resolve(parentDir, entry.name);
       const contents = await readFile(abs, "utf8");
-      if (contents.includes("recordMcpBriefEgress")) {
+      if (contents.includes("recordAgentBriefEgress")) {
         namers.push(relative(dir, abs).split(sep).join("/"));
       }
     }
-    expect(namers.sort()).toEqual(["egress/mcp-brief-egress.ts", "ipc/agents-rpc.ts"]);
+    expect(namers.sort()).toEqual(["egress/agent-brief-egress.ts", "ipc/agents-rpc.ts"]);
   });
 
   test("I29: the MCP brief append runs BEFORE the dispatch and is not swallowed", async () => {
@@ -1350,7 +1350,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // narrow window would have proved nothing.
     const src = await read("packages/gateway/src/ipc/agents-rpc.ts");
     const fnAt = src.indexOf("export async function dispatchAgentsRpc(");
-    const appendAt = src.indexOf("recordMcpBriefEgress(ctx.db");
+    const appendAt = src.indexOf("recordAgentBriefEgress(ctx.db");
     const dispatchAt = src.indexOf("dispatchByMethod<AgentsRpcContext>");
     expect(fnAt).toBeGreaterThan(-1);
     expect(appendAt).toBeGreaterThan(-1);
@@ -1383,7 +1383,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
-    // `mcp` is per-call because recordMcpBriefEgress ships in the same commit. The others stay none
+    // `mcp` is per-call because recordAgentBriefEgress ships in the same commit. The others stay none
     // until theirs do. Raising an entry without its appender is the defect the vector exists to
     // catch, so widening this expected list is a review moment, not a test to re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");

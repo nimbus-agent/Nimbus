@@ -20,7 +20,7 @@ import {
   loadNimbusDecisionsFromConfigDir,
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
-import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";
+import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
@@ -582,7 +582,8 @@ export async function dispatchAgentsRpc(
   // a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the namespace
   // prefix, so an unrecognised call is a `miss` that ledgers nothing.
   if (ctx.caller?.kind === "mcp" && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
-    recordMcpBriefEgress(ctx.db, {
+    recordAgentBriefEgress(ctx.db, {
+      sourceType: "mcp",
       method,
       params,
       clientId: ctx.caller.clientId,

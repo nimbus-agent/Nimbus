@@ -312,7 +312,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/egress/egress-ledger.ts` | `appendEgressEntry` + `EgressSink` — invariant `I29`/`D22` egress-ledger append before `connectors.dispatch` (see `nimbus-egress` skill) |
 | `packages/gateway/src/egress/{egress-record,egress-verify,egress-prune,egress-sign}.ts` | Entry builder (`serviceOf` destination) / BLAKE3-chain verify (timing-safe, I10) / HITL-gated prune tombstone / Vault-reused receipt sign |
 | `packages/gateway/src/egress/{egress-coverage,egress-boot-marker,egress-source-type}.ts` | `THIS_BINARY_COVERAGE` (the machine-readable claim) / per-process boot marker hashed into `source_id` / the 9-member `source_type` union (frozen at 8 in #1038, reopened once for `mcp`) |
-| `packages/gateway/src/egress/mcp-brief-egress.ts` | `recordMcpBriefEgress` — the MCP-originated agent-brief ledger append (I29 / D22 rule (c)); its ONLY caller is `ipc/agents-rpc.ts` `dispatchAgentsRpc` |
+| `packages/gateway/src/egress/agent-brief-egress.ts` | `recordAgentBriefEgress` — the MCP-originated agent-brief ledger append (I29 / D22 rule (c)); its ONLY caller is `ipc/agents-rpc.ts` `dispatchAgentsRpc` |
 | `packages/gateway/src/ipc/egress-rpc.ts` | `egress.{head,list,verify,proveWindow,prune}` — 4 renderer-exposed reads + CLI-only HITL-gated prune |
 | `packages/cli/src/commands/prove.ts` | `nimbus prove "<query>"` + `nimbus egress [verify\|prune]` CLI |
 | `packages/gateway/src/index/egress-ledger-v44-sql.ts` | V44 `egress_ledger` migration SQL |

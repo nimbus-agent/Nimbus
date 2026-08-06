@@ -596,19 +596,24 @@ export function checkForwardShareConfinement(files: readonly FileEntry[]): Viola
 // are addressed by removing the capability (Phase 2 of the I29 security spec), not by this regex.
 //
 // What it does enforce: no NEW site may spell `connectors.dispatch` outside engine/executor.ts,
-// `appendEgressEntry` stays inside egress/, and `recordMcpBriefEgress` is named only by its
+// `appendEgressEntry` stays inside egress/, and `recordAgentBriefEgress` is named only by its
 // definition and its single caller (rule (c), below). Test files are exempt.
 const D22_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
 const D22_DISPATCH_RE = /\bconnectors\.dispatch\b/;
 const D22_APPEND_RE = /\bappendEgressEntry\b/;
 const D22_APPEND_ALLOWED_PREFIX = "packages/gateway/src/egress/";
 
-// (c) the MCP brief egress chokepoint must be TOTAL: `recordMcpBriefEgress` is CALLED from exactly
-// one file. This mirrors (a) — it pins the caller, it does not merely permit an appender. Adding a
-// file to an allowlist here would satisfy the checker while dissolving the property it protects.
-const D22_MCP_RECORD_RE = /\brecordMcpBriefEgress\b/;
-const D22_MCP_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
-const D22_MCP_RECORD_DEFINITION = "packages/gateway/src/egress/mcp-brief-egress.ts";
+// (c) the agent brief egress chokepoint must be TOTAL: `recordAgentBriefEgress` is CALLED from
+// exactly one file. This mirrors (a) — it pins the caller, it does not merely permit an appender.
+// Adding a file to an allowlist here would satisfy the checker while dissolving the property it
+// protects.
+//
+// The symbol was `recordMcpBriefEgress` until agent briefs became reachable over HTTP as well as
+// stdio. The rule moved with it IN THE SAME COMMIT: a rule pinning a symbol that no longer exists
+// passes vacuously, which is indistinguishable from a rule that is working.
+const D22_AGENT_RECORD_RE = /\brecordAgentBriefEgress\b/;
+const D22_AGENT_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
+const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egress.ts";
 
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -635,12 +640,12 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
         });
       }
       if (
-        D22_MCP_RECORD_RE.test(line) &&
-        f.relPath !== D22_MCP_RECORD_CALLER &&
-        f.relPath !== D22_MCP_RECORD_DEFINITION
+        D22_AGENT_RECORD_RE.test(line) &&
+        f.relPath !== D22_AGENT_RECORD_CALLER &&
+        f.relPath !== D22_AGENT_RECORD_DEFINITION
       ) {
         out.push({
-          rule: "D22-mcp-brief-egress",
+          rule: "D22-agent-brief-egress",
           file: f.relPath,
           line: i + 1,
           snippet: (originalLines[i] ?? "").trim(),
@@ -828,7 +833,7 @@ async function run(): Promise<void> {
     const v = checkEgressChokepointConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordMcpBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordAgentBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

@@ -32,7 +32,7 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 /**
  * What THIS binary is built to observe. Two classes are non-`none`: `task` (the executor's
  * gated-action append, `engine/executor.ts`) and `mcp` (the MCP-originated agent-brief append in
- * `egress/mcp-brief-egress.ts`, which landed in the same commit as this entry was raised). Later
+ * `egress/agent-brief-egress.ts`, which landed in the same commit as this entry was raised). Later
  * phases raise `sync`, `model`, `peer`, `session`; raising an entry without landing its appender is
  * the exact defect this vector exists to prevent.
  *

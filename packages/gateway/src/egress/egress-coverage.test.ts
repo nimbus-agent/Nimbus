@@ -39,7 +39,7 @@ const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=non
 
 describe("coverage vector", () => {
   test("this binary observes gated actions AND MCP-originated briefs per-call, nothing else", () => {
-    // `mcp` is per-call because `recordMcpBriefEgress` ships alongside this entry. Every other
+    // `mcp` is per-call because `recordAgentBriefEgress` ships alongside this entry. Every other
     // class stays `none` until its appender lands — INCLUDING `http`, whose class name lands here
     // but whose appender does not: the generalised append condition is a later commit, and
     // claiming coverage before the appender exists is the exact defect this vector prevents.
