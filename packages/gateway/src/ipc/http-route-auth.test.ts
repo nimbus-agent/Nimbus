@@ -4,7 +4,6 @@ import {
   clipScopeFor,
   enforceClipScope,
   HTTP_ROUTE_AUTH,
-  hasScope,
   insufficientScopeBody,
 } from "./http-route-auth.ts";
 import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
@@ -29,6 +28,7 @@ const SERVER_SRC = resolve(import.meta.dir, "http-server.ts");
  */
 const REGEX_ROUTED_GET = new Set<string>([
   "/v1/briefs/*", // matched by BRIEF_GET_RE in http-server.ts
+  "/v1/agents/runs/*", // matched by AGENT_RUN_GET_RE in http-server.ts
 ]);
 
 /**
@@ -193,10 +193,32 @@ describe("http-route-auth", () => {
     expect(enforceClipScope("POST /v1/agents/{agent}", ["agents"])).toEqual({ ok: true });
   });
 
-  test("hasScope is exact membership, never a prefix or superset match", () => {
-    expect(hasScope(["clip", "briefs"], "clip")).toBe(true);
-    expect(hasScope(["clip", "briefs"], "agents")).toBe(false);
-    expect(hasScope([], "clip")).toBe(false);
+  test("the agent READ routes require the agents scope", () => {
+    expect(HTTP_ROUTE_AUTH["GET /v1/agents"]).toEqual({ kind: "clip", scope: "agents" });
+    expect(HTTP_ROUTE_AUTH["GET /v1/agents/runs/*"]).toEqual({ kind: "clip", scope: "agents" });
+  });
+
+  test("a legacy clip+briefs token reaches NEITHER agent read", () => {
+    // A bare-string token in the Vault parses as exactly clip+briefs. Both reads must refuse it:
+    // the run poll returns a brief synthesised from the whole private index, and the list route
+    // discloses which agents this gateway serves.
+    for (const key of ["GET /v1/agents", "GET /v1/agents/runs/*"]) {
+      expect(enforceClipScope(key, ["clip", "briefs"])).toMatchObject({ ok: false, status: 403 });
+    }
+  });
+
+  test("hasScope is NOT exported — a call site cannot name a scope inline", async () => {
+    // The residual parked by the previous PR, closed by CAPABILITY REMOVAL rather than a static
+    // rule. While hasScope was exported, `hasScope(scopes, "briefs")` at a handler would compile
+    // and would make HTTP_ROUTE_AUTH decorative: the table would keep passing its completeness test
+    // while the requirement actually enforced lived somewhere else entirely. Now it does not
+    // compile, which is stronger than any regex and needs no maintenance.
+    const src = await Bun.file(resolve(import.meta.dir, "http-route-auth.ts")).text();
+    expect(src).toContain("function hasScope(");
+    expect(src).not.toContain("export function hasScope(");
+    // Membership behaviour is still covered — through the only path that can now reach it.
+    expect(enforceClipScope("POST /v1/clips", ["clip"])).toEqual({ ok: true });
+    expect(enforceClipScope("POST /v1/clips", ["clipx"] as never)).toMatchObject({ status: 403 });
   });
 
   test("the 403 body names what was required and what was granted, and no token value", () => {

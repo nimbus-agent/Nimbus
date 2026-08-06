@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import type { AgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
+import type { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import type { BriefRunController } from "../briefs/brief-run-store.ts";
 import type { ApiScope } from "../clips/api-scopes.ts";
 import { ingestClip, validateClipInput } from "../clips/clip-ingest.ts";
@@ -18,12 +20,15 @@ import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { contentTypeFor, resolveConsoleAsset, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
+import { HTTP_AGENT_NAMES } from "./agents-rpc.ts";
 import { EMBEDDED_OPENAPI_YAML } from "./embedded-assets.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import {
   type ClipReadRouteKey,
   enforceClipScope,
+  ROUTE_KEY_AGENT_RUN_GET,
+  ROUTE_KEY_AGENTS_LIST,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
 } from "./http-route-auth.ts";
@@ -71,6 +76,11 @@ export type ReadOnlyHttpServerOptions = {
   readonly briefRuns?: BriefRunController;
   readonly briefStartRun?: (runId: string) => void;
   readonly briefSave?: (runId: string) => { itemId: string };
+  // Agents over HTTP. BOTH are required to mount the surface (reads and the write route alike);
+  // absent either, every /v1/agents route 404s with a named cause. Reuses clipsVault for bearer
+  // auth, exactly as briefs do — agents never mint or hold their own token.
+  readonly agentRuns?: AgentRunController;
+  readonly agentInvoke?: AgentHttpInvoker;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -601,6 +611,69 @@ async function handleBriefGet(
   );
 }
 
+// GET /v1/agents/runs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,
+// NOT in dispatchReadOnlyDataGet: that table is documented "no bearer gate", so routing a brief
+// synthesised from the private index through it would expose it to any local process on the machine.
+const AGENT_RUN_GET_RE = /^\/v1\/agents\/runs\/(\w{1,64})$/;
+
+/** Kept identical to http-write-routes.ts AGENTS_DISABLED_HINT — one string, two surfaces. */
+const AGENTS_DISABLED_HINT = "agent invocation over HTTP disabled — no local index is wired";
+
+/** 404 that names the cause, so a client can write first-run copy instead of guessing. */
+function agentsDisabled(): Response {
+  return json({ error: "agents_disabled", hint: AGENTS_DISABLED_HINT }, 404);
+}
+
+async function handleAgentsList(req: Request, opts: ReadOnlyHttpServerOptions): Promise<Response> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined || opts.agentRuns === undefined) return agentsDisabled();
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENTS_LIST);
+  if (!auth.ok) return auth.response;
+  // Derived from AGENTS_RPC_HANDLERS, so it cannot advertise a name that POST would then 404.
+  return json({ agents: [...HTTP_AGENT_NAMES] }, 200);
+}
+
+async function handleAgentRunGet(
+  req: Request,
+  id: string,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const clipsVault = opts.clipsVault;
+  const runs = opts.agentRuns;
+  if (clipsVault === undefined || runs === undefined) return agentsDisabled();
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_AGENT_RUN_GET);
+  if (!auth.ok) return auth.response;
+  const run = runs.get(id);
+  if (run === null) {
+    // 404 means "unknown OR lost to a gateway restart" — the tombstone set is in-memory, so a
+    // client polling across a restart cannot see 410. Both are terminal: re-issue the call, never
+    // keep waiting. 410 means known-and-expired within this process lifetime.
+    return runs.wasKnown(id) ? json({ error: "expired" }, 410) : json({ error: "not_found" }, 404);
+  }
+  // `failureReason`, NOT `error`: on every other route here `error` means an HTTP-level failure, so
+  // reusing it for a legitimately-failed run would make `if (body.error)` — the obvious client
+  // check — misread a normal outcome as a transport error. Same choice as handleBriefGet.
+  return json(
+    {
+      status: run.status,
+      ...(run.brief === null ? {} : { brief: run.brief }),
+      ...(run.findings === null ? {} : { findings: run.findings }),
+      ...(run.error === null ? {} : { failureReason: run.error }),
+    },
+    200,
+  );
+}
+
+// Agent-invocation write seam — present only when clipsVault, agentRuns AND agentInvoke are all
+// wired. verifyToken reuses the same labeled client token map as the web clipper and briefs.
+function buildAgentsSeam(opts: ReadOnlyHttpServerOptions) {
+  const clipsVault = opts.clipsVault;
+  const runs = opts.agentRuns;
+  const invoke = opts.agentInvoke;
+  if (clipsVault === undefined || runs === undefined || invoke === undefined) return undefined;
+  return { verifyToken: (t: string) => verifyApiToken(clipsVault, t), invoke };
+}
+
 // Web-clipper write seam — present only when BOTH clipsVault AND pairingController are wired.
 // pairingController is a singleton from assemble.ts (Task 7); http-server never constructs one.
 // Capture into locals so TS narrows them inside the closures (avoids non-null assertions).
@@ -677,6 +750,7 @@ async function resolveWriteRouteDeps(
   const messaging = await resolveMessagingSurface(opts);
   const clips = buildClipsSeam(writeDb, opts);
   const briefs = buildBriefsSeam(opts);
+  const agents = buildAgentsSeam(opts);
   return {
     writeDb,
     expectedToken: await resolveExpectedToken(opts),
@@ -688,6 +762,7 @@ async function resolveWriteRouteDeps(
     ...(messaging === undefined ? {} : { messaging }),
     ...(clips === undefined ? {} : { clips }),
     ...(briefs === undefined ? {} : { briefs }),
+    ...(agents === undefined ? {} : { agents }),
   };
 }
 
@@ -760,6 +835,7 @@ export function startReadOnlyHttpServer(
     opts.resolveTeamsEventsSurface === undefined &&
     opts.clipsVault === undefined &&
     opts.briefRuns === undefined &&
+    opts.agentRuns === undefined &&
     (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
       : openI13WriteHandle(dbPath);
@@ -785,10 +861,14 @@ export function startReadOnlyHttpServer(
       if (req.method === "POST" && url.pathname === "/v1/clips/related") {
         return handleClipRelated(req, db, opts);
       }
-      // GET /v1/briefs/{id} — bearer-authed read; intercept before the unauthenticated GET table.
+      // GET /v1/briefs/{id}, GET /v1/agents and GET /v1/agents/runs/{id} — bearer-authed reads;
+      // intercept before the unauthenticated GET table, which is documented "no bearer gate".
       if (req.method === "GET") {
         const briefGet = BRIEF_GET_RE.exec(url.pathname);
         if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
+        if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
+        const agentRun = AGENT_RUN_GET_RE.exec(url.pathname);
+        if (agentRun !== null) return await handleAgentRunGet(req, agentRun[1] as string, opts);
       }
       // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
       if (
