@@ -101,9 +101,18 @@ file-overlap check between the two branches would come back clean and both would
 silently break each other, because the schema version is a shared namespace enforced by the
 migration ledger, and the second to merge loses.
 
-This work therefore takes **V51** and leaves V50 unused on this branch. If PR 3 changes its
-mind about V50, this spec is the record that V51 was chosen deliberately rather than
-sequentially.
+This work therefore takes **V51** and fills the 49→50 slot with a permanent no-op step, so
+the ladder stays contiguous. This spec is the record that V51 was chosen deliberately rather
+than sequentially.
+
+**V50 must never be backfilled.** The reservation framing was wrong and is corrected here:
+the runner applies a step only while `PRAGMA user_version === step.fromVersion`
+(`index/migrations/runner.ts`), so once this branch lands and any database reaches 51 the
+49→50 step never runs again. Replacing the no-op's SQL with real DDL later would reach
+**fresh installs only**, silently splitting the schema between them and every upgraded
+database — and nothing would report it, because both ladders complete successfully. The
+HTTP-agents resolve-by-URL work must take a **new version number (V52 or later)** with its
+own step, so its column, index and batched backfill reach both populations.
 
 Current `CURRENT_SCHEMA_VERSION` is **49** (`index/local-index.ts:265`).
 
@@ -361,6 +370,27 @@ Five modules, each independently testable:
 re-emits wholesale, matching the populator's clear-then-emit pattern applied at pass scope. A
 root that is processed and yields nothing correctly ends with zero edges rather than stale ones.
 
+Every edge class the pass emits has a matching clear — the two STRUCTURAL edges included, since
+a stale one is exactly as permanent as a stale ownership edge and just as invisible to an
+edge-count check:
+
+| Edge | Cleared by | Scope |
+| --- | --- | --- |
+| `person --owns--> source_file` | `clearOwnershipEdgesForRoot` | pre-collected file scope |
+| `person/dir --owns--> directory`, `directory --contains-->` | `clearOwnershipEdgesForRoot` | `service = 'ownership:<root>'` |
+| `workspace --tracks_remote--> repo` | `clearRemoteTrackingEdgeForRoot` | workspace `external_id = 'filesystem:<root>'`; runs for EVERY root, outside the `remote !== null` branch, so a root that LOSES its remote is retired too |
+| `repo --belongs_to--> service` | `clearRepoServiceEdges` | wholesale on relation type + BOTH endpoint types (`repo` → `service`); once per pass, before the root loop |
+| `person --owns--> service` | `clearServiceOwnershipEdges` | wholesale on relation type + target type `service`; once per pass, after the root loop |
+
+The two wholesale clears must be unconditional: a service whose `[ci.service.<id>]` binding was
+REMOVED is absent from `serviceRepoUrns`, so no per-service emission loop would ever visit it.
+Scoping by relation type plus endpoint entity type, rather than by a list of currently-known
+service ids, is what makes a removed binding retirable at all. `belongs_to` pins BOTH endpoint
+types because it is not ours alone — `graph/graph-populator.ts` emits `issue --belongs_to--> repo`
+and `message --belongs_to--> channel`, and a type-only clear would destroy them. Both wholesale
+clears are the reason `opts.roots` must be the COMPLETE root set (a caller contract, documented
+on `runOwnershipPass`).
+
 **Orphan reaping.** Clearing relations alone is not enough. `graph_relation` cascades on
 `graph_entity` deletion, but not the reverse — so a deleted or moved file would leave its
 `source_file` entity, and every ancestor `directory` entity, stranded forever. Nothing else
@@ -371,13 +401,34 @@ that no longer exist.
 
 The pass therefore reaps, under two strict conditions that make it safe:
 
-1. **Scoped by exact equality, never a path pattern.** Ownership-owned `source_file` and
-   `directory` entities carry `service = 'ownership:<repoRoot>'`, and both the clear and the reap
-   scope on that column with `=`. The pass never issues a `LIKE 'file:<root>:%'` prefix delete —
-   a `repoRoot` containing `%` or `_` would silently widen such a pattern into other roots, and
-   escaping LIKE wildcards around a user-supplied absolute path is a trap worth not entering.
-   Equality on a dedicated marker column has none of that hazard, and lets both operations be a
-   single bulk statement rather than a per-entity loop.
+1. **Scoped by exact equality, never a path pattern — but the two entity types are scoped
+   differently, because only one of them is ours.** The pass never issues a
+   `LIKE 'file:<root>:%'` prefix delete: a `repoRoot` containing `%` or `_` would silently widen
+   such a pattern into other roots, and escaping LIKE wildcards around a user-supplied absolute
+   path is a trap worth not entering. Both scopes below are exact and let the clear and the reap
+   stay single bulk statements rather than per-entity loops.
+
+   - **`directory` — the `ownership:<repoRoot>` marker.** Nothing outside `ownership/` creates a
+     `directory` entity, so this pass is its sole writer and may keep a dedicated marker in
+     `graph_entity.service`. The clear and the reap scope on that column with `=`.
+   - **`source_file` — NOT the marker; scope derived from our own `contains` edges.** This
+     entity is SHARED with `syncCodeSymbolGraph`, which builds the byte-identical external id
+     `file:<repoRoot>:<path>`. The convergence is deliberate — ownership edges must land on the
+     same node as `defined_in` / `in_repo` so a reader can walk symbol → file → owners in one
+     traversal — but `upsertGraphEntity` overwrites `service` unconditionally, so the two writers
+     would churn that column back and forth, and a code-symbol sync would flip our marker away
+     mid-life. A `service`-scoped clear would then stop matching the row and strand a
+     `person --owns--> source_file` edge with no blame behind it. The pass therefore writes
+     `service: "filesystem"` on files — matching that populator exactly, so neither side churns
+     the other — and derives file scope from its own `directory --contains--> source_file` edges,
+     which are exclusively ours. That set is **collected before any `contains` edge is deleted**,
+     because the clear destroys the very set the reap needs: a file whose blame vanished has no
+     `contains` edge left by reap time and would otherwise never be recognised as a candidate.
+
+   An earlier draft of this spec put the `ownership:<repoRoot>` marker on `source_file` too.
+   That is the entity-id collision defect described above; it is recorded here so the model is
+   not reintroduced. `ownership-pass.ts` (`collectFileScopeForRoot`, `clearOwnershipEdgesForRoot`,
+   `reapOrphansForRoot`) is the shipped source of truth.
 2. **Degree-0 across *all* relation types, not just this pass's.** A `source_file` may still
    carry `defined_in` edges from `syncCodeSymbolGraph`, which owns them. Deleting an entity that
    still has any edge would destroy another populator's work and cascade its relations away. The

@@ -166,6 +166,68 @@ function clearOwnershipEdgesForRoot(db: Database, rootMarker: string): void {
 }
 
 /**
+ * Retire this root's `workspace --tracks_remote--> repo` edge.
+ *
+ * Scoped by the workspace's EXACT external id (`filesystem:<root>`), which this
+ * pass derives from the root path itself, so a re-pointed origin retires the old
+ * edge instead of accumulating beside it — a workspace that claims to track two
+ * remotes at once is a wrong answer that never self-corrects, and one an
+ * edge-COUNT check cannot see, because the new edge is an INSERT rather than an
+ * upsert of the old row.
+ *
+ * `clearOwnershipEdgesForRoot` cannot reach this edge: neither endpoint is a
+ * `directory` and neither is in the file scope, and the relation type is not
+ * `owns`/`contains`.
+ *
+ * Called for EVERY root, deliberately OUTSIDE the `remote !== null` branch that
+ * re-emits it: a root that loses its remote entirely (`origin` removed, git gone
+ * from PATH) must have the edge retired, and that root by definition never
+ * enters the branch. Scoping by relation type + the workspace id, rather than by
+ * a currently-known repo, is what makes that reachable.
+ *
+ * The `type = 'tracks_remote'` predicate makes this exclusively ours — the type
+ * is introduced by V51 and this pass is its only writer — while the external-id
+ * equality keeps one root's clear off every OTHER root's edge.
+ */
+function clearRemoteTrackingEdgeForRoot(db: Database, root: string): void {
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE type = 'tracks_remote'
+        AND from_id IN (SELECT id FROM graph_entity
+                         WHERE type = 'workspace' AND external_id = ?1)`,
+    [`filesystem:${root}`],
+  );
+}
+
+/**
+ * Retire EVERY `repo --belongs_to--> service` edge, unconditionally, once per
+ * pass — the structural twin of `clearServiceOwnershipEdges` below, and it exists
+ * for exactly the same reason: remove a `[ci.service.<id>]` binding and the
+ * service disappears from `serviceRepoUrns`, so no per-service loop would ever
+ * visit it, and the graph would keep asserting the binding forever.
+ *
+ * BOTH endpoint types are pinned, because `belongs_to` is NOT ours alone:
+ * `graph/graph-populator.ts` emits `issue --belongs_to--> repo` and
+ * `message --belongs_to--> channel`. A clear on the relation type alone would
+ * destroy another populator's edges wholesale. The `repo → service` direction is
+ * emitted only here, so pinning both ends makes the delete exclusively ours.
+ *
+ * Runs ONCE before the root loop rather than per root, because the edge is keyed
+ * on the remote repo, not on the root: a root that re-points from repo A to repo
+ * B leaves A's edge behind, and no root-scoped predicate can name A.
+ */
+function clearRepoServiceEdges(db: Database): void {
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE type = 'belongs_to'
+        AND from_id IN (SELECT id FROM graph_entity WHERE type = 'repo')
+        AND to_id   IN (SELECT id FROM graph_entity WHERE type = 'service')`,
+  );
+}
+
+/**
  * Retire EVERY `person --owns--> service` edge, unconditionally, once per pass.
  *
  * The root-scoped clear above cannot reach these: a service-ownership edge has a
@@ -243,12 +305,14 @@ function reapOrphansForRoot(db: Database, rootMarker: string): number {
  * Derive the ownership graph for `opts.roots` and persist the pass summary.
  *
  * `opts.roots` MUST be the COMPLETE set of git-aware roots, not a subset.
- * `clearServiceOwnershipEdges` retires every `person --owns--> service` edge in
- * one statement and only services reachable from `opts.roots` are re-emitted, so
- * calling this with a partial root set silently erases ownership for every
- * service the omitted roots would have bound. The wholesale clear is what makes
- * a REMOVED config binding retirable at all (see that function), so this is a
- * caller contract rather than something the pass can defend against internally.
+ * `clearServiceOwnershipEdges` retires every `person --owns--> service` edge and
+ * `clearRepoServiceEdges` every `repo --belongs_to--> service` edge, each in one
+ * statement, and only services reachable from `opts.roots` are re-emitted — so
+ * calling this with a partial root set silently erases both edge classes for
+ * every service the omitted roots would have bound. The wholesale clears are
+ * what make a REMOVED config binding retirable at all (see those functions), so
+ * this is a caller contract rather than something the pass can defend against
+ * internally.
  */
 export async function runOwnershipPass(
   db: Database,
@@ -298,11 +362,20 @@ export async function runOwnershipPass(
   // OUTSIDE this body: a `db.transaction` callback is synchronous and must
   // never `await`, which is the reason all subprocess I/O was hoisted there.
   db.transaction(() => {
+    // BEFORE the loop, not inside it: the edge is keyed on the remote repo, so a
+    // root that re-points cannot name the repo it used to be bound to. Same
+    // wholesale-clear-then-re-emit discipline as `clearServiceOwnershipEdges`,
+    // and it carries the same caller contract on `opts.roots` completeness.
+    clearRepoServiceEdges(db);
+
     for (const root of opts.roots) {
       const rootMarker = `ownership:${root}`;
       // MUST precede the clear — it reads the `contains` edges the clear deletes.
       collectFileScopeForRoot(db, rootMarker);
       clearOwnershipEdgesForRoot(db, rootMarker);
+      // Outside the `remote !== null` branch below, on purpose: a root that LOST
+      // its remote must still have its stale `tracks_remote` edge retired.
+      clearRemoteTrackingEdgeForRoot(db, root);
 
       const agg = aggregateBlameForRoot(db, root, {
         nowMs: opts.nowMs,

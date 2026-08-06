@@ -1,11 +1,18 @@
 /**
- * V50 is RESERVED for the HTTP-agents PR 3 (`resolve_key`), which is being
- * built on a parallel branch. The migration ladder applies steps in sequence,
- * so the slot must exist for V51 to be reachable — but this branch must not
- * claim it. The step is therefore a deliberate no-op: it bumps
- * `user_version` and records a ledger row, nothing else. PR 3 replaces this
- * constant's body with its real DDL; the version and ledger row are already
- * correct.
+ * V50 is a PERMANENT NO-OP. The migration ladder applies steps in sequence, so
+ * the 49→50 slot must exist for V51 to be reachable; this branch fills it and
+ * claims nothing, bumping `user_version` and recording one ledger row.
+ *
+ * DO NOT BACKFILL THIS CONSTANT'S BODY. The runner applies a step only while
+ * `PRAGMA user_version === step.fromVersion` (`migrations/runner.ts`), so once
+ * this branch lands and any database reaches 51, the 49→50 step NEVER runs
+ * again. Adding real DDL here would therefore reach fresh installs only and
+ * silently split the schema between them and every upgraded database — with no
+ * error at any point, because both ladders complete successfully.
+ *
+ * The HTTP-agents resolve-by-URL work (its PR 3), which this slot was originally
+ * reserved for, must take a NEW version number (V52 or later) with its own step,
+ * so its column, index and batched backfill reach both populations.
  */
 export const SCHEMA_V50_RESERVED_SQL = `
 -- V50 reserved for the HTTP agents resolve-by-URL work; intentionally empty.

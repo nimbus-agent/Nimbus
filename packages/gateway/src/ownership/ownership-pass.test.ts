@@ -289,6 +289,87 @@ describe("runOwnershipPass", () => {
     expect(countServiceOwns()).toBe(0);
   });
 
+  // A re-pointed origin is an INSERT of a new edge, not an upsert of the old row
+  // — so without a clear the workspace ends up claiming to track BOTH remotes,
+  // and an edge-COUNT assertion that only checks "> 0" would pass.
+  test("re-pointing a root's remote retires the previous tracks_remote edge", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn: fakeSpawn("origin\n", "git@github.com:acme/old.git") }),
+    );
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn: fakeSpawn("origin\n", "git@github.com:acme/new.git") }),
+    );
+
+    const tracked = d
+      .query(
+        `SELECT repo.external_id AS repo FROM graph_relation r
+           JOIN graph_entity ws   ON ws.id   = r.from_id
+           JOIN graph_entity repo ON repo.id = r.to_id
+          WHERE r.type = 'tracks_remote' AND ws.external_id = ?`,
+      )
+      .all(`filesystem:${ROOT}`) as { repo: string }[];
+    expect(tracked).toHaveLength(1);
+    expect(tracked[0]?.repo).toBe("github:acme/new");
+  });
+
+  // The `belongs_to` twin of the unconditional-placement test above: a service
+  // dropped from `serviceRepoUrns` is absent from every per-service loop, so only
+  // a clear scoped by relation type + both endpoint types can ever retire it.
+  test("retires repo -> service belongs_to edges when the config binding is removed", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    const spawn = fakeSpawn("origin\n", "git@github.com:acme/api.git");
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn, serviceRepoUrns: new Map([["checkout", ["github:acme/api"]]]) }),
+    );
+    const countRepoServiceBelongs = (): number =>
+      (
+        d
+          .query(
+            `SELECT COUNT(*) AS n FROM graph_relation r
+               JOIN graph_entity repo ON repo.id = r.from_id
+               JOIN graph_entity svc  ON svc.id  = r.to_id
+              WHERE r.type = 'belongs_to' AND repo.type = 'repo' AND svc.type = 'service'`,
+          )
+          .get() as { n: number }
+      ).n;
+    expect(countRepoServiceBelongs()).toBe(1);
+
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn, serviceRepoUrns: new Map<string, readonly string[]>() }),
+    );
+    expect(countRepoServiceBelongs()).toBe(0);
+    const anyBelongs = d
+      .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'belongs_to'")
+      .get() as { n: number };
+    expect(anyBelongs.n).toBe(0);
+  });
+
+  // The clear must NOT live inside the `remote !== null` branch that re-emits the
+  // edge: a root that loses `origin` entirely never enters that branch, so a
+  // branch-local clear would leave the stale edge standing forever.
+  test("a root that loses its remote has its tracks_remote edge retired", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(
+      d,
+      baseOpts({ spawn: fakeSpawn("origin\n", "git@github.com:acme/api.git") }),
+    );
+    const countTracks = (): number =>
+      (
+        d.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'tracks_remote'").get() as {
+          n: number;
+        }
+      ).n;
+    expect(countTracks()).toBe(1);
+
+    await runOwnershipPass(d, baseOpts({ spawn: noRemote }));
+    expect(countTracks()).toBe(0);
+  });
+
   test("no remote still emits file ownership, just no service rollup", async () => {
     seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
     const s = await runOwnershipPass(d, baseOpts());

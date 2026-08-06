@@ -544,7 +544,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             .filter((r) => r.gitAware)
             .map((r) => r.path);
           const serviceRepoUrns = new Map<string, readonly string[]>();
-          for (const [serviceId, svc] of loadNimbusServiceConfigsFromConfigDir(paths.configDir)) {
+          // M-1 (see `loadServiceConfigsOrDegrade`): the raw loader THROWS on any
+          // malformed `[metrics.dora.*]`/`[ci.service.*]` block. Unwrapped, one typo
+          // in an unrelated DORA section would abort every pass — taking file and
+          // directory ownership, which need no service config at all, down with it.
+          // Degrade to zero bindings instead: the service rollup is skipped, code
+          // ownership still lands.
+          for (const [serviceId, svc] of loadServiceConfigsOrDegrade(paths.configDir, syncLogger)) {
             serviceRepoUrns.set(
               serviceId,
               svc.repos.map((u) => `${u.provider}:${u.providerId}`),

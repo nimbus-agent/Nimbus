@@ -58,7 +58,9 @@
 
 ## A note on V50
 
-`CURRENT_SCHEMA_VERSION` must reach **51**, and the migration runner applies steps in sequence, so a step from 49→50 must exist or the ladder breaks. Task 1 registers a **deliberate no-op V50 step** whose SQL is a comment, reserving the slot for the HTTP-agents PR 3 without claiming it. When that PR lands it replaces the no-op's SQL; the version number and ledger row are already correct. This is the one coordination point between the two branches, and it is inert by construction.
+`CURRENT_SCHEMA_VERSION` must reach **51**, and the migration runner applies steps in sequence, so a step from 49→50 must exist or the ladder breaks. Task 1 registers a **deliberate no-op V50 step** whose SQL is a comment. It bumps `user_version`, records one ledger row, and does nothing else — inert by construction.
+
+**V50 is permanently spent, not reserved — do not backfill it.** The runner applies a step only while `PRAGMA user_version === step.fromVersion` (`index/migrations/runner.ts`), so once this branch lands and any database reaches 51 the 49→50 step never runs again. Replacing the no-op's SQL with real DDL later would reach **fresh installs only** and silently split the schema between them and every upgraded database, with no error on either path. The HTTP-agents resolve-by-URL work — whose column, index and batched backfill this slot was originally meant to hold — must take a **new version number (V52 or later)** with its own step.
 
 ---
 
@@ -164,13 +166,20 @@ Create `packages/gateway/src/index/ownership-v51-sql.ts`:
 
 ```ts
 /**
- * V50 is RESERVED for the HTTP-agents PR 3 (`resolve_key`), which is being
- * built on a parallel branch. The migration ladder applies steps in sequence,
- * so the slot must exist for V51 to be reachable — but this branch must not
- * claim it. The step is therefore a deliberate no-op: it bumps
- * `user_version` and records a ledger row, nothing else. PR 3 replaces this
- * constant's body with its real DDL; the version and ledger row are already
- * correct.
+ * V50 is a PERMANENT NO-OP. The migration ladder applies steps in sequence, so
+ * the 49→50 slot must exist for V51 to be reachable; this branch fills it and
+ * claims nothing, bumping `user_version` and recording one ledger row.
+ *
+ * DO NOT BACKFILL THIS CONSTANT'S BODY. The runner applies a step only while
+ * `PRAGMA user_version === step.fromVersion` (`migrations/runner.ts`), so once
+ * this branch lands and any database reaches 51, the 49→50 step NEVER runs
+ * again. Adding real DDL here would therefore reach fresh installs only and
+ * silently split the schema between them and every upgraded database — with no
+ * error at any point, because both ladders complete successfully.
+ *
+ * The HTTP-agents resolve-by-URL work (its PR 3), which this slot was originally
+ * reserved for, must take a NEW version number (V52 or later) with its own step,
+ * so its column, index and batched backfill reach both populations.
  */
 export const SCHEMA_V50_RESERVED_SQL = `
 -- V50 reserved for the HTTP agents resolve-by-URL work; intentionally empty.
@@ -2577,7 +2586,7 @@ feat(gateway): ownership graph derived from already-indexed blame data
 
 The PR description MUST state, prominently:
 
-- Schema is **V51**. V50 is registered as a deliberate **no-op step** reserving the slot for the HTTP-agents PR 3; that PR replaces the constant's body, and the version and ledger row are already correct.
+- Schema is **V51**. V50 is registered as a deliberate **no-op step** to keep the ladder contiguous, and is permanently spent: a step runs only while `user_version === fromVersion`, so backfilling V50 later would reach fresh installs only and split the schema. The HTTP-agents resolve-by-URL work must take **V52 or later**.
 - This PR does **not** modify `security-invariants.test.ts`, any `ipc/http-*` file, `agents-rpc.ts`, `egress/*`, or `packages/gateway/src/graph/*`.
 - Read surface (`ownership.*` IPC + `nimbus owners` CLI + Tauri allowlist) is **PR B**, deliberately deferred.
 
