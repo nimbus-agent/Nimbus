@@ -3,7 +3,7 @@
 **Date:** 2026-08-06
 **Spine slot:** S1 (Local Brain) — closes the last unstarted S1 item
 **Branch:** `dev/asafgolombek/ownership-graph`
-**Schema:** **V51** — see [Schema version](#schema-version-v51-not-v50) for why not V50
+**Schema:** **V51** — see [Schema version](#4-schema-version-v51-not-v50) for why not V50
 **Roadmap row:** `docs/roadmap.md` § Spine S1 → "Ownership graph from already-indexed data —
 service/code ownership derived from the existing GitHub + PagerDuty index; dedicated IDP
 connectors (Backstage et al.) stay demoted to S5"
@@ -142,7 +142,7 @@ so the graph converges instead of forking into a parallel file universe.
 
 ### 5.3 Edges
 
-```
+```text
 person    --owns-->          source_file    weight = recency-weighted share
 person    --owns-->          directory      rolled up from descendant files
 person    --owns-->          service        rolled up from all files in bound repos
@@ -157,7 +157,7 @@ minting a fourth. `belongs_to` already expresses containment (`issue belongs_to 
 
 The full service rollup path:
 
-```
+```text
 service ←belongs_to← repo ←tracks_remote← workspace → source_file →owns→ person
 ```
 
@@ -206,7 +206,7 @@ neither needs a bespoke step.
 
 Each blame line's weight decays with the age of its authoring commit:
 
-```
+```text
 w(line)              = 0.5 ^ ((now - author_time_ms) / halfLifeMs)
 weighted(person, f)  = Σ w(line) over that person's lines in f
 share(person, f)     = weighted(person, f) / Σ weighted(*, f)
@@ -270,7 +270,7 @@ that bug is usually introduced.
 
 Default `ignore_globs`:
 
-```
+```text
 **/package-lock.json  **/yarn.lock  **/pnpm-lock.yaml  **/bun.lock  **/bun.lockb
 **/Cargo.lock  **/poetry.lock  **/Gemfile.lock  **/composer.lock  **/go.sum
 **/vendor/**  **/node_modules/**  **/dist/**  **/build/**  **/*.min.js  **/*.min.css

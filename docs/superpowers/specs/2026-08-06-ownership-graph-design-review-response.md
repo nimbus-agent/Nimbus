@@ -21,7 +21,7 @@ was checked against source at `origin/main` = `826b76a1` before being accepted o
 **The concern is real, and stronger than the review states.** I verified the enumeration:
 `gitBlameWindowFiles` (`connectors/blame-index-sync.ts:70`) is
 
-```
+```sh
 git log --since=<N> days ago --name-only --pretty=format: -z
 ```
 

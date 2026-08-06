@@ -65,12 +65,14 @@
 ## Task 1: V51 migration (with the reserved V50 slot)
 
 **Files:**
+
 - Create: `packages/gateway/src/index/ownership-v51-sql.ts`
 - Modify: `packages/gateway/src/index/local-index.ts:265`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - Test: `packages/gateway/src/index/migrations/runner-v51.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `OWNERSHIP_RELATION_TYPES_V51_SQL: string`, `OWNERSHIP_PASS_STATE_V51_SQL: string`, `SCHEMA_V50_RESERVED_SQL: string`. Schema version 51 with `graph_relation_type` rows `owns` / `contains` / `tracks_remote` and table `ownership_pass_state`.
 
@@ -83,11 +85,11 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
-import { migrateIndexedSchema } from "./runner.ts";
+import { runIndexedSchemaMigrations } from "./runner.ts";
 
 function freshMigratedDb(): Database {
   const db = new Database(":memory:");
-  migrateIndexedSchema(db, Date.now());
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   return db;
 }
 
@@ -143,7 +145,7 @@ describe("V51 ownership migration", () => {
 
   test("re-running the migration on an already-migrated db is a no-op", () => {
     const db = freshMigratedDb();
-    migrateIndexedSchema(db, Date.now());
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
     const row = db.query("PRAGMA user_version").get() as { user_version: number };
     expect(row.user_version).toBe(51);
     db.close();
@@ -266,12 +268,15 @@ git commit -m "feat(gateway): V51 ownership relation types + pass state"
 ## Task 2: `[ownership]` config section
 
 **Files:**
+
 - Modify: `packages/gateway/src/config/nimbus-toml.ts`
 - Test: `packages/gateway/src/config/nimbus-toml-ownership.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
+
   ```ts
   export type NimbusOwnershipToml = {
     enabled: boolean;
@@ -515,12 +520,15 @@ git commit -m "feat(gateway): [ownership] config section"
 ## Task 3: Blame aggregation with recency weighting and glob exclusion
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/blame-aggregate.ts`
 - Test: `packages/gateway/src/ownership/blame-aggregate.test.ts`
 
 **Interfaces:**
+
 - Consumes: `NimbusOwnershipToml` (Task 2) — only `halfLifeDays` and `ignoreGlobs` are read here.
 - Produces:
+
   ```ts
   export type FileAuthorWeight = {
     readonly filePath: string;      // root-relative, forward slashes
@@ -554,7 +562,8 @@ Create `packages/gateway/src/ownership/blame-aggregate.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { migrateIndexedSchema } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   aggregateBlameForRoot,
   compileIgnoreGlobs,
@@ -569,7 +578,7 @@ const ROOT = "/repo/alpha";
 
 function db(): Database {
   const d = new Database(":memory:");
-  migrateIndexedSchema(d, NOW);
+  runIndexedSchemaMigrations(d, CURRENT_SCHEMA_VERSION);
   return d;
 }
 
@@ -934,12 +943,15 @@ git commit -m "feat(gateway): recency-weighted blame aggregation with glob exclu
 ## Task 4: Owner identity resolution
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/owner-identity.ts`
 - Test: `packages/gateway/src/ownership/owner-identity.test.ts`
 
 **Interfaces:**
+
 - Consumes: `findPersonByCanonicalEmail`, `normalizeEmail` from `../people/person-store.ts`.
 - Produces:
+
   ```ts
   export type ResolvedOwner = {
     readonly entityExternalId: string; // person id, or `git:<email>`
@@ -958,7 +970,8 @@ Create `packages/gateway/src/ownership/owner-identity.test.ts`:
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { migrateIndexedSchema } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { isBotAuthor, resolveOwner } from "./owner-identity.ts";
 
 const NOW = 1_800_000_000_000;
@@ -992,7 +1005,7 @@ describe("resolveOwner", () => {
   let db: Database;
   beforeEach(() => {
     db = new Database(":memory:");
-    migrateIndexedSchema(db, NOW);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   });
 
   test("resolves to an existing person id", () => {
@@ -1123,12 +1136,15 @@ git commit -m "feat(gateway): git-author identity resolution for ownership"
 ## Task 5: Git remote resolution
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/repo-remote.ts`
 - Test: `packages/gateway/src/ownership/repo-remote.test.ts`
 
 **Interfaces:**
+
 - Consumes: `extensionProcessEnv` from `../extensions/spawn-env.ts`.
 - Produces:
+
   ```ts
   export type RemoteRef = { readonly service: string; readonly ownerName: string };
   export type RemoteSpawn = typeof Bun.spawn;
@@ -1343,12 +1359,15 @@ git commit -m "feat(gateway): git remote resolution with fail-closed ambiguity"
 ## Task 6: The ownership pass
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/ownership-pass.ts`
 - Test: `packages/gateway/src/ownership/ownership-pass.test.ts`
 
 **Interfaces:**
+
 - Consumes: `aggregateBlameForRoot` (Task 3), `resolveOwner` / `isBotAuthor` (Task 4), `resolveRepoRemote` / `RemoteSpawn` (Task 5), `NimbusOwnershipToml` (Task 2), and from `../graph/relationship-graph.ts`: `upsertGraphEntity(db, {type, externalId, label, service?, metadata?}) => string` and `upsertGraphRelation(db, fromId, toId, relationType, createdAt, weight?) => void`.
 - Produces:
+
   ```ts
   export type OwnershipPassSummary = {
     readonly rootsTotal: number; readonly rootsCovered: number; readonly rootsWithRemote: number;
@@ -1378,7 +1397,8 @@ Create `packages/gateway/src/ownership/ownership-pass.test.ts` with this first b
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { migrateIndexedSchema } from "../index/migrations/runner.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { DEFAULT_NIMBUS_OWNERSHIP_TOML } from "../config/nimbus-toml.ts";
 import { directoryAncestors, rankOwners, runOwnershipPass } from "./ownership-pass.ts";
 
@@ -1878,7 +1898,7 @@ describe("runOwnershipPass", () => {
   let d: Database;
   beforeEach(() => {
     d = new Database(":memory:");
-    migrateIndexedSchema(d, NOW);
+    runIndexedSchemaMigrations(d, CURRENT_SCHEMA_VERSION);
   });
 
   test("zero roots is a no-op that RECORDS roots_total = 0", async () => {
@@ -2088,12 +2108,15 @@ git commit -m "feat(gateway): ownership derivation pass with rollups and orphan 
 ## Task 7: Debounced refresher
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/ownership-refresh.ts`
 - Test: `packages/gateway/src/ownership/ownership-refresh.test.ts`
 
 **Interfaces:**
+
 - Consumes: `OwnershipPassSummary` (Task 6).
 - Produces:
+
   ```ts
   export type OwnershipRefresherDeps = {
     debounceMs: number;
@@ -2322,9 +2345,11 @@ git commit -m "feat(gateway): debounced single-flight ownership refresher"
 ## Task 8: Wire the refresher into assemble
 
 **Files:**
+
 - Modify: `packages/gateway/src/platform/assemble.ts`
 
 **Interfaces:**
+
 - Consumes: `createOwnershipRefresher` (Task 7), `runOwnershipPass` (Task 6), `loadNimbusOwnershipFromConfigDir` (Task 2), and the existing `loadNimbusFilesystemRootsFromConfigDir` + `loadNimbusServiceConfigsFromConfigDir`.
 - Produces: an `ownershipRefresher: OwnershipRefresher | undefined` on the same return object that already carries `glossaryRefresher` and `decisionsRefresher`.
 
@@ -2425,6 +2450,7 @@ git commit -m "feat(gateway): wire the ownership pass into the post-sync seam"
 ## Task 8b: Status-surface drift (schema V49 → V51)
 
 **Files:**
+
 - Modify: `CLAUDE.md`
 - Modify: `GEMINI.md`
 - Modify: `docs/architecture.md`
@@ -2446,7 +2472,7 @@ In **both** `CLAUDE.md` and `GEMINI.md` (they are mirrors — CLAUDE.md's own he
 
 Add the ownership graph to the S1 sentence in the same paragraph, after the research-briefs clause:
 
-```
+```text
 ; the ownership graph (schema V51) derives service/code ownership from the already-indexed git-blame data
 ```
 
@@ -2457,7 +2483,7 @@ Two edits:
 1. Line ~5: `schema V49` → `schema V51`.
 2. The migration-runner paragraph (~line 1379): change `**Latest applied migration: V49**` to `**Latest applied migration: V51**` and prepend a clause describing V51 ahead of the existing V49 clause:
 
-```
+```text
 V51 added the ownership relation types (`owns` / `contains` / `tracks_remote`) + `ownership_pass_state` — the ownership graph derived from git blame — S1 "Local Brain"; V50 is reserved for the HTTP agents resolve-by-URL work and is a deliberate no-op step;
 ```
 
@@ -2536,7 +2562,7 @@ git push -u origin dev/asafgolombek/ownership-graph
 
 PR title (release-please parses this line):
 
-```
+```text
 feat(gateway): ownership graph derived from already-indexed blame data
 ```
 
