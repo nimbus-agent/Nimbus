@@ -45,13 +45,21 @@ export interface ToolSpec {
   run(deps: AdapterDeps, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
-/** Shown when an agent-classified tool is reached on a gateway that cannot attribute its output. */
+/**
+ * Shown when an agent-classified tool is reached on a gateway that cannot attribute its output.
+ *
+ * Every `nimbus <cmd>` named here must be a real command. `nimbus restart` does not exist — it is
+ * not in `COMMAND_NAMES` — and naming it sent the operator to a dead end at the exact moment they
+ * were told how to fix something. `nimbus update` already reports "Gateway will restart", so no
+ * second command is needed. `tool-runtime.test.ts` checks every `nimbus <cmd>` in this string
+ * against the registry, the same way `audit:readme-cli` does for the docs.
+ */
 export const AGENT_TOOLS_UNSUPPORTED_MESSAGE =
   "Nimbus: this gateway is too old to record MCP-served agent briefs in the egress ledger " +
   "(it rejects session.declareKind), so the agent tools are disabled rather than served " +
   "unrecorded — `nimbus prove` would otherwise report a clean scope over output it never saw. " +
-  "Fix: upgrade the Nimbus gateway (`nimbus update`, then `nimbus restart`) and restart this MCP " +
-  "client. The read-only index tools are unaffected and remain available.";
+  "Fix: upgrade the Nimbus gateway (`nimbus update`), then restart this MCP client. " +
+  "The read-only index tools are unaffected and remain available.";
 
 export function jsonResult(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };

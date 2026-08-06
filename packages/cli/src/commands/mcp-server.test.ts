@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
-import { type AdapterDeps, TOOL_SPECS } from "../mcp/adapter.ts";
+import { type AdapterDeps, INDEX_TOOL_SPECS, TOOL_SPECS } from "../mcp/adapter.ts";
 import {
   formatConfigBlock,
   formatHelp,
@@ -100,5 +100,17 @@ describe("formatHelp", () => {
     for (const line of formatHelp().split("\n")) {
       expect(line.length).toBeLessThanOrEqual(90);
     }
+  });
+
+  it("states the degraded-gateway policy, with both counts derived from the spec lists", () => {
+    // `--help` is answered without connecting to anything, so this is stated as POLICY, not as a
+    // live verdict about the gateway on this machine. The counts must still be real: an operator
+    // who upgrades on the strength of this line should get back exactly what it promised.
+    const help = formatHelp();
+    const agentToolCount = TOOL_SPECS.length - INDEX_TOOL_SPECS.length;
+    expect(help).toContain("session.declareKind");
+    expect(help).toContain(`the ${String(agentToolCount)} agent tools are`);
+    expect(help).toContain(`only the ${String(INDEX_TOOL_SPECS.length)} index tools are served`);
+    expect(help).toContain("nimbus prove");
   });
 });

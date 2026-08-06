@@ -7,6 +7,7 @@ import {
   AGENT_TOOLS_UNSUPPORTED_MESSAGE,
   agentToolsSupported,
   buildMcpServer,
+  buildMcpServerForGateway,
   type ConnectionEnv,
   clampLimit,
   createDeps,
@@ -607,7 +608,34 @@ describe("degraded mode on a gateway without session.declareKind", () => {
   it("says what is wrong and what to do about it — not merely that something failed", () => {
     expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("session.declareKind");
     expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("egress ledger");
-    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("upgrade the Nimbus gateway");
+    // Pinned to the exact fix clause, not a loose "upgrade the Nimbus gateway" substring: the
+    // loose form passed while the clause told the operator to run `nimbus restart`, which is not a
+    // Nimbus command. Every `nimbus <cmd>` in the string is checked against the registry in
+    // `tool-runtime.test.ts`; this assertion pins the sentence around them.
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain(
+      "upgrade the Nimbus gateway (`nimbus update`), then restart this MCP client",
+    );
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).not.toContain("nimbus restart");
+  });
+
+  it("the SHIPPED composition — probe then build — serves only the index tools", async () => {
+    // The probe and the build were only ever exercised separately, so hard-coding `true` at the
+    // composition would have kept every other test in this block green while withdrawing nothing.
+    // This drives `buildMcpServerForGateway` from a raw deps object: it opens the connection,
+    // fails `declareKind`, and must decide registration off that outcome by itself.
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    const server = await captureStdio(() => buildMcpServerForGateway(deps));
+    expect(await listToolNames(server.result)).toEqual(INDEX_TOOL_SPECS.map((s) => s.name).sort());
+  });
+
+  it("the SHIPPED composition serves everything against a healthy gateway", async () => {
+    const deps = createDeps({
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => fakeClient(async () => "ok"),
+    });
+    const names = await listToolNames(await buildMcpServerForGateway(deps));
+    expect(names).toHaveLength(TOOL_SPECS.length);
+    expect(names).toContain("explainWhy");
   });
 
   it("a DISCONNECT-class declareKind failure is not degraded mode — all seventeen tools stay", async () => {

@@ -513,9 +513,23 @@ export function buildMcpServer(deps: AdapterDeps, includeAgentTools = true): Mcp
   return server;
 }
 
+/**
+ * Build the server this gateway may honestly serve: the capability probe composed with the
+ * registration decision.
+ *
+ * Extracted from `runMcpServerStdio` so the composition itself is testable. Probing and building
+ * were only ever exercised SEPARATELY, which meant hard-coding `true` here would have kept every
+ * test green while dissolving the owner-decided property — agent tools must not be registered
+ * against a gateway that cannot ledger them. That is the whole safety guarantee resting on one
+ * argument.
+ */
+export async function buildMcpServerForGateway(deps: AdapterDeps): Promise<McpServer> {
+  return buildMcpServer(deps, await agentToolsSupported(deps));
+}
+
 /** Run the MCP server over stdio (this process is launched by the editor). */
 export async function runMcpServerStdio(deps: AdapterDeps): Promise<void> {
-  const server = buildMcpServer(deps, await agentToolsSupported(deps));
+  const server = await buildMcpServerForGateway(deps);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

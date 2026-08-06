@@ -386,7 +386,9 @@ export type EgressCompleteness = {
    * `coverage`/`indeterminate` are emitted alongside it and remain the authoritative claim — so
    * the misstatement is inert locally. Remove it, and the client's `validateEgressCompleteness`
    * dependency on it, at the next client major. Do not raise a third coverage class without
-   * settling this first. See `docs/SECURITY-INVARIANTS.md` § I29 ("Outstanding debt").
+   * settling this first. Tracked as https://github.com/nimbus-agent/Nimbus/issues/1057 — a removal
+   * condition that names no owner is a comment, not a plan. See `docs/SECURITY-INVARIANTS.md`
+   * § I29 ("Outstanding debt").
    */
   readonly tier: "authorized-actions";
 };
