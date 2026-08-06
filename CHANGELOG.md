@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.23.0](https://github.com/nimbus-agent/Nimbus/compare/v1.22.0...v1.23.0) (2026-08-06)
+
+
+### Features
+
+* **gateway:** scope the HTTP API bearer tokens ([#1062](https://github.com/nimbus-agent/Nimbus/issues/1062)) ([826b76a](https://github.com/nimbus-agent/Nimbus/commit/826b76a1a5352ac226bfcd3c6a88b901d6afe33a))
+
+
+### Bug Fixes
+
+* **gateway:** serve the admin console and OpenAPI doc from a compiled binary ([#1058](https://github.com/nimbus-agent/Nimbus/issues/1058)) ([36abf19](https://github.com/nimbus-agent/Nimbus/commit/36abf192457984a42e2d4e74b984603d51fbb376))
+
 ## [1.22.0](https://github.com/nimbus-agent/Nimbus/compare/v1.21.0...v1.22.0) (2026-08-06)
 
 
