@@ -135,6 +135,8 @@
   "scripts": {
     "dev": "bun run --filter './packages/gateway' dev & bun run --filter './packages/cli' dev",
     "build": "bun run --filter '*' build",
+    "build:console": "bun run --filter @nimbus-dev/admin-console build",
+    "prepare": "bun run build:console",
     "build:debug": "bun scripts/build-debug.ts",
     "build:release": "bun scripts/build-release.ts",
     "typecheck": "bun run --filter '*' --sequential typecheck && tsc -p scripts/tsconfig.json",
@@ -161,6 +163,7 @@
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
     "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
     "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
+    "audit:import-meta-dir": "bun scripts/structure-audit/check-import-meta-dir.ts",
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",

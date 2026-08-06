@@ -8,6 +8,15 @@ export interface Gate {
 }
 
 const FAST: readonly Gate[] = [
+  {
+    // The gateway statically imports the console's build output with `{ type: "file" }`, so a
+    // missing dist is a module-resolution error across the whole gateway graph, not a 503 at
+    // runtime. The root `prepare` script keeps it fresh after `bun install`; this gate keeps it
+    // fresh after a console source edit.
+    name: "build:console",
+    cmd: ["bun", "run", "build:console"],
+    tier: "fast",
+  },
   { name: "typecheck", cmd: ["bun", "run", "typecheck"], tier: "fast" },
   {
     // Test directories are NOT in any package's tsconfig `include`, so `typecheck` is blind to
@@ -36,6 +45,14 @@ const FAST: readonly Gate[] = [
     // compile or the runtime load, and the only symptom is a sync that never works.
     name: "audit:connector-deps",
     cmd: ["bun", "run", "audit:connector-deps"],
+    tier: "fast",
+  },
+  {
+    // A source-tree-relative path derived from `import.meta.dir` resolves inside the read-only
+    // bunfs root in a compiled binary, so it silently points at nothing. Two such sites made the
+    // admin console and the OpenAPI route unreachable in every released binary.
+    name: "audit:import-meta-dir",
+    cmd: ["bun", "run", "audit:import-meta-dir"],
     tier: "fast",
   },
   { name: "audit:any", cmd: ["bun", "run", "audit:any", "--check"], tier: "fast" },

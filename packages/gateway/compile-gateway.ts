@@ -88,6 +88,22 @@ async function main(): Promise<void> {
     }
   }
 
+  // The gateway embeds the admin console's build output with `{ type: "file" }` imports, so the
+  // compile cannot proceed without it. `prepare` normally keeps dist fresh after `bun install`;
+  // this is the explicit, fail-loud form for the one place where a stale or missing dist would be
+  // baked into a user's binary.
+  const consoleBuild = spawnSync(process.execPath, ["run", "build:console"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if ((consoleBuild.status ?? 1) !== 0) {
+    process.stderr.write(
+      "compile-gateway: admin-console build failed; the gateway embeds its dist and cannot compile without it.\n",
+    );
+    process.exit(consoleBuild.status ?? 1);
+  }
+
   const r = spawnSync(
     process.execPath,
     [
