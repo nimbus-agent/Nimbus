@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { checkAgentEmitterImportConfinement } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -1275,7 +1276,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(audit).toContain("D22-agent-emitter-import");
   });
 
-  test("D22(d): the emitter-import rule matches BOTH the static and the dynamic import form", async () => {
+  test("D22(d): the emitter-import rule flags ALL THREE module-resolution forms", async () => {
     // Rule (c) pins the CALLER of the appender, which catches a second file ACQUIRING the appender
     // — but not a second file that serves a brief WITHOUT calling it. That path spells nothing (c)
     // matches: it would append no row, serve the brief, and leave audit:invariants green. This file
@@ -1290,6 +1291,37 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `require` is the third spelling, and Bun honours it from a .ts module — a rule matching only
     // the two `import` forms reported green while that door stood open.
     expect(audit).toContain("D22_EMITTER_REQUIRE_RE");
+
+    // ...and the rule is exercised, not merely declared. A name-presence assertion passes for a
+    // regex that is defined and never wired into the check, which is exactly the state this rule
+    // was in before the `require` gap was closed. Each form is planted and the audit must flag it.
+    for (const contents of [
+      'import { emitWhyBrief } from "../agents/why.ts";',
+      'const m = await import("../agents/why.ts");',
+      'const m = require("../agents/why.ts");',
+    ]) {
+      const violations = checkAgentEmitterImportConfinement([
+        { relPath: "packages/gateway/src/ipc/http-server.ts", contents: `${contents}\n` },
+      ]);
+      expect({ contents, flagged: violations.map((v) => v.rule) }).toEqual({
+        contents,
+        flagged: ["D22-agent-emitter-import"],
+      });
+    }
+    // The negative control: the allowed door and the excluded `_lib` path must NOT be flagged, or
+    // the loop above would pass for a rule that simply rejects everything.
+    expect(
+      checkAgentEmitterImportConfinement([
+        {
+          relPath: "packages/gateway/src/ipc/agents-rpc.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'import type { GapNote } from "../agents/_lib/findings.ts";\n',
+        },
+      ]),
+    ).toEqual([]);
     expect(audit).toContain("checkAgentEmitterImportConfinement");
   });
 
