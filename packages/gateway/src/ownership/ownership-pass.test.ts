@@ -322,6 +322,41 @@ describe("runOwnershipPass", () => {
     expect(person?.label).toBe("Alice");
   });
 
+  // The widening hazard proved in the direction that actually bites: it is the
+  // root whose path CONTAINS the metacharacters that supplies the pattern. Under
+  // any `LIKE`-based scope, `/repo/a_b` also matches `/repo/axb` — `_` is a
+  // single-character wildcard — so reaping `a_b` would silently destroy `axb`'s
+  // graph while reporting success. The test above varies the OTHER root's path,
+  // which cannot exercise this.
+  test("reaping a root whose path holds SQL wildcards leaves a look-alike root intact", async () => {
+    const weird = "/repo/a_b";
+    const lookAlike = "/repo/axb";
+    for (const [root, file] of [
+      [weird, "src/w.ts"],
+      [lookAlike, "src/l.ts"],
+    ]) {
+      d.run(
+        `INSERT INTO git_blame_line
+           (repo_root, file_path, line_no, commit_sha, author_name, author_email, author_time_ms)
+         VALUES (?, ?, 1, 'sha', 'A', 'a@x.com', ?)`,
+        [root ?? "", file ?? "", NOW],
+      );
+    }
+    await runOwnershipPass(d, baseOpts({ roots: [weird, lookAlike] }));
+    d.run("DELETE FROM git_blame_line WHERE repo_root = ?", [weird]);
+    await runOwnershipPass(d, baseOpts({ roots: [weird] }));
+
+    const survivors = d
+      .query("SELECT COUNT(*) AS n FROM graph_entity WHERE service = ?")
+      .get(`ownership:${lookAlike}`) as { n: number };
+    expect(survivors.n).toBeGreaterThan(0);
+    // Guards against a vacuous pass: the targeted root really was reaped.
+    const reaped = d
+      .query("SELECT COUNT(*) AS n FROM graph_entity WHERE service = ?")
+      .get(`ownership:${weird}`) as { n: number };
+    expect(reaped.n).toBe(0);
+  });
+
   test("ignored paths are excluded and counted", async () => {
     seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
     seedLine(d, "package-lock.json", 1, "b@x.com", "B", 0);
