@@ -1367,8 +1367,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // append-only column (`payload_summary` is capped at 256 bytes; `method` is not).
     expect(guardedRegion).toContain("Object.hasOwn(AGENTS_RPC_HANDLERS, method)");
     expect(guardedRegion).not.toContain('method.startsWith("agents.")');
-    // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params.
-    expect(src).toContain('ctx.caller?.kind === "mcp"');
+    // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params. The
+    // condition is a lookup over a TOTAL map rather than an equality on one transport, so a new
+    // client kind is a compile error rather than a silently unledgered surface — see
+    // egress/egress-bearing-kinds.ts.
+    expect(src).toContain("egressSourceTypeForClientKind(ctx.caller?.kind)");
+    // ...and the kind is never reconstructed from the payload. Asserted as an absence because the
+    // presence check above would still pass if a params-derived fallback were added beside it.
+    expect(src).not.toMatch(/params\s*\.\s*kind/);
+    expect(src).not.toMatch(/\bp\.kind\b/);
   });
 
   test("I29: COVERAGE_CLASSES is exactly the non-marker source types", () => {
@@ -1383,11 +1390,14 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
-    // `mcp` is per-call because recordAgentBriefEgress ships in the same commit. The others stay none
-    // until theirs do. Raising an entry without its appender is the defect the vector exists to
-    // catch, so widening this expected list is a review moment, not a test to re-bank.
+    // `mcp` and `http` are per-call because recordAgentBriefEgress serves BOTH transports and its
+    // dispatcher condition ships in the same commit as this claim. The others stay none until
+    // theirs do — `sync` in particular is a later PR's, and the design document that lists it in
+    // the end-state vector is describing that PR, not this one. Raising an entry without its
+    // appender is the defect the vector exists to catch, so widening this expected list is a review
+    // moment, not a test to re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["mcp", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

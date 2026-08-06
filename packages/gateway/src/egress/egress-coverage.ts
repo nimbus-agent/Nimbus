@@ -51,8 +51,8 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * strings are permanent in the data, so a class whose appender covers less than its NAME suggests
  * must say so at the point the claim is made, not only at the point it is rendered.
  *
- * READ THE `http` ENTRY THE SAME WAY, and more narrowly still. When raised, it is `per-call` over
- * exactly one thing: an `agents.*` brief served to a caller verified on the local HTTP API. It is
+ * READ THE `http` ENTRY THE SAME WAY, and more narrowly still. It is `per-call` over exactly one
+ * thing: an `agents.*` brief served to a caller verified on the local HTTP API. It is
  * NOT "everything on the HTTP API". `GET /v1/items`, `GET /v1/people`, `GET /v1/audit` and the rest
  * of the read surface hand index rows to a local process and append NO row. Conversely a targeted
  * connector fetch on the same port WILL append, but under `sync`, not `http` — the class tracks the
@@ -61,9 +61,7 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
   mcp: "per-call",
-  // The class name lands before its appender does. `none` until the generalised append condition
-  // ships — raising a claim ahead of the code that backs it is the defect this vector prevents.
-  http: "none",
+  http: "per-call",
   session: "none",
   sync: "none",
   model: "none",

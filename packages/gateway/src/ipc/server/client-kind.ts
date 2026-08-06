@@ -5,9 +5,22 @@
  *
  * This is an honesty-of-record mechanism, not an authorization one: every client on this socket is
  * a local process the owner started, and anyone who can open the socket can already call anything.
+ *
+ * `http` is on the union but is NOT a socket kind at all: it is constructed by the HTTP route
+ * handler for a caller whose bearer token it just verified. It is on this union because the egress
+ * ledger records the transport, and one union keeps that record total.
  */
-export type ClientKind = "cli" | "mcp" | "ui" | "unknown";
+export type ClientKind = "cli" | "mcp" | "ui" | "http" | "unknown";
 
+/**
+ * The kinds a client may DECLARE at connect time.
+ *
+ * `http` is deliberately ABSENT. It is derived, not declared — the HTTP route handler sets it after
+ * checking a token against the labeled token map, which makes it the one kind on this union that is
+ * a fact the gateway verified rather than a client's word. Adding it here would let any local
+ * process on the socket file its briefs under that stronger attribution, turning an observation
+ * back into a claim.
+ */
 const RECOGNISED: ReadonlySet<string> = new Set(["cli", "mcp", "ui"]);
 
 export class ClientKindStore {

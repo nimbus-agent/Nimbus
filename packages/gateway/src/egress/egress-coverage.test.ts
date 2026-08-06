@@ -32,21 +32,22 @@ const NONE: CoverageVector = {
  * `http` heads the string because the array is key-sorted and `http` < `mcp`.
  */
 const CANONICAL =
-  "http=none;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
+  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
 
 describe("coverage vector", () => {
-  test("this binary observes gated actions AND MCP-originated briefs per-call, nothing else", () => {
-    // `mcp` is per-call because `recordAgentBriefEgress` ships alongside this entry. Every other
-    // class stays `none` until its appender lands — INCLUDING `http`, whose class name lands here
-    // but whose appender does not: the generalised append condition is a later commit, and
-    // claiming coverage before the appender exists is the exact defect this vector prevents.
+  test("this binary observes gated actions AND externally-originated briefs per-call, nothing else", () => {
+    // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
+    // transports and its dispatcher condition ships alongside this entry. Every other class stays
+    // `none` until its appender lands — `sync` especially: it is named in the end-state vector of
+    // the design doc, and raising it here on that basis would be a claim with no code behind it,
+    // which is the exact defect this vector prevents.
     expect(THIS_BINARY_COVERAGE).toEqual({
       task: "per-call",
       mcp: "per-call",
-      http: "none",
+      http: "per-call",
       session: "none",
       sync: "none",
       model: "none",
@@ -149,7 +150,7 @@ describe("coverage vector", () => {
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
-      http: "none", // this binary claims none until its appender lands
+      http: "per-call", // both per-call
       session: "none", // this binary saw nothing
       sync: "none",
       model: "none",

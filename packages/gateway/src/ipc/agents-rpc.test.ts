@@ -643,9 +643,9 @@ test("dispatchAgentsRpc accepts and retains a caller descriptor", async () => {
   expect(ctx.caller.kind).toBe("mcp");
 });
 
-// I29/D22(c) — the MCP brief egress chokepoint. `freshDb()` runs the real migration set
+// I29/D22(c) — the agent brief egress chokepoint. `freshDb()` runs the real migration set
 // (LocalIndex.ensureSchema → V44), so `egress_ledger` is the shipped table, not a fixture copy.
-describe("I29 — MCP-originated agent briefs are ledgered", () => {
+describe("I29 — externally-originated agent briefs are ledgered", () => {
   test("a CLI-originated agents call appends NO egress row", async () => {
     const db = freshDb();
     await dispatchAgentsRpc(
@@ -712,6 +712,71 @@ describe("I29 — MCP-originated agent briefs are ledgered", () => {
     }
     const n = db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number };
     expect(n.n).toBe(0);
+  });
+
+  test("an HTTP-originated agents call appends exactly one source_type='http' row", async () => {
+    // The second transport. Attribution is stronger here than over stdio: there is no connection to
+    // hand-shake, so `kind` is a literal the gateway sets after verifying a bearer token, and
+    // `clientId` is that token's verified label — both server-derived, neither caller-supplied.
+    const db = freshDb();
+    await dispatchAgentsRpc(
+      "agents.expert",
+      { topicOrFile: "x" },
+      { ...makeCtx(db), caller: { clientId: "chrome-work", kind: "http" as const } },
+    );
+    const rows = db
+      .query(`SELECT source_type, source_id, method, destination FROM egress_ledger`)
+      .all() as Array<{
+      source_type: string;
+      source_id: string | null;
+      method: string;
+      destination: string;
+    }>;
+    expect(rows).toEqual([
+      {
+        source_type: "http",
+        source_id: "chrome-work",
+        method: "agents.expert",
+        destination: "http",
+      },
+    ]);
+  });
+
+  test("a federation-touching agent over HTTP keeps its distinguishable destination", async () => {
+    const db = freshDb();
+    await dispatchAgentsRpc(
+      "agents.ghost",
+      { file: "auth.ts" },
+      { ...makeCtx(db), caller: { clientId: "chrome", kind: "http" as const } },
+    ).catch(() => undefined);
+    const rows = db.query(`SELECT destination FROM egress_ledger`).all() as Array<{
+      destination: string;
+    }>;
+    expect(rows.map((r) => r.destination)).toEqual(["http+federation"]);
+  });
+
+  test("an HTTP-originated call to an UNRECOGNISED method appends NO row and still misses", async () => {
+    // The generalisation from an equality to a lookup must not widen WHAT is appended for, only
+    // WHO. Membership of the served handler map still gates the append on every transport.
+    const db = freshDb();
+    const outcome = await dispatchAgentsRpc(
+      "agents.bogus",
+      {},
+      { ...makeCtx(db), caller: { clientId: "chrome", kind: "http" as const } },
+    );
+    expect(outcome.kind).toBe("miss");
+    const n = db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number };
+    expect(n.n).toBe(0);
+  });
+
+  test("a failed HTTP append emits no brief either — fail-closed on both transports", async () => {
+    const db = freshDb();
+    db.exec(`DROP TABLE egress_ledger`);
+    const ctx = { ...makeCtx(db), caller: { clientId: "chrome", kind: "http" as const } };
+    await expect(
+      dispatchAgentsRpc("agents.expert", { topicOrFile: "x" }, ctx),
+    ).rejects.toBeInstanceOf(Error);
+    expect((ctx.notify as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
   });
 
   test("membership-gating did not narrow the append below the served set", async () => {

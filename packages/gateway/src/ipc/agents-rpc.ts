@@ -21,6 +21,7 @@ import {
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
 import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
+import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
@@ -577,16 +578,26 @@ export async function dispatchAgentsRpc(
   params: unknown,
   ctx: AgentsRpcContext,
 ): Promise<RpcMissOrHit> {
-  // I29/D22(c): an MCP-originated brief is egress — the gateway synthesises from the private index
-  // and hands the result to whatever model the calling client uses. Append BEFORE any work, and let
-  // a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the namespace
-  // prefix, so an unrecognised call is a `miss` that ledgers nothing.
-  if (ctx.caller?.kind === "mcp" && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
+  // I29/D22(c): an externally-originated brief is egress — the gateway synthesises from the private
+  // index and hands the result to whatever model the calling client uses. Append BEFORE any work,
+  // and let a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the
+  // namespace prefix, so an unrecognised call is a `miss` that ledgers nothing.
+  //
+  // The caller kind selects the source type through a TOTAL map (egress/egress-bearing-kinds.ts)
+  // rather than an equality. This read `ctx.caller?.kind === "mcp"` while stdio was the only
+  // external transport; as an equality it was not wrong so much as unable to grow — the second
+  // transport would have served briefs and appended nothing, passing every test. `cli`/`ui`/
+  // `unknown`/absent map to null and append nothing, exactly as before.
+  const egressSourceType = egressSourceTypeForClientKind(ctx.caller?.kind);
+  if (egressSourceType !== null && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
     recordAgentBriefEgress(ctx.db, {
-      sourceType: "mcp",
+      sourceType: egressSourceType,
       method,
       params,
-      clientId: ctx.caller.clientId,
+      // Unreachable when null: a non-null source type implies ctx.caller exists. TypeScript cannot
+      // narrow across the helper call, and `!` would assert what the compiler declines to check —
+      // so the impossible branch is spelled out and made harmless instead.
+      clientId: ctx.caller?.clientId ?? "",
       now: Date.now(),
     });
   }
