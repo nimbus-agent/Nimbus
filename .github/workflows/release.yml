@@ -117,6 +117,13 @@ jobs:
         with:
           verify-lock: "false"
 
+      # The gateway embeds the console's build output with `{ type: "file" }` imports, so its dist
+      # must exist before the compile. The root `prepare` script already builds it during install;
+      # this is the explicit form for the one place where a missing dist would be baked into a
+      # user's binary rather than surfacing as a local error.
+      - name: Build the admin console (embedded into the gateway binary)
+        run: bun run build:console
+
       - name: Build Gateway binary (non-Windows)
         if: matrix.target.os != 'windows'
         run: |
@@ -145,6 +152,13 @@ jobs:
             --windows-description "Nimbus Gateway — local-first AI agent framework" `
             --windows-copyright "Copyright (c) Nimbus Contributors — AGPL-3.0-or-later"
 
+      # sqlite-vec loadable extension. tryLoadFromSidecar() resolves it from
+      # dirname(process.execPath), so it must travel with the binary into every archive and
+      # installer. Its absence is a log.debug-level failure — semantic memory just stops working —
+      # which is why no release before this one noticed it was never copied at all.
+      - name: Copy sqlite-vec sidecar
+        run: bun scripts/copy-vec0-sidecar.ts --dest dist
+
       - name: Sign binary (Linux GPG)
         if: matrix.target.os == 'linux'
         timeout-minutes: 15
@@ -166,11 +180,20 @@ jobs:
       # The update-manifest job downloads this artifact and reads <bin>.sha256
       # + <bin>.sig per target — without the sidecars, build-update-manifest.ts
       # fails with ENOENT and the v0.1.0 latest.json was never produced.
+      #
+      # vec0.* is a SECOND path entry rather than part of the glob above, which is anchored on the
+      # binary's name. Both live under dist/, so the least-common-ancestor stays dist/ and every
+      # file still lands at the artifact root. The downstream `Stage release assets`,
+      # `Compute SHA256SUMS` and `Flatten artifact dir` steps all glob on the nimbus-gateway-*
+      # prefix, so the sidecar never becomes a loose release asset — it ships inside the archives
+      # and installers, which is where a user's binary can actually find it.
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.target.artifact }}
-          path: dist/${{ matrix.target.artifact }}${{ matrix.target.ext }}*
+          path: |
+            dist/${{ matrix.target.artifact }}${{ matrix.target.ext }}*
+            dist/vec0.*
           if-no-files-found: error
           retention-days: 30
 
@@ -295,6 +318,7 @@ jobs:
           New-Item -ItemType Directory -Path dist/msi-bin -Force | Out-Null
           Copy-Item dist/nimbus-gateway-windows-x64/nimbus-gateway-windows-x64.exe dist/msi-bin/nimbus-gateway.exe
           Copy-Item dist/nimbus-cli-windows-x64/nimbus-cli-windows-x64.exe          dist/msi-bin/nimbus.exe
+          Copy-Item dist/nimbus-gateway-windows-x64/vec0.dll                        dist/msi-bin/vec0.dll
 
       - name: Install WiX v5 (pinned)
         shell: pwsh
@@ -363,6 +387,7 @@ jobs:
             mkdir -p "$stage"
             cp "dist/nimbus-gateway-macos-$arch/nimbus-gateway-macos-$arch" "$stage/nimbus-gateway"
             cp "dist/nimbus-cli-macos-$arch/nimbus-cli-macos-$arch"         "$stage/nimbus"
+            cp "dist/nimbus-gateway-macos-$arch/vec0.dylib"                 "$stage/vec0.dylib"
             chmod +x "$stage/nimbus" "$stage/nimbus-gateway"
             out="dist/installers/nimbus-headless-macos-$arch.pkg"
             bash scripts/package-macos-installer.sh --bin-dir "$stage" --version "$V" --out "$out"
@@ -452,6 +477,7 @@ jobs:
           mkdir -p dist/headless-bundle
           cp dist/nimbus-gateway-linux-x64/nimbus-gateway-linux-x64 dist/headless-bundle/nimbus-gateway
           cp dist/nimbus-cli-linux-x64/nimbus-cli-linux-x64 dist/headless-bundle/nimbus
+          cp dist/nimbus-gateway-linux-x64/vec0.so dist/headless-bundle/vec0.so
           chmod +x dist/headless-bundle/nimbus-gateway dist/headless-bundle/nimbus
           V="${GITHUB_REF_NAME#v}"
           bun scripts/package-linux-installers.ts \
@@ -491,6 +517,7 @@ jobs:
           mkdir -p dist/stage-macos-x64
           cp dist/nimbus-gateway-macos-x64/nimbus-gateway-macos-x64 dist/stage-macos-x64/nimbus-gateway
           cp dist/nimbus-cli-macos-x64/nimbus-cli-macos-x64         dist/stage-macos-x64/nimbus
+          cp dist/nimbus-gateway-macos-x64/vec0.dylib               dist/stage-macos-x64/vec0.dylib
           cp scripts/release/archive-contents/README-QUICKSTART.txt dist/stage-macos-x64/
           cp scripts/release/archive-contents/LICENSE-AGPL.txt      dist/stage-macos-x64/
           cp scripts/install/unix/install.sh                         dist/stage-macos-x64/
@@ -502,6 +529,7 @@ jobs:
           mkdir -p dist/stage-macos-arm64
           cp dist/nimbus-gateway-macos-arm64/nimbus-gateway-macos-arm64 dist/stage-macos-arm64/nimbus-gateway
           cp dist/nimbus-cli-macos-arm64/nimbus-cli-macos-arm64         dist/stage-macos-arm64/nimbus
+          cp dist/nimbus-gateway-macos-arm64/vec0.dylib                 dist/stage-macos-arm64/vec0.dylib
           cp scripts/release/archive-contents/README-QUICKSTART.txt     dist/stage-macos-arm64/
           cp scripts/release/archive-contents/LICENSE-AGPL.txt          dist/stage-macos-arm64/
           cp scripts/install/unix/install.sh                             dist/stage-macos-arm64/
@@ -513,6 +541,7 @@ jobs:
           mkdir -p dist/stage-windows-x64
           cp dist/nimbus-gateway-windows-x64/nimbus-gateway-windows-x64.exe dist/stage-windows-x64/nimbus-gateway.exe
           cp dist/nimbus-cli-windows-x64/nimbus-cli-windows-x64.exe         dist/stage-windows-x64/nimbus.exe
+          cp dist/nimbus-gateway-windows-x64/vec0.dll                       dist/stage-windows-x64/vec0.dll
           cp scripts/release/archive-contents/README-QUICKSTART.txt         dist/stage-windows-x64/
           cp scripts/release/archive-contents/LICENSE-AGPL.txt              dist/stage-windows-x64/
           cp scripts/install/windows/install.ps1                             dist/stage-windows-x64/
