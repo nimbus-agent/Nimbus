@@ -38,12 +38,19 @@ export interface ConsoleAssetDeps {
   readonly exists: (path: string) => boolean;
 }
 
-export const DEFAULT_CONSOLE_ASSET_DEPS: ConsoleAssetDeps = {
-  compiled: isCompiledBinary(),
-  assets: EMBEDDED_CONSOLE_ASSETS,
-  distOverride: process.env["NIMBUS_ADMIN_CONSOLE_DIST"],
-  exists: existsSync,
-};
+/**
+ * Built per call, not once at module load: `NIMBUS_ADMIN_CONSOLE_DIST` is read at request time so
+ * a value set after this module was imported still takes effect. A module-scope snapshot would
+ * silently ignore it — which is exactly how the previous `process.env` read behaved.
+ */
+export function defaultConsoleAssetDeps(): ConsoleAssetDeps {
+  return {
+    compiled: isCompiledBinary(),
+    assets: EMBEDDED_CONSOLE_ASSETS,
+    distOverride: process.env["NIMBUS_ADMIN_CONSOLE_DIST"],
+    exists: existsSync,
+  };
+}
 
 /**
  * The dev-tree dist directory: the override when it names a built console, else the directory
@@ -72,8 +79,9 @@ function devConsoleDist(deps: ConsoleAssetDeps): string | undefined {
  */
 export function resolveConsoleAsset(
   rel: string,
-  deps: ConsoleAssetDeps = DEFAULT_CONSOLE_ASSET_DEPS,
+  overrideDeps?: ConsoleAssetDeps,
 ): ConsoleAssetResult {
+  const deps = overrideDeps ?? defaultConsoleAssetDeps();
   if (deps.compiled) {
     // hasOwn, not `deps.assets[rel] !== undefined`: "constructor" and "toString" are truthy on any
     // plain object and would otherwise resolve to a function.

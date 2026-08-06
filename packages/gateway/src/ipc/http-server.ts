@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite";
-import { join, resolve } from "node:path";
 import type { BriefRunController } from "../briefs/brief-run-store.ts";
 import { ingestClip, validateClipInput } from "../clips/clip-ingest.ts";
 import { type RelatedHit, type RelatedInput, runClipRelated } from "../clips/clip-related.ts";
@@ -16,8 +15,9 @@ import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-li
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-console-assets.ts";
+import { contentTypeFor, resolveConsoleAsset, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
+import { EMBEDDED_OPENAPI_YAML } from "./embedded-assets.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import {
@@ -187,10 +187,8 @@ function handleAudit(url: URL, db: Database): Response {
   return json({ data: rows, meta: { total: rows.length, limit: lim, offset: 0 } });
 }
 
-const OPENAPI_YAML_PATH = resolve(import.meta.dir, "..", "..", "openapi", "v1.yaml");
-
 function handleOpenApiJson(): Response {
-  const bytes = loadOpenApiJsonBytes(OPENAPI_YAML_PATH);
+  const bytes = loadOpenApiJsonBytes(EMBEDDED_OPENAPI_YAML);
   return new Response(bytes, {
     status: 200,
     headers: { "content-type": "application/json; charset=utf-8" },
@@ -334,8 +332,15 @@ async function handleAdminConsole(
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
-  const dist = resolveConsoleDist(import.meta.dir);
-  if (dist === undefined) {
+  const rel = safeAssetPath(url.pathname);
+  if (rel === undefined) {
+    return new Response("bad request\n", {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const asset = resolveConsoleAsset(rel);
+  if (asset.kind === "not-built") {
     return new Response(
       "admin console not built — run: bun --filter @nimbus-dev/admin-console build\n",
       {
@@ -344,18 +349,10 @@ async function handleAdminConsole(
       },
     );
   }
-  const rel = safeAssetPath(url.pathname);
-  if (rel === undefined) {
-    return new Response("bad request\n", {
-      status: 400,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
-  const file = Bun.file(join(dist, rel));
-  if (!(await file.exists())) {
+  if (asset.kind === "not-found") {
     return new Response("Not Found", { status: 404 });
   }
-  return new Response(file, { headers: { "content-type": contentTypeFor(rel) } });
+  return new Response(Bun.file(asset.path), { headers: { "content-type": contentTypeFor(rel) } });
 }
 
 // Read-only data routes (no bearer gate, never fall through). Returns null when `path` matches no

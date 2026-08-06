@@ -137,6 +137,22 @@ describe("resolveConsoleAsset — dev tree", () => {
     expect(resolveConsoleAsset("main.js", devDeps(undefined))).toEqual({ kind: "not-built" });
   });
 
+  test("the zero-argument call reads NIMBUS_ADMIN_CONSOLE_DIST at call time, not at import", () => {
+    const key = "NIMBUS_ADMIN_CONSOLE_DIST";
+    const prev = process.env[key];
+    try {
+      // The default deps are rebuilt per call; a module-scope snapshot would miss this assignment
+      // because the module was imported long before it.
+      process.env[key] = dist;
+      expect(resolveConsoleAsset("main.js")).toEqual({ kind: "file", path: join(dist, "main.js") });
+      process.env[key] = join(tmp, "nothing-here");
+      expect(resolveConsoleAsset("main.js")).toEqual({ kind: "not-built" });
+    } finally {
+      if (prev === undefined) delete process.env[key];
+      else process.env[key] = prev;
+    }
+  });
+
   test("an empty asset map with no override is not-built", () => {
     expect(
       resolveConsoleAsset("main.js", {

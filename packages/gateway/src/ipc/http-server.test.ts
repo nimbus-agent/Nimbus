@@ -27,7 +27,7 @@ function makeEmptyDb(dbPath: string, targetVersion = 28): void {
 
 /** Path to the real built admin-console dist (packages/admin-console/dist). */
 function builtConsoleDist(): string {
-  // A self-contained dummy "built" console (index.html present) so resolveConsoleDist() resolves
+  // A self-contained dummy "built" console (index.html present) so resolveConsoleAsset() resolves
   // on CI regardless of whether the real packages/admin-console/dist was built — the previous
   // version pointed at the real dist, which is absent on CI runners → the route returned 503
   // (not-built) instead of reaching the safeAssetPath traversal-rejection branch under test.
@@ -661,7 +661,7 @@ describe("startReadOnlyHttpServer — admin console assets (/admin/*)", () => {
   });
 
   it("GET /admin returns 503 with a valid bearer when the console is not built", async () => {
-    // Force resolveConsoleDist → undefined by pointing the override at a path with no index.html.
+    // Force the not-built result by pointing the override at a path with no index.html.
     process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = join(tmpDir, "no-console-here");
     handle = startReadOnlyHttpServer(dbPath, 0, {
       statusReaders: STATUS_READERS,
@@ -675,7 +675,7 @@ describe("startReadOnlyHttpServer — admin console assets (/admin/*)", () => {
   });
 
   it("rejects encoded-slash traversal (/admin/..%2f..%2fetc) with 400 under a valid bearer", async () => {
-    // Point the override at a real built dist so resolveConsoleDist resolves, exercising the
+    // Point the override at a real built dist so the asset resolves, exercising the
     // safeAssetPath traversal rejection (400) rather than the 503 not-built branch.
     process.env["NIMBUS_ADMIN_CONSOLE_DIST"] = builtConsoleDist();
     handle = startReadOnlyHttpServer(dbPath, 0, {
