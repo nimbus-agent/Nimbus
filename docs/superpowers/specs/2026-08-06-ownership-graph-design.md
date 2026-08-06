@@ -219,8 +219,21 @@ Rollups aggregate **weighted line totals, then divide** — never an average of 
 per-file shares would weight a 3-line file the same as a 3,000-line one.
 
 **Emission threshold.** An edge is emitted for owners with `share ≥ 0.05`, capped at the top 10
-by share. Both the applied threshold and the **true owner count before truncation** are written
-to edge metadata, so truncation is observable rather than silent.
+by share. The share itself is the edge's `weight`.
+
+The **true owner count before truncation** is recorded on the *target entity's* metadata
+(`source_file` / `directory`), not on the edge. `upsertGraphRelation`
+(`graph/relationship-graph.ts:102`) accepts `weight` but has **no metadata parameter**, and
+nothing in the gateway reads `graph_relation.metadata` today. Extending that shared helper to
+carry per-edge metadata would be a change to a populator-wide primitive for one caller's benefit;
+recording it on the entity avoids that and is the better model anyway — "this file has 23 owners
+and we show the top 10" is a fact about the file, not about any one of its edges. Entity
+metadata carries `{ownerCount, truncated, totalWeightedLines}`, and `upsertGraphEntity` already
+accepts it.
+
+Per-`(person, path)` line counts are therefore deliberately **not** stored. `weight` is
+sufficient to rank owners, and a consumer needing raw counts can recompute from `git_blame_line`.
+This keeps the promise that `packages/gateway/src/graph/` needs no edits.
 
 Capping is safe here in a way it explicitly was not for `correlates_with`: the comment on
 `timelineCounterparts` (`graph/graph-populator.ts:624`) warns that truncating after a full clear
