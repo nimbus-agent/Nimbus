@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
-import { listClipFingerprints, revokeClipToken } from "../clips/clip-token-store.ts";
+import { API_SCOPES, type ApiScope, isApiScope, LEGACY_SCOPES } from "../clips/api-scopes.ts";
+import { listApiTokens, revokeClipToken, setApiTokenScopes } from "../clips/clip-token-store.ts";
 import type { PairingWindowController } from "../clips/pairing-window.ts";
 import { buildItemListSql } from "../index/item-list-query.ts";
 import { deleteItemByPrimaryKey } from "../index/item-store.ts";
@@ -130,6 +131,37 @@ function resolveClipIdsToDelete(db: Database, rec: Record<string, unknown>): str
     : clipIdsByCanonicalUrl(db, canonicalizeUrl(target));
 }
 
+/**
+ * Reads an OPERATOR-supplied scope list, rejecting anything unrecognised.
+ *
+ * Absent (`undefined`) means "I did not specify", and defaults to LEGACY_SCOPES. Everything else
+ * is a statement, and a statement that cannot be honoured is refused rather than reinterpreted:
+ * `--scopes telepathy` silently becoming `clip,briefs` would hand an operator who asked for
+ * something narrow the default set instead — a silent over-grant, which is the exact failure this
+ * whole change exists to prevent. An empty array is likewise refused rather than guessed at.
+ *
+ * NOTE the deliberate asymmetry with `parseEntry` in clip-token-store.ts, which DROPS unknown
+ * scopes silently. Different source, different policy: a stored record may come from a newer
+ * binary and must degrade closed without failing the load, whereas operator input is a typo and
+ * deserves an error naming the valid set.
+ */
+function readScopes(v: unknown): readonly ApiScope[] {
+  if (v === undefined) return LEGACY_SCOPES;
+  if (!Array.isArray(v)) {
+    throw new Error(`scopes must be an array of: ${API_SCOPES.join(", ")}`);
+  }
+  const invalid = v.filter((s) => !isApiScope(s));
+  if (invalid.length > 0) {
+    throw new Error(
+      `unknown scope(s): ${invalid.map((s) => String(s)).join(", ")} — valid scopes are: ${API_SCOPES.join(", ")}`,
+    );
+  }
+  if (v.length === 0) {
+    throw new Error(`scopes must name at least one of: ${API_SCOPES.join(", ")}`);
+  }
+  return v as readonly ApiScope[];
+}
+
 function handleClipPair(params: unknown, deps: ClipRpcDeps): unknown {
   const rec = asRecord(params);
   // Random suffix, NOT a memory-only counter: a counter resets to 0 on gateway restart and a
@@ -138,18 +170,29 @@ function handleClipPair(params: unknown, deps: ClipRpcDeps): unknown {
     typeof rec["label"] === "string" && rec["label"].length > 0
       ? (rec["label"] as string)
       : `device-${randomBytes(3).toString("hex")}`;
-  const { code, expiresAtMs } = deps.pairing.open(label);
+  const scopes = readScopes(rec["scopes"]);
+  const { code, expiresAtMs } = deps.pairing.open(label, scopes);
   return {
     code,
     expiresAtMs,
     label,
+    scopes: [...scopes],
     ...(deps.httpBaseUrl === undefined ? {} : { gatewayUrl: deps.httpBaseUrl }),
   };
 }
 
 async function handleClipStatus(_params: unknown, deps: ClipRpcDeps): Promise<unknown> {
-  const devices = await listClipFingerprints(deps.vault);
+  const devices = await listApiTokens(deps.vault);
   return { devices, briefsEnabled: deps.briefsEnabled };
+}
+
+async function handleClipScopes(params: unknown, deps: ClipRpcDeps): Promise<unknown> {
+  const rec = asRecord(params);
+  const label = typeof rec["label"] === "string" ? (rec["label"] as string) : "";
+  if (label === "") return { updated: false, scopes: [] };
+  const scopes = readScopes(rec["scopes"]);
+  const updated = await setApiTokenScopes(deps.vault, label, scopes);
+  return { updated, scopes: updated ? [...scopes] : [] };
 }
 
 async function handleClipRevoke(params: unknown, deps: ClipRpcDeps): Promise<unknown> {
@@ -185,6 +228,7 @@ function handleClipDelete(params: unknown, deps: ClipRpcDeps): unknown {
 const CLIP_RPC_HANDLERS: RpcMethodHandlerMap<ClipRpcDeps> = {
   "clip.pair": handleClipPair,
   "clip.status": handleClipStatus,
+  "clip.scopes": handleClipScopes,
   "clip.revoke": handleClipRevoke,
   "clip.list": handleClipList,
   "clip.delete": handleClipDelete,

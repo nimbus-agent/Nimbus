@@ -10,11 +10,13 @@ import {
   formatClipList,
   formatStatus,
   parseLimit,
+  parseScopesFlag,
   runClip,
   runClipDelete,
   runClipList,
   runClipPair,
   runClipRevoke,
+  runClipScopes,
   runClipStatus,
 } from "./clip.ts";
 
@@ -30,7 +32,7 @@ afterAll(() => {
 
 describe("clip CLI formatting", () => {
   test("formatStatus lists labels + fingerprints", () => {
-    const result = formatStatus([{ label: "chrome", fingerprint: "abcd1234" }]);
+    const result = formatStatus([{ label: "chrome", fingerprint: "abcd1234", scopes: ["clip"] }]);
     expect(result).toContain("chrome");
     expect(result).toContain("abcd1234");
   });
@@ -47,13 +49,21 @@ describe("clip CLI formatting", () => {
 
   test("formatStatus formats multiple devices", () => {
     const result = formatStatus([
-      { label: "chrome", fingerprint: "abcd1234" },
-      { label: "firefox", fingerprint: "ef567890" },
+      { label: "chrome", fingerprint: "abcd1234", scopes: ["clip", "briefs"] },
+      { label: "firefox", fingerprint: "ef567890", scopes: ["clip"] },
     ]);
     expect(result).toContain("chrome");
     expect(result).toContain("abcd1234");
     expect(result).toContain("firefox");
     expect(result).toContain("ef567890");
+  });
+
+  test("formatStatus shows each device's scopes", () => {
+    const out = formatStatus([
+      { label: "chrome", fingerprint: "abcd1234", scopes: ["clip", "briefs"] },
+    ]);
+    expect(out).toContain("chrome");
+    expect(out).toContain("clip,briefs");
   });
 
   test("formatBriefsLine reports enabled", () => {
@@ -62,6 +72,24 @@ describe("clip CLI formatting", () => {
 
   test("formatBriefsLine reports disabled with the how-to-enable hint", () => {
     expect(formatBriefsLine(false)).toBe("briefs: disabled (enable [briefs] in nimbus.toml)");
+  });
+});
+
+describe("parseScopesFlag", () => {
+  test("splits a comma list and trims", () => {
+    expect(parseScopesFlag("clip, agents")).toEqual(["clip", "agents"]);
+    expect(parseScopesFlag(undefined)).toBeUndefined();
+  });
+
+  test("does NOT validate names — the gateway is the only validator", () => {
+    // A second copy of the scope vocabulary in the CLI would drift from the gateway's.
+    expect(parseScopesFlag("telepathy")).toEqual(["telepathy"]);
+  });
+
+  test("an explicitly empty --scopes yields [] so the gateway can refuse it", () => {
+    // NOT undefined: passing the flag is a statement, and "unspecified" is a different thing.
+    expect(parseScopesFlag("")).toEqual([]);
+    expect(parseScopesFlag("  ,  ")).toEqual([]);
   });
 });
 
@@ -127,6 +155,57 @@ describe("runClipPair", () => {
     expect(out.stdout).toMatch(/no HTTP port/i);
     expect(out.stdout).toContain("nimbus serve --port");
   });
+
+  it("sends scopes when provided", async () => {
+    const { client, calls } = createMockIpcClient([
+      {
+        code: "ABC123",
+        expiresAtMs: Date.now() + 120_000,
+        label: "chrome",
+        scopes: ["clip", "agents"],
+      },
+    ]);
+    await runClipPair(client, "chrome", ["clip", "agents"]);
+    expect(calls[0]).toEqual({
+      method: "clip.pair",
+      params: { label: "chrome", scopes: ["clip", "agents"] },
+    });
+  });
+
+  it("omits scopes from params when not provided", async () => {
+    const { client, calls } = createMockIpcClient([
+      { code: "ABC123", expiresAtMs: Date.now() + 120_000, label: "chrome" },
+    ]);
+    await runClipPair(client, "chrome");
+    expect(calls[0]).toEqual({ method: "clip.pair", params: { label: "chrome" } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runClipScopes
+// ---------------------------------------------------------------------------
+
+describe("runClipScopes", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("calls clip.scopes and prints the updated set", async () => {
+    const { client, calls } = createMockIpcClient([{ updated: true, scopes: ["clip", "agents"] }]);
+    await runClipScopes(client, "chrome", ["clip", "agents"]);
+    expect(calls[0]).toEqual({
+      method: "clip.scopes",
+      params: { label: "chrome", scopes: ["clip", "agents"] },
+    });
+    expect(out.stdout).toContain('Scopes for "chrome" are now: clip,agents');
+  });
+
+  it("throws when the label is unknown", async () => {
+    const { client } = createMockIpcClient([{ updated: false, scopes: [] }]);
+    await expect(runClipScopes(client, "nope", ["clip"])).rejects.toThrow(
+      'No paired client labelled "nope"',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -140,7 +219,10 @@ describe("runClipStatus", () => {
 
   it("calls clip.status and prints formatted device list", async () => {
     const { client, calls } = createMockIpcClient([
-      { devices: [{ label: "chrome", fingerprint: "abcd1234" }], briefsEnabled: true },
+      {
+        devices: [{ label: "chrome", fingerprint: "abcd1234", scopes: ["clip", "briefs"] }],
+        briefsEnabled: true,
+      },
     ]);
     await runClipStatus(client);
     expect(calls).toHaveLength(1);
@@ -256,9 +338,51 @@ describe("runClip (dispatcher)", () => {
     expect(ipc.calls[0]).toEqual({ method: "clip.pair", params: { label: "work" } });
   });
 
+  it("routes 'pair --scopes <a,b>' through withIpc with parsed scopes", async () => {
+    const ipc = createMockIpcClient([
+      { code: "P4242", expiresAtMs: Date.now() + 120_000, label: "work", scopes: ["clip"] },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runClip(["pair", "--label", "work", "--scopes", "clip,agents"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "clip.pair",
+      params: { label: "work", scopes: ["clip", "agents"] },
+    });
+  });
+
+  it("routes 'scopes <label> --set <a,b>' through withIpc", async () => {
+    const ipc = createMockIpcClient([{ updated: true, scopes: ["clip", "agents"] }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runClip(["scopes", "chrome", "--set", "clip,agents"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "clip.scopes",
+      params: { label: "chrome", scopes: ["clip", "agents"] },
+    });
+    expect(out.stdout).toContain("clip,agents");
+  });
+
+  it("throws usage for 'scopes' without a label", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runClip(["scopes"])).rejects.toThrow("Usage: nimbus clip scopes");
+  });
+
+  it("throws usage for 'scopes <label>' without --set", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runClip(["scopes", "chrome"])).rejects.toThrow("Usage: nimbus clip scopes");
+  });
+
   it("routes 'status' through withIpc", async () => {
     const ipc = createMockIpcClient([
-      { devices: [{ label: "chrome", fingerprint: "ff00" }], briefsEnabled: false },
+      {
+        devices: [{ label: "chrome", fingerprint: "ff00", scopes: ["clip"] }],
+        briefsEnabled: false,
+      },
     ]);
     setFixture({
       gatewayState: { socketPath: FAKE_SOCKET_PATH },

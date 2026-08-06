@@ -31,7 +31,12 @@ describe("dispatchClipRpc", () => {
     const out = await dispatchClipRpc("clip.pair", { label: "chrome" }, d);
     expect(out).toEqual({
       kind: "hit",
-      value: { code: "654321", expiresAtMs: 1000 + 120_000, label: "chrome" },
+      value: {
+        code: "654321",
+        expiresAtMs: 1000 + 120_000,
+        label: "chrome",
+        scopes: ["clip", "briefs"],
+      },
     });
     expect(d.pairing.isOpen()).toBe(true);
   });
@@ -45,9 +50,100 @@ describe("dispatchClipRpc", () => {
         code: "654321",
         expiresAtMs: 1000 + 120_000,
         label: "chrome",
+        scopes: ["clip", "briefs"],
         gatewayUrl: "http://127.0.0.1:7474",
       },
     });
+  });
+
+  test("clip.pair with no scopes opens the window with LEGACY_SCOPES", async () => {
+    // ABSENT is a decision — an operator who did not think about scopes gets today's capability,
+    // never tomorrow's. MISSPELLED is NOT a decision; see the next tests.
+    const d = deps();
+    const out = await dispatchClipRpc("clip.pair", { label: "chrome" }, d);
+    expect(out).toEqual({
+      kind: "hit",
+      value: {
+        code: "654321",
+        expiresAtMs: 1000 + 120_000,
+        label: "chrome",
+        scopes: ["clip", "briefs"],
+      },
+    });
+  });
+
+  test("clip.pair carries an explicit scope list onto the window", async () => {
+    const d = deps();
+    await dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["clip", "agents"] }, d);
+    expect(d.pairing.confirm("654321")).toEqual({
+      label: "chrome",
+      scopes: ["clip", "agents"],
+    });
+  });
+
+  test("clip.pair REJECTS an unrecognised scope instead of dropping it", async () => {
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["clip", "telepathy"] }, d),
+    ).rejects.toThrow(/telepathy/);
+    // Nothing was minted, and no window was opened on a request we refused.
+    expect(d.pairing.isOpen()).toBe(false);
+  });
+
+  test("clip.pair rejects a wholly-invalid list rather than falling back to LEGACY_SCOPES", async () => {
+    // The silent-over-grant guard: ["telepathy"] must NOT become ["clip","briefs"]. An operator
+    // asking for something narrow and being handed the default set is the failure this change
+    // exists to prevent.
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["telepathy"] }, d),
+    ).rejects.toThrow(/telepathy/);
+    expect(d.pairing.isOpen()).toBe(false);
+  });
+
+  test("clip.pair rejects an explicitly EMPTY scope list", async () => {
+    // `[]` is an operator statement, not an omission. Refuse rather than guess between
+    // "no capability" and "default capability".
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: [] }, d),
+    ).rejects.toThrow();
+    expect(d.pairing.isOpen()).toBe(false);
+  });
+
+  test("clip.scopes updates an existing label and reports the stored set", async () => {
+    const d = {
+      ...deps(),
+      vault: fakeVault({
+        "http_api.web_clipper_tokens": JSON.stringify({ chrome: { token: "t", scopes: ["clip"] } }),
+      }),
+    };
+    const out = await dispatchClipRpc(
+      "clip.scopes",
+      { label: "chrome", scopes: ["clip", "agents"] },
+      d,
+    );
+    expect(out).toEqual({ kind: "hit", value: { updated: true, scopes: ["clip", "agents"] } });
+  });
+
+  test("clip.scopes on an unknown label reports updated:false", async () => {
+    const d = deps();
+    const out = await dispatchClipRpc("clip.scopes", { label: "nope", scopes: ["clip"] }, d);
+    expect(out).toEqual({ kind: "hit", value: { updated: false, scopes: [] } });
+  });
+
+  test("clip.status reports each device's scopes, and a LEGACY entry reads as clip+briefs", async () => {
+    const d = {
+      ...deps(),
+      vault: fakeVault({
+        "http_api.web_clipper_tokens": JSON.stringify({ chrome: "legacy-token" }),
+      }),
+    };
+    const out = (await dispatchClipRpc("clip.status", {}, d)) as {
+      kind: string;
+      value: { devices: Array<{ label: string; scopes: string[] }> };
+    };
+    expect(out.value.devices[0]?.scopes).toEqual(["clip", "briefs"]);
   });
 
   test("clip.pair omits gatewayUrl when httpBaseUrl is absent", async () => {

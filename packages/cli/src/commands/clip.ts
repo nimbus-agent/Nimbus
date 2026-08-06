@@ -8,16 +8,41 @@ function clipCount(n: number): string {
 }
 
 export const CLIP_USAGE = `Usage:
-  nimbus clip pair [--label <device>]   open a pairing window and print the one-time code
-  nimbus clip status                    list paired browsers (labels + token fingerprints)
+  nimbus clip pair [--label <device>] [--scopes <a,b>]   open a pairing window and print the one-time code
+  nimbus clip scopes <label> --set <a,b>                 change a paired client's scopes in place
+  nimbus clip status                    list paired browsers (labels + fingerprints + scopes)
                                          and whether research briefs are enabled
   nimbus clip revoke <label|--all>      revoke a paired browser's token
   nimbus clip list [--tag <t>] [--limit N] [--json]   list saved clips
-  nimbus clip delete <id|url> | --all [--yes]         delete clips`;
+  nimbus clip delete <id|url> | --all [--yes]         delete clips
 
-export function formatStatus(devices: Array<{ label: string; fingerprint: string }>): string {
+Scopes: clip, briefs, agents, resolve, fetch (default: clip,briefs)`;
+
+export function formatStatus(
+  devices: Array<{ label: string; fingerprint: string; scopes: readonly string[] }>,
+): string {
   if (devices.length === 0) return "No clipper tokens registered.";
-  return devices.map((d) => `  ${d.label}\t${d.fingerprint}`).join("\n");
+  return devices.map((d) => `  ${d.label}\t${d.fingerprint}\t${d.scopes.join(",")}`).join("\n");
+}
+
+/**
+ * `--scopes clip,agents` → ["clip","agents"]. Undefined only when the flag is ABSENT.
+ *
+ * Deliberately does NOT validate the names. `packages/cli` may not import gateway source, so
+ * validating here would mean a second copy of the scope vocabulary that agrees with the gateway
+ * on the day it is written and drifts thereafter — the mirrored-contract failure that put four
+ * wrong param shapes into #1059. The gateway is the single validator; its error names the valid
+ * set, and this command prints it.
+ *
+ * `--scopes ""` yields `[]`, not `undefined`: an operator who passed the flag said something, and
+ * the gateway refuses an empty list rather than quietly treating it as "unspecified".
+ */
+export function parseScopesFlag(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
 }
 
 /** The `briefs: ...` discoverability line — one command from where pairing is managed. */
@@ -40,15 +65,23 @@ async function withIpc<T>(fn: (c: IPCClient) => Promise<T>): Promise<T> {
   }
 }
 
-export async function runClipPair(client: IPCClient, label: string | undefined): Promise<void> {
-  const params: { label?: string } = {};
+export async function runClipPair(
+  client: IPCClient,
+  label: string | undefined,
+  scopes?: string[],
+): Promise<void> {
+  const params: { label?: string; scopes?: string[] } = {};
   if (label !== undefined) {
     params.label = label;
+  }
+  if (scopes !== undefined) {
+    params.scopes = scopes;
   }
   const out = await client.call<{
     code: string;
     expiresAtMs: number;
     label: string;
+    scopes: string[];
     gatewayUrl?: string;
   }>("clip.pair", params);
   console.log(`Pairing "${out.label}" — in the browser extension's Options page, enter:`);
@@ -67,7 +100,7 @@ export async function runClipPair(client: IPCClient, label: string | undefined):
 
 export async function runClipStatus(client: IPCClient): Promise<void> {
   const out = await client.call<{
-    devices: Array<{ label: string; fingerprint: string }>;
+    devices: Array<{ label: string; fingerprint: string; scopes: readonly string[] }>;
     briefsEnabled: boolean;
   }>("clip.status", {});
   console.log(formatStatus(out.devices));
@@ -77,6 +110,21 @@ export async function runClipStatus(client: IPCClient): Promise<void> {
 export async function runClipRevoke(client: IPCClient, label: string): Promise<void> {
   const out = await client.call<{ revoked: number }>("clip.revoke", { label });
   console.log(`Revoked ${out.revoked} token(s).`);
+}
+
+export async function runClipScopes(
+  client: IPCClient,
+  label: string,
+  scopes: string[],
+): Promise<void> {
+  const out = await client.call<{ updated: boolean; scopes: string[] }>("clip.scopes", {
+    label,
+    scopes,
+  });
+  if (!out.updated) {
+    throw new Error(`No paired client labelled "${label}". See: nimbus clip status`);
+  }
+  console.log(`Scopes for "${label}" are now: ${out.scopes.join(",")}`);
 }
 
 export interface ClipListEntry {
@@ -170,7 +218,19 @@ export async function runClip(args: string[]): Promise<void> {
     case "pair": {
       const i = rest.indexOf("--label");
       const label = i >= 0 ? rest[i + 1] : undefined;
-      await withIpc((c) => runClipPair(c, label));
+      const s = rest.indexOf("--scopes");
+      const scopes = parseScopesFlag(s >= 0 ? rest[s + 1] : undefined);
+      await withIpc((c) => runClipPair(c, label, scopes));
+      return;
+    }
+    case "scopes": {
+      const label = rest[0];
+      const s = rest.indexOf("--set");
+      const scopes = parseScopesFlag(s >= 0 ? rest[s + 1] : undefined);
+      if (label === undefined || label.startsWith("--") || scopes === undefined) {
+        throw new Error("Usage: nimbus clip scopes <label> --set <a,b>");
+      }
+      await withIpc((c) => runClipScopes(c, label, scopes));
       return;
     }
     case "status":
