@@ -124,6 +124,22 @@ jobs:
         # "it parses" is not sufficient validation.
         run: bun run audit:workflow-lint
 
+      # The three audits below guard the compiled binary. They shipped into the local preflight
+      # manifest but no workflow ran them, so nothing gated a contributor's PR on them.
+      - name: Connector entrypoint contract (bundled-registry startability)
+        # A connector guarding startup with import.meta.main is invisible to the bundled registry:
+        # the guard is false under an import, so it loads, starts nothing and exits 0 in silence.
+        run: bun run audit:connector-entrypoints
+
+      - name: Connector dependency allowlist (pure JS only — the binary bundles them)
+        run: bun run audit:connector-deps
+
+      - name: import.meta path confinement (compiled-binary asset resolution)
+        # A source-tree-relative path derived from import.meta.dir resolves inside the read-only
+        # bunfs root in a compiled binary. Two such sites made the admin console and the OpenAPI
+        # route unreachable in every released binary.
+        run: bun run audit:import-meta-dir
+
       - name: regen-slo drift check
         run: bun run regen-slo:check
 
