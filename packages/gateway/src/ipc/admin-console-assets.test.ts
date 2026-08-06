@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { contentTypeFor, resolveConsoleDist, safeAssetPath } from "./admin-console-assets.ts";
+import {
+  type ConsoleAssetDeps,
+  contentTypeFor,
+  resolveConsoleAsset,
+  safeAssetPath,
+} from "./admin-console-assets.ts";
 
 describe("admin-console-assets", () => {
   test("maps extensions to content types", () => {
@@ -20,45 +25,126 @@ describe("admin-console-assets", () => {
   });
 });
 
-describe("resolveConsoleDist", () => {
-  const KEY = "NIMBUS_ADMIN_CONSOLE_DIST";
-  let prev: string | undefined;
+describe("resolveConsoleAsset — compiled binary", () => {
+  const deps: ConsoleAssetDeps = {
+    compiled: true,
+    assets: { "index.html": "/$bunfs/root/index-a.html", "main.js": "/$bunfs/root/main-b.js" },
+    distOverride: "/tmp/attacker-controlled",
+    exists: () => true,
+  };
+
+  test("serves a mapped asset", () => {
+    expect(resolveConsoleAsset("index.html", deps)).toEqual({
+      kind: "file",
+      path: "/$bunfs/root/index-a.html",
+    });
+  });
+
+  test("an unmapped name misses — there is no directory to walk", () => {
+    expect(resolveConsoleAsset("styles.css", deps)).toEqual({ kind: "not-found" });
+  });
+
+  test("inherited Object keys are not assets", () => {
+    expect(resolveConsoleAsset("constructor", deps)).toEqual({ kind: "not-found" });
+    expect(resolveConsoleAsset("__proto__", deps)).toEqual({ kind: "not-found" });
+    expect(resolveConsoleAsset("toString", deps)).toEqual({ kind: "not-found" });
+  });
+
+  test("the dist override is ignored when compiled", () => {
+    expect(resolveConsoleAsset("main.js", deps)).toEqual({
+      kind: "file",
+      path: "/$bunfs/root/main-b.js",
+    });
+  });
+
+  test("an own key whose value is undefined is not-found", () => {
+    const holey: ConsoleAssetDeps = {
+      ...deps,
+      assets: Object.assign(Object.create(null) as Record<string, string>, {
+        "index.html": undefined as unknown as string,
+      }),
+    };
+    expect(resolveConsoleAsset("index.html", holey)).toEqual({ kind: "not-found" });
+  });
+
+  test("never reports not-built when compiled — the assets are in the executable", () => {
+    expect(resolveConsoleAsset("index.html", { ...deps, assets: {} })).toEqual({
+      kind: "not-found",
+    });
+  });
+});
+
+describe("resolveConsoleAsset — dev tree", () => {
   let tmp: string;
+  let dist: string;
 
   beforeEach(() => {
-    prev = process.env[KEY];
     tmp = mkdtempSync(join(tmpdir(), "nimbus-console-"));
+    dist = join(tmp, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "index.html"), "<!doctype html>");
+    writeFileSync(join(dist, "main.js"), "export {};");
   });
   afterEach(() => {
-    if (prev === undefined) delete process.env[KEY];
-    else process.env[KEY] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test("override present + index.html exists returns the override (line 32 true / line 33 true side)", () => {
-    writeFileSync(join(tmp, "index.html"), "<!doctype html>");
-    process.env[KEY] = tmp;
-    expect(resolveConsoleDist("/whatever/ipc")).toBe(tmp);
+  function devDeps(distOverride: string | undefined): ConsoleAssetDeps {
+    return {
+      compiled: false,
+      assets: { "index.html": join(dist, "index.html") },
+      distOverride,
+      exists: existsSync,
+    };
+  }
+
+  test("serves from the dist directory derived from the embedded index.html", () => {
+    expect(resolveConsoleAsset("main.js", devDeps(undefined))).toEqual({
+      kind: "file",
+      path: join(dist, "main.js"),
+    });
   });
 
-  test("override present but no index.html returns undefined (line 33 false side)", () => {
-    process.env[KEY] = tmp; // empty dir
-    expect(resolveConsoleDist("/whatever/ipc")).toBeUndefined();
+  test("a missing file in a built dist is not-found", () => {
+    expect(resolveConsoleAsset("styles.css", devDeps(undefined))).toEqual({ kind: "not-found" });
   });
 
-  test("blank override is treated as absent → falls to default-dist resolution (line 32 false side)", () => {
-    process.env[KEY] = "   ";
-    // baseDir points nowhere real → default dist has no index.html → undefined (line 36 false side)
-    expect(resolveConsoleDist(join(tmp, "ipc"))).toBeUndefined();
+  test("an override with an index.html wins over the derived dist", () => {
+    const other = join(tmp, "other");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "index.html"), "<!doctype html>");
+    expect(resolveConsoleAsset("index.html", devDeps(other))).toEqual({
+      kind: "file",
+      path: join(other, "index.html"),
+    });
   });
 
-  test("no override + default dist has index.html returns it (line 36 true side)", () => {
-    delete process.env[KEY];
-    // Layout: baseDir = <root>/a/b/c so ../../../admin-console/dist = <root>/admin-console/dist
-    const dist = join(tmp, "admin-console", "dist");
-    mkdirSync(dist, { recursive: true });
-    writeFileSync(join(dist, "index.html"), "<!doctype html>");
-    const baseDir = join(tmp, "a", "b", "c");
-    expect(resolveConsoleDist(baseDir)).toBe(dist);
+  test("an override without an index.html is not-built", () => {
+    expect(resolveConsoleAsset("index.html", devDeps(join(tmp, "nothing-here")))).toEqual({
+      kind: "not-built",
+    });
+  });
+
+  test("a blank override is treated as absent", () => {
+    expect(resolveConsoleAsset("main.js", devDeps("   "))).toEqual({
+      kind: "file",
+      path: join(dist, "main.js"),
+    });
+  });
+
+  test("a dist whose index.html has gone missing is not-built", () => {
+    rmSync(join(dist, "index.html"));
+    expect(resolveConsoleAsset("main.js", devDeps(undefined))).toEqual({ kind: "not-built" });
+  });
+
+  test("an empty asset map with no override is not-built", () => {
+    expect(
+      resolveConsoleAsset("main.js", {
+        compiled: false,
+        assets: {},
+        distOverride: undefined,
+        exists: existsSync,
+      }),
+    ).toEqual({ kind: "not-built" });
   });
 });
