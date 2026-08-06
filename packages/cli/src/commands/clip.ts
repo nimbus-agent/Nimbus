@@ -219,7 +219,15 @@ export async function runClip(args: string[]): Promise<void> {
       const i = rest.indexOf("--label");
       const label = i >= 0 ? rest[i + 1] : undefined;
       const s = rest.indexOf("--scopes");
-      const scopes = parseScopesFlag(s >= 0 ? rest[s + 1] : undefined);
+      const scopesRaw = s >= 0 ? rest[s + 1] : undefined;
+      // A PRESENT but valueless (or flag-shaped) --scopes is a usage error, not "flag omitted".
+      // parseScopesFlag(undefined) reads as "the operator did not ask for scopes at all" and the
+      // gateway grants the legacy clip+briefs set — the exact silent-grant this design exists to
+      // prevent, now happening to an operator who explicitly typed --scopes.
+      if (s >= 0 && (scopesRaw === undefined || scopesRaw.startsWith("--"))) {
+        throw new Error("Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]");
+      }
+      const scopes = parseScopesFlag(scopesRaw);
       await withIpc((c) => runClipPair(c, label, scopes));
       return;
     }

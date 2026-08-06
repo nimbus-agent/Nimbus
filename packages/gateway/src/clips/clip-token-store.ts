@@ -47,17 +47,34 @@ function parseEntry(v: unknown): ApiTokenRecord | null {
   return { token: rec.token, scopes: rec.scopes.filter(isApiScope) };
 }
 
+/**
+ * A fresh, empty token map with NO prototype.
+ *
+ * A plain `{}` inherits `Object.prototype`, which owns an accessor property named `__proto__`.
+ * Assigning `map["__proto__"] = rec` on such an object does not create an own property called
+ * "__proto__" — it invokes that accessor's setter, which (for a non-object `rec`, or in general)
+ * does NOT store the record retrievably under the label "__proto__": `addApiToken(vault,
+ * "__proto__", …)` would report success while the token silently is not there on the next load
+ * (or, worse, corrupts the map's own prototype). `Object.create(null)` has no such accessor in its
+ * chain, so `map["__proto__"] = rec` becomes an ordinary own property, exactly like any other
+ * label — round-tripping correctly through `Object.keys`/`Object.entries`/`in`/JSON.stringify.
+ */
+function emptyTokenMap(): ApiTokenMap {
+  return Object.create(null) as ApiTokenMap;
+}
+
 export async function loadApiTokens(vault: NimbusVault): Promise<ApiTokenMap> {
   const raw = await vault.get(CLIP_TOKENS_VAULT_KEY);
-  if (raw === null || raw === "") return {};
+  if (raw === null || raw === "") return emptyTokenMap();
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return {};
+    return emptyTokenMap();
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  const out: Record<string, ApiTokenRecord> = {};
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return emptyTokenMap();
+  const out = emptyTokenMap();
   for (const [label, entry] of Object.entries(parsed as Record<string, unknown>)) {
     const rec = parseEntry(entry);
     if (rec !== null) out[label] = rec;

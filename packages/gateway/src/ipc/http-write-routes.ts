@@ -17,7 +17,7 @@ import { ScimError } from "../identity/scim-service.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts";
-import { clipScopeFor, hasScope, insufficientScopeBody } from "./http-route-auth.ts";
+import { enforceClipScope } from "./http-route-auth.ts";
 
 // Canonical allowlist keys ("<METHOD> <PATH>", exact-match for deployment; the `{id}` item routes
 // are matched by the SCIM regex below, never by string templating). Plain string literals (no
@@ -569,23 +569,31 @@ function checkRateLimit(
 }
 
 /**
- * Refuses an authenticated-but-unscoped caller with 403.
+ * Refuses an authenticated-but-unscoped caller with 403, or a misconfigured route with 500.
+ * Returns null only when the caller is genuinely allowed through.
  *
- * 403 rather than 401 deliberately: the token IS valid, so reporting 401 would send a client into
- * a re-pair loop that cannot fix anything. Returns null when the route needs no scope.
+ * 403 rather than 401 for a real scope gap, deliberately: the token IS valid, so reporting 401
+ * would send a client into a re-pair loop that cannot fix anything.
  *
  * Takes `route.key` — the STATIC route constant — never the raw request path. `clipScopeFor`
- * looks up the requirement by that literal key; a raw path (with the id substituted in) would
- * miss every templated key and silently wave the request through with no scope check at all.
+ * (via `enforceClipScope`) looks up the requirement by that literal key; a raw path (with the id
+ * substituted in) would miss every templated key and silently wave the request through with no
+ * scope check at all.
+ *
+ * EVERY caller of `scopeRefusal` is a clip-token-authenticated route — `runClipIngestRoute`
+ * (kind `clipIngest`) and `requireBriefAuth` (kinds `briefCreate`/`briefSource`/`briefRun`/
+ * `briefSave`) — so `enforceClipScope` returning "misconfigured" here means the table's entry for
+ * this key was removed or changed away from `kind: "clip"`, not that the route legitimately needs
+ * no scope. FAIL CLOSED (500), never treat that as "no refusal".
  */
 function scopeRefusal(
   routeKey: string,
   granted: readonly ApiScope[],
   limit: RateLimitCheck,
 ): Response | null {
-  const required = clipScopeFor(routeKey);
-  if (required === null || hasScope(granted, required)) return null;
-  return jsonResponse(insufficientScopeBody(required, granted), 403, rateLimitHeaders(limit));
+  const verdict = enforceClipScope(routeKey, granted);
+  if (verdict.ok) return null;
+  return jsonResponse(verdict.body, verdict.status, rateLimitHeaders(limit));
 }
 
 async function parseBody(
@@ -914,11 +922,14 @@ async function runClipIngestRoute(
   }
   const refusal = scopeRefusal(route.key, verdict.scopes, limit);
   if (refusal !== null) {
+    // refusal.status is either 403 (real scope gap) or 500 (HTTP_ROUTE_AUTH entry for this key
+    // is misconfigured — see scopeRefusal). Record whichever actually happened, not a hardcoded
+    // 403/insufficient_scope that would mislabel a table misconfiguration as a client error.
     recordRejection(ctx, {
       actionType: CLIP_REJECT_ACTION,
       tokenFingerprint: fingerprint,
-      resultCode: 403,
-      reason: "insufficient_scope",
+      resultCode: refusal.status,
+      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
     });
     return refusal;
   }
@@ -1005,11 +1016,13 @@ async function requireBriefAuth(
   }
   const refusal = scopeRefusal(route.key, verdict.scopes, limit);
   if (refusal !== null) {
+    // See the twin comment in runClipIngestRoute: refusal.status is 403 or 500, and the recorded
+    // reason must match which one actually happened.
     recordRejection(ctx, {
       actionType: route.rejectAction,
       tokenFingerprint: fingerprint,
-      resultCode: 403,
-      reason: "insufficient_scope",
+      resultCode: refusal.status,
+      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
     });
     return refusal;
   }

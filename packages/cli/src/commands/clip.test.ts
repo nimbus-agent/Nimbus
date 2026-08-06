@@ -353,6 +353,34 @@ describe("runClip (dispatcher)", () => {
     });
   });
 
+  it("throws usage for 'pair --scopes' with no following value", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runClip(["pair", "--scopes"])).rejects.toThrow(
+      "Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]",
+    );
+  });
+
+  it("throws usage for 'pair --scopes' immediately followed by another flag", async () => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    // --scopes with no value, followed by --label: rest[s+1] is "--label", which would otherwise
+    // be silently consumed as the (nonsensical) scope list "--label".
+    await expect(runClip(["pair", "--scopes", "--label", "work"])).rejects.toThrow(
+      "Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]",
+    );
+  });
+
+  it("does NOT throw for 'pair' with no --scopes flag at all (flag genuinely omitted)", async () => {
+    const ipc = createMockIpcClient([
+      { code: "P0001", expiresAtMs: Date.now() + 120_000, label: "browser" },
+    ]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+    });
+    await runClip(["pair"]);
+    expect(ipc.calls[0]).toEqual({ method: "clip.pair", params: {} });
+  });
+
   it("routes 'scopes <label> --set <a,b>' through withIpc", async () => {
     const ipc = createMockIpcClient([{ updated: true, scopes: ["clip", "agents"] }]);
     setFixture({

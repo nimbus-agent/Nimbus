@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
   clipScopeFor,
+  enforceClipScope,
   HTTP_ROUTE_AUTH,
   hasScope,
   insufficientScopeBody,
@@ -136,14 +137,32 @@ describe("http-route-auth", () => {
   });
 
   test("no route is matched by a form the scanner cannot see", async () => {
-    // The scanner reads two forms: `path === "…"` and `path.startsWith("…")`. Any OTHER way of
-    // matching a path is invisible to it, which would make the completeness guard fail OPEN for
-    // that route — it would pass while protecting nothing.
+    // The scanner reads two forms — `path === "…"` and `path.startsWith("…")` — and only on
+    // `path`/`url.pathname`, and only double-quoted. Any OTHER way of matching a path is invisible
+    // to it, which would make the completeness guard fail OPEN for that route — it would pass
+    // while protecting nothing.
     //
     // So the unseen forms are themselves forbidden, with the known exceptions named. A comment
     // asking developers to remember this would not fail; this does.
     const src = await Bun.file(SERVER_SRC).text();
-    const UNSEEN_FORMS = [/path\.includes\(/, /path\.match\(/, /\.test\(path\)/];
+    const UNSEEN_FORMS = [
+      /path\.includes\(/,
+      /path\.match\(/,
+      /\.test\(path\)/,
+      // The scanner's regexes hardcode `path` — `url.pathname` matched the SAME way (`===` /
+      // `.includes`/`.match`/`.test`) is just as invisible. `/v1/clips/related` already matches on
+      // `url.pathname` directly (the `===`/`startsWith` forms of that ARE scanned — see
+      // `routeLiteralsInServer`'s doc comment — but the other four forms are not).
+      /url\.pathname\.includes\(/,
+      /url\.pathname\.match\(/,
+      /\.test\(url\.pathname\)/,
+      // Single-quoted route comparisons: `routeLiteralsInServer`'s regexes only match a
+      // double-quoted string literal (`"…"`). A route written `path === '/v1/whatever'` (or the
+      // `url.pathname` equivalent) would compile, run, and never appear in `tablePaths()`.
+      /(?:path|url\.pathname)\s*===\s*'\//,
+      // Template-literal route comparisons: same blind spot, backtick-delimited.
+      /(?:path|url\.pathname)\s*===\s*`\//,
+    ];
     for (const form of UNSEEN_FORMS) {
       expect(src).not.toMatch(form);
     }
@@ -182,5 +201,51 @@ describe("http-route-auth", () => {
     // is supposed to have one — just as dangerous as a wrong non-null on the negative cases above.
     expect(clipScopeFor("POST /v1/clips")).toBe("clip");
     expect(clipScopeFor("POST /v1/briefs")).toBe("briefs");
+  });
+
+  describe("enforceClipScope — fail-closed on a misconfigured table entry", () => {
+    // Every caller of enforceClipScope (requireScopedClipToken in http-server.ts, scopeRefusal in
+    // http-write-routes.ts) is ONLY ever invoked for a route it already knows is clip-authenticated.
+    // clipScopeFor returning null for such a key is therefore never "this route needs no scope" —
+    // it can only mean the HTTP_ROUTE_AUTH entry was removed, mistyped, or its `kind` was changed
+    // away from "clip" (e.g. flipped to `{kind:"public"}`). These tests prove enforceClipScope
+    // refuses (500) rather than allows in that situation — the exact regression this function
+    // exists to close: both former call sites read a null scope as "no refusal needed".
+    //
+    // "GET /v1/health" is a REAL table entry that is legitimately `{kind:"public"}` today. Its
+    // clipScopeFor() output — null — is byte-for-byte what a maliciously-flipped clip-kind entry
+    // would also produce, so exercising enforceClipScope against it is equivalent to flipping
+    // "POST /v1/clips" itself (verified directly below, and by hand during review — see the PR
+    // description's red-proof: temporarily changing "POST /v1/clips" to `{kind:"public"}` in
+    // HTTP_ROUTE_AUTH makes the "allows...POST /v1/clips" test below fail with ok:false/500).
+
+    test("a route key present but not clip-kind FAILS CLOSED (500), never allows", () => {
+      expect(HTTP_ROUTE_AUTH["GET /v1/health"]).toEqual({ kind: "public" });
+      const verdict = enforceClipScope("GET /v1/health", ["clip", "briefs", "agents"]);
+      expect(verdict).toEqual({ ok: false, status: 500, body: { error: "internal_error" } });
+    });
+
+    test("a route key absent from the table entirely FAILS CLOSED (500), never allows", () => {
+      const verdict = enforceClipScope("GET /v1/this-route-does-not-exist", ["clip"]);
+      expect(verdict).toEqual({ ok: false, status: 500, body: { error: "internal_error" } });
+    });
+
+    test("a sufficiently-scoped grant on a REAL clip-kind route key is allowed", () => {
+      // The positive control: without it, a version that fails closed on EVERY key (including
+      // real clip-kind ones) would pass the two tests above for the wrong reason.
+      expect(enforceClipScope("POST /v1/clips", ["clip"])).toEqual({ ok: true });
+      expect(enforceClipScope("POST /v1/briefs", ["briefs", "clip"])).toEqual({ ok: true });
+    });
+
+    test("an insufficiently-scoped grant on a REAL clip-kind route key is refused with 403, not 500", () => {
+      // Distinguishes "misconfigured table" (500) from "valid route, wrong scope" (403) — the two
+      // failure modes must not collapse into one status code.
+      const verdict = enforceClipScope("POST /v1/briefs", ["clip"]);
+      expect(verdict).toEqual({
+        ok: false,
+        status: 403,
+        body: { error: "insufficient_scope", required: "briefs", granted: ["clip"] },
+      });
+    });
   });
 });

@@ -548,10 +548,14 @@ Create `packages/gateway/src/ipc/http-route-auth.test.ts`:
 
 ```ts
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { HTTP_ROUTE_AUTH, hasScope, insufficientScopeBody } from "./http-route-auth.ts";
 import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
-const SERVER_SRC = "packages/gateway/src/ipc/http-server.ts";
+// Resolved from THIS FILE's directory, never the process CWD — a CWD-relative path throws ENOENT
+// under CI's sharded runner (fixed post-landing in commit b1227b8f; shown here corrected so this
+// historical snippet does not teach the bug it was fixed to avoid).
+const SERVER_SRC = resolve(import.meta.dir, "http-server.ts");
 
 /**
  * Routes matched by a REGEX rather than a path literal, so the scan below cannot see them.

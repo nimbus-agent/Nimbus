@@ -22,9 +22,8 @@ import { EMBEDDED_OPENAPI_YAML } from "./embedded-assets.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import {
-  clipScopeFor,
-  hasScope,
-  insufficientScopeBody,
+  type ClipReadRouteKey,
+  enforceClipScope,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
 } from "./http-route-auth.ts";
@@ -88,27 +87,28 @@ function json(data: unknown, status = 200): Response {
 
 /**
  * Shared gate for the two inline bearer reads: 401 when the token is unknown, 403 when it is
- * known but out of scope. Returns the verified principal on success.
+ * known but out of scope, 500 when the route's `HTTP_ROUTE_AUTH` entry is itself misconfigured
+ * (see `enforceClipScope`'s fail-closed contract). Returns the verified principal on success.
  *
  * `routeKey` must be the STATIC route constant (`ROUTE_KEY_BRIEF_GET` / `ROUTE_KEY_CLIPS_RELATED`),
- * never the raw request path — `clipScopeFor` looks the requirement up by that literal key.
+ * never the raw request path — `clipScopeFor` looks the requirement up by that literal key. The
+ * parameter type is narrowed to exactly those two constants: this function is never called any
+ * other way, and the narrowing is what makes `enforceClipScope` returning "misconfigured" for this
+ * routeKey a genuine table bug rather than a legitimately-unscoped route.
  */
 async function requireScopedClipToken(
   req: Request,
   clipsVault: NimbusVault,
-  routeKey: string,
+  routeKey: ClipReadRouteKey,
 ): Promise<{ ok: true; scopes: readonly ApiScope[] } | { ok: false; response: Response }> {
   const presented = bearerToken(req);
   const verified = presented === undefined ? null : await verifyApiToken(clipsVault, presented);
   if (verified === null) {
     return { ok: false, response: json({ error: "unauthorized" }, 401) };
   }
-  const required = clipScopeFor(routeKey);
-  if (required !== null && !hasScope(verified.scopes, required)) {
-    return {
-      ok: false,
-      response: json(insufficientScopeBody(required, verified.scopes), 403),
-    };
+  const verdict = enforceClipScope(routeKey, verified.scopes);
+  if (!verdict.ok) {
+    return { ok: false, response: json(verdict.body, verdict.status) };
   }
   return { ok: true, scopes: verified.scopes };
 }

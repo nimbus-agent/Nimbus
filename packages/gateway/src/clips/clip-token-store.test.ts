@@ -197,4 +197,59 @@ describe("clip-token-store", () => {
     expect((await loadApiTokens(v))["chrome"]?.scopes).toEqual(["clip"]);
     expect(await setApiTokenScopes(v, "nope", ["clip"])).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // "__proto__" label — loaded maps must be prototype-free (Object.create(null)), else
+  // `map["__proto__"] = rec` hits Object.prototype's __proto__ accessor instead of creating an
+  // own property, and the token silently vanishes (or the map's own prototype is corrupted) even
+  // though addApiToken reported success.
+  // ---------------------------------------------------------------------------
+
+  test("a label named '__proto__' round-trips through add -> load -> verify", async () => {
+    const v = fakeVault();
+    await addApiToken(v, "__proto__", "tok-proto", ["clip"]);
+    const loaded = await loadApiTokens(v);
+    // Must be a genuine OWN property, not a prototype-chain effect (Object.prototype.__proto__
+    // reads back an object even when nothing was ever stored — hasOwnProperty rules that out).
+    // Read via Object.entries rather than `loaded["__proto__"]` — the latter is the deprecated
+    // accessor form itself (biome noProto), the exact thing this whole fix avoids invoking.
+    expect(Object.hasOwn(loaded, "__proto__")).toBe(true);
+    const record = Object.entries(loaded).find(([label]) => label === "__proto__")?.[1];
+    expect(record).toEqual({ token: "tok-proto", scopes: ["clip"] });
+    expect(await verifyApiToken(v, "tok-proto")).toEqual({ label: "__proto__", scopes: ["clip"] });
+  });
+
+  test("a '__proto__' label does not pollute the prototype of a fresh object", async () => {
+    const v = fakeVault();
+    await addApiToken(v, "__proto__", "tok-proto", ["clip"]);
+    await loadApiTokens(v);
+    // If the map were a plain `{}` and the assignment had hit the __proto__ SETTER, a later
+    // literal `{}` could inherit whatever was assigned. It must not.
+    expect(({} as Record<string, unknown>)["token"]).toBeUndefined();
+    expect(({} as Record<string, unknown>)["scopes"]).toBeUndefined();
+  });
+
+  test("a '__proto__' label survives listApiTokens and revokeClipToken like any other label", async () => {
+    const v = fakeVault();
+    await addApiToken(v, "__proto__", "tok-proto", ["clip"]);
+    const listed = await listApiTokens(v);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.label).toBe("__proto__");
+    expect(await revokeClipToken(v, "__proto__")).toBe(1);
+    expect(await loadApiTokens(v)).toEqual({});
+  });
+
+  test("JSON.stringify of the persisted map still serialises the '__proto__' label as text", async () => {
+    const v = fakeVault();
+    await addApiToken(v, "__proto__", "tok-proto", ["clip"]);
+    const raw = await v.get(CLIP_TOKENS_VAULT_KEY);
+    // A null-prototype object serialises identically to a plain one via JSON.stringify — verified
+    // by inspecting the literal on-disk text rather than constructing a `{ __proto__: … }` object
+    // literal for comparison, which would itself trigger the same accessor this test guards against.
+    expect(raw).toContain('"__proto__"');
+    expect(raw).toContain("tok-proto");
+    const parsed: unknown = JSON.parse(raw as string);
+    expect(typeof parsed).toBe("object");
+    expect(Object.hasOwn(parsed as Record<string, unknown>, "__proto__")).toBe(true);
+  });
 });

@@ -103,3 +103,55 @@ export function insufficientScopeBody(
 ): { error: string; required: string; granted: string[] } {
   return { error: "insufficient_scope", required, granted: [...granted] };
 }
+
+/**
+ * Route keys the two inline bearer READS are allowed to pass to `enforceClipScope` /
+ * `clipScopeFor`. `requireScopedClipToken` (http-server.ts) only ever calls with one of these two
+ * exported constants — narrowing the parameter type to their union makes passing anything else
+ * (in particular a raw request path) a compile error rather than a runtime fail-open.
+ */
+export type ClipReadRouteKey = typeof ROUTE_KEY_CLIPS_RELATED | typeof ROUTE_KEY_BRIEF_GET;
+
+export type ClipScopeVerdict =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly status: 403;
+      readonly body: ReturnType<typeof insufficientScopeBody>;
+    }
+  | {
+      readonly ok: false;
+      readonly status: 500;
+      readonly body: { readonly error: "internal_error" };
+    };
+
+/**
+ * Enforces a clip-token route's scope requirement, FAIL CLOSED.
+ *
+ * `routeKey` must already be known by the CALLER to be clip-authenticated — one of the two
+ * `ROUTE_KEY_*` read constants, or a write route's `route.key` (the `clipIngest` / `briefCreate` /
+ * `briefSource` / `briefRun` / `briefSave` kinds — see `WRITE_ROUTE_ALLOWLIST` in
+ * http-write-routes.ts). For such a key, `clipScopeFor` returning `null` does NOT mean "this route
+ * needs no scope" — every route this function is called for DOES need one. It means the
+ * `HTTP_ROUTE_AUTH` entry for that key was removed, mistyped, or its `kind` was changed away from
+ * `"clip"` (e.g. to `"public"`) — a TABLE MISCONFIGURATION, not a legitimately unscoped route.
+ * Refuse rather than silently waving the request through unscoped: that silent fall-through is the
+ * exact bug this function exists to close (both former call sites read `required !== null` /
+ * `required === null` as "no refusal needed", which happened to be true for every entry that
+ * exists today but was never actually verified — a flipped or deleted entry sailed straight
+ * through).
+ *
+ * Returns the verdict data only (status + body), not a `Response` — the two callers attach
+ * different headers (http-server.ts's inline reads have none extra; http-write-routes.ts's writes
+ * carry rate-limit headers), so building the `Response` stays their job.
+ */
+export function enforceClipScope(routeKey: string, granted: readonly ApiScope[]): ClipScopeVerdict {
+  const required = clipScopeFor(routeKey);
+  if (required === null) {
+    return { ok: false, status: 500, body: { error: "internal_error" } };
+  }
+  if (!hasScope(granted, required)) {
+    return { ok: false, status: 403, body: insufficientScopeBody(required, granted) };
+  }
+  return { ok: true };
+}

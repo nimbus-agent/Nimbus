@@ -282,7 +282,10 @@ compiler finds every existing call site.
 Five scopes: `clip`, `briefs`, `agents`, `resolve`, `fetch`. A legacy bare-string
 token resolves to exactly `["clip","briefs"]` — everything it can do today, none
 of what this slice adds. No paired browser breaks; none silently gains agent
-invocation over the whole index. New capability requires a re-pair.
+invocation over the whole index. A legacy token gains nothing automatically:
+new capability requires either an explicit scope update (`nimbus clip scopes
+<label> --set …`, below) or a re-pair — not a re-pair alone, since the scope
+update below is the in-place path for an already-paired client.
 
 **Scopes are owner-set, never requester-set.** `nimbus clip pair --scopes
 agents,resolve` records them on the `PairingWindowController` window; `POST
