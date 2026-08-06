@@ -11,10 +11,20 @@ export type Granularity = (typeof GRANULARITIES)[number];
  * The egress-BEARING source types. Marker classes carry no coverage claim.
  *
  * Kept in key-sorted order — `serializeCoverage` maps over this array to build the canonical
- * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `mcp`
- * sorts before `model`; that is why it heads the list rather than trailing it.
+ * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `http`
+ * sorts before `mcp`, which sorts before `model`; that is why they head the list rather than
+ * trailing it. Appending a new class instead of inserting it in sort order would still typecheck,
+ * still round-trip within one binary, and produce a canonical string no other binary agrees with.
  */
-export const COVERAGE_CLASSES = ["mcp", "model", "peer", "session", "sync", "task"] as const;
+export const COVERAGE_CLASSES = [
+  "http",
+  "mcp",
+  "model",
+  "peer",
+  "session",
+  "sync",
+  "task",
+] as const;
 export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
@@ -40,10 +50,20 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * reader and is a hand-maintained mirror, since the CLI cannot import this module. `source_type`
  * strings are permanent in the data, so a class whose appender covers less than its NAME suggests
  * must say so at the point the claim is made, not only at the point it is rendered.
+ *
+ * READ THE `http` ENTRY THE SAME WAY, and more narrowly still. When raised, it is `per-call` over
+ * exactly one thing: an `agents.*` brief served to a caller verified on the local HTTP API. It is
+ * NOT "everything on the HTTP API". `GET /v1/items`, `GET /v1/people`, `GET /v1/audit` and the rest
+ * of the read surface hand index rows to a local process and append NO row. Conversely a targeted
+ * connector fetch on the same port WILL append, but under `sync`, not `http` — the class tracks the
+ * kind of egress, not the port it arrived on.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
   mcp: "per-call",
+  // The class name lands before its appender does. `none` until the generalised append condition
+  // ships — raising a claim ahead of the code that backs it is the defect this vector prevents.
+  http: "none",
   session: "none",
   sync: "none",
   model: "none",
@@ -58,6 +78,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
 export const ALL_NONE_COVERAGE: CoverageVector = {
   task: "none",
   mcp: "none",
+  http: "none",
   session: "none",
   sync: "none",
   model: "none",

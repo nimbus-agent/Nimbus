@@ -18,7 +18,12 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // freeze note's original prescription) because `session` must keep claiming `none` coverage until
   // its own appenders land; see the rewritten header on EGRESS_SOURCE_TYPES and I29 in
   // docs/SECURITY-INVARIANTS.md.
-  test("is exactly these nine members, in this order", () => {
+  //
+  // `http` is the TENTH, added when agent briefs became reachable over the local HTTP API. Same
+  // review moment, same rejected shortcut (`session` again), plus one reason of its own: it is
+  // named for the VERIFIABLE TRANSPORT rather than a caller-declared client kind, so folding it
+  // into `mcp` would have merged two different attribution strengths under one permanent string.
+  test("is exactly these ten members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
       "prune",
@@ -29,6 +34,7 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
       "mcp",
       "boot",
       "degraded",
+      "http",
     ]);
   });
 
@@ -44,6 +50,8 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
     expect(isMarkerSourceType("model")).toBe(false);
     // `mcp` rows are real egress (a brief handed to a client's model), never bookkeeping.
     expect(isMarkerSourceType("mcp")).toBe(false);
+    // Same for `http` — the transport differs, the disclosure does not.
+    expect(isMarkerSourceType("http")).toBe(false);
     // An unrecognized value must NOT be treated as a marker — an unknown row counts as egress.
     expect(isMarkerSourceType("wat")).toBe(false);
   });

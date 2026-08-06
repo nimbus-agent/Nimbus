@@ -26,6 +26,19 @@
  * on claiming `none` coverage until its real appenders (telemetry, updater, JWKS) land, which would
  * have recorded MCP briefs and disclaimed them in the same breath. A further class still needs an
  * explicit decision recorded here; it is not a casual append.
+ *
+ * `http` is that further class, and this is its decision. It arrived when agent briefs became
+ * invocable over the local HTTP API, and it is named for the VERIFIABLE TRANSPORT rather than for a
+ * caller-declared client kind. Folding those rows into `mcp` was the obvious shortcut and the wrong
+ * one: over stdio, `mcp` is ultimately a client's self-declaration at handshake, whereas an HTTP
+ * caller's transport is a fact the gateway observed and whose identity it verified against the
+ * token map. One string for two different attribution strengths would be permanent in every row and
+ * unrecoverable afterwards. Reusing `session` was rejected again, for the same reason it was
+ * rejected for `mcp`.
+ *
+ * Like `mcp`, the class covers LESS than its name suggests: it is agent briefs served over HTTP,
+ * NOT "everything on the HTTP API". The narrowing is recorded machine-readably in
+ * `THIS_BINARY_COVERAGE` (egress-coverage.ts), which is what a consumer actually reads.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action
@@ -37,6 +50,7 @@ export const EGRESS_SOURCE_TYPES = [
   "mcp", // agent brief served to an MCP-connected client
   "boot", // per-process marker carrying the coverage vector
   "degraded", // lost-append recovery marker
+  "http", // agent brief served over the local HTTP API
 ] as const;
 
 export type EgressSourceType = (typeof EGRESS_SOURCE_TYPES)[number];
