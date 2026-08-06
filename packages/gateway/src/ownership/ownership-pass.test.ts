@@ -422,6 +422,56 @@ describe("runOwnershipPass", () => {
     expect(reaped.n).toBe(0);
   });
 
+  // `collectFileScopeForRoot` RESETS the temp table before repopulating it. Drop
+  // that reset and root B's file-scoped clear still holds root A's file ids, so
+  // it deletes A's FRESHLY RE-EMITTED `owns` edges — and because A's files keep
+  // their `contains` edge, the degree-0 reap never notices the loss. Only a
+  // second pass over TWO roots reaches it: the scope table has to already be
+  // populated for the leak to exist.
+  test("a multi-root pass does not let one root's file scope leak into the next", async () => {
+    const rootA = "/repo/a";
+    const rootB = "/repo/b";
+    for (const [root, file] of [
+      [rootA, "src/a.ts"],
+      [rootB, "src/b.ts"],
+    ]) {
+      d.run(
+        `INSERT INTO git_blame_line
+           (repo_root, file_path, line_no, commit_sha, author_name, author_email, author_time_ms)
+         VALUES (?, ?, 1, 'sha', 'A', 'a@x.com', ?)`,
+        [root ?? "", file ?? "", NOW],
+      );
+    }
+    const fileOwns = (): number =>
+      (
+        d
+          .query(
+            `SELECT COUNT(*) AS n FROM graph_relation r
+               JOIN graph_entity f ON f.id = r.to_id
+              WHERE r.type = 'owns' AND f.type = 'source_file'`,
+          )
+          .get() as { n: number }
+      ).n;
+
+    await runOwnershipPass(d, baseOpts({ roots: [rootA, rootB] }));
+    const first = fileOwns();
+    expect(first).toBe(2);
+
+    await runOwnershipPass(d, baseOpts({ roots: [rootA, rootB] }));
+    expect(fileOwns()).toBe(first);
+
+    // Root A specifically — it is the one whose edges a stale scope would eat,
+    // because it is re-emitted before root B's clear runs.
+    const aEdge = d
+      .query(
+        `SELECT COUNT(*) AS n FROM graph_relation r
+           JOIN graph_entity f ON f.id = r.to_id
+          WHERE r.type = 'owns' AND f.type = 'source_file' AND f.external_id = ?`,
+      )
+      .get(`file:${rootA}:src/a.ts`) as { n: number };
+    expect(aEdge.n).toBe(1);
+  });
+
   // `syncCodeSymbolGraph` builds the BYTE-IDENTICAL `file:<root>:<path>` external
   // id, and `upsertGraphEntity` overwrites `service` unconditionally — so it
   // silently takes over the row. If file scope were read from that column, the
