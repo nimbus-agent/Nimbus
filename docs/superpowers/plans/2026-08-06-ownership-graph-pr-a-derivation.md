@@ -938,7 +938,7 @@ export function aggregateBlameForRoot(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/ownership/blame-aggregate.test.ts`
-Expected: PASS, 16 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2519,7 +2519,7 @@ git commit -m "docs: status surfaces to schema V51"
 - [ ] **Step 1: Run the whole ownership suite**
 
 Run: `bun test packages/gateway/src/ownership/`
-Expected: PASS, 58 tests across five files.
+Expected: PASS, 57 tests across five files.
 
 - [ ] **Step 2: Confirm the forbidden files are untouched**
 
