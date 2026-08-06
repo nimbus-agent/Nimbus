@@ -75,6 +75,10 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // Gated by the short-lived pairing CODE, not a bearer — it is how a token is obtained, so it
   // cannot require one.
   "POST /v1/clips/pair/confirm": { kind: "pairing" },
+  // `{agent}`, not `:agent` — matches the `{id}` convention the brief and SCIM item routes already
+  // use. The key is the STATIC route constant; the request's own segment is captured into
+  // `route.id` and never substituted in here (see scopeRefusal's contract).
+  "POST /v1/agents/{agent}": { kind: "clip", scope: "agents" },
   "POST /v1/briefs": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/sources": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/run": { kind: "clip", scope: "briefs" },

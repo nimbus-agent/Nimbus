@@ -172,6 +172,27 @@ describe("http-route-auth", () => {
     expect(execMatches.length).toBe(REGEX_ROUTED_GET.size);
   });
 
+  test("the agent invoke route requires the agents scope", () => {
+    expect(HTTP_ROUTE_AUTH["POST /v1/agents/{agent}"]).toEqual({ kind: "clip", scope: "agents" });
+  });
+
+  test("a clip+briefs token is refused on the agent invoke route", () => {
+    // The whole point of the scope work: a token minted to clip a web page must not be able to run
+    // any read-only agent over the entire private index. `agents` was added to the vocabulary in
+    // the previous PR precisely so it could be WITHHELD before this route existed.
+    expect(enforceClipScope("POST /v1/agents/{agent}", ["clip", "briefs"])).toEqual({
+      ok: false,
+      status: 403,
+      body: { error: "insufficient_scope", required: "agents", granted: ["clip", "briefs"] },
+    });
+  });
+
+  test("an agents-scoped token is allowed on the agent invoke route", () => {
+    // The positive control: without it, a version that refused every key would pass the test above
+    // for entirely the wrong reason.
+    expect(enforceClipScope("POST /v1/agents/{agent}", ["agents"])).toEqual({ ok: true });
+  });
+
   test("hasScope is exact membership, never a prefix or superset match", () => {
     expect(hasScope(["clip", "briefs"], "clip")).toBe(true);
     expect(hasScope(["clip", "briefs"], "agents")).toBe(false);

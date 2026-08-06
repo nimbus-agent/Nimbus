@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import type { AgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
+import { AGENT_BUSY_RETRY_AFTER_SECONDS } from "../agent-runs/agent-run-store.ts";
 import type { BriefRunController } from "../briefs/brief-run-store.ts";
 import { ReportTooLargeError } from "../briefs/brief-save.ts";
 import {
@@ -30,6 +32,7 @@ const ROUTE_ADMIN_POLICY = "PUT /v1/admin/policy";
 const ROUTE_TEAMS_EVENTS = "POST /v1/messaging/teams/events";
 const ROUTE_CLIPS = "POST /v1/clips";
 const ROUTE_CLIPS_PAIR_CONFIRM = "POST /v1/clips/pair/confirm";
+const ROUTE_AGENT_INVOKE = "POST /v1/agents/{agent}";
 const ROUTE_BRIEFS = "POST /v1/briefs";
 const ROUTE_BRIEF_SOURCES = "POST /v1/briefs/{id}/sources";
 const ROUTE_BRIEF_RUN = "POST /v1/briefs/{id}/run";
@@ -62,9 +65,17 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_BRIEF_SOURCES,
   ROUTE_BRIEF_RUN,
   ROUTE_BRIEF_SAVE,
+  ROUTE_AGENT_INVOKE,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
+/**
+ * `/v1/agents/<name>` — path-param routing by regex, as the brief and SCIM item routes do.
+ *
+ * `[A-Za-z]` only: an agent name is a bare identifier, and narrowing the charset here means the
+ * caller-supplied segment cannot carry separators or escapes before it reaches the resolver.
+ */
+const AGENT_INVOKE_RE = /^\/v1\/agents\/([A-Za-z]{1,32})$/;
 /** `/v1/briefs/<id>/<action>` — there is no path-param router here; SCIM sets the precedent. */
 const BRIEF_ITEM_RE = /^\/v1\/briefs\/(\w{1,64})\/(sources|run|save)$/;
 /**
@@ -141,6 +152,8 @@ const BRIEF_CREATE_REJECT_ACTION = "brief.create_rejected";
 const BRIEF_SOURCE_REJECT_ACTION = "brief.source_rejected";
 const BRIEF_RUN_REJECT_ACTION = "brief.run_rejected";
 const BRIEF_SAVE_REJECT_ACTION = "brief.save_rejected";
+const AGENTS_DISABLED_HINT = "agent invocation over HTTP disabled — no local index is wired";
+const AGENT_INVOKE_REJECT_ACTION = "agents.invoke_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
@@ -206,6 +219,20 @@ export interface BriefsWriteSurface {
   readonly save: (runId: string) => { itemId: string };
 }
 
+/**
+ * Agent-invocation seam — present only when the agents surface is enabled. `verifyToken` reuses the
+ * same labeled client token map as `ClipsWriteSurface` / `BriefsWriteSurface` (clipIngest
+ * precedent: verified in-route, not via a static bearer). `invoke` is the closure built in
+ * `agent-runs/agent-http-invoke.ts`, which reaches agents through `dispatchAgentsRpc` and therefore
+ * through the egress append.
+ */
+export interface AgentsWriteSurface {
+  readonly verifyToken: (
+    presented: string,
+  ) => Promise<{ label: string; scopes: readonly ApiScope[] } | null>;
+  readonly invoke: AgentHttpInvoker;
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -218,6 +245,7 @@ export interface WriteRouteContext {
   readonly messaging?: TeamsEventsSurface;
   readonly clips?: ClipsWriteSurface;
   readonly briefs?: BriefsWriteSurface;
+  readonly agents?: AgentsWriteSurface;
 }
 
 type RouteKind =
@@ -230,7 +258,8 @@ type RouteKind =
   | "briefCreate"
   | "briefSource"
   | "briefRun"
-  | "briefSave";
+  | "briefSave"
+  | "agentInvoke";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -437,6 +466,33 @@ function resolveClipPairConfirmRoute(
   };
 }
 
+/** `POST /v1/agents/{agent}` (404 unless the agents seam is enabled). */
+function resolveAgentInvokeRoute(
+  method: string,
+  agent: string,
+  ctx: WriteRouteContext,
+): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.agents === undefined) {
+    return jsonResponse({ error: "agents_disabled", hint: AGENTS_DISABLED_HINT }, 404);
+  }
+  return {
+    key: ROUTE_AGENT_INVOKE,
+    kind: "agentInvoke",
+    expectedToken: "", // verified in-route against the labeled token map (clipIngest precedent)
+    disabledHint: AGENTS_DISABLED_HINT,
+    rejectAction: AGENT_INVOKE_REJECT_ACTION,
+    hasBody: true,
+    // Control-plane sized. Agent params are a topic, a file path or a since-window; the 1 MiB
+    // article cap stays the deliberate outlier it is documented to be.
+    maxBodyBytes: MAX_BODY_BYTES_DEFAULT,
+    maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_DEFAULT,
+    // `id` carries the agent NAME for this route kind, as it carries the brief id for the brief
+    // routes. The route KEY stays the static template either way.
+    id: agent,
+  };
+}
+
 /** `POST /v1/briefs` (404 unless the briefs seam is enabled). */
 function resolveBriefCreateRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
   if (method !== "POST") return methodNotAllowed("POST");
@@ -502,6 +558,8 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
   if (path === "/v1/clips") return resolveClipIngestRoute(method, ctx);
   if (path === "/v1/clips/pair/confirm") return resolveClipPairConfirmRoute(method, ctx);
   if (path === "/v1/briefs") return resolveBriefCreateRoute(method, ctx);
+  const agent = AGENT_INVOKE_RE.exec(path);
+  if (agent !== null) return resolveAgentInvokeRoute(method, agent[1] as string, ctx);
   const brief = BRIEF_ITEM_RE.exec(path);
   if (brief !== null) {
     return resolveBriefItemRoute(method, brief[1] as string, brief[2] as string, ctx);
@@ -526,6 +584,9 @@ function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): 
   // Briefs verify the clipper token in-route (clipIngest precedent). The fingerprint doubles as
   // the rate-limit bucket key: source-feeding gets its own bucket so a sweep cannot starve
   // ordinary clipping, and vice versa.
+  // Agent invocation verifies the labeled token in-route (clipIngest precedent) and gets its own
+  // rate-limit bucket, so an agent sweep cannot starve clipping and vice versa.
+  if (route.kind === "agentInvoke") return { fingerprint: "agents" };
   if (route.kind === "briefSource") return { fingerprint: "brief-src" };
   if (route.kind === "briefCreate" || route.kind === "briefRun" || route.kind === "briefSave") {
     return { fingerprint: "brief" };
@@ -995,6 +1056,116 @@ async function runClipPairConfirmRoute(
   );
 }
 
+/**
+ * 401/403 gate for the agent route, returning the VERIFIED PRINCIPAL on success.
+ *
+ * Unlike `requireBriefAuth` this returns the label rather than discarding it: the label becomes
+ * `caller.clientId` on the egress row, which is the whole attribution claim. A hand-built or
+ * body-supplied client id would turn the ledger row from something the gateway observed into
+ * something the caller asserted about itself.
+ */
+async function requireAgentAuth(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  req: Request,
+  limit: RateLimitCheck,
+): Promise<Response | { label: string; scopes: readonly ApiScope[] }> {
+  const agents = ctx.agents as AgentsWriteSurface;
+  const presented = bearerToken(req);
+  const verdict = presented === undefined ? null : await agents.verifyToken(presented);
+  if (verdict === null) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 401,
+      reason: "unauthorized",
+    });
+    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
+  }
+  const refusal = scopeRefusal(route.key, verdict.scopes, limit);
+  if (refusal !== null) {
+    // See the twin comment in runClipIngestRoute: refusal.status is 403 (a real scope gap) or 500
+    // (a misconfigured HTTP_ROUTE_AUTH entry), and the recorded reason must match which happened.
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: refusal.status,
+      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
+    });
+    return refusal;
+  }
+  return verdict;
+}
+
+async function runAgentInvokeRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  // resolveRoute guarantees ctx.agents is defined for every agent-kind route.
+  const agents = ctx.agents as AgentsWriteSurface;
+  const auth = await requireAgentAuth(ctx, route, fingerprint, req, limit);
+  if (auth instanceof Response) return auth;
+
+  let out: Awaited<ReturnType<AgentHttpInvoker>>;
+  try {
+    // The body goes through VERBATIM to the gateway's own validator. No params are built here and
+    // no schema is mirrored, so there is no second contract to drift.
+    out = await agents.invoke(route.id as string, parsed, auth.label);
+  } catch {
+    // Reached when the egress append fails: I29 fail-closed. No run was created and no brief was
+    // emitted; the caller gets a 500 and may retry.
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+
+  if (out.ok) {
+    // 202: the run is accepted and in progress, not complete. Poll GET /v1/agents/runs/{id}.
+    return jsonResponse({ runId: out.runId }, 202, rateLimitHeaders(limit));
+  }
+  if (out.reason === "unknown_agent") {
+    return jsonResponse({ error: "unknown_agent" }, 404, rateLimitHeaders(limit));
+  }
+  if (out.reason === "busy") {
+    // 429, matching the rate limiter's own refusal code: both mean "retry later", and a client that
+    // already handles 429 needs no second code path. The AgentRunController cap — not the 60/min
+    // token limiter — is the real bound on agent runs.
+    //
+    // Retry-After is MANDATORY here, not a nicety. `checkRateLimit` (this file) already sends it on
+    // the OTHER 429 this route can produce, so omitting it would mean two 429s from one endpoint,
+    // one honouring the header contract and one not — and a client written to back off by
+    // Retry-After would read null and either hammer or guess. The value is the small constant, NOT
+    // the run-expiry distance: a slot frees when a run finishes (seconds), not when it expires (ten
+    // minutes). The expiry distance goes in the body as an upper bound, where over-estimating is
+    // context rather than an instruction, and is omitted when the store cannot support a number.
+    return jsonResponse(
+      {
+        error: "busy",
+        activeRuns: out.activeRuns,
+        ...(out.oldestExpiresInSeconds === null
+          ? {}
+          : { oldestExpiresInSeconds: out.oldestExpiresInSeconds }),
+      },
+      429,
+      { ...rateLimitHeaders(limit), "Retry-After": String(AGENT_BUSY_RETRY_AFTER_SECONDS) },
+    );
+  }
+  return jsonResponse(
+    { error: "invalid_params", detail: out.detail },
+    400,
+    rateLimitHeaders(limit),
+  );
+}
+
 async function requireBriefAuth(
   ctx: WriteRouteContext,
   route: ResolvedRoute,
@@ -1317,6 +1488,8 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
       return runClipIngestRoute(ctx, route, auth.fingerprint, limit, req, parsed);
     case "clipPairConfirm":
       return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
+    case "agentInvoke":
+      return runAgentInvokeRoute(ctx, route, auth.fingerprint, limit, req, parsed);
     case "briefCreate":
       return runBriefCreateRoute(ctx, route, auth.fingerprint, limit, req, parsed);
     case "briefSource":

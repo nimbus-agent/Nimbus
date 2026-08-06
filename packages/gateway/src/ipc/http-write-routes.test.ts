@@ -2,10 +2,12 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, it, test } from "bun:test";
 
 import { openSeededInMemoryDb } from "../../test/helpers/migrated-db-seed.ts";
+import type { AgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
 import { MAX_CONCURRENT_RUNS, MAX_SOURCE_BYTES } from "../briefs/brief-constants.ts";
 import { BriefRunController, type CreateResult } from "../briefs/brief-run-store.ts";
 import { ReportTooLargeError } from "../briefs/brief-save.ts";
 import type { Report } from "../briefs/brief-types.ts";
+import type { ApiScope } from "../clips/api-scopes.ts";
 import { ClipValidationError } from "../clips/clip-ingest.ts";
 import { PairingWindowController } from "../clips/pairing-window.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
@@ -112,8 +114,14 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip + 4 brief routes", () => {
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
+  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip + 4 brief + 1 agent route", () => {
+    // I13: the write surface is closed by enumeration, and this assertion is the review gate on
+    // widening it. `POST /v1/agents/{agent}` is the thirteenth: it invokes a read-only agent and
+    // returns a run id to poll. It is a WRITE by classification — not because it mutates the index
+    // (it does not), but because putting it here is what subjects it to the bearer gate, the
+    // per-route body cap and the per-token rate limiter. Reclassifying it as a read to skip the
+    // allowlist would be the exact evasion the allowlist exists to prevent.
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -127,6 +135,7 @@ describe("dispatchWriteRoute", () => {
       "POST /v1/briefs/{id}/sources",
       "POST /v1/briefs/{id}/run",
       "POST /v1/briefs/{id}/save",
+      "POST /v1/agents/{agent}",
     ]);
   });
 });
@@ -1621,4 +1630,178 @@ test("brief source-feed and control routes are rate-limited on SEPARATE buckets 
   const createRes = await dispatchWriteRoute(briefReq("/v1/briefs", validCreateBody()), ctx);
   expect(createRes.status).toBe(200);
   expect(createRes.headers.get("X-RateLimit-Remaining")).toBe("59");
+});
+
+// --- POST /v1/agents/{agent} (I13 write surface) -------------------------------------------
+//
+// Exercised through `dispatchWriteRoute` with a FAKE AgentsWriteSurface rather than a real server:
+// the property under test is the route wiring — auth, scope, status mapping, Retry-After — not the
+// agent machinery, which has its own suite. The end-to-end path gets a real server separately.
+
+const AGENT_TOKEN = "agents-route-token-0123456789abcdef0123456789ab";
+
+function agentsContext(
+  invoke: AgentHttpInvoker,
+  scopes: readonly ApiScope[] = ["agents"],
+): WriteRouteContext {
+  return {
+    writeDb: openSeededInMemoryDb(44),
+    expectedToken: "",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: (): readonly string[] => [],
+    agents: {
+      verifyToken: async (presented: string) =>
+        presented === AGENT_TOKEN ? { label: "chrome-work", scopes } : null,
+      invoke,
+    },
+  };
+}
+
+function agentReq(path: string, token: string | null = AGENT_TOKEN): Request {
+  return new Request(`http://127.0.0.1${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({ topicOrFile: "auth.ts" }),
+  });
+}
+
+const okInvoke: AgentHttpInvoker = async () => ({ ok: true, runId: "expert_1_abcd1234" });
+
+describe("POST /v1/agents/{agent}", () => {
+  it("returns 202 and the run id for an agents-scoped token", async () => {
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(okInvoke));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ runId: "expert_1_abcd1234" });
+  });
+
+  it("passes the VERIFIED token label through as the invoker's client label", async () => {
+    // That label becomes caller.clientId on the egress row. If the route passed anything
+    // caller-supplied, the ledger would record an assertion rather than an observation.
+    const seenLabels: string[] = [];
+    const capture: AgentHttpInvoker = async (_a, _p, label) => {
+      seenLabels.push(label);
+      return { ok: true, runId: "expert_1_abcd1234" };
+    };
+    await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(capture));
+    expect(seenLabels).toEqual(["chrome-work"]);
+  });
+
+  it("passes the body through VERBATIM — no params are built here", async () => {
+    let seenParams: unknown = null;
+    const capture: AgentHttpInvoker = async (_a, params) => {
+      seenParams = params;
+      return { ok: true, runId: "expert_1_abcd1234" };
+    };
+    await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(capture));
+    expect(seenParams).toEqual({ topicOrFile: "auth.ts" });
+  });
+
+  it("is 401 for an unknown token, NOT 403", async () => {
+    // Authentication failure must stay distinguishable from authorization failure: a client that
+    // sees 401 re-pairs, a client that sees 403 asks for a scope. Collapsing them misroutes both.
+    const res = await dispatchWriteRoute(
+      agentReq("/v1/agents/expert", "wrong-token"),
+      agentsContext(okInvoke),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("is 403 insufficient_scope for a clip+briefs token", async () => {
+    const res = await dispatchWriteRoute(
+      agentReq("/v1/agents/expert"),
+      agentsContext(okInvoke, ["clip", "briefs"]),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "insufficient_scope",
+      required: "agents",
+      granted: ["clip", "briefs"],
+    });
+  });
+
+  it("is 404 unknown_agent when the invoker refuses the name", async () => {
+    const refuse: AgentHttpInvoker = async () => ({ ok: false, reason: "unknown_agent" });
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/preflight"), agentsContext(refuse));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "unknown_agent" });
+  });
+
+  it("is 400 invalid_params with the validator's own message", async () => {
+    const refuse: AgentHttpInvoker = async () => ({
+      ok: false,
+      reason: "invalid_params",
+      detail: "topicOrFile must be a string",
+    });
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(refuse));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "invalid_params",
+      detail: "topicOrFile must be a string",
+    });
+  });
+
+  it("is 429 WITH Retry-After when the run store is at capacity", async () => {
+    // Two different 429s reach a client from this route: the per-token rate limiter's and this
+    // capacity refusal. A client backing off by Retry-After must not have to know which it got.
+    const busy: AgentHttpInvoker = async () => ({
+      ok: false,
+      reason: "busy",
+      activeRuns: 3,
+      oldestExpiresInSeconds: 42,
+    });
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(busy));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("1");
+    expect(await res.json()).toEqual({ error: "busy", activeRuns: 3, oldestExpiresInSeconds: 42 });
+  });
+
+  it("omits oldestExpiresInSeconds when the store cannot support a number", async () => {
+    const busy: AgentHttpInvoker = async () => ({
+      ok: false,
+      reason: "busy",
+      activeRuns: 3,
+      oldestExpiresInSeconds: null,
+    });
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(busy));
+    expect(await res.json()).toEqual({ error: "busy", activeRuns: 3 });
+    // The header is still present: the client's instruction does not depend on the context field.
+    expect(res.headers.get("Retry-After")).toBe("1");
+  });
+
+  it("is 500 with NO run when the egress append fails — I29 fail-closed", async () => {
+    const throwing: AgentHttpInvoker = async () => {
+      throw new Error("egress_ledger is gone");
+    };
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), agentsContext(throwing));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal_error" });
+  });
+
+  it("404s when the agents seam is absent, naming the cause", async () => {
+    // Built WITHOUT the key rather than with `agents: undefined` — the codebase runs
+    // exactOptionalPropertyTypes, under which those are different types, and the absent-key form is
+    // what production actually produces (the seam is spread in only when it is wired).
+    const { agents: _omitted, ...withoutAgents } = agentsContext(okInvoke);
+    const res = await dispatchWriteRoute(agentReq("/v1/agents/expert"), withoutAgents);
+    expect(res.status).toBe(404);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "agents_disabled" });
+  });
+
+  it("405s a GET on the invoke path rather than falling through", async () => {
+    const req = new Request("http://127.0.0.1/v1/agents/expert", { method: "PUT" });
+    const res = await dispatchWriteRoute(req, agentsContext(okInvoke));
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("does not match a path with extra segments or a non-alpha name", async () => {
+    for (const path of ["/v1/agents", "/v1/agents/expert/extra", "/v1/agents/ex-pert"]) {
+      const res = await dispatchWriteRoute(agentReq(path), agentsContext(okInvoke));
+      expect({ path, status: res.status }).toEqual({ path, status: 404 });
+    }
+  });
 });
