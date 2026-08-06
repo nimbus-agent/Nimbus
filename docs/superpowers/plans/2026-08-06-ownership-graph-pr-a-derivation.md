@@ -607,34 +607,40 @@ describe("lineWeight", () => {
   });
 });
 
-describe("isIgnoredPath", () => {
+// These target the COMPILED pair, because that is what production runs:
+// `aggregateBlameForRoot` uses `compileIgnoreGlobs` + `matchesAnyCompiledGlob`.
+// `isIgnoredPath` is a thin convenience over them and is covered by the
+// equivalence test alone — testing only the wrapper would leave the hot path
+// unverified.
+describe("glob exclusion", () => {
   test("matches lock files and nested generated trees", () => {
-    const globs = ["**/package-lock.json", "**/dist/**", "**/*.min.js"];
-    expect(isIgnoredPath("package-lock.json", globs)).toBe(true);
-    expect(isIgnoredPath("packages/app/package-lock.json", globs)).toBe(true);
-    expect(isIgnoredPath("packages/app/dist/index.js", globs)).toBe(true);
-    expect(isIgnoredPath("a/b/c.min.js", globs)).toBe(true);
-    expect(isIgnoredPath("packages/app/src/index.ts", globs)).toBe(false);
+    const compiled = compileIgnoreGlobs([
+      "**/package-lock.json",
+      "**/dist/**",
+      "**/*.min.js",
+    ]);
+    expect(matchesAnyCompiledGlob("package-lock.json", compiled)).toBe(true);
+    expect(matchesAnyCompiledGlob("packages/app/package-lock.json", compiled)).toBe(true);
+    expect(matchesAnyCompiledGlob("packages/app/dist/index.js", compiled)).toBe(true);
+    expect(matchesAnyCompiledGlob("a/b/c.min.js", compiled)).toBe(true);
+    expect(matchesAnyCompiledGlob("packages/app/src/index.ts", compiled)).toBe(false);
   });
 
-  test("an empty glob list ignores nothing", () => {
-    expect(isIgnoredPath("package-lock.json", [])).toBe(false);
-  });
-
-  test("the compiled pair agrees with the string convenience", () => {
-    const globs = ["**/dist/**", "**/*.min.js"];
-    const compiled = compileIgnoreGlobs(globs);
-    for (const p of ["a/dist/b.js", "a/b.min.js", "a/b.ts", ""]) {
-      expect(matchesAnyCompiledGlob(p, compiled)).toBe(isIgnoredPath(p, globs));
-    }
-  });
-
-  test("compiling an empty list yields an empty matcher", () => {
-    expect(matchesAnyCompiledGlob("anything", compileIgnoreGlobs([]))).toBe(false);
+  test("compiling an empty list yields a matcher that matches nothing", () => {
+    expect(matchesAnyCompiledGlob("package-lock.json", compileIgnoreGlobs([]))).toBe(false);
   });
 
   test("a path containing glob metacharacters does not corrupt matching", () => {
-    expect(isIgnoredPath("src/weird[1]/a{b}.ts", ["**/dist/**"])).toBe(false);
+    const compiled = compileIgnoreGlobs(["**/dist/**"]);
+    expect(matchesAnyCompiledGlob("src/weird[1]/a{b}.ts", compiled)).toBe(false);
+  });
+
+  test("isIgnoredPath is exactly the compiled pair composed", () => {
+    const globs = ["**/dist/**", "**/*.min.js", "**/package-lock.json"];
+    const compiled = compileIgnoreGlobs(globs);
+    for (const p of ["a/dist/b.js", "a/b.min.js", "package-lock.json", "a/b.ts", ""]) {
+      expect(isIgnoredPath(p, globs)).toBe(matchesAnyCompiledGlob(p, compiled));
+    }
   });
 });
 
@@ -914,7 +920,7 @@ export function aggregateBlameForRoot(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/ownership/blame-aggregate.test.ts`
-Expected: PASS, 17 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2412,6 +2418,61 @@ Expected: PASS.
 ```bash
 git add packages/gateway/src/platform/assemble.ts
 git commit -m "feat(gateway): wire the ownership pass into the post-sync seam"
+```
+
+---
+
+## Task 8b: Status-surface drift (schema V49 → V51)
+
+**Files:**
+- Modify: `CLAUDE.md`
+- Modify: `GEMINI.md`
+- Modify: `docs/architecture.md`
+
+**Why this task exists.** `scripts/structure-audit/check-status-drift.ts` is a **preflight gate**. `auditStatusDrift` reads `CURRENT_SCHEMA_VERSION` from `local-index.ts` as canonical, then scans `CLAUDE.md`, `GEMINI.md` and `docs/architecture.md` for `/\bschema\s+V(\d+)/gi` and errors on every mismatch. All three currently say **V49**, so Task 1's bump makes this gate fail. Without this task the failure surfaces only at Task 9, after all implementation.
+
+It also cross-checks that `CURRENT_SCHEMA_VERSION` equals the highest `…-v<N>-sql.ts` filename. `ownership-v51-sql.ts` gives 51, matching. The reserved V50 has no file of its own and needs none — the check takes the maximum, not a contiguous run.
+
+**Interfaces:** none — documentation only.
+
+- [ ] **Step 1: Run the audit to see it fail**
+
+Run: `bun run scripts/structure-audit/check-status-drift.ts`
+Expected: FAIL, with three `"schema V49" is stale — canonical schema is V51` errors, one per surface.
+
+- [ ] **Step 2: Update the two mirrored status lines**
+
+In **both** `CLAUDE.md` and `GEMINI.md` (they are mirrors — CLAUDE.md's own header says to update both when changing roadmap rows), change `schema V49` to `schema V51` in the `**Status:**` paragraph. Leave the `V49 (connector-depth enforcement + Gmail/Outlook bodies, #1047)` clause alone — that sentence is about a past release and remains true.
+
+Add the ownership graph to the S1 sentence in the same paragraph, after the research-briefs clause:
+
+```
+; the ownership graph (schema V51) derives service/code ownership from the already-indexed git-blame data
+```
+
+- [ ] **Step 3: Update architecture.md**
+
+Two edits:
+
+1. Line ~5: `schema V49` → `schema V51`.
+2. The migration-runner paragraph (~line 1379): change `**Latest applied migration: V49**` to `**Latest applied migration: V51**` and prepend a clause describing V51 ahead of the existing V49 clause:
+
+```
+V51 added the ownership relation types (`owns` / `contains` / `tracks_remote`) + `ownership_pass_state` — the ownership graph derived from git blame — S1 "Local Brain"; V50 is reserved for the HTTP agents resolve-by-URL work and is a deliberate no-op step;
+```
+
+Also update the trailing `` `CURRENT_SCHEMA_VERSION = 49` `` in that same paragraph to `51`. That one is not caught by the audit's regex, which makes it exactly the kind of stale prose that survives a gate and misleads the next reader.
+
+- [ ] **Step 4: Run the audit to verify it passes**
+
+Run: `bun run scripts/structure-audit/check-status-drift.ts`
+Expected: PASS, no output.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add CLAUDE.md GEMINI.md docs/architecture.md
+git commit -m "docs: status surfaces to schema V51"
 ```
 
 ---
