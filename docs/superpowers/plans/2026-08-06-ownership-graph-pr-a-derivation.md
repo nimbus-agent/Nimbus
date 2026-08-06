@@ -1349,7 +1349,7 @@ export async function resolveRepoRemote(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/ownership/repo-remote.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS, 17 tests (11 pure-helper + 6 `resolveRepoRemote` orchestration cases added in a fix round: origin-present, sole-non-origin, ambiguity-short-circuits-with-no-get-url-call, `git remote` non-zero, `get-url` non-zero, spawn-throws — all via a recording fake spawn, per `connectors/blame-index-sync.test.ts`).
 
 - [ ] **Step 5: Red-prove the ambiguity guard**
 
@@ -2519,7 +2519,7 @@ git commit -m "docs: status surfaces to schema V51"
 - [ ] **Step 1: Run the whole ownership suite**
 
 Run: `bun test packages/gateway/src/ownership/`
-Expected: PASS, 57 tests across five files.
+Expected: PASS, 63 tests across five files.
 
 - [ ] **Step 2: Confirm the forbidden files are untouched**
 
