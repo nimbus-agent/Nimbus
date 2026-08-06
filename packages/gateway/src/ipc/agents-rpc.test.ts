@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { AgentsRpcError, dispatchAgentsRpc } from "./agents-rpc.ts";
+import {
+  AgentsRpcError,
+  dispatchAgentsRpc,
+  HTTP_AGENT_NAMES,
+  resolveHttpAgentMethod,
+} from "./agents-rpc.ts";
 
 function makeCtx(db: Database, extras?: { llm?: SynthesizerLlm; configDir?: string }) {
   return {
@@ -624,6 +629,60 @@ describe("dispatchAgentsRpc — agents.decisions", () => {
     if (out.kind === "hit") {
       const v = out.value as { sessionId: string };
       expect(v.sessionId).toMatch(/^decisions/);
+    }
+  });
+});
+
+describe("the HTTP-invokable agent set", () => {
+  test("is exactly the ten asynchronous, non-preflight agents", () => {
+    expect([...HTTP_AGENT_NAMES]).toEqual([
+      "catchup",
+      "conflicts",
+      "decisions",
+      "expert",
+      "ghost",
+      "glossary",
+      "huddle",
+      "impact",
+      "janitor",
+      "why",
+    ]);
+  });
+
+  test("preflight is not reachable over HTTP", () => {
+    // I24: agents.preflight is the federated-action path. A caller that can invoke it can queue
+    // consent prompts on the owner's machine — an external caller must never originate one.
+    expect(resolveHttpAgentMethod("preflight")).toBeNull();
+    expect(HTTP_AGENT_NAMES).not.toContain("preflight");
+  });
+
+  test("whyPeek is not reachable over HTTP", () => {
+    // Synchronous by design (the why-lens hover): it returns its payload inline and calls notify
+    // NEVER, so on the {runId}+poll contract it would create a run that can never complete and
+    // would poll until the TTL turned a success into a 410. Exposing it needs its own
+    // inline-result route, which is a later decision — not a second response shape bolted on here.
+    expect(resolveHttpAgentMethod("whyPeek")).toBeNull();
+    expect(HTTP_AGENT_NAMES).not.toContain("whyPeek");
+  });
+
+  test("ghost and huddle stay in, as they did for MCP", () => {
+    expect(resolveHttpAgentMethod("ghost")).toBe("agents.ghost");
+    expect(resolveHttpAgentMethod("huddle")).toBe("agents.huddle");
+  });
+
+  test("the resolver is prototype-safe and rejects anything unserved", () => {
+    // A caller-supplied path segment reaches this. `Object.hasOwn` (not `in`) is what stops
+    // "constructor" / "__proto__" / "toString" resolving against the object prototype.
+    for (const junk of ["__proto__", "constructor", "toString", "", "expert.extra", "Expert"]) {
+      expect(resolveHttpAgentMethod(junk)).toBeNull();
+    }
+  });
+
+  test("every published name resolves back to a served method", () => {
+    // The list and the resolver are two derivations of the same map; this pins them together so a
+    // name cannot be advertised by GET /v1/agents and then 404 on invocation.
+    for (const name of HTTP_AGENT_NAMES) {
+      expect(resolveHttpAgentMethod(name)).toBe(`agents.${name}`);
     }
   });
 });
