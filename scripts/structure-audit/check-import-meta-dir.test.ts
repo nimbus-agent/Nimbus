@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { checkImportMetaDir } from "./check-import-meta-dir.ts";
+import { blankLiterals, checkImportMetaDir } from "./check-import-meta-dir.ts";
 
 const ROOT = mkdtempSync(join(tmpdir(), "nimbus-meta-dir-audit-"));
 afterAll(() => {
@@ -28,6 +28,25 @@ fixture(
 );
 fixture("ipc/bad-dir-multiline.ts", `const p = resolve(\n  import.meta\n    .dir,\n  "x",\n);\n`);
 fixture("ipc/bad-twice.ts", `const a = import.meta.dir;\nconst b = import.meta.path;\n`);
+// Node's two-argument form is just as much a path derivation as the one-argument form.
+fixture(
+  "ipc/bad-fileurl-options.ts",
+  `const d = fileURLToPath(import.meta.url, { windows: false });\n`,
+);
+// A substitution inside a template literal is code, not text.
+//
+// The `"$" +` concatenation below is deliberate. These plain strings are DATA for the lexer under
+// test, so the placeholder has to reach it intact — but written literally, Biome's source-text
+// `noTemplateCurlyInString` rule flags every one of them. Splitting the `$` from the `{` yields an
+// identical runtime value with nothing to suppress.
+const DOLLAR = "$";
+fixture("ipc/bad-template.ts", `const p = \`${DOLLAR}{import.meta.dir}/asset.yaml\`;\n`);
+// The same token as TEXT is not a derivation.
+fixture("ipc/ok-string-literal.ts", `const msg = "do not use import.meta.dir here";\n`);
+fixture("ipc/ok-string-single.ts", `const msg = 'import.meta.path is forbidden';\n`);
+fixture("ipc/ok-template-text.ts", "const msg = `avoid import.meta.dirname`;\n");
+// A regex literal holding a quote must not swallow the code after it.
+fixture("ipc/ok-regex-quote.ts", `const r = s.replace(/"/g, "");\nexport const x = r;\n`);
 fixture("ipc/ok-comment.ts", `// baseDir is the caller's import.meta.dir\nexport const x = 1;\n`);
 fixture("ipc/ok-worker.ts", `new Worker(new URL("./w.ts", import.meta.url).href);\n`);
 fixture("ipc/ok-asset.ts", `import p from "./a.html" with { type: "file" };\n`);
@@ -50,11 +69,31 @@ describe("checkImportMetaDir", () => {
       "ipc/bad-dirname.ts",
       "ipc/bad-file.ts",
       "ipc/bad-fileurl-multiline.ts",
+      "ipc/bad-fileurl-options.ts",
       "ipc/bad-fileurl.ts",
       "ipc/bad-path.ts",
+      "ipc/bad-template.ts",
       "ipc/bad-twice.ts",
       "ipc/bad-twice.ts", // two occurrences in one file — both reported
     ]);
+  });
+
+  test("catches the two-argument fileURLToPath form", () => {
+    // `,?\s*\)` anchored on the closing paren and missed `{ windows: false }` entirely.
+    const v = checkImportMetaDir(ROOT).find((x) => x.file === "ipc/bad-fileurl-options.ts");
+    expect(v?.snippet).toBe("fileURLToPath(import.meta.url,");
+  });
+
+  test("catches a derivation inside a template substitution", () => {
+    const v = checkImportMetaDir(ROOT).find((x) => x.file === "ipc/bad-template.ts");
+    expect(v?.snippet).toBe("import.meta.dir");
+  });
+
+  test("does not flag the same token appearing as string or template TEXT", () => {
+    const f = flagged();
+    expect(f).not.toContain("ipc/ok-string-literal.ts");
+    expect(f).not.toContain("ipc/ok-string-single.ts");
+    expect(f).not.toContain("ipc/ok-template-text.ts");
   });
 
   test("catches an expression a formatter split across lines", () => {
@@ -62,7 +101,7 @@ describe("checkImportMetaDir", () => {
     const v = checkImportMetaDir(ROOT);
     const wrapped = v.find((x) => x.file === "ipc/bad-fileurl-multiline.ts");
     expect(wrapped?.line).toBe(2); // the line the expression STARTS on, not where it ends
-    expect(wrapped?.snippet).toBe("fileURLToPath( import.meta.url, )");
+    expect(wrapped?.snippet).toBe("fileURLToPath( import.meta.url,");
     const dotted = v.find((x) => x.file === "ipc/bad-dir-multiline.ts");
     expect(dotted?.line).toBe(2);
     expect(dotted?.snippet).toBe("import.meta .dir");
@@ -103,5 +142,39 @@ describe("checkImportMetaDir", () => {
 
   test("the real gateway source tree is clean", () => {
     expect(checkImportMetaDir()).toEqual([]);
+  });
+});
+
+describe("blankLiterals", () => {
+  test("blanks string contents but preserves length and newlines", () => {
+    const src = `const a = "one";\nconst b = 'two';\n`;
+    const out = blankLiterals(src);
+    expect(out).toHaveLength(src.length);
+    expect(out.split("\n")).toHaveLength(src.split("\n").length);
+    expect(out).toBe(`const a = "   ";\nconst b = '   ';\n`);
+  });
+
+  test("keeps template substitutions as code while blanking the surrounding text", () => {
+    expect(blankLiterals(`\`aa${DOLLAR}{bb}cc\``)).toBe(`\`  ${DOLLAR}{bb}  \``);
+  });
+
+  test("handles nested braces inside a substitution", () => {
+    expect(blankLiterals(`\`x${DOLLAR}{ {k: 1} }y\``)).toBe(`\` ${DOLLAR}{ {k: 1} } \``);
+  });
+
+  test("does not treat an escaped quote as the end of a string", () => {
+    // Contents are the 4 characters a \ " b, so 4 spaces — the trailing `+ c` stays code.
+    expect(blankLiterals(`"a\\"b" + c`)).toBe(`"    " + c`);
+  });
+
+  test("a regex literal containing a quote does not swallow the code after it", () => {
+    // The failure this guards: a phantom string opening at the `"` would blank `import.meta.dir`
+    // below it, turning a real violation into a silent miss.
+    const src = `s.replace(/"/g, "");\nconst p = import.meta.dir;`;
+    expect(blankLiterals(src)).toContain("import.meta.dir");
+  });
+
+  test("leaves division alone", () => {
+    expect(blankLiterals("const r = a / b / c;")).toBe("const r = a / b / c;");
   });
 });

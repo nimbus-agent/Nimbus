@@ -36,8 +36,126 @@ const DEV_ONLY_PREFIX = "perf/surfaces/";
  */
 const FORBIDDEN: readonly RegExp[] = [
   /\bimport\s*\.\s*meta\s*\.\s*(?:dir|dirname|path|file)\b/g,
-  /\bfileURLToPath\s*\(\s*import\s*\.\s*meta\s*\.\s*url\s*,?\s*\)/g,
+  // `[,)]`, not `,?\s*\)`: `fileURLToPath(import.meta.url, { windows: false })` is a valid
+  // path-producing call (Node's two-arg form), and anchoring on the closing paren missed it.
+  /\bfileURLToPath\s*\(\s*import\s*\.\s*meta\s*\.\s*url\s*[,)]/g,
 ];
+
+/**
+ * Blank the CONTENTS of string and regex literals, preserving length and newlines so match
+ * offsets and line numbers stay exact.
+ *
+ * `stripComments` deliberately preserves string literals, so without this a source file holding
+ * the literal `"import.meta.dir"` — an error message, a doc string — would be reported as a
+ * violation. A template literal's `${...}` substitutions are NOT blanked: `` `${import.meta.dir}/x` ``
+ * is real code and must still be caught.
+ *
+ * Regex literals are skipped too, which `stripComments` does not do. That matters in the other
+ * direction: `str.replace(/"/g, "")` would otherwise open a phantom string and blank the real code
+ * that follows — a silent FALSE NEGATIVE in a gate whose whole job is to not miss one.
+ */
+export function blankLiterals(src: string): string {
+  const out = src.split("");
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== "\n") out[k] = " ";
+    }
+  };
+  // A `/` starts a regex (not division) when the previous non-space token can't end an operand.
+  const regexAllowedAfter = new Set(["(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";"]);
+  const templateStack: number[] = []; // ${} nesting depth per open template literal
+  let i = 0;
+  let prev = "";
+  while (i < src.length) {
+    const c = src[i] as string;
+    if (c === "'" || c === '"') {
+      const start = ++i;
+      while (i < src.length && src[i] !== c) i += src[i] === "\\" ? 2 : 1;
+      blank(start, i);
+      i += 1;
+      prev = c;
+      continue;
+    }
+    if (c === "`") {
+      const start = ++i;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (src[i] === "`") break;
+        if (src[i] === "$" && src[i + 1] === "{") break;
+        i += 1;
+      }
+      blank(start, i);
+      if (src[i] === "$") {
+        templateStack.push(0);
+        i += 2; // step over `${` into the substitution — code, so keep scanning normally
+      } else {
+        i += 1;
+      }
+      prev = "`";
+      continue;
+    }
+    if (c === "}" && templateStack.length > 0) {
+      const depth = templateStack[templateStack.length - 1] as number;
+      if (depth === 0) {
+        // Closing a substitution: resume template-literal text.
+        templateStack.pop();
+        const start = ++i;
+        while (i < src.length) {
+          if (src[i] === "\\") {
+            i += 2;
+            continue;
+          }
+          if (src[i] === "`") break;
+          if (src[i] === "$" && src[i + 1] === "{") break;
+          i += 1;
+        }
+        blank(start, i);
+        if (src[i] === "$") {
+          templateStack.push(0);
+          i += 2;
+        } else {
+          i += 1;
+        }
+        prev = "`";
+        continue;
+      }
+      templateStack[templateStack.length - 1] = depth - 1;
+    } else if (c === "{" && templateStack.length > 0) {
+      templateStack[templateStack.length - 1] = (templateStack[templateStack.length - 1] ?? 0) + 1;
+    }
+    if (c === "/" && (prev === "" || regexAllowedAfter.has(prev))) {
+      const start = ++i;
+      let closed = false;
+      while (i < src.length && src[i] !== "\n") {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (src[i] === "[") {
+          while (i < src.length && src[i] !== "]" && src[i] !== "\n") i += src[i] === "\\" ? 2 : 1;
+        }
+        if (src[i] === "/") {
+          closed = true;
+          break;
+        }
+        i += 1;
+      }
+      if (closed) {
+        blank(start, i);
+        i += 1;
+        prev = "/";
+        continue;
+      }
+      i = start; // not a regex after all (e.g. division); fall through
+    }
+    if (!/\s/.test(c)) prev = c;
+    i += 1;
+  }
+  return out.join("");
+}
 
 export interface PathDerivationViolation {
   readonly file: string;
@@ -87,9 +205,10 @@ export function checkImportMetaDir(root: string = GATEWAY_SRC): PathDerivationVi
   for (const full of walkTypeScript(root)) {
     const rel = relative(root, full).replaceAll("\\", "/");
     if (isExempt(rel)) continue;
-    // stripComments preserves newlines inside block comments, so line numbers stay accurate.
-    // Matched against the WHOLE source, not per line: see the note on FORBIDDEN.
-    const src = stripComments(readFileSync(full, "utf8"));
+    // stripComments preserves newlines inside block comments and blankLiterals preserves length,
+    // so offsets and line numbers stay exact through both passes. Matched against the WHOLE
+    // source, not per line: see the note on FORBIDDEN.
+    const src = blankLiterals(stripComments(readFileSync(full, "utf8")));
     for (const re of FORBIDDEN) {
       re.lastIndex = 0; // module-scope /g patterns: reset before each reuse
       for (const m of src.matchAll(re)) {
