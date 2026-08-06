@@ -1791,11 +1791,60 @@ describe("POST /v1/agents/{agent}", () => {
     expect((await res.json()) as { error: string }).toMatchObject({ error: "agents_disabled" });
   });
 
-  it("405s a GET on the invoke path rather than falling through", async () => {
-    const req = new Request("http://127.0.0.1/v1/agents/expert", { method: "PUT" });
-    const res = await dispatchWriteRoute(req, agentsContext(okInvoke));
-    expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("POST");
+  it("audits every refusal, not only the auth failures", async () => {
+    // The clip and brief handlers record their 400 validation refusals too, so the agent route
+    // matching only its 401/403 would have left an owner blind to a caller enumerating agent names
+    // or hammering a saturated run store.
+    const cases: Array<{ invoke: AgentHttpInvoker; code: number; reason: string }> = [
+      {
+        invoke: async () => ({ ok: false, reason: "unknown_agent" }),
+        code: 404,
+        reason: "unknown_agent",
+      },
+      {
+        invoke: async () => ({
+          ok: false,
+          reason: "busy",
+          activeRuns: 3,
+          oldestExpiresInSeconds: null,
+        }),
+        code: 429,
+        reason: "busy",
+      },
+      {
+        invoke: async () => ({ ok: false, reason: "invalid_params", detail: "bad" }),
+        code: 400,
+        reason: "invalid_params",
+      },
+    ];
+    for (const c of cases) {
+      const ctx = agentsContext(c.invoke);
+      await dispatchWriteRoute(agentReq("/v1/agents/expert"), ctx);
+      const rows = ctx.writeDb
+        .query("SELECT action_json FROM audit_log ORDER BY id DESC LIMIT 1")
+        .all() as Array<{ action_json: string }>;
+      const parsed = JSON.parse(rows[0]?.action_json ?? "{}") as {
+        result_code: number;
+        reason: string;
+      };
+      expect({ code: parsed.result_code, reason: parsed.reason }).toEqual({
+        code: c.code,
+        reason: c.reason,
+      });
+    }
+  });
+
+  it("405s every non-POST method on the invoke path rather than falling through", async () => {
+    // GET is the method a reader most expects here, since the two agent READ routes live under
+    // /v1/agents — but they are matched in the fetch handler, so a GET that reaches this dispatcher
+    // must not silently fall through to something else. PUT and DELETE cover the other write verbs
+    // dispatchWriteRoute accepts.
+    for (const method of ["GET", "PUT", "DELETE", "PATCH"]) {
+      const req = new Request("http://127.0.0.1/v1/agents/expert", { method });
+      const res = await dispatchWriteRoute(req, agentsContext(okInvoke));
+      expect({ method, status: res.status }).toEqual({ method, status: 405 });
+      expect(res.headers.get("Allow")).toBe("POST");
+    }
   });
 
   it("does not match a path with extra segments or a non-alpha name", async () => {

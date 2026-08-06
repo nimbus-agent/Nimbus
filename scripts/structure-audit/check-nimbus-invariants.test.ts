@@ -508,6 +508,31 @@ describe("D22(d) — agent emitter import confinement", () => {
     ).toBe(true);
   });
 
+  test("flags a require() emitter import outside agents-rpc.ts", () => {
+    // Not theoretical: Bun resolves `require("../agents/why.ts")` from a TypeScript module and
+    // returns the live emitter — verified by running it. A rule matching only the two `import`
+    // spellings would have left this door open while reporting green.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'const m = require("../agents/why.ts");\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("require() of an agents/_lib path is still allowed", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'const m = require("../agents/_lib/findings.ts");\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
   test("allows every emitter import in agents-rpc.ts — the one door", () => {
     expect(
       flagged([

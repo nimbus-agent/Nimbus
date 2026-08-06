@@ -1132,7 +1132,18 @@ async function runAgentInvokeRoute(
     // 202: the run is accepted and in progress, not complete. Poll GET /v1/agents/runs/{id}.
     return jsonResponse({ runId: out.runId }, 202, rateLimitHeaders(limit));
   }
+
+  // Every refusal below is audited, matching runClipIngestRoute and runBriefCreateRoute — both of
+  // which record their 400 validation refusals, not only their auth failures. The audit log is how
+  // an owner sees refused external attempts, so a caller enumerating agent names (repeated 404s) or
+  // hammering a saturated run store (repeated 429s) must leave a trace rather than none.
   if (out.reason === "unknown_agent") {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 404,
+      reason: "unknown_agent",
+    });
     return jsonResponse({ error: "unknown_agent" }, 404, rateLimitHeaders(limit));
   }
   if (out.reason === "busy") {
@@ -1147,6 +1158,12 @@ async function runAgentInvokeRoute(
     // the run-expiry distance: a slot frees when a run finishes (seconds), not when it expires (ten
     // minutes). The expiry distance goes in the body as an upper bound, where over-estimating is
     // context rather than an instruction, and is omitted when the store cannot support a number.
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 429,
+      reason: "busy",
+    });
     return jsonResponse(
       {
         error: "busy",
@@ -1159,6 +1176,12 @@ async function runAgentInvokeRoute(
       { ...rateLimitHeaders(limit), "Retry-After": String(AGENT_BUSY_RETRY_AFTER_SECONDS) },
     );
   }
+  recordRejection(ctx, {
+    actionType: route.rejectAction,
+    tokenFingerprint: fingerprint,
+    resultCode: 400,
+    reason: "invalid_params",
+  });
   return jsonResponse(
     { error: "invalid_params", detail: out.detail },
     400,

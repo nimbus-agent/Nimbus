@@ -626,8 +626,12 @@ const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egr
 // `packages/gateway/src/agents/<name>.ts`; `agents/_lib/` is excluded because it holds types and
 // shared helpers (findings.ts, demo-symbol.ts) that federation/ and ipc/ legitimately consume.
 //
-// BOTH import forms are matched. A static-only regex is defeated by the one-character change from
-// `import x from "…"` to `await import("…")`.
+// ALL THREE module-resolution forms are matched. A static-only regex is defeated by the
+// one-character change from `import x from "…"` to `await import("…")`, and BOTH are defeated by
+// `require("…")` — which is not theoretical here: Bun resolves `require("../agents/why.ts")` from a
+// TypeScript module and hands back the live emitter, verified by running it. An enumeration of
+// import forms is only as good as its completeness, so adding a fourth spelling must add a fourth
+// pattern rather than assume the existing ones generalise.
 //
 // KNOWN LIMIT, stated because D22's existing weakness is exactly this: a regex over import
 // specifiers does not follow re-export chains. An emitter re-exported through `agents/_lib/` could
@@ -641,6 +645,9 @@ const D22_EMITTER_STATIC_RE = /\bfrom\s+["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z]
 /** `import(".../agents/<name>.ts")` — the dynamic form. */
 const D22_EMITTER_DYNAMIC_RE =
   /\bimport\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+/** `require(".../agents/<name>.ts")` — the CommonJS form, which Bun honours from a .ts module. */
+const D22_EMITTER_REQUIRE_RE =
+  /\brequire\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
 
 export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -654,7 +661,11 @@ export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]):
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {
       const line = strippedLines[i] ?? "";
-      if (D22_EMITTER_STATIC_RE.test(line) || D22_EMITTER_DYNAMIC_RE.test(line)) {
+      if (
+        D22_EMITTER_STATIC_RE.test(line) ||
+        D22_EMITTER_DYNAMIC_RE.test(line) ||
+        D22_EMITTER_REQUIRE_RE.test(line)
+      ) {
         out.push({
           rule: "D22-agent-emitter-import",
           file: f.relPath,

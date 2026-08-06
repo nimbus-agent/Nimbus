@@ -1287,6 +1287,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22_EMITTER_STATIC_RE");
     expect(audit).toContain("D22_EMITTER_DYNAMIC_RE");
+    // `require` is the third spelling, and Bun honours it from a .ts module — a rule matching only
+    // the two `import` forms reported green while that door stood open.
+    expect(audit).toContain("D22_EMITTER_REQUIRE_RE");
     expect(audit).toContain("checkAgentEmitterImportConfinement");
   });
 
