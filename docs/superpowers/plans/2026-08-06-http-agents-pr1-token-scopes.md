@@ -557,6 +557,16 @@ const REGEX_ROUTED_GET = new Set<string>([
 ]);
 
 /**
+ * Routes whose matcher lives in ANOTHER FILE, so no literal for them appears in http-server.ts.
+ *
+ * `GET /scim/v2/Users[/{id}]` is bearer-gated at http-server.ts:743-751 via `isScimPath(url)`,
+ * whose body (`identity/scim-http-routes.ts`) the scanner never reads. Without this list the route
+ * is invisible to every guard here — which is precisely the silent hole this task exists to make
+ * impossible, so it is named rather than tolerated.
+ */
+const EXTERNALLY_ROUTED = new Set<string>(["/scim/v2/Users", "/scim/v2/Users/{id}"]);
+
+/**
  * Every `path === "/…"` / `path.startsWith("/…")` literal in the HTTP server.
  *
  * Source-scanned rather than hand-mirrored ON PURPOSE. A hand-written second list of routes is
@@ -564,21 +574,35 @@ const REGEX_ROUTED_GET = new Set<string>([
  * the day it is written and never again. A scan self-updates: add a route, and this test demands
  * a decision about it.
  *
- * Two regexes, not one with a branch: the `startsWith` form has NO space after `path`, so a
+ * Separate regexes, not one with a branch: the `startsWith` form has NO space after `path`, so a
  * single pattern with `path ` in it silently matches only the `===` form — a scan that finds
  * half the routes and reports success.
+ *
+ * BOTH `path` and `url.pathname` are scanned. `dispatchReadOnlyDataGet` narrows to a local `path`,
+ * but the `fetch` handler matches several routes on `url.pathname` directly (`/v1/clips/related`
+ * at http-server.ts:754 is one). Scanning only `path` leaves those invisible: their table entry
+ * could be deleted or given the wrong scope and nothing would fail.
+ *
+ * Returns PATHS ONLY, with no method inferred. An earlier draft prefixed every hit with `GET `,
+ * which silently mis-keyed the POST-matched routes. Membership is checked against the path portion
+ * of the table's keys instead.
  */
 async function routeLiteralsInServer(): Promise<string[]> {
   const src = await Bun.file(SERVER_SRC).text();
   const out = new Set<string>();
-  for (const m of src.matchAll(/path\s*===\s*"(\/[^"]*)"/g)) {
+  for (const m of src.matchAll(/(?:^|[^.\w])(?:path|url\.pathname)\s*===\s*"(\/[^"]*)"/g)) {
     out.add(m[1] as string);
   }
   // `startsWith` literals are prefixes; the table keys them with a trailing `*`.
-  for (const m of src.matchAll(/path\.startsWith\("(\/[^"]*)"\)/g)) {
+  for (const m of src.matchAll(/(?:path|url\.pathname)\.startsWith\("(\/[^"]*)"\)/g)) {
     out.add(`${m[1] as string}*`);
   }
   return [...out];
+}
+
+/** The path portion of every table key, e.g. "POST /v1/clips" -> "/v1/clips". */
+function tablePaths(): string[] {
+  return Object.keys(HTTP_ROUTE_AUTH).map((k) => k.slice(k.indexOf(" ") + 1));
 }
 
 describe("http-route-auth", () => {
@@ -587,23 +611,30 @@ describe("http-route-auth", () => {
     expect(missing).toEqual([]);
   });
 
-  test("every GET route literal in http-server.ts has an auth decision", async () => {
+  test("every route literal in http-server.ts has an auth decision", async () => {
     const literals = await routeLiteralsInServer();
     // Guard the guard, twice over: if the scan finds nothing the regex has rotted, and if it
     // finds no `*` entry the startsWith half has rotted while the `===` half still passes.
     expect(literals.length).toBeGreaterThan(8);
     expect(literals.some((p) => p.endsWith("*"))).toBe(true);
-    const missing = literals.filter((p) => !(`GET ${p}` in HTTP_ROUTE_AUTH));
-    expect(missing).toEqual([]);
+    const known = new Set(tablePaths());
+    expect(literals.filter((p) => !known.has(p))).toEqual([]);
   });
 
   test("no table entry is a route that no longer exists", async () => {
     const literals = new Set(await routeLiteralsInServer());
-    const stale = Object.keys(HTTP_ROUTE_AUTH)
-      .filter((k) => k.startsWith("GET "))
-      .map((k) => k.slice("GET ".length))
-      .filter((p) => !literals.has(p) && !REGEX_ROUTED_GET.has(p));
+    const stale = tablePaths().filter(
+      (p) => !literals.has(p) && !REGEX_ROUTED_GET.has(p) && !EXTERNALLY_ROUTED.has(p),
+    );
     expect(stale).toEqual([]);
+  });
+
+  test("the SCIM read seam is still mounted the way EXTERNALLY_ROUTED assumes", async () => {
+    // EXTERNALLY_ROUTED exempts the SCIM GETs from the scan because their matcher lives in
+    // another file. That exemption is only safe while this is still true — if the seam is ever
+    // rewired, the exemption must be re-examined rather than silently kept.
+    const src = await Bun.file(SERVER_SRC).text();
+    expect(src).toContain("isScimPath(url)");
   });
 
   test("no route is matched by a form the scanner cannot see", async () => {
@@ -695,6 +726,11 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   "GET /v1/metrics/dora": { kind: "public" },
   "GET /v1/preflight/deploy": { kind: "public" },
   "GET /v1/openapi.json": { kind: "public" },
+
+  // --- SCIM-token reads. Matched by `isScimPath(url)` (identity/scim-http-routes.ts), NOT by a
+  // literal in http-server.ts — see EXTERNALLY_ROUTED in the test.
+  "GET /scim/v2/Users": { kind: "scim" },
+  "GET /scim/v2/Users/{id}": { kind: "scim" },
 
   // --- Admin-token reads.
   "GET /v1/admin/status": { kind: "admin" },
