@@ -1,8 +1,12 @@
 import type { Database } from "bun:sqlite";
 
 import type { NimbusOwnershipToml } from "../config/nimbus-toml.ts";
-import { dbRun } from "../db/write.ts";
-import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
+import { dbExec, dbRun } from "../db/write.ts";
+import {
+  ensureGraphEntity,
+  upsertGraphEntity,
+  upsertGraphRelation,
+} from "../graph/relationship-graph.ts";
 import { aggregateBlameForRoot } from "./blame-aggregate.ts";
 import { isBotAuthor, resolveOwner } from "./owner-identity.ts";
 import { type RemoteSpawn, resolveRepoRemote } from "./repo-remote.ts";
@@ -85,24 +89,79 @@ function dirExternalId(root: string, path: string): string {
   return `dir:${root}:${path}`;
 }
 
+/** Temp table holding one root's in-scope `source_file` ids for the duration of
+ * that root's clear/re-emit/reap cycle. See `collectFileScopeForRoot`. */
+const FILE_SCOPE_TABLE = "ownership_file_scope";
+
 /**
- * Retire this root's ownership edges in ONE statement.
+ * Materialize this root's `source_file` scope from OUR OWN `contains` edges.
  *
- * Scoping is an EXACT EQUALITY on `graph_entity.service = 'ownership:<root>'`,
- * never a `LIKE 'file:<root>:%'` prefix — a `repoRoot` containing `%` or `_`
- * would silently widen a prefix pattern across roots, retiring a NEIGHBOURING
- * root's edges while this root's pass reports success. Equality on a dedicated
- * marker column carries none of that hazard while still being a single query,
- * so there is no need to materialize a candidate id set first.
+ * We cannot scope files by `graph_entity.service`. `source_file` entities are
+ * SHARED with `syncCodeSymbolGraph`, which builds the byte-identical external id
+ * `file:<repoRoot>:<path>` (`graph/graph-populator.ts`) — the convergence is
+ * deliberate, so that ownership edges land on the same node as `defined_in` /
+ * `in_repo` and a reader can walk symbol → file → owners in one traversal. But
+ * `upsertGraphEntity` overwrites `service` unconditionally, so a code-symbol
+ * sync flips our marker back to `filesystem`; a `service`-scoped clear would
+ * then stop matching the row and leave a `person --owns--> source_file` edge
+ * standing with no blame behind it. We therefore write `service: "filesystem"`
+ * on files, matching that populator exactly so neither side churns the other's
+ * column, and derive file scope from `contains` edges instead — those are
+ * exclusively ours, because nothing outside `ownership/` creates a `directory`
+ * entity.
+ *
+ * Collected BEFORE any `contains` edge is deleted, because the clear destroys
+ * the very set the reap needs: a file whose blame vanished has no `contains`
+ * edge left by reap time and would never be recognised as a candidate.
+ *
+ * A TEMP TABLE rather than an `IN (?,?,…)` list: a large root can hold tens of
+ * thousands of files, which would blow SQLite's bound-variable ceiling. This
+ * keeps the clear and the reap as single bulk statements at any repo size.
+ */
+function collectFileScopeForRoot(db: Database, rootMarker: string): void {
+  dbExec(db, `CREATE TEMP TABLE IF NOT EXISTS ${FILE_SCOPE_TABLE} (id TEXT PRIMARY KEY)`);
+  dbRun(db, `DELETE FROM ${FILE_SCOPE_TABLE}`);
+  dbRun(
+    db,
+    `INSERT OR IGNORE INTO ${FILE_SCOPE_TABLE} (id)
+       SELECT r.to_id FROM graph_relation r
+         JOIN graph_entity d ON d.id = r.from_id
+         JOIN graph_entity f ON f.id = r.to_id
+        WHERE r.type = 'contains'
+          AND d.type = 'directory'
+          AND d.service = ?1
+          AND f.type = 'source_file'`,
+    [rootMarker],
+  );
+}
+
+/**
+ * Retire this root's ownership edges.
+ *
+ * Directory scoping is an EXACT EQUALITY on
+ * `graph_entity.service = 'ownership:<root>'`, never a `LIKE 'dir:<root>:%'`
+ * prefix — a `repoRoot` containing `%` or `_` would silently widen a prefix
+ * pattern across roots, retiring a NEIGHBOURING root's edges while this root's
+ * pass reports success. The marker is safe on directories specifically because
+ * this pass is their sole writer.
+ *
+ * Two statements, because the two entity classes are scoped differently. Every
+ * `contains` edge and every directory `owns` edge is anchored to an in-scope
+ * `directory`; file `owns` edges are anchored to the pre-collected file scope.
  */
 function clearOwnershipEdgesForRoot(db: Database, rootMarker: string): void {
   dbRun(
     db,
     `DELETE FROM graph_relation
       WHERE type IN ('owns','contains')
-        AND (from_id IN (SELECT id FROM graph_entity WHERE service = ?1)
-          OR   to_id IN (SELECT id FROM graph_entity WHERE service = ?1))`,
+        AND (from_id IN (SELECT id FROM graph_entity WHERE type = 'directory' AND service = ?1)
+          OR   to_id IN (SELECT id FROM graph_entity WHERE type = 'directory' AND service = ?1))`,
     [rootMarker],
+  );
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE type = 'owns' AND to_id IN (SELECT id FROM ${FILE_SCOPE_TABLE})`,
   );
 }
 
@@ -138,7 +197,8 @@ function clearServiceOwnershipEdges(db: Database): void {
 
 /**
  * Delete this root's `source_file` / `directory` entities that now have NO
- * relations at all, in one statement. Returns the row count via `changes`.
+ * relations at all. Two statements, because the two types are scoped
+ * differently (see `collectFileScopeForRoot`); returns the summed `changes`.
  *
  * The degree-0 test spans EVERY relation type, not just this pass's. A
  * `source_file` may still carry `defined_in` edges from `syncCodeSymbolGraph`,
@@ -157,18 +217,39 @@ function clearServiceOwnershipEdges(db: Database): void {
  * `idx_graph_relation_from` / `_to` indexes.
  */
 function reapOrphansForRoot(db: Database, rootMarker: string): number {
-  const res = dbRun(
+  const dirs = dbRun(
     db,
     `DELETE FROM graph_entity
       WHERE service = ?1
-        AND type IN ('source_file','directory')
+        AND type = 'directory'
         AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.from_id = graph_entity.id)
         AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.to_id   = graph_entity.id)`,
     [rootMarker],
   );
-  return res.changes;
+  // Files are scoped by the pre-collected set, not by `service` — see
+  // `collectFileScopeForRoot` for why that column is unreliable for this type.
+  const files = dbRun(
+    db,
+    `DELETE FROM graph_entity
+      WHERE type = 'source_file'
+        AND id IN (SELECT id FROM ${FILE_SCOPE_TABLE})
+        AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.from_id = graph_entity.id)
+        AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.to_id   = graph_entity.id)`,
+  );
+  return dirs.changes + files.changes;
 }
 
+/**
+ * Derive the ownership graph for `opts.roots` and persist the pass summary.
+ *
+ * `opts.roots` MUST be the COMPLETE set of git-aware roots, not a subset.
+ * `clearServiceOwnershipEdges` retires every `person --owns--> service` edge in
+ * one statement and only services reachable from `opts.roots` are re-emitted, so
+ * calling this with a partial root set silently erases ownership for every
+ * service the omitted roots would have bound. The wholesale clear is what makes
+ * a REMOVED config binding retirable at all (see that function), so this is a
+ * caller contract rather than something the pass can defend against internally.
+ */
 export async function runOwnershipPass(
   db: Database,
   opts: OwnershipPassOptions,
@@ -209,181 +290,211 @@ export async function runOwnershipPass(
     }),
   );
 
-  for (const root of opts.roots) {
-    const rootMarker = `ownership:${root}`;
-    clearOwnershipEdgesForRoot(db, rootMarker);
+  // ATOMIC. Each root CLEARS destructively before re-emitting, and
+  // `clearServiceOwnershipEdges` wipes every service edge before the rollup.
+  // `dbRun` is a bare `db.run`, so every statement autocommits on its own — a
+  // throw between a clear and its re-emit would leave the graph permanently
+  // worse than before the pass ran. The remote prefetch above is deliberately
+  // OUTSIDE this body: a `db.transaction` callback is synchronous and must
+  // never `await`, which is the reason all subprocess I/O was hoisted there.
+  db.transaction(() => {
+    for (const root of opts.roots) {
+      const rootMarker = `ownership:${root}`;
+      // MUST precede the clear — it reads the `contains` edges the clear deletes.
+      collectFileScopeForRoot(db, rootMarker);
+      clearOwnershipEdgesForRoot(db, rootMarker);
 
-    const agg = aggregateBlameForRoot(db, root, {
-      nowMs: opts.nowMs,
-      halfLifeDays: cfg.halfLifeDays,
-      ignoreGlobs: cfg.ignoreGlobs,
-    });
-    filesCovered += agg.filesCovered;
-    filesExcluded += agg.filesExcluded;
-    if (agg.rows.length > 0) rootsCovered += 1;
+      const agg = aggregateBlameForRoot(db, root, {
+        nowMs: opts.nowMs,
+        halfLifeDays: cfg.halfLifeDays,
+        ignoreGlobs: cfg.ignoreGlobs,
+      });
+      filesCovered += agg.filesCovered;
+      filesExcluded += agg.filesExcluded;
+      if (agg.rows.length > 0) rootsCovered += 1;
 
-    // file -> ownerExternalId -> weight ; and dir -> ownerExternalId -> weight
-    const fileWeights = new Map<string, Map<string, number>>();
-    const dirWeights = new Map<string, Map<string, number>>();
-    const ownerLabels = new Map<string, string>();
+      // file -> ownerExternalId -> weight ; and dir -> ownerExternalId -> weight
+      const fileWeights = new Map<string, Map<string, number>>();
+      const dirWeights = new Map<string, Map<string, number>>();
+      const ownerLabels = new Map<string, string>();
 
-    for (const r of agg.rows) {
-      // NOTE the argument order: `isBotAuthor(name, email)` is the REVERSE of
-      // `resolveOwner(db, email, name)`. Both take two strings, so a swap here
-      // would compile.
-      if (isBotAuthor(r.authorName, r.authorEmail)) continue;
-      const owner = resolveOwner(db, r.authorEmail, r.authorName);
-      ownerLabels.set(owner.entityExternalId, owner.label);
+      for (const r of agg.rows) {
+        // NOTE the argument order: `isBotAuthor(name, email)` is the REVERSE of
+        // `resolveOwner(db, email, name)`. Both take two strings, so a swap here
+        // would compile.
+        if (isBotAuthor(r.authorName, r.authorEmail)) continue;
+        const owner = resolveOwner(db, r.authorEmail, r.authorName);
+        ownerLabels.set(owner.entityExternalId, owner.label);
 
-      const fw = fileWeights.get(r.filePath) ?? new Map<string, number>();
-      fw.set(owner.entityExternalId, (fw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
-      fileWeights.set(r.filePath, fw);
+        const fw = fileWeights.get(r.filePath) ?? new Map<string, number>();
+        fw.set(owner.entityExternalId, (fw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
+        fileWeights.set(r.filePath, fw);
 
-      for (const dir of directoryAncestors(r.filePath)) {
-        const dw = dirWeights.get(dir) ?? new Map<string, number>();
-        dw.set(owner.entityExternalId, (dw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
-        dirWeights.set(dir, dw);
+        for (const dir of directoryAncestors(r.filePath)) {
+          const dw = dirWeights.get(dir) ?? new Map<string, number>();
+          dw.set(owner.entityExternalId, (dw.get(owner.entityExternalId) ?? 0) + r.weightedLines);
+          dirWeights.set(dir, dw);
+        }
       }
-    }
 
-    const remote = remoteByRoot.get(root) ?? null;
-    let boundServiceId: string | undefined;
-    if (remote !== null) {
-      rootsWithRemote += 1;
-      const wsId = upsertGraphEntity(db, {
-        type: "workspace",
-        externalId: `filesystem:${root}`,
-        label: root,
-        service: "filesystem",
-      });
-      const repoId = upsertGraphEntity(db, {
-        type: "repo",
-        externalId: `${remote.service}:${remote.ownerName}`,
-        label: remote.ownerName,
-        service: remote.service,
-      });
-      upsertGraphRelation(db, wsId, repoId, "tracks_remote", opts.nowMs);
-
-      boundServiceId = urnToService.get(`${remote.service}:${remote.ownerName}`);
-      if (boundServiceId !== undefined) {
-        const svcId = upsertGraphEntity(db, {
-          type: "service",
-          externalId: `service:${boundServiceId}`,
-          label: boundServiceId,
-          service: "nimbus",
+      const remote = remoteByRoot.get(root) ?? null;
+      let boundServiceId: string | undefined;
+      if (remote !== null) {
+        rootsWithRemote += 1;
+        const wsId = upsertGraphEntity(db, {
+          type: "workspace",
+          externalId: `filesystem:${root}`,
+          label: root,
+          service: "filesystem",
         });
-        upsertGraphRelation(db, repoId, svcId, "belongs_to", opts.nowMs);
-        servicesSeen.add(boundServiceId);
+        const repoId = upsertGraphEntity(db, {
+          type: "repo",
+          externalId: `${remote.service}:${remote.ownerName}`,
+          label: remote.ownerName,
+          service: remote.service,
+        });
+        upsertGraphRelation(db, wsId, repoId, "tracks_remote", opts.nowMs);
+
+        boundServiceId = urnToService.get(`${remote.service}:${remote.ownerName}`);
+        if (boundServiceId !== undefined) {
+          const svcId = upsertGraphEntity(db, {
+            type: "service",
+            externalId: `service:${boundServiceId}`,
+            label: boundServiceId,
+            service: "nimbus",
+          });
+          upsertGraphRelation(db, repoId, svcId, "belongs_to", opts.nowMs);
+          servicesSeen.add(boundServiceId);
+        }
       }
+
+      const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {
+        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+        for (const e of ranked.emitted) {
+          const personId = upsertGraphEntity(db, {
+            type: "person",
+            externalId: e.externalId,
+            label: ownerLabels.get(e.externalId) ?? e.externalId,
+            service: "filesystem",
+          });
+          upsertGraphRelation(db, personId, targetEntityId, "owns", opts.nowMs, e.share);
+          ownersEmitted += 1;
+        }
+      };
+
+      for (const [path, weights] of fileWeights) {
+        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+        // `service: "filesystem"` MATCHES `syncCodeSymbolGraph` exactly. We share
+        // this entity with it by design (same external id, so ownership edges land
+        // on the same node as `defined_in`/`in_repo` and the graph converges), and
+        // an upsert overwrites `service` unconditionally — so if the two writers
+        // disagreed on this value they would churn it back and forth forever.
+        //
+        // The consequence is that a code-symbol sync, which passes no metadata,
+        // transiently NULLs the ownership metadata below. That is self-healing:
+        // the next debounced pass restores it, and it is cosmetic — unlike the
+        // scoping it would break, which is why file scope comes from `contains`
+        // edges rather than from this column.
+        const fileId = upsertGraphEntity(db, {
+          type: "source_file",
+          externalId: fileExternalId(root, path),
+          label: path,
+          service: "filesystem",
+          metadata: {
+            ownerCount: ranked.totalOwners,
+            truncated: ranked.emitted.length < ranked.totalOwners,
+            totalWeightedLines: ranked.totalWeight,
+          },
+        });
+        emitOwners(fileId, weights);
+
+        const nearest = directoryAncestors(path)[0];
+        if (nearest !== undefined) {
+          // `ensureGraphEntity` (create-if-absent), NOT `upsertGraphEntity`: this
+          // is a purely STRUCTURAL reference to a directory that the rollup loop
+          // below writes authoritatively, metadata included. An upsert here would
+          // NULL that metadata, because this call site has none to pass.
+          const dirId = ensureGraphEntity(db, {
+            type: "directory",
+            externalId: dirExternalId(root, nearest),
+            label: nearest === "" ? root : nearest,
+            service: rootMarker,
+          });
+          upsertGraphRelation(db, dirId, fileId, "contains", opts.nowMs);
+        }
+      }
+
+      for (const [dir, weights] of dirWeights) {
+        const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
+        const dirId = upsertGraphEntity(db, {
+          type: "directory",
+          externalId: dirExternalId(root, dir),
+          label: dir === "" ? root : dir,
+          service: rootMarker,
+          metadata: {
+            ownerCount: ranked.totalOwners,
+            truncated: ranked.emitted.length < ranked.totalOwners,
+            totalWeightedLines: ranked.totalWeight,
+          },
+        });
+        emitOwners(dirId, weights);
+
+        const parents = directoryAncestors(dir);
+        const parent = dir === "" ? undefined : parents[0];
+        if (parent !== undefined) {
+          // Structural again — create-if-absent. With two or more top-level
+          // directories the repo-root node is reached from several children, and
+          // an upsert here would NULL the metadata its own iteration wrote. That
+          // node feeds the service rollup, so losing its metadata is not cosmetic.
+          const parentId = ensureGraphEntity(db, {
+            type: "directory",
+            externalId: dirExternalId(root, parent),
+            label: parent === "" ? root : parent,
+            service: rootMarker,
+          });
+          upsertGraphRelation(db, parentId, dirId, "contains", opts.nowMs);
+        }
+      }
+
+      if (boundServiceId !== undefined) {
+        const sw = serviceWeights.get(boundServiceId) ?? new Map<string, number>();
+        // The service rollup adds the ROOT directory's weighted TOTALS, which are
+        // themselves the sum of every file under the root — not an average of the
+        // per-directory shares. Two repos bound to one service therefore compose
+        // by volume of surviving code, as they should.
+        const rootTotals = dirWeights.get("");
+        if (rootTotals !== undefined) {
+          for (const [owner, w] of rootTotals) sw.set(owner, (sw.get(owner) ?? 0) + w);
+        }
+        serviceWeights.set(boundServiceId, sw);
+        for (const [owner, label] of ownerLabels) ownerLabelsAcrossRoots.set(owner, label);
+      }
+
+      entitiesReaped += reapOrphansForRoot(db, rootMarker);
     }
 
-    const emitOwners = (targetEntityId: string, weights: Map<string, number>): void => {
+    clearServiceOwnershipEdges(db);
+
+    for (const [serviceId, weights] of serviceWeights) {
+      const svcId = upsertGraphEntity(db, {
+        type: "service",
+        externalId: `service:${serviceId}`,
+        label: serviceId,
+        service: "nimbus",
+      });
       const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
       for (const e of ranked.emitted) {
         const personId = upsertGraphEntity(db, {
           type: "person",
           externalId: e.externalId,
-          label: ownerLabels.get(e.externalId) ?? e.externalId,
+          label: ownerLabelsAcrossRoots.get(e.externalId) ?? e.externalId,
           service: "filesystem",
         });
-        upsertGraphRelation(db, personId, targetEntityId, "owns", opts.nowMs, e.share);
+        upsertGraphRelation(db, personId, svcId, "owns", opts.nowMs, e.share);
         ownersEmitted += 1;
       }
-    };
-
-    for (const [path, weights] of fileWeights) {
-      const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-      const fileId = upsertGraphEntity(db, {
-        type: "source_file",
-        externalId: fileExternalId(root, path),
-        label: path,
-        service: rootMarker,
-        metadata: {
-          ownerCount: ranked.totalOwners,
-          truncated: ranked.emitted.length < ranked.totalOwners,
-          totalWeightedLines: ranked.totalWeight,
-        },
-      });
-      emitOwners(fileId, weights);
-
-      const nearest = directoryAncestors(path)[0];
-      if (nearest !== undefined) {
-        const dirId = upsertGraphEntity(db, {
-          type: "directory",
-          externalId: dirExternalId(root, nearest),
-          label: nearest === "" ? root : nearest,
-          service: rootMarker,
-        });
-        upsertGraphRelation(db, dirId, fileId, "contains", opts.nowMs);
-      }
     }
-
-    for (const [dir, weights] of dirWeights) {
-      const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-      const dirId = upsertGraphEntity(db, {
-        type: "directory",
-        externalId: dirExternalId(root, dir),
-        label: dir === "" ? root : dir,
-        service: rootMarker,
-        metadata: {
-          ownerCount: ranked.totalOwners,
-          truncated: ranked.emitted.length < ranked.totalOwners,
-          totalWeightedLines: ranked.totalWeight,
-        },
-      });
-      emitOwners(dirId, weights);
-
-      const parents = directoryAncestors(dir);
-      const parent = dir === "" ? undefined : parents[0];
-      if (parent !== undefined) {
-        const parentId = upsertGraphEntity(db, {
-          type: "directory",
-          externalId: dirExternalId(root, parent),
-          label: parent === "" ? root : parent,
-          service: rootMarker,
-        });
-        upsertGraphRelation(db, parentId, dirId, "contains", opts.nowMs);
-      }
-    }
-
-    if (boundServiceId !== undefined) {
-      const sw = serviceWeights.get(boundServiceId) ?? new Map<string, number>();
-      // The service rollup adds the ROOT directory's weighted TOTALS, which are
-      // themselves the sum of every file under the root — not an average of the
-      // per-directory shares. Two repos bound to one service therefore compose
-      // by volume of surviving code, as they should.
-      const rootTotals = dirWeights.get("");
-      if (rootTotals !== undefined) {
-        for (const [owner, w] of rootTotals) sw.set(owner, (sw.get(owner) ?? 0) + w);
-      }
-      serviceWeights.set(boundServiceId, sw);
-      for (const [owner, label] of ownerLabels) ownerLabelsAcrossRoots.set(owner, label);
-    }
-
-    entitiesReaped += reapOrphansForRoot(db, rootMarker);
-  }
-
-  clearServiceOwnershipEdges(db);
-
-  for (const [serviceId, weights] of serviceWeights) {
-    const svcId = upsertGraphEntity(db, {
-      type: "service",
-      externalId: `service:${serviceId}`,
-      label: serviceId,
-      service: "nimbus",
-    });
-    const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
-    for (const e of ranked.emitted) {
-      const personId = upsertGraphEntity(db, {
-        type: "person",
-        externalId: e.externalId,
-        label: ownerLabelsAcrossRoots.get(e.externalId) ?? e.externalId,
-        service: "filesystem",
-      });
-      upsertGraphRelation(db, personId, svcId, "owns", opts.nowMs, e.share);
-      ownersEmitted += 1;
-    }
-  }
+  })();
 
   const summary: OwnershipPassSummary = {
     rootsTotal: opts.roots.length,

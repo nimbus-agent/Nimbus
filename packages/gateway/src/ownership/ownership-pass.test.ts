@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_NIMBUS_OWNERSHIP_TOML } from "../config/nimbus-toml.ts";
+import { upsertGraphEntity } from "../graph/relationship-graph.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { directoryAncestors, rankOwners, runOwnershipPass } from "./ownership-pass.ts";
@@ -419,6 +420,102 @@ describe("runOwnershipPass", () => {
       .query("SELECT COUNT(*) AS n FROM graph_entity WHERE service = ?")
       .get(`ownership:${weird}`) as { n: number };
     expect(reaped.n).toBe(0);
+  });
+
+  // `syncCodeSymbolGraph` builds the BYTE-IDENTICAL `file:<root>:<path>` external
+  // id, and `upsertGraphEntity` overwrites `service` unconditionally — so it
+  // silently takes over the row. If file scope were read from that column, the
+  // takeover would put the file out of scope and strand its `owns` edge with no
+  // blame behind it. File scope therefore comes from our own `contains` edges.
+  test("a code-symbol sync taking over the source_file row does not strand an owns edge", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(d, baseOpts());
+
+    // Exactly what `graph/graph-populator.ts` writes: same id, "filesystem", no
+    // metadata.
+    upsertGraphEntity(d, {
+      type: "source_file",
+      externalId: `file:${ROOT}:src/a.ts`,
+      label: "src/a.ts",
+      service: "filesystem",
+    });
+
+    d.run("DELETE FROM git_blame_line WHERE file_path = 'src/a.ts'");
+    await runOwnershipPass(d, baseOpts());
+
+    const stale = d
+      .query(
+        `SELECT COUNT(*) AS n FROM graph_relation r
+           JOIN graph_entity f ON f.id = r.to_id
+          WHERE r.type = 'owns' AND f.type = 'source_file'`,
+      )
+      .get() as { n: number };
+    expect(stale.n).toBe(0);
+  });
+
+  // With ONE top-level directory the repo-root node is reached from a single
+  // child, so an upsert-based structural parent write happens to be harmless.
+  // With two, the second child's structural write lands after the root's own
+  // authoritative write and NULLs the metadata that feeds the service rollup.
+  test("the repo-root directory keeps its metadata with two top-level directories", async () => {
+    seedLine(d, "a/b.ts", 1, "a@x.com", "A", 0);
+    seedLine(d, "c/d.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(d, baseOpts());
+
+    const row = d
+      .query("SELECT metadata FROM graph_entity WHERE type = 'directory' AND external_id = ?")
+      .get(`dir:${ROOT}:`) as { metadata: string | null } | null;
+    expect(row?.metadata).not.toBeNull();
+    const meta = JSON.parse(row?.metadata ?? "null") as { totalWeightedLines: number };
+    expect(meta.totalWeightedLines).toBeCloseTo(2, 6);
+  });
+
+  // Rollups must sum weighted line TOTALS and divide ONCE. Averaging per-file
+  // shares would give a 1-line file the same vote as a 10-line one.
+  test("a directory rollup weights by line TOTALS, not by per-file shares", async () => {
+    for (let i = 1; i <= 10; i += 1) seedLine(d, "d/big.ts", i, "a@x.com", "A", 0);
+    seedLine(d, "d/small.ts", 1, "b@x.com", "B", 0);
+    await runOwnershipPass(d, baseOpts());
+
+    const row = d
+      .query(
+        `SELECT r.weight AS weight FROM graph_relation r
+           JOIN graph_entity p   ON p.id   = r.from_id
+           JOIN graph_entity dir ON dir.id = r.to_id
+          WHERE r.type = 'owns' AND dir.type = 'directory'
+            AND dir.external_id = ? AND p.external_id = ?`,
+      )
+      .get(`dir:${ROOT}:d`, "git:a@x.com") as { weight: number } | null;
+    expect(row?.weight).toBeCloseTo(10 / 11, 6);
+    // One equal vote per file — the averaging defect — would give exactly 0.5.
+    expect(row?.weight).not.toBeCloseTo(0.5, 2);
+  });
+
+  // Every root clears destructively BEFORE re-emitting, so a throw in between
+  // would otherwise autocommit the deletions and leave the graph worse than it
+  // was before the pass started.
+  test("a mid-pass failure rolls back, leaving the previous graph intact", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 0);
+    await runOwnershipPass(d, baseOpts());
+    const countOwns = (): number =>
+      (
+        d.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'owns'").get() as {
+          n: number;
+        }
+      ).n;
+    const before = countOwns();
+    expect(before).toBeGreaterThan(0);
+
+    // Abort the instant the pass re-emits an `owns` edge — by which point its
+    // destructive clear has already run.
+    d.run(
+      `CREATE TRIGGER boom BEFORE INSERT ON graph_relation
+         WHEN NEW.type = 'owns' BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+    );
+    await expect(runOwnershipPass(d, baseOpts())).rejects.toThrow();
+    d.run("DROP TRIGGER boom");
+
+    expect(countOwns()).toBe(before);
   });
 
   test("ignored paths are excluded and counted", async () => {
