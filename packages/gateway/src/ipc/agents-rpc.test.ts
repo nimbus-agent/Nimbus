@@ -692,4 +692,41 @@ describe("I29 — MCP-originated agent briefs are ledgered", () => {
     // Nothing was emitted: no briefReady (or any) notification fired.
     expect((ctx.notify as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
   });
+
+  test("an MCP-originated call to an UNRECOGNISED agents.* method appends NO row and still misses", async () => {
+    // The append is gated on membership of the handler map, not on the `agents.` prefix. Gating on
+    // the prefix wrote a `result_status='authorized'` row for work that never ran (the call then
+    // fails -32601) — `nimbus prove` over-counting is the same defect this feature exists to close,
+    // pointed the other way. It also let an arbitrary, caller-controlled, UNBOUNDED `method` string
+    // reach a hashed append-only column: `payload_summary` is capped at 256 bytes, `method` is not,
+    // and the local socket has no frame-size cap.
+    const db = freshDb();
+    const long = `agents.${"z".repeat(4096)}`;
+    for (const method of ["agents.bogus", "agents.", "agents.expertX", long]) {
+      const outcome = await dispatchAgentsRpc(
+        method,
+        { topicOrFile: "x" },
+        { ...makeCtx(db), caller: { clientId: "c1", kind: "mcp" as const } },
+      );
+      expect({ method, kind: outcome.kind }).toEqual({ method, kind: "miss" });
+    }
+    const n = db.query(`SELECT COUNT(*) AS n FROM egress_ledger`).get() as { n: number };
+    expect(n.n).toBe(0);
+  });
+
+  test("membership-gating did not narrow the append below the served set", async () => {
+    // The complement of the test above. `agents.whyPeek` is the one worth pinning: it is
+    // synchronous and returns its answer inline rather than via a briefReady notification, so a
+    // narrowing that keyed on "async agents" would drop it — and it is still gateway-synthesised
+    // content handed to the caller's model. The append runs before the handler, so the row must
+    // exist whether or not the handler itself succeeds on this bare context.
+    const db = freshDb();
+    await dispatchAgentsRpc(
+      "agents.whyPeek",
+      { ref: "src/a.ts:1" },
+      { ...makeCtx(db), caller: { clientId: "c1", kind: "mcp" as const } },
+    ).catch(() => undefined);
+    const rows = db.query(`SELECT method FROM egress_ledger`).all() as Array<{ method: string }>;
+    expect(rows.map((r) => r.method)).toEqual(["agents.whyPeek"]);
+  });
 });

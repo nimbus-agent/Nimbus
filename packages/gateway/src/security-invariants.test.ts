@@ -1310,13 +1310,32 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   test("I29: the MCP brief append runs BEFORE the dispatch and is not swallowed", async () => {
     // Ordering and the absence of a try/catch are the whole property: an append that runs after
     // the handler, or one whose failure is caught, records a brief that has already been served.
+    //
+    // The scanned region runs from the FUNCTION HEADER to the dispatch, not from the append to the
+    // dispatch. An append-to-dispatch window plus a `catch` check was evadable twice over: a `try
+    // {` opened before the append with its `catch` placed after the dispatch sits entirely outside
+    // such a window at both ends, so neither the opener nor the handler is ever looked at. Widening
+    // the region is what makes the added `try` assertion bite; the `try` assertion alone on the
+    // narrow window would have proved nothing.
     const src = await read("packages/gateway/src/ipc/agents-rpc.ts");
+    const fnAt = src.indexOf("export async function dispatchAgentsRpc(");
     const appendAt = src.indexOf("recordMcpBriefEgress(ctx.db");
     const dispatchAt = src.indexOf("dispatchByMethod<AgentsRpcContext>");
+    expect(fnAt).toBeGreaterThan(-1);
     expect(appendAt).toBeGreaterThan(-1);
     expect(dispatchAt).toBeGreaterThan(-1);
+    expect(fnAt).toBeLessThan(appendAt);
     expect(appendAt).toBeLessThan(dispatchAt);
-    expect(src.slice(appendAt, dispatchAt)).not.toContain("catch");
+    const guardedRegion = src.slice(fnAt, dispatchAt);
+    expect(guardedRegion).not.toContain("catch");
+    expect(guardedRegion).not.toContain("try");
+    // The ledgered set is the SERVED set: the append is gated on membership of the handler map the
+    // dispatch itself consumes, never on the `agents.` namespace prefix. Prefix-gating appended an
+    // `authorized` row for an unrecognised method that then failed -32601, so `nimbus prove`
+    // over-counted, and it admitted an unbounded caller-controlled `method` into a hashed,
+    // append-only column (`payload_summary` is capped at 256 bytes; `method` is not).
+    expect(guardedRegion).toContain("Object.hasOwn(AGENTS_RPC_HANDLERS, method)");
+    expect(guardedRegion).not.toContain('method.startsWith("agents.")');
     // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params.
     expect(src).toContain('ctx.caller?.kind === "mcp"');
   });

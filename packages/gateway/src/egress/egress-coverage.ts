@@ -25,6 +25,21 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * `egress/mcp-brief-egress.ts`, which landed in the same commit as this entry was raised). Later
  * phases raise `sync`, `model`, `peer`, `session`; raising an entry without landing its appender is
  * the exact defect this vector exists to prevent.
+ *
+ * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
+ * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
+ * same MCP server also exposes six read-only index tools — `searchIndex`, `getConnectorStatus`,
+ * `getRecentIncidents` / `getRecentPullRequests` / `getRecentDeployments`, `getDoraMetrics` — that
+ * hand raw index rows to the same editor model and append NO row at all, and the same socket's
+ * `ask` / `search.query` / `glossary.*` calls append nothing either.
+ *
+ * That narrowing is recorded HERE, in the machine-readable claim, because this vector — not any
+ * prose about it — is what gets serialized into a boot marker's HASHED `source_id` and read by
+ * published `@nimbus-dev/client` consumers. The `nimbus prove` display label
+ * (`COVERAGE_CLASS_LABELS` in `packages/cli/src/commands/prove.ts`) says the same thing for a human
+ * reader and is a hand-maintained mirror, since the CLI cannot import this module. `source_type`
+ * strings are permanent in the data, so a class whose appender covers less than its NAME suggests
+ * must say so at the point the claim is made, not only at the point it is rendered.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",

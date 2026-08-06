@@ -1,3 +1,5 @@
+// packages/gateway/src/egress/mcp-brief-egress.ts
+
 import type { Database } from "bun:sqlite";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";

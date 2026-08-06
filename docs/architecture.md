@@ -1281,6 +1281,24 @@ const streamReq: JSONRPCRequest = {
 //   The inbound forwarded share is stored inert (no auto-index, no auto-execute) — a tested property.
 //   Receiving needs no HITL; the local owner reviews via share.inbox.
 //
+// Connection handshake:
+// session.declareKind — declare what KIND of client owns this connection ("cli" | "mcp" | "ui");
+//   returns { kind } with the effective value. Answered in `ipc/server/server.ts` `dispatchMethod`
+//   ahead of every namespace dispatcher, and stored in the `ClientKindStore` keyed by connection id.
+//   FIRST DECLARATION WINS and it is immutable for the connection's lifetime; an unrecognised value
+//   collapses to "unknown" rather than being rejected. This is an honesty-of-record mechanism, NOT
+//   an authorization one — every client on this socket is a local process the owner started — and it
+//   is what makes `ctx.caller.kind` server-derived, so the I29 MCP-brief append can never be
+//   triggered (or suppressed) by a caller-supplied param.
+//   NOT renderer-exposed: it is deliberately absent from the Tauri `ALLOWED_METHODS` (I7) — the
+//   desktop UI's connection kind is a property of the bridge, not something the renderer should be
+//   able to restate. Unreachable over LAN by construction: the LAN path routes only to
+//   `dispatchFederationRpc`, which never sees this method.
+//   Client side: `packages/cli/src/mcp/adapter.ts` calls it once per connection; a gateway that
+//   rejects it as an unsupported method makes the MCP adapter withhold its eleven agent tools
+//   (fail-closed — see I29 in docs/SECURITY-INVARIANTS.md), while a disconnect-class failure is
+//   treated as a dead transport and changes nothing.
+//
 // Phase 6 S1 surfaces — Egress Ledger (provable locality; I29 / static D22, V44 `egress_ledger`):
 // egress.head        — ledger head hash + row count (read; renderer-exposed)
 // egress.list        — list egress_ledger rows, clamped (read; renderer-exposed)

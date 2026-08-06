@@ -23,7 +23,11 @@ import {
 import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
+import {
+  dispatchByMethod,
+  type RpcMethodHandlerMap,
+  type RpcMissOrHit,
+} from "./_lib/dispatch-by-method.ts";
 import type { sendFederatedOverWire } from "./lan-client.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
 import type { ClientKind } from "./server/client-kind.ts";
@@ -543,6 +547,31 @@ async function handleDecisions(
   });
 }
 
+/**
+ * The `agents.*` methods this module answers.
+ *
+ * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
+ * definitionally the served set. A second, hand-maintained list of the same twelve strings is how
+ * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
+ * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
+ * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
+ * append-only column whose only mutation path is a HITL-gated prune.
+ */
+const AGENTS_RPC_HANDLERS = {
+  "agents.expert": handleExpert,
+  "agents.impact": handleImpact,
+  "agents.catchup": handleCatchup,
+  "agents.ghost": handleGhost,
+  "agents.conflicts": handleConflicts,
+  "agents.huddle": handleHuddle,
+  "agents.janitor": handleJanitor,
+  "agents.preflight": handlePreflight,
+  "agents.why": handleWhy,
+  "agents.whyPeek": handleWhyPeek,
+  "agents.glossary": handleGlossary,
+  "agents.decisions": handleDecisions,
+} as const satisfies RpcMethodHandlerMap<AgentsRpcContext>;
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
@@ -550,8 +579,9 @@ export async function dispatchAgentsRpc(
 ): Promise<RpcMissOrHit> {
   // I29/D22(c): an MCP-originated brief is egress — the gateway synthesises from the private index
   // and hands the result to whatever model the calling client uses. Append BEFORE any work, and let
-  // a failure propagate: no row, no brief.
-  if (ctx.caller?.kind === "mcp" && method.startsWith("agents.")) {
+  // a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the namespace
+  // prefix, so an unrecognised call is a `miss` that ledgers nothing.
+  if (ctx.caller?.kind === "mcp" && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
     recordMcpBriefEgress(ctx.db, {
       method,
       params,
@@ -559,18 +589,5 @@ export async function dispatchAgentsRpc(
       now: Date.now(),
     });
   }
-  return dispatchByMethod<AgentsRpcContext>(method, params, ctx, {
-    "agents.expert": handleExpert,
-    "agents.impact": handleImpact,
-    "agents.catchup": handleCatchup,
-    "agents.ghost": handleGhost,
-    "agents.conflicts": handleConflicts,
-    "agents.huddle": handleHuddle,
-    "agents.janitor": handleJanitor,
-    "agents.preflight": handlePreflight,
-    "agents.why": handleWhy,
-    "agents.whyPeek": handleWhyPeek,
-    "agents.glossary": handleGlossary,
-    "agents.decisions": handleDecisions,
-  });
+  return dispatchByMethod<AgentsRpcContext>(method, params, ctx, AGENTS_RPC_HANDLERS);
 }
