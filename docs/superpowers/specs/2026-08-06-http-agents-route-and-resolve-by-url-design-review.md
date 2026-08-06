@@ -1,7 +1,7 @@
 # HTTP Agent Invocation + Resolve-by-URL — Design Review
 
 **Date:** 2026-08-06
-**Subject File:** [`2026-08-06-http-agents-route-and-resolve-by-url-design.md`](file:///C:/gitrep/Nimbus/.claude/worktrees/http-agents/docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md)
+**Subject File:** [`2026-08-06-http-agents-route-and-resolve-by-url-design.md`](./2026-08-06-http-agents-route-and-resolve-by-url-design.md)
 
 ---
 

@@ -1,7 +1,7 @@
 # HTTP API Token Scopes (PR 1) — Plan Review
 
 **Date:** 2026-08-06
-**Subject File:** [`2026-08-06-http-agents-pr1-token-scopes.md`](file:///C:/gitrep/Nimbus/.claude/worktrees/http-agents/docs/superpowers/plans/2026-08-06-http-agents-pr1-token-scopes.md)
+**Subject File:** [`2026-08-06-http-agents-pr1-token-scopes.md`](./2026-08-06-http-agents-pr1-token-scopes.md)
 
 ---
 

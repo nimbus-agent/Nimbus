@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
   clipScopeFor,
   HTTP_ROUTE_AUTH,
@@ -7,7 +8,17 @@ import {
 } from "./http-route-auth.ts";
 import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
-const SERVER_SRC = "packages/gateway/src/ipc/http-server.ts";
+/**
+ * Resolved from THIS FILE's directory, never from the process CWD.
+ *
+ * A CWD-relative path (`"packages/gateway/src/ipc/http-server.ts"`) resolves when the suite is
+ * run from the repo root — which is what happens locally — and throws ENOENT under CI's sharded
+ * runner, which runs from elsewhere. That is not a cosmetic difference: every scanner-backed test
+ * below then fails on CI, so the completeness guard this file exists to provide would be dead in
+ * the only place it has to work. `security-invariants.test.ts:47` and `entry-graph.test.ts:5` use
+ * `import.meta.dir` for exactly this reason.
+ */
+const SERVER_SRC = resolve(import.meta.dir, "http-server.ts");
 
 /**
  * Routes matched by a REGEX rather than a path literal, so the scan below cannot see them.
