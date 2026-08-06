@@ -371,11 +371,13 @@ that no longer exist.
 
 The pass therefore reaps, under two strict conditions that make it safe:
 
-1. **Candidate set is explicit, never a path pattern.** Before clearing, the pass records the
-   entity ids that held `owns` / `contains` edges for this root; after re-emitting, it deletes
-   those that are now **degree-0**. It never issues a `LIKE 'file:<root>:%'` prefix delete — a
-   `repoRoot` containing `%` or `_` would silently widen such a pattern into other roots, and
+1. **Scoped by exact equality, never a path pattern.** Ownership-owned `source_file` and
+   `directory` entities carry `service = 'ownership:<repoRoot>'`, and both the clear and the reap
+   scope on that column with `=`. The pass never issues a `LIKE 'file:<root>:%'` prefix delete —
+   a `repoRoot` containing `%` or `_` would silently widen such a pattern into other roots, and
    escaping LIKE wildcards around a user-supplied absolute path is a trap worth not entering.
+   Equality on a dedicated marker column has none of that hazard, and lets both operations be a
+   single bulk statement rather than a per-entity loop.
 2. **Degree-0 across *all* relation types, not just this pass's.** A `source_file` may still
    carry `defined_in` edges from `syncCodeSymbolGraph`, which owns them. Deleting an entity that
    still has any edge would destroy another populator's work and cascade its relations away. The
@@ -384,6 +386,12 @@ The pass therefore reaps, under two strict conditions that make it safe:
 
 Because a degree-0 entity has, by definition, no relations to cascade, the delete is inert
 beyond removing the row itself.
+
+The degree-0 test is written as `NOT EXISTS`, not `NOT IN`. Both happen to be correct here only
+because `graph_relation.from_id` / `to_id` are `TEXT NOT NULL` (`index/graph-v7-sql.ts:19-20`) —
+a single NULL inside a `NOT IN` subquery makes the entire predicate never match, which would
+silently reap nothing and look like the feature working. `NOT EXISTS` does not depend on that
+constraint holding, and uses the existing `idx_graph_relation_from` / `_to` indexes.
 
 **Wiring.** `platform/assemble.ts` constructs the refresher gated on `[ownership].enabled`
 (the `decisionsRefresher` pattern — construction-gated, so a disabled pass leaves it `undefined`

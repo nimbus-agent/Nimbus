@@ -536,6 +536,8 @@ git commit -m "feat(gateway): [ownership] config section"
     readonly filesExcluded: number;
   };
   export function lineWeight(authorTimeMs: number, nowMs: number, halfLifeMs: number): number;
+  export function compileIgnoreGlobs(globs: readonly string[]): Bun.Glob[];
+  export function matchesAnyCompiledGlob(filePath: string, compiled: readonly Bun.Glob[]): boolean;
   export function isIgnoredPath(filePath: string, globs: readonly string[]): boolean;
   export function aggregateBlameForRoot(
     db: Database,
@@ -553,7 +555,13 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { migrateIndexedSchema } from "../index/migrations/runner.ts";
-import { aggregateBlameForRoot, isIgnoredPath, lineWeight } from "./blame-aggregate.ts";
+import {
+  aggregateBlameForRoot,
+  compileIgnoreGlobs,
+  isIgnoredPath,
+  lineWeight,
+  matchesAnyCompiledGlob,
+} from "./blame-aggregate.ts";
 
 const DAY = 86_400_000;
 const NOW = 1_800_000_000_000;
@@ -611,6 +619,18 @@ describe("isIgnoredPath", () => {
 
   test("an empty glob list ignores nothing", () => {
     expect(isIgnoredPath("package-lock.json", [])).toBe(false);
+  });
+
+  test("the compiled pair agrees with the string convenience", () => {
+    const globs = ["**/dist/**", "**/*.min.js"];
+    const compiled = compileIgnoreGlobs(globs);
+    for (const p of ["a/dist/b.js", "a/b.min.js", "a/b.ts", ""]) {
+      expect(matchesAnyCompiledGlob(p, compiled)).toBe(isIgnoredPath(p, globs));
+    }
+  });
+
+  test("compiling an empty list yields an empty matcher", () => {
+    expect(matchesAnyCompiledGlob("anything", compileIgnoreGlobs([]))).toBe(false);
   });
 
   test("a path containing glob metacharacters does not corrupt matching", () => {
@@ -768,12 +788,31 @@ export function lineWeight(authorTimeMs: number, nowMs: number, halfLifeMs: numb
  * `Bun.Glob` rather than a hand-rolled glob-to-regex translation: compiling a
  * user-supplied pattern into a backtracking regex is a ReDoS surface, and the
  * translation step is where that defect is usually introduced.
+ *
+ * Compilation is separated from matching because `aggregateBlameForRoot`
+ * iterates BLAME LINES, not files. Constructing the glob set inside that loop
+ * would build `lines × patterns` objects — on a 50k-line root with the 21
+ * default patterns, over a million allocations for a decision that depends
+ * only on the path.
  */
-export function isIgnoredPath(filePath: string, globs: readonly string[]): boolean {
-  for (const g of globs) {
-    if (new Bun.Glob(g).match(filePath)) return true;
+export function compileIgnoreGlobs(globs: readonly string[]): Bun.Glob[] {
+  return globs.map((g) => new Bun.Glob(g));
+}
+
+export function matchesAnyCompiledGlob(
+  filePath: string,
+  compiled: readonly Bun.Glob[],
+): boolean {
+  for (const g of compiled) {
+    if (g.match(filePath)) return true;
   }
   return false;
+}
+
+/** String convenience over the compiled pair. Compiles on every call, so it is
+ * for callers holding a single path — never for a hot loop. */
+export function isIgnoredPath(filePath: string, globs: readonly string[]): boolean {
+  return matchesAnyCompiledGlob(filePath, compileIgnoreGlobs(globs));
 }
 
 type BlameRow = {
@@ -810,8 +849,22 @@ export function aggregateBlameForRoot(
   const coveredFiles = new Set<string>();
   const excludedFiles = new Set<string>();
 
+  // Compiled ONCE, then memoized PER FILE. The rows are blame LINES, so a
+  // 5,000-line file would otherwise be glob-matched 5,000 times against every
+  // pattern for a decision that depends only on the path. Compilation alone
+  // fixes the allocation cost; the memo fixes the far larger match cost.
+  const compiled = compileIgnoreGlobs(opts.ignoreGlobs);
+  const ignoredByPath = new Map<string, boolean>();
+  const isIgnored = (path: string): boolean => {
+    const memo = ignoredByPath.get(path);
+    if (memo !== undefined) return memo;
+    const v = matchesAnyCompiledGlob(path, compiled);
+    ignoredByPath.set(path, v);
+    return v;
+  };
+
   for (const r of rows) {
-    if (isIgnoredPath(r.file_path, opts.ignoreGlobs)) {
+    if (isIgnored(r.file_path)) {
       excludedFiles.add(r.file_path);
       continue;
     }
@@ -861,7 +914,7 @@ export function aggregateBlameForRoot(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/ownership/blame-aggregate.test.ts`
-Expected: PASS, 15 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1466,54 +1519,54 @@ function dirExternalId(root: string, path: string): string {
   return `dir:${root}:${path}`;
 }
 
-/** Entity ids currently on either end of an `owns`/`contains` edge whose other
- * end is one of `entityIds`. Collected BEFORE clearing so reaping has an
- * explicit candidate set and never needs a `LIKE 'file:<root>:%'` prefix
- * delete — a `repoRoot` containing `%` or `_` would silently widen that. */
-function collectOwnedEntityIds(db: Database, rootMarker: string): Set<string> {
-  const rows = db
-    .query(
-      `SELECT DISTINCT e.id AS id
-         FROM graph_entity e
-        WHERE e.type IN ('source_file','directory')
-          AND e.service = ?`,
-    )
-    .all(rootMarker) as { id: string }[];
-  return new Set(rows.map((r) => r.id));
+/**
+ * Retire this root's ownership edges in ONE statement.
+ *
+ * Scoping is an EXACT EQUALITY on `graph_entity.service = 'ownership:<root>'`,
+ * never a `LIKE 'file:<root>:%'` prefix — a `repoRoot` containing `%` or `_`
+ * would silently widen a prefix pattern across roots. Equality on a dedicated
+ * marker column carries none of that hazard while still being a single query,
+ * so there is no need to materialize a candidate id set first.
+ */
+function clearOwnershipEdgesForRoot(db: Database, rootMarker: string): void {
+  dbRun(
+    db,
+    `DELETE FROM graph_relation
+      WHERE type IN ('owns','contains')
+        AND (from_id IN (SELECT id FROM graph_entity WHERE service = ?1)
+          OR   to_id IN (SELECT id FROM graph_entity WHERE service = ?1))`,
+    [rootMarker],
+  );
 }
 
-function clearOwnershipEdgesFor(db: Database, entityIds: Iterable<string>): void {
-  for (const id of entityIds) {
-    dbRun(db, "DELETE FROM graph_relation WHERE to_id = ? AND type IN ('owns','contains')", [id]);
-    dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND type IN ('owns','contains')", [id]);
-  }
-}
-
-/** Delete candidates that now have NO relations at all.
+/**
+ * Delete this root's `source_file` / `directory` entities that now have NO
+ * relations at all, in one statement. Returns the row count via `changes`.
  *
  * The degree-0 test spans EVERY relation type, not just this pass's: a
  * `source_file` may still carry `defined_in` edges from `syncCodeSymbolGraph`,
  * which owns them, and `graph_relation` cascades on entity deletion — so
  * reaping an entity that still has any edge would destroy another populator's
  * work. A degree-0 entity has nothing to cascade, making the delete inert
- * beyond the row itself. */
-function reapOrphans(db: Database, candidates: Iterable<string>): number {
-  let reaped = 0;
-  for (const id of candidates) {
-    const row = db
-      .query(
-        `SELECT (
-           (SELECT COUNT(*) FROM graph_relation WHERE from_id = ?1) +
-           (SELECT COUNT(*) FROM graph_relation WHERE to_id = ?1)
-         ) AS degree`,
-      )
-      .get(id) as { degree: number } | null;
-    if (row !== null && row.degree === 0) {
-      dbRun(db, "DELETE FROM graph_entity WHERE id = ?", [id]);
-      reaped += 1;
-    }
-  }
-  return reaped;
+ * beyond the row itself.
+ *
+ * `NOT EXISTS` rather than `NOT IN`: both are correct here only because
+ * `from_id`/`to_id` are `TEXT NOT NULL` (`index/graph-v7-sql.ts:19-20`) — a
+ * single NULL in a `NOT IN` subquery makes the whole predicate never match,
+ * silently reaping nothing. `NOT EXISTS` is immune to that and uses the
+ * existing `idx_graph_relation_from` / `_to` indexes.
+ */
+function reapOrphansForRoot(db: Database, rootMarker: string): number {
+  const res = dbRun(
+    db,
+    `DELETE FROM graph_entity
+      WHERE service = ?1
+        AND type IN ('source_file','directory')
+        AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.from_id = graph_entity.id)
+        AND NOT EXISTS (SELECT 1 FROM graph_relation r WHERE r.to_id   = graph_entity.id)`,
+    [rootMarker],
+  );
+  return res.changes;
 }
 
 export async function runOwnershipPass(
@@ -1538,10 +1591,22 @@ export async function runOwnershipPass(
     for (const u of urns) urnToService.set(u, serviceId);
   }
 
+  // Resolve every root's remote UP FRONT and in parallel. Two effects, the
+  // second being the real reason: it removes the serial spawn cost across
+  // roots, and — more importantly — it lifts all subprocess I/O out of the
+  // per-root loop, leaving that loop as uninterrupted SQLite work. Interleaving
+  // `await`ed spawns with graph writes is what would make wrapping the loop in
+  // a transaction impossible later.
+  const remoteByRoot = new Map<string, Awaited<ReturnType<typeof resolveRepoRemote>>>();
+  await Promise.all(
+    opts.roots.map(async (root) => {
+      remoteByRoot.set(root, await resolveRepoRemote(root, opts.spawn));
+    }),
+  );
+
   for (const root of opts.roots) {
     const rootMarker = `ownership:${root}`;
-    const candidates = collectOwnedEntityIds(db, rootMarker);
-    clearOwnershipEdgesFor(db, candidates);
+    clearOwnershipEdgesForRoot(db, rootMarker);
 
     const agg = aggregateBlameForRoot(db, root, {
       nowMs: opts.nowMs,
@@ -1573,7 +1638,7 @@ export async function runOwnershipPass(
       }
     }
 
-    const remote = await resolveRepoRemote(root, opts.spawn);
+    const remote = remoteByRoot.get(root) ?? null;
     let boundServiceId: string | undefined;
     if (remote !== null) {
       rootsWithRemote += 1;
@@ -1686,8 +1751,7 @@ export async function runOwnershipPass(
       for (const [owner, label] of ownerLabels) ownerLabels.set(owner, label);
     }
 
-    const stillCandidates = new Set(candidates);
-    entitiesReaped += reapOrphans(db, stillCandidates);
+    entitiesReaped += reapOrphansForRoot(db, rootMarker);
   }
 
   for (const [serviceId, weights] of serviceWeights) {
@@ -1757,7 +1821,7 @@ export async function runOwnershipPass(
 }
 ```
 
-Note the `service` column on `source_file` / `directory` entities is set to `ownership:<root>`. That is what makes the reap candidate set explicit and root-scoped without a `LIKE` prefix query. `source_file` entities created by `syncCodeSymbolGraph` carry `service: "filesystem"` and a different `external_id` namespace, so they are never candidates here.
+Note the `service` column on `source_file` / `directory` entities is set to `ownership:<root>`. That marker column is what lets both the clear and the reap scope by **exact equality** — root-scoped, a single bulk statement each, and with none of the widening hazard a `LIKE 'file:<root>:%'` prefix query would carry for a `repoRoot` containing `%` or `_`. `source_file` entities created by `syncCodeSymbolGraph` carry `service: "filesystem"` and a different `external_id` namespace, so they are never in scope here — and even if one were, the degree-0 test would spare it.
 
 - [ ] **Step 4: Run the pure-helper tests**
 
@@ -2001,8 +2065,10 @@ Expected: PASS, 19 tests. If the `fakeSpawn` stub's shape does not satisfy `reso
 
 - [ ] **Step 7: Red-prove the reaping-safety guard**
 
-In `reapOrphans`, change the degree query to count only `owns`/`contains` edges (add `AND type IN ('owns','contains')` to both subqueries). Re-run.
-Expected: `does not reap an entity that still has a foreign edge` FAILS — the `defined_in` edge is destroyed. **Revert exactly.**
+In `reapOrphansForRoot`, narrow both `NOT EXISTS` subqueries to this pass's own edge types by appending `AND r.type IN ('owns','contains')` to each. Re-run.
+Expected: `does not reap an entity that still has a foreign edge` FAILS — the `defined_in` edge is destroyed by the cascade. **Revert exactly.**
+
+Then do it a second way: change `NOT EXISTS (SELECT 1 ...)` to `id NOT IN (SELECT from_id FROM graph_relation)` and insert a row with a NULL `from_id`. This one you cannot actually execute — the column is `TEXT NOT NULL`, and that constraint is the only reason the `NOT IN` form would have been safe. Record that as the reason the code uses `NOT EXISTS`, and move on.
 
 - [ ] **Step 8: Commit**
 
@@ -2357,7 +2423,7 @@ git commit -m "feat(gateway): wire the ownership pass into the post-sync seam"
 - [ ] **Step 1: Run the whole ownership suite**
 
 Run: `bun test packages/gateway/src/ownership/`
-Expected: PASS, 56 tests across five files.
+Expected: PASS, 58 tests across five files.
 
 - [ ] **Step 2: Confirm the forbidden files are untouched**
 
