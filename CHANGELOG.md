@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.22.0](https://github.com/nimbus-agent/Nimbus/compare/v1.21.0...v1.22.0) (2026-08-06)
+
+
+### Features
+
+* expose the read-only agents as MCP tools, recorded in the egress ledger ([#1059](https://github.com/nimbus-agent/Nimbus/issues/1059)) ([dcc7bd7](https://github.com/nimbus-agent/Nimbus/commit/dcc7bd7d1a1bbdf04273b4769df7e0f637bbc209))
+
 ## [1.21.0](https://github.com/nimbus-agent/Nimbus/compare/v1.20.0...v1.21.0) (2026-08-05)
 
 
