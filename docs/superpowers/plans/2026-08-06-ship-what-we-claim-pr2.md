@@ -17,7 +17,7 @@
 - **Never `git add -A`** — `.claude/settings.local.json` is tracked.
 - **Verify by exit code, never piped output.** `cmd > log 2>&1; echo $?`. A `| tail` swallows the status.
 - **`bun test packages` is not the repo's test scope and hangs.** Use `bun run test` or an explicit path.
-- **`lint:markdown` is a false green inside `.claude/worktrees/`** — the config excludes that path and reports "0 files" while exiting 0. Lint docs from the main checkout or a scratch copy.
+- **`lint:markdown`'s worktree exclusion is CWD-relative.** Run it from the worktree root and it lints normally (82 files); run it from the main checkout against `.claude/worktrees/**` paths and the exclusion swallows them into a "0 files" green. Always run it from inside the worktree.
 - **Do not touch** `packages/cli/**`, `packages/gateway/src/ipc/agents-rpc.ts`, `packages/gateway/src/ipc/server/*`, or `packages/gateway/src/egress/mcp-brief-egress.ts` — a parallel session owns them. Additive edits to `package.json`, `scripts/lib/preflight-gates.ts` and `.github/workflows/_test-suite.yml` are fine.
 
 ## Measurements taken against this tree on 2026-08-06 (do not re-derive)
@@ -82,12 +82,14 @@ Measurement 4 is the load-bearing one. `_test-suite.yml`'s "Unit + Coverage" and
 ### Task 1: The console build becomes a prerequisite
 
 **Files:**
+
 - Modify: `package.json` (scripts block)
 - Modify: `scripts/lib/preflight-gates.ts:10-21` (FAST list head)
 - Modify: `packages/gateway/compile-gateway.ts:91-110`
 - Test: `scripts/preflight.test.ts` (existing drift guard — must stay green)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: the root script id **`build:console`**, relied on by `release.yml` (Task 7) and the preflight manifest. Guarantees `packages/admin-console/dist/{index.html,main.js,styles.css}` exists after any `bun install`, which every later task's imports depend on.
 
@@ -178,11 +180,13 @@ git commit -m "build: make the admin-console build a prerequisite of the gateway
 ### Task 2: `ipc/embedded-assets.ts` — the four baked assets
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/embedded-assets.ts`
 - Create: `packages/gateway/src/asset-modules.d.ts`
 - Test: `packages/gateway/src/ipc/embedded-assets.test.ts`
 
 **Interfaces:**
+
 - Consumes: `packages/admin-console/dist/*` (Task 1 guarantees it exists).
 - Produces:
   - `EMBEDDED_OPENAPI_YAML: string` — absolute path to the OpenAPI document, valid in both runtime shapes.
@@ -336,16 +340,23 @@ git commit -m "feat(gateway): bake the console + openapi assets into the binary"
 ### Task 3: `resolveConsoleAsset` replaces `resolveConsoleDist`
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/admin-console-assets.ts:24-37`
 - Test: `packages/gateway/src/ipc/admin-console-assets.test.ts:23-64` (replace the `resolveConsoleDist` describe block)
 
 **Interfaces:**
+
 - Consumes: `EMBEDDED_CONSOLE_ASSETS` (Task 2); `isCompiledBinary()` from `../platform/runtime-layout.ts` (shipped by PR 1).
 - Produces:
   - `type ConsoleAssetResult = { kind: "file"; path: string } | { kind: "not-built" } | { kind: "not-found" }`
   - `interface ConsoleAssetDeps { compiled: boolean; assets: Readonly<Record<string,string>>; distOverride: string | undefined; exists: (p: string) => boolean }`
-  - `const DEFAULT_CONSOLE_ASSET_DEPS: ConsoleAssetDeps`
-  - `function resolveConsoleAsset(rel: string, deps?: ConsoleAssetDeps): ConsoleAssetResult`
+  - `function defaultConsoleAssetDeps(): ConsoleAssetDeps` — **a function, not a frozen constant.**
+    A module-scope `const` would snapshot `process.env["NIMBUS_ADMIN_CONSOLE_DIST"]` at import
+    time, and `http-server.test.ts` sets it per test long after the import. That regressed the
+    existing "console not built → 503" test to a 200 during execution; the previous
+    `resolveConsoleDist` read `process.env` per call, and this must too.
+
+  - `function resolveConsoleAsset(rel: string, overrideDeps?: ConsoleAssetDeps): ConsoleAssetResult`
   - `contentTypeFor` and `safeAssetPath` keep their current signatures. Task 4 consumes all of it.
 
 The three-way result keeps the three distinct HTTP outcomes the route already has (503 not-built / 404 not-found / 200) instead of collapsing "not built" into a 404 and losing the operator hint.
@@ -580,10 +591,12 @@ git commit -m "refactor(gateway): resolve console assets by name, not by dist di
 ### Task 4: Wire `http-server.ts` — the last two `import.meta.dir` sites
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-server.ts:2` (path import), `:19` (asset import), `:30` (openapi loader import), `:190-198`, `:337-358`
 - Test: `packages/gateway/src/ipc/http-server.test.ts:664-666`, `:678-679` (comment text only)
 
 **Interfaces:**
+
 - Consumes: `resolveConsoleAsset`, `ConsoleAssetResult`, `contentTypeFor`, `safeAssetPath` (Task 3); `EMBEDDED_OPENAPI_YAML` (Task 2).
 - Produces: a `packages/gateway/src` tree with zero `import.meta.dir` outside `perf/surfaces/**`, which is what Task 6's audit asserts.
 
@@ -642,6 +655,7 @@ Note the reordering: traversal is now rejected **before** the not-built check. A
 - [ ] **Step 4: Update the two stale test comments**
 
 In `packages/gateway/src/ipc/http-server.test.ts`:
+
 - line 665: `// Force resolveConsoleDist → undefined by pointing the override at a path with no index.html.` → `// Force the not-built result by pointing the override at a path with no index.html.`
 - line 679: `// Point the override at a real built dist so resolveConsoleDist resolves, exercising the` → `// Point the override at a real built dist so the asset resolves, exercising the`
 - line 30 mentions `resolveConsoleDist()` in the `builtConsoleDist()` helper comment → `resolveConsoleAsset()`.
@@ -681,16 +695,23 @@ git commit -m "fix(gateway): serve the console and openapi doc from embedded ass
 ### Task 5: Extract `scripts/copy-vec0-sidecar.ts`
 
 **Files:**
+
 - Create: `scripts/copy-vec0-sidecar.ts`
 - Create: `scripts/copy-vec0-sidecar.test.ts`
 - Modify: `packages/gateway/compile-gateway.ts:36-70` (delete the four moved functions), `:109`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `function vec0Filename(platform: NodeJS.Platform): string`
   - `function npmOsSegment(platform: NodeJS.Platform): string`
-  - `function resolveVec0SourceOrThrow(platform?: NodeJS.Platform, arch?: string): string`
+  - `function resolveVec0SourceOrThrow(platform?: NodeJS.Platform, arch?: string): string` —
+    resolution must start from `packages/gateway/package.json`, not from this script's own URL.
+    `sqlite-vec` is declared by the gateway package, not the root, so the verbatim
+    `createRequire(import.meta.url)` that worked inside `packages/gateway` throws
+    `Cannot find package 'sqlite-vec'` once the file moves to `scripts/`.
+
   - `function copyVec0Sidecar(destDir: string): string` — returns the destination path
   - CLI: `bun scripts/copy-vec0-sidecar.ts --dest <dir>` (default `dist`), consumed by `release.yml` (Task 7).
 
@@ -868,11 +889,13 @@ git commit -m "refactor(build): extract the vec0 sidecar copy so the release can
 ### Task 6: The `import.meta.dir` confinement audit
 
 **Files:**
+
 - Create: `scripts/structure-audit/check-import-meta-dir.ts`
 - Create: `scripts/structure-audit/check-import-meta-dir.test.ts`
 - Modify: `package.json` (scripts), `scripts/lib/preflight-gates.ts` (FAST), `.github/workflows/_test-suite.yml:125-131` (Static job)
 
 **Interfaces:**
+
 - Consumes: `stripComments` from `scripts/structure-audit/lib.ts`.
 - Produces: `export interface PathDerivationViolation { file: string; line: number; snippet: string }` and `export function checkImportMetaDir(dir?: string): PathDerivationViolation[]`; root script id `audit:import-meta-dir`.
 
@@ -1128,9 +1151,11 @@ git commit -m "test(build): confine import.meta path derivation out of the gatew
 ### Task 7: `release.yml` — build the console, ship the sidecar
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml:120-175` (build-gateway), `:292-297` (build-msi staging), `:357-370` (build-pkg staging), `:451-455` (linux bundle), `:490-520` (macOS/Windows archives)
 
 **Interfaces:**
+
 - Consumes: root script `build:console` (Task 1); `scripts/copy-vec0-sidecar.ts --dest` (Task 5).
 - Produces: each `nimbus-gateway-<target>` artifact now also contains `vec0.{so,dylib,dll}`, which Task 8's packaging steps consume.
 
@@ -1215,10 +1240,12 @@ git commit -m "ci(release): build the console and ship the vec0 sidecar per targ
 ### Task 8: Installers and archives install the sidecar
 
 **Files:**
+
 - Modify: `scripts/windows/nimbus.wxs`, `scripts/package-macos-installer.sh:20-35`, `scripts/package-linux-installers.ts`, `scripts/package-headless-bundle.ts`, `scripts/install/unix/install.sh:35-94`, `scripts/install/windows/install.ps1:20-56`
 - Test: `scripts/package-linux-installers.test.ts` (existing — must stay green)
 
 **Interfaces:**
+
 - Consumes: a staged directory containing `vec0.{so,dylib,dll}` beside the gateway binary (Task 7).
 - Produces: an installed layout where the sidecar sits in the same directory as `nimbus-gateway`, which is the only place `tryLoadFromSidecar()` looks (`dirname(process.execPath)`).
 
@@ -1264,6 +1291,7 @@ const hasVec0 = existsSync(vec0);
 ```
 
 Then add a copy at each of the four staging sites, matching the `sandboxHelper` pattern already there:
+
 - `buildTarball()` — after line 222, into `tarBin`
 - the `.deb` staging — after line 305, into `debInst`
 - the `.rpm` staging — after line 399, into `rpmBinDir`
@@ -1331,9 +1359,11 @@ git commit -m "build: install the sqlite-vec sidecar beside the gateway in every
 ### Task 9: Changelog and full verification
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: a branch that is ready to push.
 
@@ -1363,6 +1393,23 @@ If Docker is unavailable, fall back to WSL on a Linux-native copy of the tree �
 
 `lint:markdown` is a false green inside `.claude/worktrees/`. Copy the two changed docs to a scratch directory outside the worktree, or run the linter from `C:\gitrep\Nimbus` against a copy, and confirm the exit code.
 
+**Verified result (2026-08-06).** All six relevant files pass the floor on Linux; the Windows run's
+four "violations" are a platform-measurement artifact in files this branch does not touch:
+
+| File | Windows | Linux |
+|---|---|---|
+| `ipc/embedded-assets.ts` | 100% / 100% ✓ | 100% / 100% ✓ |
+| `ipc/admin-console-assets.ts` | 100% / 96.97% ✓ | 100% / 96.97% ✓ |
+| `ipc/http-server.ts` | 96.47% / 92.12% ✓ | 96.47% / 92.12% ✓ |
+| `ipc/server/dispatchers.ts` | 79.89% branch ✗ | 80.07% ✓ |
+| `ipc/server/socket-listeners.ts` | 66.67% line ✗ | 91.67% ✓ |
+| `platform/linux.ts` | 82.56% / 75% ✗ | 97.67% / 90% ✓ |
+
+The full-tier `verify:docker --full` run OOM-killed (exit 137) during `test:ci`: this machine's
+`.wslconfig` caps the WSL2 VM at 8 GB. Its static tier, `build` and `test:connector-boot` all
+passed; the numbers above came from a gateway-only instrumented run in the same container
+(12,566 tests, 0 fail).
+
 - [ ] **Step 5: Compiled-binary smoke, by hand**
 
 `bun run build` (the preflight `build` gate) produces `dist/nimbus-gateway`. Start it, and confirm with a valid admin bearer:
@@ -1374,6 +1421,19 @@ If Docker is unavailable, fall back to WSL on a Linux-native copy of the tree �
 
 Record the four results in the PR body. PR 3 turns them into `install-smoke.yml` assertions; until then this is the only evidence that the headline claim holds.
 
+**Verified result (2026-08-06).** The admin bearer resolves from the Vault (`http_api.deployment_token`), so sandboxing a full gateway boot would mean writing to the developer's real vault. Instead a throwaway entry compiled the **real** `startReadOnlyHttpServer` into a binary and drove it over HTTP — the same `handleAdminConsole` → `resolveConsoleAsset` production path, with `isCompiledBinary()` reporting `true`:
+
+```text
+compiled binary: true
+PASS  console index  /admin            -> 200  ct=text/html; charset=utf-8        bytes=460
+PASS  console js     /admin/main.js    -> 200  ct=text/javascript; charset=utf-8  bytes=5896
+PASS  console css    /admin/styles.css -> 200  ct=text/css; charset=utf-8         bytes=1059
+PASS  openapi doc    /v1/openapi.json  -> 200  ct=application/json; charset=utf-8 bytes=12177
+PASS  unmapped asset /admin/nope.js    -> 404
+```
+
+The last row is the point of the map: an unmapped name misses, with no directory to walk. `dist/vec0.dll` sits beside `dist/nimbus-gateway.exe` after `compile-gateway.ts`.
+
 - [ ] **Step 6: Push and open the PR**
 
 ```bash
@@ -1382,11 +1442,12 @@ git push -u origin dev/asaf/ship-what-we-claim-pr2
 
 The **PR title** carries the conventional-commit type — release-please parses that subject line, and local commit messages are discarded on squash. Use:
 
-```
+```text
 fix(gateway): serve the admin console and OpenAPI doc from a compiled binary
 ```
 
 The **PR body** becomes the permanent commit. It must record:
+
 - the five measurements above, especially #4 (the dist is a hard dev-mode prerequisite) and #5 (`prepare` is what makes that survivable in CI);
 - that `packages/cli/src/commands/bench.ts:31` is a known remaining `import.meta.dir` site, deliberately out of the audit's scope as a dev-tree-only surface, not an exemption;
 - that `audit:connector-entrypoints` and `audit:connector-deps` shipped in PR 1 without any CI invocation and now run in the Static job;

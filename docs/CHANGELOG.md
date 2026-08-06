@@ -8,6 +8,49 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-06 — The admin console, the OpenAPI document and semantic memory work in a released
+  binary.** Second of three PRs in the "what we ship is what we claim" cluster; the first
+  (2026-08-05) made connectors spawnable from a compiled binary.
+
+  **Two routes were unreachable in every release to date.** `ipc/http-server.ts` derived the admin
+  console's dist directory and the OpenAPI document's path by walking up from `import.meta.dir`.
+  Inside a `bun build --compile` executable that directory is the read-only virtual root
+  (`/$bunfs/root`; `B:\~BUN\root` on Windows), so both walked to paths that do not exist:
+  `nimbus admin console` printed a URL that answered HTTP 503, and `GET /v1/openapi.json` could not
+  read its schema. Both now resolve through `ipc/embedded-assets.ts`, four `{ type: "file" }`
+  imports that the bundler rewrites to content-hashed paths inside the executable. No codegen is
+  involved — the import *is* the path, in both runtime shapes.
+
+  `resolveConsoleDist(baseDir)` became `resolveConsoleAsset(rel)`. Embedded files land in a flat
+  bunfs root under content-hashed names, so a compiled binary has no directory to join a request
+  path against: it answers from a three-entry map, which makes traversal **structurally
+  impossible** rather than rejected. `safeAssetPath` remains load-bearing on the dev path, where
+  the lookup is still a join. `NIMBUS_ADMIN_CONSOLE_DIST` is now explicitly a dev-tree affordance —
+  a compiled binary ignores it rather than re-opening that surface.
+
+  Embedding the console makes its build a prerequisite of the gateway compile, and of the gateway's
+  module graph in a dev tree as well. A root `prepare` script builds it after every `bun install`
+  (verified to run even against a warm `node_modules` under `--frozen-lockfile`), and
+  `compile-gateway.ts`, `release.yml` and the preflight manifest each build it explicitly.
+
+  **Semantic memory was silently disabled in every release.** The `vec0` sqlite-vec sidecar was
+  copied only by `compile-gateway.ts`, which the release pipeline never runs, and it appeared in no
+  workflow at all. `tryLoadFromSidecar()` reports its absence at `log.debug` level, so a released
+  gateway lost vector search without saying anything. No gateway code changed — the copy moved into
+  `scripts/copy-vec0-sidecar.ts`, which each `release.yml` gateway matrix leg now calls, and the
+  sidecar ships in the `.msi`, `.pkg`, `.deb`, `.rpm`, AppImage, tarballs and zip, with both install
+  scripts placing it beside the gateway binary where `dirname(process.execPath)` will find it.
+
+  **A static audit closes the class.** `audit:import-meta-dir` forbids `import.meta.{dir,dirname,
+  path,file}` and `fileURLToPath(import.meta.url)` across `packages/gateway/src`, allowlisting only
+  `perf/surfaces/**` (dev-tree-only bench drivers) and test files, with
+  `platform/runtime-layout.ts` named as the rule's canonical module. It could not land in the
+  previous PR because its only two violations were the two this one removes. `import.meta.url`
+  itself is deliberately untouched: `new Worker(new URL("./worker.ts", import.meta.url))` is the
+  form Bun's bundler rewrites, and two modules depend on it. That audit, plus the two connector
+  audits from the previous PR, now run in CI's Static job — all three had been reachable only from
+  a local preflight run.
+
 - **2026-08-04 — Depth enforcement is now real (V49), plus real Gmail and Outlook bodies.**
   Two independent gaps, closed together because the second built on the first: connector index
   depth (`metadata_only` / `summary` / `full`) had never actually been enforced for body content,
