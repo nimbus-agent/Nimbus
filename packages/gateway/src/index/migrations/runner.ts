@@ -42,6 +42,11 @@ import {
   OBSIDIAN_NOTES_V26_SCHEMA_SQL,
   OBSIDIAN_NOTES_V26_SEED_SQL,
 } from "../obsidian-notes-v26-sql.ts";
+import {
+  OWNERSHIP_PASS_STATE_V51_SQL,
+  OWNERSHIP_RELATION_TYPES_V51_SQL,
+  SCHEMA_V50_RESERVED_SQL,
+} from "../ownership-v51-sql.ts";
 import { PERSON_HANDLES_V5_ALTER_SQL } from "../person-handles-v5-sql.ts";
 import { PERSON_LINKED_V4_ALTER_SQL } from "../person-linked-v4-sql.ts";
 import { POLICY_V36_SQL } from "../policy-v36-sql.ts";
@@ -447,6 +452,11 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "connector depth default summary->full (enforced depth v49)",
     DEPTH_DEFAULT_V49_SQL,
   ),
+  simpleStep(49, 50, "reserved for HTTP agents resolve-by-URL", SCHEMA_V50_RESERVED_SQL),
+  simpleStep(50, 51, "ownership relation types + ownership_pass_state", [
+    OWNERSHIP_RELATION_TYPES_V51_SQL,
+    OWNERSHIP_PASS_STATE_V51_SQL,
+  ]),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [
