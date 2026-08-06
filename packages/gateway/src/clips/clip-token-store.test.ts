@@ -100,7 +100,7 @@ describe("clip-token-store", () => {
   // Every non-conforming vault payload is fail-safe: an empty map, never a throw.
   test.each([
     ["corrupt JSON", "{not json"],
-    ["empty object (isStringMap vacuous-true)", "{}"],
+    ["empty object (no entries to parse)", "{}"],
     ["non-object JSON (number)", "42"],
     ["JSON array (Array rejected)", '["a","b"]'],
     ["null JSON", "null"],

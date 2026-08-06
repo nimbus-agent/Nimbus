@@ -132,6 +132,15 @@ describe("dispatchClipRpc", () => {
     expect(out).toEqual({ kind: "hit", value: { updated: false, scopes: [] } });
   });
 
+  test("clip.scopes with an invalid scope list throws even when the label is empty", async () => {
+    // Scope validation must run before the empty-label short-circuit — an empty label must not
+    // mask a bad scope list as a soft "updated: false" miss.
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.scopes", { label: "", scopes: ["telepathy"] }, d),
+    ).rejects.toThrow(/telepathy/);
+  });
+
   test("clip.status reports each device's scopes, and a LEGACY entry reads as clip+briefs", async () => {
     const d = {
       ...deps(),

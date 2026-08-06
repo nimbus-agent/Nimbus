@@ -189,8 +189,11 @@ async function handleClipStatus(_params: unknown, deps: ClipRpcDeps): Promise<un
 async function handleClipScopes(params: unknown, deps: ClipRpcDeps): Promise<unknown> {
   const rec = asRecord(params);
   const label = typeof rec["label"] === "string" ? (rec["label"] as string) : "";
-  if (label === "") return { updated: false, scopes: [] };
+  // Validate BEFORE the empty-label short-circuit: an invalid scope list must throw regardless of
+  // whether the label happens to be well-formed. The RPC's behaviour must not depend on the caller
+  // supplying a valid label first — that would make error visibility conditional on unrelated input.
   const scopes = readScopes(rec["scopes"]);
+  if (label === "") return { updated: false, scopes: [] };
   const updated = await setApiTokenScopes(deps.vault, label, scopes);
   return { updated, scopes: updated ? [...scopes] : [] };
 }

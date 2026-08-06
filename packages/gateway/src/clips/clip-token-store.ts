@@ -38,7 +38,12 @@ function parseEntry(v: unknown): ApiTokenRecord | null {
   if (typeof rec.token !== "string" || rec.token === "") return null;
   if (!Array.isArray(rec.scopes)) return null;
   // Unknown scopes are DROPPED, not preserved. A record written by a newer binary may name a
-  // scope this one cannot enforce; carrying it forward would let it read as granted.
+  // scope this one cannot enforce; carrying it forward would let it read as granted. This drop is
+  // PERSISTED: every mutator (addApiToken / setApiTokenScopes / revokeClipToken) round-trips
+  // through loadApiTokens -> mutate -> saveApiTokens, so the filtered map is what gets written
+  // back. An older binary that revokes an unrelated label silently downgrades every OTHER label's
+  // vault entry to what it recognises. There is no merge-back of the dropped scope on write;
+  // downgrade-then-restore-on-upgrade is not a supported path.
   return { token: rec.token, scopes: rec.scopes.filter(isApiScope) };
 }
 
