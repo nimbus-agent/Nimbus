@@ -30,9 +30,24 @@ function binName(platform: Platform): string {
 }
 
 /**
- * Known install locations, by platform. This duplicates a small amount of path knowledge that the
- * AGPL CLI also holds — deliberately, because this package is MIT and cannot import from it. The
- * drift risk is covered by a test asserting this list against the installers' output directories.
+ * Known install locations, by platform, INSTALLER DIRECTORY FIRST.
+ *
+ * This duplicates a small amount of path knowledge that the AGPL installer also holds —
+ * deliberately, because this package is MIT and cannot import from it, and `scripts/` is not a
+ * dependency of it either. The fallback matters precisely when an MCP client spawns this launcher
+ * without the user's shell `PATH` (the normal case for a GUI-launched editor on macOS), so a list
+ * that misses the real installer directory reports "Could not find the Nimbus CLI" against a
+ * perfectly good install.
+ *
+ * The drift risk is covered by `resolve-binary.test.ts` → "the FIRST candidate on every platform is
+ * the installer's own output directory", which reads `scripts/install/lib/paths.ts` as TEXT (a text
+ * read creates neither a package dependency nor a licence problem), extracts the directory literals
+ * `resolveInstallDir` builds, and asserts each platform's first candidate equals it. Changing either
+ * side alone fails that test.
+ *
+ * Entries after the first are additional plausible locations, not installer output — a
+ * package-manager or hand-placed binary. Nothing invented: every path here either is the installer's
+ * own, or is a directory a real distribution channel uses.
  */
 export function CANDIDATE_DIRS(
   platform: Platform,
@@ -41,20 +56,12 @@ export function CANDIDATE_DIRS(
 ): string[] {
   if (platform === "win32") {
     const localAppData = env["LOCALAPPDATA"] ?? join(platform, home, "AppData", "Local");
-    return [
-      join(platform, localAppData, "Nimbus", "bin"),
-      join(platform, localAppData, "Programs", "Nimbus"),
-    ];
+    return [join(platform, localAppData, "Programs", "Nimbus", "bin")];
   }
   if (platform === "darwin") {
-    return [join(platform, home, ".nimbus", "bin"), "/usr/local/bin", "/opt/homebrew/bin"];
+    return [join(platform, home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
   }
-  return [
-    join(platform, home, ".nimbus", "bin"),
-    join(platform, home, ".local", "bin"),
-    "/usr/local/bin",
-    "/usr/bin",
-  ];
+  return [join(platform, home, ".local", "bin"), "/usr/local/bin", "/usr/bin"];
 }
 
 export function resolveNimbusBinary(input: ResolveInput): Resolution {

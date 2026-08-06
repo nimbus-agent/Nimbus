@@ -18,6 +18,11 @@ normally use it (the `mcp-server --stdio` command talks to your existing local i
 
 ## Install
 
+> **Not published to npm yet.** `@nimbus-dev/mcp` has no release-please entry and no publish
+> workflow — registry submission is deliberately deferred to a release activity. The `npm` / `npx`
+> instructions below are what you will use **once it is published**; until then, use
+> [Running from a local checkout](#running-from-a-local-checkout).
+
 Run it directly, without a global install, from your MCP client's config (see below), or install it
 explicitly:
 
@@ -40,22 +45,51 @@ Add `nimbus-mcp` as a command in your MCP client's server configuration, for exa
 }
 ```
 
+### Running from a local checkout
+
+Until the package is published, point your MCP client straight at the launcher's entry point in a
+clone of the [Nimbus](https://github.com/nimbus-agent/Nimbus) repository. Use absolute paths — an
+editor-spawned MCP server does not inherit your shell's working directory:
+
+```json
+{
+  "mcpServers": {
+    "nimbus": {
+      "command": "bun",
+      "args": ["/absolute/path/to/Nimbus/packages/mcp-launcher/src/index.ts"]
+    }
+  }
+}
+```
+
+If you already have the Nimbus CLI installed, you can skip the launcher altogether and have your
+client run `nimbus mcp-server --stdio` directly — the launcher exists only to find that binary for
+you.
+
+### How the binary is found
+
 The launcher looks for the Nimbus binary in this order:
 
 1. `NIMBUS_BIN` — an explicit full path to the binary, if set. A `NIMBUS_BIN` that points at a
    non-existent file is reported as an error, never silently ignored.
 2. `PATH` — the first `nimbus` (or `nimbus.exe` on Windows) found on your `PATH`.
-3. Known per-platform install directories (e.g. `~/.nimbus/bin`, `/usr/local/bin`, or
-   `%LOCALAPPDATA%\Nimbus\bin` on Windows).
+3. Known per-platform install directories, the installer's own output directory first:
+   `%LOCALAPPDATA%\Programs\Nimbus\bin` on Windows, `~/.local/bin` on macOS and Linux, then
+   `/opt/homebrew/bin` and `/usr/local/bin` (macOS) or `/usr/local/bin` and `/usr/bin` (Linux).
 
-If none of those resolve, the launcher exits with a message naming the fix — never a bare exit code.
+Step 3 is what carries a GUI-launched editor on macOS, which typically spawns MCP servers without
+your shell's `PATH`. If none of those resolve, the launcher exits with a message naming the fix —
+never a bare exit code.
 
 ### Environment variables
 
 - `NIMBUS_BIN` — override the resolved binary path. Point it at the exact Nimbus CLI executable.
-- `NIMBUS_MCP_TIMEOUT_MS` — lower the MCP transport timeout when your editor's own MCP transport
-  timeout is shorter than the gateway's default (60 s). This is read by the underlying `nimbus
-  mcp-server` process, which this launcher execs with your environment inherited unchanged.
+- `NIMBUS_MCP_TIMEOUT_MS` — how long the Nimbus **CLI's MCP adapter** waits for an agent brief
+  before returning a clean timeout error; it defaults to 60 s. Lower it when your editor's own MCP
+  transport timeout is shorter, so the tool reports a timeout instead of having the call severed
+  underneath it. This is the adapter's own budget — the gateway imposes no such timeout. It is read
+  by the underlying `nimbus mcp-server` process, which this launcher execs with your environment
+  inherited unchanged.
 
 ## See also
 
