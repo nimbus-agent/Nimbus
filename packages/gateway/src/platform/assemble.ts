@@ -4,6 +4,8 @@ import os from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Logger } from "pino";
+import { type AgentHttpInvoker, buildAgentHttpInvoker } from "../agent-runs/agent-http-invoke.ts";
+import { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import { startAuditShipper } from "../audit/audit-shipper.ts";
 import {
   evaluateWatchersAfterSync,
@@ -590,6 +592,10 @@ interface HttpSidecarOpts {
   briefRuns?: BriefRunController;
   briefStartRun?: (runId: string) => void;
   briefSave?: (runId: string) => { itemId: string };
+  // Agents over HTTP: the run store is a SINGLETON — the POST route opens runs in it and the GET
+  // route reads them, so they must be the same object.
+  agentRuns?: AgentRunController;
+  agentInvoke?: AgentHttpInvoker;
 }
 
 /** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
@@ -629,6 +635,8 @@ function buildReadOnlyHttpServerOpts(
     ...(httpOpts.briefRuns === undefined ? {} : { briefRuns: httpOpts.briefRuns }),
     ...(httpOpts.briefStartRun === undefined ? {} : { briefStartRun: httpOpts.briefStartRun }),
     ...(httpOpts.briefSave === undefined ? {} : { briefSave: httpOpts.briefSave }),
+    ...(httpOpts.agentRuns === undefined ? {} : { agentRuns: httpOpts.agentRuns }),
+    ...(httpOpts.agentInvoke === undefined ? {} : { agentInvoke: httpOpts.agentInvoke }),
   };
 }
 
@@ -1824,6 +1832,37 @@ function bootBriefsIntoHttpSidecar(deps: {
   };
 }
 
+/**
+ * Agents-over-HTTP boot. Mirrors `bootBriefsIntoHttpSidecar`: build the singleton run store and the
+ * invoker, then assign both onto the caller's `httpSidecarOpts` so wiring order is unchanged.
+ *
+ * The context handed to the invoker mirrors `ipc/server/dispatchers.ts` `tryDispatchAgentsRpc` —
+ * same db, index, configDir and federation identity, and the same ABSENCE of `llm`. Diverging here
+ * would make an HTTP brief and a socket brief different answers to the same question.
+ *
+ * Unlike briefs there is no `[agents].enabled` gate: the agents namespace is already served on the
+ * socket unconditionally, and the HTTP surface adds no capability a paired client does not have to
+ * be granted explicitly — reaching it requires the `agents` scope, which no legacy token carries
+ * and `nimbus clip pair --scopes` must name.
+ */
+function bootAgentsIntoHttpSidecar(deps: {
+  db: Database;
+  localIndex: LocalIndex;
+  configDir: string;
+  selfIdentity: Parameters<typeof createIpcServer>[0]["federationIdentity"];
+  httpSidecarOpts: HttpSidecarOpts;
+}): void {
+  const agentRuns = new AgentRunController({ nowMs: () => Date.now() });
+  deps.httpSidecarOpts.agentRuns = agentRuns;
+  deps.httpSidecarOpts.agentInvoke = buildAgentHttpInvoker({
+    db: deps.db,
+    runs: agentRuns,
+    index: deps.localIndex,
+    configDir: deps.configDir,
+    ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
+  });
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
@@ -2059,6 +2098,17 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     localIndex,
     db,
     scheduleItemEmbedding,
+    httpSidecarOpts,
+  });
+
+  // Agents over HTTP. Placed AFTER bootFederationIntoIpcOpts (above) so `federationIdentity` is
+  // already populated when the invoker captures it — the socket path reads it per call, this one
+  // captures once, so the ordering is load-bearing rather than cosmetic.
+  bootAgentsIntoHttpSidecar({
+    db,
+    localIndex,
+    configDir: paths.configDir,
+    selfIdentity: ipcOpts.federationIdentity,
     httpSidecarOpts,
   });
 

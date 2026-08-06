@@ -1,4 +1,7 @@
----
+| `packages/gateway/src/egress/agent-brief-egress.ts` | `recordAgentBriefEgress` — the agent-brief ledger append for BOTH external transports (I29 / D22 rule (c)); its ONLY caller is `ipc/agents-rpc.ts` `dispatchAgentsRpc` |
+| `packages/gateway/src/egress/egress-bearing-kinds.ts` | `EGRESS_BEARING_CLIENT_KINDS` — the TOTAL `ClientKind` → `source_type` map that decides whether a caller's brief is ledgered |
+| `packages/gateway/src/agent-runs/agent-run-store.ts` | `AgentRunController` — in-memory HTTP agent runs; reservation-based admission, lazy expiry, 410-vs-404 tombstones |
+| `packages/gateway/src/agent-runs/agent-http-invoke.ts` | `buildAgentHttpInvoker` — the HTTP entry point into `agents.*`; reaches them via `dispatchAgentsRpc`, never an emitter (D22 rule (d)) |---
 name: nimbus-file-map
 description: >
   Pointer index from "where does X live?" to file path, for the Nimbus monorepo.
