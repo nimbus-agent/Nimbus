@@ -17,16 +17,21 @@ describe("[ownership] config", () => {
   });
 
   // THE REGRESSION THIS FILE EXISTS FOR: `min_share` is the one FLOAT key.
-  // If its branch falls through to the integer branch, 0.05 truncates to 0 and
-  // the `n <= 0` guard discards it — the threshold silently disables itself
-  // with no error. Same trap [decisions].min_confidence documents at
-  // nimbus-toml.ts:1663-1665.
+  // If its branch falls through to the integer branch, `parseIntDec("0.25")` is
+  // `Number.parseInt("0.25", 10)` = 0 — finite, so the `n <= 0` guard returns
+  // early and `minShare` silently keeps its DEFAULT. The asserted value must
+  // therefore DIFFER from the default (0.05), or the test passes either way.
   test("min_share survives the float branch", () => {
-    const cfg = parseNimbusOwnershipToml("[ownership]\nmin_share = 0.05\n");
-    expect(cfg.minShare).toBeCloseTo(0.05, 10);
-    expect(cfg.minShare).not.toBe(0);
+    const cfg = parseNimbusOwnershipToml("[ownership]\nmin_share = 0.25\n");
+    expect(cfg.minShare).toBeCloseTo(0.25, 10);
+    expect(cfg.minShare).not.toBe(DEFAULT_NIMBUS_OWNERSHIP_TOML.minShare);
   });
 
+  // Clamping is this test's job. Note only the `-1` case is ORDERING-sensitive:
+  // `parseIntDec("-1")` = -1 <= 0, so a misordered float branch returns early and
+  // `minShare` falls back to the default (0.05), failing the expectation of 0.
+  // The `5` case passes in BOTH orderings — the switch's `default: break` falls
+  // through to the float code — so it proves clamping, not ordering.
   test("min_share clamps to [0,1]", () => {
     expect(parseNimbusOwnershipToml("[ownership]\nmin_share = 5\n").minShare).toBe(1);
     expect(parseNimbusOwnershipToml("[ownership]\nmin_share = -1\n").minShare).toBe(0);
