@@ -1707,6 +1707,129 @@ export function loadNimbusDecisionsFromConfigDir(configDir: string): NimbusDecis
 }
 
 // ---------------------------------------------------------------------------
+// [ownership] — ownership graph derivation pass (Spine S1)
+// ---------------------------------------------------------------------------
+
+export type NimbusOwnershipToml = {
+  /** Default ON, like [glossary] and [decisions]. This pass opens nothing and
+   * calls no model — it reads local rows and writes local graph edges. */
+  enabled: boolean;
+  /** Post-sync debounce. Matches [decisions]. */
+  debounceMs: number;
+  /** Recency half-life for blame-line weighting. */
+  halfLifeDays: number;
+  /** Minimum share for an edge to be emitted. FLOAT — see the parser. */
+  minShare: number;
+  /** Cap on emitted owners per path; the true count lands on entity metadata. */
+  maxOwnersPerPath: number;
+  /** Root-relative globs excluded from aggregation. `[]` disables filtering. */
+  ignoreGlobs: string[];
+};
+
+/**
+ * Lock files and generated output are fully present in `git_blame_line`:
+ * `gitBlameWindowFiles` (`connectors/blame-index-sync.ts:70`) is a bare
+ * `git log --name-only` and consults NO exclude list. Left unfiltered, a
+ * churning lock file is thousands of lines credited to whoever last ran the
+ * installer, and would dominate its directory's rollup.
+ */
+const DEFAULT_OWNERSHIP_IGNORE_GLOBS: readonly string[] = [
+  "**/package-lock.json",
+  "**/yarn.lock",
+  "**/pnpm-lock.yaml",
+  "**/bun.lock",
+  "**/bun.lockb",
+  "**/Cargo.lock",
+  "**/poetry.lock",
+  "**/Gemfile.lock",
+  "**/composer.lock",
+  "**/go.sum",
+  "**/vendor/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/*.min.js",
+  "**/*.min.css",
+  "**/*.snap",
+  "**/__snapshots__/**",
+  "**/*.generated.*",
+  "**/*.pb.go",
+  "**/*_pb2.py",
+];
+
+export const DEFAULT_NIMBUS_OWNERSHIP_TOML: NimbusOwnershipToml = {
+  enabled: true,
+  debounceMs: 30_000,
+  halfLifeDays: 365,
+  minShare: 0.05,
+  maxOwnersPerPath: 10,
+  ignoreGlobs: [...DEFAULT_OWNERSHIP_IGNORE_GLOBS],
+};
+
+function applyNimbusOwnershipKey(
+  out: Partial<NimbusOwnershipToml>,
+  key: string,
+  valRaw: string,
+): void {
+  if (key === "enabled") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.enabled = b;
+    return;
+  }
+  if (key === "ignore_globs") {
+    // An explicit empty array is meaningful (disable filtering), so this must
+    // NOT be guarded on length.
+    out.ignoreGlobs = parseStringArray(valRaw);
+    return;
+  }
+  // `min_share` is the one FLOAT key, so it MUST precede the integer branch:
+  // that branch would truncate 0.05 to 0, and its `n <= 0` guard would then
+  // discard it before the clamp ever ran — silently disabling the threshold.
+  // Identical to the [decisions].min_confidence trap at lines 1663-1665.
+  if (key === "min_share") {
+    const f = Number(valRaw.trim());
+    if (valRaw.trim() !== "" && Number.isFinite(f)) {
+      out.minShare = Math.min(1, Math.max(0, f));
+    }
+    return;
+  }
+  const n = parseIntDec(valRaw);
+  if (n === undefined || n <= 0) return;
+  switch (key) {
+    case "debounce_ms":
+      out.debounceMs = n;
+      break;
+    case "half_life_days":
+      out.halfLifeDays = n;
+      break;
+    case "max_owners_per_path":
+      out.maxOwnersPerPath = n;
+      break;
+    default:
+      break;
+  }
+}
+
+export function parseNimbusOwnershipToml(
+  raw: string,
+  defaults: NimbusOwnershipToml = DEFAULT_NIMBUS_OWNERSHIP_TOML,
+): NimbusOwnershipToml {
+  const out: Partial<NimbusOwnershipToml> = {};
+  forEachSectionEntry(raw, "[ownership]", (key, valRaw) =>
+    applyNimbusOwnershipKey(out, key, valRaw),
+  );
+  return { ...defaults, ...out };
+}
+
+export function loadNimbusOwnershipFromConfigDir(configDir: string): NimbusOwnershipToml {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_OWNERSHIP_TOML,
+    parseNimbusOwnershipToml,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 // The DORA / CI service-config machinery (parsing + materialization) lives in
 // `./service-config-toml.ts` and is re-exported from this module via the
