@@ -1260,11 +1260,50 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
   });
 
-  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, and the MCP brief append to agents-rpc.ts", async () => {
+  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, and emitter imports to agents-rpc.ts", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22-connectors-dispatch");
     expect(audit).toContain("D22-egress-append");
     expect(audit).toContain("D22-agent-brief-egress");
+    expect(audit).toContain("D22-agent-emitter-import");
+  });
+
+  test("D22(d): the emitter-import rule matches BOTH the static and the dynamic import form", async () => {
+    // Rule (c) pins the CALLER of the appender, which catches a second file ACQUIRING the appender
+    // — but not a second file that serves a brief WITHOUT calling it. That path spells nothing (c)
+    // matches: it would append no row, serve the brief, and leave audit:invariants green. This file
+    // predicted that gap in prose before it was closed; rule (d) closes it.
+    //
+    // Both forms are required. A static-only regex is defeated by the one-character change from
+    // `import x from "…"` to `await import("…")` — a bypass hiding in plain sight, and the reason
+    // this asserts the two constants exist rather than trusting one pattern to cover both.
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain("D22_EMITTER_STATIC_RE");
+    expect(audit).toContain("D22_EMITTER_DYNAMIC_RE");
+    expect(audit).toContain("checkAgentEmitterImportConfinement");
+  });
+
+  test("D22(d): agents/_lib re-exports no emitter — the gap the import regex cannot see", async () => {
+    // A regex over import SPECIFIERS does not follow re-export chains. Were an emitter re-exported
+    // through `agents/_lib/`, a file could import it from the EXCLUDED path and rule (d) would miss
+    // — the same shape as D22's recorded wrapper/façade limit. That gap is closed by ASSERTION
+    // here, not by trusting the import rule to cover something it structurally cannot.
+    //
+    // Resolved from REPO_ROOT (which derives from import.meta.dir), never the process CWD: a
+    // CWD-relative read passes from the repo root and throws ENOENT under CI's sharded runner,
+    // which is how a guard ends up dead in the only place it has to work.
+    const libDir = resolve(REPO_ROOT, "packages/gateway/src/agents/_lib");
+    const entries = await readdir(libDir);
+    const offenders: string[] = [];
+    for (const f of entries) {
+      if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+      const src = await readFile(resolve(libDir, f), "utf8");
+      // Any re-export whose specifier climbs out of _lib and back into agents/ itself.
+      if (/export\s[^;]*from\s+["'`]\.\.\/[A-Za-z][\w-]*\.ts["'`]/.test(src)) offenders.push(f);
+    }
+    expect(offenders).toEqual([]);
+    // Guard the guard: if the directory scan finds nothing, the assertion above is vacuous.
+    expect(entries.filter((f) => f.endsWith(".ts")).length).toBeGreaterThan(5);
   });
 
   test("I29: the D22 comment does not claim totality it cannot enforce", async () => {

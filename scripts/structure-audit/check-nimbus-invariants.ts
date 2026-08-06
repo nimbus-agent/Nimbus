@@ -615,6 +615,58 @@ const D22_AGENT_RECORD_RE = /\brecordAgentBriefEgress\b/;
 const D22_AGENT_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
 const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egress.ts";
 
+// (d) the EMITTER chokepoint. Rule (c) pins the caller of the appender, which catches a second file
+// acquiring the appender — but NOT a second file that serves a brief without calling it at all.
+// That path spells nothing (c) matches: it would append no row, serve the brief, and leave
+// audit:invariants green. docs/SECURITY-INVARIANTS.md recorded that gap in prose, naming a
+// browser-reachable agent route as the surface that would hit it; this rule closes it before that
+// surface can.
+//
+// The property: only ipc/agents-rpc.ts may import an agent EMITTER module. Emitters are
+// `packages/gateway/src/agents/<name>.ts`; `agents/_lib/` is excluded because it holds types and
+// shared helpers (findings.ts, demo-symbol.ts) that federation/ and ipc/ legitimately consume.
+//
+// BOTH import forms are matched. A static-only regex is defeated by the one-character change from
+// `import x from "…"` to `await import("…")`.
+//
+// KNOWN LIMIT, stated because D22's existing weakness is exactly this: a regex over import
+// specifiers does not follow re-export chains. An emitter re-exported through `agents/_lib/` could
+// be imported from the excluded path and this rule would miss. That is closed by an assertion in
+// security-invariants.test.ts ("agents/_lib re-exports no emitter"), not by this regex — the same
+// answer as the wrapper/façade limit above: address the capability, do not pretend the regex sees it.
+const D22_EMITTER_ALLOWED = "packages/gateway/src/ipc/agents-rpc.ts";
+const D22_EMITTER_DIR = "packages/gateway/src/agents/";
+/** `from ".../agents/<name>.ts"` — any quote style, excluding an `_lib/` segment. */
+const D22_EMITTER_STATIC_RE = /\bfrom\s+["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+/** `import(".../agents/<name>.ts")` — the dynamic form. */
+const D22_EMITTER_DYNAMIC_RE =
+  /\bimport\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+
+export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    // An emitter importing a sibling emitter is internal to the agents package, not a second entry
+    // point. The rule is about who can reach IN from outside.
+    if (f.relPath.startsWith(D22_EMITTER_DIR)) continue;
+    if (f.relPath === D22_EMITTER_ALLOWED) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (D22_EMITTER_STATIC_RE.test(line) || D22_EMITTER_DYNAMIC_RE.test(line)) {
+        out.push({
+          rule: "D22-agent-emitter-import",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
   for (const f of files) {
@@ -834,6 +886,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordAgentBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkAgentEmitterImportConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(d) agent emitter imported outside ipc/agents-rpc.ts — a second entry point would serve a brief with no egress row; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

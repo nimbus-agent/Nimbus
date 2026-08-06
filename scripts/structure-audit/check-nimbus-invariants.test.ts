@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  checkAgentEmitterImportConfinement,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
   checkForwardShareConfinement,
@@ -476,5 +477,97 @@ describe("D22 — egress chokepoint confinement", () => {
     ];
     const v = checkEgressChokepointConfinement(files);
     expect(v.some((x) => x.rule === "D22-agent-brief-egress")).toBe(true);
+  });
+});
+
+describe("D22(d) — agent emitter import confinement", () => {
+  const flagged = (files: FileEntry[]): boolean =>
+    checkAgentEmitterImportConfinement(files).some((x) => x.rule === "D22-agent-emitter-import");
+
+  test("flags a STATIC emitter import outside agents-rpc.ts", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a DYNAMIC emitter import outside agents-rpc.ts", () => {
+    // Without this arm the rule is defeated by a one-character change from `import x from` to
+    // `await import(`, which would be a bypass hiding in plain sight.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'const m = await import("../agents/why.ts");\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("allows every emitter import in agents-rpc.ts — the one door", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/agents-rpc.ts",
+          contents:
+            'import { emitWhyBrief } from "../agents/why.ts";\nimport { runWhyPeek } from "../agents/why-peek.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("allows agents/_lib imports from anywhere — types and shared helpers, not emitters", () => {
+    // federation/peer-fanout.ts imports _lib/findings.ts (a type) and
+    // ipc/index-demo-symbol-rpc.ts imports _lib/demo-symbol.ts (a helper). Both are legitimate and
+    // must stay legitimate, or the rule would force a pointless re-plumbing of unrelated code.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'import type { GapNote } from "../agents/_lib/findings.ts";\n',
+        },
+        {
+          relPath: "packages/gateway/src/ipc/index-demo-symbol-rpc.ts",
+          contents: 'import { pickDemoSymbol } from "../agents/_lib/demo-symbol.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("allows an emitter importing a sibling emitter — internal, not a second entry point", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/agents/why.ts",
+          contents: 'import { emitGhostBrief } from "./ghost.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("ignores test files, matching every sibling rule", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/some.test.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("a commented-out import does not trip it — comments are stripped first", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: '// import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(false);
   });
 });
