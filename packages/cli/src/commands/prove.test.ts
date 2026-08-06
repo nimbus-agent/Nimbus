@@ -12,12 +12,40 @@ const { resolvePruneBeforeTs, runEgress, runEgressReport, runEgressVerify, runPr
 
 type Call = { method: string; params: unknown };
 
-// Matches EgressCompleteness from Task 4: task is observed per-call, everything else is
-// unobserved in this phase. A correctly-booted gateway with an intact chain looks like this.
+// Mirrors the gateway's THIS_BINARY_COVERAGE (`gateway/src/egress/egress-coverage.ts`): SIX
+// classes, of which `task` and `mcp` are observed per-call and the rest are `none`. A
+// correctly-booted gateway with an intact chain looks like this.
+//
+// This is a HAND-MAINTAINED MIRROR and nothing typechecks it: `ProveCompleteness.coverage` is
+// `Record<string, string>` because the dependency rule forbids the CLI importing gateway source,
+// so a fixture that has gone stale stays green while asserting output no real gateway can produce.
+// It did exactly that once — this fixture modelled five classes for a release after `mcp` landed,
+// which is how the missing `mcp` entry in COVERAGE_CLASS_LABELS reached production. If you change
+// COVERAGE_CLASSES gateway-side, change this too, and check the asserted scope strings below.
 const COVERED_COMPLETENESS = {
-  coverage: { task: "per-call", session: "none", sync: "none", model: "none", peer: "none" },
+  coverage: {
+    mcp: "per-call",
+    task: "per-call",
+    session: "none",
+    sync: "none",
+    model: "none",
+    peer: "none",
+  },
   indeterminate: false,
 };
+
+/** The all-none vector a gateway reports when no boot marker covers the window. */
+const UNCOVERED_COVERAGE = {
+  mcp: "none",
+  task: "none",
+  session: "none",
+  sync: "none",
+  model: "none",
+  peer: "none",
+};
+
+/** The scope clause a real six-class gateway produces: both observed classes, alphabetical by key. */
+const REAL_SCOPE = "agents.* briefs served to MCP clients, gated connector actions";
 
 // Direct fake client for the functions that take an IPCClient argument (no withIpc round-trip).
 function fakeClient(responses: Record<string, unknown>): {
@@ -120,7 +148,7 @@ describe("runEgressReport", () => {
       "egress.proveWindow": {
         rows: [],
         completeness: {
-          coverage: { task: "none", session: "none", sync: "none", model: "none", peer: "none" },
+          coverage: UNCOVERED_COVERAGE,
           outboundEgressEvents: 0,
           indeterminate: true,
         },
@@ -254,8 +282,10 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     ]);
     wiredGateway(ipc.client.call);
     await runProve(["what time is it"]);
+    // Pinned to the REAL six-class output. A five-class fixture used to make this line read
+    // "(scope: gated connector actions)", which no shipped gateway can produce.
     expect(out.stdout).toContain(
-      "outbound egress events during this query: 0 (scope: gated connector actions)",
+      `outbound egress events during this query: 0 (scope: ${REAL_SCOPE})`,
     );
     expect(out.stdout).toContain("not observed: model, peer, session, sync");
     expect(out.stdout).not.toContain("0 ✓");
@@ -300,7 +330,7 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
     wiredGateway(ipc.client.call);
     await runProve(["--receipt"]);
     expect(ipc.calls.map((c) => c.method)).toEqual(["egress.proveWindow"]);
-    expect(out.stdout).toContain("scope: gated connector actions");
+    expect(out.stdout).toContain(`scope: ${REAL_SCOPE}`);
     expect(out.stdout).not.toContain("0 ✓");
   });
 
@@ -338,7 +368,7 @@ describe("runProve (dispatcher through withConsentIpc)", () => {
       {
         rows: [],
         completeness: {
-          coverage: { task: "none", session: "none", sync: "none", model: "none", peer: "none" },
+          coverage: UNCOVERED_COVERAGE,
           outboundEgressEvents: 0,
           indeterminate: true,
         },

@@ -715,9 +715,29 @@ nimbus mcp-server            # print the MCP config block to paste into your edi
 nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
 ```
 
-The Gateway must be running (`nimbus start`). Tools are read-only:
-`searchIndex`, `getConnectorStatus`, `getRecentIncidents`, `getRecentPullRequests`,
-`getRecentDeployments`, `getDoraMetrics`. No write or HITL surface is exposed.
+The Gateway must be running (`nimbus start`). Seventeen tools are registered; run
+`nimbus mcp-server --help` for the live list, which is derived from the registry rather
+than restated.
+
+**Index and metrics (6, synchronous):** `searchIndex`, `getConnectorStatus`,
+`getRecentIncidents`, `getRecentPullRequests`, `getRecentDeployments`, `getDoraMetrics`.
+
+**Why-lens probe (1, synchronous):** `peekWhy` — a sub-300 ms one-liner for a
+`path[:line]` or symbol.
+
+**Agent briefs (10, asynchronous):** `explainWhy`, `getCatchup`, `findExpert`,
+`assessImpact`, `findConflicts`, `findDecisions`, `getGlossary`, `checkResourceUsage`,
+`getPeerContext`, `getTeamHuddle`. Each starts an `agents.*` run and returns the markdown
+brief plus its typed findings once the matching `briefReady` notification arrives; the
+wait is bounded at 60 s, overridable with `NIMBUS_MCP_TIMEOUT_MS`. `getPeerContext` and
+`getTeamHuddle` reach paired peers across the federation mesh, not just this machine.
+
+`agents.preflight` is deliberately **not** exposed: it is the `I24` federated action path,
+and triggers sandboxed execution on peers behind the owner's HITL gate. No write or HITL
+surface is exposed.
+
+Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter declares
+`kind: "mcp"` on connect, so `nimbus prove` accounts for them.
 
 ---
 

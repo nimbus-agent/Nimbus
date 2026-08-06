@@ -84,6 +84,7 @@ function makeCtx(opts: CtxOpts = {}): ServerCtx {
     broadcastNotification: () => {},
     getAgentInvokeHandler: () => opts.agentInvokeHandler,
     getWorkflowRunHandler: () => opts.workflowRunHandler as never,
+    getClientKind: () => "unknown",
   };
   return ctx;
 }

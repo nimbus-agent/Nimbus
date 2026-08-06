@@ -372,15 +372,23 @@ export type EgressCompleteness = {
    * dropped it outright. Emitted ALONGSIDE `coverage`/`outboundEgressEvents`/`indeterminate`, never
    * in place of them.
    *
-   * This value is TRUE TODAY ONLY because Phase 1 coverage is task-only (`THIS_BINARY_COVERAGE` has
-   * exactly one non-"none" class, `task`, and only at `"per-call"` granularity) — "authorized
-   * gated-connector actions, one row per call" is in fact the whole of what this binary observes.
-   * It becomes FALSE the moment any later phase raises another coverage class (`session`/`sync`/
-   * `model`/`peer`) above `"none"`, because at that point the binary observes more than
-   * "authorized-actions" describes and this field would misstate coverage exactly the way the old
-   * scalar `tier` used to. It MUST be removed — not merely "deprecated, remove eventually" — before
-   * any phase raises another coverage class. Nothing in the gateway or CLI reads this field for a
-   * decision; it exists solely for old-client wire compatibility.
+   * THIS VALUE IS NOW OVERDUE FOR REMOVAL, not merely deprecated. It was true only while
+   * `THIS_BINARY_COVERAGE` had exactly one non-"none" class (`task`, at `"per-call"`), so that
+   * "authorized gated-connector actions, one row per call" was the whole of what this binary
+   * observed. The agents-as-MCP-tools work raised a SECOND class — `mcp` at `"per-call"`
+   * (`egress/mcp-brief-egress.ts`, I29/D22(c)) — so the binary now observes more than
+   * "authorized-actions" describes, and this field misstates coverage exactly the way the old
+   * scalar `tier` used to.
+   *
+   * It was NOT deleted in that commit on purpose: removing it is a breaking wire change for
+   * published-client consumers (nimbus-vscode included), a cross-repo release decision rather than
+   * part of wiring an appender. Nothing in the gateway or CLI reads this field for a decision, and
+   * `coverage`/`indeterminate` are emitted alongside it and remain the authoritative claim — so
+   * the misstatement is inert locally. Remove it, and the client's `validateEgressCompleteness`
+   * dependency on it, at the next client major. Do not raise a third coverage class without
+   * settling this first. Tracked as https://github.com/nimbus-agent/Nimbus/issues/1057 — a removal
+   * condition that names no owner is a comment, not a plan. See `docs/SECURITY-INVARIANTS.md`
+   * § I29 ("Outstanding debt").
    */
   readonly tier: "authorized-actions";
 };

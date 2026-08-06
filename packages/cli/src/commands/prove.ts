@@ -29,9 +29,23 @@ type ProveResult = {
   receipt?: { sigB64: string; pubkeyB64: string; digest: string };
 };
 
-/** Friendlier display name for a coverage class; classes without an entry print their raw name. */
+/**
+ * Friendlier display name for a coverage class; classes without an entry print their raw name.
+ *
+ * EVERY coverage class the gateway can observe needs an entry here, and each label must be worded
+ * NARROWLY ENOUGH that it cannot be read as broader than the appender behind it. The raw fallback
+ * is the trap: a bare `mcp` in a scope line reads as "everything my MCP client does", when the
+ * class in fact covers only `agents.*` briefs served to a client that declared `kind: "mcp"` — not
+ * `ask`, not `search.query`, not `glossary.*`, none of which that same client's socket calls would
+ * ledger. Overstating scope on this surface is the same defect as the understating one guarded
+ * against below, pointed the other way, and it is worse here: this is the one output whose entire
+ * purpose is not over-claiming. Keep the labels in sync with `COVERAGE_CLASSES`
+ * (`gateway/src/egress/egress-coverage.ts`) — the CLI cannot import it (cli→gateway source imports
+ * are forbidden), so this map is a hand-maintained mirror and drifts silently if you forget.
+ */
 const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   task: "gated connector actions",
+  mcp: "agents.* briefs served to MCP clients",
 };
 
 /**

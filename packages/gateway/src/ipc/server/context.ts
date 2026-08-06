@@ -2,6 +2,7 @@ import type { AgentInvokeHandler } from "../agent-invoke.ts";
 import type { ConsentCoordinatorImpl } from "../consent.ts";
 import type { StreamRegistry } from "../engine-ask-stream.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
+import type { ClientKind } from "./client-kind.ts";
 import type { CreateIpcServerOptions } from "./options.ts";
 
 export interface ServerCtx {
@@ -12,6 +13,7 @@ export interface ServerCtx {
   broadcastNotification(method: string, params: Record<string, unknown>): void;
   getAgentInvokeHandler(): AgentInvokeHandler | undefined;
   getWorkflowRunHandler(): WorkflowRunHandler | undefined;
+  getClientKind(clientId: string): ClientKind;
 }
 
 export const connectorRpcSkipped: unique symbol = Symbol("connectorRpcSkipped");

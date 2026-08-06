@@ -12,7 +12,13 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // row's own stored source_type, never from this union's current definition) — it's frozen because
   // a value written today is permanent in the data and isMarkerSourceType depends on the set being
   // known and closed. See the doc comment on EGRESS_SOURCE_TYPES.
-  test("is exactly these eight members, in this order", () => {
+  //
+  // `mcp` is the NINTH member, added deliberately in the agents-as-MCP-tools work — the review
+  // moment this assertion exists to force. It did NOT reuse `session` with a reserved `method` (the
+  // freeze note's original prescription) because `session` must keep claiming `none` coverage until
+  // its own appenders land; see the rewritten header on EGRESS_SOURCE_TYPES and I29 in
+  // docs/SECURITY-INVARIANTS.md.
+  test("is exactly these nine members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
       "prune",
@@ -20,6 +26,7 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
       "sync",
       "model",
       "peer",
+      "mcp",
       "boot",
       "degraded",
     ]);
@@ -35,6 +42,8 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
     expect(isMarkerSourceType("degraded")).toBe(true);
     expect(isMarkerSourceType("task")).toBe(false);
     expect(isMarkerSourceType("model")).toBe(false);
+    // `mcp` rows are real egress (a brief handed to a client's model), never bookkeeping.
+    expect(isMarkerSourceType("mcp")).toBe(false);
     // An unrecognized value must NOT be treated as a marker — an unknown row counts as egress.
     expect(isMarkerSourceType("wat")).toBe(false);
   });

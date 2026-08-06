@@ -40,6 +40,7 @@ function runInitialUnitTestsWithCoverage(): void {
     "packages/gateway",
     "packages/cli",
     "packages/mcp-connectors",
+    "packages/mcp-launcher",
     "scripts",
     "--coverage",
   ];

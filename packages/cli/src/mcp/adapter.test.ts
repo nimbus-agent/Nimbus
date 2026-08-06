@@ -1,17 +1,26 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   type AdapterDeps,
+  AGENT_TOOLS_UNSUPPORTED_MESSAGE,
+  agentToolsSupported,
   buildMcpServer,
+  buildMcpServerForGateway,
   type ConnectionEnv,
   clampLimit,
   createDeps,
+  GATEWAY_DOWN_MESSAGE,
   GatewayUnavailableError,
+  INDEX_TOOL_SPECS,
   type IpcCallable,
   isDisconnectError,
   projectRankedItem,
   projectRankedItems,
   TOOL_SPECS,
 } from "./adapter.ts";
+import { supportsClose, supportsNotifications } from "./client-surface.ts";
 
 describe("clampLimit", () => {
   it("defaults to 20 when undefined", () => {
@@ -272,6 +281,125 @@ describe("createDeps", () => {
   });
 });
 
+/**
+ * Replaces `process.stderr.write` / `process.stdout.write` with recording stubs for the duration
+ * of the callback, restoring the originals in a `finally` even if the callback throws. Chosen
+ * over `mock.module` (which contaminates the combined `bun test packages/cli/src` run on CI
+ * Linux) and over threading a writer through `ConnectionEnv`/`AdapterDeps` (neither has a seam for
+ * one today, and the only caller of `session.declareKind` is this one block).
+ */
+async function captureStdio<T>(fn: () => Promise<T>): Promise<{
+  result: T;
+  stderr: string[];
+  stdout: string[];
+}> {
+  const stderr: string[] = [];
+  const stdout: string[] = [];
+  const origErr = process.stderr.write;
+  const origOut = process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const result = await fn();
+    return { result, stderr, stdout };
+  } finally {
+    process.stderr.write = origErr;
+    process.stdout.write = origOut;
+  }
+}
+
+describe("session.declareKind", () => {
+  it("is called with exactly { kind: 'mcp' } before a healthy connection is handed off, and writes nothing to stdio", async () => {
+    const calls: Array<{ method: string; params?: unknown }> = [];
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () =>
+        fakeClient(async (method, params) => {
+          calls.push({ method, params });
+          return "ok";
+        }),
+    };
+    const {
+      result: client,
+      stderr,
+      stdout,
+    } = await captureStdio(() => createDeps(env).getClient());
+    // declareKind is the only call made so far — proof it happens strictly before getClient()
+    // resolves and hands the client to any caller, not merely "at some point".
+    expect(calls).toEqual([{ method: "session.declareKind", params: { kind: "mcp" } }]);
+    expect(client).toBeDefined();
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([]);
+  });
+
+  it("writes the exact upgrade warning to stderr (never stdout) when an older gateway rejects declareKind, and still caches a usable client", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw new Error("Method not found");
+          }
+          return "ok";
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const { result: client, stderr, stdout } = await captureStdio(() => deps.getClient());
+    expect(stderr).toEqual([
+      "nimbus-mcp: gateway does not support session.declareKind; agent briefs served over MCP would NOT appear in the egress ledger, so the agent tools are DISABLED on this connection. The read-only index tools still work. Upgrade the gateway.\n",
+    ]);
+    expect(stdout).toEqual([]);
+    // Still usable: a subsequent real call on the returned client succeeds — the INDEX tools are
+    // unaffected by the degraded mode.
+    await expect(client.call("index.searchRanked", {})).resolves.toBe("ok");
+    // And it was cached despite the warning — a second getClient() does not reconnect.
+    await deps.getClient();
+    expect(connects).toBe(1);
+    // The machine-readable half of the same fact, which is what withdraws the agent tools. stderr
+    // alone was the whole defect: an editor-spawned MCP server usually discards it.
+    expect(deps.agentToolsDisabledReason?.()).toBe(AGENT_TOOLS_UNSUPPORTED_MESSAGE);
+  });
+
+  it("does not print the upgrade warning and does not re-cache when declareKind fails with a disconnect-class error", async () => {
+    let connects = 0;
+    const env: ConnectionEnv = {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => {
+        connects += 1;
+        return fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw new Error("IPC connection closed");
+          }
+          return "ok";
+        });
+      },
+    };
+    const deps = createDeps(env);
+    const { stderr, stdout } = await captureStdio(() => deps.getClient());
+    // Distinguishing behaviour from the older-gateway case above: no misdiagnosed "upgrade the
+    // gateway" warning for what is actually a dead transport.
+    expect(stderr).toEqual([]);
+    expect(stdout).toEqual([]);
+    expect(connects).toBe(1);
+    // Not re-cached: the next getClient() reconnects rather than reusing the known-dead client.
+    await deps.getClient();
+    expect(connects).toBe(2);
+    // And NOT degraded: a disconnect-class failure is a dead transport, not an old gateway, so the
+    // agent tools stay registered and stay reachable. Collapsing the two would report "upgrade the
+    // gateway" at every transient drop.
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
+  });
+});
+
 type RecordedCall = { method: string; params?: unknown };
 
 function recordingDeps(opts: { result?: unknown; fail?: "down" | "drop" }): {
@@ -309,14 +437,25 @@ function spec(name: string) {
 }
 
 describe("TOOL_SPECS", () => {
-  it("exposes exactly the six read-only tools", () => {
+  it("exposes exactly the seventeen read-only tools", () => {
     expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
+        "assessImpact",
+        "checkResourceUsage",
+        "explainWhy",
+        "findConflicts",
+        "findDecisions",
+        "findExpert",
+        "getCatchup",
         "getConnectorStatus",
         "getDoraMetrics",
+        "getGlossary",
+        "getPeerContext",
         "getRecentDeployments",
         "getRecentIncidents",
         "getRecentPullRequests",
+        "getTeamHuddle",
+        "peekWhy",
         "searchIndex",
       ].sort((a, b) => a.localeCompare(b)),
     );
@@ -390,10 +529,145 @@ describe("TOOL_SPECS", () => {
 });
 
 describe("buildMcpServer", () => {
-  it("registers all six tools without throwing", () => {
+  it("registers all seventeen tools without throwing", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
+  });
+});
+
+/**
+ * Owner decision: on a gateway that rejects `session.declareKind` as an unsupported method, the
+ * eleven agent-classified tools are withdrawn and the six read-only index tools are kept. The
+ * previous behaviour — warn on stderr, serve the briefs anyway — handed the operator unrecorded
+ * briefs while `nimbus prove` reported a clean scope, and editor-spawned MCP servers usually
+ * discard stderr, so nothing said otherwise.
+ */
+describe("degraded mode on a gateway without session.declareKind", () => {
+  /** A `ConnectionEnv` whose gateway fails `declareKind` with the given error. */
+  function envRejectingDeclareKind(err: Error): ConnectionEnv {
+    return {
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () =>
+        fakeClient(async (method) => {
+          if (method === "session.declareKind") {
+            throw err;
+          }
+          return "ok";
+        }),
+    };
+  }
+
+  /** Ask a real MCP client, over an in-memory transport, what this server actually lists. */
+  async function listToolNames(server: McpServer): Promise<string[]> {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const listed = await client.listTools();
+    await client.close();
+    return listed.tools.map((t) => t.name).sort();
+  }
+
+  it("lists exactly the six read-only index tools, and no agent tool", async () => {
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    await captureStdio(() => deps.getClient());
+    expect(await agentToolsSupported(deps)).toBe(false);
+
+    const names = await listToolNames(buildMcpServer(deps, false));
+    expect(names).toEqual([
+      "getConnectorStatus",
+      "getDoraMetrics",
+      "getRecentDeployments",
+      "getRecentIncidents",
+      "getRecentPullRequests",
+      "searchIndex",
+    ]);
+    // Derived, not retyped: the withheld set is exactly TOOL_SPECS minus INDEX_TOOL_SPECS, and it
+    // includes peekWhy — synchronous, but still `agents.whyPeek` and still ledgered gateway-side.
+    const withheld = TOOL_SPECS.filter((s) => !names.includes(s.name)).map((s) => s.name);
+    expect(withheld).toHaveLength(11);
+    expect(withheld).toContain("peekWhy");
+    expect(withheld).toContain("explainWhy");
+    expect(INDEX_TOOL_SPECS.map((s) => s.name).sort()).toEqual(names);
+  });
+
+  it("an agent tool reached anyway returns an actionable error naming the cause and the fix", async () => {
+    // Reachable in production when the gateway was healthy at spawn time and an older one answered
+    // a later reconnect — registration alone cannot cover that, so the run path checks too.
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    await captureStdio(() => deps.getClient());
+
+    for (const name of ["peekWhy", "explainWhy", "getCatchup"]) {
+      const spec = TOOL_SPECS.find((s) => s.name === name);
+      const got = await spec?.run(deps, { ref: "src/a.ts", sinceMs: 1 });
+      expect({ name, isError: got?.isError }).toEqual({ name, isError: true });
+      expect(got?.content[0]?.text).toBe(AGENT_TOOLS_UNSUPPORTED_MESSAGE);
+    }
+  });
+
+  it("says what is wrong and what to do about it — not merely that something failed", () => {
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("session.declareKind");
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain("egress ledger");
+    // Pinned to the exact fix clause, not a loose "upgrade the Nimbus gateway" substring: the
+    // loose form passed while the clause told the operator to run `nimbus restart`, which is not a
+    // Nimbus command. Every `nimbus <cmd>` in the string is checked against the registry in
+    // `tool-runtime.test.ts`; this assertion pins the sentence around them.
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).toContain(
+      "upgrade the Nimbus gateway (`nimbus update`), then restart this MCP client",
+    );
+    expect(AGENT_TOOLS_UNSUPPORTED_MESSAGE).not.toContain("nimbus restart");
+  });
+
+  it("the SHIPPED composition — probe then build — serves only the index tools", async () => {
+    // The probe and the build were only ever exercised separately, so hard-coding `true` at the
+    // composition would have kept every other test in this block green while withdrawing nothing.
+    // This drives `buildMcpServerForGateway` from a raw deps object: it opens the connection,
+    // fails `declareKind`, and must decide registration off that outcome by itself.
+    const deps = createDeps(envRejectingDeclareKind(new Error("Method not found")));
+    const server = await captureStdio(() => buildMcpServerForGateway(deps));
+    expect(await listToolNames(server.result)).toEqual(INDEX_TOOL_SPECS.map((s) => s.name).sort());
+  });
+
+  it("the SHIPPED composition serves everything against a healthy gateway", async () => {
+    const deps = createDeps({
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => fakeClient(async () => "ok"),
+    });
+    const names = await listToolNames(await buildMcpServerForGateway(deps));
+    expect(names).toHaveLength(TOOL_SPECS.length);
+    expect(names).toContain("explainWhy");
+  });
+
+  it("a DISCONNECT-class declareKind failure is not degraded mode — all seventeen tools stay", async () => {
+    // The distinction shipped earlier on this branch: a dead transport must not be reported as an
+    // old gateway. It keeps its behaviour exactly, including full tool registration.
+    const deps = createDeps(envRejectingDeclareKind(new Error("IPC connection closed")));
+    const { stderr } = await captureStdio(() => deps.getClient());
+    expect(stderr).toEqual([]);
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
+    expect(await agentToolsSupported(deps)).toBe(true);
+    expect(await listToolNames(buildMcpServer(deps, true))).toHaveLength(TOOL_SPECS.length);
+  });
+
+  it("a gateway that is merely DOWN keeps its tools — not running is not out of date", async () => {
+    const deps: AdapterDeps = {
+      getClient: (): Promise<never> => Promise.reject(new GatewayUnavailableError()),
+    };
+    expect(await agentToolsSupported(deps)).toBe(true);
+    const got = await TOOL_SPECS.find((s) => s.name === "explainWhy")?.run(deps, {
+      ref: "src/a.ts",
+    });
+    expect(got?.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+  });
+
+  it("a healthy gateway is never degraded", async () => {
+    const deps = createDeps({
+      readState: async () => ({ socketPath: "/tmp/x.sock" }),
+      connect: async () => fakeClient(async () => "ok"),
+    });
+    await deps.getClient();
+    expect(deps.agentToolsDisabledReason?.()).toBeUndefined();
+    expect(await agentToolsSupported(deps)).toBe(true);
   });
 });
 
@@ -590,4 +864,218 @@ describe("TOOL_SPECS — additional branch arms", () => {
     const params = calls[0]?.params as Record<string, unknown>;
     expect(params["service"]).toBe("");
   });
+});
+
+test("peekWhy is registered and calls agents.whyPeek", async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const deps = {
+    getClient: async () => ({
+      call: async <T>(method: string, params?: unknown): Promise<T> => {
+        calls.push({ method, params });
+        return { summary: "because of PR #412" } as T;
+      },
+      disconnect: async (): Promise<void> => {},
+    }),
+  };
+  const spec = TOOL_SPECS.find((s) => s.name === "peekWhy");
+  expect(spec).toBeDefined();
+  const out = await spec?.run(deps, { ref: "src/a.ts" });
+  expect(calls[0]?.method).toBe("agents.whyPeek");
+  expect(calls[0]?.params).toEqual({ ref: "src/a.ts" });
+  expect(out?.isError).toBeUndefined();
+  expect(out?.content[0]?.text).toContain("because of PR #412");
+});
+
+test("peekWhy reports a stopped gateway without throwing", async () => {
+  const deps = {
+    getClient: (): Promise<never> => Promise.reject(new GatewayUnavailableError()),
+  };
+  const spec = TOOL_SPECS.find((s) => s.name === "peekWhy");
+  const out = await spec?.run(deps, { fileOrPrUrl: "src/a.ts" });
+  expect(out?.isError).toBe(true);
+  expect(out?.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+});
+
+test("peekWhy sends `ref` — the key agents.whyPeek's validator actually reads", () => {
+  // `requireWhyParams` reads `ref`; a `fileOrPrUrl` here is rejected -32602 on every real call.
+  expect(Object.keys(spec("peekWhy").schema)).toEqual(["ref"]);
+});
+
+test("the registered tool set is the six index tools plus peekWhy plus ten agents", () => {
+  expect(TOOL_SPECS).toHaveLength(17);
+  const names = new Set(TOOL_SPECS.map((s) => s.name));
+  expect(names.has("searchIndex")).toBe(true);
+  expect(names.has("peekWhy")).toBe(true);
+  expect(names.has("explainWhy")).toBe(true);
+  expect(names.has("runPreflight")).toBe(false);
+});
+
+/** Drain every pending microtask, so a lazily-opened connection is fully established. */
+function flush(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+test("a disconnect on one call fails briefs in flight on the same connection", async () => {
+  let failNext = false;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    async call<T>(method: string): Promise<T> {
+      if (failNext && method === "connector.listStatus") {
+        throw new Error("IPC connection closed");
+      }
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const inFlight = spec("explainWhy").run(deps, { ref: "x" });
+  await flush();
+
+  // A second, failing call on the same connection trips the disconnect branch.
+  failNext = true;
+  await spec("getConnectorStatus").run(deps, {});
+
+  // Resolves well inside the 60 s timeout, because failAll found the WRAPPER in the WeakMap.
+  // Keyed on `raw` instead, this does not fail an assertion — it hangs out the agent timeout and
+  // trips the 5 s budget below. That budget IS the assertion.
+  const out = await inFlight;
+  expect(out.isError).toBe(true);
+  expect(out.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+}, 5000);
+
+test("an unexpected transport close fails a solitary brief in flight", async () => {
+  let fireClose: ((err: Error) => void) | undefined;
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    offNotification(_m: string, _h: (p: unknown) => void): void {},
+    onClose(h: (err: Error) => void): void {
+      fireClose = h;
+    },
+    offClose(_h: (err: Error) => void): void {},
+    async call<T>(): Promise<T> {
+      return { sessionId: "s1" } as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+
+  const inFlight = spec("explainWhy").run(deps, { ref: "x" });
+  await flush();
+
+  // No second call is made — the connection simply dies. Only onClose can observe this.
+  expect(fireClose).toBeDefined();
+  fireClose?.(new Error("IPC connection closed"));
+
+  const out = await inFlight;
+  expect(out.isError).toBe(true);
+  // Asserted exactly, not just `isError`: this message is what proves the brief was rejected by
+  // the disconnect path rather than by an incapable-transport report, so it is also what pins the
+  // wrapper's `onNotification` forwarding. Concentrating that in one test would be fragile.
+  expect(out.content[0]?.text).toBe(GATEWAY_DOWN_MESSAGE);
+}, 5000);
+
+test("a connection with no onClose still connects (guard's false arm)", async () => {
+  const raw: IpcCallable = {
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const deps = createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  });
+  await expect(deps.getClient()).resolves.toBeDefined();
+});
+
+test("the client getClient hands out carries every capability the raw client has", async () => {
+  // Asserted as a property rather than inferred from an error string. The wrapper is the only
+  // object consumers ever see, so a capability that does not cross it does not exist as far as
+  // they are concerned — which is exactly how all ten agent tools once reported a healthy
+  // connection as incapable of delivering briefs.
+  const seen: string[] = [];
+  const raw = {
+    onNotification(m: string, _h: (p: unknown) => void): void {
+      seen.push(`on:${m}`);
+    },
+    offNotification(m: string, _h: (p: unknown) => void): void {
+      seen.push(`off:${m}`);
+    },
+    onClose(_h: (err: Error) => void): void {
+      seen.push("onClose");
+    },
+    offClose(_h: (err: Error) => void): void {
+      seen.push("offClose");
+    },
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+
+  expect(supportsNotifications(client)).toBe(true);
+  expect(supportsClose(client)).toBe(true);
+
+  // openConnection binds its own close handler on `raw` during connect; drop that so what follows
+  // measures only the wrapper's forwarding.
+  expect(seen).toEqual(["onClose"]);
+  seen.length = 0;
+
+  // …and each forwarded member actually reaches the raw client, rather than being a present-but-
+  // inert stub that would satisfy the guards and drop every registration on the floor.
+  const noop = (): void => {};
+  if (supportsNotifications(client)) {
+    client.onNotification("why.briefReady", noop);
+    client.offNotification?.("why.briefReady", noop);
+  }
+  if (supportsClose(client)) {
+    client.onClose(noop);
+    client.offClose(noop);
+  }
+  expect(seen).toEqual(["on:why.briefReady", "off:why.briefReady", "onClose", "offClose"]);
+});
+
+test("a raw client with no handler methods still yields a usable client", async () => {
+  const raw: IpcCallable = {
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+  expect(supportsNotifications(client)).toBe(false);
+  expect(supportsClose(client)).toBe(false);
+  await expect(client.call("gateway.ping")).resolves.toBeDefined();
+});
+
+test("a notification-capable client without offNotification does not gain a stub", async () => {
+  // Forwarding an inert `offNotification` would advertise a capability the transport lacks — the
+  // same lie as omitting one it has, in the other direction.
+  const raw = {
+    onNotification(_m: string, _h: (p: unknown) => void): void {},
+    async call<T>(): Promise<T> {
+      return {} as T;
+    },
+    async disconnect(): Promise<void> {},
+  };
+  const client = await createDeps({
+    readState: async () => ({ socketPath: "/tmp/sock" }),
+    connect: async () => raw,
+  }).getClient();
+  expect(supportsNotifications(client)).toBe(true);
+  expect("offNotification" in client).toBe(false);
 });

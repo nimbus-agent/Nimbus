@@ -7,20 +7,43 @@
 export const GRANULARITIES = ["none", "per-run", "per-call"] as const;
 export type Granularity = (typeof GRANULARITIES)[number];
 
-/** The egress-BEARING source types. Marker classes carry no coverage claim. */
-export const COVERAGE_CLASSES = ["model", "peer", "session", "sync", "task"] as const;
+/**
+ * The egress-BEARING source types. Marker classes carry no coverage claim.
+ *
+ * Kept in key-sorted order — `serializeCoverage` maps over this array to build the canonical
+ * string stored in a boot marker's HASHED `source_id`, so the order IS the wire format. `mcp`
+ * sorts before `model`; that is why it heads the list rather than trailing it.
+ */
+export const COVERAGE_CLASSES = ["mcp", "model", "peer", "session", "sync", "task"] as const;
 export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. Phase 1 adds no coverage — it only makes the existing
- * claim honest — so only `task` is non-`none`. Later phases raise `sync`, `model`, `peer`,
- * `session`; raising an entry without landing its appender is the exact defect this vector exists
- * to prevent.
+ * What THIS binary is built to observe. Two classes are non-`none`: `task` (the executor's
+ * gated-action append, `engine/executor.ts`) and `mcp` (the MCP-originated agent-brief append in
+ * `egress/mcp-brief-egress.ts`, which landed in the same commit as this entry was raised). Later
+ * phases raise `sync`, `model`, `peer`, `session`; raising an entry without landing its appender is
+ * the exact defect this vector exists to prevent.
+ *
+ * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
+ * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
+ * same MCP server also exposes six read-only index tools — `searchIndex`, `getConnectorStatus`,
+ * `getRecentIncidents` / `getRecentPullRequests` / `getRecentDeployments`, `getDoraMetrics` — that
+ * hand raw index rows to the same editor model and append NO row at all, and the same socket's
+ * `ask` / `search.query` / `glossary.*` calls append nothing either.
+ *
+ * That narrowing is recorded HERE, in the machine-readable claim, because this vector — not any
+ * prose about it — is what gets serialized into a boot marker's HASHED `source_id` and read by
+ * published `@nimbus-dev/client` consumers. The `nimbus prove` display label
+ * (`COVERAGE_CLASS_LABELS` in `packages/cli/src/commands/prove.ts`) says the same thing for a human
+ * reader and is a hand-maintained mirror, since the CLI cannot import this module. `source_type`
+ * strings are permanent in the data, so a class whose appender covers less than its NAME suggests
+ * must say so at the point the claim is made, not only at the point it is rendered.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
+  mcp: "per-call",
   session: "none",
   sync: "none",
   model: "none",
@@ -34,6 +57,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
  */
 export const ALL_NONE_COVERAGE: CoverageVector = {
   task: "none",
+  mcp: "none",
   session: "none",
   sync: "none",
   model: "none",

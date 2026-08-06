@@ -18,6 +18,7 @@ import {
 import { ClientSession, type SessionWrite } from "../session.ts";
 import type { IPCServer } from "../types.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
+import { ClientKindStore } from "./client-kind.ts";
 import {
   automationRpcSkipped,
   connectorRpcSkipped,
@@ -58,6 +59,7 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   let agentInvokeHandler: AgentInvokeHandler | undefined = options.agentInvoke;
   let workflowRunHandler: WorkflowRunHandler | undefined = options.workflowRun;
   const sessions = new Map<string, ClientSession>();
+  const clientKinds = options.clientKinds ?? new ClientKindStore();
   const consentImpl = new ConsentCoordinatorImpl((clientId) => {
     const session = sessions.get(clientId);
     return session === undefined ? undefined : (n) => session.writeNotification(n);
@@ -89,12 +91,14 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
     broadcastNotification,
     getAgentInvokeHandler: () => agentInvokeHandler,
     getWorkflowRunHandler: () => workflowRunHandler,
+    getClientKind: (clientId: string) => clientKinds.get(clientId),
   };
 
   function attachSession(write: SessionWrite): ClientSession {
     const clientId = randomUUID();
     const session = new ClientSession(clientId, write, handleRpc, (cid) => {
       sessions.delete(cid);
+      clientKinds.forget(cid);
       consentImpl.onClientDisconnect(cid);
     });
     sessions.set(clientId, session);
@@ -138,6 +142,11 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   ): Promise<unknown> {
     const { method } = req;
     const params = req.params;
+
+    if (method === "session.declareKind") {
+      const p = params as { kind?: unknown } | undefined;
+      return { kind: clientKinds.declare(clientId, p?.kind) };
+    }
 
     const sessionOutcome = await tryDispatchSessionRpc(ctx, method, params);
     if (sessionOutcome !== sessionRpcSkipped) return sessionOutcome;

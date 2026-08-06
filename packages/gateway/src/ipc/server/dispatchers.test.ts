@@ -156,6 +156,7 @@ function makeCtx(overrides: Partial<ServerCtx["options"]> = {}): {
     },
     getAgentInvokeHandler: () => undefined,
     getWorkflowRunHandler: () => undefined,
+    getClientKind: () => "unknown",
   };
   return { ctx, notifications };
 }
@@ -201,11 +202,44 @@ describe("tryDispatchLlmRpc", () => {
 describe("tryDispatchAgentsRpc", () => {
   test("skips non-agents methods", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchAgentsRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchAgentsRpc(ctx, "engine.ask", {}, "test-client")).toBe(phase4RpcSkipped);
   });
   test("skips when localIndex is undefined", async () => {
     const { ctx } = makeCtx();
-    expect(await tryDispatchAgentsRpc(ctx, "agents.expert", {})).toBe(phase4RpcSkipped);
+    expect(await tryDispatchAgentsRpc(ctx, "agents.expert", {}, "test-client")).toBe(
+      phase4RpcSkipped,
+    );
+  });
+
+  test("builds AgentsRpcContext.caller from the server-derived clientId/kind, not a hand-built one", async () => {
+    // Exercises the real dispatchers.ts wiring (caller: { clientId, kind: ctx.getClientKind(clientId) })
+    // rather than a hand-constructed AgentsRpcContext. Observes the effect through dispatchAgentsRpc's
+    // real caller-attribution chokepoint (I29/D22(c): an mcp-kind caller appends one egress_ledger row
+    // keyed by clientId), since tryDispatchAgentsRpc has no injectable seam over dispatchAgentsRpc
+    // itself and a production seam solely for this test is not warranted.
+    //
+    // "client-abc" and "mcp" are deliberately non-interchangeable (client-abc is not a valid
+    // ClientKind; mcp is not the clientId used here), so a clientId/kind swap cannot coincidentally
+    // pass, and a hardcoded clientId literal at the call site is caught by the source_id assertion.
+    const db = trackedDb();
+    const localIndex = new LocalIndex(db);
+    const { ctx } = makeCtx({ localIndex });
+    const getClientKindCalls: string[] = [];
+    ctx.getClientKind = (clientId: string) => {
+      getClientKindCalls.push(clientId);
+      return "mcp";
+    };
+
+    await tryDispatchAgentsRpc(ctx, "agents.expert", { topicOrFile: "x" }, "client-abc");
+
+    expect(getClientKindCalls).toEqual(["client-abc"]);
+    const rows = db
+      .query(`SELECT source_type, source_id, method FROM egress_ledger`)
+      .all() as Array<{ source_type: string; source_id: string | null; method: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.source_type).toBe("mcp");
+    expect(rows[0]?.source_id).toBe("client-abc");
+    expect(rows[0]?.method).toBe("agents.expert");
   });
 });
 

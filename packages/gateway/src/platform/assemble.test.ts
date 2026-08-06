@@ -65,6 +65,7 @@ describe("appendBootMarkerOrWarn", () => {
     // covered stays indeterminate rather than reporting a falsely clean/covered state.
     expect(coverageForWindow(db, { since: 2_000, until: 3_000 })).toEqual({
       task: "none",
+      mcp: "none",
       session: "none",
       sync: "none",
       model: "none",

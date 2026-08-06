@@ -583,8 +583,38 @@ constraint is ordering-induced rework, not blocking.**
 Each of these is invisible from inside any single track, and each will otherwise be decided
 accidentally by whichever item ships first.
 
-- **Who owns the `source_type` enum.** Five items independently plan to add a value. It is committed
-  by the row hash, so the taxonomy is permanent. Close the union before the first new appender.
+- **Who owns the `source_type` enum. — DECIDED 2026-08-05, by the repo owner, in the
+  agents-as-MCP-tools work.** Five items independently planned to add a value; it is committed by
+  the row hash, so the taxonomy is permanent, and the standing instruction was to close the union
+  before the first new appender. That first appender was the MCP agent-brief ledger append
+  (`egress/mcp-brief-egress.ts`), and this is the decision it forced, made once and recorded here.
+
+  **What was decided.** `mcp` was added as the ninth member of `EGRESS_SOURCE_TYPES`, overriding
+  #1038's prescription that a ninth class reuse `session` with a reserved `method`. That
+  prescription weighed only the marker/non-marker exclusion cost and not **coverage**:
+  `COVERAGE_CLASSES` is by definition the set of egress-bearing source types, and
+  `THIS_BINARY_COVERAGE` may claim a granularity only for a class whose appender exists.
+  `session`'s appenders (telemetry, updater, JWKS) do not exist, so `session` must go on claiming
+  `none` — filing MCP briefs there would have recorded them and disclaimed them in the same breath.
+  Widening the union is not a chain break: `verifyEgressChain` recomputes each row's hash from that
+  row's own stored column values, never from the union's current definition.
+
+  **What the other four claimants must now do.** The union is not open. A new member is a reviewed
+  taxonomy change, not an append, and it lands as one commit carrying all six of: the
+  `EGRESS_SOURCE_TYPES` member **with its reasoning written into that file's header the way `mcp`'s
+  is**; the matching `COVERAGE_CLASSES` entry (the two lists are separate declarations and a
+  mismatch is silent — `security-invariants.test.ts` asserts they agree); the
+  `THIS_BINARY_COVERAGE` granularity; **the appender itself**; the D22 caller pin; and the
+  enforcement test. A claimant whose appender is not landing in the same commit does **not** get a
+  member — `session` with a reserved `method` remains the right answer for that case, because a
+  class that cannot honestly claim coverage should not be in the coverage vector at all. The
+  identity assertion in `egress-source-type.test.ts` is the review checkpoint and must never be
+  weakened to a length check. Authority: `docs/SECURITY-INVARIANTS.md` § I29.
+
+  **Accepted cost, already paid.** `parseCoverage` rejects a vector missing a known class by
+  design, so a `prove` window spanning a pre-`mcp` and a post-`mcp` binary reads `indeterminate` on
+  every class. That is the fail-safe direction; it must not be softened by making `parseCoverage`
+  lenient. Every further member re-incurs this, which is itself a reason to keep the bar high.
 - **The consent model contradiction.** Shipped code answers it two ways: the share and preflight
   gates accept an approval from any local client, while the executor gate rejects a foreign
   responder. Nobody should build a second approver path until that is resolved deliberately. The

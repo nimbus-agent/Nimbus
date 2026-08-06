@@ -149,6 +149,7 @@ function buildCtx(opts: { withLocalIndex: boolean }): { ctx: ServerCtx; openDbs:
     broadcastNotification: () => {},
     getAgentInvokeHandler: () => undefined,
     getWorkflowRunHandler: () => undefined,
+    getClientKind: () => "unknown",
   };
   return { ctx, openDbs };
 }
