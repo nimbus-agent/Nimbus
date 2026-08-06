@@ -2,6 +2,8 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { vec0Filename } from "./copy-vec0-sidecar.ts";
+
 const isWin = process.platform === "win32";
 const ext = isWin ? ".exe" : "";
 
@@ -46,6 +48,15 @@ const gwDest = join(outDir, `nimbus-gateway${ext}`);
 const cliDest = join(outDir, `nimbus${ext}`);
 copyFileSync(gatewaySrc, gwDest);
 copyFileSync(cliSrc, cliDest);
+
+// sqlite-vec loadable extension, beside the gateway binary because tryLoadFromSidecar() resolves
+// it from dirname(process.execPath). Optional: `bun run compile:gateway` produces it in dist/, but
+// a bundle assembled from pre-built binaries may not have one, and that only costs semantic memory.
+const vec0Name = vec0Filename(process.platform);
+const vec0Src = resolve(repoRoot, "dist", vec0Name);
+if (existsSync(vec0Src)) {
+  copyFileSync(vec0Src, join(outDir, vec0Name));
+}
 
 async function materializeEmbeddingModelDefault(dest: string): Promise<void> {
   const modelMod = join(repoRoot, "packages/gateway/src/embedding/model.ts");

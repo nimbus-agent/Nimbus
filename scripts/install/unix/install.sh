@@ -93,6 +93,17 @@ cp "$NIMBUS_SRC" "${INSTALL_DIR}/nimbus"
 cp "$GATEWAY_SRC" "${INSTALL_DIR}/nimbus-gateway"
 chmod +x "${INSTALL_DIR}/nimbus" "${INSTALL_DIR}/nimbus-gateway"
 
+# sqlite-vec loadable extension. The gateway looks for it beside its own executable, so it has to
+# be installed into the same directory. Optional: absent on an unsupported platform, which
+# disables semantic memory and nothing else.
+for cand in "${SCRIPT_DIR}/vec0.so" "${SCRIPT_DIR}/vec0.dylib" \
+            "${SCRIPT_DIR}/bin/vec0.so" "${SCRIPT_DIR}/bin/vec0.dylib"; do
+  if [ -f "$cand" ]; then
+    cp "$cand" "${INSTALL_DIR}/$(basename "$cand")"
+    break
+  fi
+done
+
 # Append marker block to rc files (idempotent — strip first if present).
 BLOCK="${BEGIN_MARKER}
 export PATH=\"${INSTALL_DIR}:\$PATH\"

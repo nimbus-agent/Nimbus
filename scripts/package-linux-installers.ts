@@ -96,6 +96,20 @@ const nfpmOverride = parseArg("--nfpm");
 const gw = join(bundleDir, "nimbus-gateway");
 const cli = join(bundleDir, "nimbus");
 
+/**
+ * The sqlite-vec loadable extension. `tryLoadFromSidecar()` resolves it from
+ * `dirname(process.execPath)`, so every layout below has to place it beside `nimbus-gateway`.
+ * Optional, like the sandbox helper: a bundle built on a machine where `bun install` skipped the
+ * platform binary still packages, it just ships without semantic memory.
+ */
+const vec0 = join(bundleDir, "vec0.so");
+const hasVec0 = existsSync(vec0);
+
+/** Copy the sidecar into a staged bin directory when the bundle carries one. */
+function stageVec0(binDir: string): void {
+  if (hasVec0) copyFileSync(vec0, join(binDir, "vec0.so"));
+}
+
 for (const [label, p] of [
   ["gateway", gw],
   ["cli", cli],
@@ -218,6 +232,7 @@ function buildTarball(): string {
   mkdirSync(tarBin, { recursive: true });
   copyFileSync(gw, join(tarBin, "nimbus-gateway"));
   copyFileSync(cli, join(tarBin, "nimbus"));
+  stageVec0(tarBin);
   chmodSync(join(tarBin, "nimbus-gateway"), 0o755);
   chmodSync(join(tarBin, "nimbus"), 0o755);
   if (sandboxHelper !== null) {
@@ -302,6 +317,7 @@ function buildDeb(): string {
   mkdirSync(debBin, { recursive: true });
   copyFileSync(gw, join(debInst, "nimbus-gateway"));
   copyFileSync(cli, join(debInst, "nimbus"));
+  stageVec0(debInst);
   chmodSync(join(debInst, "nimbus-gateway"), 0o755);
   chmodSync(join(debInst, "nimbus"), 0o755);
 
@@ -397,6 +413,7 @@ function buildRpm(nfpmBin: string): string {
   // --sandbox-helper or the built src-native path, not necessarily bundleDir.
   copyFileSync(gw, join(rpmBinDir, "nimbus-gateway"));
   copyFileSync(cli, join(rpmBinDir, "nimbus"));
+  stageVec0(rpmBinDir);
   if (sandboxHelper !== null) {
     copyFileSync(sandboxHelper, join(rpmBinDir, "nimbus-sandbox-helper"));
   }
@@ -471,6 +488,7 @@ function buildAppImage(toolPath: string): string {
 
   copyFileSync(gw, join(usrBin, "nimbus-gateway"));
   copyFileSync(cli, join(usrBin, "nimbus"));
+  stageVec0(usrBin);
   chmodSync(join(usrBin, "nimbus-gateway"), 0o755);
   chmodSync(join(usrBin, "nimbus"), 0o755);
 

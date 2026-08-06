@@ -22,8 +22,10 @@ $ErrorActionPreference = "Stop"
 $pv = ($Version -replace '^v', '') -replace '-.*$', ''
 if ($pv -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid MSI version '$Version' -> '$pv' (need x.y.z)." }
 
-foreach ($exe in @("nimbus.exe", "nimbus-gateway.exe")) {
-  if (-not (Test-Path (Join-Path $BinDir $exe))) { throw "Missing $exe in $BinDir" }
+# vec0.dll is a required MSI payload (nimbus.wxs has a Component for it), so a missing sidecar
+# must fail here with a readable message rather than as a WiX file-not-found.
+foreach ($f in @("nimbus.exe", "nimbus-gateway.exe", "vec0.dll")) {
+  if (-not (Test-Path (Join-Path $BinDir $f))) { throw "Missing $f in $BinDir" }
 }
 
 # WiX v5 is bootstrapped by the CI job via `dotnet tool install --global wix`.

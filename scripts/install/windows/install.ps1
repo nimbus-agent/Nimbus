@@ -55,6 +55,17 @@ if ((Test-Path (Join-Path $InstallDir "nimbus.exe")) -and -not $Yes) {
 Copy-Item -Path $NimbusSrc  -Destination (Join-Path $InstallDir "nimbus.exe")  -Force
 Copy-Item -Path $GatewaySrc -Destination (Join-Path $InstallDir "nimbus-gateway.exe") -Force
 
+# sqlite-vec loadable extension. The gateway looks for it beside its own executable, so it has to
+# be installed into the same directory. Optional: absent on an unsupported platform, which
+# disables semantic memory and nothing else.
+$Vec0Src = @(
+  (Join-Path $ScriptDir "vec0.dll"),
+  (Join-Path $ScriptDir "bin\vec0.dll")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($Vec0Src) {
+  Copy-Item -Path $Vec0Src -Destination (Join-Path $InstallDir "vec0.dll") -Force
+}
+
 # Update User PATH via .NET API (avoids setx 1024-char truncation bug).
 $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($null -eq $currentPath) { $currentPath = "" }

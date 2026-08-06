@@ -34,6 +34,12 @@
       <Component Id="NimbusGateway" Bitness="always64">
         <File Id="NimbusGatewayExe" Source="$(BinDir)\nimbus-gateway.exe" KeyPath="yes" />
       </Component>
+      <!-- sqlite-vec loadable extension. tryLoadFromSidecar() resolves it from -->
+      <!-- dirname(process.execPath), so it must install into this same bin dir. -->
+      <!-- Without it semantic memory is disabled at log.debug level — silently. -->
+      <Component Id="NimbusVec0" Bitness="always64">
+        <File Id="Vec0Dll" Source="$(BinDir)\vec0.dll" KeyPath="yes" />
+      </Component>
       <!-- PATH append to HKCU\Environment (same target as install.ps1's -->
       <!-- [Environment]::SetEnvironmentVariable(..,"User")); removed on uninstall. -->
       <Component Id="NimbusPath" Guid="3F1A8C6B-9D2E-4A7F-8B5C-6E0D2A4F1C9B">

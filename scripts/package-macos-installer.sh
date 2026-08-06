@@ -33,6 +33,13 @@ mkdir -p "${ROOT}/nimbus/bin" "${ROOT}/bin" "$SCRIPTS"
 install -m 0755 "${BIN_DIR}/nimbus"         "${ROOT}/nimbus/bin/nimbus"
 install -m 0755 "${BIN_DIR}/nimbus-gateway" "${ROOT}/nimbus/bin/nimbus-gateway"
 
+# sqlite-vec loadable extension, next to the gateway binary because tryLoadFromSidecar()
+# resolves it from dirname(process.execPath). Optional: on a platform where bun install
+# skipped the binary, semantic memory is disabled but everything else works.
+if [ -f "${BIN_DIR}/vec0.dylib" ]; then
+  install -m 0644 "${BIN_DIR}/vec0.dylib" "${ROOT}/nimbus/bin/vec0.dylib"
+fi
+
 # Channel-marked wrappers -> ~/.local/bin
 for t in nimbus nimbus-gateway; do
   cat > "${ROOT}/bin/${t}" <<EOF
