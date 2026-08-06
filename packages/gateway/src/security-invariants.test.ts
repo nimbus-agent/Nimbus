@@ -407,15 +407,21 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events routes", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events + clip + brief + agent routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
     // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
     // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b) +
     // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT) +
     // 2 web-clipper routes (POST /v1/clips + POST /v1/clips/pair/confirm, I30) +
-    // 4 research-brief routes (POST /v1/briefs + .../sources + .../run + .../save).
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
+    // 4 research-brief routes (POST /v1/briefs + .../sources + .../run + .../save) +
+    // 1 agent-invocation route (POST /v1/agents/{agent}, agents-scoped).
+    //
+    // The agent route is a WRITE by CLASSIFICATION, not because it mutates the index — it does not.
+    // Listing it here is what subjects it to the bearer gate, the per-route body cap and the
+    // per-token rate limiter; reclassifying it as a read to slip past this allowlist would be the
+    // exact evasion the allowlist exists to prevent.
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -429,6 +435,7 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
       "POST /v1/briefs/{id}/sources",
       "POST /v1/briefs/{id}/run",
       "POST /v1/briefs/{id}/save",
+      "POST /v1/agents/{agent}",
     ]);
   });
 });
@@ -1495,9 +1502,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 });
 
 describe("I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window", () => {
-  test("WRITE_ROUTE_ALLOWLIST is exactly the 12 sanctioned write routes (adds the 2 clip routes)", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the 13 sanctioned write routes (still includes the 2 clip routes)", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips");
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips/pair/confirm");
   });
