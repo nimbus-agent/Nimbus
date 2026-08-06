@@ -47,6 +47,11 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   "GET /v1/preflight/deploy": { kind: "public" },
   "GET /v1/openapi.json": { kind: "public" },
 
+  // --- SCIM-token reads. Matched by `isScimPath(url)` (identity/scim-http-routes.ts), NOT by a
+  // literal in http-server.ts — see EXTERNALLY_ROUTED in the test.
+  "GET /scim/v2/Users": { kind: "scim" },
+  "GET /scim/v2/Users/{id}": { kind: "scim" },
+
   // --- Admin-token reads.
   "GET /v1/admin/status": { kind: "admin" },
   "GET /metrics": { kind: "admin" },
