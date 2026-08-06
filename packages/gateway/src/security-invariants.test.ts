@@ -1446,7 +1446,7 @@ describe("I30 — web-clipper token minting is fail-closed behind an owner-opene
   test("an expired window does not mint", () => {
     let now = 0;
     const ctl = new PairingWindowController({ nowMs: () => now, genCode: () => "111111" });
-    ctl.open("dev");
+    ctl.open("dev", ["clip"]);
     now = 200_000; // past the 120s TTL
     expect(ctl.confirm("111111")).toBeNull();
   });

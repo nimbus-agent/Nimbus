@@ -836,7 +836,7 @@ test("POST /v1/clips with invalid payload → 400 with field", async () => {
 
 test("pair/confirm with the right code mints a token (window open)", async () => {
   const surface = clipsSurface();
-  surface.pairing.open("chrome-work");
+  surface.pairing.open("chrome-work", ["clip"]);
   const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -923,7 +923,7 @@ test("POST /v1/clips → 400 without a field key when the validation error has n
 
 test("pair/confirm with a non-string code → 403", async () => {
   const surface = clipsSurface();
-  surface.pairing.open("dev");
+  surface.pairing.open("dev", ["clip"]);
   const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -935,7 +935,7 @@ test("pair/confirm with a non-string code → 403", async () => {
 
 test("pair/confirm with no code field → 403", async () => {
   const surface = clipsSurface();
-  surface.pairing.open("dev");
+  surface.pairing.open("dev", ["clip"]);
   const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1138,7 +1138,7 @@ test("POST /v1/clips/pair/confirm keeps the 8 KiB cap (a pairing code is tiny)",
       return "x";
     },
   });
-  surface.pairing.open("chrome-work");
+  surface.pairing.open("chrome-work", ["clip"]);
   const req = new Request("http://127.0.0.1/v1/clips/pair/confirm", {
     method: "POST",
     headers: { "content-type": "application/json" },
