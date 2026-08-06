@@ -17,7 +17,15 @@
 - **Legacy tokens gain nothing.** A pre-scopes token resolves to exactly `["clip","briefs"]` — never `agents`, `resolve` or `fetch`.
 - **Cross-platform:** `path.join()` / `os.tmpdir()`, never hardcoded separators.
 - **Commit on the branch `dev/asaf/spec-http-agents-route`** in worktree `.claude/worktrees/http-agents`. Never on `main`.
-- Run `bun run preflight:fast` after each task; the full `bun run preflight` before the PR.
+- Run `bun run preflight:fast` after each task **except Task 1**, and the full `bun run preflight` before the PR.
+
+  **The Task 1 exception is deliberate, not an oversight.** `typecheck` is in the fast tier
+  (`scripts/lib/preflight-gates.ts:20`), and Task 1's rename intentionally leaves the tree red in
+  exactly two files — `packages/gateway/src/ipc/http-server.ts` and
+  `packages/gateway/src/ipc/clip-rpc.ts` — which Tasks 4 and 5 own. Task 1's definition of done is
+  therefore: **its own tests green, and `bun run typecheck` failing ONLY in those two files.**
+  Errors anywhere else mean something went wrong. Do not "fix" the two files during Task 1: that
+  is Task 4's and Task 5's work, and doing it early lands it without the tests that prove it.
 
 ## File Structure
 
@@ -782,41 +790,131 @@ git commit -m "feat(ipc): total route-to-auth table with a source-scanned comple
 - Consumes: `verifyApiToken` (Task 1), `hasScope` / `insufficientScopeBody` / `HTTP_ROUTE_AUTH` (Task 3).
 - Produces: `verifyToken` on both write surfaces now resolves `{ label: string; scopes: readonly ApiScope[] } | null`.
 
-- [ ] **Step 1: Write the failing enforcement tests**
+- [ ] **Step 1a: Give the existing harness a scoped-token seam**
 
-Create `packages/gateway/src/ipc/http-scope-enforcement.test.ts`. Build the server with the existing test helper used by `brief-http.test.ts` — read `packages/gateway/src/briefs/brief-test-server.ts` first and reuse it rather than standing up a second harness.
+`packages/gateway/src/briefs/brief-test-server.ts` already boots a real `startReadOnlyHttpServer`,
+and its `makeInMemoryVault` seeds the token map in the **legacy bare-string form**:
+
+```ts
+store.set(
+  "http_api.web_clipper_tokens",
+  JSON.stringify({ [KNOWN_LABEL]: KNOWN_TOKEN } satisfies Record<string, string>),
+);
+```
+
+That default is worth keeping exactly as it is — it makes every existing brief HTTP test a live
+regression test that legacy tokens still work. Add an **opt-in override** rather than changing it.
+
+In `brief-test-server.ts`, thread an optional seed through:
+
+```ts
+function makeInMemoryVault(tokensJson?: string): NimbusVault {
+  const store = new Map<string, string>();
+  store.set(
+    "http_api.web_clipper_tokens",
+    // Default stays the LEGACY bare-string shape on purpose: every existing test that uses this
+    // harness then proves, for free, that a pre-scopes token still works.
+    tokensJson ?? JSON.stringify({ [KNOWN_LABEL]: KNOWN_TOKEN }),
+  );
+  …
+}
+```
+
+and on the options object:
+
+```ts
+  /** Raw JSON for `http_api.web_clipper_tokens`. Omit for the legacy single-token default. */
+  tokensJson?: string;
+```
+
+passing `opts?.tokensJson` into `makeInMemoryVault(...)`.
+
+- [ ] **Step 1b: Write the failing enforcement tests**
+
+Create `packages/gateway/src/ipc/http-scope-enforcement.test.ts`:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-// Import the shared brief/clip test server helper here; see brief-http.test.ts for the exact
-// factory name and options it takes. Do NOT write a second harness.
+import { startBriefTestServer } from "../briefs/brief-test-server.ts";
+
+const SCOPED_TOKEN = "scoped-test-token-0123456789abcdef0123456789abcd";
+
+/** Seeds the harness vault with one token carrying exactly `scopes`. */
+function scopedTokens(scopes: readonly string[]): string {
+  return JSON.stringify({ "scoped-client": { token: SCOPED_TOKEN, scopes } });
+}
+
+async function postBriefs(port: number, token: string): Promise<Response> {
+  return await fetch(`http://127.0.0.1:${String(port)}/v1/briefs`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ brief: "why is the sky blue", sources: [], useIndex: false }),
+  });
+}
 
 describe("HTTP scope enforcement", () => {
-  test("a legacy-scoped token still reaches POST /v1/clips", async () => {
-    // legacy => ["clip","briefs"], and POST /v1/clips requires "clip"
-    // expect 200/201, NOT 403
-  });
-
-  test("a legacy-scoped token still reaches GET /v1/briefs/{id}", async () => {
-    // The no-regression assertion: scopes must not break already-paired clients.
+  test("a LEGACY token still reaches POST /v1/briefs", async () => {
+    // The no-regression assertion. The harness default IS the legacy bare-string shape, so this
+    // exercises the real upgrade path: no scopes on disk => clip+briefs.
+    const s = await startBriefTestServer();
+    try {
+      const res = await postBriefs(s.port, s.token);
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBeLessThan(300);
+    } finally {
+      s.stop();
+    }
   });
 
   test("a clip-only token is REFUSED on a briefs route with 403 insufficient_scope", async () => {
-    // mint with scopes ["clip"]; call POST /v1/briefs
-    // expect 403 and body.error === "insufficient_scope", body.required === "briefs"
+    const s = await startBriefTestServer({ tokensJson: scopedTokens(["clip"]) });
+    try {
+      const res = await postBriefs(s.port, SCOPED_TOKEN);
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string; required: string; granted: string[] };
+      expect(body.error).toBe("insufficient_scope");
+      expect(body.required).toBe("briefs");
+      expect(body.granted).toEqual(["clip"]);
+    } finally {
+      s.stop();
+    }
   });
 
-  test("an unknown token is still 401, not 403", async () => {
-    // Authentication failure must stay distinguishable from authorization failure.
+  test("a briefs-scoped token is allowed on the same route", async () => {
+    // The positive half: without it, a handler that 403s unconditionally would pass the test above.
+    const s = await startBriefTestServer({ tokensJson: scopedTokens(["briefs"]) });
+    try {
+      const res = await postBriefs(s.port, SCOPED_TOKEN);
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBeLessThan(300);
+    } finally {
+      s.stop();
+    }
+  });
+
+  test("an unknown token is 401, NOT 403", async () => {
+    // Authentication failure must stay distinguishable from authorization failure: a client that
+    // sees 401 re-pairs, a client that sees 403 asks for a scope. Collapsing them misroutes both.
+    const s = await startBriefTestServer({ tokensJson: scopedTokens(["briefs"]) });
+    try {
+      const res = await postBriefs(s.port, "not-a-real-token");
+      expect(res.status).toBe(401);
+    } finally {
+      s.stop();
+    }
   });
 
   test("the 403 body never contains the token value", async () => {
-    // expect(JSON.stringify(body)).not.toContain(theToken)
+    const s = await startBriefTestServer({ tokensJson: scopedTokens(["clip"]) });
+    try {
+      const res = await postBriefs(s.port, SCOPED_TOKEN);
+      expect(await res.text()).not.toContain(SCOPED_TOKEN);
+    } finally {
+      s.stop();
+    }
   });
 });
 ```
-
-Fill each body against the real harness. Every assertion above must be concrete before moving on — a test that only describes itself is not a test.
 
 - [ ] **Step 2: Run to confirm they fail**
 
@@ -989,43 +1087,101 @@ git commit -m "feat(ipc): refuse an out-of-scope token with 403 at every clip-to
 
 - [ ] **Step 1: Write the failing gateway tests**
 
-Add to `packages/gateway/src/ipc/clip-rpc.test.ts`:
+Add to `packages/gateway/src/ipc/clip-rpc.test.ts`. The file already has `fakeVault(seed)` and
+`deps()` helpers, and `dispatchClipRpc` resolves `{ kind: "hit", value }`:
 
 ```ts
   test("clip.pair with no scopes opens the window with LEGACY_SCOPES", async () => {
-    // Conservative default: an operator who does not think about scopes gets today's capability,
-    // never tomorrow's. ABSENT is a decision; MISSPELLED is not — see the next two tests.
+    // ABSENT is a decision — an operator who did not think about scopes gets today's capability,
+    // never tomorrow's. MISSPELLED is NOT a decision; see the next tests.
+    const d = deps();
+    const out = await dispatchClipRpc("clip.pair", { label: "chrome" }, d);
+    expect(out).toEqual({
+      kind: "hit",
+      value: {
+        code: "654321",
+        expiresAtMs: 1000 + 120_000,
+        label: "chrome",
+        scopes: ["clip", "briefs"],
+      },
+    });
+  });
+
+  test("clip.pair carries an explicit scope list onto the window", async () => {
+    const d = deps();
+    await dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["clip", "agents"] }, d);
+    expect(d.pairing.confirm("654321")).toEqual({
+      label: "chrome",
+      scopes: ["clip", "agents"],
+    });
   });
 
   test("clip.pair REJECTS an unrecognised scope instead of dropping it", async () => {
-    // params.scopes = ["clip", "telepathy"] => throws AgentsRpcError-style -32602, mints nothing.
-    // The error message must NAME the invalid scope and list the valid set.
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["clip", "telepathy"] }, d),
+    ).rejects.toThrow(/telepathy/);
+    // Nothing was minted, and no window was opened on a request we refused.
+    expect(d.pairing.isOpen()).toBe(false);
   });
 
   test("clip.pair rejects a wholly-invalid list rather than falling back to LEGACY_SCOPES", async () => {
-    // ["telepathy"] must NOT silently become ["clip","briefs"]: an operator asking for something
-    // narrow and being handed the default set is a silent over-grant.
+    // The silent-over-grant guard: ["telepathy"] must NOT become ["clip","briefs"]. An operator
+    // asking for something narrow and being handed the default set is the failure this change
+    // exists to prevent.
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: ["telepathy"] }, d),
+    ).rejects.toThrow(/telepathy/);
+    expect(d.pairing.isOpen()).toBe(false);
   });
 
   test("clip.pair rejects an explicitly EMPTY scope list", async () => {
-    // params.scopes = [] is an operator statement, not an omission. Refuse it rather than
-    // guessing which of "no capability" or "default capability" was meant.
+    // `[]` is an operator statement, not an omission. Refuse rather than guess between
+    // "no capability" and "default capability".
+    const d = deps();
+    await expect(
+      dispatchClipRpc("clip.pair", { label: "chrome", scopes: [] }, d),
+    ).rejects.toThrow();
+    expect(d.pairing.isOpen()).toBe(false);
   });
 
   test("clip.scopes updates an existing label and reports the stored set", async () => {
-    // => { updated: true, scopes: ["clip","agents"] }
+    const d = {
+      ...deps(),
+      vault: fakeVault({
+        "http_api.web_clipper_tokens": JSON.stringify({ chrome: { token: "t", scopes: ["clip"] } }),
+      }),
+    };
+    const out = await dispatchClipRpc("clip.scopes", { label: "chrome", scopes: ["clip", "agents"] }, d);
+    expect(out).toEqual({ kind: "hit", value: { updated: true, scopes: ["clip", "agents"] } });
   });
 
   test("clip.scopes on an unknown label reports updated:false", async () => {
-    // => { updated: false, scopes: [] }
+    const d = deps();
+    const out = await dispatchClipRpc("clip.scopes", { label: "nope", scopes: ["clip"] }, d);
+    expect(out).toEqual({ kind: "hit", value: { updated: false, scopes: [] } });
   });
 
-  test("clip.status reports each device's scopes", async () => {
-    // devices[0].scopes === ["clip","briefs"]
+  test("clip.status reports each device's scopes, and a LEGACY entry reads as clip+briefs", async () => {
+    const d = {
+      ...deps(),
+      vault: fakeVault({
+        "http_api.web_clipper_tokens": JSON.stringify({ chrome: "legacy-token" }),
+      }),
+    };
+    const out = (await dispatchClipRpc("clip.status", {}, d)) as {
+      kind: string;
+      value: { devices: Array<{ label: string; scopes: string[] }> };
+    };
+    expect(out.value.devices[0]?.scopes).toEqual(["clip", "briefs"]);
   });
 ```
 
-Fill the bodies against the existing test harness in that file.
+> **Existing tests in this file break on purpose.** `clip.pair`'s two current tests assert the
+> response with `toEqual` and will fail once `scopes` joins the payload. Add `scopes: ["clip",
+> "briefs"]` to their expected values — do not loosen them to `toMatchObject`, which would stop
+> them noticing an unexpected extra field.
 
 - [ ] **Step 2: Run to confirm they fail**
 
