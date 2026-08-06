@@ -765,6 +765,7 @@ jobs:
           mkdir -p dist
           (cd packages/gateway && bun build src/index.ts --compile --outfile ../../dist/nimbus-gateway --target bun)
           (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
+          bun scripts/connector-boot-smoke.ts dist/nimbus-gateway
           bun scripts/package-headless-bundle.ts --skip-embedding-model
           bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
           test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb

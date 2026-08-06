@@ -7,7 +7,7 @@ import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
 } from "./first-party-manifests.ts";
-import { mcpConnectorServerScript } from "./keys.ts";
+import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -81,7 +81,7 @@ async function readSecret<S extends ConnectorServiceId>(
 interface SimpleTokenSpec<S extends ConnectorServiceId> {
   /** Service id, used as the `servers` key, the manifest id, and the secret namespace. */
   readonly serviceId: S;
-  /** MCP server script name passed to {@link mcpConnectorServerScript}. */
+  /** MCP server script name passed to {@link connectorSpawn}. */
   readonly script: string;
   /** Vault secret suffix (e.g. `"token"`, `"api_key"`) — validated against the service. */
   readonly secretKey: ConnectorSecretKeyOf<S>;
@@ -106,8 +106,7 @@ async function addSimpleTokenServer<S extends ConnectorServiceId>(
   }
   servers[spec.serviceId] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript(spec.script)],
+      ...connectorSpawn(spec.script),
       env: extensionProcessEnv({ [spec.envKey]: value }),
     },
     spec.serviceId,
@@ -144,8 +143,7 @@ async function addDirManifestServer<S extends ConnectorServiceId>(
   };
   servers[spec.serviceId] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript(spec.script)],
+      ...connectorSpawn(spec.script),
       env: extensionProcessEnv({ [spec.envKey]: dir }),
     },
     manifest,
@@ -200,8 +198,7 @@ export async function phase3AddAwsMcp(
   }
   servers["aws"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("aws")],
+      ...connectorSpawn("aws"),
       env: extensionProcessEnv(creds.env),
     },
     "aws",
@@ -222,8 +219,7 @@ export async function phase3AddAzureMcp(
   }
   servers["azure"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("azure")],
+      ...connectorSpawn("azure"),
       env: extensionProcessEnv({
         AZURE_TENANT_ID: azT,
         AZURE_CLIENT_ID: azC,
@@ -246,8 +242,7 @@ export async function phase3AddGcpMcp(
   }
   servers["gcp"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("gcp")],
+      ...connectorSpawn("gcp"),
       env: extensionProcessEnv({ GOOGLE_APPLICATION_CREDENTIALS: gcpPath }),
     },
     "gcp",
@@ -268,8 +263,7 @@ export async function phase3AddBigqueryMcp(
   const projectId = (await readConnectorSecret(vault, "gcp", "project_id"))?.trim() ?? "";
   servers["bigquery"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("bigquery")],
+      ...connectorSpawn("bigquery"),
       env: extensionProcessEnv({
         GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
         ...(projectId === "" ? {} : { BIGQUERY_PROJECT: projectId }),
@@ -299,8 +293,7 @@ export async function phase3AddAthenaMcp(
   );
   servers["athena"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("athena")],
+      ...connectorSpawn("athena"),
       env: extensionProcessEnv(creds.env),
     },
     athenaManifest,
@@ -327,8 +320,7 @@ export async function phase3AddCloudwatchMcp(
   );
   servers["cloudwatch"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("cloudwatch")],
+      ...connectorSpawn("cloudwatch"),
       env: extensionProcessEnv(creds.env),
     },
     cloudwatchManifest,
@@ -356,8 +348,7 @@ export async function phase3AddSagemakerMcp(
   );
   servers["sagemaker"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("sagemaker")],
+      ...connectorSpawn("sagemaker"),
       env: extensionProcessEnv(creds.env),
     },
     sagemakerManifest,
@@ -379,8 +370,7 @@ export async function phase3AddCloudLoggingMcp(
   const projectId = (await readConnectorSecret(vault, "gcp", "project_id"))?.trim() ?? "";
   servers["cloud_logging"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("cloud-logging")],
+      ...connectorSpawn("cloud-logging"),
       env: extensionProcessEnv({
         GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
         ...(projectId === "" ? {} : { GOOGLE_CLOUD_PROJECT: projectId }),
@@ -416,8 +406,7 @@ export async function phase3AddVertexAiMcp(
   ]);
   servers["vertex_ai"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("vertex-ai")],
+      ...connectorSpawn("vertex-ai"),
       env: extensionProcessEnv({
         GOOGLE_APPLICATION_CREDENTIALS: gcpPath,
         VERTEX_AI_REGION: safeRegion,
@@ -440,8 +429,7 @@ export async function phase3AddIacMcp(
   }
   servers["iac"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("iac")],
+      ...connectorSpawn("iac"),
       env: extensionProcessEnv({}),
     },
     "iac",
@@ -466,8 +454,7 @@ export async function phase3AddGrafanaMcp(
   );
   servers["grafana"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("grafana")],
+      ...connectorSpawn("grafana"),
       env: extensionProcessEnv({ GRAFANA_URL: gfu, GRAFANA_API_TOKEN: gtk }),
     },
     grafanaManifest,
@@ -495,8 +482,7 @@ export async function phase3AddSentryMcp(
   }
   servers["sentry"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("sentry")],
+      ...connectorSpawn("sentry"),
       env: extensionProcessEnv(extra),
     },
     "sentry",
@@ -537,8 +523,7 @@ export async function phase3AddDatadogMcp(
   }
   servers["datadog"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("datadog")],
+      ...connectorSpawn("datadog"),
       env: extensionProcessEnv(extra),
     },
     "datadog",
@@ -583,8 +568,7 @@ export async function phase3AddCodemagicMcp(
   }
   servers["codemagic"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("codemagic")],
+      ...connectorSpawn("codemagic"),
       env: extensionProcessEnv({ CODEMAGIC_TOKEN: tok }),
     },
     "codemagic",
@@ -605,8 +589,7 @@ export async function phase3AddTestflightMcp(
   }
   servers["testflight"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("testflight")],
+      ...connectorSpawn("testflight"),
       env: extensionProcessEnv({
         TESTFLIGHT_ISSUER_ID: issuerId,
         TESTFLIGHT_KEY_ID: keyId,
@@ -631,8 +614,7 @@ export async function phase3AddFirebaseMcp(
   }
   servers["firebase"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("firebase")],
+      ...connectorSpawn("firebase"),
       env: extensionProcessEnv({
         FIREBASE_SERVICE_ACCOUNT_JSON: serviceAccountJson,
         FIREBASE_APP_IDS: appIds,
@@ -657,8 +639,7 @@ export async function phase3AddSonarqubeMcp(
     (await readConnectorSecret(vault, "sonarqube", "organization"))?.trim() ?? "";
   servers["sonarqube"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("sonarqube")],
+      ...connectorSpawn("sonarqube"),
       env: extensionProcessEnv({
         SONARQUBE_TOKEN: tok,
         ...(url === "" ? {} : { SONARQUBE_URL: url }),
@@ -682,8 +663,7 @@ export async function phase3AddSemgrepMcp(
   const slug = (await readConnectorSecret(vault, "semgrep", "deployment_slug"))?.trim() ?? "";
   servers["semgrep"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("semgrep")],
+      ...connectorSpawn("semgrep"),
       env: extensionProcessEnv({
         SEMGREP_TOKEN: tok,
         ...(slug === "" ? {} : { SEMGREP_DEPLOYMENT_SLUG: slug }),
@@ -708,8 +688,7 @@ export async function phase3AddWizMcp(
   const authUrl = (await readConnectorSecret(vault, "wiz", "auth_url"))?.trim() ?? "";
   servers["wiz"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("wiz")],
+      ...connectorSpawn("wiz"),
       env: extensionProcessEnv({
         WIZ_CLIENT_ID: clientId,
         WIZ_CLIENT_SECRET: clientSecret,
@@ -734,8 +713,7 @@ export async function phase3AddLaunchdarklyMcp(
   const baseUrl = (await readConnectorSecret(vault, "launchdarkly", "base_url"))?.trim() ?? "";
   servers["launchdarkly"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("launchdarkly")],
+      ...connectorSpawn("launchdarkly"),
       env: extensionProcessEnv({
         LAUNCHDARKLY_TOKEN: tok,
         ...(baseUrl === "" ? {} : { LAUNCHDARKLY_BASE_URL: baseUrl }),
@@ -758,8 +736,7 @@ export async function phase3AddFlagsmithMcp(
   const apiBase = (await readConnectorSecret(vault, "flagsmith", "api_base"))?.trim() ?? "";
   servers["flagsmith"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("flagsmith")],
+      ...connectorSpawn("flagsmith"),
       env: extensionProcessEnv({
         FLAGSMITH_TOKEN: tok,
         ...(apiBase === "" ? {} : { FLAGSMITH_API_BASE: apiBase }),
@@ -784,8 +761,7 @@ export async function phase3AddArgocdMcp(
   const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host]);
   servers["argocd"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("argocd")],
+      ...connectorSpawn("argocd"),
       env: extensionProcessEnv({ ARGOCD_URL: url, ARGOCD_TOKEN: tok }),
     },
     manifest,
@@ -807,8 +783,7 @@ export async function phase3AddFluxMcp(
   const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
   servers["flux"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("flux")],
+      ...connectorSpawn("flux"),
       env: extensionProcessEnv({ FLUX_API_URL: apiUrl, FLUX_TOKEN: tok }),
     },
     manifest,
@@ -828,8 +803,7 @@ export async function phase3AddDbtMcp(
   const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
   servers["dbt"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("dbt")],
+      ...connectorSpawn("dbt"),
       env: extensionProcessEnv({
         DBT_TOKEN: tok,
         ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
@@ -854,8 +828,7 @@ export async function phase3AddMetabaseMcp(
   const manifest = manifestWithExtraNetworkHosts("metabase", host === null ? [] : [host]);
   servers["metabase"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("metabase")],
+      ...connectorSpawn("metabase"),
       env: extensionProcessEnv({ METABASE_URL: url, METABASE_API_KEY: apiKey }),
     },
     manifest,
@@ -885,8 +858,7 @@ export async function phase3AddSnowflakeMcp(
   const manifest = manifestWithExtraNetworkHosts("snowflake", [host]);
   servers["snowflake"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("snowflake")],
+      ...connectorSpawn("snowflake"),
       env: extensionProcessEnv({ SNOWFLAKE_ACCOUNT: account, SNOWFLAKE_TOKEN: token }),
     },
     manifest,
@@ -909,8 +881,7 @@ export async function phase3AddTableauMcp(
   const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host]);
   servers["tableau"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("tableau")],
+      ...connectorSpawn("tableau"),
       env: extensionProcessEnv({
         TABLEAU_URL: url,
         TABLEAU_PAT_NAME: patName,
@@ -937,8 +908,7 @@ export async function phase3AddLookerMcp(
   const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host]);
   servers["looker"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("looker")],
+      ...connectorSpawn("looker"),
       env: extensionProcessEnv({
         LOOKER_BASE_URL: baseUrl,
         LOOKER_CLIENT_ID: clientId,
@@ -968,8 +938,7 @@ export async function phase3AddPowerBiMcp(
   }
   servers["powerbi"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("powerbi")],
+      ...connectorSpawn("powerbi"),
       env: extensionProcessEnv({
         POWERBI_TENANT_ID: tenantId,
         POWERBI_CLIENT_ID: clientId,
@@ -996,8 +965,7 @@ export async function phase3AddSupersetMcp(
   const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
   servers["superset"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("superset")],
+      ...connectorSpawn("superset"),
       env: extensionProcessEnv({
         SUPERSET_URL: url,
         SUPERSET_USERNAME: user,
@@ -1023,8 +991,7 @@ export async function phase3AddDatabricksMcp(
   const manifest = manifestWithExtraNetworkHosts("databricks", host === null ? [] : [host]);
   servers["databricks"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("databricks")],
+      ...connectorSpawn("databricks"),
       env: extensionProcessEnv({ DATABRICKS_HOST: hostUrl, DATABRICKS_TOKEN: tok }),
     },
     manifest,
@@ -1046,8 +1013,7 @@ export async function phase3AddMlflowMcp(
   const manifest = manifestWithExtraNetworkHosts("mlflow", host === null ? [] : [host]);
   servers["mlflow"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("mlflow")],
+      ...connectorSpawn("mlflow"),
       env: extensionProcessEnv({ MLFLOW_HOST: hostUrl, MLFLOW_TOKEN: tok }),
     },
     manifest,
@@ -1067,8 +1033,7 @@ export async function phase3AddVercelMcp(
   const teamId = (await readConnectorSecret(vault, "vercel", "team_id"))?.trim() ?? "";
   servers["vercel"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("vercel")],
+      ...connectorSpawn("vercel"),
       env: extensionProcessEnv({
         VERCEL_TOKEN: tok,
         ...(teamId === "" ? {} : { VERCEL_TEAM_ID: teamId }),
@@ -1172,8 +1137,7 @@ export async function phase3AddZendeskMcp(
   const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
   servers["zendesk"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("zendesk")],
+      ...connectorSpawn("zendesk"),
       env: extensionProcessEnv({
         ZENDESK_URL: url,
         ZENDESK_EMAIL: email,
@@ -1236,8 +1200,7 @@ export async function phase3AddStackoverflowMcp(
   }
   servers["stackoverflow"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("stackoverflow")],
+      ...connectorSpawn("stackoverflow"),
       env: extensionProcessEnv({
         STACKOVERFLOW_TOKEN: token,
         STACKOVERFLOW_TEAM: team,
@@ -1260,8 +1223,7 @@ export async function phase3AddZoteroMcp(
   }
   servers["zotero"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("zotero")],
+      ...connectorSpawn("zotero"),
       env: extensionProcessEnv({
         ZOTERO_API_KEY: apiKey,
         ZOTERO_LIBRARY: library,
@@ -1284,8 +1246,7 @@ export async function phase3AddRampMcp(
   }
   servers["ramp"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("ramp")],
+      ...connectorSpawn("ramp"),
       env: extensionProcessEnv({
         RAMP_CLIENT_ID: clientId,
         RAMP_CLIENT_SECRET: clientSecret,
@@ -1310,8 +1271,7 @@ export async function phase3AddDependencytrackMcp(
   const manifest = manifestWithExtraNetworkHosts("dependencytrack", host === null ? [] : [host]);
   servers["dependencytrack"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("dependencytrack")],
+      ...connectorSpawn("dependencytrack"),
       env: extensionProcessEnv({ DEPENDENCYTRACK_URL: url, DEPENDENCYTRACK_API_KEY: apiKey }),
     },
     manifest,
@@ -1333,8 +1293,7 @@ export async function phase3AddElasticsearchMcp(
   const manifest = manifestWithExtraNetworkHosts("elasticsearch", host === null ? [] : [host]);
   servers["elasticsearch"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("elasticsearch")],
+      ...connectorSpawn("elasticsearch"),
       env: extensionProcessEnv({ ELASTICSEARCH_URL: url, ELASTICSEARCH_API_KEY: apiKey }),
     },
     manifest,
@@ -1357,8 +1316,7 @@ export async function phase3AddAirflowMcp(
   const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host]);
   servers["airflow"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("airflow")],
+      ...connectorSpawn("airflow"),
       env: extensionProcessEnv({
         AIRFLOW_URL: url,
         AIRFLOW_USERNAME: username,
@@ -1384,8 +1342,7 @@ export async function phase3AddPrefectMcp(
   const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host]);
   servers["prefect"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("prefect")],
+      ...connectorSpawn("prefect"),
       env: extensionProcessEnv({
         PREFECT_API_URL: apiUrl,
         PREFECT_API_KEY: apiKey,
@@ -1410,8 +1367,7 @@ export async function phase3AddDagsterMcp(
   const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host]);
   servers["dagster"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("dagster")],
+      ...connectorSpawn("dagster"),
       env: extensionProcessEnv({
         DAGSTER_BASE_URL: baseUrl,
         DAGSTER_API_TOKEN: apiToken,
@@ -1475,8 +1431,7 @@ export async function phase3AddImapMcp(
 
   servers["imap"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("imap")],
+      ...connectorSpawn("imap"),
       env: extensionProcessEnv(env),
     },
     manifest,
@@ -1536,8 +1491,7 @@ export async function phase3AddProtonmailMcp(
 
   servers["protonmail"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("protonmail")],
+      ...connectorSpawn("protonmail"),
       env: extensionProcessEnv(env),
     },
     manifest,
@@ -1566,8 +1520,7 @@ export async function phase3AddFastmailMcp(
 
   servers["fastmail"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("fastmail")],
+      ...connectorSpawn("fastmail"),
       env: extensionProcessEnv(env),
     },
     "fastmail",
@@ -1652,8 +1605,7 @@ export async function phase3AddMonteCarloMcp(
   }
   servers["montecarlo"] = wrap(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("monte-carlo")],
+      ...connectorSpawn("monte-carlo"),
       env: extensionProcessEnv({
         MONTECARLO_API_ID: apiId,
         MONTECARLO_API_TOKEN: apiToken,
@@ -1678,8 +1630,7 @@ export async function phase3AddBigeyeMcp(
   const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host]);
   servers["bigeye"] = wrapServerSpec(
     {
-      command: "bun",
-      args: [mcpConnectorServerScript("bigeye")],
+      ...connectorSpawn("bigeye"),
       env: extensionProcessEnv({
         BIGEYE_BASE_URL: baseUrl,
         BIGEYE_API_KEY: apiKey,

@@ -23,6 +23,21 @@ const FAST: readonly Gate[] = [
   { name: "audit:openapi-drift", cmd: ["bun", "run", "audit:openapi-drift"], tier: "fast" },
   { name: "audit:boundaries", cmd: ["bun", "run", "audit:boundaries"], tier: "fast" },
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
+  {
+    // A connector that guards startup with `import.meta.main` is invisible to the bundled
+    // registry: the guard is false under an import, so it loads, starts nothing and exits 0.
+    // Ten connectors were in exactly that state before this gate existed.
+    name: "audit:connector-entrypoints",
+    cmd: ["bun", "run", "audit:connector-entrypoints"],
+    tier: "fast",
+  },
+  {
+    // Connectors are bundled into the gateway binary. A native dependency would break the
+    // compile or the runtime load, and the only symptom is a sync that never works.
+    name: "audit:connector-deps",
+    cmd: ["bun", "run", "audit:connector-deps"],
+    tier: "fast",
+  },
   { name: "audit:any", cmd: ["bun", "run", "audit:any", "--check"], tier: "fast" },
   { name: "audit:release-please", cmd: ["bun", "run", "audit:release-please"], tier: "fast" },
   {
@@ -74,6 +89,13 @@ const FAST: readonly Gate[] = [
 
 const FULL: readonly Gate[] = [
   { name: "build", cmd: ["bun", "run", "build"], tier: "full" },
+  {
+    // Proves the headline claim: an installed binary can actually start every connector it ships.
+    // Requires `dist/nimbus-gateway` to exist — the `build` gate above produces it.
+    name: "test:connector-boot",
+    cmd: ["bun", "run", "test:connector-boot"],
+    tier: "full",
+  },
   { name: "test:ci (suite + coverage)", cmd: ["bun", "run", "test:ci"], tier: "full" },
   {
     name: "coverage-floor: build lcov",

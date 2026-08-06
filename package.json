@@ -1,6 +1,6 @@
 {
   "name": "nimbus",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
   "repository": {
     "type": "git",
@@ -160,6 +160,10 @@
     "audit:exclusion-parity": "bun scripts/coverage-floor/check-exclusion-parity.ts",
     "audit:any": "bun scripts/structure-audit/count-any-usage.ts",
     "audit:invariants": "bun scripts/structure-audit/check-nimbus-invariants.ts --binary-only",
+    "audit:connector-entrypoints": "bun scripts/structure-audit/check-connector-entrypoints.ts",
+    "audit:connector-deps": "bun scripts/structure-audit/check-connector-deps.ts",
+    "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
+    "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",
     "audit:openapi-drift": "bun scripts/structure-audit/check-openapi-drift.ts --check",
     "audit:release-please": "bun scripts/structure-audit/check-release-please-manifest.ts",

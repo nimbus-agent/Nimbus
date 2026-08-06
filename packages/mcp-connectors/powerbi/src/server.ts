@@ -221,7 +221,10 @@ export function registerPowerBiTools(reg: ZodToolRegistrar): void {
   );
 }
 
-// Only connect a real stdio transport when run as the connector entrypoint (not when imported by tests).
-if (import.meta.main) {
+// Exported so the bundled-connector registry can start this server explicitly: `import.meta.main`
+// is false under an import, and the module must stay importable by tests without connecting stdio.
+export async function startConnector(): Promise<void> {
   await runReadOnlyMcpConnector("nimbus-powerbi", registerPowerBiTools);
 }
+
+if (import.meta.main) await startConnector();

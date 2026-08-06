@@ -156,6 +156,8 @@ export function registerFluxTools(reg: ZodToolRegistrar): void {
   );
 }
 
-if (import.meta.main) {
+export async function startConnector(): Promise<void> {
   await runReadOnlyMcpConnector("nimbus-flux", registerFluxTools);
 }
+
+if (import.meta.main) await startConnector();

@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { constants as osConstants } from "node:os";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
@@ -9,10 +8,14 @@ function fatal(msg: string): never {
   process.exit(2);
 }
 
-async function main(): Promise<never> {
-  const args = process.argv.slice(2);
+/**
+ * The `__nimbus-sandbox` role of the gateway executable: re-exec the requested command inside the
+ * platform sandbox. `args` is everything after the sentinel — the original command followed by its
+ * own arguments.
+ */
+export async function runSandboxWrapper(args: readonly string[]): Promise<never> {
   if (args.length < 1) {
-    fatal("usage: bun sandbox-wrapper.ts <cmd> [...args]");
+    fatal("usage: <gateway> __nimbus-sandbox <cmd> [...args]");
   }
   const originalCmd = args[0];
   if (originalCmd === undefined) {
@@ -62,5 +65,3 @@ async function main(): Promise<never> {
 
   return new Promise<never>(() => {});
 }
-
-await main();
