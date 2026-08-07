@@ -81,6 +81,50 @@ describe("rankOwners", () => {
     expect(out.emitted).toEqual([]);
     expect(Number.isNaN(out.totalWeight)).toBe(false);
   });
+
+  test("truncated reflects the CAP alone — thresholded-out owners are not truncation", () => {
+    // 23 owners, only 3 clear the 5% floor, cap of 10 never binds.
+    const m = new Map<string, number>();
+    m.set("a", 40);
+    m.set("b", 30);
+    m.set("c", 20);
+    for (let i = 0; i < 20; i += 1) m.set(`tiny${String(i).padStart(2, "0")}`, 0.5);
+    const out = rankOwners(m, 0.05, 10);
+
+    expect(out.totalOwners).toBe(23);
+    expect(out.aboveFloor).toBe(3);
+    expect(out.emitted).toHaveLength(3);
+    // The whole point: nothing was capped, so nothing was truncated.
+    expect(out.emitted.length < out.aboveFloor).toBe(false);
+  });
+
+  test("aboveFloor counts survivors of the floor, before the cap", () => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < 14; i += 1) m.set(`p${String(i).padStart(2, "0")}`, 10);
+    const out = rankOwners(m, 0.05, 10);
+
+    expect(out.totalOwners).toBe(14);
+    expect(out.aboveFloor).toBe(14);
+    expect(out.emitted).toHaveLength(10);
+    expect(out.emitted.length < out.aboveFloor).toBe(true);
+  });
+
+  test("a cap exactly equal to aboveFloor does not count as truncation", () => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < 10; i += 1) m.set(`p${String(i)}`, 10);
+    const out = rankOwners(m, 0.05, 10);
+
+    expect(out.aboveFloor).toBe(10);
+    expect(out.emitted).toHaveLength(10);
+    expect(out.emitted.length < out.aboveFloor).toBe(false);
+  });
+
+  test("an all-zero weight map reports zero aboveFloor without dividing by zero", () => {
+    const out = rankOwners(new Map([["a", 0]]), 0.05, 10);
+    expect(out.totalWeight).toBe(0);
+    expect(out.aboveFloor).toBe(0);
+    expect(out.emitted).toHaveLength(0);
+  });
 });
 
 function seedLine(
@@ -193,6 +237,46 @@ describe("runOwnershipPass", () => {
     const meta = JSON.parse(row.metadata) as { ownerCount: number; truncated: boolean };
     expect(meta.ownerCount).toBe(12);
     expect(meta.truncated).toBe(true);
+  });
+
+  // Distinguishes the two possible `truncated` formulas: floor-excluded owners
+  // (20 tiny contributors below the 5% `minShare`) push `ownerCount` to 23 while
+  // only 3 owners clear the floor — well under the default cap of 10, so the cap
+  // never binds. A `totalOwners`-relative formula reports `truncated: true` here
+  // (23 owners, only 3 emitted); the cap-relative formula correctly reports
+  // `false`, since nothing was dropped by `max_owners_per_path`.
+  test("truncated stays false on the file entity when the floor — not the cap — excludes owners", async () => {
+    let lineNo = 1;
+    const majors: [string, number][] = [
+      ["a@x.com", 40],
+      ["b@x.com", 30],
+      ["c@x.com", 20],
+    ];
+    for (const [email, count] of majors) {
+      for (let i = 0; i < count; i += 1) {
+        seedLine(d, "src/a.ts", lineNo, email, email, 0);
+        lineNo += 1;
+      }
+    }
+    for (let i = 0; i < 20; i += 1) {
+      seedLine(d, "src/a.ts", lineNo, `tiny${String(i).padStart(2, "0")}@x.com`, "tiny", 0);
+      lineNo += 1;
+    }
+    await runOwnershipPass(
+      d,
+      baseOpts({ config: { ...DEFAULT_NIMBUS_OWNERSHIP_TOML, ignoreGlobs: [] } }),
+    );
+    const row = d
+      .query("SELECT metadata FROM graph_entity WHERE type = 'source_file' LIMIT 1")
+      .get() as { metadata: string };
+    const meta = JSON.parse(row.metadata) as {
+      ownerCount: number;
+      ownersAboveFloor: number;
+      truncated: boolean;
+    };
+    expect(meta.ownerCount).toBe(23);
+    expect(meta.ownersAboveFloor).toBe(3);
+    expect(meta.truncated).toBe(false);
   });
 
   test("is idempotent — running twice yields the same edge count", async () => {
@@ -665,5 +749,27 @@ describe("runOwnershipPass", () => {
       }[]
     ).map((r) => r.label);
     expect(labels).not.toContain("package-lock.json");
+  });
+
+  test("a service entity carries the same owner-count metadata as a file", async () => {
+    seedLine(d, "src/a.ts", 1, "a@x.com", "A", 1);
+    seedLine(d, "src/a.ts", 2, "b@x.com", "B", 1);
+    await runOwnershipPass(
+      d,
+      baseOpts({
+        spawn: fakeSpawn("origin\n", "git@github.com:acme/alpha.git"),
+        serviceRepoUrns: new Map([["checkout", ["github:acme/alpha"]]]),
+      }),
+    );
+
+    const row = d
+      .query("SELECT metadata FROM graph_entity WHERE type = 'service' AND external_id = ?")
+      .get("service:checkout") as { metadata: string | null } | null;
+    expect(row).not.toBeNull();
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["ownerCount"]).toBe(2);
+    expect(meta["ownersAboveFloor"]).toBe(2);
+    expect(meta["truncated"]).toBe(false);
+    expect(typeof meta["totalWeightedLines"]).toBe("number");
   });
 });
