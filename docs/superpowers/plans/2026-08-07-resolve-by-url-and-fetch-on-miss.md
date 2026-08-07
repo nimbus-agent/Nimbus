@@ -1327,9 +1327,20 @@ git switch -c dev/asafgolombek/fetch-on-miss
 - Test: `packages/gateway/src/sync/fetch-host-boundary.test.ts`
 
 **Interfaces:**
-- Consumes: `readConnectorSecret(vault, service, key)` from
-  `packages/gateway/src/connectors/connector-secrets.ts` (confirm the exact module with
-  `grep -rn "export async function readConnectorSecret" packages/gateway/src`); `NimbusVault`.
+- Consumes: `readConnectorSecret` and `NimbusVault`. **Verified signature** — the plan's first draft
+  named the wrong module:
+  ```ts
+  // packages/gateway/src/connectors/connector-vault.ts:101
+  export async function readConnectorSecret<S extends ConnectorServiceId>(
+    vault: NimbusVault, serviceId: S, keyName: ConnectorSecretKeyOf<S>,
+  ): Promise<string | null>   // internally: vault.get(`${serviceId}.${keyName}`)
+  ```
+  So `keyName` is the bare key (`"pat"`, `"api_base"`, `"base_url"`), **without** the service
+  prefix, and it is TYPE-CHECKED against `connector-secrets-manifest.ts`. A wrong key name is a
+  compile error, not a runtime null — which is why `SERVICE_SECRETS` below is safe to write as
+  literals.
+- A test fake must implement **`get(fullKey)`**, not `getSecret`, and is keyed by the FULL
+  `"<service>.<key>"` string.
 - Produces:
   ```ts
   export type FetchableService = "github" | "gitlab" | "bitbucket" | "jenkins" | "jira";
@@ -1347,10 +1358,11 @@ git switch -c dev/asafgolombek/fetch-on-miss
 import { describe, expect, test } from "bun:test";
 import { deriveFetchHostMap, serviceForHost, SAAS_HOSTS } from "./fetch-host-boundary.ts";
 
+/** `readConnectorSecret` calls `vault.get("<service>.<key>")` — so the fake keys on the FULL key. */
 function fakeVault(secrets: Record<string, string>) {
   return {
-    async getSecret(key: string): Promise<string | null> {
-      return secrets[key] ?? null;
+    async get(fullKey: string): Promise<string | null> {
+      return secrets[fullKey] ?? null;
     },
   } as unknown as Parameters<typeof deriveFetchHostMap>[0];
 }
@@ -1410,7 +1422,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement the module**
 
 ```ts
-import { readConnectorSecret } from "../connectors/connector-secrets.ts";
+import { readConnectorSecret } from "../connectors/connector-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -2047,24 +2059,62 @@ export async function targetedFetch(
   // BEFORE the outbound call. A throw here propagates and no fetch happens.
   deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
   const ctx = deps.contextFor(service);
-  try {
-    // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it.
-    await ctx.rateLimiter.acquire(service);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return { status: "rate_limited" };
-    }
-    throw err;
+  // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it.
+  //
+  // `acquire` WAITS — it sleeps in a loop until tokens refill or a penalty window passes, and never
+  // throws RateLimitError (verified: sync/rate-limiter.ts:278 / acquireUnderLock:291; it throws only
+  // for a bad token count or an unknown provider). This route is synchronous with a bounded timeout,
+  // so the wait must be bounded here. `acquire` is genuinely async (an awaited mutex plus sleepMs),
+  // so racing it is sound — unlike a sync FFI call, which no Promise.race can ever bound.
+  const acquired = await Promise.race([
+    ctx.rateLimiter.acquire(service).then(() => true),
+    deps.sleep(ACQUIRE_TIMEOUT_MS).then(() => false),
+  ]);
+  if (!acquired) {
+    // The losing acquire() keeps running and will eventually take its token. That over-consumes the
+    // bucket by one for a request we abandoned — deliberately the SAFE direction: it can only make
+    // us more conservative against the provider, never let this path bypass or starve the scheduler.
+    return { status: "rate_limited" };
   }
   const result: FetchOneResult = await syncable.fetchOne(ctx, url);
   return result;
 }
 ```
 
-> Confirm `ProviderRateLimiter.acquire`'s real contract before finalising the `try/catch`: read
-> `packages/gateway/src/sync/rate-limiter.ts`. If `acquire` *waits* rather than throwing, the
-> `rate_limited` arm must come from a bounded `Promise.race` timeout instead — and note that a
-> synchronous FFI call can never be raced, so verify `acquire` is genuinely async.
+Add to the module, and to `TargetedFetchDeps`:
+
+```ts
+/** How long a targeted fetch will wait for a rate-limit token before answering `rate_limited`. */
+const ACQUIRE_TIMEOUT_MS = 5_000;
+```
+```ts
+  /** Injected so the timeout is testable without real time. */
+  readonly sleep: (ms: number) => Promise<void>;
+```
+
+`FetchableService` is a subset of `Provider` (`rate-limiter.ts:1-13` lists all five, and
+`DEFAULT_QUOTAS` gives each a quota), so `acquire(service)` type-checks with no cast.
+
+Replace the plan's earlier `RateLimitError` test with this one:
+
+```ts
+test("a rate-limit wait past the timeout answers rate_limited, not a hang", async () => {
+  let fetched = false;
+  const deps = depsWith({
+    hostMap: new Map([["github.com", "github"]]),
+    // Never resolves — models a saturated bucket.
+    acquire: () => new Promise<void>(() => {}),
+    sleep: async () => {},           // timeout fires immediately
+    syncable: { fetchOne: async () => { fetched = true; return { status: "not_found" as const }; } },
+  });
+  expect(await targetedFetch(deps, "https://github.com/o/r/pull/1")).toEqual({
+    status: "rate_limited",
+  });
+  expect(fetched).toBe(false);
+});
+```
+
+Note `RateLimitError` is no longer imported by this module — drop it from the import list.
 
 - [ ] **Step 4: Run to verify they pass**
 
