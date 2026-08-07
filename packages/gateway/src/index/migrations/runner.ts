@@ -6,6 +6,7 @@ import { CONNECTOR_REMOVE_INTENT_V15_SQL } from "../../connectors/remove-intent.
 import { computeAuditRowHash } from "../../db/audit-chain.ts";
 import { vacuumAndGzip } from "../../db/vacuum-gzip.ts";
 import { dbExec, dbRun, dbStmtRun } from "../../db/write.ts";
+import { canonicalizeUrl } from "../../util/url-canonical.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
@@ -52,6 +53,7 @@ import { PERSON_LINKED_V4_ALTER_SQL } from "../person-linked-v4-sql.ts";
 import { POLICY_V36_SQL } from "../policy-v36-sql.ts";
 import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.ts";
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
+import { RESOLVE_KEY_V52_SQL } from "../resolve-key-v52-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
 import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
@@ -273,6 +275,68 @@ function backfillAuditChain(db: Database): void {
   }
 }
 
+/**
+ * Chunk size for the V52 backfill. Bounds MEMORY, not transaction size: the whole step runs inside
+ * one `db.transaction` (see `applySchemaStep`), so there is deliberately NO commit per chunk.
+ * Committing per chunk would leave `resolve_key` half-populated with `PRAGMA user_version` already
+ * advanced — an index that resolves some URLs and not others, invisible until a user asks why one
+ * PR resolves and another does not.
+ */
+const RESOLVE_KEY_BACKFILL_CHUNK = 5_000;
+
+function backfillResolveKey(db: Database): void {
+  const select = db.prepare(
+    `SELECT id, url, canonical_url FROM item
+     WHERE resolve_key IS NULL AND (url IS NOT NULL OR canonical_url IS NOT NULL)
+     ORDER BY id ASC LIMIT ? OFFSET ?`,
+  );
+  const update = db.prepare(`UPDATE item SET resolve_key = ? WHERE id = ?`);
+  // Both statements come from db.prepare() and MUST be finalized: bun:sqlite only auto-releases the
+  // db.query() cache, so an unfinalized handle makes a later db.close() a silent no-op (#969).
+  try {
+    let offset = 0;
+    for (;;) {
+      const rows = select.all(RESOLVE_KEY_BACKFILL_CHUNK, offset) as Array<{
+        id: string;
+        url: string | null;
+        canonical_url: string | null;
+      }>;
+      if (rows.length === 0) {
+        break;
+      }
+      for (const r of rows) {
+        const raw = r.canonical_url ?? r.url;
+        // The WHERE clause already excludes both-NULL rows; this narrows the type.
+        if (raw === null) {
+          continue;
+        }
+        dbStmtRun(update, canonicalizeUrl(raw), r.id);
+      }
+      // OFFSET advances by the chunk, NOT by rows updated: the rows just written no longer satisfy
+      // `resolve_key IS NULL`, so a fixed OFFSET would re-scan. Advancing past what was read keeps
+      // the walk linear and terminating.
+      offset += rows.length;
+      if (rows.length < RESOLVE_KEY_BACKFILL_CHUNK) {
+        break;
+      }
+    }
+  } finally {
+    select.finalize();
+    update.finalize();
+  }
+}
+
+function migrateIndexedV51ToV52(db: Database, now: number): void {
+  db.transaction(() => {
+    for (const sql of RESOLVE_KEY_V52_SQL) {
+      dbExec(db, sql);
+    }
+    backfillResolveKey(db);
+    dbExec(db, "PRAGMA user_version = 52");
+    recordMigration(db, 52, "item.resolve_key + idx_item_resolve_key (resolve-by-URL v52)", now);
+  })();
+}
+
 function migrateIndexedV17ToV18(db: Database, now: number): void {
   db.transaction(() => {
     dbExec(db, AUDIT_CHAIN_V18_SCHEMA_SQL);
@@ -465,6 +529,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     OWNERSHIP_RELATION_TYPES_V51_SQL,
     OWNERSHIP_PASS_STATE_V51_SQL,
   ]),
+  { fromVersion: 51, toVersion: 52, apply: migrateIndexedV51ToV52 },
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

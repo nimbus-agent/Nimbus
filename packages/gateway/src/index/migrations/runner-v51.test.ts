@@ -6,13 +6,15 @@ import { runIndexedSchemaMigrations } from "./runner.ts";
 
 function freshMigratedDb(): Database {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  // Hardcoded to 51 (not CURRENT_SCHEMA_VERSION) — this file tests the V51 step in isolation, so it
+  // must stay valid as later steps (e.g. V52) land and bump the production ceiling.
+  runIndexedSchemaMigrations(db, 51);
   return db;
 }
 
 describe("V51 ownership migration", () => {
   test("schema version reaches 51", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(51);
     const db = freshMigratedDb();
     const row = db.query("PRAGMA user_version").get() as { user_version: number };
     expect(row.user_version).toBe(51);
@@ -62,7 +64,7 @@ describe("V51 ownership migration", () => {
 
   test("re-running the migration on an already-migrated db is a no-op", () => {
     const db = freshMigratedDb();
-    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    runIndexedSchemaMigrations(db, 51);
     const row = db.query("PRAGMA user_version").get() as { user_version: number };
     expect(row.user_version).toBe(51);
     db.close();

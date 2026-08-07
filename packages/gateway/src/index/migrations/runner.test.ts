@@ -5,7 +5,7 @@
  * All file-system tests use os.tmpdir() paths, cleaned up in afterEach.
  */
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -17,6 +17,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canonicalizeUrl } from "../../util/url-canonical.ts";
+import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
 import {
   MigrationRollbackError,
   pruneOldBackups,
@@ -736,4 +738,78 @@ describe("backfillMigrationsLedger — label missing error branch", () => {
     );
     db.close();
   });
+});
+
+// ---------------------------------------------------------------------------
+// V52 — item.resolve_key backfill
+// ---------------------------------------------------------------------------
+
+test("V52 backfills resolve_key for rows indexed before the column existed", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  // No resolve_key column at v51, so this is a genuine pre-migration row.
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
+       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
+     VALUES ('github:pr-1','github','pull_request','pr-1','PR one','','',0,
+       'https://github.com/o/r/pull/1?utm_source=x',NULL,1,'{}',1,0)`,
+  ).run();
+  runIndexedSchemaMigrations(db, 52);
+  const row = db.query("SELECT resolve_key FROM item WHERE id = 'github:pr-1'").get() as {
+    resolve_key: string | null;
+  };
+  expect(row.resolve_key).toBe(canonicalizeUrl("https://github.com/o/r/pull/1?utm_source=x"));
+  expect(userVersion(db)).toBe(52);
+  db.close();
+});
+
+test("V52 leaves resolve_key NULL for a row with neither url", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
+       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
+     VALUES ('nimbus:g-1','nimbus','glossary_term','g-1','Term','','',0,
+       NULL,NULL,1,'{}',1,0)`,
+  ).run();
+  runIndexedSchemaMigrations(db, 52);
+  const row = db.query("SELECT resolve_key FROM item WHERE id = 'nimbus:g-1'").get() as {
+    resolve_key: string | null;
+  };
+  expect(row.resolve_key).toBeNull();
+  db.close();
+});
+
+test("CURRENT_SCHEMA_VERSION is 52, so V52 runs in production", () => {
+  // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
+  // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
+  expect(CURRENT_SCHEMA_VERSION).toBe(52);
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  expect(tableNames(db)).toContain("item");
+  const cols = db.query("PRAGMA table_info(item)").all() as Array<{ name: string }>;
+  expect(cols.map((c) => c.name)).toContain("resolve_key");
+  db.close();
+});
+
+test("V52 leaves user_version unadvanced when the backfill throws", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview, body_complete,
+       url, canonical_url, modified_at, metadata, synced_at, pinned)
+     VALUES ('github:pr-2','github','pull_request','pr-2','PR two','','',0,
+       'https://github.com/o/r/pull/2',NULL,1,'{}',1,0)`,
+  ).run();
+  // Poison the UPDATE the backfill must perform. The trigger is created BEFORE the migration runs,
+  // and it fires on the resolve_key write that V52's backfill issues.
+  db.query(
+    `CREATE TRIGGER poison_resolve_key BEFORE UPDATE OF resolve_key ON item
+     BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+  ).run();
+  expect(() => runIndexedSchemaMigrations(db, 52)).toThrow();
+  // The whole step is one db.transaction, so a throw mid-backfill rolls back the DDL AND the
+  // version bump. A half-populated resolve_key at v52 would resolve some URLs and not others.
+  expect(userVersion(db)).toBe(51);
+  db.close();
 });
