@@ -273,6 +273,67 @@ describe("ProviderRateLimiter – deterministic (clock-injected)", () => {
 // mergeQuota nullish-coalescing arms (partial overrides)
 // ────────────────────────────────────────────────────────────────────────────
 
+describe("ProviderRateLimiter.tryAcquire", () => {
+  test("takes a token and returns true when tokens are available", async () => {
+    const limiter = new ProviderRateLimiter({ github: { requestsPerMinute: 60, burstSize: 2 } });
+    await expect(limiter.tryAcquire("github")).resolves.toBe(true);
+    // Second token also available (burstSize=2) — proves the first call actually decremented.
+    await expect(limiter.tryAcquire("github")).resolves.toBe(true);
+    // Bucket now drained — a third call must fail rather than wait.
+    await expect(limiter.tryAcquire("github")).resolves.toBe(false);
+  });
+
+  test("returns false immediately when the bucket is empty — never sleeps", async () => {
+    const limiter = new ProviderRateLimiter({ github: { requestsPerMinute: 60, burstSize: 1 } });
+    await limiter.tryAcquire("github"); // drain the single token
+    let macrotaskFired = false;
+    setTimeout(() => {
+      macrotaskFired = true;
+    }, 0);
+    const result = await limiter.tryAcquire("github");
+    expect(result).toBe(false);
+    // If tryAcquire had internally awaited even a zero-delay timer, the macrotask queued above
+    // would have had a chance to run first. It didn't — tryAcquire settled purely on microtasks.
+    expect(macrotaskFired).toBe(false);
+  });
+
+  test("respects an active penalty window (returns false, does not wait it out)", async () => {
+    const limiter = new ProviderRateLimiter({ google: { requestsPerMinute: 60, burstSize: 5 } });
+    limiter.penalise("google", 60_000);
+    await expect(limiter.tryAcquire("google")).resolves.toBe(false);
+  });
+
+  test("rejects non-integer/zero/negative token counts, matching acquire's validation", async () => {
+    const limiter = new ProviderRateLimiter({ google: { requestsPerMinute: 60, burstSize: 5 } });
+    await expect(limiter.tryAcquire("google", 1.5)).rejects.toThrow(/positive integer/);
+    await expect(limiter.tryAcquire("google", 0)).rejects.toThrow(/positive integer/);
+    await expect(limiter.tryAcquire("google", -1)).rejects.toThrow(/positive integer/);
+  });
+
+  test("rejects a token request larger than burstSize", async () => {
+    const limiter = new ProviderRateLimiter({ google: { requestsPerMinute: 60, burstSize: 2 } });
+    await expect(limiter.tryAcquire("google", 3)).rejects.toThrow(/burstSize/);
+  });
+
+  // The regression this method exists to fix: N concurrent, permanently-failing tryAcquire calls
+  // must never queue behind one another on a real timer — each settles in the same microtask
+  // flush, so none of them can serialize a legitimate `acquire` behind a growing backlog the way
+  // N abandoned blocking `acquire()` calls used to (measured: 106ms baseline → 1366ms after 12).
+  test("N concurrent calls against a saturated bucket all settle without waiting on any timer", async () => {
+    const limiter = new ProviderRateLimiter({ github: { requestsPerMinute: 60, burstSize: 1 } });
+    await limiter.tryAcquire("github"); // drain the single token
+    let macrotaskFired = false;
+    setTimeout(() => {
+      macrotaskFired = true;
+    }, 0);
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () => limiter.tryAcquire("github")),
+    );
+    expect(results.every((r) => r === false)).toBe(true);
+    expect(macrotaskFired).toBe(false);
+  });
+});
+
 describe("mergeQuota via ProviderRateLimiter constructor", () => {
   test("override with both fields set uses override values", async () => {
     const limiter = new ProviderRateLimiter({

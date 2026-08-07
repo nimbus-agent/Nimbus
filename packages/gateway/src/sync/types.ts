@@ -70,6 +70,12 @@ export interface Syncable {
    * limiter, append to the egress ledger, or check the fetch-host boundary — those are the
    * orchestrator's job in a later layer; duplicating them here would make this method untestable
    * in isolation.
+   *
+   * `unsupported_url` MUST be returned before any outbound request — the caller's URL regex
+   * failed to match, so there is nothing yet to fetch. The targeted-fetch orchestrator
+   * (`sync/targeted-fetch.ts`) retries once, query-stripped, whenever it sees this status, and
+   * that retry is safe to make ONLY because this status is known to mean "no request was made
+   * yet"; returning it after a real outbound call would make the orchestrator double it.
    */
   fetchOne?(ctx: SyncContext, url: string): Promise<FetchOneResult>;
 }

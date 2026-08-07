@@ -4,8 +4,15 @@ import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { type FetchableService, serviceForHost } from "./fetch-host-boundary.ts";
 import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
 
-/** How long a targeted fetch will wait for a rate-limit token before answering `rate_limited`. */
+/** How long a targeted fetch will poll for a rate-limit token before answering `rate_limited`. */
 const ACQUIRE_TIMEOUT_MS = 5_000;
+/**
+ * Interval between `tryAcquire` polls. Small enough to feel responsive, large enough not to
+ * hammer the per-provider mutex under contention. `ACQUIRE_TIMEOUT_MS / RATE_LIMIT_POLL_INTERVAL_MS`
+ * attempts fit in the timeout budget.
+ */
+const RATE_LIMIT_POLL_INTERVAL_MS = 100;
+const MAX_ACQUIRE_POLL_ATTEMPTS = Math.ceil(ACQUIRE_TIMEOUT_MS / RATE_LIMIT_POLL_INTERVAL_MS);
 
 export type TargetedFetchOutcome =
   | { readonly status: "indexed"; readonly itemId: string }
@@ -52,13 +59,19 @@ export interface TargetedFetchDeps {
    * literal identifier to `egress/*`; the real implementation lives there (see
    * `egress/agent-brief-egress.ts` for the established shape) and is wired in by the caller that
    * constructs `TargetedFetchDeps`.
+   *
+   * Typed to return `undefined`, not `void` — TypeScript's `void`-return leniency would otherwise
+   * accept an `async` function here silently. An async implementation's rejection would surface
+   * as an unhandled promise rejection AFTER `targetedFetch` had already moved past this call
+   * (since nothing here awaits it), which breaks the fail-closed contract: a failing append must
+   * abort the fetch synchronously in this function's control flow, not fail invisibly later.
    */
   readonly appendEgress: (row: {
-    readonly destination: string;
+    readonly destination: FetchableService;
     readonly sourceType: "sync";
     readonly method: string;
-  }) => void;
-  /** Injected so the acquire timeout below is testable without real time. */
+  }) => undefined;
+  /** Injected so the acquire poll loop below is testable without real time. */
   readonly sleep: (ms: number) => Promise<void>;
 }
 
@@ -78,8 +91,9 @@ function queryStrippedCanonical(canonicalUrl: string): string {
  * `unsupported_url` — meaning the connector's `$`-anchored regex rejected it before making any
  * outbound call — retries once with ALL query params stripped (rung 2). Never retries on
  * `not_found`: that attempt already made a real request, so trying again would double it. At most
- * one attempt ever reaches the network, because `unsupported_url` is returned before the
- * connector calls `fetch`.
+ * one attempt ever reaches the network, because `unsupported_url` MUST be returned before any
+ * outbound request (a contract stated on `Syncable.fetchOne` in `sync/types.ts`, since this retry
+ * depends on it).
  */
 async function fetchOneWithRetry(
   fetchOne: NonNullable<Syncable["fetchOne"]>,
@@ -101,6 +115,33 @@ async function fetchOneWithRetry(
 }
 
 /**
+ * Polls `tryAcquire` (non-blocking) rather than racing the blocking `acquire` against a timeout.
+ *
+ * `acquire`'s retry loop runs entirely inside its per-provider mutex, holding it for the WHOLE
+ * wait. Racing that call against a timeout and walking away on timeout (the earlier design) left
+ * the losing `acquire()` running and queued: N abandoned callers left N full-wait-duration mutex
+ * holds queued back-to-back, so a legitimate acquirer (the scheduler) arriving after them waited
+ * behind ALL N — measured with a drained `github` bucket: 106ms baseline `acquire`, 1366ms after
+ * 12 abandoned targeted-fetch attempts. `tryAcquire`'s mutex hold is a single synchronous
+ * check-and-maybe-decrement, released immediately regardless of outcome, so any number of
+ * concurrent pollers here can never serialize a legitimate `acquire` behind them — see
+ * `sync/rate-limiter.ts`'s `tryAcquire` doc comment for the full account.
+ */
+async function acquireWithinTimeout(
+  rateLimiter: SyncContext["rateLimiter"],
+  service: FetchableService,
+  sleep: (ms: number) => Promise<void>,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < MAX_ACQUIRE_POLL_ATTEMPTS; attempt++) {
+    if (await rateLimiter.tryAcquire(service)) {
+      return true;
+    }
+    await sleep(RATE_LIMIT_POLL_INTERVAL_MS);
+  }
+  return false;
+}
+
+/**
  * Fetch and index one item named by a URL, server-side. The single chokepoint every targeted
  * fetch passes through.
  *
@@ -116,8 +157,8 @@ async function fetchOneWithRetry(
  *   2. Resolve the host against the derived fetch-host boundary. A miss is `not_configured`.
  *   3. Look up the registered connector for that service, and its `fetchOne`.
  *   4. Append ONE `sync` egress row. A throw here aborts — no row, no fetch.
- *   5. Acquire a rate-limit token from the SAME bucket the scheduler uses (bounded by a timeout,
- *      since `acquire` waits rather than throwing).
+ *   5. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
+ *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`.
  *   6. Call `fetchOne`, canonicalizing the URL first and retrying once query-stripped.
  */
 export async function targetedFetch(
@@ -133,6 +174,12 @@ export async function targetedFetch(
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { status: "unsupported_url" };
   }
+  // Caller-controlled userinfo (`user:pass@host`) plays no role in host or scheme resolution
+  // (`.host`/`.origin` never include it) and every connector today discards the authority when
+  // it parses `fetchOne`'s `url` argument — but it must not be given the chance to ride along
+  // regardless. Cleared before `parsed` is ever serialized back into a string.
+  parsed.username = "";
+  parsed.password = "";
 
   // The host boundary runs BEFORE anything else touches a connector — every connector's URL
   // regex matches ANY host, so an unclaimed host must never reach `syncableFor`/`fetchOne`.
@@ -169,30 +216,26 @@ export async function targetedFetch(
   deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
 
   const ctx = deps.contextFor(service);
-  // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it.
-  //
-  // `ProviderRateLimiter.acquire` WAITS — it sleeps in a loop until tokens refill or a penalty
-  // window passes, and never throws `RateLimitError` (it throws only for a bad token count or an
-  // unknown provider; see `sync/rate-limiter.ts`). This route needs a bounded wait, so it races
-  // the wait against an injected `sleep`. Racing is sound here because `acquire` is genuinely
-  // async (an awaited mutex plus a real sleep) — unlike a sync FFI call, which no `Promise.race`
-  // could ever bound.
-  const acquired = await Promise.race([
-    ctx.rateLimiter.acquire(service).then(() => true),
-    deps.sleep(ACQUIRE_TIMEOUT_MS).then(() => false),
-  ]);
+  // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it —
+  // polled non-blockingly (see `acquireWithinTimeout`'s doc comment for why this is `tryAcquire`
+  // and not a raced, abandonable `acquire()`).
+  const acquired = await acquireWithinTimeout(ctx.rateLimiter, service, deps.sleep);
   if (!acquired) {
-    // The losing `acquire()` keeps running and will eventually take its token — over-consuming
-    // the bucket by one for a request we abandoned here. Deliberately the SAFE direction: it can
-    // only make us more conservative toward the provider, never let this path starve or bypass
-    // the scheduler.
     return { status: "rate_limited" };
   }
 
-  // Mirrors `resolveItemByUrl`'s first two rungs (`index/resolve-by-url.ts`) so fetch-on-miss never
-  // declines a URL that resolve reports `fetchable: true` for. `canonicalizeUrl` is REUSED, never
-  // reimplemented here — `externalIdFor` hashes its output, so a divergent rule in this module
-  // would not just miss fetches, it would change identity elsewhere.
+  // Mirrors `resolveItemByUrl`'s first two rungs (`index/resolve-by-url.ts`) for the three cases
+  // they close: a fragment, one extra (non-tracking) query param, and a non-root trailing slash.
+  // `canonicalizeUrl` is REUSED, never reimplemented here — `externalIdFor` hashes its output, so
+  // a divergent rule in this module would not just miss fetches, it would change identity
+  // elsewhere.
+  //
+  // NOT mirrored: resolve's third rung, which trims up to three trailing path segments. `resolve`
+  // reports `fetchable: true` from the host alone, so a URL like `.../pull/1/files`,
+  // `.../commits`, a GitLab `.../-/merge_requests/7/diffs`, or a Jenkins `.../12/console` gets
+  // `fetchable: true` from resolve and then `unsupported_url` here. That is a known asymmetry, not
+  // a loop — a decline is terminal and free (it never reaches the network) — it just means those
+  // URL shapes cannot be targeted-fetched today.
   const canonical = canonicalizeUrl(parsed.toString());
   return fetchOneWithRetry(fetchOne, ctx, canonical);
 }

@@ -33,7 +33,7 @@ describe("boot marker", () => {
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
     expect(rows[0]?.sourceId).toBe(
-      "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=per-run;task=per-call",
+      "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call",
     );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
@@ -52,8 +52,8 @@ describe("boot marker", () => {
       task: "per-call", // both non-none
       mcp: "per-call", // both non-none
       http: "per-call", // both non-none
-      sync: "per-run", // both non-none
       session: "none", // the covering marker (400) saw nothing here
+      sync: "none",
       model: "none",
       peer: "none",
     });

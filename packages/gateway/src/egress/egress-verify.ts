@@ -389,6 +389,12 @@ export type EgressCompleteness = {
    * settling this first. Tracked as https://github.com/nimbus-agent/Nimbus/issues/1057 — a removal
    * condition that names no owner is a comment, not a plan. See `docs/SECURITY-INVARIANTS.md`
    * § I29 ("Outstanding debt").
+   *
+   * `sync` (`egress/egress-coverage.ts`) is the next candidate raise — `sync/scheduler.ts` and
+   * `sync/targeted-fetch.ts` already carry the injection seams, just no landed appender yet — and
+   * it would be the THIRD non-`none` class. Whoever lands that appender must either settle #1057
+   * first or explicitly record here that it is being deferred again; do not raise `sync` as a
+   * silent third class on top of an already-overdue shim.
    */
   readonly tier: "authorized-actions";
 };

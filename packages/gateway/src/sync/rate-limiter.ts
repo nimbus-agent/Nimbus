@@ -288,6 +288,44 @@ export class ProviderRateLimiter {
     });
   }
 
+  /**
+   * Non-blocking token attempt: takes `tokens` immediately and returns `true` if they are
+   * available right now; otherwise takes nothing and returns `false`. Never sleeps and never
+   * loops — unlike `acquire`, a caller that gives up on `false` leaves NOTHING behind: no queued
+   * mutex hold, no eventual token still to be taken later.
+   *
+   * Exists for a caller that wants to poll with its OWN bounded backoff instead of joining
+   * `acquire`'s blocking queue (`sync/targeted-fetch.ts`). `acquire`'s retry loop runs entirely
+   * inside `runExclusive`, holding the per-provider mutex for the whole wait — so N callers that
+   * each call `acquire` and then abandon it (e.g. a caller-facing timeout) still queue N
+   * full-wait-duration mutex holds, and a legitimate acquirer behind them waits behind all N
+   * (measured: 12 abandoned callers turned a 106ms baseline `acquire` into 1366ms). `tryAcquire`'s
+   * mutex hold is a single synchronous check-and-maybe-decrement — released before any wait would
+   * ever start — so any number of concurrent pollers never serialize a legitimate `acquire`
+   * behind them.
+   */
+  async tryAcquire(provider: Provider, tokens = 1): Promise<boolean> {
+    if (!Number.isInteger(tokens) || tokens < 1) {
+      throw new Error("acquire tokens must be a positive integer");
+    }
+    const state = this.stateFor(provider);
+    if (tokens > state.quota.burstSize) {
+      throw new Error("acquire exceeds provider burstSize");
+    }
+    return this.mutexFor(provider).runExclusive(async () => {
+      const now = this.nowFn();
+      if (now < state.penaltyUntilMs) {
+        return false;
+      }
+      refill(state, now);
+      if (state.tokens >= tokens) {
+        state.tokens -= tokens;
+        return true;
+      }
+      return false;
+    });
+  }
+
   private async acquireUnderLock(provider: Provider, tokens: number): Promise<void> {
     const state = this.stateFor(provider);
     for (;;) {

@@ -30,12 +30,12 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. FOUR classes are non-`none`: `task` (the executor's
- * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
- * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
- * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); and `sync`. Later phases raise
- * `model`, `peer`, `session`; raising an entry without landing its appender is the exact defect
- * this vector exists to prevent.
+ * What THIS binary is built to observe. THREE classes are non-`none`: `task` (the executor's
+ * gated-action append, `engine/executor.ts`), plus `mcp` and `http` — the two external transports
+ * an agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
+ * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map). Later phases raise `sync`, `model`,
+ * `peer`, `session`; raising an entry without landing its appender is the exact defect this vector
+ * exists to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -62,19 +62,21 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * same port WILL append, but under `sync`, not `http` — the class tracks the kind of egress, not
  * the port it arrived on.
  *
- * READ THE `sync` ENTRY AS `per-run`, WHICH IS WEAKER THAN `per-call` AND DELIBERATELY SO. It has
- * TWO appenders: the scheduler's sync-run boundary (`sync/scheduler.ts` `runJob`) and the targeted
- * single-item fetch (`sync/targeted-fetch.ts`, reached by `POST /v1/items/fetch`). A scheduled sync
- * is a paginated run that makes many upstream calls and appends ONE row, so the ledger proves that
- * a sync of that service happened in the window — not how many requests it made. A targeted fetch
- * appends one row for its one call. Both name the service id as `destination`.
+ * `sync` STAYS `none` even though `sync/scheduler.ts` and `sync/targeted-fetch.ts` both carry an
+ * injection SEAM for a `sync` egress row (`appendSyncEgress` / `appendEgress`). A seam is not an
+ * appender: `packages/gateway/src/platform/assemble.ts` is the only production `new
+ * SyncScheduler(...)` and it does not pass `appendSyncEgress`, and `targetedFetch` has no caller
+ * repo-wide yet. Raising this entry before BOTH become reachable in the shipped binary would be a
+ * false zero the moment a background sync runs and `nimbus prove` reports it as observed — do not
+ * raise it again until the route task wires a real appender into `assemble.ts` and lands it in the
+ * same commit as this claim.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
   mcp: "per-call",
   http: "per-call",
-  sync: "per-run",
   session: "none",
+  sync: "none",
   model: "none",
   peer: "none",
 };

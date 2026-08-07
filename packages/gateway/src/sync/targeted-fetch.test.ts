@@ -8,7 +8,7 @@ import { type TargetedFetchDeps, targetedFetch } from "./targeted-fetch.ts";
 import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
 
 type EgressRow = {
-  readonly destination: string;
+  readonly destination: FetchableService;
   readonly sourceType: "sync";
   readonly method: string;
 };
@@ -19,28 +19,24 @@ type DepsOverrides = {
   syncableFor?: (service: FetchableService) => Syncable | undefined;
   /** Shorthand: builds a trivial fixture `Syncable` with this `fetchOne` (or none at all). */
   syncable?: { fetchOne?: Syncable["fetchOne"] };
-  appendEgress?: (row: EgressRow) => void;
+  appendEgress?: (row: EgressRow) => undefined;
   sleep?: (ms: number) => Promise<void>;
-  acquire?: (service: FetchableService) => Promise<void>;
+  /** Fake for `ctx.rateLimiter.tryAcquire`. Defaults to always-succeeds-immediately. */
+  tryAcquire?: (service: FetchableService) => Promise<boolean>;
   httpOriginFor?: (service: FetchableService) => string | null;
 };
 
-/** Never resolves — models a saturated bucket whose token is still pending. */
-function hangingAcquire(): Promise<void> {
-  return new Promise<void>(() => {});
-}
-
 function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
   const hostMap = overrides.hostMap ?? new Map<string, FetchableService>();
-  const acquire = overrides.acquire ?? (async () => {});
+  const tryAcquire = overrides.tryAcquire ?? (async () => true);
   const fakeCtx: SyncContext = {
     db: openMemoryIndexDatabase(),
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),
     // A plain object structurally satisfies `SyncContext["rateLimiter"]` for the fields this
-    // module actually calls (`acquire`) — the same pattern used elsewhere for a fake rate
+    // module actually calls (`tryAcquire`) — the same pattern used elsewhere for a fake rate
     // limiter (see connectors/mendeley-sync.test.ts).
-    rateLimiter: { acquire } as unknown as SyncContext["rateLimiter"],
+    rateLimiter: { tryAcquire } as unknown as SyncContext["rateLimiter"],
     sandboxCwd: "/tmp",
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
@@ -69,7 +65,7 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
     syncableFor: syncableFor ?? (() => undefined),
     contextFor: () => fakeCtx,
     httpOriginFor: overrides.httpOriginFor ?? (() => null),
-    appendEgress: overrides.appendEgress ?? (() => {}),
+    appendEgress: overrides.appendEgress ?? (() => undefined),
     sleep: overrides.sleep ?? (() => Promise.resolve()),
   };
 }
@@ -97,8 +93,13 @@ describe("targetedFetch", () => {
   // itself would happily answer for a constructed API URL if it were ever called directly.
   test("a host the boundary never claimed never reaches fetchOne, even though a syncable exists", async () => {
     let called = false;
+    const rows: EgressRow[] = [];
     const deps = depsWith({
       hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      appendEgress: (r) => {
+        rows.push(r);
+        return undefined;
+      },
       syncableFor: (service) => ({
         serviceId: service,
         defaultIntervalMs: 60_000,
@@ -115,6 +116,9 @@ describe("targetedFetch", () => {
     const out = await targetedFetch(deps, "https://evil.example/o/r/pull/1");
     expect(out).toEqual({ status: "not_configured" });
     expect(called).toBe(false);
+    // MINOR 7: hoisting the egress append above the host check would leave every OTHER
+    // assertion in this file green — this is what actually catches it.
+    expect(rows).toHaveLength(0);
   });
 
   test("a claimed host whose connector is not wired up in this binary is also not_configured", async () => {
@@ -151,13 +155,36 @@ describe("targetedFetch", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
+  test("userinfo (user:pass@host) is stripped before the URL reaches fetchOne", async () => {
+    let seenUrl: string | undefined;
+    const deps = depsWith({
+      hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+      syncable: {
+        fetchOne: async (_ctx, url) => {
+          seenUrl = url;
+          return { status: "indexed", itemId: "github:o/r#1" };
+        },
+      },
+    });
+    const out = await targetedFetch(deps, "https://evil.example:pw@github.com/o/r/pull/1");
+    expect(out).toEqual({ status: "indexed", itemId: "github:o/r#1" });
+    expect(seenUrl).toBe("https://github.com/o/r/pull/1");
+    expect(seenUrl).not.toContain("evil.example");
+    expect(seenUrl).not.toContain("pw");
+  });
+
   // Requirement B: pin https: before fetching.
   describe("scheme pinning", () => {
     test("an http: URL is rejected when the service has no self-hosted http origin", async () => {
       let called = false;
+      const rows: EgressRow[] = [];
       const deps = depsWith({
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
         httpOriginFor: () => null,
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
         syncable: {
           fetchOne: async () => {
             called = true;
@@ -168,6 +195,9 @@ describe("targetedFetch", () => {
       const out = await targetedFetch(deps, "http://github.com/o/r/pull/1");
       expect(out).toEqual({ status: "unsupported_url" });
       expect(called).toBe(false);
+      // MINOR 7: proves the scheme gate also runs before any egress row, not merely before
+      // fetchOne.
+      expect(rows).toHaveLength(0);
     });
 
     test("an http: URL is accepted when it matches the service's own self-hosted origin exactly", async () => {
@@ -275,6 +305,27 @@ describe("targetedFetch", () => {
       expect(calls).toBe(2);
     });
 
+    // MINOR 6: rung 1's URL already has nothing left to strip (no query at all), so the
+    // `stripped === canonicalUrl` short-circuit inside `fetchOneWithRetry` must fire and skip a
+    // pointless, identical second call.
+    test("a query-less unsupported_url short-circuits — no second, identical fetchOne call", async () => {
+      let calls = 0;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        syncable: {
+          fetchOne: async (): Promise<FetchOneResult> => {
+            calls++;
+            // Rejects for a reason unrelated to the query string (there isn't one) — models a
+            // malformed-path rejection.
+            return { status: "unsupported_url" };
+          },
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
+      expect(out).toEqual({ status: "unsupported_url" });
+      expect(calls).toBe(1);
+    });
+
     test("not_found is never retried, even though a query remains to strip", async () => {
       let calls = 0;
       const deps = depsWith({
@@ -338,6 +389,7 @@ describe("targetedFetch", () => {
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
         appendEgress: (r) => {
           rows.push(r);
+          return undefined;
         },
         syncable: {
           fetchOne: async () => ({ status: "indexed", itemId: "github:o/r#1" }),
@@ -355,6 +407,7 @@ describe("targetedFetch", () => {
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
         appendEgress: (r) => {
           rows.push(r);
+          return undefined;
         },
         syncable: {},
       });
@@ -364,12 +417,12 @@ describe("targetedFetch", () => {
   });
 
   describe("rate limiting", () => {
-    test("a rate-limit wait past the timeout answers rate_limited, not a hang, and fetchOne is never called", async () => {
+    test("a saturated bucket that never yields a token within the timeout answers rate_limited, and fetchOne is never called", async () => {
       let fetched = false;
       const deps = depsWith({
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
-        acquire: hangingAcquire,
-        sleep: async () => {}, // timeout fires immediately
+        tryAcquire: async () => false, // always saturated
+        sleep: async () => {}, // each poll's wait resolves instantly
         syncable: {
           fetchOne: async () => {
             fetched = true;
@@ -382,17 +435,53 @@ describe("targetedFetch", () => {
       expect(fetched).toBe(false);
     });
 
-    test("an acquire that resolves well within the timeout still fetches normally", async () => {
+    test("a token available on the first poll fetches normally without ever sleeping", async () => {
       const deps = depsWith({
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
-        acquire: async () => {},
-        sleep: () => new Promise(() => {}), // never fires — acquire must win the race
+        tryAcquire: async () => true,
+        // Never resolves — if the poll loop slept even once, this test would hang and fail on
+        // its own timeout, which is exactly what proves `tryAcquire` succeeding on attempt 1
+        // never needs to.
+        sleep: () => new Promise(() => {}),
         syncable: {
           fetchOne: async () => ({ status: "indexed", itemId: "github:o/r#1" }),
         },
       });
       const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
       expect(out).toEqual({ status: "indexed", itemId: "github:o/r#1" });
+    });
+
+    // IMPORTANT 2: N concurrent abandoned attempts must not leave any pending low-level acquire
+    // behind them — with the non-blocking `tryAcquire` design there is nothing to leave pending
+    // at all (every call settles synchronously under the mutex), which is the property this
+    // test pins at the orchestrator level. The rate-limiter-level regression proof (no real timer
+    // is ever awaited) lives in `rate-limiter.test.ts`.
+    test("N concurrent rate_limited outcomes against a saturated bucket each poll independently and fetchOne is never called", async () => {
+      let pollCalls = 0;
+      let fetchOneCalls = 0;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        tryAcquire: async () => {
+          pollCalls++;
+          return false;
+        },
+        sleep: async () => {},
+        syncable: {
+          fetchOne: async () => {
+            fetchOneCalls++;
+            return { status: "indexed", itemId: "x" };
+          },
+        },
+      });
+      const outcomes = await Promise.all(
+        Array.from({ length: 12 }, () => targetedFetch(deps, "https://github.com/o/r/pull/1")),
+      );
+      expect(outcomes.every((o) => o.status === "rate_limited")).toBe(true);
+      expect(fetchOneCalls).toBe(0);
+      // Each of the 12 calls polled independently (no shared, cached "give up early" state) —
+      // this is a sanity check that the fix didn't accidentally starve legitimate polling, only
+      // the linear mutex backlog the old blocking-`acquire()` design created.
+      expect(pollCalls).toBeGreaterThan(0);
     });
   });
 });

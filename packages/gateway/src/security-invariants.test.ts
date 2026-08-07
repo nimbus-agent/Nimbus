@@ -1482,17 +1482,16 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
     // `mcp` and `http` are per-call because recordAgentBriefEgress serves BOTH transports and its
-    // dispatcher condition ships in the same commit as this claim. `sync` joined at `per-run` —
-    // weaker than `per-call`, and deliberately so (a sync is a paginated run, not a call) — with
-    // BOTH its appenders landing in the same commit as this widened claim: the scheduler's
-    // per-run boundary (`sync/scheduler.ts` `runJob`, gated by the optional `appendSyncEgress`
-    // closure) and the targeted single-item fetch (`sync/targeted-fetch.ts`, gated by
-    // `appendEgress`, which throws-aborts before any outbound call). The remaining classes stay
-    // `none` until THEIR appenders land. Raising an entry without its appender is the defect the
-    // vector exists to catch, so widening this expected list is a review moment, not a test to
-    // re-bank.
+    // dispatcher condition ships in the same commit as this claim. The others stay none until
+    // theirs do — `sync` in particular now has TWO injection seams (`sync/scheduler.ts`'s optional
+    // `appendSyncEgress`, `sync/targeted-fetch.ts`'s `appendEgress`), but neither is wired to a
+    // real appender in the shipped binary yet: `platform/assemble.ts`'s only production
+    // `new SyncScheduler(...)` passes no `appendSyncEgress`, and `targetedFetch` has no caller
+    // repo-wide. A seam is not an appender — raising this entry before both become reachable
+    // would be a false zero. Raising an entry without its appender is the defect the vector
+    // exists to catch, so widening this expected list is a review moment, not a test to re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["http", "mcp", "sync", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
