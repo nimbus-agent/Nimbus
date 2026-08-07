@@ -18,6 +18,12 @@ export type FetchableService = "github" | "gitlab" | "bitbucket" | "jenkins" | "
  * is acceptable as a hint inside a generated brief and unacceptable as a gate on an outbound
  * request that carries the user's stored credentials: here a miss must mean "not fetchable",
  * never "guess".
+ *
+ * This table is an INGREDIENT, not an authorization decision — it is not itself a source of
+ * truth for what is fetchable. Authorization comes only from `deriveFetchHostMap`, which gates
+ * every one of these hosts behind proof that its service's credential actually exists in the
+ * Vault. Reading `SAAS_HOSTS` directly would authorise all three hosts against a completely
+ * empty Vault.
  */
 export const SAAS_HOSTS: Readonly<Record<string, FetchableService>> = Object.freeze({
   "github.com": "github",
@@ -25,14 +31,20 @@ export const SAAS_HOSTS: Readonly<Record<string, FetchableService>> = Object.fre
   "bitbucket.org": "bitbucket",
 });
 
-/** Every service this boundary can resolve, in the order the map is built. */
-const FETCHABLE_SERVICES: readonly FetchableService[] = [
-  "github",
-  "gitlab",
-  "bitbucket",
-  "jenkins",
-  "jira",
-];
+/**
+ * Every service this boundary can resolve, in the order the map is built. Derived from the
+ * `FetchableService` union via `satisfies` rather than hand-listed, so a future service added to
+ * the union without a corresponding key here is a compile error (`TS2345`/`TS2353`) instead of a
+ * silent miss — matching the exhaustiveness the two `switch` statements below already get for
+ * free from the union.
+ */
+const FETCHABLE_SERVICES = Object.keys({
+  github: 0,
+  gitlab: 0,
+  bitbucket: 0,
+  jenkins: 0,
+  jira: 0,
+} satisfies Record<FetchableService, number>) as readonly FetchableService[];
 
 /**
  * The Vault secret that proves a service is CONFIGURED.
@@ -55,7 +67,7 @@ async function credentialSecret(
     case "bitbucket":
       return readConnectorSecret(vault, "bitbucket", "app_password");
     case "jenkins":
-      return readConnectorSecret(vault, "jenkins", "base_url");
+      return readConnectorSecret(vault, "jenkins", "api_token");
     case "jira":
       return readConnectorSecret(vault, "jira", "api_token");
   }
@@ -109,11 +121,36 @@ function hostOf(raw: string): string | null {
  * machine's real configuration rather than declared in a list that can drift from it. Every path
  * that cannot prove a service is configured (missing/blank credential, missing/malformed origin,
  * non-http(s) scheme) contributes no entry and never throws.
+ *
+ * A host can be claimed by at most one service. If two DIFFERENT services would claim the same
+ * host — e.g. a pasted-wrong `jira.base_url = "https://github.com"` alongside a real
+ * `github.pat` — the host is refused for BOTH rather than resolved to whichever service happened
+ * to run last (`Map.set` is otherwise last-write-wins, and iteration order is an implementation
+ * detail, not a security boundary). Guessing which of two claimants owns a contested host is
+ * exactly the kind of guess this module refuses to make elsewhere; once a host is marked
+ * ambiguous it stays refused even if a later service in this same pass would also claim it. A
+ * service re-claiming a host it already holds (e.g. its self-hosted origin secret happens to
+ * equal its own static SaaS host) is not a collision and resolves normally.
  */
 export async function deriveFetchHostMap(
   vault: NimbusVault,
 ): Promise<ReadonlyMap<string, FetchableService>> {
   const map = new Map<string, FetchableService>();
+  const ambiguousHosts = new Set<string>();
+
+  const claim = (host: string, service: FetchableService): void => {
+    if (ambiguousHosts.has(host)) {
+      return;
+    }
+    const existing = map.get(host);
+    if (existing !== undefined && existing !== service) {
+      map.delete(host);
+      ambiguousHosts.add(host);
+      return;
+    }
+    map.set(host, service);
+  };
+
   for (const service of FETCHABLE_SERVICES) {
     const credential = await credentialSecret(vault, service);
     if (credential === null || credential.trim() === "") {
@@ -122,7 +159,7 @@ export async function deriveFetchHostMap(
 
     for (const [host, saasService] of Object.entries(SAAS_HOSTS)) {
       if (saasService === service) {
-        map.set(host, service);
+        claim(host, service);
       }
     }
 
@@ -134,7 +171,7 @@ export async function deriveFetchHostMap(
     if (host === null) {
       continue;
     }
-    map.set(host, service);
+    claim(host, service);
   }
   return map;
 }

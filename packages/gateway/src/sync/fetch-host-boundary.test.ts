@@ -29,13 +29,31 @@ describe("fetch-host-boundary", () => {
     // outbound request carrying the user's stored credentials.
     expect(serviceForHost(map, "github.evil.example")).toBeNull();
     expect(serviceForHost(map, "notgithub.com")).toBeNull();
+    // Dot-boundary suffix matching (`host === key || host.endsWith("." + key)`) would also pass
+    // both cases above yet still incorrectly resolve a subdomain of the real host.
+    expect(serviceForHost(map, "api.github.com")).toBeNull();
   });
 
   test("a self-hosted Jenkins contributes the host of its Vault base_url", async () => {
     const map = await deriveFetchHostMap(
-      fakeVault({ "jenkins.base_url": "https://ci.corp.example:8443/jenkins/" }),
+      fakeVault({
+        "jenkins.api_token": "t",
+        "jenkins.base_url": "https://ci.corp.example:8443/jenkins/",
+      }),
     );
     expect(serviceForHost(map, "ci.corp.example:8443")).toBe("jenkins");
+    // The port is part of the host — a self-hosted origin is not truncated to its bare hostname.
+    expect(serviceForHost(map, "ci.corp.example")).toBeNull();
+  });
+
+  test("jenkins with base_url but no credential contributes no entry", async () => {
+    // base_url alone does not prove Jenkins is configured — the credential (api_token) must
+    // exist too, or a stray base_url with a revoked/never-set token would be fetchable.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jenkins.base_url": "https://ci.corp.example:8443/" }),
+    );
+    expect(serviceForHost(map, "ci.corp.example:8443")).toBeNull();
+    expect(map.size).toBe(0);
   });
 
   test("self-hosted GitLab is reachable via api_base, not base_url", async () => {
@@ -59,7 +77,11 @@ describe("fetch-host-boundary", () => {
   });
 
   test("a malformed base_url contributes nothing rather than throwing", async () => {
-    const map = await deriveFetchHostMap(fakeVault({ "jenkins.base_url": "not a url" }));
+    // Credential present so this exercises the origin-parse failure branch specifically, not
+    // the (already-covered) missing-credential branch.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jenkins.api_token": "t", "jenkins.base_url": "not a url" }),
+    );
     expect(map.size).toBe(0);
   });
 
@@ -81,7 +103,7 @@ describe("fetch-host-boundary", () => {
 
   test("a non-http(s) base_url scheme contributes nothing", async () => {
     const map = await deriveFetchHostMap(
-      fakeVault({ "jenkins.base_url": "ftp://ci.corp.example" }),
+      fakeVault({ "jenkins.api_token": "t", "jenkins.base_url": "ftp://ci.corp.example" }),
     );
     expect(map.size).toBe(0);
   });
@@ -117,5 +139,29 @@ describe("fetch-host-boundary", () => {
   test("serviceForHost is case-insensitive on the lookup side too", async () => {
     const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
     expect(serviceForHost(map, "GitHub.COM")).toBe("github");
+  });
+
+  test("a host claimed by two different services is refused for both, not last-write-wins", async () => {
+    // A pasted-wrong jira.base_url pointing at github.com must not let the outbound Jira
+    // credential be dispatched to github.com, and must not silently keep resolving to github
+    // either — the contested host is refused entirely.
+    const map = await deriveFetchHostMap(
+      fakeVault({
+        "github.pat": "t",
+        "jira.api_token": "t",
+        "jira.base_url": "https://github.com",
+      }),
+    );
+    expect(serviceForHost(map, "github.com")).toBeNull();
+  });
+
+  test("a service re-claiming a host it already holds is not a collision", async () => {
+    // gitlab.com is claimed by the static SaaS-host loop; a self-hosted origin secret that
+    // happens to resolve to gitlab.com too (e.g. the api_base default) must still resolve —
+    // this is the SAME service re-asserting the same host, not two services disputing it.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "gitlab.pat": "t", "gitlab.api_base": "https://gitlab.com/api/v4" }),
+    );
+    expect(serviceForHost(map, "gitlab.com")).toBe("gitlab");
   });
 });
