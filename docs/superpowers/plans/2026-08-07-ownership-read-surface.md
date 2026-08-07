@@ -2182,13 +2182,24 @@ export async function tryDispatchOwnershipRpc(
 }
 ```
 
-Register it in the same chain that calls `tryDispatchDecisionsRpc` — find that call site with:
+Register it in `dispatchPhase4CoreGroup` (`dispatchers.ts:1073`), which is the **only** call site — `tryDispatchDecisionsRpc` is invoked exactly once, at `:1153`. Insert the ownership pair directly after the decisions pair, so `:1153-1154` becomes:
+
+```ts
+  const decisionsOutcome = await tryDispatchDecisionsRpc(ctx, method, params);
+  if (decisionsOutcome !== phase4RpcSkipped) return decisionsOutcome;
+  const ownershipOutcome = await tryDispatchOwnershipRpc(ctx, method, params);
+  if (ownershipOutcome !== phase4RpcSkipped) return ownershipOutcome;
+```
+
+Order within the group is not load-bearing — each `tryDispatch*` returns `phase4RpcSkipped` unless its own namespace prefix matches, and no two entries share a prefix. Placing it beside decisions keeps the two S1 derivation passes adjacent.
+
+Confirm there is no second chain to update:
 
 ```bash
 grep -rn "tryDispatchDecisionsRpc" packages/gateway/src/ipc/
 ```
 
-and add `tryDispatchOwnershipRpc` alongside every occurrence.
+Expected: exactly two hits — the `export async function` at `:997` and the single call at `:1153`.
 
 - [ ] **Step 6: Wire `assemble.ts`**
 
@@ -2593,21 +2604,33 @@ In `packages/cli/src/mcp/adapter.test.ts`:
 - `:905` — `expect(TOOL_SPECS).toHaveLength(17);` → `18`
 - `:904` — change the test **name** from `"the registered tool set is the six index tools plus peekWhy plus ten agents"` to `"… plus eleven agents"`.
 
-- [ ] **Step 3: Add a routing test**
+- [ ] **Step 3: Extend the two existing routing tests**
 
-Append to `packages/cli/src/mcp/agent-tools.test.ts`, following the existing `agents.glossary` case at `:273`:
+There is no per-tool test to copy — `agent-tools.test.ts` already has one table-style test that drives every tool through `specFor(<name>).run(deps, args)` against a recording client. **Extend it rather than adding a parallel one**, so the new tool is covered by the same net as the other ten.
+
+In the test `"each tool calls its own agents.* method with the declared params"` (`:251`), add one call after the `findDecisions` line at `:267`:
 
 ```ts
-  test("findOwners calls agents.ownership and omits absent params", async () => {
-    const calls: Array<{ method: string; params: unknown }> = [];
-    // Reuse this file's existing harness for driving a tool against a fake client;
-    // copy the setup from the `agents.glossary` case above rather than inventing one.
-    await runToolByName(calls, "findOwners", { path: "src/a.ts" });
-    expect(calls[0]).toEqual({ method: "agents.ownership", params: { path: "src/a.ts" } });
-  });
+  await specFor("findOwners").run(deps, { path: "src/a.ts" });
 ```
 
-Read `packages/cli/src/mcp/agent-tools.test.ts:265-290` first and match its existing harness exactly — the helper name above is illustrative, not assumed to exist.
+and the matching expectation after the `agents.decisions` line at `:274`:
+
+```ts
+    { method: "agents.ownership", params: { path: "src/a.ts" } },
+```
+
+In the test `"absent optionals are omitted and wrong-typed required args degrade to empty string"` (`:278`), add after the `getGlossary` call at `:291`:
+
+```ts
+  await specFor("findOwners").run(deps, {});
+```
+
+and assert the summary-mode shape — both optionals absent means an empty param object, not `{ path: undefined }`:
+
+```ts
+  expect(calls[2]?.params).toEqual({});
+```
 
 - [ ] **Step 4: Run the MCP suite**
 
@@ -2762,4 +2785,16 @@ The description is the permanent commit body. It must state:
 
 **Type consistency.** `rankOwners` returns `aboveFloor` (Task 1) and only `aboveFloor` is referenced later. `ResolvedOwnershipPath` uses `relPath` throughout Tasks 3, 4 and 6 — note `matchConfiguredRoot` returns `filePath`, and Task 3's implementation renames it at the boundary, deliberately. `OwnershipCounts` fields (`ownerCount`/`ownersAboveFloor`/`truncated`) match between the store (Task 4), the brief (Task 5) and the renderer. `spec.kind: "ownership"` in Task 10 aligns with `emitOwnershipBrief`'s `ownership.briefReady` in Task 6.
 
-**Known soft spots, flagged rather than hidden.** Three steps say "read the existing harness and match it" instead of giving code: Task 8's `LongRunningJobRegistry.start` options, Task 11 Step 3's MCP test harness, and Task 12's e2e harness. Each is a case where inventing a signature is more dangerous than requiring a read — the exact reference file and line range is named in every one. If any of them turns out to differ materially from its named reference, report NEEDS_CONTEXT rather than guessing.
+**Known soft spots, flagged rather than hidden.** One step still says "read the existing harness and match it" instead of giving code: Task 12's e2e harness (gateway subprocess, temp config dir, IPC client), where inventing a setup is more dangerous than requiring a read of `decisions.e2e.test.ts`. If it differs materially from that reference, report NEEDS_CONTEXT rather than guessing.
+
+Task 11's MCP harness was originally in this list and is now concrete: the file has no per-tool helper, only two table-style tests that every tool passes through, and the plan extends both in place.
+
+**One instruction NOT taken.** A review of this plan proposed simplifying Task 8's registry call to `emit: ctx.notify`. The plan keeps the wrapped form:
+
+```ts
+    emit: (m, payload) => {
+      ctx.notify(m, payload);
+    },
+```
+
+because that is what `ipc/decisions-rpc.ts:48-50` — the call site the plan tells the implementer to copy — actually contains. The two are functionally equivalent here (`notify` is a plain function property, so there is no `this` to lose), but diverging from the reference for no reason is how a plan and its cited source drift apart. Copy the source, not a paraphrase of it.
