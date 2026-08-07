@@ -1184,18 +1184,30 @@ test("a parseable URL with a non-http(s) scheme is unresolvable", () => {
 });
 ```
 
-- [ ] **Step 1: Find and run the OpenAPI drift test**
+- [ ] **Step 1: DECIDED — do NOT add the route to the OpenAPI document. No work here.**
 
-Run: `grep -rn "openapi" --include=*.ts packages/gateway/src/ipc/ | grep -v test | head`
-then run that module's test. Several repos' drift tests assert every mounted route appears in the
-document; if one exists it is now failing, which is the test telling you to do Step 2.
+An earlier draft of this plan said to "find and run the OpenAPI drift test" and to mirror "the
+existing `POST /v1/clips/related` entry". **Both premises were false, verified in source:**
 
-- [ ] **Step 2: Add the route to the OpenAPI document**
+- The spec is a hand-maintained YAML at `packages/gateway/openapi/v1.yaml`, embedded via
+  `import openapiV1Yaml from "../../openapi/v1.yaml" with { type: "file" }`
+  (`ipc/embedded-assets.ts:4`). There is **no** doc↔route parity/drift test — `openapi-loader.test.ts`
+  tests YAML loading and `test/integration/http/openapi-route.test.ts` asserts the route serves valid
+  3.1.0 with `/v1/openapi.json` present. Nothing asserts completeness.
+- There is **no `POST /v1/clips/related` entry** to mirror. The documented paths are exactly:
+  `/v1/health`, `/v1/items`, `/v1/items/{id}`, `/v1/connectors`, `/v1/people`, `/v1/people/{id}`,
+  `/v1/audit`, `/v1/deployments`, `/v1/openapi.json`, `/v1/metrics/dora`, `/v1/preflight/deploy`.
 
-Add a `GET /v1/items/resolve` path entry mirroring the shape of the existing
-`POST /v1/clips/related` entry: bearer security, a required `url` query parameter, and a 200 whose
-schema is the three-arm `ResolveResponse` union. Copy the surrounding style exactly — if the file
-uses hand-written JSON literals, add a literal; do not introduce a schema generator.
+So the established, consistent precedent is that **every bearer-gated client-token route family is
+absent** from the document — `/v1/clips`, `/v1/clips/related`, `/v1/briefs/*` and `/v1/agents/*` are
+all undocumented. `v1.yaml` covers the public read surface plus the one `/v1/deployments` write
+carve-out.
+
+**Decision: follow the precedent and add nothing.** Adding resolve alone would make it the sole
+documented gated route, which is actively misleading — a reader would infer the other four families
+do not exist. Documenting the gated surface is a real gap, but it spans four pre-existing route
+families and is its own change; fixing it by inconsistently adding a fifth is worse than leaving it.
+Record this in the PR description as a stated decision, not an oversight.
 
 - [ ] **Step 3: Extend the `http` narrowing comment**
 
