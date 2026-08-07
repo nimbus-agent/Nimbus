@@ -22,6 +22,7 @@ import { CURRENT_SCHEMA_VERSION } from "../local-index.ts";
 import {
   MigrationRollbackError,
   pruneOldBackups,
+  RESOLVE_KEY_BACKFILL_CHUNK,
   readIndexedUserVersion,
   runIndexedSchemaMigrations,
 } from "./runner.ts";
@@ -811,5 +812,40 @@ test("V52 leaves user_version unadvanced when the backfill throws", () => {
   // The whole step is one db.transaction, so a throw mid-backfill rolls back the DDL AND the
   // version bump. A half-populated resolve_key at v52 would resolve some URLs and not others.
   expect(userVersion(db)).toBe(51);
+  db.close();
+});
+
+test("V52 backfills every row across a chunk boundary (regression: OFFSET pagination skipped ~half the rows)", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  const rowCount = RESOLVE_KEY_BACKFILL_CHUNK + 3;
+  db.transaction(() => {
+    for (let i = 0; i < rowCount; i++) {
+      db.query(
+        `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
+           body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
+         VALUES (?, 'github', 'pull_request', ?, ?, '', '', 0, ?, NULL, 1, '{}', 1, 0)`,
+      ).run(
+        `github:pr-${String(i)}`,
+        `pr-${String(i)}`,
+        `PR ${String(i)}`,
+        `https://github.com/o/r/pull/${String(i)}`,
+      );
+    }
+  })();
+  runIndexedSchemaMigrations(db, 52);
+  const remaining = db.query("SELECT COUNT(*) AS c FROM item WHERE resolve_key IS NULL").get() as {
+    c: number;
+  };
+  expect(remaining.c).toBe(0);
+  // Spot-check a row from the middle of the range — exactly where the broken OFFSET pagination
+  // silently dropped rows.
+  const midIndex = Math.floor(rowCount / 2);
+  const midRow = db
+    .query("SELECT resolve_key FROM item WHERE id = ?")
+    .get(`github:pr-${String(midIndex)}`) as { resolve_key: string | null };
+  expect(midRow.resolve_key).toBe(
+    canonicalizeUrl(`https://github.com/o/r/pull/${String(midIndex)}`),
+  );
   db.close();
 });

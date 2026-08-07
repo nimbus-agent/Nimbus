@@ -281,22 +281,23 @@ function backfillAuditChain(db: Database): void {
  * Committing per chunk would leave `resolve_key` half-populated with `PRAGMA user_version` already
  * advanced — an index that resolves some URLs and not others, invisible until a user asks why one
  * PR resolves and another does not.
+ *
+ * Exported so the multi-chunk test in runner.test.ts cannot drift from the real value.
  */
-const RESOLVE_KEY_BACKFILL_CHUNK = 5_000;
+export const RESOLVE_KEY_BACKFILL_CHUNK = 5_000;
 
 function backfillResolveKey(db: Database): void {
   const select = db.prepare(
     `SELECT id, url, canonical_url FROM item
      WHERE resolve_key IS NULL AND (url IS NOT NULL OR canonical_url IS NOT NULL)
-     ORDER BY id ASC LIMIT ? OFFSET ?`,
+     ORDER BY id ASC LIMIT ?`,
   );
   const update = db.prepare(`UPDATE item SET resolve_key = ? WHERE id = ?`);
   // Both statements come from db.prepare() and MUST be finalized: bun:sqlite only auto-releases the
   // db.query() cache, so an unfinalized handle makes a later db.close() a silent no-op (#969).
   try {
-    let offset = 0;
     for (;;) {
-      const rows = select.all(RESOLVE_KEY_BACKFILL_CHUNK, offset) as Array<{
+      const rows = select.all(RESOLVE_KEY_BACKFILL_CHUNK) as Array<{
         id: string;
         url: string | null;
         canonical_url: string | null;
@@ -312,10 +313,13 @@ function backfillResolveKey(db: Database): void {
         }
         dbStmtRun(update, canonicalizeUrl(raw), r.id);
       }
-      // OFFSET advances by the chunk, NOT by rows updated: the rows just written no longer satisfy
-      // `resolve_key IS NULL`, so a fixed OFFSET would re-scan. Advancing past what was read keeps
-      // the walk linear and terminating.
-      offset += rows.length;
+      // Deliberately NO OFFSET: the WHERE clause filters on `resolve_key IS NULL`, and this loop
+      // WRITES that column, so the candidate set shrinks by exactly the rows just updated. The next
+      // unprocessed rows are therefore always back at the front of an unfiltered LIMIT-only query.
+      // An OFFSET here would compound two shrinks — the set shrinking under it AND the offset
+      // advancing on top of that — and silently skip roughly half the rows past the first chunk
+      // boundary (a real defect this migration shipped with once; see runner.test.ts's
+      // "multi-chunk" test for the failure trace).
       if (rows.length < RESOLVE_KEY_BACKFILL_CHUNK) {
         break;
       }
