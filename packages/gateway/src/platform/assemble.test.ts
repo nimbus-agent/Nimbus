@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
+import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import { coverageForWindow } from "../egress/egress-verify.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { appendBootMarkerOrWarn, assemblePlatformServices } from "./assemble.ts";
+import type { Syncable } from "../sync/types.ts";
+import { appendBootMarkerOrWarn, assemblePlatformServices, httpOriginFor } from "./assemble.ts";
 import { processEnvSet } from "./env-access.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
@@ -82,6 +85,44 @@ describe("appendBootMarkerOrWarn", () => {
 
     expect(warnCalls).toHaveLength(0);
     expect(coverageForWindow(db, {})).toEqual(THIS_BINARY_COVERAGE);
+  });
+});
+
+// Task 11: the one `http:` exception source for `POST /v1/items/fetch`. Unit-tested directly
+// against a fake Vault — the property under test (return the parsed `.origin`, never the raw
+// secret; fail closed on anything but `http:`) is orthogonal to the full gateway boot above.
+describe("httpOriginFor", () => {
+  it("returns the LOWERCASED, no-trailing-slash origin for a self-hosted http: secret", async () => {
+    const vault = makeInMemoryVault();
+    // Uppercase host + trailing slash: the raw secret targeted-fetch.ts must NEVER see, because
+    // its comparison is against `parsed.origin` (always lowercase host, no trailing slash).
+    await writeConnectorSecret(vault, "gitlab", "api_base", "http://Internal.Example:8080/");
+    expect(await httpOriginFor(vault, "gitlab")).toBe("http://internal.example:8080");
+  });
+
+  it("returns null for an https: self-hosted secret — no exception to grant", async () => {
+    const vault = makeInMemoryVault();
+    await writeConnectorSecret(vault, "jenkins", "base_url", "https://ci.internal.example");
+    expect(await httpOriginFor(vault, "jenkins")).toBeNull();
+  });
+
+  it("returns null for an unparseable secret rather than throwing", async () => {
+    const vault = makeInMemoryVault();
+    await writeConnectorSecret(vault, "jira", "base_url", "not a url");
+    expect(await httpOriginFor(vault, "jira")).toBeNull();
+  });
+
+  it("returns null for a missing or blank secret", async () => {
+    const vault = makeInMemoryVault();
+    expect(await httpOriginFor(vault, "gitlab")).toBeNull();
+    await writeConnectorSecret(vault, "gitlab", "api_base", "   ");
+    expect(await httpOriginFor(vault, "gitlab")).toBeNull();
+  });
+
+  it("returns null immediately for github/bitbucket — no self-hosted variant", async () => {
+    const vault = makeInMemoryVault();
+    expect(await httpOriginFor(vault, "github")).toBeNull();
+    expect(await httpOriginFor(vault, "bitbucket")).toBeNull();
   });
 });
 
@@ -294,5 +335,59 @@ describe("assemblePlatformServices — in-process assembly", () => {
     services = await assemblePlatformServices(paths);
     expect(services).toBeDefined();
     expect(typeof services.ipc.stop).toBe("function");
+  }, 30000);
+
+  // Task 11 / I29: `platform/assemble.ts` is the ONLY production `new SyncScheduler(...)`, and it
+  // must pass a real (non-undefined) `appendSyncEgress` — otherwise `sync`'s coverage claim in
+  // `egress/egress-coverage.ts` (raised to `"per-run"`) is a false claim the moment a real sync
+  // runs. This is exactly the regression that happened once already (Task 10 had to revert the
+  // claim because assemble.ts omitted the option) — so it is proven against the REAL assembly
+  // path, not a fake scheduler construction, and a future refactor that drops the option again
+  // fails this test instead of silently reverting the claim to a lie.
+  it("wires a real appendSyncEgress into the production SyncScheduler — a forced sync ledgers ONE `sync` row", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths);
+
+    const probeServiceId = "assemble-egress-probe";
+    const fakeSyncable: Syncable = {
+      serviceId: probeServiceId,
+      defaultIntervalMs: 3_600_000,
+      initialSyncDepthDays: 1,
+      sync: async (_ctx, cursor) => ({
+        cursor,
+        itemsUpserted: 0,
+        itemsDeleted: 0,
+        hasMore: false,
+        durationMs: 1,
+      }),
+    };
+    services.syncScheduler.register(fakeSyncable);
+    await services.syncScheduler.forceSync(probeServiceId);
+
+    // Filtered by `destination = probeServiceId` rather than just `source_type = 'sync'`: other
+    // syncables registered at boot (e.g. filesystem/blame-index) may ALSO have run a scheduled
+    // sync in the background by the time this assertion runs, appending their own `sync` rows —
+    // this test is about proving the wiring exists, not about being the only sync in the process.
+    const db = services.localIndex.getDatabase();
+    const rows = db
+      .query(
+        `SELECT destination, method, hitl_status, result_status FROM egress_ledger
+         WHERE source_type = 'sync' AND destination = ? ORDER BY id DESC`,
+      )
+      .all(probeServiceId) as Array<{
+      destination: string;
+      method: string;
+      hitl_status: string;
+      result_status: string;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({
+      destination: probeServiceId,
+      method: "sync.run",
+      hitl_status: "not_required",
+      result_status: "authorized",
+    });
   }, 30000);
 });

@@ -14,13 +14,18 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { ScimError } from "../identity/scim-service.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import type {
   BriefsWriteSurface,
   ClipsWriteSurface,
   WriteRouteContext,
 } from "./http-write-routes.ts";
-import { dispatchWriteRoute, WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
+import {
+  dispatchWriteRoute,
+  ROUTE_ITEMS_FETCH,
+  WRITE_ROUTE_ALLOWLIST,
+} from "./http-write-routes.ts";
 
 function freshContext(): {
   writeDb: Database;
@@ -115,14 +120,17 @@ describe("dispatchWriteRoute", () => {
     expect(res.status).toBe(404);
   });
 
-  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip + 4 brief + 1 agent route", () => {
+  it("keeps the I13 allowlist at deployment + 3 SCIM + admin-policy + teams-events + 2 clip + 4 brief + 1 agent + 1 items-fetch route", () => {
     // I13: the write surface is closed by enumeration, and this assertion is the review gate on
     // widening it. `POST /v1/agents/{agent}` is the thirteenth: it invokes a read-only agent and
     // returns a run id to poll. It is a WRITE by classification — not because it mutates the index
     // (it does not), but because putting it here is what subjects it to the bearer gate, the
     // per-route body cap and the per-token rate limiter. Reclassifying it as a read to skip the
-    // allowlist would be the exact evasion the allowlist exists to prevent.
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
+    // allowlist would be the exact evasion the allowlist exists to prevent. `POST /v1/items/fetch`
+    // is the fourteenth: it DOES cause an outbound provider request and an index write, so — unlike
+    // the agent route — it is a write for the ordinary reason too, and it is deliberately not
+    // modeled as a read (that reclassification is exactly how a write slips past the allowlist).
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(14);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -137,6 +145,7 @@ describe("dispatchWriteRoute", () => {
       "POST /v1/briefs/{id}/run",
       "POST /v1/briefs/{id}/save",
       "POST /v1/agents/{agent}",
+      "POST /v1/items/fetch",
     ]);
   });
 });
@@ -1855,5 +1864,193 @@ describe("POST /v1/agents/{agent}", () => {
       const res = await dispatchWriteRoute(agentReq(path), agentsContext(okInvoke));
       expect({ path, status: res.status }).toEqual({ path, status: 404 });
     }
+  });
+});
+
+// --- POST /v1/items/fetch (I13 write surface) ----------------------------------------------
+//
+// Exercised through `dispatchWriteRoute` with a FAKE FetchWriteSurface rather than a real
+// targetedFetch/server — the property under test is the route wiring — auth, scope, the
+// missing_url 400, and 200-for-every-outcome — not the fetch-host-boundary/connector machinery,
+// which has its own suite (sync/targeted-fetch.test.ts, sync/fetch-host-boundary.test.ts). The
+// end-to-end path (real server, real scope enforcement) gets its own suite at
+// test/integration/http/items-fetch-route.test.ts.
+
+const FETCH_TOKEN = "fetch-route-token-0123456789abcdef0123456789ab";
+
+function fetchContext(
+  fetchItem: (url: string) => Promise<TargetedFetchOutcome>,
+  scopes: readonly ApiScope[] = ["fetch"],
+): WriteRouteContext {
+  return {
+    writeDb: openSeededInMemoryDb(45),
+    expectedToken: "",
+    rateLimiter: new HttpWriteRateLimiter({ maxRequests: 60, windowMs: 60_000 }),
+    nowMs: () => 1_700_000_000_000,
+    knownServices: (): readonly string[] => [],
+    fetch: {
+      verifyToken: async (presented: string) =>
+        presented === FETCH_TOKEN ? { label: "chrome-work", scopes } : null,
+      fetchItem,
+    },
+  };
+}
+
+function fetchReq(
+  body: unknown = { url: "https://github.com/o/r/pull/1" },
+  token: string | null = FETCH_TOKEN,
+): Request {
+  return new Request("http://127.0.0.1/v1/items/fetch", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+const okIndexed: (url: string) => Promise<TargetedFetchOutcome> = async () => ({
+  status: "indexed",
+  itemId: "github:o/r#1",
+});
+
+describe("POST /v1/items/fetch", () => {
+  it("returns 200 indexed for a fetch-scoped token", async () => {
+    const res = await dispatchWriteRoute(fetchReq(), fetchContext(okIndexed));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "indexed", itemId: "github:o/r#1" });
+  });
+
+  it.each<TargetedFetchOutcome>([
+    { status: "not_found" },
+    { status: "unsupported_url" },
+    { status: "no_targeted_fetch", service: "jira" },
+    { status: "not_configured" },
+    { status: "rate_limited" },
+  ])("returns 200 for the miss outcome %j — a miss is not a client error", async (outcome) => {
+    const res = await dispatchWriteRoute(
+      fetchReq(),
+      fetchContext(async () => outcome),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(outcome);
+  });
+
+  it("passes the caller-supplied url through to fetchItem verbatim", async () => {
+    const seenUrls: string[] = [];
+    const capture = async (url: string): Promise<TargetedFetchOutcome> => {
+      seenUrls.push(url);
+      return { status: "indexed", itemId: "x" };
+    };
+    await dispatchWriteRoute(
+      fetchReq({ url: "https://gitlab.com/o/r/-/merge_requests/1" }),
+      fetchContext(capture),
+    );
+    expect(seenUrls).toEqual(["https://gitlab.com/o/r/-/merge_requests/1"]);
+  });
+
+  it("is 400 missing_url for a non-string url", async () => {
+    const res = await dispatchWriteRoute(fetchReq({ url: 42 }), fetchContext(okIndexed));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing_url" });
+  });
+
+  it("is 400 missing_url when the body has no url field at all", async () => {
+    const res = await dispatchWriteRoute(fetchReq({}), fetchContext(okIndexed));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing_url" });
+  });
+
+  it("is 401 for an unknown token, NOT 403", async () => {
+    const res = await dispatchWriteRoute(
+      fetchReq(undefined, "wrong-token"),
+      fetchContext(okIndexed),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("is 403 insufficient_scope for a resolve-only token — fetch is a distinct scope", async () => {
+    const res = await dispatchWriteRoute(fetchReq(), fetchContext(okIndexed, ["resolve"]));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "insufficient_scope",
+      required: "fetch",
+      granted: ["resolve"],
+    });
+  });
+
+  it("is 403 insufficient_scope for a legacy clip+briefs token", async () => {
+    const res = await dispatchWriteRoute(fetchReq(), fetchContext(okIndexed, ["clip", "briefs"]));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "insufficient_scope", required: "fetch" });
+  });
+
+  it("is 500 with a distinguishable audit reason when fetchItem throws — I29 fail-closed", async () => {
+    const throwing = async (): Promise<TargetedFetchOutcome> => {
+      throw new Error("egress_ledger append failed");
+    };
+    const ctx = fetchContext(throwing);
+    const res = await dispatchWriteRoute(fetchReq(), ctx);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal_error" });
+    const rows = ctx.writeDb
+      .query("SELECT action_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .all() as Array<{ action_json: string }>;
+    const parsed = JSON.parse(rows[0]?.action_json ?? "{}") as { reason: string };
+    expect(parsed.reason).toBe("internal_error");
+  });
+
+  it("404s when the fetch seam is absent, naming the cause", async () => {
+    // Built WITHOUT the key rather than with `fetch: undefined` — exactOptionalPropertyTypes makes
+    // those different types, and the absent-key form is what production actually produces.
+    const { fetch: _omitted, ...withoutFetch } = fetchContext(okIndexed);
+    const res = await dispatchWriteRoute(fetchReq(), withoutFetch);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "fetch_disabled",
+      hint: "targeted fetch disabled — no fetch-on-miss surface is wired",
+    });
+  });
+
+  it("405s every non-POST method rather than falling through", async () => {
+    for (const method of ["GET", "PUT", "DELETE", "PATCH"]) {
+      const req = new Request("http://127.0.0.1/v1/items/fetch", { method });
+      const res = await dispatchWriteRoute(req, fetchContext(okIndexed));
+      expect({ method, status: res.status }).toEqual({ method, status: 405 });
+      expect(res.headers.get("Allow")).toBe("POST");
+    }
+  });
+
+  it("413s a body over the 8 KiB control-plane cap — a URL is control-plane data, not an article", async () => {
+    // A single URL is control-plane-sized: this route stays on MAX_BODY_BYTES_DEFAULT (8 KiB),
+    // never the 1 MiB article cap `POST /v1/clips` / `POST /v1/briefs/{id}/sources` carry.
+    const oversized = `https://github.com/o/r/pull/1?${"a".repeat(9 * 1024)}`;
+    const res = await dispatchWriteRoute(fetchReq({ url: oversized }), fetchContext(okIndexed));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+  });
+
+  it("audits the missing_url refusal, not only auth failures", async () => {
+    const ctx = fetchContext(okIndexed);
+    await dispatchWriteRoute(fetchReq({}), ctx);
+    const rows = ctx.writeDb
+      .query("SELECT action_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .all() as Array<{ action_json: string }>;
+    const parsed = JSON.parse(rows[0]?.action_json ?? "{}") as {
+      result_code: number;
+      reason: string;
+    };
+    expect({ code: parsed.result_code, reason: parsed.reason }).toEqual({
+      code: 400,
+      reason: "missing_url",
+    });
+  });
+});
+
+describe("ROUTE_ITEMS_FETCH constant", () => {
+  test("is the exact allowlisted route string", () => {
+    expect(ROUTE_ITEMS_FETCH).toBe("POST /v1/items/fetch");
+    expect(WRITE_ROUTE_ALLOWLIST).toContain(ROUTE_ITEMS_FETCH);
   });
 });

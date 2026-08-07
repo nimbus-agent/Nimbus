@@ -30,12 +30,14 @@ export type CoverageClass = (typeof COVERAGE_CLASSES)[number];
 export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
 
 /**
- * What THIS binary is built to observe. THREE classes are non-`none`: `task` (the executor's
- * gated-action append, `engine/executor.ts`), plus `mcp` and `http` — the two external transports
- * an agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
- * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map). Later phases raise `sync`, `model`,
- * `peer`, `session`; raising an entry without landing its appender is the exact defect this vector
- * exists to prevent.
+ * What THIS binary is built to observe. FOUR classes are non-`none`: `task` (the executor's
+ * gated-action append, `engine/executor.ts`); `mcp` and `http` — the two external transports an
+ * agent brief can be served over, sharing ONE appender (`egress/agent-brief-egress.ts`, selected
+ * per transport by the total `EGRESS_BEARING_CLIENT_KINDS` map); and `sync` (a connector sync run
+ * OR a targeted fetch-on-miss call, both landing through `egress/sync-egress.ts`'s
+ * `recordSyncEgress` — see the `sync` paragraph below). Later phases raise `model`, `peer`,
+ * `session`; raising an entry without landing its appender is the exact defect this vector exists
+ * to prevent.
  *
  * READ THE `mcp` ENTRY NARROWLY. It is `per-call` over exactly one thing: an `agents.*` brief
  * served to a client that declared `kind: "mcp"`. It is NOT "everything an MCP client does". The
@@ -58,25 +60,29 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * `GET /v1/audit` and the rest of the read surface hand index rows to a local process and append
  * NO row. `GET /v1/items/resolve` is called out by name because it is the newest of them and the
  * one most likely to be mistaken for egress: it takes a URL from an external caller and answers
- * from the LOCAL index without any outbound request. Conversely a targeted connector fetch on the
- * same port WILL append, but under `sync`, not `http` — the class tracks the kind of egress, not
- * the port it arrived on.
+ * from the LOCAL index without any outbound request. `POST /v1/items/fetch` on the same port DOES
+ * make an outbound request and WILL append — but under `sync`, not `http`: the class tracks the
+ * KIND of egress (a connector call), not the transport port it arrived on.
  *
- * `sync` STAYS `none` even though `sync/scheduler.ts` and `sync/targeted-fetch.ts` both carry an
- * injection SEAM for a `sync` egress row (`appendSyncEgress` / `appendEgress`). A seam is not an
- * appender: `packages/gateway/src/platform/assemble.ts` is the only production `new
- * SyncScheduler(...)` and it does not pass `appendSyncEgress`, and `targetedFetch` has no caller
- * repo-wide yet. Raising this entry before BOTH become reachable in the shipped binary would be a
- * false zero the moment a background sync runs and `nimbus prove` reports it as observed — do not
- * raise it again until the route task wires a real appender into `assemble.ts` and lands it in the
- * same commit as this claim.
+ * `sync` is `per-run`, RAISED FROM `none`, and `per-run` — not `per-call` — is the honest
+ * granularity for the class as a whole, not a hedge. Two appenders share ONE function
+ * (`egress/sync-egress.ts`'s `recordSyncEgress`, injected as a thin closure by
+ * `platform/assemble.ts`, the only production `new SyncScheduler(...)` AND the sole builder of
+ * `targetedFetch`'s deps — D22(b) confines the raw `appendEgressEntry` identifier to `egress/*`, so
+ * neither caller imports it directly): `sync/scheduler.ts`'s `appendSyncEgress` appends ONE row per
+ * RUN, before `connector.sync(...)` — and a scheduled sync is a paginated run that can make many
+ * upstream calls per row, which is a WEAKER claim than `per-call` would assert; `sync/targeted-
+ * fetch.ts`'s `appendEgress` appends one row per its one call, which alone would be `per-call`. The
+ * vector reports the weaker of the two shapes it actually backs, exactly as `weakestCoverage` merges
+ * markers from different binaries — asserting `per-call` here would overstate what the scheduled-
+ * sync half of this class observes.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
   mcp: "per-call",
   http: "per-call",
   session: "none",
-  sync: "none",
+  sync: "per-run",
   model: "none",
   peer: "none",
 };

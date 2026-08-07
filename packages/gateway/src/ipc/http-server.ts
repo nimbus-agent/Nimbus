@@ -18,6 +18,7 @@ import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-li
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
+import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { contentTypeFor, resolveConsoleAsset, safeAssetPath } from "./admin-console-assets.ts";
 import { buildStatus, type StatusReaders } from "./admin-status-rpc.ts";
@@ -83,6 +84,12 @@ export type ReadOnlyHttpServerOptions = {
   // auth, exactly as briefs do — agents never mint or hold their own token.
   readonly agentRuns?: AgentRunController;
   readonly agentInvoke?: AgentHttpInvoker;
+  // Targeted fetch-on-miss (Task 11). Absent => POST /v1/items/fetch 404s (surface not mounted).
+  // Built at assemble time because it needs the scheduler's syncables, its SyncContext and its
+  // rate-limiter bucket, plus a Vault-derived fetch-host boundary — the HTTP layer must not reach
+  // into connectors or the Vault itself. Reuses clipsVault for bearer auth (clipIngest precedent),
+  // under its own `fetch` scope, distinct from `resolve`'s read-only local-index lookup.
+  readonly fetchItem?: (url: string) => Promise<TargetedFetchOutcome>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -723,6 +730,16 @@ function buildClipsSeam(writeDb: Database, opts: ReadOnlyHttpServerOptions) {
   };
 }
 
+// Targeted-fetch write seam — present only when BOTH clipsVault AND fetchItem are wired.
+// verifyToken reuses the same labeled clipper token map as the web clipper / agents / briefs
+// (clipIngest precedent) — this route never mints or holds its own token.
+function buildFetchSeam(opts: ReadOnlyHttpServerOptions) {
+  const clipsVault = opts.clipsVault;
+  const fetchItem = opts.fetchItem;
+  if (clipsVault === undefined || fetchItem === undefined) return undefined;
+  return { verifyToken: (t: string) => verifyApiToken(clipsVault, t), fetchItem };
+}
+
 // Research-briefs write seam — present only when clipsVault, briefRuns, briefStartRun, AND
 // briefSave are ALL wired. verifyToken reuses the same labeled clipper token map as the web
 // clipper (clipIngest precedent) — briefs never mint or hold their own token.
@@ -780,6 +797,7 @@ async function resolveWriteRouteDeps(
   const clips = buildClipsSeam(writeDb, opts);
   const briefs = buildBriefsSeam(opts);
   const agents = buildAgentsSeam(opts);
+  const fetchSeam = buildFetchSeam(opts);
   return {
     writeDb,
     expectedToken: await resolveExpectedToken(opts),
@@ -792,6 +810,7 @@ async function resolveWriteRouteDeps(
     ...(clips === undefined ? {} : { clips }),
     ...(briefs === undefined ? {} : { briefs }),
     ...(agents === undefined ? {} : { agents }),
+    ...(fetchSeam === undefined ? {} : { fetch: fetchSeam }),
   };
 }
 
@@ -865,6 +884,7 @@ export function startReadOnlyHttpServer(
     opts.clipsVault === undefined &&
     opts.briefRuns === undefined &&
     opts.agentRuns === undefined &&
+    opts.fetchItem === undefined &&
     (opts.authorPolicy === undefined || opts.resolveAdminToken === undefined)
       ? null
       : openI13WriteHandle(dbPath);

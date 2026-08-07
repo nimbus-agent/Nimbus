@@ -150,6 +150,29 @@ export class SyncScheduler {
     }
   }
 
+  /**
+   * The registered connector for `serviceId`, or `undefined` when nothing this scheduler knows
+   * about serves it (a service not wired up in this binary at all — distinct from a host simply
+   * being unclaimed, which the fetch-host boundary refuses before this lookup is ever reached).
+   *
+   * A public reader rather than a new construction: `sync/targeted-fetch.ts`'s `syncableFor` dep
+   * reads THIS scheduler's own registered connector, so a targeted fetch and a scheduled sync agree
+   * on which `Syncable` a service resolves to.
+   */
+  syncableFor(serviceId: string): Syncable | undefined {
+    return this.connectors.get(serviceId);
+  }
+
+  /**
+   * The `SyncContext` a targeted fetch's `fetchOne` should run with — the SAME shape `runJob`
+   * builds for a scheduled sync (this scheduler's own `ctx`, with `depth` resolved per service),
+   * so a targeted fetch shares depth enforcement and the rate-limiter bucket with scheduled syncs
+   * rather than constructing a parallel context that could drift from it.
+   */
+  syncContextFor(serviceId: string): SyncContext {
+    return { ...this.ctx, depth: this.getDepthForService(serviceId) };
+  }
+
   register(connector: Syncable, intervalOverrideMs?: number): void {
     const now = Date.now();
     const existing = this.sched.loadState(connector.serviceId);

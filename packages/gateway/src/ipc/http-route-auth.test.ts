@@ -214,6 +214,25 @@ describe("http-route-auth", () => {
     expect(clipScopeFor(ROUTE_KEY_ITEMS_RESOLVE)).toBe("resolve");
   });
 
+  test("the items-fetch route requires its OWN fetch scope, distinct from resolve", () => {
+    expect(HTTP_ROUTE_AUTH["POST /v1/items/fetch"]).toEqual({ kind: "clip", scope: "fetch" });
+    expect(clipScopeFor("POST /v1/items/fetch")).toBe("fetch");
+  });
+
+  test("a resolve-scoped token cannot reach the fetch route", () => {
+    // Proves the split is real: a token minted to read the local index cannot trigger an outbound
+    // provider request.
+    expect(enforceClipScope("POST /v1/items/fetch", ["resolve"])).toEqual({
+      ok: false,
+      status: 403,
+      body: { error: "insufficient_scope", required: "fetch", granted: ["resolve"] },
+    });
+  });
+
+  test("a fetch-scoped token is allowed on the fetch route", () => {
+    expect(enforceClipScope("POST /v1/items/fetch", ["fetch"])).toEqual({ ok: true });
+  });
+
   test("a legacy token is refused the resolve route with a distinguishable body", () => {
     const verdict = enforceClipScope(ROUTE_KEY_ITEMS_RESOLVE, LEGACY_SCOPES);
     expect(verdict).toEqual({

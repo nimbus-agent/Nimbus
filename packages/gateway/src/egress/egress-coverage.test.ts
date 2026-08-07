@@ -32,26 +32,28 @@ const NONE: CoverageVector = {
  * `http` heads the string because the array is key-sorted and `http` < `mcp`.
  */
 const CANONICAL =
-  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
+  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=per-run;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
 
 describe("coverage vector", () => {
-  test("this binary observes gated actions AND externally-originated briefs per-call, nothing else", () => {
+  test("this binary observes gated actions, externally-originated briefs, and sync runs — nothing else", () => {
     // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
-    // transports and its dispatcher condition ships alongside this entry. Every other class stays
-    // `none` until its appender lands — `sync` especially: it now has two injection SEAMS
-    // (`sync/scheduler.ts`, `sync/targeted-fetch.ts`) but no landed appender (nothing in
-    // `platform/assemble.ts` passes them, and `targetedFetch` has no caller yet), and raising it on
-    // the strength of an unwired seam would be a claim with no code behind it, which is the exact
-    // defect this vector prevents.
+    // transports and its dispatcher condition ships alongside this entry. `sync` is `per-run`
+    // (weaker than per-call) because its ONE appender (`egress/sync-egress.ts`'s
+    // `recordSyncEgress`) backs two callers with different shapes: `sync/scheduler.ts` appends once
+    // per paginated RUN (many upstream calls per row), `sync/targeted-fetch.ts` appends once per
+    // CALL — the vector reports the weaker of the two, matching how `weakestCoverage` merges
+    // markers from different binaries. Every other class stays `none` until its appender lands —
+    // raising an entry on the strength of an unwired seam would be a claim with no code behind it,
+    // which is the exact defect this vector prevents.
     expect(THIS_BINARY_COVERAGE).toEqual({
       task: "per-call",
       mcp: "per-call",
       http: "per-call",
       session: "none",
-      sync: "none",
+      sync: "per-run",
       model: "none",
       peer: "none",
     });
@@ -154,7 +156,7 @@ describe("coverage vector", () => {
       mcp: "per-call", // both per-call
       http: "per-call", // both per-call
       session: "none", // this binary saw nothing
-      sync: "none",
+      sync: "per-run", // both per-run
       model: "none",
       peer: "none",
     });

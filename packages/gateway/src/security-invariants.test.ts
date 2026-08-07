@@ -408,7 +408,7 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events + clip + brief + agent routes", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events + clip + brief + agent + items-fetch routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
     // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
@@ -416,13 +416,16 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT) +
     // 2 web-clipper routes (POST /v1/clips + POST /v1/clips/pair/confirm, I30) +
     // 4 research-brief routes (POST /v1/briefs + .../sources + .../run + .../save) +
-    // 1 agent-invocation route (POST /v1/agents/{agent}, agents-scoped).
+    // 1 agent-invocation route (POST /v1/agents/{agent}, agents-scoped) +
+    // 1 targeted-fetch route (POST /v1/items/fetch, fetch-scoped).
     //
     // The agent route is a WRITE by CLASSIFICATION, not because it mutates the index — it does not.
     // Listing it here is what subjects it to the bearer gate, the per-route body cap and the
     // per-token rate limiter; reclassifying it as a read to slip past this allowlist would be the
-    // exact evasion the allowlist exists to prevent.
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
+    // exact evasion the allowlist exists to prevent. The items-fetch route IS a write for the
+    // ordinary reason too — it causes an outbound provider request and an index write — so it is
+    // never modeled as a read that happens to have side effects.
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(14);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -437,6 +440,7 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
       "POST /v1/briefs/{id}/run",
       "POST /v1/briefs/{id}/save",
       "POST /v1/agents/{agent}",
+      "POST /v1/items/fetch",
     ]);
   });
 });
@@ -1482,16 +1486,18 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
     // `mcp` and `http` are per-call because recordAgentBriefEgress serves BOTH transports and its
-    // dispatcher condition ships in the same commit as this claim. The others stay none until
-    // theirs do — `sync` in particular now has TWO injection seams (`sync/scheduler.ts`'s optional
-    // `appendSyncEgress`, `sync/targeted-fetch.ts`'s `appendEgress`), but neither is wired to a
-    // real appender in the shipped binary yet: `platform/assemble.ts`'s only production
-    // `new SyncScheduler(...)` passes no `appendSyncEgress`, and `targetedFetch` has no caller
-    // repo-wide. A seam is not an appender — raising this entry before both become reachable
-    // would be a false zero. Raising an entry without its appender is the defect the vector
-    // exists to catch, so widening this expected list is a review moment, not a test to re-bank.
+    // dispatcher condition ships in the same commit as this claim. `sync` is now `per-run`: BOTH of
+    // its injection seams (`sync/scheduler.ts`'s `appendSyncEgress`, `sync/targeted-fetch.ts`'s
+    // `appendEgress`) are wired in the same commit as this raise — `platform/assemble.ts`'s only
+    // production `new SyncScheduler(...)` passes `appendSyncEgress`, and it is the sole builder of
+    // `targetedFetch`'s deps — both closures around ONE appender, `egress/sync-egress.ts`'s
+    // `recordSyncEgress`. `per-run`, not `per-call`, because the scheduler side appends ONE row per
+    // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
+    // `model`/`peer`/`session` stay `none` until THEIR appenders land — raising an entry without a
+    // landed appender behind it is the defect this vector exists to catch, so widening this
+    // expected list further is a review moment, not a test to re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["http", "mcp", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "sync", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
@@ -1550,9 +1556,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 });
 
 describe("I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window", () => {
-  test("WRITE_ROUTE_ALLOWLIST is exactly the 13 sanctioned write routes (still includes the 2 clip routes)", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the 14 sanctioned write routes (still includes the 2 clip routes)", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(14);
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips");
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips/pair/confirm");
   });

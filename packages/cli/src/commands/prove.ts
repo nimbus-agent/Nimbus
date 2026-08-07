@@ -52,6 +52,14 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // a human reads when `nimbus prove` prints its scope, and a label wider than the appender would
   // overstate the proof.
   http: "agents.* briefs served over the local HTTP API",
+  // "runs", not "calls": a scheduled sync is a paginated RUN that can make many upstream calls and
+  // ledgers ONE row for the whole run (`sync/scheduler.ts`'s `appendSyncEgress`); a targeted
+  // fetch-on-miss call (`POST /v1/items/fetch`, `sync/targeted-fetch.ts`'s `appendEgress`) ledgers
+  // one row for its one call. Both land through the same appender
+  // (`egress/sync-egress.ts`'s `recordSyncEgress`), and "runs" is the word that does not overclaim
+  // the scheduled-sync half of the pair — "calls" would read as per-call precision this class does
+  // not have.
+  sync: "connector sync runs and targeted fetch-on-miss calls",
 };
 
 /**

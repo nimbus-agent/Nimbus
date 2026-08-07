@@ -16,6 +16,7 @@ import type { NamespaceStore } from "../federation/namespace-store.ts";
 import type { IdentityStore } from "../identity/identity-store.ts";
 import { runScimWrite } from "../identity/scim-http-routes.ts";
 import { ScimError } from "../identity/scim-service.ts";
+import type { TargetedFetchOutcome } from "../sync/targeted-fetch.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "./deployment-rpc.ts";
 import { bearerToken, requireBearer } from "./http-auth.ts";
 import type { HttpWriteRateLimiter, RateLimitCheck } from "./http-rate-limit.ts";
@@ -37,6 +38,12 @@ const ROUTE_BRIEFS = "POST /v1/briefs";
 const ROUTE_BRIEF_SOURCES = "POST /v1/briefs/{id}/sources";
 const ROUTE_BRIEF_RUN = "POST /v1/briefs/{id}/run";
 const ROUTE_BRIEF_SAVE = "POST /v1/briefs/{id}/save";
+/**
+ * Targeted single-item fetch. An explicit I13 WRITE: it causes an OUTBOUND request to a configured
+ * provider and a row in the local index. It is deliberately NOT modelled as a read that happens to
+ * have side effects — that reclassification is exactly how a write slips past the allowlist.
+ */
+export const ROUTE_ITEMS_FETCH = "POST /v1/items/fetch";
 
 /**
  * The complete HTTP write surface (I13). Every entry flows through `dispatchWriteRoute` — bearer
@@ -50,7 +57,11 @@ const ROUTE_BRIEF_SAVE = "POST /v1/briefs/{id}/save";
  * confirm surface (gated by a short-lived pairing code). `POST /v1/briefs` creates a research-brief
  * run, `POST /v1/briefs/{id}/sources` feeds it a captured source, `POST /v1/briefs/{id}/run`
  * triggers synthesis, and `POST /v1/briefs/{id}/save` persists the finished report (auth = the same
- * labeled clipper token, verified in-route). No other HTTP method may write.
+ * labeled clipper token, verified in-route). `POST /v1/agents/{agent}` invokes a read-only agent
+ * (auth = the same labeled clipper token, under the `agents` scope). `POST /v1/items/fetch` is the
+ * targeted fetch-on-miss route (auth = the same labeled clipper token, under its own `fetch` scope
+ * — distinct from `resolve`'s read-only local-index lookup, since this one makes an outbound
+ * request). No other HTTP method may write.
  */
 export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_DEPLOY,
@@ -66,6 +77,7 @@ export const WRITE_ROUTE_ALLOWLIST: readonly string[] = Object.freeze([
   ROUTE_BRIEF_RUN,
   ROUTE_BRIEF_SAVE,
   ROUTE_AGENT_INVOKE,
+  ROUTE_ITEMS_FETCH,
 ]);
 
 const SCIM_ITEM_RE = /^\/scim\/v2\/Users\/([^/]+)$/;
@@ -154,6 +166,8 @@ const BRIEF_RUN_REJECT_ACTION = "brief.run_rejected";
 const BRIEF_SAVE_REJECT_ACTION = "brief.save_rejected";
 const AGENTS_DISABLED_HINT = "agent invocation over HTTP disabled — no local index is wired";
 const AGENT_INVOKE_REJECT_ACTION = "agents.invoke_rejected";
+const ITEMS_FETCH_DISABLED_HINT = "targeted fetch disabled — no fetch-on-miss surface is wired";
+const ITEMS_FETCH_REJECT_ACTION = "items.fetch_rejected";
 
 /** SCIM seam — present only when the SCIM provisioning surface is enabled for this server. */
 export interface ScimWriteSurface {
@@ -233,6 +247,21 @@ export interface AgentsWriteSurface {
   readonly invoke: AgentHttpInvoker;
 }
 
+/**
+ * Targeted-fetch write seam — present only when BOTH the labeled clipper token map AND `fetchItem`
+ * are wired. `verifyToken` reuses the same labeled clipper token map as `AgentsWriteSurface` /
+ * `BriefsWriteSurface` (clipIngest precedent: verified in-route, not via a static bearer).
+ * `fetchItem` is the `targetedFetch` closure built at assemble time (Task 10's orchestrator chained
+ * behind Task 7's host boundary) — this route layer never touches a connector, the Vault, or the
+ * fetch-host boundary directly.
+ */
+export interface FetchWriteSurface {
+  readonly verifyToken: (
+    presented: string,
+  ) => Promise<{ label: string; scopes: readonly ApiScope[] } | null>;
+  readonly fetchItem: (url: string) => Promise<TargetedFetchOutcome>;
+}
+
 export interface WriteRouteContext {
   readonly writeDb: Database;
   readonly expectedToken: string;
@@ -246,6 +275,7 @@ export interface WriteRouteContext {
   readonly clips?: ClipsWriteSurface;
   readonly briefs?: BriefsWriteSurface;
   readonly agents?: AgentsWriteSurface;
+  readonly fetch?: FetchWriteSurface;
 }
 
 type RouteKind =
@@ -259,7 +289,8 @@ type RouteKind =
   | "briefSource"
   | "briefRun"
   | "briefSave"
-  | "agentInvoke";
+  | "agentInvoke"
+  | "itemsFetch";
 
 interface ResolvedRoute {
   readonly key: string;
@@ -493,6 +524,29 @@ function resolveAgentInvokeRoute(
   };
 }
 
+/** 404 that names the cause, matching briefsDisabled()/agentsDisabled()'s shape. */
+function itemsFetchDisabled(): Response {
+  return jsonResponse({ error: "fetch_disabled", hint: ITEMS_FETCH_DISABLED_HINT }, 404);
+}
+
+/** `POST /v1/items/fetch` (404 unless the targeted-fetch seam is enabled). */
+function resolveItemsFetchRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
+  if (method !== "POST") return methodNotAllowed("POST");
+  if (ctx.fetch === undefined) return itemsFetchDisabled();
+  return {
+    key: ROUTE_ITEMS_FETCH,
+    kind: "itemsFetch",
+    expectedToken: "", // verified in-route against the clipper token map (clipIngest precedent)
+    disabledHint: ITEMS_FETCH_DISABLED_HINT,
+    rejectAction: ITEMS_FETCH_REJECT_ACTION,
+    hasBody: true,
+    // Control-plane sized: the body is a single URL, not an article. Do NOT reuse
+    // MAX_BODY_BYTES_ARTICLE — a URL is control-plane data, not extracted page content.
+    maxBodyBytes: MAX_BODY_BYTES_DEFAULT,
+    maxRequestsPerWindow: MAX_REQUESTS_PER_WINDOW_DEFAULT,
+  };
+}
+
 /** `POST /v1/briefs` (404 unless the briefs seam is enabled). */
 function resolveBriefCreateRoute(method: string, ctx: WriteRouteContext): ResolvedRoute | Response {
   if (method !== "POST") return methodNotAllowed("POST");
@@ -558,6 +612,7 @@ function resolveRoute(req: Request, url: URL, ctx: WriteRouteContext): ResolvedR
   if (path === "/v1/clips") return resolveClipIngestRoute(method, ctx);
   if (path === "/v1/clips/pair/confirm") return resolveClipPairConfirmRoute(method, ctx);
   if (path === "/v1/briefs") return resolveBriefCreateRoute(method, ctx);
+  if (path === "/v1/items/fetch") return resolveItemsFetchRoute(method, ctx);
   const agent = AGENT_INVOKE_RE.exec(path);
   if (agent !== null) return resolveAgentInvokeRoute(method, agent[1] as string, ctx);
   const brief = BRIEF_ITEM_RE.exec(path);
@@ -587,6 +642,9 @@ function checkAuth(req: Request, route: ResolvedRoute, ctx: WriteRouteContext): 
   // Agent invocation verifies the labeled token in-route (clipIngest precedent) and gets its own
   // rate-limit bucket, so an agent sweep cannot starve clipping and vice versa.
   if (route.kind === "agentInvoke") return { fingerprint: "agents" };
+  // Targeted fetch verifies the labeled token in-route (clipIngest precedent) and gets its own
+  // rate-limit bucket, so a fetch sweep cannot starve clipping/agent invocation and vice versa.
+  if (route.kind === "itemsFetch") return { fingerprint: "fetch" };
   if (route.kind === "briefSource") return { fingerprint: "brief-src" };
   if (route.kind === "briefCreate" || route.kind === "briefRun" || route.kind === "briefSave") {
     return { fingerprint: "brief" };
@@ -1189,6 +1247,96 @@ async function runAgentInvokeRoute(
   );
 }
 
+function extractUrl(parsed: unknown): string | undefined {
+  if (parsed !== null && typeof parsed === "object" && "url" in parsed) {
+    const u = (parsed as { url?: unknown }).url;
+    return typeof u === "string" ? u : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 401/403 gate for the items-fetch route, mirroring `requireAgentAuth`. Returns the verified
+ * principal on success — unused beyond the auth check itself: the egress row's `destination` is
+ * the SERVICE id `targetedFetch` derives internally from the URL's host, never the caller's label.
+ */
+async function requireFetchAuth(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  req: Request,
+  limit: RateLimitCheck,
+): Promise<Response | { label: string; scopes: readonly ApiScope[] }> {
+  const fetchSurface = ctx.fetch as FetchWriteSurface;
+  const presented = bearerToken(req);
+  const verdict = presented === undefined ? null : await fetchSurface.verifyToken(presented);
+  if (verdict === null) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 401,
+      reason: "unauthorized",
+    });
+    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
+  }
+  const refusal = scopeRefusal(route.key, verdict.scopes, limit);
+  if (refusal !== null) {
+    // See the twin comment in runClipIngestRoute: refusal.status is 403 (a real scope gap) or 500
+    // (a misconfigured HTTP_ROUTE_AUTH entry), and the recorded reason must match which happened.
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: refusal.status,
+      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
+    });
+    return refusal;
+  }
+  return verdict;
+}
+
+async function runItemsFetchRoute(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  limit: RateLimitCheck,
+  req: Request,
+  parsed: unknown,
+): Promise<Response> {
+  // resolveRoute guarantees ctx.fetch is defined for every itemsFetch-kind route.
+  const fetchSurface = ctx.fetch as FetchWriteSurface;
+  const auth = await requireFetchAuth(ctx, route, fingerprint, req, limit);
+  if (auth instanceof Response) return auth;
+
+  const url = extractUrl(parsed);
+  if (url === undefined) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 400,
+      reason: "missing_url",
+    });
+    return jsonResponse({ error: "missing_url" }, 400, rateLimitHeaders(limit));
+  }
+
+  try {
+    // Every TargetedFetchOutcome — `indexed` and every miss arm alike — is a 200: a miss is a
+    // legitimate answer to a well-formed request, not a client error. Only a malformed body
+    // (above) or an auth/rate-limit failure produces a non-2xx from this route.
+    const outcome = await fetchSurface.fetchItem(url);
+    return jsonResponse(outcome, 200, rateLimitHeaders(limit));
+  } catch {
+    // Reached when the egress append fails (I29 fail-closed) or the connector call throws
+    // unexpectedly. No row means no fetch either way; the caller gets a 500 and may retry.
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 500,
+      reason: "internal_error",
+    });
+    return jsonResponse({ error: "internal_error" }, 500, rateLimitHeaders(limit));
+  }
+}
+
 async function requireBriefAuth(
   ctx: WriteRouteContext,
   route: ResolvedRoute,
@@ -1513,6 +1661,8 @@ export async function dispatchWriteRoute(req: Request, ctx: WriteRouteContext): 
       return runClipPairConfirmRoute(ctx, auth.fingerprint, limit, parsed);
     case "agentInvoke":
       return runAgentInvokeRoute(ctx, route, auth.fingerprint, limit, req, parsed);
+    case "itemsFetch":
+      return runItemsFetchRoute(ctx, route, auth.fingerprint, limit, req, parsed);
     case "briefCreate":
       return runBriefCreateRoute(ctx, route, auth.fingerprint, limit, req, parsed);
     case "briefSource":

@@ -91,6 +91,9 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   "POST /v1/briefs/{id}/sources": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/run": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/save": { kind: "clip", scope: "briefs" },
+  // Write. An outbound provider request under its own scope — a `resolve`-scoped token cannot
+  // trigger one, which is the point of splitting the two scopes.
+  "POST /v1/items/fetch": { kind: "clip", scope: "fetch" },
 });
 
 /**

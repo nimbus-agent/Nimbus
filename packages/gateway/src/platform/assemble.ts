@@ -99,6 +99,7 @@ import { createDecisionRefresher, type DecisionRefresher } from "../decisions/de
 import { appendBootMarker } from "../egress/egress-boot-marker.ts";
 import { type CoverageVector, THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
+import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { createEmbeddingRuntimeNonBlocking } from "../embedding/create-embedding-runtime.ts";
 import {
   type EmbeddingReadiness,
@@ -191,8 +192,10 @@ import {
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
+import { deriveFetchHostMap, type FetchableService } from "../sync/fetch-host-boundary.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
+import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
 import type { SyncContext } from "../sync/types.ts";
 import { withConnectorSession } from "../teamvault/connector-session.ts";
 import {
@@ -595,6 +598,11 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       decisionsRefresher?.trigger();
       ownershipRefresher?.trigger();
     },
+    // I29/D22(b): the ONE production appender for the `sync` egress class — one `sync` row per
+    // paginated RUN, before `connector.sync(...)` in `runJob`. Kept synchronous (`recordSyncEgress`
+    // returns `undefined`, never a Promise) so a throw here aborts the run before any outbound call,
+    // matching the fail-closed contract `sync/scheduler.ts`'s own doc comment states for this seam.
+    appendSyncEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
   });
   const tomlRoots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir);
   const registeredRoots = loadRegisteredRoots(paths.configDir);
@@ -664,6 +672,8 @@ interface HttpSidecarOpts {
   // route reads them, so they must be the same object.
   agentRuns?: AgentRunController;
   agentInvoke?: AgentHttpInvoker;
+  // Targeted fetch-on-miss (Task 11): threaded into ReadOnlyHttpServerOptions the same way.
+  fetchItem?: (url: string) => Promise<TargetedFetchOutcome>;
 }
 
 /** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
@@ -705,6 +715,7 @@ function buildReadOnlyHttpServerOpts(
     ...(httpOpts.briefSave === undefined ? {} : { briefSave: httpOpts.briefSave }),
     ...(httpOpts.agentRuns === undefined ? {} : { agentRuns: httpOpts.agentRuns }),
     ...(httpOpts.agentInvoke === undefined ? {} : { agentInvoke: httpOpts.agentInvoke }),
+    ...(httpOpts.fetchItem === undefined ? {} : { fetchItem: httpOpts.fetchItem }),
   };
 }
 
@@ -1931,6 +1942,118 @@ function bootAgentsIntoHttpSidecar(deps: {
   });
 }
 
+/**
+ * `POST /v1/items/fetch`'s one `http:` exception source (Task 11): the literal `URL.origin` of a
+ * service's own self-hosted origin secret — but ONLY when that origin is itself `http:`.
+ *
+ * Mirrors `sync/fetch-host-boundary.ts`'s module-private `selfHostedOriginSecret` vault-key mapping
+ * (`gitlab` → `api_base`, `jenkins`/`jira` → `base_url`; `github`/`bitbucket` have no self-hosted
+ * variant) rather than importing it — that helper is private by design, and this is the one other
+ * call site that needs the same mapping. `sync/fetch-host-boundary.ts` is on the "do not modify"
+ * list for this task, so a short, obviously-mirrored switch here is the alternative to changing
+ * that module's public surface.
+ *
+ * Returns `new URL(secret).origin`, NEVER the raw secret string: `targeted-fetch.ts` compares
+ * against `parsed.origin`, which is always scheme+host+port with no trailing slash and a lowercase
+ * host — a raw Vault value with a trailing slash or an uppercase host would never match, silently
+ * breaking the exception for an otherwise-legitimate self-hosted `http:` service. Returns `null`
+ * for a SaaS-only service, an absent/blank secret, an unparseable one, or one configured over
+ * anything but `http:`.
+ */
+export async function httpOriginFor(
+  vault: NimbusVault,
+  service: FetchableService,
+): Promise<string | null> {
+  let raw: string | null;
+  switch (service) {
+    case "gitlab":
+      raw = await readConnectorSecret(vault, "gitlab", "api_base");
+      break;
+    case "jenkins":
+      raw = await readConnectorSecret(vault, "jenkins", "base_url");
+      break;
+    case "jira":
+      raw = await readConnectorSecret(vault, "jira", "base_url");
+      break;
+    case "github":
+    case "bitbucket":
+      return null;
+  }
+  if (raw === null || raw.trim() === "") {
+    return null;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  return parsed.protocol === "http:" ? parsed.origin : null;
+}
+
+/** Every `FetchableService` with a possible self-hosted origin secret (Task 11). */
+const HTTP_ORIGIN_CANDIDATE_SERVICES: readonly FetchableService[] = ["gitlab", "jenkins", "jira"];
+
+/**
+ * Resolved FRESH per call, alongside `deriveFetchHostMap` — never cached — for the same reason:
+ * credentials can be revoked while the gateway runs, and a cached boundary would keep authorising
+ * an `http:` exception after its credential was removed. A few Vault reads on a route that makes a
+ * network request anyway.
+ */
+async function buildHttpOriginMap(
+  vault: NimbusVault,
+): Promise<ReadonlyMap<FetchableService, string>> {
+  const map = new Map<FetchableService, string>();
+  for (const service of HTTP_ORIGIN_CANDIDATE_SERVICES) {
+    const origin = await httpOriginFor(vault, service);
+    if (origin !== null) {
+      map.set(service, origin);
+    }
+  }
+  return map;
+}
+
+/**
+ * Targeted-fetch-on-miss boot (Task 11): builds the `POST /v1/items/fetch` closure and assigns it
+ * onto the caller's `httpSidecarOpts`, mirroring `bootAgentsIntoHttpSidecar`'s shape.
+ *
+ * The host map AND the http-origin map are both derived fresh on EVERY call — never cached at boot
+ * — because a credential can be revoked while the gateway runs; a cached boundary would keep
+ * authorising a service (or an `http:` exception) after its backing secret was removed.
+ * `syncableFor`/`contextFor` read the scheduler's OWN registered connectors and `SyncContext`
+ * (Task 10's `syncableFor`/`syncContextFor`), so a targeted fetch shares depth enforcement and the
+ * rate-limiter bucket with scheduled syncs rather than constructing a parallel context that could
+ * drift from it. `appendEgress` and `sync/scheduler.ts`'s `appendSyncEgress` (wired in
+ * `createSchedulerWithMesh`, above) are two closures around the SAME appender,
+ * `egress/sync-egress.ts`'s `recordSyncEgress` — never the raw `appendEgressEntry`, which D22(b)
+ * confines to `egress/*`.
+ */
+function bootTargetedFetchIntoHttpSidecar(deps: {
+  db: Database;
+  vault: NimbusVault;
+  syncScheduler: SyncScheduler;
+  httpSidecarOpts: HttpSidecarOpts;
+}): void {
+  const { db, vault, syncScheduler } = deps;
+  deps.httpSidecarOpts.fetchItem = async (url: string): Promise<TargetedFetchOutcome> => {
+    const [hostMap, httpOrigins] = await Promise.all([
+      deriveFetchHostMap(vault),
+      buildHttpOriginMap(vault),
+    ]);
+    return targetedFetch(
+      {
+        hostMap,
+        syncableFor: (service) => syncScheduler.syncableFor(service),
+        contextFor: (service) => syncScheduler.syncContextFor(service),
+        httpOriginFor: (service) => httpOrigins.get(service) ?? null,
+        appendEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      },
+      url,
+    );
+  };
+}
+
 export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
@@ -2187,6 +2310,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
     selfIdentity: ipcOpts.federationIdentity,
     httpSidecarOpts,
   });
+
+  // Targeted fetch-on-miss (Task 11). Unconditional, like agents: reaching it requires the
+  // `fetch` scope, which no legacy token carries and `nimbus clip pair --scopes` must name.
+  bootTargetedFetchIntoHttpSidecar({ db, vault, syncScheduler, httpSidecarOpts });
 
   const identityBoot = bootIdentityIntoIpcOpts({
     configDir: paths.configDir,
