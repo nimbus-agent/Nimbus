@@ -155,8 +155,11 @@ describe("I29 — agents.ownership over HTTP", () => {
       const { runId } = (await res.json()) as { runId: string };
       expect(runId).toMatch(/^ownership_\d+_[0-9a-f]{8}$/);
 
+      // Unfiltered — the whole table, not `WHERE source_type='http'` — so this pins the ledger's
+      // total content, not merely the http-typed slice of it. A spurious row of a different
+      // source_type would be invisible to a filtered query but must fail this one.
       const rows = s.db
-        .query(`SELECT source_type, source_id, method FROM egress_ledger WHERE source_type='http'`)
+        .query(`SELECT source_type, source_id, method FROM egress_ledger`)
         .all() as Array<{ source_type: string; source_id: string | null; method: string }>;
       expect(rows).toEqual([
         { source_type: "http", source_id: "agent-test-harness", method: "agents.ownership" },
