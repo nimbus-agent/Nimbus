@@ -182,6 +182,16 @@ function modifiedMsFromGithubTimestamps(
   return fallbackMs;
 }
 
+/**
+ * The `<repoFull>#<num>` external-id shape shared by `upsertPr` and `fetchOne`. Both MUST derive
+ * this from the same source — the API response's own `number` field — so the id `fetchOne`
+ * returns can never diverge from the id the row was actually written under (e.g. a caller URL's
+ * `/pull/007` vs. the API's normalized `number: 7`).
+ */
+export function githubPrExternalId(repoFull: string, num: number): string {
+  return `${repoFull}#${String(num)}`;
+}
+
 export function upsertPr(
   ctx: SyncContext,
   repoFull: string,
@@ -199,7 +209,7 @@ export function upsertPr(
   const user = asRecord(pr["user"]);
   const authorId = resolveGithubActorPersonId(ctx.db, user);
   const meta = extractPrMetadataForIndex(repoFull, pr, now);
-  const externalId = `${repoFull}#${String(num)}`;
+  const externalId = githubPrExternalId(repoFull, num);
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "pr",
@@ -547,6 +557,9 @@ async function syncGithubUserEvents(
  */
 const GITHUB_PR_URL_RE = /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/pull\/(\d{1,10})$/;
 
+/** A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a name. */
+const ALL_DOTS_RE = /^\.+$/;
+
 /**
  * Fetch and index ONE GitHub PR by its web URL. See `Syncable.fetchOne` for the contract: no
  * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
@@ -559,13 +572,19 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   }
   const owner = m[1] as string;
   const repo = m[2] as string;
-  const num = m[3] as string;
+  // `[\w.-]` legally captures `.`/`..`, which `pullDetailUrl`'s unencoded interpolation would let
+  // traverse the API path (e.g. `repos/../secret/pulls/1` — the WHATWG URL parser normalizes away
+  // the `repos/` prefix). Reject outright rather than sanitize: neither is a real owner or repo.
+  if (ALL_DOTS_RE.test(owner) || ALL_DOTS_RE.test(repo)) {
+    return { status: "unsupported_url" };
+  }
+  const requestedNum = m[3] as string;
   const pat = await readConnectorSecret(ctx.vault, "github", "pat");
   if (pat === null || pat === "") {
     return { status: "not_found" };
   }
   const repoFull = `${owner}/${repo}`;
-  const res = await fetch(pullDetailUrl(repoFull, Number.parseInt(num, 10)), {
+  const res = await fetch(pullDetailUrl(repoFull, Number.parseInt(requestedNum, 10)), {
     headers: buildGithubEventHeaders(pat, null),
   });
   if (!res.ok) {
@@ -581,9 +600,18 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   if (pr === undefined) {
     return { status: "not_found" };
   }
+  // The returned itemId MUST reflect the row `upsertPr` actually wrote, which keys off the API
+  // response's own `number` field (normalized, e.g. `007` -> `7`) — never the raw regex capture
+  // from the caller's URL, which can differ from it (leading zeros, etc.).
+  const num = numberField(pr, "number");
+  if (num === undefined) {
+    return { status: "not_found" };
+  }
   upsertPr(ctx, repoFull, pr, Date.now());
-  const externalId = `${repoFull}#${num}`;
-  return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, externalId) };
+  return {
+    status: "indexed",
+    itemId: itemPrimaryKey(SERVICE_ID, githubPrExternalId(repoFull, num)),
+  };
 }
 
 export type GithubSyncableOptions = {

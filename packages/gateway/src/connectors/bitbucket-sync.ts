@@ -100,6 +100,16 @@ function normalizeBitbucketUserUuid(raw: string): string {
     .toLowerCase();
 }
 
+/**
+ * The `<repoFull>#<id>` external-id shape shared by `upsertFromPullRequest` and `fetchOne`. Both
+ * MUST derive this from the same source — the API response's own `id` field — so the id
+ * `fetchOne` returns can never diverge from the id the row was actually written under (e.g. a
+ * caller URL's `/pull-requests/007` vs. the API's normalized `id: 7`).
+ */
+function bitbucketPrExternalId(repoFull: string, id: number): string {
+  return `${repoFull}#${String(id)}`;
+}
+
 function upsertFromPullRequest(
   ctx: SyncContext,
   repoFull: string,
@@ -134,7 +144,7 @@ function upsertFromPullRequest(
     state,
     author: displayName,
   };
-  const externalId = `${repoFull}#${String(id)}`;
+  const externalId = bitbucketPrExternalId(repoFull, id);
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "pr",
@@ -219,6 +229,9 @@ function ingestBitbucketPullRequestPage(
 const BITBUCKET_PR_URL_RE =
   /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/pull-requests\/(\d{1,10})$/;
 
+/** A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a name. */
+const ALL_DOTS_RE = /^\.+$/;
+
 /**
  * Fetch and index ONE Bitbucket PR by its web URL. See `Syncable.fetchOne` for the contract: no
  * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
@@ -231,14 +244,20 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   }
   const workspace = m[1] as string;
   const repoSlug = m[2] as string;
-  const num = m[3] as string;
+  // `[\w.-]` legally captures `.`/`..`; `encodeURIComponent` does NOT save us here — dot is
+  // unreserved, so `encodeURIComponent("..") === ".."` and the traversal survives encoding
+  // unchanged. Reject outright rather than sanitize: neither is a real workspace or repo slug.
+  if (ALL_DOTS_RE.test(workspace) || ALL_DOTS_RE.test(repoSlug)) {
+    return { status: "unsupported_url" };
+  }
+  const requestedNum = m[3] as string;
   const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
   const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
   if (user === null || user === "" || pass === null || pass === "") {
     return { status: "not_found" };
   }
   const repoFull = `${workspace}/${repoSlug}`;
-  const detailUrl = `${API_ROOT}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${num}`;
+  const detailUrl = `${API_ROOT}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${requestedNum}`;
   const res = await fetch(detailUrl, {
     headers: { Authorization: basicAuthHeader(user, pass), Accept: "application/json" },
   });
@@ -255,9 +274,18 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   if (pr === undefined) {
     return { status: "not_found" };
   }
+  // The returned itemId MUST reflect the row `upsertFromPullRequest` actually wrote, which keys
+  // off the API response's own `id` field (normalized, e.g. `007` -> `7`) — never the raw regex
+  // capture from the caller's URL, which can differ from it (leading zeros, etc.).
+  const id = numberField(pr, "id");
+  if (id === undefined) {
+    return { status: "not_found" };
+  }
   upsertFromPullRequest(ctx, repoFull, pr, Date.now());
-  const externalId = `${repoFull}#${num}`;
-  return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, externalId) };
+  return {
+    status: "indexed",
+    itemId: itemPrimaryKey(SERVICE_ID, bitbucketPrExternalId(repoFull, id)),
+  };
 }
 
 export type BitbucketSyncableOptions = {
