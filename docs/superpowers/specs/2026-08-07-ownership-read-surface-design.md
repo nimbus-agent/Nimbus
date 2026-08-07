@@ -144,9 +144,10 @@ export type OwnershipBrief = {
   query: { path: string | null; service: string | null };
   target: OwnershipTargetView | null;   // null in summary mode / unresolvable path
   parentDirectory: OwnershipTargetView | null;
-  service: { id: string; via: "repo_binding" } | null;
+  service: { id: string } | null;
   coverage: {                            // ownership_pass_state, verbatim
     lastPassAt: number | null;
+    lastDurationMs: number;
     rootsTotal: number; rootsCovered: number; rootsWithRemote: number;
     filesCovered: number; filesExcluded: number;
     servicesBound: number; ownersEmitted: number; entitiesReaped: number;

@@ -82,4 +82,23 @@ describe("ownership brief synthesis", () => {
     expect(md).toContain("0 of 25");
     expect(md).not.toContain("No owners recorded");
   });
+
+  test("a legacy row (ownerCount recorded, ownersAboveFloor never split out) reports unrecorded, not a floor result", () => {
+    // A row written before the ownerCount/ownersAboveFloor split parses to
+    // ownerCount: 23, ownersAboveFloor: null — see ownership-store.ts `parseCounts`,
+    // which gates on `ownersAboveFloor` presence, not on `ownerCount`. The renderer
+    // must follow the same rule or it asserts a floor result the row never recorded.
+    const md = renderOwnership({
+      ...BRIEF,
+      target: {
+        ...(BRIEF.target ?? { kind: "source_file" as const, displayPath: "src/a.ts" }),
+        owners: [],
+        ownerCount: 23,
+        ownersAboveFloor: null,
+        truncated: null,
+      },
+    } as OwnershipBrief);
+    expect(md).toContain("not recorded");
+    expect(md).not.toContain("cleared the share floor");
+  });
 });

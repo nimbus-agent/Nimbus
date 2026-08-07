@@ -260,8 +260,22 @@ export async function runOwnership(
   const target = decode<OwnershipTargetView | null>(results[0]?.text, null);
   const parentDirectory = decode<OwnershipTargetView | null>(results[1]?.text, null);
   const svc = decode<{ id: string | null } | null>(results[2]?.text, null);
+  // An all-zero literal, not `readOwnershipCoverage(ctx.db)`: that fallback argument is
+  // evaluated eagerly on every call (redundant DB read on the success path), and if lane 4
+  // failed because the DB is unhealthy, the fallback read would throw too.
   const lane4 = decode<{ coverage: OwnershipCoverage; services: string[] }>(results[3]?.text, {
-    coverage: readOwnershipCoverage(ctx.db),
+    coverage: {
+      lastPassAt: null,
+      lastDurationMs: 0,
+      rootsTotal: 0,
+      rootsCovered: 0,
+      rootsWithRemote: 0,
+      filesCovered: 0,
+      filesExcluded: 0,
+      servicesBound: 0,
+      ownersEmitted: 0,
+      entitiesReaped: 0,
+    },
     services: [],
   });
 

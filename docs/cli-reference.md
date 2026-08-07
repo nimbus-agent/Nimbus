@@ -505,7 +505,7 @@ Like `nimbus glossary`, `nimbus owners` **hard-rejects** an unrecognised flag ra
 | `ignore_globs` | a default list of lock files, `vendor/`, `node_modules/`, `dist/`, `build/`, minified/generated/snapshot files | Root-relative globs excluded from aggregation. `git log --name-only` consults no exclude list on its own, so an unfiltered lock file would otherwise hand a directory to whoever last ran the installer. An explicit `[]` disables filtering entirely. |
 | `debounce_ms` | `30000` | How long a burst of connector syncs coalesces before triggering one pass. |
 
-**Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — the derivation pass reads only the already-indexed `git_blame_line` table and calls no model. Zero `egress_ledger` rows.
+**Read-only (normal lookup):** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — a plain `nimbus owners` reads only the already-indexed `git_blame_line` table and calls no model. Zero `egress_ledger` rows. `--refresh` is different: it invokes `ownership.refresh`, which clears and re-derives every ownership edge — local write-class maintenance, not a live connector call, but not read-only either.
 
 **Exit codes:** `1` = gateway not running; `2` = agent error (timeout or a malformed `agents.ownership` response).
 

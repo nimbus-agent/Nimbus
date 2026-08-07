@@ -673,6 +673,16 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*104\s*\)/);
   });
 
+  // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.
+  // agents.ownership swapped out for the LAN-forbidden ownership.refresh, which clears and
+  // re-derives every ownership edge) leaves the count at 104 and would sail through. Name
+  // the methods, mirroring the Rust-side `allowlist_ownership_brief_only` test.
+  test("S1 ownership: agents.ownership is renderer-exposed; ownership.refresh stays absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toContain("agents.ownership");
+    expect(rust).not.toMatch(/^\s*"ownership\.refresh",\s*$/m);
+  });
+
   // The count above is NOT sufficient on its own. A change that removes
   // agents.decisions and adds decisions.refresh — LAN-forbidden, and the verb
   // that can clear the whole decision store via decisions.rebuild — leaves the

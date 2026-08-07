@@ -363,7 +363,19 @@ function renderOwnershipTarget(heading: string, t: OwnershipTargetView | null): 
   if (t === null) return [];
   if (t.owners.length === 0) {
     // Counts recorded but nobody cleared the share floor is a different fact than
-    // nothing recorded at all — a reader must not confuse the two.
+    // nothing recorded at all — a reader must not confuse the two. Gate on
+    // `ownersAboveFloor` presence, matching `parseCounts` in ownership-store.ts: a
+    // legacy row (written before the ownerCount/ownersAboveFloor split) has a
+    // non-null `ownerCount` but a null `ownersAboveFloor`, and must report as
+    // unrecorded, not assert a floor result the row never recorded.
+    if (t.ownersAboveFloor === null) {
+      return [
+        `### ${heading} — ${t.displayPath}`,
+        "",
+        "_Owner breakdown not recorded for this path — run `nimbus owners --refresh`._",
+        "",
+      ];
+    }
     if (t.ownerCount !== null && t.ownerCount > 0) {
       return [
         `### ${heading} — ${t.displayPath}`,

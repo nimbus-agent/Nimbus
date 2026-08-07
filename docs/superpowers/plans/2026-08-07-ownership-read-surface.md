@@ -331,13 +331,13 @@ Expected: PASS.
 
 - [ ] **Step 9: Red-prove the fix**
 
-Temporarily change `truncated: ranked.emitted.length < ranked.aboveFloor` back to `< ranked.totalOwners` at the `source_file` site. Run:
+Temporarily change `truncated: ranked.emitted.length < ranked.aboveFloor` back to `< ranked.totalOwners` in `ownerCountsMetadata` (the shared constructor used at all three write sites, including `source_file`). `-t "rankOwners"` only exercises the pure `rankOwners()` function and can never reach `ownerCountsMetadata` or the metadata write — name the file-entity metadata test instead. Run:
 
 ```bash
-bun test packages/gateway/src/ownership/ownership-pass.test.ts -t "rankOwners"
+bun test packages/gateway/src/ownership/ownership-pass.test.ts -t "truncated stays false on the file entity when the floor"
 ```
 
-The first new test must fail. **Revert exactly**, re-run, confirm green.
+The test must fail. **Revert exactly**, re-run, confirm green.
 
 - [ ] **Step 10: Commit**
 

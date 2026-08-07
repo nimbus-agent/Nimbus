@@ -229,6 +229,19 @@ describe("awaitPass (via --refresh) — transport death and handler teardown", (
     await expect(runOwnersCommand(["--refresh"], deps)).rejects.toThrow("ownership pass failed");
   });
 
+  test("an ownership.passError notification with a null payload falls back to a default instead of hanging", async () => {
+    const { client, fire } = makeFakeIpcClient();
+    const deps: OwnersCommandDeps = {
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        if (spec.beforeCall === undefined) return;
+        const passWait = spec.beforeCall(client);
+        fire("ownership.passError", null);
+        await passWait;
+      },
+    };
+    await expect(runOwnersCommand(["--refresh"], deps)).rejects.toThrow("ownership pass failed");
+  });
+
   test("a failed ownership.refresh RPC call rejects (not silently hangs)", async () => {
     const { client } = makeFakeIpcClient();
     (client as unknown as { call: () => Promise<never> }).call = async (): Promise<never> => {

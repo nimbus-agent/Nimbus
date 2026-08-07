@@ -992,7 +992,7 @@ question, which is how several files came to claim the same authority before.
 
 Much of this is **wiring shipped capability to a new surface rather than new capability** — verified in the tree, not assumed:
 
-- Eleven built-in agents already ship (`packages/gateway/src/agents/`: `catchup`, `conflicts`, `expert`, `ghost`, `glossary`, `huddle`, `impact`, `janitor`, `preflight`, `why`, `why-peek`), and all eleven are dispatched by the `agents.*` IPC namespace that already exists (`packages/gateway/src/ipc/agents-rpc.ts`).
+- Twelve built-in agents already ship (`packages/gateway/src/agents/`: `catchup`, `conflicts`, `decisions`, `expert`, `ghost`, `glossary`, `huddle`, `impact`, `janitor`, `ownership`, `preflight`, `why`), plus the synchronous `agents.whyPeek` companion — not counted as a separate agent, consistent with the count used elsewhere in this document (see the "twelfth built-in agent" entry above) — and all twelve are dispatched by the `agents.*` IPC namespace that already exists (`packages/gateway/src/ipc/agents-rpc.ts`).
 - Bitbucket, Jenkins, Jira, GitHub and GitLab are all indexed connectors with sync handlers.
 - The *data* URL → item resolution needs is already captured: `connectors/bitbucket-sync.ts` indexes `type: "pr"` with a `canonicalUrl`, `connectors/jenkins-sync.ts` indexes `type: "ci_run"` the same way, and `canonical_url` is a real column on `item` (`index/unified-item-v3-sql.ts`).
 

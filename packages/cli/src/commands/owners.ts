@@ -70,7 +70,11 @@ function awaitPass(client: IPCClient): Promise<void> {
     }
     function onError(n: unknown): void {
       teardown();
-      reject(new Error((n as { message?: string }).message ?? "ownership pass failed"));
+      const message =
+        typeof n === "object" && n !== null && "message" in n && typeof n.message === "string"
+          ? n.message
+          : "ownership pass failed";
+      reject(new Error(message));
     }
     // A pass runs unbounded, so a gateway that dies mid-pass must be detected explicitly
     // rather than hanging forever — the same reason decisions' awaitPass binds onClose.
