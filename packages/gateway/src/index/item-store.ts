@@ -5,6 +5,7 @@ import { dbRun } from "../db/write.ts";
 import { type ResolveServiceId, syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import type { SyncContext } from "../sync/types.ts";
+import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { BODY_MAX_DEFAULT, BODY_PREVIEW_MAX, bodyCapForItemType, clampBody } from "./body-caps.ts";
 import { RAW_META_MAX_BYTES } from "./constants.ts";
 import { itemPrimaryKey } from "./item-key.ts";
@@ -89,12 +90,23 @@ export function upsertIndexedItem(
   const body = clampBody(raw, cap);
   const preview = clampBody(body, BODY_PREVIEW_MAX);
   const bodyComplete = declaredFull && raw.length <= cap && row.bodyTruncated !== true ? 1 : 0;
+  // The DERIVED resolve key, written HERE rather than in `upsertIndexedItemForSync`, because this
+  // is the actual SQL chokepoint: `clips/clip-ingest.ts`, `briefs/brief-save.ts`,
+  // `glossary/glossary-project.ts` and `upsertNimbusItemIntoItemTable` all call THIS function
+  // directly and never touch the sync wrapper. Deriving it in the wrapper would leave every web
+  // clip unresolvable — the one item type whose identity already IS a canonicalized URL.
+  //
+  // `canonicalizeUrl` is reused unchanged (`externalIdFor` hashes its output, so its rules are
+  // clip identity). It does not throw: unparseable input comes back verbatim, which is acceptable
+  // for a stored key because the READ side parse-checks before it canonicalizes.
+  const resolveSource = row.canonicalUrl ?? row.url ?? null;
+  const resolveKey = resolveSource === null ? null : canonicalizeUrl(resolveSource);
   dbRun(
     db,
     `INSERT INTO item (
       id, service, type, external_id, title, body, body_preview, body_complete,
-      url, canonical_url, modified_at, author_id, metadata, synced_at, pinned
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      url, canonical_url, resolve_key, modified_at, author_id, metadata, synced_at, pinned
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       service = excluded.service,
       type = excluded.type,
@@ -105,6 +117,7 @@ export function upsertIndexedItem(
       body_complete = excluded.body_complete,
       url = excluded.url,
       canonical_url = excluded.canonical_url,
+      resolve_key = excluded.resolve_key,
       modified_at = excluded.modified_at,
       author_id = excluded.author_id,
       metadata = excluded.metadata,
@@ -121,6 +134,7 @@ export function upsertIndexedItem(
       bodyComplete,
       row.url ?? null,
       row.canonicalUrl ?? null,
+      resolveKey,
       row.modifiedAt,
       row.authorId ?? null,
       meta,

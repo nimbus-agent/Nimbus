@@ -142,4 +142,14 @@ describe("ingestClip", () => {
   test("rejects a tags array containing a non-string", () => {
     expect(() => validateClipInput({ ...base, tags: ["ok", 7] })).toThrow(ClipValidationError);
   });
+
+  test("a web clip written through ingestClip is resolvable", () => {
+    const res = ingestClip(db, { ...base, url: "https://example.com/post?utm_source=news" });
+    const row = db.query("SELECT resolve_key FROM item WHERE id = ?").get(res.id) as {
+      resolve_key: string | null;
+    };
+    // Not NULL is the whole point: clip-ingest calls upsertIndexedItem DIRECTLY, bypassing
+    // upsertIndexedItemForSync. Deriving the key in the wrapper would leave every clip unresolvable.
+    expect(row.resolve_key).toBe("https://example.com/post");
+  });
 });
