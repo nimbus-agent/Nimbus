@@ -832,16 +832,18 @@ describe("tryDispatchGlossaryRpc — skip / hit / error remapping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ownership RPC (Task 8) — skip / hit / unrelated method.
-// tryDispatchOwnershipRpc has three branches: (1) ctx.options.ownershipRefresher
+// Ownership RPC (Task 8) — skip / hit / miss / unrelated method.
+// tryDispatchOwnershipRpc has four branches: (1) ctx.options.ownershipRefresher
 // unset → phase4RpcSkipped, (2) ownership.refresh with wiring present → the
-// "hit" { jobId } value, (3) a method outside the ownership.* namespace →
-// skipped WITHOUT the refresher ever being invoked. Unlike glossary/decisions,
-// there is no error-remapping (OwnershipRpcError) test here: startPass() never
-// throws synchronously (registry.start() always returns { jobId }), so that
-// catch branch is unreachable from THIS dispatcher — the async
-// OwnershipRefresherError → ownership.passError path is covered separately in
-// ownership-rpc.test.ts.
+// "hit" { jobId } value, (3) a recognised-namespace method dispatchOwnershipRpc
+// itself misses (e.g. an unknown ownership.* method) → falls through to
+// phase4RpcSkipped, (4) a method outside the ownership.* namespace → skipped
+// WITHOUT the refresher ever being invoked. Unlike glossary/decisions there is
+// no try/catch + <X>RpcError remap here at all (not merely untested) — the sole
+// handler always returns { jobId } synchronously and never throws, so there is
+// nothing to catch; see the comment on tryDispatchOwnershipRpc itself. The
+// async OwnershipRefresherError → ownership.passError path is covered
+// separately in ownership-rpc.test.ts.
 // ---------------------------------------------------------------------------
 describe("tryDispatchOwnershipRpc — skip / hit / unrelated method", () => {
   const OWNERSHIP_SUMMARY = {
@@ -877,6 +879,12 @@ describe("tryDispatchOwnershipRpc — skip / hit / unrelated method", () => {
     const ctx = makeCtx({ ownershipRefresher: fakeOwnershipRefresher() });
     const out = await tryDispatchOwnershipRpc(ctx, "ownership.refresh", {});
     expect((out as { jobId: string }).jobId).toStartWith("ownership_refresh_");
+  });
+
+  test("an unrecognised ownership.* method misses inside dispatchOwnershipRpc and falls through", async () => {
+    const ctx = makeCtx({ ownershipRefresher: fakeOwnershipRefresher() });
+    const out = await tryDispatchOwnershipRpc(ctx, "ownership.nope", {});
+    expect(out).toBe(phase4RpcSkipped);
   });
 
   test("a non-ownership method is skipped without ever invoking the refresher", async () => {

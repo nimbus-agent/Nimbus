@@ -169,6 +169,41 @@ describe("ownership-store", () => {
     expect(cov.rootsCovered).toBe(1);
     expect(cov.servicesBound).toBe(1);
   });
+
+  test("coverage defaults every counter to 0 when the row unexpectedly holds null", () => {
+    // The real `ownership_pass_state` schema is NOT NULL DEFAULT 0 for every counter but
+    // `last_pass_at`, so this shape is not reachable through the pass itself — it guards
+    // `readOwnershipCoverage` against a hand-patched or otherwise-corrupted row, exactly like
+    // `parseCounts` above tolerates a pre-split `graph_entity.metadata` shape. Recreate the
+    // table without the NOT NULL constraint so a null can actually be written.
+    d.run("DROP TABLE ownership_pass_state");
+    d.run(`CREATE TABLE ownership_pass_state (
+      id                INTEGER PRIMARY KEY CHECK(id = 1),
+      last_pass_at      INTEGER,
+      last_duration_ms  INTEGER,
+      roots_total       INTEGER,
+      roots_covered     INTEGER,
+      roots_with_remote INTEGER,
+      files_covered     INTEGER,
+      files_excluded    INTEGER,
+      services_bound    INTEGER,
+      owners_emitted    INTEGER,
+      entities_reaped   INTEGER
+    )`);
+    d.run("INSERT INTO ownership_pass_state (id, last_pass_at) VALUES (1, ?)", [NOW]);
+
+    const cov = readOwnershipCoverage(d);
+    expect(cov.lastPassAt).toBe(NOW);
+    expect(cov.lastDurationMs).toBe(0);
+    expect(cov.rootsTotal).toBe(0);
+    expect(cov.rootsCovered).toBe(0);
+    expect(cov.rootsWithRemote).toBe(0);
+    expect(cov.filesCovered).toBe(0);
+    expect(cov.filesExcluded).toBe(0);
+    expect(cov.servicesBound).toBe(0);
+    expect(cov.ownersEmitted).toBe(0);
+    expect(cov.entitiesReaped).toBe(0);
+  });
 });
 
 describe("parseCounts", () => {

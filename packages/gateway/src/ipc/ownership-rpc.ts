@@ -7,19 +7,10 @@ export type OwnershipRpcContext = {
   notify: (method: string, params: unknown) => void;
 };
 
-export class OwnershipRpcError extends Error {
-  readonly rpcCode: number;
-  constructor(rpcCode: number, message: string) {
-    super(message);
-    this.name = "OwnershipRpcError";
-    this.rpcCode = rpcCode;
-  }
-}
-
 const registry = new LongRunningJobRegistry();
 
 /**
- * Mirrors `ipc/decisions-rpc.ts`. Two deliberate absences:
+ * Mirrors `ipc/decisions-rpc.ts`. Three deliberate absences:
  *
  * 1. No "disabled" precondition. `ownershipRefresher` is constructed at all only when
  *    `[ownership].enabled` (`platform/assemble.ts`), so an absent refresher already
@@ -27,6 +18,10 @@ const registry = new LongRunningJobRegistry();
  * 2. No `rebuild` verb. The ownership pass clears and re-emits WHOLESALE every run, so a
  *    rebuild would be a synonym for refresh — shipping both would imply a difference that
  *    does not exist.
+ * 3. No `<X>RpcError` class. Glossary/decisions each remap a synchronous precondition
+ *    failure (an in-flight-pass or disabled check) to an RPC error code. `startPass` has no
+ *    such precondition — the sole handler always returns `{ jobId }` synchronously, so
+ *    there is nothing here that ever throws before returning "hit" or "miss".
  *
  * The method takes NO parameters, and that is a safety property rather than tidiness:
  * `runOwnershipPass` clears every `person --owns--> service` edge each pass and re-emits

@@ -38,7 +38,7 @@ import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
-import { dispatchOwnershipRpc, OwnershipRpcError } from "../ownership-rpc.ts";
+import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
@@ -1024,16 +1024,16 @@ export async function tryDispatchOwnershipRpc(
   if (!method.startsWith("ownership.")) return phase4RpcSkipped;
   const refresher = ctx.options.ownershipRefresher;
   if (refresher === undefined) return phase4RpcSkipped;
-  try {
-    const out = await dispatchOwnershipRpc(method, params, {
-      refresher,
-      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
-    });
-    if (out.kind === "hit") return out.value;
-  } catch (e) {
-    if (e instanceof OwnershipRpcError) throw new RpcMethodError(e.rpcCode, e.message);
-    throw e;
-  }
+  // Unlike glossary/decisions, there is no try/catch + <X>RpcError remap here: the sole
+  // handler (`ownership.refresh` → `startPass` → `LongRunningJobRegistry.start()`) always
+  // returns `{ jobId }` synchronously and never throws — there is no rebuild verb and no
+  // params to validate, so `dispatchOwnershipRpc` cannot reject before returning a "hit" or
+  // "miss". A try/catch around an await that can never reject is dead code, not defense.
+  const out = await dispatchOwnershipRpc(method, params, {
+    refresher,
+    notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+  });
+  if (out.kind === "hit") return out.value;
   return phase4RpcSkipped;
 }
 
