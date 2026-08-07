@@ -131,43 +131,86 @@ Task 6 and Task 12 are the two "docs + CHANGELOG" tasks that close each PR under
 **Files:**
 - Create: `packages/gateway/src/index/resolve-key-v52-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
+- **Modify: `packages/gateway/src/index/local-index.ts:265` — `CURRENT_SCHEMA_VERSION` 51 → 52**
 - Test: `packages/gateway/src/index/migrations/runner.test.ts`
 
 **Interfaces:**
 - Consumes: `readIndexedUserVersion(db)`, `applySchemaStep`, `recordMigration`, `dbExec`, `dbRun`,
   `dbStmtRun` — all already in `runner.ts`. `canonicalizeUrl` from `../../util/url-canonical.ts`.
-- Produces: `RESOLVE_KEY_V52_SQL: readonly string[]`; a `simpleStep`-shaped entry appended to
-  `INDEXED_SCHEMA_STEPS` via bespoke `migrateIndexedV51ToV52(db, now)`.
+- Produces: `RESOLVE_KEY_V52_SQL: readonly string[]`; an `IndexedSchemaStep` appended to
+  `INDEXED_SCHEMA_STEPS` via bespoke `migrateIndexedV51ToV52(db, now)`; `CURRENT_SCHEMA_VERSION`
+  becomes `52`.
+
+**Verified facts about this file — the plan's first draft got these wrong, so use these:**
+- The migration entry point is **`runIndexedSchemaMigrations(db, targetVersion, backupOptions?)`**
+  (`runner.ts:635`). There is no `runIndexedMigrations`.
+- It **early-returns when `readIndexedUserVersion(db) >= targetVersion`**, so the target is what
+  drives the upgrade. `CURRENT_SCHEMA_VERSION` (`local-index.ts:265`, re-exported as
+  `LocalIndex.SCHEMA_VERSION`) is the production target. **Bumping it to 52 is what makes V52
+  actually run** — landing the step without the bump ships a dead migration.
+- `runner.test.ts`'s helpers are `freshDb()` (a bare `:memory:` DB with **no** migrations run),
+  `userVersion(db)`, `migrationCount(db)`, `tableNames(db)`. There is no
+  `openIndexedDbAtLatest`.
 
 - [ ] **Step 1: Write the failing test — a pre-existing row becomes resolvable**
 
-Add to `packages/gateway/src/index/migrations/runner.test.ts`. Find the existing helper that opens
-a temp DB at a given version (the file already has migration tests; reuse its temp-dir pattern
-built with `os.tmpdir()` + `path.join`).
+Add to `packages/gateway/src/index/migrations/runner.test.ts`. Build the DB at **51**, insert a row
+while the column genuinely does not exist yet, then migrate to 52 — no `DROP COLUMN` trickery
+needed, because `runIndexedSchemaMigrations` takes the target version.
 
 ```ts
 import { canonicalizeUrl } from "../../util/url-canonical.ts";
 
-test("V52 backfills resolve_key for pre-existing rows", () => {
-  const { db } = openIndexedDbAtLatest(); // existing helper in this file
-  // Simulate a row written before V52 by clearing the column the migration filled.
-  dbRun(
-    db,
+test("V52 backfills resolve_key for rows indexed before the column existed", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  // No resolve_key column at v51, so this is a genuine pre-migration row.
+  db.query(
     `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
-       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned, resolve_key)
+       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
      VALUES ('github:pr-1','github','pull_request','pr-1','PR one','','',0,
-       'https://github.com/o/r/pull/1?utm_source=x',NULL,1,'{}',1,0,NULL)`,
-  );
-  dbExec(db, "PRAGMA user_version = 51");
-  runIndexedMigrations(db); // existing exported entry point
+       'https://github.com/o/r/pull/1?utm_source=x',NULL,1,'{}',1,0)`,
+  ).run();
+  runIndexedSchemaMigrations(db, 52);
   const row = db.query("SELECT resolve_key FROM item WHERE id = 'github:pr-1'").get() as {
     resolve_key: string | null;
   };
   expect(row.resolve_key).toBe(canonicalizeUrl("https://github.com/o/r/pull/1?utm_source=x"));
-  expect(readIndexedUserVersion(db)).toBe(52);
+  expect(userVersion(db)).toBe(52);
+  db.close();
+});
+
+test("V52 leaves resolve_key NULL for a row with neither url", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
+       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
+     VALUES ('nimbus:g-1','nimbus','glossary_term','g-1','Term','','',0,
+       NULL,NULL,1,'{}',1,0)`,
+  ).run();
+  runIndexedSchemaMigrations(db, 52);
+  const row = db.query("SELECT resolve_key FROM item WHERE id = 'nimbus:g-1'").get() as {
+    resolve_key: string | null;
+  };
+  expect(row.resolve_key).toBeNull();
+  db.close();
+});
+
+test("CURRENT_SCHEMA_VERSION is 52, so V52 runs in production", () => {
+  // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
+  // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
+  expect(CURRENT_SCHEMA_VERSION).toBe(52);
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  expect(tableNames(db)).toContain("item");
+  const cols = db.query("PRAGMA table_info(item)").all() as Array<{ name: string }>;
+  expect(cols.map((c) => c.name)).toContain("resolve_key");
   db.close();
 });
 ```
+
+Import `CURRENT_SCHEMA_VERSION` from `../local-index.ts`.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -280,6 +323,15 @@ Append to `INDEXED_SCHEMA_STEPS`, after the `simpleStep(50, 51, …)` entry:
   { fromVersion: 51, toVersion: 52, apply: migrateIndexedV51ToV52 },
 ```
 
+Then bump the production target in `packages/gateway/src/index/local-index.ts:265`:
+
+```ts
+export const CURRENT_SCHEMA_VERSION = 52;
+```
+
+Do NOT append to `BACKFILL_LABELS` — it intentionally stops at v37, and the comment at
+`runner.ts:508` says appending per migration makes an error branch unreachable.
+
 > Note the `OFFSET` subtlety above: because the `WHERE` filters on `resolve_key IS NULL` and the
 > loop writes that column, rows already handled drop out of the result set. Advancing `offset` by
 > `rows.length` is correct and terminating; a plain `OFFSET 0` re-read would also terminate but
@@ -294,36 +346,49 @@ Expected: PASS.
 
 ```ts
 test("V52 leaves user_version unadvanced when the backfill throws", () => {
-  const { db } = openIndexedDbAtLatest();
-  dbExec(db, "PRAGMA user_version = 51");
-  dbExec(db, "ALTER TABLE item DROP COLUMN resolve_key");
-  // A row whose canonicalization is attempted, plus a poisoned table that makes the UPDATE fail.
-  dbRun(
-    db,
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  db.query(
     `INSERT INTO item (id, service, type, external_id, title, body, body_preview, body_complete,
        url, canonical_url, modified_at, metadata, synced_at, pinned)
      VALUES ('github:pr-2','github','pull_request','pr-2','PR two','','',0,
        'https://github.com/o/r/pull/2',NULL,1,'{}',1,0)`,
-  );
-  dbExec(db, `CREATE TRIGGER poison BEFORE UPDATE OF resolve_key ON item
-              BEGIN SELECT RAISE(ABORT, 'boom'); END`);
-  expect(() => runIndexedMigrations(db)).toThrow();
-  expect(readIndexedUserVersion(db)).toBe(51);
+  ).run();
+  // Poison the UPDATE the backfill must perform. The trigger is created BEFORE the migration runs,
+  // and it fires on the resolve_key write that V52's backfill issues.
+  db.query(
+    `CREATE TRIGGER poison_resolve_key BEFORE UPDATE OF resolve_key ON item
+     BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+  ).run();
+  expect(() => runIndexedSchemaMigrations(db, 52)).toThrow();
+  // The whole step is one db.transaction, so a throw mid-backfill rolls back the DDL AND the
+  // version bump. A half-populated resolve_key at v52 would resolve some URLs and not others.
+  expect(userVersion(db)).toBe(51);
   db.close();
 });
 ```
 
-- [ ] **Step 7: Run it**
+> The trigger references `resolve_key`, a column that does not exist at v51. SQLite parses trigger
+> bodies lazily but validates the `UPDATE OF <column>` clause at creation time against the current
+> schema, so this `CREATE TRIGGER` may fail at v51. If it does, create the trigger *after* the DDL
+> by splitting the assertion: run `runIndexedSchemaMigrations(db, 52)` once on an empty table
+> (which succeeds trivially), then assert atomicity with a fresh DB where the poison is a
+> `CHECK`-violating row instead. Do not delete the test — the atomicity property is the one the
+> review-response called a live defect risk.
 
-Run: `bun test packages/gateway/src/index/migrations/runner.test.ts -t "V52"`
-Expected: both PASS. If the `DROP COLUMN` is rejected by the pinned SQLite build, replace it by
-opening a DB at v51 through the existing at-version helper instead — do not weaken the assertion.
+- [ ] **Step 7: Run both migration tests**
+
+Run: `bun test packages/gateway/src/index/migrations/runner.test.ts`
+Expected: PASS, including the file's pre-existing tests. Watch for a pre-existing test that pins the
+migration count or the highest version — if one fails, it is asserting the old ceiling and must be
+updated to 52, not weakened.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add packages/gateway/src/index/resolve-key-v52-sql.ts \
         packages/gateway/src/index/migrations/runner.ts \
+        packages/gateway/src/index/local-index.ts \
         packages/gateway/src/index/migrations/runner.test.ts
 git commit -m "V52: item.resolve_key column, index and row-wise backfill"
 ```
@@ -334,7 +399,26 @@ git commit -m "V52: item.resolve_key column, index and row-wise backfill"
 
 **Files:**
 - Modify: `packages/gateway/src/index/item-store.ts:64-146`
-- Test: `packages/gateway/src/index/item-store.test.ts`
+- **Create** (verified absent): `packages/gateway/src/index/item-store.test.ts`
+- Test: `packages/gateway/src/clips/clip-ingest.test.ts` (exists — add one test)
+
+**There is no `item-store.test.ts` today**, so create it with this local helper rather than reaching
+for a shared one that does not exist:
+
+```ts
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { CURRENT_SCHEMA_VERSION } from "./local-index.ts";
+import { upsertIndexedItem } from "./item-store.ts";
+import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
+
+function freshIndexedDb(): Database {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+  return db;
+}
+```
 
 **Interfaces:**
 - Consumes: `canonicalizeUrl`.
