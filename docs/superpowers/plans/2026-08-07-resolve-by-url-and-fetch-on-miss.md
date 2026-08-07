@@ -1149,8 +1149,8 @@ git commit -m "GET /v1/items/resolve behind the resolve scope"
 
 **Files:**
 
-- Modify: `packages/gateway/src/ipc/http-openapi.ts` (or wherever `/v1/openapi.json` is built —
-  confirm with `grep -rn "openapi" packages/gateway/src/ipc/`)
+- Modify: NOTHING for OpenAPI — see Step 1. The spec (`packages/gateway/openapi/v1.yaml`) is
+  deliberately left untouched: no bearer-gated route family is documented there.
 - Modify: `packages/gateway/src/egress/egress-coverage.ts:55-61`
 - Modify: `packages/cli/src/commands/prove.ts:46-53`
 - Test: the existing OpenAPI drift test; `packages/gateway/src/egress/egress-coverage.test.ts`
@@ -1245,7 +1245,7 @@ the vector.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/gateway/src/ipc/http-openapi.ts \
+git add packages/gateway/src/index/resolve-by-url.test.ts \
         packages/gateway/src/egress/egress-coverage.ts \
         packages/cli/src/commands/prove.ts
 git commit -m "document the resolve route and its no-egress narrowing"

@@ -93,7 +93,11 @@ export async function startServerWithClipToken(
  * unauthenticated GET table). No token is minted since there is no vault to mint it into.
  */
 export async function startServerWithoutClipsVault(
-  extraOpts: Partial<ReadOnlyHttpServerOptions> = {},
+  // `clipsVault` is EXCLUDED at the type level, not merely omitted by convention: this helper exists
+  // to prove the "surface not mounted" branch, and a caller who spread a vault in through `extraOpts`
+  // would silently mount the clip-token surface while the function name still promised the opposite —
+  // turning a fail-closed regression test into one that asserts nothing.
+  extraOpts: Partial<Omit<ReadOnlyHttpServerOptions, "clipsVault">> = {},
 ): Promise<Omit<ClipTestServer, "token">> {
   const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-"));
   const dbPath = join(tmpDir, "nimbus.db");
