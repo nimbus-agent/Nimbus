@@ -1,5 +1,20 @@
 import type { OwnershipPassSummary } from "./ownership-pass.ts";
 
+/**
+ * Carries `rpcCode` so `ipc/ownership-rpc.ts` maps it without re-deriving a code, and so a
+ * caller can branch on the CLASS rather than string-matching a message. Mirrors
+ * `DecisionRefresherError` (`decisions/decision-refresh.ts`). Both refreshers use -32000
+ * (JSON-RPC implementation-defined server error).
+ */
+export class OwnershipRefresherError extends Error {
+  readonly rpcCode: number;
+  constructor(message: string) {
+    super(message);
+    this.name = "OwnershipRefresherError";
+    this.rpcCode = -32000;
+  }
+}
+
 export type OwnershipRefresherDeps = {
   readonly debounceMs: number;
   /** Injected rather than imported so this module is testable without a Database. */
@@ -82,10 +97,12 @@ export function createOwnershipRefresher(deps: OwnershipRefresherDeps): Ownershi
       // sidecars close. Mirrors `ERR_DECISIONS_STOPPED` in
       // `decisions/decision-refresh.ts`.
       if (stopped) {
-        throw new Error("ERR_OWNERSHIP_STOPPED: the gateway is shutting down");
+        throw new OwnershipRefresherError("ERR_OWNERSHIP_STOPPED: the gateway is shutting down");
       }
       if (running) {
-        throw new Error("ERR_OWNERSHIP_PASS_RUNNING: an ownership pass is already running");
+        throw new OwnershipRefresherError(
+          "ERR_OWNERSHIP_PASS_RUNNING: an ownership pass is already running",
+        );
       }
       running = true;
       try {
