@@ -193,9 +193,39 @@ bun test packages/gateway/src/ownership/ownership-pass.test.ts -t "rankOwners"
 
 Expected: PASS, including the four pre-existing `rankOwners` tests.
 
-- [ ] **Step 5: Update the two existing metadata sites**
+- [ ] **Step 5: Extract the metadata shape, and use it at both existing sites**
 
-In `ownership-pass.ts`, the `source_file` upsert (around `:471`) and the `directory` upsert (around `:502`) each carry a `metadata` block. Replace **both** occurrences of:
+The same four-key object is written at three sites once Step 6 lands. Spell it once — this is not only de-duplication: the defect being fixed here is precisely that two sites drifted into computing `truncated` wrongly, and a shared constructor makes the three agree **by construction** rather than by three independently correct edits.
+
+Add above `rankOwners` in `ownership-pass.ts`:
+
+```ts
+/**
+ * The owner-count facts recorded on every ownable entity (`source_file`, `directory`,
+ * `service`).
+ *
+ * One constructor for all three sites on purpose. `truncated` means the CAP bound —
+ * `max_owners_per_path` dropped someone who cleared the floor — and NOTHING else. Its
+ * predecessor compared against `totalOwners`, so it also fired whenever `min_share`
+ * excluded a contributor, which made "showing top N of M" a claim the data did not
+ * support. Two call sites computed that independently and both were wrong the same way.
+ */
+function ownerCountsMetadata(ranked: ReturnType<typeof rankOwners>): {
+  ownerCount: number;
+  ownersAboveFloor: number;
+  truncated: boolean;
+  totalWeightedLines: number;
+} {
+  return {
+    ownerCount: ranked.totalOwners,
+    ownersAboveFloor: ranked.aboveFloor,
+    truncated: ranked.emitted.length < ranked.aboveFloor,
+    totalWeightedLines: ranked.totalWeight,
+  };
+}
+```
+
+Then, at the `source_file` upsert (around `:471`) and the `directory` upsert (around `:502`), replace **both** occurrences of:
 
 ```ts
           metadata: {
@@ -208,21 +238,16 @@ In `ownership-pass.ts`, the `source_file` upsert (around `:471`) and the `direct
 with:
 
 ```ts
-          metadata: {
-            ownerCount: ranked.totalOwners,
-            ownersAboveFloor: ranked.aboveFloor,
-            truncated: ranked.emitted.length < ranked.aboveFloor,
-            totalWeightedLines: ranked.totalWeight,
-          },
+          metadata: ownerCountsMetadata(ranked),
 ```
 
-Note the two sites differ in indentation (the `directory` one is inside a different block). Match each file's existing indentation exactly rather than pasting blindly, then grep to confirm both applied:
+The two sites differ in indentation (the `directory` one sits in a different block). Match each site's existing indentation rather than pasting blindly, then confirm both applied and that no literal survives:
 
 ```bash
-grep -n "ownersAboveFloor" packages/gateway/src/ownership/ownership-pass.ts
+grep -n "ownerCountsMetadata\|ownersAboveFloor\|totalWeightedLines" packages/gateway/src/ownership/ownership-pass.ts
 ```
 
-Expected: exactly 2 hits so far.
+Expected: the helper definition, plus exactly 2 call sites, and **no** remaining `truncated: ranked.emitted.length` literal.
 
 - [ ] **Step 6: Give the `service` entity the same metadata**
 
@@ -254,14 +279,17 @@ with:
         externalId: `service:${serviceId}`,
         label: serviceId,
         service: "nimbus",
-        metadata: {
-          ownerCount: ranked.totalOwners,
-          ownersAboveFloor: ranked.aboveFloor,
-          truncated: ranked.emitted.length < ranked.aboveFloor,
-          totalWeightedLines: ranked.totalWeight,
-        },
+        metadata: ownerCountsMetadata(ranked),
       });
 ```
+
+Three call sites of `ownerCountsMetadata` now exist and no literal remains:
+
+```bash
+grep -c "ownerCountsMetadata(ranked)" packages/gateway/src/ownership/ownership-pass.ts
+```
+
+Expected: `3`.
 
 - [ ] **Step 7: Write the service-metadata integration test**
 
@@ -2373,26 +2401,34 @@ describe("parseOwnersArgs", () => {
 });
 
 describe("runOwnersCommand", () => {
-  test("sends path and never sends an undefined service key", async () => {
-    let seen: Record<string, unknown> | undefined;
-    await runOwnersCommand(["src/a.ts"], {
-      runAgentBriefCli: async (spec) => {
-        seen = spec.params;
+  // `OwnersCommandDeps.runAgentBriefCli` is generic, so the fake is declared as a generic
+  // arrow and needs no cast. If it will not typecheck as written, report NEEDS_CONTEXT
+  // rather than reaching for `as unknown as` — a cast here would hide a real signature
+  // mismatch between the fake and the seam it stands in for.
+  function recordingDeps(sink: { params?: Record<string, unknown> }): OwnersCommandDeps {
+    return {
+      runAgentBriefCli: async <T>(spec: AgentBriefCliSpec<T>): Promise<void> => {
+        sink.params = spec.params;
       },
-    } as unknown as Parameters<typeof runOwnersCommand>[1]);
+    };
+  }
 
-    expect(seen).toEqual({ path: "src/a.ts" });
+  test("sends path and never sends an undefined service key", async () => {
+    const sink: { params?: Record<string, unknown> } = {};
+    await runOwnersCommand(["src/a.ts"], recordingDeps(sink));
+    expect(sink.params).toEqual({ path: "src/a.ts" });
   });
 
   test("summary mode sends an empty param object", async () => {
-    let seen: Record<string, unknown> | undefined;
-    await runOwnersCommand([], {
-      runAgentBriefCli: async (spec) => {
-        seen = spec.params;
-      },
-    } as unknown as Parameters<typeof runOwnersCommand>[1]);
+    const sink: { params?: Record<string, unknown> } = {};
+    await runOwnersCommand([], recordingDeps(sink));
+    expect(sink.params).toEqual({});
+  });
 
-    expect(seen).toEqual({});
+  test("--service sends service and no path key", async () => {
+    const sink: { params?: Record<string, unknown> } = {};
+    await runOwnersCommand(["--service", "checkout"], recordingDeps(sink));
+    expect(sink.params).toEqual({ service: "checkout" });
   });
 });
 ```
