@@ -8,6 +8,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-07 — Resolve-by-URL** (`GET /v1/items/resolve`, `resolve` token scope). Schema **V52** adds
+  the derived `item.resolve_key` (`canonicalizeUrl(canonical_url ?? url)`) plus
+  `idx_item_resolve_key`, written at the single `upsertIndexedItem` SQL chokepoint and backfilled
+  row-wise inside the migration. Matching is a bounded ladder — exact key, all query params
+  dropped, then up to three trimmed trailing path segments — where a non-unique trim answers
+  `ambiguous` with at most five candidates (over the cap: `truncated: true` and no list) rather
+  than guessing. Returns metadata only, never a body, and appends no egress row.
 - **2026-08-07 — Ownership graph derived from git blame (schema V51).** PR A (derivation) of the
   S1 ownership work. A debounced post-sync pass (`ownership/ownership-pass.ts`, `[ownership]` in
   `nimbus.toml`, default ON) aggregates the already-indexed `git_blame_line` rows into graph edges:

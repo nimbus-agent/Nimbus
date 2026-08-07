@@ -335,9 +335,20 @@ is, mirroring `MAX_CONCURRENT_RUNS`.
 
 **Storage.** A new `resolve_key TEXT` column on `item`, plus
 `idx_item_resolve_key`. Value is `canonicalizeUrl(canonical_url ?? url)`, or NULL
-when both are null. Written at exactly one site — `upsertIndexedItemForSync`, the
-chokepoint V48/V49 established — so no connector can forget it and no connector
-changes.
+when both are null.
+
+> **Corrected 2026-08-07:** this section said V50. V50 is a retired permanent no-op and V51 is
+> the ownership graph (#1064), so the resolve migration is **V52**. Verified against
+> `index/migrations/runner.ts`, whose last step is `simpleStep(50, 51, …)`.
+
+Written at exactly one site — **`upsertIndexedItem`**, the SQL writer that
+`upsertIndexedItemForSync` delegates to — so no connector can forget it and no connector
+changes. **Corrected 2026-08-07:** this section named `upsertIndexedItemForSync`, which is the
+depth-applying _wrapper_, not the write site. Three other non-test callers reach the writer
+directly — `clips/clip-ingest.ts`, `briefs/brief-save.ts`, `glossary/glossary-project.ts` —
+plus `upsertNimbusItemIntoItemTable` for filesystem items. Deriving the key in the wrapper
+would have left **every web clip** unresolvable, which is the browser panel's primary case and
+the one item type whose identity already is a canonicalized URL.
 
 A derived column rather than an index on `canonical_url` directly, because the
 stored values are raw provider URLs (`github-sync.ts:209`:
@@ -349,7 +360,7 @@ cannot run `canonicalizeUrl`.
 docstring records that `externalIdFor` hashes its output, so changing its rules
 changes clip identity.
 
-**Migration V50** adds column + index, then backfills as a bespoke step:
+**Migration V52** adds column + index, then backfills as a bespoke step:
 `canonicalizeUrl` is JS, so the backfill reads, computes and updates row-wise
 rather than being expressible as one `UPDATE`. It backfills in the migration
 rather than deferring to a CLI, because a resolve read that silently misses the
@@ -376,7 +387,14 @@ were checked in `index/migrations/runner.ts` rather than assumed:
 
 **Matching is a bounded ladder, not a rule set.** `canonicalizeUrl` strips
 fragment, `utm_*`/click-ids and a non-root trailing slash — nothing else — so
-browser view-state survives it. Resolve tries, in order:
+browser view-state survives it.
+
+> **Note (2026-08-07):** `canonicalizeUrl` does not throw — unparseable input is returned
+> verbatim. So `unresolvable_url` cannot be inferred from its output; the route parses with
+> `new URL()` and rejects non-`http(s)` schemes _before_ canonicalizing. Without that check a
+> non-URL string would match a row whose stored key is that same string.
+
+Resolve tries, in order:
 
 1. the canonical key;
 2. the key with **all** query params dropped;
@@ -452,8 +470,13 @@ credentials, a service is not in the map at all.
 
 Self-hosted base URLs live in the **Vault**, not config —
 `readConnectorSecret(ctx.vault, "jenkins", "base_url")`
-(`jenkins-sync.ts:263`); eleven connectors carry a `base_url` secret. GitLab is
-not among them, so self-hosted GitLab is unreachable today either way.
+(`jenkins-sync.ts:263`); eleven connectors carry a `base_url` secret.
+
+> **Corrected 2026-08-07:** GitLab _is_ reachable. `connector-secrets-manifest.ts` lists
+> `gitlab: ["gitlab.pat", "gitlab.api_base"]`, and `_lib/gitlab/events.ts` already exports
+> `webOriginFromApiBase()` to derive the web origin from it. The secret is named `api_base`, not
+> `base_url`, so a host map built by scanning for `*.base_url` silently misses GitLab — the map
+> names each service's secret key explicitly instead.
 
 This lives in a shared module with its own tests, explicitly **not**
 `agents/impact.ts`'s `HOST_TO_SERVICE` (`impact.ts:130`) — a three-entry SaaS-only
@@ -540,7 +563,7 @@ Four PRs. Each carries wiring + docs + tests in one commit per the triple rule.
 2. **Agents over HTTP** — `http` client kind, source type and coverage class; the
    generalised append; `recordAgentBriefEgress` rename; **`D22(d)`**; the agent
    routes; `AgentRunController`. Updates `SECURITY-INVARIANTS.md` (`I29`, `D22`).
-3. **Resolve** — V50 `resolve_key` + index + batched backfill, the ladder,
+3. **Resolve** — V52 `resolve_key` + index + batched backfill, the ladder,
    `GET /v1/items/resolve`. Updates the schema reference.
 4. **Fetch-on-miss** — the scheduler's `sync` appender (raising `sync` to
    `per-run`), `fetchOne` on five connectors, the host-boundary module,
@@ -589,3 +612,9 @@ All four update [`docs/CHANGELOG.md`](../../CHANGELOG.md).
   non-appending HTTP capability lands. Re-decide then, with the data.
 - Whether `fetchOne`'s starter set should include Jira on the first PR, given its
   URL shapes vary most across Cloud and Server.
+
+  > **Resolved 2026-08-07: Jira is in the starter set,** bounded to `<base>/browse/<KEY>-<N>` and a
+  > `selectedIssue=<KEY>-<N>` query param, returning `unsupported_url` for other shapes. Jira's
+  > host boundary is the _least_ ambiguous of the five — it is exactly the origin of the
+  > Vault-stored `jira.base_url`, with no SaaS host to guess. The URL variance is real but lives in
+  > the deep-link shapes, and declining those explicitly is what `unsupported_url` is for.
