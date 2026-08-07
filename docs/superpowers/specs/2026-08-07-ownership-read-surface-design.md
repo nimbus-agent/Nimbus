@@ -169,7 +169,8 @@ export type OwnershipBrief = {
 | `agents/ownership.ts` | **new** — the agent: coordinator lanes, gap notes, `emitBriefWithSynthesis`. |
 | `agents/_lib/ownership-types.ts` | **new** — `OwnershipBrief` and friends. |
 | `agents/_lib/render.ts` | **edit** — `renderOwnership`. |
-| `agents/_lib/synthesize.ts` | **edit** — two if-chains (§5.4). |
+| `agents/_lib/synthesize.ts` | **edit** — `SynthInput` + two dispatches (§5.4). |
+| `agents/_lib/emit-brief.ts` | **edit** — `AnyBrief`, a **third** copy of the same union (§5.4). |
 | `ipc/agents-rpc.ts` | **edit** — handler + map entry + `newSessionId` kind. |
 | `ipc/ownership-rpc.ts` | **new** — `ownership.refresh`. |
 | `ipc/server/{dispatchers,options}.ts` | **edit** — `tryDispatchOwnershipRpc`, `ownershipRefresher`. |
@@ -257,16 +258,44 @@ Every lane is a local SQLite read — no LLM, no `Bun.spawn`, no network — so 
 budget is not in question; the LLM appears only in the optional `emitBriefWithSynthesis` prose pass,
 identically to every other brief.
 
-### 5.4 The synthesize fall-through
+### 5.4 The brief union is declared THREE times, and its dispatch falls through
 
-`agents/_lib/synthesize.ts` needs its `SynthInput` union (`:48`) and **both** if-chains extended:
-`deterministicRender` (`:61`) and `toolNameFor` (`:75`).
+`OwnershipBrief` must be added to three separate hand-maintained unions, none of which references the
+others:
 
-Both end in a bare fall-through — `return renderHuddle(brief)` and `return "agents.huddle"` — rather
-than an exhaustiveness check. Adding `OwnershipBrief` to the union without adding both arms therefore
-**compiles, runs, and renders an ownership brief as a huddle**. This is a silent-wrong-output trap,
-not a type error, so §9 carries a test that asserts an ownership brief does not render as a huddle
-and does not report itself as `agents.huddle`.
+1. `agents/_lib/synthesize.ts:48` — `SynthInput`.
+2. `agents/_lib/emit-brief.ts:16` — `AnyBrief`, the constraint on
+   `emitBriefWithSynthesis<B extends AnyBrief>`. **Miss this one and `agents/ownership.ts` does not
+   compile** — which is the benign failure of the three, because the compiler says so.
+3. `agents/_lib/synthesize.ts`'s two dispatches, `deterministicRender` (`:61`) and `toolNameFor`
+   (`:75`).
+
+The third is the dangerous one. Both dispatches end in a **bare fall-through** —
+`return renderHuddle(brief)` and `return "agents.huddle"` — not an exhaustiveness check. Extending
+the union without extending both dispatches therefore **compiles, runs, and renders an ownership
+brief as a huddle**, reporting itself to the LLM as `agents.huddle` into the bargain. Nothing fails.
+
+**This PR closes the trap class rather than stepping around it.** Both dispatches get an explicit
+`huddle` arm followed by an exhaustiveness guard:
+
+```ts
+if (brief.kind === "huddle") return renderHuddle(brief);
+return assertNeverBrief(brief);   // (x: never) => never
+```
+
+Every member of the union carries a distinct `kind` string literal (verified across `findings.ts`,
+`why-types.ts`, `glossary-types.ts`, `decisions-types.ts`), so `SynthInput` is a proper discriminated
+union and the guard is a genuine compile-time check — the **twelfth** agent then cannot repeat this
+mistake at all, because omitting an arm becomes a type error instead of a wrong brief.
+
+The runtime behaviour change is safe and is an improvement: `synthesize` is awaited inside
+`emitBriefWithSynthesis`'s `void (async () => …)()`, whose `.catch` (`emit-brief.ts:59`) emits
+`<agent>.briefError` with the message. An unreachable-in-practice throw therefore degrades to a
+named error notification, where today the same condition degrades to a *plausible wrong answer*.
+
+This is a small edit to a file every agent shares, so it is called out explicitly rather than folded
+in silently. §9 keeps the behavioural test regardless — the guard proves no arm is *missing*, the
+test proves the arm that exists is the *right* one, and neither substitutes for the other.
 
 ### 5.5 `ownership.refresh`
 
@@ -281,6 +310,18 @@ surfaces as "Method not found" one level up in `tryDispatchOwnershipRpc` — the
 
 `OwnershipPassSummary` has no `discoveryComplete` analogue — the pass processes the whole root set
 each run — so `passDone` carries the summary verbatim.
+
+**`ownership.refresh` takes no parameters, and this is a safety property rather than tidiness.**
+Every input the pass needs is re-read from `nimbus.toml` and `registered-roots.json` inside `runPass`
+(`assemble.ts:554-570`), exactly as `decisions.refresh` ignores its `_p` (`decisions-rpc.ts:67`).
+The reason to keep it that way is specific: `runOwnershipPass` clears `person --owns--> service` and
+`repo --belongs_to--> service` **wholesale** on every pass and re-emits only what is reachable from
+`opts.roots`, so its documented caller contract is that `opts.roots` must be the COMPLETE root set
+(predecessor spec §6). A caller-supplied `roots` — or any narrowing filter — would therefore not
+merely scope the run: it would **erase** the ownership of every service the omitted roots bind, and
+report success. A tuning knob (`halfLifeDays`, `minShare`) is a milder version of the same problem,
+producing a graph that disagrees with the configured policy until the next sync silently overwrites
+it. Params are rejected outright rather than validated, so there is no shape to get wrong later.
 
 ---
 
@@ -506,6 +547,12 @@ Per `nimbus-testing`: real SQLite, fresh temp dirs, no DB-layer mocks.
 - An `OwnershipBrief` renders through `renderOwnership`, **not** `renderHuddle`, and
   `toolNameFor` returns `agents.ownership`, **not** `agents.huddle`. Red-prove by deleting one arm
   and watching each assertion fail independently (§5.4).
+- Every one of the eleven pre-existing kinds still routes to its own renderer and tool name — the
+  regression net for rewriting both dispatches. Cheap: one table-driven test over the union.
+- The exhaustiveness guard is proven at **compile** time, not runtime: deleting an arm must make
+  `bun run typecheck` fail. Verify it once by hand during implementation and record the result in
+  the PR description; a runtime test cannot observe a type error, and asserting on the thrown
+  message instead would test the unreachable branch rather than the guard.
 
 **Unit — refresher guards** (`ownership-refresh.test.ts`, extended)
 
