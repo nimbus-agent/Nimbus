@@ -207,6 +207,16 @@ export async function deriveFetchHostMap(
       // SaaS host as before; an origin that resolves to the SAME host as the SaaS one (the
       // self-hosted secret simply points back at the public instance) is not a divergence and
       // still claims it too.
+      // NOTE (no behavior change here, just recording a consequence): before this skip existed, a
+      // self-hosted service ALWAYS claimed its static SaaS host too, so a self-hosted GitLab and a
+      // mis-pasted `jira.base_url = https://gitlab.com` would BOTH claim `gitlab.com` and collide —
+      // `ambiguousHosts` refused `gitlab.com` for BOTH services. Now that a self-hosted-only
+      // deployment does NOT also claim its SaaS host, that same misconfiguration no longer
+      // collides with anything: `gitlab.com` resolves to `jira` alone instead of being refused for
+      // both. This is bounded (jira's own `fetchOne` only accepts `/browse/KEY-N`-shaped URLs, and
+      // it still requires an actual misconfiguration — a `base_url` that is not jira's own host —
+      // to reach), but it is a strictly weaker collision posture than before the self-hosted skip:
+      // fewer ambiguous-host refusals means fewer configuration mistakes get caught this way.
       if (selfHostedHost !== null && selfHostedHost !== host) {
         continue;
       }

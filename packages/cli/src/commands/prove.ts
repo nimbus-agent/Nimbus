@@ -58,8 +58,12 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // one row for its one call. Both land through the same appender
   // (`egress/sync-egress.ts`'s `recordSyncEgress`), and "runs" is the word that does not overclaim
   // the scheduled-sync half of the pair — "calls" would read as per-call precision this class does
-  // not have.
-  sync: "connector sync runs and targeted fetch-on-miss calls",
+  // not have. "configured", not unqualified "connector": `sync/scheduler.ts`'s `runJob` skips the
+  // append entirely for a connector `isConnectorConfigured` (`sync/connector-configured.ts`) says
+  // is unconfigured — the connector's own `sync()` still runs (and, for six of them, still fails
+  // loudly), it just makes no outbound call and ledgers no row — so a zero here means no
+  // CONFIGURED connector's sync/fetch ran, not that no syncable on the scheduler executed at all.
+  sync: "configured connector sync runs and targeted fetch-on-miss calls",
 };
 
 /**

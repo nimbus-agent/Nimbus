@@ -4,8 +4,47 @@ import {
   syncPassCursorSuccess,
 } from "../../sync/pass-cursor-sync-result.ts";
 import { type SyncContext, type SyncResult, syncNoopResult } from "../../sync/types.ts";
+import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { asRecord, stringField } from "../unknown-record.ts";
+
+interface AwsCredentialFields {
+  readonly ak: string;
+  readonly sk: string;
+  readonly reg: string;
+  readonly prof: string;
+}
+
+async function readAwsCredentialFields(vault: NimbusVault): Promise<AwsCredentialFields> {
+  const ak = (await readConnectorSecret(vault, "aws", "access_key_id"))?.trim() ?? "";
+  const sk = (await readConnectorSecret(vault, "aws", "secret_access_key"))?.trim() ?? "";
+  const reg = (await readConnectorSecret(vault, "aws", "default_region"))?.trim() ?? "";
+  const prof = (await readConnectorSecret(vault, "aws", "profile"))?.trim() ?? "";
+  return { ak, sk, reg, prof };
+}
+
+/**
+ * Usable combinations for the shared `aws.*` credential fields:
+ *  - access key + secret + (region OR profile), or
+ *  - profile alone (no access key).
+ */
+function hasUsableAwsCredentialFields(f: AwsCredentialFields): boolean {
+  return (
+    (f.ak !== "" && f.sk !== "" && (f.reg !== "" || f.prof !== "")) ||
+    (f.prof !== "" && f.ak === "")
+  );
+}
+
+/**
+ * Whether the shared `aws.*` vault keys carry a usable credential combination — the SAME
+ * predicate `awsCredentialsExtra` gates its spawn on, exposed standalone (vault-only, no
+ * `SyncContext`) so `sync/connector-configured.ts` can reuse it as the configured-check for
+ * every AWS-CLI-derived syncable (`athena`/`cloudwatch`/`sagemaker`) without duplicating the
+ * usable-combination formula and risking drift between the two call sites.
+ */
+export async function hasUsableAwsCredentials(vault: NimbusVault): Promise<boolean> {
+  return hasUsableAwsCredentialFields(await readAwsCredentialFields(vault));
+}
 
 /**
  * Resolve the AWS credential environment from the shared `aws.*` vault keys
@@ -23,14 +62,11 @@ import { asRecord, stringField } from "../unknown-record.ts";
 export async function awsCredentialsExtra(
   ctx: SyncContext,
 ): Promise<Record<string, string> | null> {
-  const ak = (await readConnectorSecret(ctx.vault, "aws", "access_key_id"))?.trim() ?? "";
-  const sk = (await readConnectorSecret(ctx.vault, "aws", "secret_access_key"))?.trim() ?? "";
-  const reg = (await readConnectorSecret(ctx.vault, "aws", "default_region"))?.trim() ?? "";
-  const prof = (await readConnectorSecret(ctx.vault, "aws", "profile"))?.trim() ?? "";
-  const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
-  if (!ok) {
+  const fields = await readAwsCredentialFields(ctx.vault);
+  if (!hasUsableAwsCredentialFields(fields)) {
     return null;
   }
+  const { ak, sk, reg, prof } = fields;
   const extra: Record<string, string> = {};
   if (ak !== "") {
     extra["AWS_ACCESS_KEY_ID"] = ak;

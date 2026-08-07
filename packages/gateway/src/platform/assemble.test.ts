@@ -370,9 +370,14 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // test is about proving the wiring exists for THIS probe, not about being the only sync in
     // the process — a background scheduled sync for another registered connector would add an
     // unrelated row with a different `destination` and must not be mistaken for this one's.
-    // (It does NOT rely on other real cloud connectors staying silent because they are
-    // unconfigured on this test machine — I29 Critical 1 makes that true regardless, proven
-    // directly by the empty-Vault multi-connector test below, not merely assumed here.)
+    // (This test's own correctness does not depend on other real cloud connectors staying silent
+    // on this machine — filtering by `destination = probeServiceId` excludes any row a different
+    // connector's own run would append regardless. It is a SEPARATE claim, proven directly by the
+    // empty-Vault tests below rather than assumed here, that those other connectors actually DO
+    // stay silent: before Fix 1 in `sync/connector-configured.ts`, 13 registered syncables with an
+    // empty manifest key list were NOT silent — each made zero network calls but still ledgered an
+    // "authorized" row on every run. That gap is closed now, and the tests below assert it against
+    // both the 3 manifest-keyed probes AND all 13 previously-ungated syncables.)
     const db = services.localIndex.getDatabase();
     const rows = db
       .query(
@@ -417,6 +422,116 @@ describe("assemblePlatformServices — in-process assembly", () => {
       )
       .all(...probeServiceIds) as Array<{ destination: string }>;
     expect(rows).toHaveLength(0);
+  }, 30000);
+
+  // I29 Critical follow-up (Fix 1): the 13 registered, non-local-only syncables whose OWN
+  // `CONNECTOR_VAULT_SECRET_KEYS` entry is an EMPTY array (`sync/connector-configured.ts`'s
+  // `DERIVED_CONFIGURED_CHECKS`) used to fall through the manifest check's "no signal, no gate"
+  // branch and were ledgered as `authorized` on EVERY run against an EMPTY Vault — proven by a
+  // real boot + instrumented `globalThis.fetch`: 0 network attempts, 15 fabricated `sync` rows
+  // before this fix. Forcing all 13 against a real, empty-Vault assembly must now ledger ZERO
+  // rows AND make ZERO `fetch` calls (the four of the 13 that go over HTTP rather than an
+  // AWS/GCP CLI spawn — `gmail`/`google_drive`/`google_photos`/`google_meet` also apply, but
+  // `github_actions`/`onedrive`/`outlook` are the ones this process can reach without native
+  // repos/mailboxes already indexed).
+  it("force-syncing all 13 empty-manifest syncables against an EMPTY Vault ledgers ZERO sync egress rows and makes ZERO fetch calls", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths);
+
+    const emptyManifestServiceIds = [
+      "google_drive",
+      "gmail",
+      "google_photos",
+      "google_meet",
+      "onedrive",
+      "outlook",
+      "github_actions",
+      "bigquery",
+      "athena",
+      "cloudwatch",
+      "sagemaker",
+      "cloud_logging",
+      "vertex_ai",
+    ] as const;
+
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+      fetchCalls += 1;
+      return originalFetch(...args);
+    }) as typeof fetch;
+    try {
+      // Six of these thirteen (`google_drive`/`gmail`/`google_photos`/`google_meet`/`onedrive`/
+      // `outlook`) throw a "not configured" Error straight out of their own `sync()` when
+      // unconfigured — pre-existing, unmodified connector behavior this fix does not touch — so a
+      // forced run on any of them REJECTS the `forceSync` promise. Each rejection is swallowed
+      // individually: what this test asserts is the egress ROW COUNT, not that every one of these
+      // connectors resolves cleanly against an empty Vault.
+      await Promise.all(
+        emptyManifestServiceIds.map((id) =>
+          services?.syncScheduler.forceSync(id).catch(() => undefined),
+        ),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(fetchCalls).toBe(0);
+
+    const db = services.localIndex.getDatabase();
+    const rows = db
+      .query(
+        `SELECT destination FROM egress_ledger WHERE source_type = 'sync' AND destination IN (${emptyManifestServiceIds
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .all(...emptyManifestServiceIds) as Array<{ destination: string }>;
+    expect(rows).toEqual([]);
+  }, 60000);
+
+  // Fix 1, other half: gating must not silence the LEGITIMATE case — once one of these 13
+  // actually has its real signal set, the run must still ledger exactly ONE `sync` row, the same
+  // as any other configured connector. `github_actions` is picked because its own `sync()`
+  // short-circuits to a network-free noop as soon as the local index has no github repos (which
+  // this fresh DB does not), so this proves the egress-append wiring without depending on a real
+  // network call succeeding.
+  it("a newly-gated empty-manifest syncable still ledgers exactly ONE row once its real signal is set", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths);
+    // `github_actions` has a 60s scheduled interval and the scheduler is already ticking at this
+    // point — pausing it (a paused connector's own tick is skipped, but "forceSync on a paused
+    // connector still runs" per `scheduler.test.ts`) rules out a natural scheduled tick racing
+    // the explicit `forceSync` below and appending a SECOND row, which would make this assertion
+    // flaky for a reason that has nothing to do with what it is testing.
+    services.syncScheduler.pause("github_actions");
+
+    await writeConnectorSecret(services.vault, "github", "pat", "ghp_test_token");
+    await services.syncScheduler.forceSync("github_actions");
+
+    const db = services.localIndex.getDatabase();
+    const rows = db
+      .query(
+        `SELECT destination, method, hitl_status, result_status FROM egress_ledger
+         WHERE source_type = 'sync' AND destination = 'github_actions'`,
+      )
+      .all() as Array<{
+      destination: string;
+      method: string;
+      hitl_status: string;
+      result_status: string;
+    }>;
+    expect(rows).toEqual([
+      {
+        destination: "github_actions",
+        method: "sync.run",
+        hitl_status: "not_required",
+        result_status: "authorized",
+      },
+    ]);
   }, 30000);
 
   // I29 CRITICAL fix: `filesystem`/`blame`/`openapi`/`obsidian` are registered on the SAME
