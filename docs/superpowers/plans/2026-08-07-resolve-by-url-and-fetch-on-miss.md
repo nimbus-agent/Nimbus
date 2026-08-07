@@ -66,6 +66,7 @@ the call. Step 3 is a migration + row-wise backfill + a read; step 4 is a new ou
 surface + its security gate. Those are different risk classes, and squash-merge means one branch =
 one commit on `main`, so genuinely separating them requires two branches. Both are built in this
 plan; nothing is dropped or deferred.
+
 - **PR A** = Tasks 1–6 on `dev/asafgolombek/resolve-and-fetch-on-miss`.
 - **PR B** = Tasks 7–12 on `dev/asafgolombek/fetch-on-miss`, branched from PR A's head.
 Task 6 and Task 12 are the two "docs + CHANGELOG" tasks that close each PR under the triple rule.
@@ -124,17 +125,19 @@ Task 6 and Task 12 are the two "docs + CHANGELOG" tasks that close each PR under
 
 ---
 
-# PR A — Resolve
+## PR A — Resolve
 
 ### Task 1: V52 schema constants + migration step
 
 **Files:**
+
 - Create: `packages/gateway/src/index/resolve-key-v52-sql.ts`
 - Modify: `packages/gateway/src/index/migrations/runner.ts`
 - **Modify: `packages/gateway/src/index/local-index.ts:265` — `CURRENT_SCHEMA_VERSION` 51 → 52**
 - Test: `packages/gateway/src/index/migrations/runner.test.ts`
 
 **Interfaces:**
+
 - Consumes: `readIndexedUserVersion(db)`, `applySchemaStep`, `recordMigration`, `dbExec`, `dbRun`,
   `dbStmtRun` — all already in `runner.ts`. `canonicalizeUrl` from `../../util/url-canonical.ts`.
 - Produces: `RESOLVE_KEY_V52_SQL: readonly string[]`; an `IndexedSchemaStep` appended to
@@ -142,6 +145,7 @@ Task 6 and Task 12 are the two "docs + CHANGELOG" tasks that close each PR under
   becomes `52`.
 
 **Verified facts about this file — the plan's first draft got these wrong, so use these:**
+
 - The migration entry point is **`runIndexedSchemaMigrations(db, targetVersion, backupOptions?)`**
   (`runner.ts:635`). There is no `runIndexedMigrations`.
 - It **early-returns when `readIndexedUserVersion(db) >= targetVersion`**, so the target is what
@@ -398,6 +402,7 @@ git commit -m "V52: item.resolve_key column, index and row-wise backfill"
 ### Task 2: Write `resolve_key` at the `upsertIndexedItem` chokepoint
 
 **Files:**
+
 - Modify: `packages/gateway/src/index/item-store.ts:64-146`
 - **Create** (verified absent): `packages/gateway/src/index/item-store.test.ts`
 - Test: `packages/gateway/src/clips/clip-ingest.test.ts` (exists — add one test)
@@ -421,6 +426,7 @@ function freshIndexedDb(): Database {
 ```
 
 **Interfaces:**
+
 - Consumes: `canonicalizeUrl`.
 - Produces: nothing new exported — `upsertIndexedItem` gains one derived column write. Every caller
   (all ~62 connectors via `upsertIndexedItemForSync`, plus `clip-ingest`, `brief-save`,
@@ -525,14 +531,16 @@ Inside `upsertIndexedItem`, after the `const bodyComplete = …` line, add:
 Add `resolve_key` to the INSERT column list, the `VALUES` placeholders, the `DO UPDATE SET` clause
 and the bound-parameter array:
 
-```
+```text
       url, canonical_url, resolve_key, modified_at, author_id, metadata, synced_at, pinned
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ```
-```
+
+```text
       canonical_url = excluded.canonical_url,
       resolve_key = excluded.resolve_key,
 ```
+
 ```ts
       row.url ?? null,
       row.canonicalUrl ?? null,
@@ -555,6 +563,7 @@ Expected: PASS. Then confirm the caller set has not grown since this plan was wr
 ```bash
 grep -rn "upsertIndexedItem\b" --include=*.ts packages/gateway/src | grep -v "\.test\.ts" | grep -v "^\S*:.*\*"
 ```
+
 Expected callers: `briefs/brief-save.ts`, `clips/clip-ingest.ts`, `glossary/glossary-project.ts`,
 and `index/item-store.ts` itself. A fifth non-comment caller means re-checking that it supplies a
 URL, not that the approach is wrong.
@@ -573,12 +582,15 @@ git commit -m "derive item.resolve_key at the upsertIndexedItem chokepoint"
 ### Task 3: The matching ladder (pure module)
 
 **Files:**
+
 - Create: `packages/gateway/src/index/resolve-by-url.ts`
 - Test: `packages/gateway/src/index/resolve-by-url.test.ts`
 
 **Interfaces:**
+
 - Consumes: `canonicalizeUrl`; a `Database` for reads only.
 - Produces:
+
   ```ts
   export type ResolveMatchKind = "exact" | "query_stripped" | "path_trimmed";
   export type ResolveCandidate = {
@@ -601,6 +613,7 @@ git commit -m "derive item.resolve_key at the upsertIndexedItem chokepoint"
     opts?: { readonly fetchable?: (host: string) => boolean },
   ): ResolveResponse;
   ```
+
   `opts.fetchable` is injected so PR A can pass nothing (`fetchable: false` everywhere) and PR B
   can pass the host-boundary predicate without this module importing the sync layer.
 
@@ -918,11 +931,13 @@ git commit -m "resolve-by-url matching ladder with capped ambiguity"
 ### Task 4: `GET /v1/items/resolve` route + scope wiring
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-route-auth.ts`
 - Modify: `packages/gateway/src/ipc/http-server.ts` (mount beside `POST /v1/clips/related`, ~L527)
 - Test: `packages/gateway/src/ipc/http-route-auth.test.ts`, `packages/gateway/test/http-api.test.ts`
 
 **Interfaces:**
+
 - Consumes: `resolveItemByUrl` (Task 3); `requireScopedClipToken`, `json`,
   `enforceClipScope`, `clipScopeFor`.
 - Produces: `ROUTE_KEY_ITEMS_RESOLVE = "GET /v1/items/resolve"`, added to `ClipReadRouteKey`.
@@ -1129,6 +1144,7 @@ git commit -m "GET /v1/items/resolve behind the resolve scope"
 ### Task 5: OpenAPI + the `http` coverage narrowing
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-openapi.ts` (or wherever `/v1/openapi.json` is built —
   confirm with `grep -rn "openapi" packages/gateway/src/ipc/`)
 - Modify: `packages/gateway/src/egress/egress-coverage.ts:55-61`
@@ -1136,6 +1152,7 @@ git commit -m "GET /v1/items/resolve behind the resolve scope"
 - Test: the existing OpenAPI drift test; `packages/gateway/src/egress/egress-coverage.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new. Produces: no new symbols — documentation of an existing claim.
 
 - [ ] **Step 1: Find and run the OpenAPI drift test**
@@ -1156,7 +1173,7 @@ uses hand-written JSON literals, add a literal; do not introduce a schema genera
 In `packages/gateway/src/egress/egress-coverage.ts`, the `READ THE http ENTRY` paragraph currently
 names `GET /v1/items`, `/v1/people`, `/v1/audit`. Add resolve explicitly:
 
-```
+```text
  * NOT "everything on the HTTP API". `GET /v1/items`, `GET /v1/items/resolve`, `GET /v1/people`,
  * `GET /v1/audit` and the rest of the read surface hand index rows to a local process and append
  * NO row. `GET /v1/items/resolve` is called out by name because it is the newest of them and the
@@ -1198,6 +1215,7 @@ git commit -m "document the resolve route and its no-egress narrowing"
 ### Task 6: PR A docs — schema reference, design correction, CHANGELOG
 
 **Files:**
+
 - Modify: `docs/architecture.md` (schema reference section)
 - Modify: `docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md`
 - Modify: `docs/CHANGELOG.md`
@@ -1208,7 +1226,7 @@ git commit -m "document the resolve route and its no-egress narrowing"
 In `docs/architecture.md`, find the `item` table description (`grep -n "canonical_url" docs/architecture.md`)
 and add the column plus the index:
 
-```
+```text
 | `resolve_key` | TEXT | `canonicalizeUrl(canonical_url ?? url)`, NULL when both are null. Indexed by `idx_item_resolve_key`. Derived in `upsertIndexedItem` — the single SQL write site — and backfilled by V52. Matched by `GET /v1/items/resolve`. |
 ```
 
@@ -1312,7 +1330,7 @@ until it re-pairs with `nimbus clip pair --scopes resolve`.
 
 ---
 
-# PR B — Fetch-on-miss
+## PR B — Fetch-on-miss
 
 Branch from PR A's head:
 
@@ -1323,18 +1341,22 @@ git switch -c dev/asafgolombek/fetch-on-miss
 ### Task 7: The host boundary (the security gate)
 
 **Files:**
+
 - Create: `packages/gateway/src/sync/fetch-host-boundary.ts`
 - Test: `packages/gateway/src/sync/fetch-host-boundary.test.ts`
 
 **Interfaces:**
+
 - Consumes: `readConnectorSecret` and `NimbusVault`. **Verified signature** — the plan's first draft
   named the wrong module:
+
   ```ts
   // packages/gateway/src/connectors/connector-vault.ts:101
   export async function readConnectorSecret<S extends ConnectorServiceId>(
     vault: NimbusVault, serviceId: S, keyName: ConnectorSecretKeyOf<S>,
   ): Promise<string | null>   // internally: vault.get(`${serviceId}.${keyName}`)
   ```
+
   So `keyName` is the bare key (`"pat"`, `"api_base"`, `"base_url"`), **without** the service
   prefix, and it is TYPE-CHECKED against `connector-secrets-manifest.ts`. A wrong key name is a
   compile error, not a runtime null — which is why `SERVICE_SECRETS` below is safe to write as
@@ -1342,6 +1364,7 @@ git switch -c dev/asafgolombek/fetch-on-miss
 - A test fake must implement **`get(fullKey)`**, not `getSecret`, and is keyed by the FULL
   `"<service>.<key>"` string.
 - Produces:
+
   ```ts
   export type FetchableService = "github" | "gitlab" | "bitbucket" | "jenkins" | "jira";
   export const SAAS_HOSTS: Readonly<Record<string, FetchableService>>;
@@ -1559,6 +1582,7 @@ git commit -m "derived host boundary for targeted connector fetch"
 ### Task 8: `fetchOne` on `Syncable` + GitHub and Bitbucket
 
 **Files:**
+
 - Modify: `packages/gateway/src/sync/types.ts:49-54`
 - Modify: `packages/gateway/src/connectors/github-sync.ts`
 - Modify: `packages/gateway/src/connectors/bitbucket-sync.ts`
@@ -1566,13 +1590,16 @@ git commit -m "derived host boundary for targeted connector fetch"
   `packages/gateway/src/connectors/bitbucket-sync.test.ts`
 
 **Interfaces:**
+
 - Produces, in `sync/types.ts`:
+
   ```ts
   export type FetchOneResult =
     | { readonly status: "indexed"; readonly itemId: string }
     | { readonly status: "not_found" }
     | { readonly status: "unsupported_url" };
   ```
+
   and on `Syncable`: `fetchOne?(ctx: SyncContext, url: string): Promise<FetchOneResult>;`
 - Consumes: `upsertPr` (exported, `github-sync.ts:184`) and `upsertFromPullRequest`
   (module-private, `bitbucket-sync.ts:97`). Both write through `upsertIndexedItemForSync`, so
@@ -1736,10 +1763,12 @@ git commit -m "optional Syncable.fetchOne, implemented for github and bitbucket"
 ### Task 9: `fetchOne` on GitLab, Jenkins and Jira
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/{gitlab,jenkins,jira}-sync.ts`
 - Test: the three matching `*-sync.test.ts` files
 
 **Interfaces:**
+
 - Consumes: `FetchOneResult`; GitLab's mapper in `_lib/gitlab/events.ts` plus
   `normalisedApiBase` / `webOriginFromApiBase`; `upsertJenkinsBuildRowIfNew`
   (`jenkins-sync.ts:101`), `jenkinsJobRoot`, `jenkinsGetJson`; `jiraIndexOneIssue`
@@ -1905,6 +1934,7 @@ git commit -m "fetchOne for gitlab, jenkins and jira"
 ### Task 10: The targeted-fetch orchestrator + the `sync` egress appender
 
 **Files:**
+
 - Create: `packages/gateway/src/sync/targeted-fetch.ts`
 - Modify: `packages/gateway/src/sync/scheduler.ts:640-680` (per-run append in `runJob`)
 - Modify: `packages/gateway/src/egress/egress-coverage.ts` (`sync: "none"` → `"per-run"`)
@@ -1913,10 +1943,12 @@ git commit -m "fetchOne for gitlab, jenkins and jira"
 - Test: `packages/gateway/src/sync/targeted-fetch.test.ts`
 
 **Interfaces:**
+
 - Consumes: `deriveFetchHostMap`, `serviceForHost` (Task 7); `FetchOneResult` (Task 8);
   `appendEgressEntry` from `packages/gateway/src/egress/` (confirm the exact export name — D22
   confines it to `egress/*`, so this module must call it, never re-implement it).
 - Produces:
+
   ```ts
   export type TargetedFetchOutcome =
     | { readonly status: "indexed"; readonly itemId: string }
@@ -2087,6 +2119,7 @@ Add to the module, and to `TargetedFetchDeps`:
 /** How long a targeted fetch will wait for a rate-limit token before answering `rate_limited`. */
 const ACQUIRE_TIMEOUT_MS = 5_000;
 ```
+
 ```ts
   /** Injected so the timeout is testable without real time. */
   readonly sleep: (ms: number) => Promise<void>;
@@ -2185,7 +2218,7 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
 Update that file's leading docstring: `THREE classes are non-`none`` → `FOUR`, and add a `sync`
 paragraph:
 
-```
+```text
  * READ THE `sync` ENTRY AS `per-run`, WHICH IS WEAKER THAN `per-call` AND DELIBERATELY SO. It has
  * TWO appenders: the scheduler's sync-run boundary (`sync/scheduler.ts` `runJob`) and the targeted
  * single-item fetch (`sync/targeted-fetch.ts`, reached by `POST /v1/items/fetch`). A scheduled sync
@@ -2238,6 +2271,7 @@ git commit -m "targeted-fetch orchestrator and the per-run sync egress appender"
 ### Task 11: `POST /v1/items/fetch` as an I13 write
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/http-write-routes.ts`
 - Modify: `packages/gateway/src/ipc/http-route-auth.ts`
 - Modify: `packages/gateway/src/ipc/http-server.ts` (`ReadOnlyHttpServerOptions` + the write deps)
@@ -2245,6 +2279,7 @@ git commit -m "targeted-fetch orchestrator and the per-run sync egress appender"
 - Test: `packages/gateway/src/ipc/http-write-routes.test.ts`, `packages/gateway/test/http-api.test.ts`
 
 **Interfaces:**
+
 - Consumes: `targetedFetch` (Task 10), `deriveFetchHostMap` (Task 7).
 - Produces: `ROUTE_ITEMS_FETCH = "POST /v1/items/fetch"` on `WRITE_ROUTE_ALLOWLIST` at
   `MAX_BODY_BYTES_DEFAULT`; `ReadOnlyHttpServerOptions.fetchItem?: (url: string) =>
@@ -2435,6 +2470,7 @@ git commit -m "POST /v1/items/fetch as an explicit I13 write under the fetch sco
 ### Task 12: PR B docs — I29, OpenAPI, CHANGELOG, and the `--scopes` path
 
 **Files:**
+
 - Modify: `docs/SECURITY-INVARIANTS.md` (I29)
 - Modify: `CLAUDE.md`, `GEMINI.md` (I29 summary line)
 - Modify: `docs/architecture.md` (IPC/HTTP route catalogue)
