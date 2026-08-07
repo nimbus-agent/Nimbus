@@ -46,11 +46,32 @@ export interface SyncContext {
   depth: "metadata_only" | "summary" | "full";
 }
 
+/**
+ * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing them is how a
+ * panel ends up telling a user to check credentials that are fine.
+ */
+export type FetchOneResult =
+  | { readonly status: "indexed"; readonly itemId: string }
+  | { readonly status: "not_found" }
+  | { readonly status: "unsupported_url" };
+
 export interface Syncable {
   readonly serviceId: string;
   readonly defaultIntervalMs: number;
   readonly initialSyncDepthDays: number;
   sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult>;
+  /**
+   * Fetch and index ONE item by its web URL.
+   *
+   * OPTIONAL, and the optionality does real work: 62 connectors do not move, and a service that
+   * omits it makes `POST /v1/items/fetch` answer `no_targeted_fetch` rather than pretending. An
+   * implementation MUST write through `upsertIndexedItemForSync` so index depth is enforced
+   * centrally and `resolve_key` is populated by the same write. It must NOT call the rate
+   * limiter, append to the egress ledger, or check the fetch-host boundary — those are the
+   * orchestrator's job in a later layer; duplicating them here would make this method untestable
+   * in isolation.
+   */
+  fetchOne?(ctx: SyncContext, url: string): Promise<FetchOneResult>;
 }
 
 export interface SyncResult {

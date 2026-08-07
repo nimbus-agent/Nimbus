@@ -155,6 +155,26 @@ describe("fetch-host-boundary", () => {
     expect(serviceForHost(map, "github.com")).toBeNull();
   });
 
+  test("a host contested by three services stays refused, not resolved by the last one", async () => {
+    // FETCHABLE_SERVICES iterates github, gitlab, bitbucket, jenkins, jira — so with all three of
+    // these configured: github claims github.com first (via SAAS_HOSTS); jenkins then claims the
+    // same host via its base_url, which is the ALREADY-COVERED "detect a new collision" branch
+    // (`existing !== service` → delete + ambiguousHosts.add); jira claims it last, which is the
+    // UNCOVERED branch this test targets — `ambiguousHosts.has(host)` must be true and `claim()`
+    // must return early, leaving the host refused rather than re-resolving to jira because jira
+    // ran last.
+    const map = await deriveFetchHostMap(
+      fakeVault({
+        "github.pat": "t",
+        "jenkins.api_token": "t",
+        "jenkins.base_url": "https://github.com",
+        "jira.api_token": "t",
+        "jira.base_url": "https://github.com",
+      }),
+    );
+    expect(serviceForHost(map, "github.com")).toBeNull();
+  });
+
   test("a service re-claiming a host it already holds is not a collision", async () => {
     // gitlab.com is claimed by the static SaaS-host loop; a self-hosted origin secret that
     // happens to resolve to gitlab.com too (e.g. the api_base default) must still resolve —

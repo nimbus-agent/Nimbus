@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
 
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import {
+  type FetchOneResult,
   RateLimitError,
   retryAfterDateFromHeader,
   type Syncable,
@@ -538,6 +539,53 @@ async function syncGithubUserEvents(
   };
 }
 
+/**
+ * `https://<host>/<owner>/<repo>/pull/<n>` — the only shape targeted fetch supports.
+ *
+ * Anchored at both ends and every quantifier bounded: the caller-supplied URL reaches an API
+ * path, so a permissive pattern here is a request-forgery surface, not a convenience.
+ */
+const GITHUB_PR_URL_RE = /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/pull\/(\d{1,10})$/;
+
+/**
+ * Fetch and index ONE GitHub PR by its web URL. See `Syncable.fetchOne` for the contract: no
+ * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
+ * that calls this. This function's job is parse → call → map → upsert → return.
+ */
+async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const m = GITHUB_PR_URL_RE.exec(url);
+  if (m === null) {
+    return { status: "unsupported_url" };
+  }
+  const owner = m[1] as string;
+  const repo = m[2] as string;
+  const num = m[3] as string;
+  const pat = await readConnectorSecret(ctx.vault, "github", "pat");
+  if (pat === null || pat === "") {
+    return { status: "not_found" };
+  }
+  const repoFull = `${owner}/${repo}`;
+  const res = await fetch(pullDetailUrl(repoFull, Number.parseInt(num, 10)), {
+    headers: buildGithubEventHeaders(pat, null),
+  });
+  if (!res.ok) {
+    return { status: "not_found" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await res.text()) as unknown;
+  } catch {
+    return { status: "not_found" };
+  }
+  const pr = asRecord(parsed);
+  if (pr === undefined) {
+    return { status: "not_found" };
+  }
+  upsertPr(ctx, repoFull, pr, Date.now());
+  const externalId = `${repoFull}#${num}`;
+  return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, externalId) };
+}
+
 export type GithubSyncableOptions = {
   ensureGithubMcpRunning: () => Promise<void>;
 };
@@ -557,5 +605,6 @@ export function createGithubSyncable(options: GithubSyncableOptions): Syncable {
 
       return syncGithubUserEvents(ctx, cursor, pat, t0);
     },
+    fetchOne: fetchOnePullRequest,
   };
 }

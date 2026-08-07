@@ -1,7 +1,13 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { plainTextFromHtml } from "../string/html-plain-text.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import {
+  type FetchOneResult,
+  type Syncable,
+  type SyncContext,
+  type SyncResult,
+  syncNoopResult,
+} from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -204,6 +210,56 @@ function ingestBitbucketPullRequestPage(
   return { maxUpdated, upsertedDelta, nextPrUrl };
 }
 
+/**
+ * `https://<host>/<workspace>/<repo>/pull-requests/<n>` — the only shape targeted fetch supports.
+ *
+ * Anchored at both ends and every quantifier bounded: the caller-supplied URL reaches an API
+ * path, so a permissive pattern here is a request-forgery surface, not a convenience.
+ */
+const BITBUCKET_PR_URL_RE =
+  /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/pull-requests\/(\d{1,10})$/;
+
+/**
+ * Fetch and index ONE Bitbucket PR by its web URL. See `Syncable.fetchOne` for the contract: no
+ * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
+ * that calls this. This function's job is parse → call → map → upsert → return.
+ */
+async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const m = BITBUCKET_PR_URL_RE.exec(url);
+  if (m === null) {
+    return { status: "unsupported_url" };
+  }
+  const workspace = m[1] as string;
+  const repoSlug = m[2] as string;
+  const num = m[3] as string;
+  const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
+  const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
+  if (user === null || user === "" || pass === null || pass === "") {
+    return { status: "not_found" };
+  }
+  const repoFull = `${workspace}/${repoSlug}`;
+  const detailUrl = `${API_ROOT}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${num}`;
+  const res = await fetch(detailUrl, {
+    headers: { Authorization: basicAuthHeader(user, pass), Accept: "application/json" },
+  });
+  if (!res.ok) {
+    return { status: "not_found" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await res.text()) as unknown;
+  } catch {
+    return { status: "not_found" };
+  }
+  const pr = asRecord(parsed);
+  if (pr === undefined) {
+    return { status: "not_found" };
+  }
+  upsertFromPullRequest(ctx, repoFull, pr, Date.now());
+  const externalId = `${repoFull}#${num}`;
+  return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, externalId) };
+}
+
 export type BitbucketSyncableOptions = {
   ensureBitbucketMcpRunning: () => Promise<void>;
 };
@@ -214,6 +270,7 @@ export function createBitbucketSyncable(options: BitbucketSyncableOptions): Sync
     serviceId: SERVICE_ID,
     defaultIntervalMs: 60 * 1000,
     initialSyncDepthDays,
+    fetchOne: fetchOnePullRequest,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureBitbucketMcpRunning();
