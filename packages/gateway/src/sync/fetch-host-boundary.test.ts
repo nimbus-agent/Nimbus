@@ -1,0 +1,121 @@
+import { describe, expect, test } from "bun:test";
+import { deriveFetchHostMap, SAAS_HOSTS, serviceForHost } from "./fetch-host-boundary.ts";
+
+/** `readConnectorSecret` calls `vault.get("<service>.<key>")` — so the fake keys on the FULL key. */
+function fakeVault(secrets: Record<string, string>) {
+  return {
+    async get(fullKey: string): Promise<string | null> {
+      return secrets[fullKey] ?? null;
+    },
+  } as unknown as Parameters<typeof deriveFetchHostMap>[0];
+}
+
+describe("fetch-host-boundary", () => {
+  test("an unconfigured service is absent from the map entirely", async () => {
+    const map = await deriveFetchHostMap(fakeVault({}));
+    expect(serviceForHost(map, "github.com")).toBeNull();
+    expect(map.size).toBe(0);
+  });
+
+  test("a configured SaaS service contributes its static host", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
+    expect(serviceForHost(map, "github.com")).toBe("github");
+  });
+
+  test("an arbitrary host never resolves — no first-segment guessing", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
+    // agents/impact.ts's HOST_TO_SERVICE would answer "github" here via hostFirstSegment.
+    // That is acceptable as a hint inside a generated brief and unacceptable as a gate on an
+    // outbound request carrying the user's stored credentials.
+    expect(serviceForHost(map, "github.evil.example")).toBeNull();
+    expect(serviceForHost(map, "notgithub.com")).toBeNull();
+  });
+
+  test("a self-hosted Jenkins contributes the host of its Vault base_url", async () => {
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jenkins.base_url": "https://ci.corp.example:8443/jenkins/" }),
+    );
+    expect(serviceForHost(map, "ci.corp.example:8443")).toBe("jenkins");
+  });
+
+  test("self-hosted GitLab is reachable via api_base, not base_url", async () => {
+    // The design said self-hosted GitLab was unreachable. The secret is `gitlab.api_base`.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "gitlab.pat": "t", "gitlab.api_base": "https://git.corp.example/api/v4" }),
+    );
+    expect(serviceForHost(map, "git.corp.example")).toBe("gitlab");
+    // gitlab.com stays reachable too: it is a static SaaS host, independent of api_base.
+    expect(serviceForHost(map, "gitlab.com")).toBe("gitlab");
+  });
+
+  test("a Jira base_url host is matched case-insensitively", async () => {
+    // Jira's credential (api_token) proves the service is configured, independent of the
+    // self-hosted origin — base_url alone (without a credential) must not resolve; see
+    // "jira without a base_url secret" and "jira without a credential" below.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jira.api_token": "t", "jira.base_url": "https://Corp.Atlassian.NET" }),
+    );
+    expect(serviceForHost(map, "corp.atlassian.net")).toBe("jira");
+  });
+
+  test("a malformed base_url contributes nothing rather than throwing", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "jenkins.base_url": "not a url" }));
+    expect(map.size).toBe(0);
+  });
+
+  test("the boundary refuses what impact.ts's hint map would accept", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
+    for (const host of ["github.attacker.test", "jenkins.attacker.test", "jira.attacker.test"]) {
+      expect(serviceForHost(map, host)).toBeNull();
+    }
+  });
+
+  test("SAAS_HOSTS is frozen and exposes exactly the three static hosts", () => {
+    expect(Object.isFrozen(SAAS_HOSTS)).toBe(true);
+    expect(SAAS_HOSTS).toEqual({
+      "github.com": "github",
+      "gitlab.com": "gitlab",
+      "bitbucket.org": "bitbucket",
+    });
+  });
+
+  test("a non-http(s) base_url scheme contributes nothing", async () => {
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jenkins.base_url": "ftp://ci.corp.example" }),
+    );
+    expect(map.size).toBe(0);
+  });
+
+  test("an empty-string secret is treated as not configured", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "github.pat": "" }));
+    expect(serviceForHost(map, "github.com")).toBeNull();
+    expect(map.size).toBe(0);
+  });
+
+  test("bitbucket is configured via app_password and exposes its static host", async () => {
+    const map = await deriveFetchHostMap(
+      fakeVault({ "bitbucket.username": "u", "bitbucket.app_password": "p" }),
+    );
+    expect(serviceForHost(map, "bitbucket.org")).toBe("bitbucket");
+  });
+
+  test("jira without a base_url secret contributes no entry", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "jira.api_token": "t" }));
+    expect(map.size).toBe(0);
+  });
+
+  test("jira without a credential (base_url only) contributes no entry", async () => {
+    // base_url alone does not prove Jira is configured — the credential (api_token) must exist
+    // too, or a stray base_url with no live account would be fetchable. Fail-closed.
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jira.base_url": "https://corp.atlassian.net" }),
+    );
+    expect(serviceForHost(map, "corp.atlassian.net")).toBeNull();
+    expect(map.size).toBe(0);
+  });
+
+  test("serviceForHost is case-insensitive on the lookup side too", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "github.pat": "t" }));
+    expect(serviceForHost(map, "GitHub.COM")).toBe("github");
+  });
+});
