@@ -63,6 +63,8 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // .test.ts-suffixed, imported by the agents e2e suite rather than redefined, and its defensive
   // branches (the three swallowing try/catch blocks in stop()) cannot meet the production floor.
   { kind: "exact", path: "packages/gateway/src/agent-runs/agent-test-server.ts" },
+  // `http-api-test-server.ts` is the third harness of this shape — same reason.
+  { kind: "exact", path: "packages/gateway/src/ipc/http-api-test-server.ts" },
 
   // ── Generated SQL ── (retired 2026-08-01)
   // The `index/*-v<N>-sql.ts` migration constants are single exported template literals that the
