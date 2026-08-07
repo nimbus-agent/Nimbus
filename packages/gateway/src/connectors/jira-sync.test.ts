@@ -894,6 +894,18 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     expect(out).toEqual({ status: "not_found" });
   });
 
+  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+    const { ctx } = credCtx();
+    globalThis.fetch = ((): Promise<Response> => {
+      throw new TypeError("fetch failed: getaddrinfo ENOTFOUND example.atlassian.net");
+    }) as unknown as typeof fetch;
+
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
+
+    expect(out).toEqual({ status: "not_found" });
+  });
+
   // Regression: the returned itemId must match the row's ACTUAL id — derived from the API
   // response's own `key` field, never the raw regex capture from the caller's URL. A Jira issue
   // can be MOVED between projects, changing its key; the old `/browse/` link still 200s, but with

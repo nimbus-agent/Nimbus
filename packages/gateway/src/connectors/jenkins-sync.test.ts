@@ -32,22 +32,45 @@ function buildPayload(overrides: Record<string, unknown> = {}): Record<string, u
     building: false,
     timestamp: Date.now(),
     duration: 4200,
-    url: "https://ci.corp.example/job/build/12/",
     ...overrides,
   };
 }
 
 describeWithFetchRestore("jenkins-sync fetchOne", () => {
-  test("jenkins fetchOne indexes a build url", async () => {
+  test("jenkins fetchOne indexes a build url, and it resolves", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    const callerUrl = "https://ci.corp.example/job/build/12";
     globalThis.fetch = ((): Promise<Response> =>
       Promise.resolve(
-        new Response(JSON.stringify(buildPayload()), { status: 200 }),
+        new Response(JSON.stringify(buildPayload({ url: callerUrl })), { status: 200 }),
       )) as unknown as typeof fetch;
 
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "jenkins:build#12" });
+    // The row must be RESOLVABLE: `resolve_key` exactly equal to the caller URL.
+    const row = db.query("SELECT resolve_key FROM item WHERE id = 'jenkins:build#12'").get() as {
+      resolve_key: string | null;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
+  });
+
+  test("jenkins fetchOne falls back to a constructed url when the response omits url, and it resolves", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    const callerUrl = "https://ci.corp.example/job/build/12";
+    // No `url` field on the mocked response — exercises `upsertJenkinsBuildRowIfNew`'s
+    // `job.url` fallback (without it, `url`/`canonicalUrl`/`resolve_key` would land NULL).
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify(buildPayload({ url: undefined })), { status: 200 }),
+      )) as unknown as typeof fetch;
+
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
 
     expect(out).toEqual({ status: "indexed", itemId: "jenkins:build#12" });
     const row = db.query("SELECT resolve_key FROM item WHERE id = 'jenkins:build#12'").get() as {
@@ -55,20 +78,31 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     } | null;
     expect(row).not.toBeNull();
     expect(row?.resolve_key).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
   });
 
-  test("jenkins fetchOne indexes a nested-folder build url", async () => {
+  test("jenkins fetchOne indexes a nested-folder build url, and it resolves", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    const callerUrl = "https://ci.corp.example/job/team/job/service/5";
     globalThis.fetch = ((): Promise<Response> =>
       Promise.resolve(
-        new Response(JSON.stringify(buildPayload({ number: 5, url: undefined })), { status: 200 }),
+        new Response(JSON.stringify(buildPayload({ number: 5, url: callerUrl })), {
+          status: 200,
+        }),
       )) as unknown as typeof fetch;
 
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/team/job/service/5/");
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
 
     expect(out).toEqual({ status: "indexed", itemId: "jenkins:team/service#5" });
+    const row = db
+      .query("SELECT resolve_key FROM item WHERE id = 'jenkins:team/service#5'")
+      .get() as {
+      resolve_key: string | null;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
   });
 
   test("jenkins fetchOne declines a job url with no build number", async () => {
@@ -88,6 +122,19 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
 
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/999/");
+
+    expect(out).toEqual({ status: "not_found" });
+  });
+
+  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    globalThis.fetch = ((): Promise<Response> => {
+      throw new TypeError("fetch failed: getaddrinfo ENOTFOUND ci.corp.example");
+    }) as unknown as typeof fetch;
+
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
     expect(out).toEqual({ status: "not_found" });
   });
@@ -122,6 +169,30 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(row).not.toBeNull();
   });
 
+  // Regression: `upsertJenkinsBuildRowIfNew` is a genuine no-op (writes nothing) when the
+  // response's own `number` is `<= lastSeen` (0, here) or its `timestamp` predates `floorMs` (0,
+  // here) — `fetchOne` must report `not_found` for BOTH, never `indexed` for a row it never wrote.
+  test.each([
+    ["number is 0 (num <= lastSeen)", { number: 0 }],
+    ["timestamp is negative (modifiedAt < floorMs)", { timestamp: -1 }],
+  ])("reports not_found rather than a phantom indexed when %s", async (_label, overrides) => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify(buildPayload(overrides)), { status: 200 }),
+      )) as unknown as typeof fetch;
+
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
+
+    expect(out).toEqual({ status: "not_found" });
+    const row = db.query("SELECT COUNT(*) AS c FROM item WHERE service = 'jenkins'").get() as {
+      c: number;
+    };
+    expect(row.c).toBe(0);
+  });
+
   test.each([
     ["a bare dot-traversal job segment", "https://ci.corp.example/job/./12/"],
     ["a double-dot-traversal job segment", "https://ci.corp.example/job/../12/"],
@@ -152,6 +223,27 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
 
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/%E0%A4%A/12/");
+
+    expect(out).toEqual({ status: "unsupported_url" });
+  });
+
+  // Regression: `jobPathFromFullName` (the function that actually builds the request/write path)
+  // `.trim()`s each segment before re-encoding it, so a decoded segment carrying trailing
+  // whitespace is NOT a fixed point of it — the request would go to the TRIMMED (real) job while
+  // a naive write keyed the row on the UNTRIMMED name, forking a duplicate external id that shares
+  // the real job's url/resolve_key and makes the real build permanently `ambiguous`.
+  test.each([
+    ["a trailing-space segment (%20)", "https://ci.corp.example/job/real%20/12/"],
+    ["a trailing-tab segment (%09)", "https://ci.corp.example/job/real%09/12/"],
+    [
+      "a leading-space segment on a later folder",
+      "https://ci.corp.example/job/team/job/%20real/12/",
+    ],
+  ])("declines when the job path has %s (round-trip mismatch)", async (_label, url) => {
+    const ctx = ctxWithCreds(createMemoryIndexDb(), "https://ci.corp.example");
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+
+    const out = await syncable.fetchOne?.(ctx, url);
 
     expect(out).toEqual({ status: "unsupported_url" });
   });

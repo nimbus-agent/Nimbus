@@ -36,27 +36,49 @@ function mrPayload(overrides: Record<string, unknown> = {}): Record<string, unkn
 }
 
 describeWithFetchRestore("gitlab-sync fetchOne", () => {
-  test("gitlab fetchOne indexes a merge request on a self-hosted origin", async () => {
+  test("gitlab fetchOne indexes a merge request on a self-hosted origin, and it resolves", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t", "https://git.corp.example/api/v4");
+    const callerUrl = "https://git.corp.example/grp/sub/proj/-/merge_requests/7";
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify(mrPayload({ web_url: callerUrl })), { status: 200 }),
+      )) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "gitlab:grp/sub/proj!7" });
+    // The row must be RESOLVABLE: `resolve_key` exactly equal to the plain caller URL, not an
+    // `encodeURIComponent`-mangled variant (see `_lib/gitlab/events.ts`'s `canonicalUrl`
+    // fallback) — that byte-difference is exactly what made GitLab MRs unresolvable before this
+    // fix (fetch-on-miss would loop forever).
+    const row = db
+      .query("SELECT resolve_key FROM item WHERE id = 'gitlab:grp/sub/proj!7'")
+      .get() as { resolve_key: string | null } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
+  });
+
+  test("gitlab fetchOne still resolves when the response omits web_url", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    const callerUrl = "https://gitlab.com/g/p/-/merge_requests/7";
+    // No `web_url` field on the mocked response — exercises the fallback-to-caller-URL branch.
     globalThis.fetch = ((): Promise<Response> =>
       Promise.resolve(
         new Response(JSON.stringify(mrPayload()), { status: 200 }),
       )) as unknown as typeof fetch;
 
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(
-      ctx,
-      "https://git.corp.example/grp/sub/proj/-/merge_requests/7",
-    );
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
 
-    expect(out).toEqual({ status: "indexed", itemId: "gitlab:grp/sub/proj!7" });
-    const row = db
-      .query("SELECT resolve_key FROM item WHERE id = 'gitlab:grp/sub/proj!7'")
-      .get() as { resolve_key: string | null } | null;
+    expect(out).toEqual({ status: "indexed", itemId: "gitlab:g/p!7" });
+    const row = db.query("SELECT resolve_key FROM item WHERE id = 'gitlab:g/p!7'").get() as {
+      resolve_key: string | null;
+    } | null;
     expect(row).not.toBeNull();
-    expect(row?.resolve_key).not.toBeNull();
-    expect(row?.resolve_key).toContain("merge_requests/7");
+    expect(row?.resolve_key).toBe(callerUrl);
   });
 
   test("gitlab fetchOne declines an issue url", async () => {
@@ -76,6 +98,19 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
 
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/999");
+
+    expect(out).toEqual({ status: "not_found" });
+  });
+
+  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    globalThis.fetch = ((): Promise<Response> => {
+      throw new TypeError("fetch failed: getaddrinfo ENOTFOUND git.corp.example");
+    }) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
     expect(out).toEqual({ status: "not_found" });
   });
@@ -159,20 +194,23 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     expect(out).toEqual({ status: "not_found" });
   });
 
-  test("indexes a merge request under a deeply nested namespace path", async () => {
+  test("indexes a merge request under a deeply nested namespace path, and it resolves", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
+    const callerUrl = "https://gitlab.com/grp/sub1/sub2/proj/-/merge_requests/3";
     globalThis.fetch = ((): Promise<Response> =>
       Promise.resolve(
-        new Response(JSON.stringify(mrPayload({ iid: 3 })), { status: 200 }),
+        new Response(JSON.stringify(mrPayload({ iid: 3, web_url: callerUrl })), { status: 200 }),
       )) as unknown as typeof fetch;
 
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(
-      ctx,
-      "https://gitlab.com/grp/sub1/sub2/proj/-/merge_requests/3",
-    );
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
 
     expect(out).toEqual({ status: "indexed", itemId: "gitlab:grp/sub1/sub2/proj!3" });
+    const row = db
+      .query("SELECT resolve_key FROM item WHERE id = 'gitlab:grp/sub1/sub2/proj!3'")
+      .get() as { resolve_key: string | null } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
   });
 });

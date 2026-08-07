@@ -70,7 +70,14 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   }
   const apiBase = normalisedApiBase(await readConnectorSecret(ctx.vault, "gitlab", "api_base"));
   const detailUrl = `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${requestedIid}`;
-  const res = await fetch(detailUrl, { headers: { "PRIVATE-TOKEN": pat } });
+  let res: Response;
+  try {
+    res = await fetch(detailUrl, { headers: { "PRIVATE-TOKEN": pat } });
+  } catch {
+    // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
+    // `api_base` — in its message. Swallow it entirely rather than let it propagate.
+    return { status: "not_found" };
+  }
   if (!res.ok) {
     return { status: "not_found" };
   }
@@ -99,6 +106,13 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   const modifiedIso =
     stringField(mr, "updated_at") ?? stringField(mr, "created_at") ?? new Date().toISOString();
   const actionName = stringField(mr, "state") ?? "unknown";
+  // Prefer the response's own `web_url` — the authoritative, unencoded browser URL — over the
+  // constructed fallback: `upsertGitlabEventItem` otherwise `encodeURIComponent`s the whole
+  // namespaced path into `canonicalUrl` (correctly, for the periodic-sync codepath which never
+  // has this field), which makes `resolve_key` byte-different from the plain caller URL and
+  // therefore UNRESOLVABLE. Falls back to the caller's own URL (never the response's) if GitLab's
+  // response happens to omit `web_url`.
+  const webUrl = stringField(mr, "web_url") ?? url;
   upsertFromMergeRequestEvent({
     ctx,
     pathWithNamespace,
@@ -110,6 +124,7 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
     webOrigin,
     authorUsername,
     authorName,
+    webUrl,
   });
   return {
     status: "indexed",

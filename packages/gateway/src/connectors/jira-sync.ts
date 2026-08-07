@@ -350,12 +350,19 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
     return { status: "not_found" };
   }
   const detailUrl = `${creds.baseUrl}/rest/api/3/issue/${encodeURIComponent(requestedKey)}`;
-  const res = await fetch(detailUrl, {
-    headers: {
-      Accept: "application/json",
-      Authorization: basicAuthHeader(creds.email, creds.token),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(detailUrl, {
+      headers: {
+        Accept: "application/json",
+        Authorization: basicAuthHeader(creds.email, creds.token),
+      },
+    });
+  } catch {
+    // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
+    // `base_url` — in its message. Swallow it entirely rather than let it propagate.
+    return { status: "not_found" };
+  }
   if (!res.ok) {
     return { status: "not_found" };
   }
@@ -377,16 +384,16 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   if (returnedKey === undefined || returnedKey === "") {
     return { status: "not_found" };
   }
-  const indexed = jiraIndexOneIssue({
+  // `jiraIndexOneIssue` returns `false` only when the issue object it's handed has no usable
+  // `key` — but that's the SAME `issue` object, and the same field, already checked above as
+  // `returnedKey`. There is no code path here where it returns `false`.
+  jiraIndexOneIssue({
     ctx,
     issue,
     syncTime: Date.now(),
     baseUrl: creds.baseUrl,
     maxUpdatedIso: { value: "" },
   });
-  if (!indexed) {
-    return { status: "not_found" };
-  }
   return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, returnedKey) };
 }
 

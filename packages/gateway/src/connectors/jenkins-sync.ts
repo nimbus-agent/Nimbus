@@ -278,8 +278,10 @@ const JOB_PATH_PREFIX = "/job/";
 
 /**
  * Decodes a captured `/job/<a>/job/<b>` path into `["a", "b"]`, the exact inverse of
- * `jobPathFromFullName`'s `segs.map(encodeURIComponent).join("/job/")`. Rejects (returns `null`)
- * on any segment that fails to `decodeURIComponent` or that, once decoded, is entirely dots.
+ * `jobPathFromFullName`'s `segs.map((s) => s.trim()).filter(...).map(encodeURIComponent).join("/job/")`.
+ * Rejects (returns `null`) on any segment that fails to `decodeURIComponent`, that once decoded
+ * is entirely dots, that contains a literal `/` (smuggled via a percent-encoded slash), OR whose
+ * round-trip through `jobPathFromFullName` does not reproduce `capturedPath` EXACTLY.
  *
  * Unlike GitLab's single opaque `/projects/:id` path parameter, each Jenkins job segment is
  * re-`encodeURIComponent`-ed and re-joined with a literal `/job/` separator by
@@ -287,6 +289,14 @@ const JOB_PATH_PREFIX = "/job/";
  * real `/` characters (dots are unreserved and survive `encodeURIComponent` unescaped), a genuine
  * traversal segment the URL parser would normalize away. Every segment must be checked
  * individually — a single all-dots segment anywhere in a multi-folder path is still dangerous.
+ *
+ * The round-trip check exists because `jobPathFromFullName` ALSO `.trim()`s each segment before
+ * re-encoding it, so a decoded name carrying leading/trailing whitespace (reachable via `%20`,
+ * `%09`, `%0a`, `%c2%a0`, ...) is not a fixed point of it: the request this file actually issues
+ * goes to the TRIMMED job (a real, different job that may legitimately exist), while a naive
+ * write would key the row on the UNTRIMMED name — forking a duplicate external id that shares the
+ * real job's `url`/`resolve_key` and makes the real build permanently `ambiguous` on resolve.
+ * Asserting the round-trip closes this whole class rather than special-casing whitespace.
  */
 function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] | null {
   const withoutLeadingJob = capturedPath.startsWith(JOB_PATH_PREFIX)
@@ -309,6 +319,10 @@ function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] 
     }
     decoded.push(name);
   }
+  const jobFullName = decoded.join("/");
+  if (`${JOB_PATH_PREFIX}${jobPathFromFullName(jobFullName)}` !== capturedPath) {
+    return null;
+  }
   return decoded;
 }
 
@@ -317,14 +331,16 @@ function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] 
  * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
  * that calls this. This function's job is parse → call → map → upsert → return.
  *
- * `upsertJenkinsBuildRowIfNew` is a no-op (returns `null`, writes nothing) when the passed
+ * `upsertJenkinsBuildRowIfNew` is a NO-OP — it returns `null` and writes nothing — when the passed
  * `lastSeen`/`floorMs` say the build was already covered by a previous periodic sync tick or
  * predates the connector's initial-sync depth window. A targeted fetch has neither concept — it
  * is not resuming a cursor, and "too old for periodic sync" is exactly the case fetch-on-miss
  * exists for — so this calls it with `lastSeen: 0` and `floorMs: 0`, which disables both skip
- * conditions and forces an (idempotent) write on every well-formed response. The returned
- * `itemId` is built from `numberField(br, "number")` directly rather than trusted from that
- * call's return, so a hypothetical no-op still resolves correctly.
+ * conditions for the overwhelming majority of real responses. But `num <= lastSeen` (0) still
+ * fires for `number: 0`, and `modifiedAt < floorMs` (0) still fires for a negative timestamp — so
+ * a `null` return here is not merely hypothetical, and MUST be treated as "nothing was written",
+ * never as success: this function checks it and returns `not_found` rather than reporting
+ * `indexed` for a row that does not exist.
  */
 async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneResult> {
   const m = JENKINS_BUILD_URL_RE.exec(url);
@@ -355,23 +371,43 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
   const base = stripTrailingSlashes(baseRaw);
   const auth = basicAuthHeader(user.trim(), token.trim());
 
-  const buildApiUrl = `${jenkinsJobRoot(base, jobFullName)}/${String(requestedNum)}/api/json`;
-  const bRes = await jenkinsGetJson(buildApiUrl, auth);
+  const jobRoot = jenkinsJobRoot(base, jobFullName);
+  const buildApiUrl = `${jobRoot}/${String(requestedNum)}/api/json`;
+  let bRes: Awaited<ReturnType<typeof jenkinsGetJson>>;
+  try {
+    bRes = await jenkinsGetJson(buildApiUrl, auth);
+  } catch {
+    // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
+    // `base_url` — in its message. Swallow it entirely rather than let it propagate.
+    return { status: "not_found" };
+  }
   if (!bRes.ok || bRes.json === null || typeof bRes.json !== "object") {
     return { status: "not_found" };
   }
   const br = bRes.json as Record<string, unknown>;
-  // The returned itemId MUST reflect the row `upsertJenkinsBuildRowIfNew` actually wrote, which
-  // keys off the API response's own `number` field — never the raw regex capture from the
-  // caller's URL, which can differ from it (leading zeros, etc.).
-  const num = numberField(br, "number");
-  if (num === undefined) {
+  // Fallback `url` mirrors the shape `syncJenkinsJobBuilds` passes via `job.url` for the same
+  // purpose: if the build response itself omits its `url` field, `upsertJenkinsBuildRowIfNew`
+  // falls back to this one instead of leaving `url`/`canonicalUrl` (and therefore `resolve_key`)
+  // null — an indexed-but-unresolvable row that the fetch-on-miss loop could never converge on.
+  const fallbackUrl = `${jobRoot}/${String(requestedNum)}/`;
+  const upserted = upsertJenkinsBuildRowIfNew(
+    ctx,
+    { fullName: jobFullName, url: fallbackUrl },
+    br,
+    0,
+    0,
+    Date.now(),
+  );
+  // A `null` return means NOTHING was written (see the docstring above) — the row does not exist,
+  // so this must report `not_found`, not `indexed`. The returned itemId is built from `num` on
+  // the successful result, which is the API response's own `number` field, never the raw regex
+  // capture from the caller's URL (which can differ from it — leading zeros, etc.).
+  if (upserted === null) {
     return { status: "not_found" };
   }
-  upsertJenkinsBuildRowIfNew(ctx, { fullName: jobFullName }, br, 0, 0, Date.now());
   return {
     status: "indexed",
-    itemId: itemPrimaryKey(SERVICE_ID, jenkinsBuildExternalId(jobFullName, num)),
+    itemId: itemPrimaryKey(SERVICE_ID, jenkinsBuildExternalId(jobFullName, upserted.num)),
   };
 }
 

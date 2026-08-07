@@ -34,6 +34,18 @@ export type GitlabEventUpsertFields = {
   webOrigin: string;
   authorUsername: string | undefined;
   authorName: string | undefined;
+  /**
+   * The API's own authoritative browser URL (GitLab's `web_url` field on an MR/issue detail
+   * response), when the caller has one. When present, used VERBATIM for both `url` and
+   * `canonicalUrl` — it is already the exact, unencoded browser URL that
+   * `GET /v1/items/resolve` canonicalizes an incoming URL to, whereas the constructed fallback
+   * below `encodeURIComponent`s the whole namespaced path (correctly, to defend the `/projects/:id`
+   * request path against injection — see `gitlab-sync.ts`'s `ALL_DOTS_RE` docstring), which makes
+   * it byte-different from the plain URL and therefore UNRESOLVABLE. The periodic events sync has
+   * no such field on an event payload, so `webUrl` stays undefined there and behavior is
+   * unchanged.
+   */
+  webUrl?: string;
 };
 
 /**
@@ -68,6 +80,7 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
     webOrigin,
     authorUsername,
     authorName,
+    webUrl,
   } = f;
   const externalId = shape.externalId(pathWithNamespace, iid);
   const encPath = encodeURIComponent(pathWithNamespace);
@@ -85,14 +98,16 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
           displayName: authorName ?? authorUsername,
         })
       : null;
+  const rawUrl = `${webOrigin}/${pathWithNamespace}/-/${urlPath}`;
+  const canonicalFallback = `${webOrigin}/${encPath}/-/${urlPath}`;
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: shape.type,
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
     bodyPreview: "",
-    url: `${webOrigin}/${pathWithNamespace}/-/${urlPath}`,
-    canonicalUrl: `${webOrigin}/${encPath}/-/${urlPath}`,
+    url: webUrl ?? rawUrl,
+    canonicalUrl: webUrl ?? canonicalFallback,
     modifiedAt: Number.isFinite(modified) ? modified : now,
     authorId,
     metadata: meta,
