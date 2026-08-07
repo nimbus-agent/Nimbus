@@ -100,6 +100,29 @@ function buildGaps(args: {
       remediation:
         "Add a `[[filesystem.roots]]` block with `git_aware = true`, or run `nimbus index add <path>`.",
     });
+  } else if (args.serviceRequested !== null) {
+    // Lane 1 prioritizes `service` over `path` — it looks up ONLY the service
+    // when one is given, ignoring `path` entirely. A null target here is
+    // therefore a service-lookup miss, never a path-lookup miss, even when
+    // both were supplied in the same request. Attributing the gap to `path`
+    // in that combined case would name the wrong culprit — the path may well
+    // have ownership data; the service id is what didn't resolve.
+    //
+    // The zero-bound case (no service is bound to ANY repository) is reported
+    // by the unconditional `servicesBound === 0` check below instead, so this
+    // branch only fires when the requested id specifically doesn't match one
+    // of the services that ARE bound — never both, so never double-reported.
+    if (args.target === null && args.coverage.servicesBound > 0) {
+      gaps.push({
+        category: "missing_entity_type",
+        detail:
+          `\`${args.serviceRequested}\` does not name a bound service ` +
+          `(${String(args.coverage.servicesBound)} service(s) are bound).`,
+        remediation:
+          "Run `nimbus owners` with no arguments to see the bound-service count, or check " +
+          "`[ci.service.<id>]` in `nimbus.toml` for the exact ids.",
+      });
+    }
   } else if (args.requestedPath !== null && !args.resolved) {
     gaps.push({
       category: "missing_connector",
