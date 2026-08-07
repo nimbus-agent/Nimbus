@@ -268,18 +268,24 @@ Add the function beside `backfillAuditChain`:
 const RESOLVE_KEY_BACKFILL_CHUNK = 5_000;
 
 function backfillResolveKey(db: Database): void {
+  // NO OFFSET. The loop WRITES the very column its WHERE clause filters on, so every processed row
+  // leaves the candidate set — the set is self-consuming and the next unprocessed rows are always at
+  // the front. Adding an OFFSET would compound two shrinks (rows leaving the set AND the cursor
+  // advancing past them) and SILENTLY SKIP roughly half the rows once the backfill exceeds one
+  // chunk, committing user_version=52 over a half-populated column that never self-heals, because
+  // runIndexedSchemaMigrations early-returns when user_version >= target. Termination is guaranteed
+  // because each iteration removes up to CHUNK rows from the set and the loop breaks on a short read.
   const select = db.prepare(
     `SELECT id, url, canonical_url FROM item
      WHERE resolve_key IS NULL AND (url IS NOT NULL OR canonical_url IS NOT NULL)
-     ORDER BY id ASC LIMIT ? OFFSET ?`,
+     ORDER BY id ASC LIMIT ?`,
   );
   const update = db.prepare(`UPDATE item SET resolve_key = ? WHERE id = ?`);
   // Both statements come from db.prepare() and MUST be finalized: bun:sqlite only auto-releases the
   // db.query() cache, so an unfinalized handle makes a later db.close() a silent no-op (#969).
   try {
-    let offset = 0;
     for (;;) {
-      const rows = select.all(RESOLVE_KEY_BACKFILL_CHUNK, offset) as Array<{
+      const rows = select.all(RESOLVE_KEY_BACKFILL_CHUNK) as Array<{
         id: string;
         url: string | null;
         canonical_url: string | null;
@@ -295,10 +301,6 @@ function backfillResolveKey(db: Database): void {
         }
         dbStmtRun(update, canonicalizeUrl(raw), r.id);
       }
-      // OFFSET advances by the chunk, NOT by rows updated: the rows just written no longer satisfy
-      // `resolve_key IS NULL`, so a fixed OFFSET would re-scan. Advancing past what was read keeps
-      // the walk linear and terminating.
-      offset += rows.length;
       if (rows.length < RESOLVE_KEY_BACKFILL_CHUNK) {
         break;
       }
@@ -336,10 +338,12 @@ export const CURRENT_SCHEMA_VERSION = 52;
 Do NOT append to `BACKFILL_LABELS` — it intentionally stops at v37, and the comment at
 `runner.ts:508` says appending per migration makes an error branch unreachable.
 
-> Note the `OFFSET` subtlety above: because the `WHERE` filters on `resolve_key IS NULL` and the
-> loop writes that column, rows already handled drop out of the result set. Advancing `offset` by
-> `rows.length` is correct and terminating; a plain `OFFSET 0` re-read would also terminate but
-> re-scan, and `offset += CHUNK` on a shrinking set would skip rows.
+> **A multi-chunk test is MANDATORY, not optional.** Every correctness test that uses one row per
+> case passes with *any* pagination scheme, correct or not — the bug this note exists to prevent is
+> invisible below `RESOLVE_KEY_BACKFILL_CHUNK` rows. Export the constant and assert over
+> `CHUNK + 3` rows that **zero** remain NULL. (An earlier draft of this plan asserted that
+> `offset += rows.length` was "correct and terminating". It is not: it silently skips about half the
+> rows. The claim was wrong, and single-row tests could never have caught it.)
 
 - [ ] **Step 5: Run the test to verify it passes**
 
