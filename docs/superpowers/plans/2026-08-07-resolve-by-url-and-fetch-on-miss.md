@@ -1159,6 +1159,31 @@ git commit -m "GET /v1/items/resolve behind the resolve scope"
 
 - Consumes: nothing new. Produces: no new symbols — documentation of an existing claim.
 
+**Added to this task (gap found by Task 4's coverage run).** `resolve-by-url.ts` measures **81.82%
+branch** against an 80% floor — a 1.82pp margin, so one future uncovered branch breaks CI — and the
+uncovered branch is the **non-`http(s)` scheme rejection**, which is security-adjacent: it validates
+caller-supplied input. Task 3's tests covered the *unparseable* URL but never a *parseable URL with a
+rejected scheme*. Add this to `packages/gateway/src/index/resolve-by-url.test.ts` (the TEST file only
+— `resolve-by-url.ts` itself stays untouched):
+
+```ts
+test("a parseable URL with a non-http(s) scheme is unresolvable", () => {
+  // `new URL()` ACCEPTS all of these, so only the explicit protocol check rejects them. Planting a
+  // row whose stored key IS the input proves the scheme gate runs BEFORE any lookup — otherwise
+  // these would match and report found:true.
+  const db = dbWith([{ id: "a", key: "file:///etc/passwd" }]);
+  for (const raw of ["file:///etc/passwd", "javascript:alert(1)", "ftp://h/x", "data:text/plain,x"]) {
+    expect(resolveItemByUrl(db, raw)).toMatchObject({
+      found: false,
+      reason: "unresolvable_url",
+      service: null,
+      fetchable: false,
+    });
+  }
+  db.close();
+});
+```
+
 - [ ] **Step 1: Find and run the OpenAPI drift test**
 
 Run: `grep -rn "openapi" --include=*.ts packages/gateway/src/ipc/ | grep -v test | head`
