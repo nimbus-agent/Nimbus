@@ -80,16 +80,23 @@ jobs:
         # release-please step above errored (the very failure it recovers from),
         # not just on success. Skipped only if the job is cancelled outright.
         if: ${{ always() }}
+        id: reconcile
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Published as the `reconciled` output and read by the guard step below. Without
+          # it the two steps CONTRADICT each other: reconciling a phantom REMOVES the
+          # `autorelease: pending` label, which is one of the two signals the guard reads
+          # as "a release happened" — so every successful recovery failed the job.
+          reconciled=false
           pending=$(gh pr list --repo "$REPO" --state merged --label "autorelease: pending" \
                       --json number,mergeCommit --jq '.[] | [.number, .mergeCommit.oid] | @tsv')
           if [ -z "$pending" ]; then
             echo "No untagged, merged release PRs — nothing to reconcile."
+            echo "reconciled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           while IFS=$'\t' read -r num sha; do
@@ -154,7 +161,13 @@ jobs:
             gh pr edit "$num" --repo "$REPO" \
               --add-label "autorelease: tagged" --remove-label "autorelease: pending"
             echo "Relabelled PR #${num}: autorelease: pending → tagged."
+            # Reached only on the two branches that end with the release ACCOUNTED FOR:
+            # the tag was just created, or it already pointed at this merge commit. The
+            # `continue` paths above (unreadable manifest, tag pointing elsewhere) leave
+            # this false, so a run that needed a human still reaches the guard.
+            reconciled=true
           done <<< "$pending"
+          echo "reconciled=${reconciled}" >> "$GITHUB_OUTPUT"
 
       # Silent-drop guard. DISTINCT from the phantom-release step above: that one recovers a
       # release PR that merged without a tag. This one catches the opposite failure — no
@@ -176,30 +189,50 @@ jobs:
       # This is structural, not bad luck: squash-merge puts the ENTIRE PR description into the
       # commit body (see CLAUDE.md), so any prose token the grammar dislikes can silently cost
       # a release. The invariant below is the one thing that cannot be true on a healthy run:
-      # a user-facing commit exists since the last release, yet there is neither a new release
-      # nor an open release PR.
+      # a user-facing commit exists since the last release TAG, yet none of the three ways a
+      # release can be accounted for happened — release-please cut it, the step above
+      # reconciled it, or a release PR is open waiting to be merged.
+      #
+      # That third arm is why this step must know about the reconcile step. Reconciling a
+      # phantom CLEARS the `autorelease: pending` label by design, so before the `reconciled`
+      # output existed this guard failed on every single release-PR merge (runs 31068750817,
+      # 31074863757, 31165486901 — v1.21.0, v1.22.0, v1.23.0) while the release itself shipped
+      # correctly. A guard that fires on the healthy path teaches people to ignore it.
       - name: Guard — a user-facing commit must produce a release or a release PR
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           RELEASES_CREATED: ${{ steps.release-please.outputs.releases_created }}
+          RECONCILED: ${{ steps.reconcile.outputs.reconciled }}
         run: |
           set -euo pipefail
 
-          # No release yet => nothing to compare against; the first release is not this step's
-          # business. Any other read failure is fatal rather than silently "clean".
+          # Baseline off the newest `vX.Y.Z` TAG, not `releases/latest`. The tag is what marks
+          # a version as cut; the GitHub Release is produced afterwards by the tag-driven
+          # release.yml build, so `releases/latest` still names the PREVIOUS version for the
+          # whole length of that build. Any push to main landing in that window compared
+          # against a stale baseline and fired this guard on a perfectly healthy release.
+          # (A release build that fails AFTER its tag exists goes red loudly in release.yml
+          # and is abandoned, never retagged — see CLAUDE.md; it is not this step's business.)
+          # No tag yet => nothing to compare against; the first release is not this step's
+          # business either. Any other read failure is fatal rather than silently "clean".
           set +e
-          tag=$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>&1)
+          refs=$(gh api "repos/${REPO}/git/matching-refs/tags/v" --paginate --jq '.[].ref' 2>&1)
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
-            if grep -qE '\(HTTP 404\)' <<<"$tag"; then
-              echo "No published release yet — nothing to compare against."
-              exit 0
-            fi
-            echo "::error::could not read the latest release, refusing to guess: ${tag}"
+            echo "::error::could not list release tags, refusing to guess: ${refs}"
             exit 1
+          fi
+          # `matching-refs/tags/v` is a PREFIX match, so it also returns `vscode-v*`; the
+          # pattern keeps only bare vX.Y.Z. `grep` is braced so a no-match (exit 1) cannot
+          # kill the pipeline under `pipefail`. `sort -V` orders v1.9.0 before v1.20.0.
+          tag=$(sed 's#^refs/tags/##' <<<"$refs" \
+                  | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
+          if [ -z "$tag" ]; then
+            echo "No release tag yet — nothing to compare against."
+            exit 0
           fi
 
           # Subjects only: a body line can look like a conventional header and would inflate
@@ -214,10 +247,16 @@ jobs:
             exit 0
           fi
 
+          # Three ways a run is healthy. The middle one is NOT redundant with the tag
+          # baseline above: it is the direct statement from the recovery step that it
+          # accounted for this release, and it does not depend on the tag it just created
+          # already being visible to a subsequent API read.
           pending=$(gh pr list --repo "$REPO" --state open \
                       --label "autorelease: pending" --json number --jq 'length')
-          if [ "${RELEASES_CREATED:-false}" = "true" ] || [ "$pending" -gt 0 ]; then
-            echo "Healthy: releases_created=${RELEASES_CREATED:-false}, open release PR(s)=${pending}."
+          if [ "${RELEASES_CREATED:-false}" = "true" ] \
+            || [ "${RECONCILED:-false}" = "true" ] \
+            || [ "$pending" -gt 0 ]; then
+            echo "Healthy: releases_created=${RELEASES_CREATED:-false}, reconciled=${RECONCILED:-false}, open release PR(s)=${pending}."
             exit 0
           fi
 
