@@ -1,14 +1,121 @@
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { itemPrimaryKey } from "../index/item-store.ts";
+import {
+  type FetchOneResult,
+  type Syncable,
+  type SyncContext,
+  type SyncResult,
+  syncNoopResult,
+} from "../sync/types.ts";
 import { decodeGitlabCursor, encodeGitlabCursor } from "./_lib/gitlab/cursor.ts";
 import {
+  gitlabMrExternalId,
   normalisedApiBase,
   syncGitlabEventsPages,
+  upsertFromMergeRequestEvent,
   webOriginFromApiBase,
 } from "./_lib/gitlab/events.ts";
 import { syncGitlabPipelinesForIndexedProjects } from "./_lib/gitlab/pipelines.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
+
+/**
+ * `https://<host>/<namespace/path>/-/merge_requests/<iid>` — the only shape targeted fetch
+ * supports. The namespace can nest, so the path capture allows `/`; the `/-/` separator makes the
+ * split unambiguous.
+ *
+ * Anchored at both ends and every quantifier bounded: the caller-supplied URL reaches an API
+ * path, so a permissive pattern here is a request-forgery surface, not a convenience.
+ */
+export const GITLAB_MR_URL_RE =
+  /^https?:\/\/[^/]+\/([\w./-]{1,200})\/-\/merge_requests\/(\d{1,10})$/;
+
+/**
+ * A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a
+ * namespace path. This is the ONLY dot-traversal risk here: the whole captured path is
+ * `encodeURIComponent`-ed as a single `/projects/:id` path parameter, so an internal `/../`
+ * segment never reaches the wire as a literal `/../` (the surrounding `/` characters are
+ * themselves encoded to `%2F`, so the URL parser never sees a bare `..` segment). The one case
+ * that DOES reach the wire unescaped is when the ENTIRE capture is dots — `encodeURIComponent`
+ * leaves `.` unescaped (it's an unreserved character), so `encodeURIComponent("..") === ".."`
+ * and a bare `/projects/../merge_requests/7` results, which the URL parser normalizes away,
+ * popping `/projects` out of the path.
+ */
+const ALL_DOTS_RE = /^\.+$/;
+
+/**
+ * Fetch and index ONE GitLab merge request by its web URL. See `Syncable.fetchOne` for the
+ * contract: no rate-limiter call, no egress append, no host-boundary check — those belong to the
+ * orchestrator that calls this. This function's job is parse → call → map → upsert → return.
+ *
+ * Deliberately does NOT use `webOriginFromApiBase` — it returns the literal `"https://gitlab.com"`
+ * for any input not ending in `/api/v4`, which would be wrong for a credentialed self-hosted
+ * request. The web origin used to build the item's URL/canonical-URL instead comes straight off
+ * the caller-supplied URL's own origin (it IS the real web origin, by construction).
+ */
+async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const m = GITLAB_MR_URL_RE.exec(url);
+  if (m === null) {
+    return { status: "unsupported_url" };
+  }
+  const pathWithNamespace = m[1] as string;
+  if (ALL_DOTS_RE.test(pathWithNamespace)) {
+    return { status: "unsupported_url" };
+  }
+  const requestedIid = m[2] as string;
+  const pat = await readConnectorSecret(ctx.vault, "gitlab", "pat");
+  if (pat === null || pat === "") {
+    return { status: "not_found" };
+  }
+  const apiBase = normalisedApiBase(await readConnectorSecret(ctx.vault, "gitlab", "api_base"));
+  const detailUrl = `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${requestedIid}`;
+  const res = await fetch(detailUrl, { headers: { "PRIVATE-TOKEN": pat } });
+  if (!res.ok) {
+    return { status: "not_found" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await res.text()) as unknown;
+  } catch {
+    return { status: "not_found" };
+  }
+  const mr = asRecord(parsed);
+  if (mr === undefined) {
+    return { status: "not_found" };
+  }
+  // The returned itemId MUST reflect the row `upsertFromMergeRequestEvent` actually wrote, which
+  // keys off the API response's own `iid` field — never the raw regex capture from the caller's
+  // URL, which can differ from it (leading zeros, etc.).
+  const iid = numberField(mr, "iid");
+  if (iid === undefined) {
+    return { status: "not_found" };
+  }
+  const webOrigin = new URL(url).origin;
+  const author = asRecord(mr["author"]);
+  const authorUsername = author === undefined ? undefined : stringField(author, "username");
+  const authorName = author === undefined ? undefined : stringField(author, "name");
+  const title = stringField(mr, "title") ?? `Merge request !${String(iid)}`;
+  const modifiedIso =
+    stringField(mr, "updated_at") ?? stringField(mr, "created_at") ?? new Date().toISOString();
+  const actionName = stringField(mr, "state") ?? "unknown";
+  upsertFromMergeRequestEvent({
+    ctx,
+    pathWithNamespace,
+    iid,
+    title,
+    actionName,
+    createdAt: modifiedIso,
+    now: Date.now(),
+    webOrigin,
+    authorUsername,
+    authorName,
+  });
+  return {
+    status: "indexed",
+    itemId: itemPrimaryKey(SERVICE_ID, gitlabMrExternalId(pathWithNamespace, iid)),
+  };
+}
 
 export type GitlabSyncableOptions = {
   ensureGitlabMcpRunning: () => Promise<void>;
@@ -20,6 +127,7 @@ export function createGitlabSyncable(options: GitlabSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 60 * 1000,
     initialSyncDepthDays,
+    fetchOne: fetchOneMergeRequest,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureGitlabMcpRunning();

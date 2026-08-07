@@ -1,6 +1,7 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import {
+  type FetchOneResult,
   RateLimitError,
   retryAfterDateFromHeader,
   type Syncable,
@@ -294,6 +295,101 @@ function jiraShouldStopPaging(
   return issuesLen < pageSize;
 }
 
+/**
+ * `<base>/browse/<KEY>-<N>` — emitted by both Cloud and Server/DC.
+ *
+ * Anchored at both ends and every quantifier bounded: the caller-supplied URL feeds an API path.
+ */
+export const JIRA_BROWSE_URL_RE = /^https?:\/\/[^/]+\/browse\/([A-Z][A-Z0-9_]{0,50}-\d{1,10})$/;
+
+/**
+ * A board/backlog deep link carrying `selectedIssue=<KEY>-<N>` in the query string. Deliberately
+ * bounded on purpose: Jira's other shapes (agile boards, `/projects/X/issues/...`) vary too much
+ * across Cloud and Server to support blind, and `unsupported_url` is what declining them is for —
+ * this function does not guess a key from an arbitrary path.
+ */
+export const JIRA_SELECTED_ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,50}-\d{1,10}$/;
+
+/**
+ * Extracts an issue key from either supported shape, or returns `null` for anything else
+ * (including an unparseable URL or a non-http(s) scheme).
+ */
+function jiraKeyFromUrl(url: string): string | null {
+  const browseMatch = JIRA_BROWSE_URL_RE.exec(url);
+  if (browseMatch !== null) {
+    return browseMatch[1] as string;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null;
+  }
+  const selected = parsed.searchParams.get("selectedIssue");
+  if (selected !== null && JIRA_SELECTED_ISSUE_KEY_RE.test(selected)) {
+    return selected;
+  }
+  return null;
+}
+
+/**
+ * Fetch and index ONE Jira issue by its web URL. See `Syncable.fetchOne` for the contract: no
+ * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
+ * that calls this. This function's job is parse → call → map → upsert → return.
+ */
+async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const requestedKey = jiraKeyFromUrl(url);
+  if (requestedKey === null) {
+    return { status: "unsupported_url" };
+  }
+  const creds = await loadJiraVaultCreds(ctx);
+  if (creds === null) {
+    return { status: "not_found" };
+  }
+  const detailUrl = `${creds.baseUrl}/rest/api/3/issue/${encodeURIComponent(requestedKey)}`;
+  const res = await fetch(detailUrl, {
+    headers: {
+      Accept: "application/json",
+      Authorization: basicAuthHeader(creds.email, creds.token),
+    },
+  });
+  if (!res.ok) {
+    return { status: "not_found" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await res.text()) as unknown;
+  } catch {
+    return { status: "not_found" };
+  }
+  const issue = asRecord(parsed);
+  if (issue === undefined) {
+    return { status: "not_found" };
+  }
+  // The returned itemId MUST reflect the row `jiraIndexOneIssue` actually wrote, which keys off
+  // the API response's own `key` field — never the raw regex capture from the caller's URL. A
+  // Jira issue can be MOVED between projects, which changes its key; an old `/browse/` link then
+  // 200s with the issue's CURRENT key, which can differ from the one in the URL.
+  const returnedKey = stringField(issue, "key");
+  if (returnedKey === undefined || returnedKey === "") {
+    return { status: "not_found" };
+  }
+  const indexed = jiraIndexOneIssue({
+    ctx,
+    issue,
+    syncTime: Date.now(),
+    baseUrl: creds.baseUrl,
+    maxUpdatedIso: { value: "" },
+  });
+  if (!indexed) {
+    return { status: "not_found" };
+  }
+  return { status: "indexed", itemId: itemPrimaryKey(SERVICE_ID, returnedKey) };
+}
+
 export type JiraSyncableOptions = {
   ensureJiraMcpRunning: () => Promise<void>;
 };
@@ -304,6 +400,7 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
     serviceId: SERVICE_ID,
     defaultIntervalMs: 60 * 1000,
     initialSyncDepthDays,
+    fetchOne: fetchOneIssue,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureJiraMcpRunning();

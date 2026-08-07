@@ -1,7 +1,13 @@
-import { upsertIndexedItemForSync } from "../index/item-store.ts";
+import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
-import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import {
+  type FetchOneResult,
+  type Syncable,
+  type SyncContext,
+  type SyncResult,
+  syncNoopResult,
+} from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import {
   flattenJenkinsApiJobs,
@@ -98,6 +104,15 @@ function buildTitle(
   return `${jobFullName} #${String(num)}${suffix}`;
 }
 
+/**
+ * The `<jobFullName>#<num>` external-id shape shared by `upsertJenkinsBuildRowIfNew` and
+ * `fetchOne`. Both MUST derive this from the same source so the id `fetchOne` returns can never
+ * diverge from the id the row was actually written under.
+ */
+function jenkinsBuildExternalId(jobFullName: string, num: number): string {
+  return `${jobFullName}#${String(num)}`;
+}
+
 function upsertJenkinsBuildRowIfNew(
   ctx: SyncContext,
   job: { fullName: string; url?: string },
@@ -124,7 +139,7 @@ function upsertJenkinsBuildRowIfNew(
   const url = stringField(b, "url") ?? job.url ?? null;
   const duration = numberField(b, "duration");
   const titleRaw = buildTitle(job.fullName, num, result, building);
-  const externalId = `${job.fullName}#${String(num)}`;
+  const externalId = jenkinsBuildExternalId(job.fullName, num);
   const meta: Record<string, unknown> = {
     jobName: job.fullName,
     buildNumber: num,
@@ -246,6 +261,120 @@ async function runJenkinsSyncAfterAuth(
   };
 }
 
+/**
+ * `https://<host>/job/<name>/.../<n>/` — the only shape targeted fetch supports. Nested Jenkins
+ * folders are repeated `/job/` segments, so the path capture allows up to 10 of them.
+ *
+ * Anchored at both ends and every quantifier bounded: the caller-supplied URL reaches an API
+ * path, so a permissive pattern here is a request-forgery surface, not a convenience.
+ */
+export const JENKINS_BUILD_URL_RE =
+  /^https?:\/\/[^/]+((?:\/job\/[\w.%-]{1,100}){1,10})\/(\d{1,10})\/?$/;
+
+/** A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a name. */
+const ALL_DOTS_RE = /^\.+$/;
+
+const JOB_PATH_PREFIX = "/job/";
+
+/**
+ * Decodes a captured `/job/<a>/job/<b>` path into `["a", "b"]`, the exact inverse of
+ * `jobPathFromFullName`'s `segs.map(encodeURIComponent).join("/job/")`. Rejects (returns `null`)
+ * on any segment that fails to `decodeURIComponent` or that, once decoded, is entirely dots.
+ *
+ * Unlike GitLab's single opaque `/projects/:id` path parameter, each Jenkins job segment is
+ * re-`encodeURIComponent`-ed and re-joined with a literal `/job/` separator by
+ * `jobPathFromFullName` — so a decoded segment of `".."` reaches the wire as a bare `..` between
+ * real `/` characters (dots are unreserved and survive `encodeURIComponent` unescaped), a genuine
+ * traversal segment the URL parser would normalize away. Every segment must be checked
+ * individually — a single all-dots segment anywhere in a multi-folder path is still dangerous.
+ */
+function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] | null {
+  const withoutLeadingJob = capturedPath.startsWith(JOB_PATH_PREFIX)
+    ? capturedPath.slice(JOB_PATH_PREFIX.length)
+    : capturedPath;
+  const rawSegments = withoutLeadingJob.split(JOB_PATH_PREFIX);
+  const decoded: string[] = [];
+  for (const seg of rawSegments) {
+    let name: string;
+    try {
+      name = decodeURIComponent(seg);
+    } catch {
+      return null;
+    }
+    // A decoded segment containing "/" (from a percent-encoded slash, e.g. "%2F") would smuggle
+    // an extra job-path level past the regex's per-segment character class when re-encoded by
+    // `jobPathFromFullName` — reject it outright rather than let it re-split unexpectedly.
+    if (name === "" || name.includes("/") || ALL_DOTS_RE.test(name)) {
+      return null;
+    }
+    decoded.push(name);
+  }
+  return decoded;
+}
+
+/**
+ * Fetch and index ONE Jenkins build by its web URL. See `Syncable.fetchOne` for the contract: no
+ * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
+ * that calls this. This function's job is parse → call → map → upsert → return.
+ *
+ * `upsertJenkinsBuildRowIfNew` is a no-op (returns `null`, writes nothing) when the passed
+ * `lastSeen`/`floorMs` say the build was already covered by a previous periodic sync tick or
+ * predates the connector's initial-sync depth window. A targeted fetch has neither concept — it
+ * is not resuming a cursor, and "too old for periodic sync" is exactly the case fetch-on-miss
+ * exists for — so this calls it with `lastSeen: 0` and `floorMs: 0`, which disables both skip
+ * conditions and forces an (idempotent) write on every well-formed response. The returned
+ * `itemId` is built from `numberField(br, "number")` directly rather than trusted from that
+ * call's return, so a hypothetical no-op still resolves correctly.
+ */
+async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const m = JENKINS_BUILD_URL_RE.exec(url);
+  if (m === null) {
+    return { status: "unsupported_url" };
+  }
+  const capturedJobPath = m[1] as string;
+  const segments = jenkinsJobNameSegmentsFromCapturedPath(capturedJobPath);
+  if (segments === null) {
+    return { status: "unsupported_url" };
+  }
+  const jobFullName = segments.join("/");
+  const requestedNum = Number.parseInt(m[2] as string, 10);
+
+  const baseRaw = await readConnectorSecret(ctx.vault, "jenkins", "base_url");
+  const user = await readConnectorSecret(ctx.vault, "jenkins", "username");
+  const token = await readConnectorSecret(ctx.vault, "jenkins", "api_token");
+  if (
+    baseRaw === null ||
+    baseRaw.trim() === "" ||
+    user === null ||
+    user.trim() === "" ||
+    token === null ||
+    token.trim() === ""
+  ) {
+    return { status: "not_found" };
+  }
+  const base = stripTrailingSlashes(baseRaw);
+  const auth = basicAuthHeader(user.trim(), token.trim());
+
+  const buildApiUrl = `${jenkinsJobRoot(base, jobFullName)}/${String(requestedNum)}/api/json`;
+  const bRes = await jenkinsGetJson(buildApiUrl, auth);
+  if (!bRes.ok || bRes.json === null || typeof bRes.json !== "object") {
+    return { status: "not_found" };
+  }
+  const br = bRes.json as Record<string, unknown>;
+  // The returned itemId MUST reflect the row `upsertJenkinsBuildRowIfNew` actually wrote, which
+  // keys off the API response's own `number` field — never the raw regex capture from the
+  // caller's URL, which can differ from it (leading zeros, etc.).
+  const num = numberField(br, "number");
+  if (num === undefined) {
+    return { status: "not_found" };
+  }
+  upsertJenkinsBuildRowIfNew(ctx, { fullName: jobFullName }, br, 0, 0, Date.now());
+  return {
+    status: "indexed",
+    itemId: itemPrimaryKey(SERVICE_ID, jenkinsBuildExternalId(jobFullName, num)),
+  };
+}
+
 export type JenkinsSyncableOptions = {
   ensureJenkinsMcpRunning: () => Promise<void>;
 };
@@ -256,6 +385,7 @@ export function createJenkinsSyncable(options: JenkinsSyncableOptions): Syncable
     serviceId: SERVICE_ID,
     defaultIntervalMs: 120 * 1000,
     initialSyncDepthDays,
+    fetchOne: fetchOneBuild,
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureJenkinsMcpRunning();

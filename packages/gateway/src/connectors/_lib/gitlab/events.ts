@@ -23,7 +23,7 @@ export function normalisedApiBase(raw: string | null): string {
   return stripTrailingSlashes(raw);
 }
 
-type GitlabEventUpsertFields = {
+export type GitlabEventUpsertFields = {
   ctx: SyncContext;
   pathWithNamespace: string;
   iid: number;
@@ -36,9 +36,23 @@ type GitlabEventUpsertFields = {
   authorName: string | undefined;
 };
 
+/**
+ * The `<pathWithNamespace>!<iid>` external-id shape shared by `upsertFromMergeRequestEvent` and
+ * `fetchOne` (`gitlab-sync.ts`). Both MUST derive this from the same source so the id `fetchOne`
+ * returns can never diverge from the id the row was actually written under.
+ */
+export function gitlabMrExternalId(pathWithNamespace: string, iid: number): string {
+  return `${pathWithNamespace}!${String(iid)}`;
+}
+
+/** The `<pathWithNamespace>#<iid>` external-id shape for GitLab issue events. */
+export function gitlabIssueExternalId(pathWithNamespace: string, iid: number): string {
+  return `${pathWithNamespace}#${String(iid)}`;
+}
+
 type GitlabItemShape = {
   type: "pr" | "issue";
-  idSeparator: "!" | "#";
+  externalId: (pathWithNamespace: string, iid: number) => string;
   urlSegment: string;
 };
 
@@ -55,7 +69,7 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
     authorUsername,
     authorName,
   } = f;
-  const externalId = `${pathWithNamespace}${shape.idSeparator}${String(iid)}`;
+  const externalId = shape.externalId(pathWithNamespace, iid);
   const encPath = encodeURIComponent(pathWithNamespace);
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
   const modified = Date.parse(createdAt);
@@ -87,12 +101,25 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   });
 }
 
-function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
-  upsertGitlabEventItem(f, { type: "pr", idSeparator: "!", urlSegment: "merge_requests" });
+/**
+ * Exported so `gitlab-sync.ts`'s `fetchOne` can index a single merge request through the exact
+ * same write path the periodic events sync uses — same title clamp, same author resolution, same
+ * external-id derivation (`gitlabMrExternalId`).
+ */
+export function upsertFromMergeRequestEvent(f: GitlabEventUpsertFields): void {
+  upsertGitlabEventItem(f, {
+    type: "pr",
+    externalId: gitlabMrExternalId,
+    urlSegment: "merge_requests",
+  });
 }
 
 function upsertFromIssueEvent(f: GitlabEventUpsertFields): void {
-  upsertGitlabEventItem(f, { type: "issue", idSeparator: "#", urlSegment: "issues" });
+  upsertGitlabEventItem(f, {
+    type: "issue",
+    externalId: gitlabIssueExternalId,
+    urlSegment: "issues",
+  });
 }
 
 function processEvent(
