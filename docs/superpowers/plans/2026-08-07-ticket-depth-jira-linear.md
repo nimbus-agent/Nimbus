@@ -82,6 +82,11 @@ test("jira never yields canceled - it folds Won't Do into done", () => {
   // Jira exposes the distinction only via fields.resolution, which this PR
   // does not fetch. A consumer must read a Jira `done` as "closed, outcome
   // unknown"; if this ever returns "canceled" the contract has drifted.
+  //
+  // DRIFT TRIPWIRE: if a later PR starts fetching `fields.resolution`, this
+  // test is the thing that should fail first. Do not delete it to make the
+  // change pass — update it, and update every consumer that was told a Jira
+  // `done` means "closed, outcome unknown".
   const all = ["new", "indeterminate", "done"].map(normalizeJiraStatusCategory);
   expect(all).not.toContain("canceled");
 });
@@ -1003,6 +1008,11 @@ And at the success path (`:679`), consume it only once the walk actually complet
     // WITHOUT persisting a cursor, so its retry is still a cold start and must
     // keep the wide floor — otherwise the backfill silently narrows to 30 days
     // and never reaches the history it was asked for.
+    //
+    // Deleting on a `hasMore: true` success is correct: `runJobRecordSyncSuccess`
+    // writes `result.cursor` via `updateState` and re-queues a "continuation"
+    // job, and that job resumes from the persisted cursor — which bypasses the
+    // cold-start override entirely. The floor has done its job by then.
     this.historyFloors.delete(job.serviceId);
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
 ```
@@ -1154,6 +1164,52 @@ export function buildTargetServicesSql(p: RebodyParams): { sql: string; params: 
 update its doc comment so the `-32602` message's rationale still reads true: the guard now means
 "nothing to recover, by body OR by metadata version".
 
+**Two existing tests break on this change and must be updated in the same step.**
+`index-rebody-rpc.test.ts:525-537` asserts the returned `params` by exact value:
+
+```ts
+    const { sql, params } = buildTargetServicesSql({});
+    expect(params).toEqual([]);                    // now ["jira", 1, "linear", 1]
+
+    const { sql, params } = buildTargetServicesSql({ type: "issue" });
+    expect(params).toEqual(["issue"]);             // now ["jira", 1, "linear", 1, "issue"]
+```
+
+Rewrite them to assert the *shape* rather than a frozen list, so registering a third service in
+`REBODY_REQUIRED_META_VERSION` later does not break them again:
+
+```ts
+test("no type filter", () => {
+  const { sql, params } = buildTargetServicesSql({});
+  expect(sql).not.toContain("AND type");
+  // One (service, version) pair per registered service, and nothing else.
+  expect(params).toEqual([...REBODY_REQUIRED_META_VERSION].flat());
+});
+
+test("with type filter", () => {
+  const { sql, params } = buildTargetServicesSql({ type: "issue" });
+  expect(sql).toContain("AND type = ?");
+  // The type filter is appended AFTER the metadata pairs — order is load-bearing,
+  // since these are positional `?` bindings.
+  expect(params.at(-1)).toBe("issue");
+  expect(params).toHaveLength([...REBODY_REQUIRED_META_VERSION].flat().length + 1);
+});
+```
+
+Also bound the history window in `parseRebodyParams`, on the same `sinceDays` branch added above:
+
+```ts
+    // A floor before the epoch cannot be rendered as a valid JQL date literal
+    // (`jqlFloorFromMs` would emit a negative year and Jira would reject the
+    // query with an opaque 400). Reject it here with a legible message instead.
+    if (Date.now() - out.sinceDays * 86_400_000 < 0) {
+      throw new IndexRebodyRpcError(
+        -32602,
+        "params.sinceDays reaches before 1970; pass a window that starts after the epoch",
+      );
+    }
+```
+
 In `runRebody`, before `forceSync`, set the floor when `sinceDays` was given:
 
 ```ts
@@ -1248,7 +1304,18 @@ function parseRebodySince(raw: string | undefined): number | undefined {
 Wire it into `parseRebodyOptions`, and extend `printPlannedRebody`:
 
 ```ts
-  if (p.sinceDays !== undefined) console.log(`  since   = ${String(p.sinceDays)} days`);
+  if (p.sinceDays !== undefined) {
+    console.log(`  since   = ${String(p.sinceDays)} days`);
+    // A fat-fingered `--since 36500` is well-formed and would be honoured, so
+    // it cannot be rejected — but it should not pass silently either. The
+    // gateway separately rejects a window reaching before 1970.
+    if (p.sinceDays > 3650) {
+      console.log(
+        `  note: ${String(p.sinceDays)} days is over 10 years of history — expect a long ` +
+          `re-walk and heavy API usage. Ctrl-C now if that was a typo.`,
+      );
+    }
+  }
 ```
 
 Replace the trailing caveat sentence in `printPlannedRebody` so it stops implying the window is
