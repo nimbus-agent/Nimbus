@@ -233,11 +233,15 @@ const DEFS: readonly AgentToolDef[] = [
     agent: "ownership",
     description:
       "Answer 'who owns this code?' from recency-weighted git blame already in the local index. Pass `path` for a file or directory inside a configured root, or `service` for a [ci.service.<id>] id, or neither for a coverage summary. `path` and `service` are mutually exclusive. This is AUTHORSHIP-derived ownership — who wrote the lines, not who is formally accountable.",
-    // Bounds mirror the gateway's requireOwnershipParams: path 1..2048, service 1..64.
-    // The mutual exclusion is enforced gateway-side and stated in the description, since a
-    // zod schema cannot express it without a refinement the tool surface does not carry.
+    // `path` is a bare z.string(): the gateway's requireOwnershipParams trims BEFORE checking
+    // 1..2048, so a raw-length bound here would reject whitespace-padded input the gateway
+    // accepts — the same reason `ref`/`file`/`fileOrPrUrl` carry no length bound elsewhere in
+    // this file. `service` mirrors the gateway exactly: both sides check the UNTRIMMED length
+    // against 1..MAX_SERVICE_LEN. The mutual exclusion of path/service is enforced gateway-side
+    // and stated in the description, since a zod schema cannot express it without a refinement
+    // the tool surface does not carry.
     schema: {
-      path: z.string().min(1).max(2048).optional(),
+      path: z.string().optional(),
       service: z.string().min(1).max(MAX_SERVICE_LEN).optional(),
     },
     build: (a) => withOptional({}, { path: optStr(a, "path"), service: optStr(a, "service") }),
