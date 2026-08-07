@@ -19,6 +19,7 @@ export const ROUTE_KEY_BRIEF_GET = "GET /v1/briefs/*";
 export const ROUTE_KEY_CLIPS_RELATED = "POST /v1/clips/related";
 export const ROUTE_KEY_AGENTS_LIST = "GET /v1/agents";
 export const ROUTE_KEY_AGENT_RUN_GET = "GET /v1/agents/runs/*";
+export const ROUTE_KEY_ITEMS_RESOLVE = "GET /v1/items/resolve";
 
 export type RouteAuth =
   | { readonly kind: "public" }
@@ -66,6 +67,9 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   [ROUTE_KEY_CLIPS_RELATED]: { kind: "clip", scope: "clip" },
   [ROUTE_KEY_AGENTS_LIST]: { kind: "clip", scope: "agents" },
   [ROUTE_KEY_AGENT_RUN_GET]: { kind: "clip", scope: "agents" },
+  // Resolve is a bearer READ under its own scope. It appends NO egress row (see the `http`
+  // narrowing in egress/egress-coverage.ts) — it reads the local index and returns metadata.
+  [ROUTE_KEY_ITEMS_RESOLVE]: { kind: "clip", scope: "resolve" },
 
   // --- Writes. Keys are the `ROUTE_*` constant VALUES from http-write-routes.ts, verbatim.
   // Note `{id}`, not `:id` — copied from source, not guessed.
@@ -132,7 +136,8 @@ export type ClipReadRouteKey =
   | typeof ROUTE_KEY_CLIPS_RELATED
   | typeof ROUTE_KEY_BRIEF_GET
   | typeof ROUTE_KEY_AGENTS_LIST
-  | typeof ROUTE_KEY_AGENT_RUN_GET;
+  | typeof ROUTE_KEY_AGENT_RUN_GET
+  | typeof ROUTE_KEY_ITEMS_RESOLVE;
 
 export type ClipScopeVerdict =
   | { readonly ok: true }

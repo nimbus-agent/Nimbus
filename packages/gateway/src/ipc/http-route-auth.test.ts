@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { LEGACY_SCOPES } from "../clips/api-scopes.ts";
 import {
   clipScopeFor,
   enforceClipScope,
   HTTP_ROUTE_AUTH,
   insufficientScopeBody,
+  ROUTE_KEY_ITEMS_RESOLVE,
 } from "./http-route-auth.ts";
 import { WRITE_ROUTE_ALLOWLIST } from "./http-write-routes.ts";
 
@@ -205,6 +207,20 @@ describe("http-route-auth", () => {
     for (const key of ["GET /v1/agents", "GET /v1/agents/runs/*"]) {
       expect(enforceClipScope(key, ["clip", "briefs"])).toMatchObject({ ok: false, status: 403 });
     }
+  });
+
+  test("the resolve route requires the resolve scope", () => {
+    expect(HTTP_ROUTE_AUTH[ROUTE_KEY_ITEMS_RESOLVE]).toEqual({ kind: "clip", scope: "resolve" });
+    expect(clipScopeFor(ROUTE_KEY_ITEMS_RESOLVE)).toBe("resolve");
+  });
+
+  test("a legacy token is refused the resolve route with a distinguishable body", () => {
+    const verdict = enforceClipScope(ROUTE_KEY_ITEMS_RESOLVE, LEGACY_SCOPES);
+    expect(verdict).toEqual({
+      ok: false,
+      status: 403,
+      body: { error: "insufficient_scope", required: "resolve", granted: ["clip", "briefs"] },
+    });
   });
 
   test("hasScope is NOT exported — a call site cannot name a scope inline", async () => {

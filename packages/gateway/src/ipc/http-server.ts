@@ -15,6 +15,7 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { dispatchScimRead, isScimPath } from "../identity/scim-http-routes.ts";
 import { buildItemListSql, parseRelativeSinceToWindowMs } from "../index/item-list-query.ts";
+import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { ftsMatchQuery } from "../search/hybrid-internal.ts";
 import { formatPrometheus } from "../status/prometheus-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -31,6 +32,7 @@ import {
   ROUTE_KEY_AGENTS_LIST,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
+  ROUTE_KEY_ITEMS_RESOLVE,
 } from "./http-route-auth.ts";
 import {
   dispatchWriteRoute,
@@ -572,6 +574,33 @@ async function handleClipRelated(
   return json(out);
 }
 
+// GET /v1/items/resolve?url= — bearer-authed read under the `resolve` scope. Mounted in the fetch
+// handler, NOT reachable via dispatchReadOnlyDataGet: that table's "/v1/items/*" entry is PUBLIC
+// (handleItemByPath, no bearer gate at all), so routing resolve through it would serve scoped
+// output — including which URLs are indexed — to any local process on the machine.
+//
+// Returns resolveItemByUrl's result unchanged (metadata only) and appends NO egress row.
+async function handleItemsResolve(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response> {
+  const clipsVault = opts.clipsVault;
+  if (clipsVault === undefined) {
+    // Same "surface not mounted" shape as handleAgentsList/agentsDisabled(): a named 404, never a
+    // fall-through to the public /v1/items/* table.
+    return json({ error: "resolve_disabled" }, 404);
+  }
+  const auth = await requireScopedClipToken(req, clipsVault, ROUTE_KEY_ITEMS_RESOLVE);
+  if (!auth.ok) return auth.response;
+  const raw = url.searchParams.get("url");
+  if (raw === null || raw.trim() === "") {
+    return json({ error: "missing_url" }, 400);
+  }
+  return json(resolveItemByUrl(db, raw));
+}
+
 // GET /v1/briefs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,
 // NOT in dispatchReadOnlyDataGet: that table is documented "no bearer gate", so routing briefs
 // through it would expose a user's research report to any local process on the machine.
@@ -861,9 +890,12 @@ export function startReadOnlyHttpServer(
       if (req.method === "POST" && url.pathname === "/v1/clips/related") {
         return handleClipRelated(req, db, opts);
       }
-      // GET /v1/briefs/{id}, GET /v1/agents and GET /v1/agents/runs/{id} — bearer-authed reads;
-      // intercept before the unauthenticated GET table, which is documented "no bearer gate".
+      // GET /v1/items/resolve, GET /v1/briefs/{id}, GET /v1/agents and GET /v1/agents/runs/{id} —
+      // bearer-authed reads; intercept before the unauthenticated GET table, which is documented
+      // "no bearer gate".
       if (req.method === "GET") {
+        if (url.pathname === "/v1/items/resolve")
+          return await handleItemsResolve(req, url, db, opts);
         const briefGet = BRIEF_GET_RE.exec(url.pathname);
         if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
         if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
