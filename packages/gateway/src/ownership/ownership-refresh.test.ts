@@ -97,4 +97,20 @@ describe("createOwnershipRefresher", () => {
     await tick(80);
     expect(calls).toBe(0);
   });
+
+  test("run() rejects after stop() and starts no pass", async () => {
+    // `stop()` runs as a gateway shutdown callback; an on-demand pass must not
+    // start writing graph rows while the sidecars are closing.
+    let calls = 0;
+    const r = createOwnershipRefresher({
+      debounceMs: 30,
+      runPass: async () => {
+        calls += 1;
+        return SUMMARY;
+      },
+    });
+    r.stop();
+    await expect(r.run()).rejects.toThrow("ERR_OWNERSHIP_STOPPED");
+    expect(calls).toBe(0);
+  });
 });

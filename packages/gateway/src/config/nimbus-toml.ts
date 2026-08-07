@@ -1777,9 +1777,19 @@ function applyNimbusOwnershipKey(
     return;
   }
   if (key === "ignore_globs") {
-    // An explicit empty array is meaningful (disable filtering), so this must
-    // NOT be guarded on length.
-    out.ignoreGlobs = parseStringArray(valRaw);
+    // `parseStringArray` THROWS a TypeError on anything not bracket-delimited.
+    // Unguarded, that escapes `parseNimbusOwnershipToml` into `loadTomlSection`'s
+    // catch, which discards the WHOLE `[ownership]` section — so one malformed
+    // glob line would silently re-enable a pass the user had turned off with
+    // `enabled = false`. Swallow it here instead: `ignoreGlobs` stays unset and
+    // falls back to the default list, every other key in the section survives.
+    try {
+      // An explicit empty array is meaningful (disable filtering), so this must
+      // NOT be guarded on length.
+      out.ignoreGlobs = parseStringArray(valRaw);
+    } catch {
+      /* malformed: keep the default ignore list */
+    }
     return;
   }
   // `min_share` is the one FLOAT key, so it MUST precede the integer branch:

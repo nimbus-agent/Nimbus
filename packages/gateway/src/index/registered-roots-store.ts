@@ -92,3 +92,27 @@ export function mergeRoots(
   }
   return out;
 }
+
+/**
+ * The COMPLETE set of git-aware root paths across BOTH root sources — the
+ * `[[filesystem.roots]]` TOML blocks and `registered-roots.json` (written by
+ * `nimbus index add`).
+ *
+ * Consumers that clear-and-re-emit derived state keyed on roots (the ownership
+ * pass) MUST use this rather than the TOML roots alone: `git_blame_line` is
+ * populated for the merged set (see `registerFilesystemRootSyncables` in
+ * `platform/assemble.ts`), so a TOML-only root set both misses every path under
+ * a CLI-registered root AND erases the ownership already derived for any
+ * service that root binds.
+ *
+ * Delegates to `mergeRoots`, so TOML wins on a same-path collision and a root
+ * whose folder is missing is dropped.
+ */
+export function gitAwareRootPaths(
+  tomlRoots: readonly NimbusFilesystemRootToml[],
+  registered: readonly NimbusFilesystemRootToml[],
+): string[] {
+  return mergeRoots(tomlRoots, registered)
+    .filter((r) => r.gitAware)
+    .map((r) => r.path);
+}

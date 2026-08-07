@@ -63,4 +63,13 @@ describe("[ownership] config", () => {
     expect(cfg.debounceMs).toBe(DEFAULT_NIMBUS_OWNERSHIP_TOML.debounceMs);
     expect(cfg.minShare).toBe(DEFAULT_NIMBUS_OWNERSHIP_TOML.minShare);
   });
+
+  test("a malformed ignore_globs does not discard the rest of the section", () => {
+    // Regression: `parseStringArray` throws on a non-bracketed value. Unguarded
+    // that unwinds out of the whole-section parse, so `enabled = false` would be
+    // lost and the pass would silently run again.
+    const cfg = parseNimbusOwnershipToml("[ownership]\nenabled = false\nignore_globs = nonsense\n");
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.ignoreGlobs).toEqual(DEFAULT_NIMBUS_OWNERSHIP_TOML.ignoreGlobs);
+  });
 });

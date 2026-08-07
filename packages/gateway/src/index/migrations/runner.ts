@@ -452,7 +452,15 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "connector depth default summary->full (enforced depth v49)",
     DEPTH_DEFAULT_V49_SQL,
   ),
-  simpleStep(49, 50, "reserved for HTTP agents resolve-by-URL", SCHEMA_V50_RESERVED_SQL),
+  // This description PERSISTS into every user's `_schema_migrations` ledger, so it must not
+  // carry the retracted "reserved for X" claim — the slot is a permanent no-op (see
+  // `SCHEMA_V50_RESERVED_SQL`).
+  simpleStep(
+    49,
+    50,
+    "V50 retired no-op (never backfill; a DB at V51 never re-enters this step)",
+    SCHEMA_V50_RESERVED_SQL,
+  ),
   simpleStep(50, 51, "ownership relation types + ownership_pass_state", [
     OWNERSHIP_RELATION_TYPES_V51_SQL,
     OWNERSHIP_PASS_STATE_V51_SQL,

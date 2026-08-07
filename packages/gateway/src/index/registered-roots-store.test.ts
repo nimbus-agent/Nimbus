@@ -7,6 +7,7 @@ import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import {
   addRegisteredRoot,
   canonicalizeRootPath,
+  gitAwareRootPaths,
   loadRegisteredRoots,
   mergeRoots,
 } from "./registered-roots-store.ts";
@@ -83,6 +84,45 @@ describe("mergeRoots", () => {
     const r = mkdtempSync(join(tmpdir(), "rr-reg-"));
     const merged = mergeRoots([fsRoot(t)], [fsRoot(r)]);
     expect(new Set(merged.map((m) => m.path))).toEqual(new Set([t, r]));
+  });
+});
+
+describe("gitAwareRootPaths", () => {
+  test("TOML-only: returns the git-aware TOML roots", () => {
+    const t = mkdtempSync(join(tmpdir(), "rr-toml-"));
+    expect(gitAwareRootPaths([fsRoot(t)], [])).toEqual([t]);
+  });
+
+  test("registered-only: a CLI-registered root is NOT dropped", () => {
+    // The regression this guards: deriving the ownership root set from the
+    // `[[filesystem.roots]]` TOML alone silently omits every `nimbus index add`
+    // root, whose blame rows the pass would then clear and never re-emit.
+    const r = mkdtempSync(join(tmpdir(), "rr-reg-"));
+    expect(gitAwareRootPaths([], [fsRoot(r)])).toEqual([r]);
+  });
+
+  test("both sources are merged", () => {
+    const t = mkdtempSync(join(tmpdir(), "rr-toml-"));
+    const r = mkdtempSync(join(tmpdir(), "rr-reg-"));
+    expect(new Set(gitAwareRootPaths([fsRoot(t)], [fsRoot(r)]))).toEqual(new Set([t, r]));
+  });
+
+  test("a same-path registered root collapses into the TOML one", () => {
+    const p = mkdtempSync(join(tmpdir(), "rr-dup-"));
+    expect(gitAwareRootPaths([fsRoot(p)], [fsRoot(p)])).toEqual([p]);
+  });
+
+  test("non-git-aware roots are filtered out of both sources", () => {
+    const t = mkdtempSync(join(tmpdir(), "rr-toml-"));
+    const r = mkdtempSync(join(tmpdir(), "rr-reg-"));
+    expect(
+      gitAwareRootPaths([fsRoot(t, { gitAware: false })], [fsRoot(r, { gitAware: false })]),
+    ).toEqual([]);
+  });
+
+  test("a root whose folder is gone is dropped", () => {
+    const gone = join(tmpdir(), "gone-root-xyz-987654");
+    expect(gitAwareRootPaths([], [fsRoot(gone)])).toEqual([]);
   });
 });
 

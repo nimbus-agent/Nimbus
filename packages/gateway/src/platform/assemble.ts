@@ -138,7 +138,11 @@ import {
   type SemanticSearchDeps,
 } from "../index/local-index.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
-import { loadRegisteredRoots, mergeRoots } from "../index/registered-roots-store.ts";
+import {
+  gitAwareRootPaths,
+  loadRegisteredRoots,
+  mergeRoots,
+} from "../index/registered-roots-store.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
@@ -533,16 +537,23 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // `person --owns--> service` edge each pass and re-emits only what is reachable from
   // `opts.roots`, so a partial/stale root set would silently erase ownership for every
   // service the omitted roots would have bound (see that function's doc comment). Re-reading
-  // per pass also means a `[[filesystem.roots]]` or service-config edit takes effect without a
-  // gateway restart.
+  // per pass also means a `[[filesystem.roots]]` or service-config edit — or a fresh
+  // `nimbus index add` — takes effect without a gateway restart.
+  //
+  // The root set MUST span BOTH sources: the `[[filesystem.roots]]` TOML blocks and the
+  // CLI-registered roots in `registered-roots.json`. `registerFilesystemRootSyncables` runs
+  // the blame indexer over the merged set, so `git_blame_line` holds rows for registered
+  // roots too; passing the TOML roots alone would leave every path under a registered root
+  // unowned AND erase, on every pass, the ownership of any service that root binds.
   const ownershipCfg = loadNimbusOwnershipFromConfigDir(paths.configDir);
   const ownershipRefresher = ownershipCfg.enabled
     ? createOwnershipRefresher({
         debounceMs: ownershipCfg.debounceMs,
         runPass: () => {
-          const roots = loadNimbusFilesystemRootsFromConfigDir(paths.configDir)
-            .filter((r) => r.gitAware)
-            .map((r) => r.path);
+          const roots = gitAwareRootPaths(
+            loadNimbusFilesystemRootsFromConfigDir(paths.configDir),
+            loadRegisteredRoots(paths.configDir),
+          );
           const serviceRepoUrns = new Map<string, readonly string[]>();
           // M-1 (see `loadServiceConfigsOrDegrade`): the raw loader THROWS on any
           // malformed `[metrics.dora.*]`/`[ci.service.*]` block. Unwrapped, one typo

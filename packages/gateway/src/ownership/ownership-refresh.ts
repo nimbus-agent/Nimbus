@@ -10,7 +10,10 @@ export type OwnershipRefresherDeps = {
 export type OwnershipRefresher = {
   /** Called after each successful connector sync. Cheap and non-blocking. */
   trigger: () => void;
-  /** Runs immediately, bypassing the debounce, sharing the single-flight guard. */
+  /**
+   * Runs immediately, bypassing the debounce, sharing the single-flight guard.
+   * Rejects after `stop()` (`ERR_OWNERSHIP_STOPPED`).
+   */
   run: () => Promise<OwnershipPassSummary>;
   stop: () => void;
 };
@@ -73,6 +76,14 @@ export function createOwnershipRefresher(deps: OwnershipRefresherDeps): Ownershi
       timer = setTimeout(fire, deps.debounceMs);
     },
     async run(): Promise<OwnershipPassSummary> {
+      // `stop()` is a gateway shutdown callback (`platform/assemble.ts`
+      // `sidecarStops`). Without this, an on-demand `run()` arriving after
+      // shutdown would start a fresh pass and write graph rows while the
+      // sidecars close. Mirrors `ERR_DECISIONS_STOPPED` in
+      // `decisions/decision-refresh.ts`.
+      if (stopped) {
+        throw new Error("ERR_OWNERSHIP_STOPPED: the gateway is shutting down");
+      }
       if (running) {
         throw new Error("ERR_OWNERSHIP_PASS_RUNNING: an ownership pass is already running");
       }
