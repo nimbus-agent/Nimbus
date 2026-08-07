@@ -29,6 +29,7 @@ export { runLan } from "./lan.ts";
 export { runLlm } from "./llm.ts";
 export { runMcpServer } from "./mcp-server.ts";
 export { runMetricsCli } from "./metrics.ts";
+export { runOwnersCommand } from "./owners.ts";
 export { runPeople } from "./people.ts";
 export { runPolicy } from "./policy.ts";
 export { runPreflightCli } from "./preflight.ts";
