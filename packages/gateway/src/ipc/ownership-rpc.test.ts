@@ -50,7 +50,11 @@ describe("dispatchOwnershipRpc", () => {
     );
 
     await Bun.sleep(10);
-    expect(seen.some((s) => s.method === "ownership.passError")).toBe(true);
+    const err = seen.find((s) => s.method === "ownership.passError");
+    expect((err?.params as { code: number } | undefined)?.code).toBe(-32000);
+    expect((err?.params as { message: string } | undefined)?.message).toContain(
+      "ERR_OWNERSHIP_PASS_RUNNING",
+    );
   });
 
   test("an unknown ownership.* method misses", async () => {
