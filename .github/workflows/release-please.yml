@@ -92,11 +92,21 @@ jobs:
           # `autorelease: pending` label, which is one of the two signals the guard reads
           # as "a release happened" — so every successful recovery failed the job.
           reconciled=false
+          # Counted SEPARATELY from `reconciled`, because the two are not opposites and the
+          # loop can produce both in one run. `pending` holds every merged release PR still
+          # labelled `autorelease: pending`, which is usually one — but is exactly TWO when
+          # an earlier run left one stuck. Reconciling the healthy one would then flip
+          # `reconciled=true` and, on its own, vouch for a run that still has a stuck
+          # release in it. The guard fails on `unaccounted > 0` regardless of `reconciled`.
+          unaccounted=0
           pending=$(gh pr list --repo "$REPO" --state merged --label "autorelease: pending" \
                       --json number,mergeCommit --jq '.[] | [.number, .mergeCommit.oid] | @tsv')
           if [ -z "$pending" ]; then
             echo "No untagged, merged release PRs — nothing to reconcile."
-            echo "reconciled=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "reconciled=false"
+              echo "unaccounted=0"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           while IFS=$'\t' read -r num sha; do
@@ -105,6 +115,7 @@ jobs:
                     --jq '.content' | tr -d '\n' | base64 -d | jq -r '."."')
             if [ -z "$ver" ] || [ "$ver" = "null" ]; then
               echo "::warning::could not read manifest version for PR #${num} at ${sha}; skipping"
+              unaccounted=$((unaccounted + 1))
               continue
             fi
             tag="v${ver}"
@@ -154,6 +165,7 @@ jobs:
               # Tag name exists but points elsewhere — do NOT relabel, or we would mark the
               # PR released against the wrong tree. Surface it for a human instead.
               echo "::warning::${tag} exists but points at ${existing}, not PR #${num}'s merge commit ${sha}; not relabelling — needs manual review."
+              unaccounted=$((unaccounted + 1))
               continue
             else
               echo "${tag} already points at ${sha} — relabelling PR #${num} only."
@@ -167,7 +179,10 @@ jobs:
             # this false, so a run that needed a human still reaches the guard.
             reconciled=true
           done <<< "$pending"
-          echo "reconciled=${reconciled}" >> "$GITHUB_OUTPUT"
+          {
+            echo "reconciled=${reconciled}"
+            echo "unaccounted=${unaccounted}"
+          } >> "$GITHUB_OUTPUT"
 
       # Silent-drop guard. DISTINCT from the phantom-release step above: that one recovers a
       # release PR that merged without a tag. This one catches the opposite failure — no
@@ -205,8 +220,20 @@ jobs:
           REPO: ${{ github.repository }}
           RELEASES_CREATED: ${{ steps.release-please.outputs.releases_created }}
           RECONCILED: ${{ steps.reconcile.outputs.reconciled }}
+          UNACCOUNTED: ${{ steps.reconcile.outputs.unaccounted }}
         run: |
           set -euo pipefail
+
+          # Checked BEFORE the commit comparison, and independently of it. A merged release
+          # PR the recovery step could not account for — manifest unreadable, or its tag name
+          # already pointing at a different tree — is a stuck release that no commit-range
+          # check can see: the newest tag has moved on, so `compare` comes back empty and
+          # every other signal reads healthy. It was a `::warning::` before, which is to say
+          # invisible. A release needing a human is a red job.
+          if [ "${UNACCOUNTED:-0}" -gt 0 ]; then
+            echo "::error::${UNACCOUNTED} merged release PR(s) left unaccounted for by the reconcile step above — read its warnings. A tag pointing at the wrong tree must be resolved by hand; tags are immutable (see CLAUDE.md), so the fix is to cut the next version, never to move the tag."
+            exit 1
+          fi
 
           # Baseline off the newest `vX.Y.Z` TAG, not `releases/latest`. The tag is what marks
           # a version as cut; the GitHub Release is produced afterwards by the tag-driven
