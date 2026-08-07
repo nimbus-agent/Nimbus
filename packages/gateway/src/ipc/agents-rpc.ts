@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { DecisionsInput } from "../agents/_lib/decisions-types.ts";
 import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
+import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
 import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
@@ -12,6 +13,7 @@ import { emitGlossaryBrief } from "../agents/glossary.ts";
 import { emitHuddleBrief } from "../agents/huddle.ts";
 import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
+import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
 import { emitWhyBrief } from "../agents/why.ts";
 import { runWhyPeek } from "../agents/why-peek.ts";
@@ -24,6 +26,7 @@ import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
 import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { ownershipRoots } from "../ownership/ownership-target.ts";
 import {
   dispatchByMethod,
   type RpcMethodHandlerMap,
@@ -204,7 +207,8 @@ function newSessionId(
     | "janitor"
     | "preflight"
     | "why"
-    | "decisions",
+    | "decisions"
+    | "ownership",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -548,6 +552,66 @@ async function handleDecisions(
   });
 }
 
+function requireOwnershipParams(params: unknown): OwnershipInput {
+  if (params === null || params === undefined) return {};
+  if (typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.ownership requires an object payload");
+  }
+  const p = params as { path?: unknown; service?: unknown };
+  if (p.path !== undefined && p.service !== undefined) {
+    throw new AgentsRpcError(
+      -32602,
+      "path and service are mutually exclusive — pass one, or neither for a coverage summary",
+    );
+  }
+  const out: { path?: string; service?: string } = {};
+  if (p.path !== undefined) {
+    if (typeof p.path !== "string") {
+      throw new AgentsRpcError(-32602, "path must be a string");
+    }
+    const trimmed = p.path.trim();
+    if (trimmed.length < MIN_FILE_LEN || trimmed.length > MAX_FILE_LEN) {
+      throw new AgentsRpcError(-32602, `path must be ${MIN_FILE_LEN}..${MAX_FILE_LEN} chars`);
+    }
+    out.path = trimmed;
+  }
+  if (p.service !== undefined) {
+    if (
+      typeof p.service !== "string" ||
+      p.service.trim().length === 0 ||
+      p.service.length > MAX_SERVICE_LEN
+    ) {
+      throw new AgentsRpcError(
+        -32602,
+        `service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
+      );
+    }
+    out.service = p.service.trim();
+  }
+  return out;
+}
+
+/**
+ * Roots are resolved HERE, not in the agent, so `agents/ownership.ts` keeps no config-file
+ * dependency (the rule `handleDecisions` follows for `[decisions].min_confidence`), and are
+ * re-read per call so a `[[filesystem.roots]]` edit or a fresh `nimbus index add` applies
+ * without a gateway restart. With no configDir — the test/embedded shape — the root set is
+ * empty and the brief reports that as its first gap rather than pretending to be complete.
+ */
+async function handleOwnership(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requireOwnershipParams(params);
+  return await emitOwnershipBrief(input, {
+    db: ctx.db,
+    roots: ctx.configDir === undefined ? [] : ownershipRoots(ctx.configDir),
+    notify: ctx.notify,
+    sessionId: newSessionId("ownership"),
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+  });
+}
+
 /**
  * The `agents.*` methods this module answers.
  *
@@ -566,6 +630,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.conflicts": handleConflicts,
   "agents.huddle": handleHuddle,
   "agents.janitor": handleJanitor,
+  "agents.ownership": handleOwnership,
   "agents.preflight": handlePreflight,
   "agents.why": handleWhy,
   "agents.whyPeek": handleWhyPeek,
