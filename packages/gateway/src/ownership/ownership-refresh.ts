@@ -1,10 +1,13 @@
 import type { OwnershipPassSummary } from "./ownership-pass.ts";
 
 /**
- * Carries `rpcCode` so `ipc/ownership-rpc.ts` maps it without re-deriving a code, and so a
- * caller can branch on the CLASS rather than string-matching a message. Mirrors
- * `DecisionRefresherError` (`decisions/decision-refresh.ts`). Both refreshers use -32000
- * (JSON-RPC implementation-defined server error).
+ * Carries `rpcCode` so `ipc/_lib/long-running.ts`'s `rpcCodeOf` can lift it into the
+ * `ownership.passError` payload without re-deriving a code, and so a caller can branch on
+ * the CLASS rather than string-matching a message. `ipc/ownership-rpc.ts` deliberately does
+ * NOT map it — it has no `<X>RpcError` class (see the doc comment there): `startPass`'s sole
+ * handler always returns `{ jobId }` synchronously, so nothing there ever throws before
+ * returning "hit" or "miss". Mirrors `DecisionRefresherError` (`decisions/decision-refresh.ts`).
+ * Both refreshers use -32000 (JSON-RPC implementation-defined server error).
  */
 export class OwnershipRefresherError extends Error {
   readonly rpcCode: number;

@@ -674,7 +674,7 @@ export const HTTP_AGENT_NAMES: readonly string[] = Object.freeze(
     // Explicit code-unit comparator, NOT `localeCompare` (which S2871's message suggests) and not a
     // bare `.sort()` (whose implicit string coercion is what S2871 flags). This array is a WIRE
     // RESPONSE: `localeCompare` is locale-sensitive, so two gateways under different locales could
-    // publish the same ten agents in different orders. The names are ASCII identifiers, so a
+    // publish the same eleven agents in different orders. The names are ASCII identifiers, so a
     // code-unit comparison is total, stable and identical on every machine.
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
 );

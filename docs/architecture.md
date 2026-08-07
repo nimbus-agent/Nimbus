@@ -1296,7 +1296,7 @@ const streamReq: JSONRPCRequest = {
 //   able to restate. Unreachable over LAN by construction: the LAN path routes only to
 //   `dispatchFederationRpc`, which never sees this method.
 //   Client side: `packages/cli/src/mcp/adapter.ts` calls it once per connection; a gateway that
-//   rejects it as an unsupported method makes the MCP adapter withhold its eleven agent tools
+//   rejects it as an unsupported method makes the MCP adapter withhold its twelve agent tools
 //   (fail-closed — see I29 in docs/SECURITY-INVARIANTS.md), while a disconnect-class failure is
 //   treated as a dead transport and changes nothing.
 //
@@ -1355,7 +1355,10 @@ const streamReq: JSONRPCRequest = {
 // agents.ownership  — async, returns { sessionId } immediately, emits ownership.briefReady /
 //   ownership.briefError; renderer-exposed (Tauri count 104). Reads only `path` / `service` from
 //   params — mutually exclusive, rejected with -32602 if both are given.
-//   Read-only, never HITL, never `connectors.dispatch` — zero `egress_ledger` rows.
+//   Read-only, never HITL, never `connectors.dispatch` — but NOT zero `egress_ledger` rows in
+//   general: an MCP-declared caller appends exactly one `source_type='mcp'` row and an HTTP
+//   caller (`POST /v1/agents/ownership`) appends exactly one `source_type='http'` row (I29,
+//   asserted end-to-end in `ownership.e2e.test.ts`); only a CLI-declared caller appends zero.
 // ownership.refresh — drives an on-demand derivation pass now (`nimbus owners --refresh`);
 //   long-running job via LongRunningJobRegistry, returns { jobId } and emits ownership.passDone /
 //   ownership.passError. Like decisions there is NO ownership.passProgress payload in practice:

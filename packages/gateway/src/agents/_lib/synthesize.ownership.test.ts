@@ -63,4 +63,23 @@ describe("ownership brief synthesis", () => {
     } as OwnershipBrief);
     expect(md).toContain("not recorded");
   });
+
+  test("recorded contributors below the share floor are not confused with no data", () => {
+    // 25 contributors, none clearing a 5% min_share: `emitted` is empty but the
+    // counts are real. The reader must see "nobody cleared the floor", never the
+    // same text a path with genuinely zero recorded data would show.
+    const md = renderOwnership({
+      ...BRIEF,
+      target: {
+        ...(BRIEF.target ?? { kind: "source_file" as const, displayPath: "src/a.ts" }),
+        owners: [],
+        ownerCount: 25,
+        ownersAboveFloor: 0,
+        truncated: false,
+      },
+    } as OwnershipBrief);
+    expect(md).toContain("No owners cleared the share floor");
+    expect(md).toContain("0 of 25");
+    expect(md).not.toContain("No owners recorded");
+  });
 });

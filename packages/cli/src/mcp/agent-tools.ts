@@ -236,10 +236,14 @@ const DEFS: readonly AgentToolDef[] = [
     // `path` is a bare z.string(): the gateway's requireOwnershipParams trims BEFORE checking
     // 1..2048, so a raw-length bound here would reject whitespace-padded input the gateway
     // accepts — the same reason `ref`/`file`/`fileOrPrUrl` carry no length bound elsewhere in
-    // this file. `service` mirrors the gateway exactly: both sides check the UNTRIMMED length
-    // against 1..MAX_SERVICE_LEN. The mutual exclusion of path/service is enforced gateway-side
-    // and stated in the description, since a zod schema cannot express it without a refinement
-    // the tool surface does not carry.
+    // this file. `service` does NOT mirror the gateway exactly: this schema's `min(1)` is an
+    // UNTRIMMED-length check, so a whitespace-only string like "  " passes it here, while the
+    // gateway (`agents-rpc.ts`) rejects that same value via `p.service.trim().length === 0`.
+    // That is fail-safe, not a gap — the request still gets rejected, just one hop later — so
+    // the schema is left as-is rather than reshaped to pre-trim. Both sides do agree on the
+    // untrimmed max (1..MAX_SERVICE_LEN). The mutual exclusion of path/service is enforced
+    // gateway-side and stated in the description, since a zod schema cannot express it without
+    // a refinement the tool surface does not carry.
     schema: {
       path: z.string().optional(),
       service: z.string().min(1).max(MAX_SERVICE_LEN).optional(),

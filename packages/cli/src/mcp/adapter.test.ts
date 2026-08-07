@@ -539,7 +539,7 @@ describe("buildMcpServer", () => {
 
 /**
  * Owner decision: on a gateway that rejects `session.declareKind` as an unsupported method, the
- * eleven agent-classified tools are withdrawn and the six read-only index tools are kept. The
+ * twelve agent-classified tools are withdrawn and the six read-only index tools are kept. The
  * previous behaviour — warn on stderr, serve the briefs anyway — handed the operator unrecorded
  * briefs while `nimbus prove` reported a clean scope, and editor-spawned MCP servers usually
  * discard stderr, so nothing said otherwise.

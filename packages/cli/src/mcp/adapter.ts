@@ -154,7 +154,7 @@ export interface ConnectionEnv {
  * The wrapper is what `getClient()` hands out, so it is also what every consumer sees — and the
  * agent tools need `onNotification` to receive `<agent>.briefReady`. A wrapper that forwarded only
  * `call`/`disconnect` would leave `supportsNotifications` false on the ONLY object the tools ever
- * touch, and all ten agent tools would report an incapable transport on a perfectly healthy
+ * touch, and all eleven agent tools would report an incapable transport on a perfectly healthy
  * connection.
  *
  * So EVERY handler-registration method is forwarded, symmetrically and conditionally — a wrapper

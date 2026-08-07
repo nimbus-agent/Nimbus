@@ -362,6 +362,17 @@ function renderOwnershipCounts(t: OwnershipTargetView): string {
 function renderOwnershipTarget(heading: string, t: OwnershipTargetView | null): string[] {
   if (t === null) return [];
   if (t.owners.length === 0) {
+    // Counts recorded but nobody cleared the share floor is a different fact than
+    // nothing recorded at all — a reader must not confuse the two.
+    if (t.ownerCount !== null && t.ownerCount > 0) {
+      return [
+        `### ${heading} — ${t.displayPath}`,
+        "",
+        "_No owners cleared the share floor._",
+        renderOwnershipCounts(t),
+        "",
+      ];
+    }
     return [`### ${heading} — ${t.displayPath}`, "", "_No owners recorded._", ""];
   }
   const rows = t.owners.map((o, i) => {

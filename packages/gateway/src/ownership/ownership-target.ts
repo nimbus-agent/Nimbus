@@ -58,7 +58,10 @@ function matchRootItself(roots: readonly string[], refPath: string): ResolvedOwn
  *
  * The containment fence runs FIRST and unconditionally: `matchConfiguredRoot`
  * (`agents/_lib/why-subject.ts`) rejects a `../` escape in both its absolute and its
- * relative branch before touching the filesystem, and this function never bypasses it.
+ * relative branch before touching the filesystem. The only path past that fence is
+ * `matchRootItself`, and it can return nothing but a configured root itself — it compares
+ * the resolved candidate against `resolve(root)` per root, so its result is provably one
+ * of the caller-configured roots, never an escape.
  * The root-itself case is handled only AFTER that helper has declined, because it is the
  * one legitimate subject the helper is deliberately built to reject (`rel === ""`) — see
  * the spec §5.2. Extending that shared helper with an `allowRoot` flag was rejected: one
