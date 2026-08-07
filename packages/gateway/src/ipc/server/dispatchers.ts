@@ -38,6 +38,7 @@ import { dispatchIndexRegraphRpc, IndexRegraphRpcError } from "../index-regraph-
 import { generatePairingCode } from "../lan-pairing.ts";
 import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
+import { dispatchOwnershipRpc, OwnershipRpcError } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
@@ -1015,6 +1016,27 @@ export async function tryDispatchDecisionsRpc(
   return phase4RpcSkipped;
 }
 
+export async function tryDispatchOwnershipRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("ownership.")) return phase4RpcSkipped;
+  const refresher = ctx.options.ownershipRefresher;
+  if (refresher === undefined) return phase4RpcSkipped;
+  try {
+    const out = await dispatchOwnershipRpc(method, params, {
+      refresher,
+      notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof OwnershipRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 /** Owner-HITL approval for `egress.prune`, gated through the calling client's consent channel. */
 function makePruneApproval(
   ctx: ServerCtx,
@@ -1117,7 +1139,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → ownership → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1152,6 +1174,8 @@ async function dispatchPhase4PlatformGroup(
   if (glossaryOutcome !== phase4RpcSkipped) return glossaryOutcome;
   const decisionsOutcome = await tryDispatchDecisionsRpc(ctx, method, params);
   if (decisionsOutcome !== phase4RpcSkipped) return decisionsOutcome;
+  const ownershipOutcome = await tryDispatchOwnershipRpc(ctx, method, params);
+  if (ownershipOutcome !== phase4RpcSkipped) return ownershipOutcome;
   const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
   if (clipOutcome !== phase4RpcSkipped) return clipOutcome;
   return tryDispatchAdminRpc(ctx, method, params);

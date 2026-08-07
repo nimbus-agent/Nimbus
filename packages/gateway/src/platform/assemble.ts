@@ -2368,6 +2368,9 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   if (decisionsRefresher !== undefined) {
     ipcOpts.decisionsRefresher = decisionsRefresher;
   }
+  if (ownershipRefresher !== undefined) {
+    ipcOpts.ownershipRefresher = ownershipRefresher;
+  }
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);
 

@@ -60,6 +60,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   // paired peer able to wipe every stored decision and every veto. The read-only
   // `agents.decisions` stays admitted, like every other agent.
   "decisions",
+  // Ownership on-demand passes are the analogue of glossary's and decisions': a refresh
+  // clears and re-emits every `owns`/`contains`/`tracks_remote`/`belongs_to` edge the pass
+  // owns, wholesale. The denylist is default-allow, so omitting this would leave a paired
+  // peer able to churn the owner's ownership graph on demand. The read-only
+  // `agents.ownership` stays admitted, like every other agent.
+  "ownership",
   // Zero-config onboarding — `nimbus init`'s local demo hint (a file:line from
   // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
   // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).
