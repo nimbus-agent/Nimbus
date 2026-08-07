@@ -89,7 +89,9 @@ through. Teams rename workflow states freely, so Done-vs-not must never come fro
 but the two platforms also disagree on vocabulary, so passing the raw value through would force
 every consumer to branch on service — contradicting the whole point of a shared contract.
 
-The normalized vocabulary is `todo` / `in_progress` / `done` / `canceled`:
+The normalized vocabulary is `todo` / `in_progress` / `done` / `canceled`, plus an explicit
+`unknown` for any value the platform adds later — an unrecognized input must never silently become
+`todo`, which would read as "not started yet" and quietly distort every cohort:
 
 | Normalized | Jira `statusCategory.key` | Linear `state.type` |
 | --- | --- | --- |
