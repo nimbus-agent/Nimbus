@@ -13,6 +13,7 @@ import { PairingWindowController } from "../clips/pairing-window.ts";
 import { NamespaceStore } from "../federation/namespace-store.ts";
 import { IdentityStore } from "../identity/identity-store.ts";
 import { ScimError } from "../identity/scim-service.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { HttpWriteRateLimiter } from "./http-rate-limit.ts";
 import type {
   BriefsWriteSurface,
@@ -453,7 +454,9 @@ function validDeployBody(overrides: Record<string, unknown> = {}): Record<string
 }
 
 function deployContext() {
-  const db = openSeededInMemoryDb(28);
+  // CURRENT_SCHEMA_VERSION: the deployment route calls annotateDeployment, which writes
+  // item.resolve_key (added at V52).
+  const db = openSeededInMemoryDb(CURRENT_SCHEMA_VERSION);
   return {
     writeDb: db,
     expectedToken: "hunter2",

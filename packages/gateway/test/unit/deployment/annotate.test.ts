@@ -5,13 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnnotateError, annotateDeployment } from "../../../src/deployment/annotate.ts";
 import type { DeploymentAnnotateInput } from "../../../src/deployment/types.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
+import { resolveItemByUrl } from "../../../src/index/resolve-by-url.ts";
+import { canonicalizeUrl } from "../../../src/util/url-canonical.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const NOW = 1747142641204;
 
 function freshDb(): Database {
   const dir = mkdtempSync(join(tmpdir(), "annotate-"));
-  return openSeededDbFile(join(dir, "nimbus.db"), 28);
+  // CURRENT_SCHEMA_VERSION (not a fixed early version): annotateDeployment writes
+  // item.resolve_key, added at V52, and these tests prove it does.
+  return openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
 }
 
 const valid: DeploymentAnnotateInput = {
@@ -188,6 +193,39 @@ describe("annotateDeployment", () => {
     expect(result.external_id).toBe(
       "payment-service:prod:a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4",
     );
+    db.close();
+  });
+
+  test("a deployment annotation is resolvable by its workflow_url (item.resolve_key is set)", () => {
+    const db = freshDb();
+    annotateDeployment(db, valid, NOW);
+    const resolved = resolveItemByUrl(db, valid.workflow_url as string);
+    expect(resolved.found).toBe(true);
+    if (resolved.found) {
+      expect(resolved.matchKind).toBe("exact");
+      expect(resolved.item.service).toBe("github-actions");
+    }
+    const row = db
+      .query("SELECT resolve_key FROM item WHERE external_id = ?")
+      .get("github-actions:run-12345:job-67890") as { resolve_key: string | null } | null;
+    expect(row?.resolve_key).toBe(canonicalizeUrl(valid.workflow_url as string));
+    db.close();
+  });
+
+  test("re-annotating with a changed workflow_url updates resolve_key rather than leaving it stale", () => {
+    const db = freshDb();
+    annotateDeployment(db, valid, NOW);
+    const correctedUrl = "https://github.com/acme/payments/actions/runs/99999";
+    annotateDeployment(db, { ...valid, workflow_url: correctedUrl }, NOW + 1000);
+    const row = db
+      .query("SELECT resolve_key FROM item WHERE external_id = ?")
+      .get("github-actions:run-12345:job-67890") as { resolve_key: string | null } | null;
+    expect(row?.resolve_key).toBe(canonicalizeUrl(correctedUrl));
+    // The OLD url must no longer resolve to this item — the key really moved, it wasn't just added.
+    const stale = resolveItemByUrl(db, valid.workflow_url as string);
+    expect(stale.found).toBe(false);
+    const fresh = resolveItemByUrl(db, correctedUrl);
+    expect(fresh.found).toBe(true);
     db.close();
   });
 });

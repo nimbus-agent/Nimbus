@@ -4,11 +4,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeploymentAnnotateInput } from "../../../src/deployment/types.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { dispatchDeploymentRpc } from "../../../src/ipc/deployment-rpc.ts";
 
 const NOW = 1747142641204;
-const TARGET_SCHEMA_VERSION = 29;
+// CURRENT_SCHEMA_VERSION (not a fixed early version): annotateDeployment writes item.resolve_key,
+// added at V52.
+const TARGET_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
 describe("E2E (in-process): nimbus deploy annotate", () => {
   let dir: string;

@@ -341,14 +341,21 @@ when both are null.
 > the ownership graph (#1064), so the resolve migration is **V52**. Verified against
 > `index/migrations/runner.ts`, whose last step is `simpleStep(50, 51, …)`.
 
-Written at exactly one site — **`upsertIndexedItem`**, the SQL writer that
-`upsertIndexedItemForSync` delegates to — so no connector can forget it and no connector
-changes. **Corrected 2026-08-07:** this section named `upsertIndexedItemForSync`, which is the
+Written at **`upsertIndexedItem`**, the SQL writer that `upsertIndexedItemForSync` delegates to
+— the chokepoint every connector's item write funnels through, so no connector can forget it.
+**Corrected 2026-08-07:** this section named `upsertIndexedItemForSync`, which is the
 depth-applying _wrapper_, not the write site. Three other non-test callers reach the writer
 directly — `clips/clip-ingest.ts`, `briefs/brief-save.ts`, `glossary/glossary-project.ts` —
 plus `upsertNimbusItemIntoItemTable` for filesystem items. Deriving the key in the wrapper
 would have left **every web clip** unresolvable, which is the browser panel's primary case and
 the one item type whose identity already is a canonicalized URL.
+
+**Corrected 2026-08-07 (second pass):** `upsertIndexedItem` is not the only production writer of
+`item` in the codebase — `deployment/annotate.ts` writes its own `item` row (deployment items are
+not sync'd through a connector) and derives `resolve_key` the same way. The claim that matters is
+narrower than "exactly one site": every _connector's_ item write funnels through
+`upsertIndexedItem`, so no connector can forget the key; the one non-connector writer derives it
+identically.
 
 A derived column rather than an index on `canonical_url` directly, because the
 stored values are raw provider URLs (`github-sync.ts:209`:

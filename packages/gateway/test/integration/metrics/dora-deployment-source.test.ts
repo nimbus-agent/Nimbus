@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
 import { seedPaymentServiceFixture } from "../../fixtures/deployments/payment-service/seed.ts";
@@ -27,7 +28,9 @@ describe("dora.deploymentFrequency — source preference", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "dora-source-"));
-    db = openSeededDbFile(join(dir, "nimbus.db"), 28);
+    // CURRENT_SCHEMA_VERSION: seedPaymentServiceFixture calls annotateDeployment, which writes
+    // item.resolve_key (added at V52).
+    db = openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
   });
 
   afterEach(() => {

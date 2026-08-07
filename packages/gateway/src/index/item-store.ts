@@ -91,10 +91,17 @@ export function upsertIndexedItem(
   const preview = clampBody(body, BODY_PREVIEW_MAX);
   const bodyComplete = declaredFull && raw.length <= cap && row.bodyTruncated !== true ? 1 : 0;
   // The DERIVED resolve key, written HERE rather than in `upsertIndexedItemForSync`, because this
-  // is the actual SQL chokepoint: `clips/clip-ingest.ts`, `briefs/brief-save.ts`,
-  // `glossary/glossary-project.ts` and `upsertNimbusItemIntoItemTable` all call THIS function
-  // directly and never touch the sync wrapper. Deriving it in the wrapper would leave every web
-  // clip unresolvable — the one item type whose identity already IS a canonicalized URL.
+  // is the actual SQL chokepoint for every CONNECTOR item write: `clips/clip-ingest.ts`,
+  // `briefs/brief-save.ts`, `glossary/glossary-project.ts` and `upsertNimbusItemIntoItemTable` all
+  // call THIS function directly and never touch the sync wrapper, so no connector can forget the
+  // key. Deriving it in the wrapper would leave every web clip unresolvable — the one item type
+  // whose identity already IS a canonicalized URL.
+  //
+  // This is NOT the only production writer of `item`: `deployment/annotate.ts` writes its own
+  // INSERT (deployment items are not sync'd through a connector) and derives `resolve_key` the
+  // same way — `canonicalizeUrl` over the same "canonical over raw" preference — so a deploy
+  // annotation resolves identically to a connector-synced item. Keep the two derivations in sync
+  // if this shape ever changes.
   //
   // `canonicalizeUrl` is reused unchanged (`externalIdFor` hashes its output, so its rules are
   // clip identity). It does not throw: unparseable input comes back verbatim, which is acceptable

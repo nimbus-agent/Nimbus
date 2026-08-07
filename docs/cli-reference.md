@@ -2505,8 +2505,8 @@ from five names:
 |---|---|
 | `clip` | `POST /v1/clips` (save a clip) and `POST /v1/clips/related` (related-items read) |
 | `briefs` | The research-briefs write routes (`POST /v1/briefs`, `.../sources`, `.../run`, `.../save`) and `GET /v1/briefs/*` |
-| `agents` | Reserved for a browser-reachable agent-invocation route — no route consumes it yet |
-| `resolve` | Reserved for a resolve-by-URL read — no route consumes it yet |
+| `agents` | The browser-reachable agent-invocation route: `POST /v1/agents/{agent}`, `GET /v1/agents/runs/{id}`, `GET /v1/agents` |
+| `resolve` | The resolve-by-URL read: `GET /v1/items/resolve` |
 | `fetch` | Reserved for a future fetch surface — no route consumes it yet |
 
 If `--scopes` is omitted, the minted token is granted `clip,briefs` — the two surfaces that shipped

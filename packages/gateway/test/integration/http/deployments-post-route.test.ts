@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import {
   type ReadOnlyHttpServerHandle,
   startReadOnlyHttpServer,
@@ -51,7 +52,9 @@ describe("POST /v1/deployments (integration)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "deploy-post-"));
     dbPath = join(dir, "nimbus.db");
-    seedDbFile(dbPath, 28);
+    // CURRENT_SCHEMA_VERSION: the route calls annotateDeployment, which writes item.resolve_key
+    // (added at V52).
+    seedDbFile(dbPath, CURRENT_SCHEMA_VERSION);
     writeFileSync(
       join(dir, "nimbus.toml"),
       [

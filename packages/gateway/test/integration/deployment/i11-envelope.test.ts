@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { annotateDeployment } from "../../../src/deployment/annotate.ts";
 import type { DeploymentAnnotateInput } from "../../../src/deployment/types.ts";
 import { wrapToolOutput } from "../../../src/engine/tool-output-envelope.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
 const NOW = 1747142641204;
@@ -15,7 +16,8 @@ const directInjectable = ["ref", "workflow_url", "run_id", "job_id"] as const;
 
 function fresh(): Database {
   const dir = mkdtempSync(join(tmpdir(), "i11-"));
-  const db = openSeededDbFile(join(dir, "nimbus.db"), 28);
+  // CURRENT_SCHEMA_VERSION: annotateDeployment writes item.resolve_key (added at V52).
+  const db = openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
   return db;
 }
 

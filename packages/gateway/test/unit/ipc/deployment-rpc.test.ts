@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../../../src/ipc/deployment-rpc.ts";
 import { openSeededDbFile } from "../../helpers/migrated-db-seed.ts";
 
@@ -21,7 +22,9 @@ const valid = {
 
 function fresh(): Database {
   const dir = mkdtempSync(join(tmpdir(), "drpc-"));
-  return openSeededDbFile(join(dir, "nimbus.db"), 28);
+  // CURRENT_SCHEMA_VERSION: dispatchDeploymentRpc calls annotateDeployment, which writes
+  // item.resolve_key (added at V52).
+  return openSeededDbFile(join(dir, "nimbus.db"), CURRENT_SCHEMA_VERSION);
 }
 
 describe("dispatchDeploymentRpc", () => {

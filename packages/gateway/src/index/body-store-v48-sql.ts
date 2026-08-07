@@ -21,6 +21,18 @@
  * Length 0 would flag every title-only Notion and Confluence page as complete
  * and exclude the worst-covered connectors in the index from backfill forever.
  */
+/**
+ * The `item_fts_update` trigger definition, factored out as its own constant so the V52
+ * resolve-key backfill (`index/migrations/runner.ts`) can DROP it for the duration of a
+ * non-FTS backfill and recreate it from this SAME string afterwards — never a hand-retyped
+ * copy that could drift from the schema's own trigger.
+ */
+export const ITEM_FTS_UPDATE_TRIGGER_SQL = `CREATE TRIGGER item_fts_update AFTER UPDATE ON item BEGIN
+     INSERT INTO item_fts(item_fts, rowid, title, body)
+       VALUES ('delete', old.rowid, old.title, old.body);
+     INSERT INTO item_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+   END`;
+
 export const BODY_STORE_V48_SQL: readonly string[] = [
   "ALTER TABLE item ADD COLUMN body TEXT",
   "ALTER TABLE item ADD COLUMN body_complete INTEGER NOT NULL DEFAULT 0",
@@ -43,9 +55,5 @@ export const BODY_STORE_V48_SQL: readonly string[] = [
      INSERT INTO item_fts(item_fts, rowid, title, body)
        VALUES ('delete', old.rowid, old.title, old.body);
    END`,
-  `CREATE TRIGGER item_fts_update AFTER UPDATE ON item BEGIN
-     INSERT INTO item_fts(item_fts, rowid, title, body)
-       VALUES ('delete', old.rowid, old.title, old.body);
-     INSERT INTO item_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
-   END`,
+  ITEM_FTS_UPDATE_TRIGGER_SQL,
 ];

@@ -10,7 +10,7 @@ import { canonicalizeUrl } from "../../util/url-canonical.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
-import { BODY_STORE_V48_SQL } from "../body-store-v48-sql.ts";
+import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
@@ -335,7 +335,17 @@ function migrateIndexedV51ToV52(db: Database, now: number): void {
     for (const sql of RESOLVE_KEY_V52_SQL) {
       dbExec(db, sql);
     }
+    // The V48 `item_fts_update` trigger has no `OF <column>` list, so every UPDATE on `item` —
+    // including this backfill's `resolve_key`-only writes — fires a full FTS5 delete+reinsert of
+    // `title`/`body`. `resolve_key` is not an FTS column, so drop the trigger for the duration of
+    // the backfill and recreate it VERBATIM afterwards from `ITEM_FTS_UPDATE_TRIGGER_SQL` — the
+    // SAME string constant `body-store-v48-sql.ts` uses to create it — so the two can never drift.
+    // Both the drop and the recreate live inside this transaction: a mid-backfill throw rolls back
+    // the drop too, so a failed migration can never leave the database without its FTS update
+    // trigger.
+    dbExec(db, "DROP TRIGGER item_fts_update");
     backfillResolveKey(db);
+    dbExec(db, ITEM_FTS_UPDATE_TRIGGER_SQL);
     dbExec(db, "PRAGMA user_version = 52");
     recordMigration(db, 52, "item.resolve_key + idx_item_resolve_key (resolve-by-URL v52)", now);
   })();

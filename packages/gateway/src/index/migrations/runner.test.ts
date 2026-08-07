@@ -838,8 +838,10 @@ test("V52 backfills every row across a chunk boundary (regression: OFFSET pagina
     c: number;
   };
   expect(remaining.c).toBe(0);
-  // Spot-check a row from the middle of the range — exactly where the broken OFFSET pagination
-  // silently dropped rows.
+  // Spot-check a row from the middle of the range. This index sits inside the FIRST chunk (chunk
+  // size is RESOLVE_KEY_BACKFILL_CHUNK), so it was never at risk from the broken OFFSET pagination —
+  // the `remaining.c === 0` assertion above is what actually catches that regression. This just
+  // confirms an arbitrary interior row got the right key.
   const midIndex = Math.floor(rowCount / 2);
   const midRow = db
     .query("SELECT resolve_key FROM item WHERE id = ?")
@@ -847,5 +849,34 @@ test("V52 backfills every row across a chunk boundary (regression: OFFSET pagina
   expect(midRow.resolve_key).toBe(
     canonicalizeUrl(`https://github.com/o/r/pull/${String(midIndex)}`),
   );
+  db.close();
+});
+
+test("V52 recreates item_fts_update after dropping it for the backfill", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 52);
+  const trigger = db
+    .query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'item_fts_update'")
+    .get() as { name: string } | null;
+  expect(trigger?.name).toBe("item_fts_update");
+  db.close();
+});
+
+test("V52 backfill leaves FTS search working for a row that existed before the migration", () => {
+  const db = freshDb();
+  runIndexedSchemaMigrations(db, 51);
+  // Inserted while item_fts_insert (created at V48) is live, so item_fts is populated for this row
+  // exactly as it would be in production before the V52 backfill ever runs.
+  db.query(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_preview,
+       body_complete, url, canonical_url, modified_at, metadata, synced_at, pinned)
+     VALUES ('github:pr-9','github','pull_request','pr-9','Widget PR','fixes the frobnicator','',0,
+       'https://github.com/o/r/pull/9',NULL,1,'{}',1,0)`,
+  ).run();
+  runIndexedSchemaMigrations(db, 52);
+  const hits = db
+    .query("SELECT rowid FROM item_fts WHERE item_fts MATCH 'frobnicator'")
+    .all() as Array<{ rowid: number }>;
+  expect(hits.length).toBe(1);
   db.close();
 });

@@ -90,8 +90,7 @@ export async function startServerWithClipToken(
 /**
  * Same as `startServerWithClipToken`, but omits `clipsVault` entirely — the "surface not mounted"
  * shape every route behind this seam must degrade to (a named 404, never a fall-through to the
- * unauthenticated GET table). No token is minted since there is no vault to mint it into; the
- * returned `token` is a placeholder that is never valid against this server.
+ * unauthenticated GET table). No token is minted since there is no vault to mint it into.
  */
 export async function startServerWithoutClipsVault(
   extraOpts: Partial<ReadOnlyHttpServerOptions> = {},

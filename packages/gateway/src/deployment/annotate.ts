@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { dbRun } from "../db/write.ts";
+import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { computeDeploymentExternalId } from "./external-id.ts";
 import type {
   DeploymentAnnotateInput,
@@ -177,14 +178,22 @@ export function annotateDeployment(
       run_id: input.run_id ?? null,
       job_id: input.job_id ?? null,
     });
+    // The DERIVED resolve key, mirroring `item-store.ts`'s `upsertIndexedItem` exactly: this is the
+    // OTHER production writer of `item` (see the comment there), so it must derive the same value
+    // the same way or a deploy annotation's URL silently fails to resolve. `url` and `canonical_url`
+    // are both `input.workflow_url` here, so the `canonicalUrl ?? url` preference collapses to one
+    // source — kept in this shape anyway so the two derivations read as one rule.
+    const resolveSource = input.workflow_url ?? null;
+    const resolveKey = resolveSource === null ? null : canonicalizeUrl(resolveSource);
     dbRun(
       db,
-      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, modified_at, author_id, metadata, synced_at, pinned)
-       VALUES (?, ?, 'deployment', ?, ?, '', ?, ?, ?, NULL, ?, ?, 0)
+      `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url, resolve_key, modified_at, author_id, metadata, synced_at, pinned)
+       VALUES (?, ?, 'deployment', ?, ?, '', ?, ?, ?, ?, NULL, ?, ?, 0)
        ON CONFLICT(service, external_id) DO UPDATE SET
          title = excluded.title,
          url = excluded.url,
          canonical_url = excluded.canonical_url,
+         resolve_key = excluded.resolve_key,
          modified_at = excluded.modified_at,
          metadata = excluded.metadata,
          synced_at = excluded.synced_at`,
@@ -195,6 +204,7 @@ export function annotateDeployment(
         title,
         input.workflow_url ?? null,
         input.workflow_url ?? null,
+        resolveKey,
         input.started_at_ms,
         metadata,
         nowMs,
