@@ -2280,7 +2280,17 @@ git commit -m "targeted-fetch orchestrator and the per-run sync egress appender"
 - Modify: `packages/gateway/src/ipc/http-route-auth.ts`
 - Modify: `packages/gateway/src/ipc/http-server.ts` (`ReadOnlyHttpServerOptions` + the write deps)
 - Modify: `packages/gateway/src/platform/assemble.ts` (build the `fetchItem` closure)
-- Test: `packages/gateway/src/ipc/http-write-routes.test.ts`, `packages/gateway/test/http-api.test.ts`
+- Test: `packages/gateway/src/ipc/http-write-routes.test.ts`, and a NEW
+  `packages/gateway/test/integration/http/items-fetch-route.test.ts`
+
+**Test placement + harness (corrected — an earlier draft named a path that never existed).** Route
+tests live at `packages/gateway/test/integration/http/<route>-route.test.ts`, beside
+`items-resolve-route.test.ts` and the four `{deployments-post,metrics-dora,openapi,preflight-deploy}`
+siblings. **Reuse `startServerWithClipToken` from
+`packages/gateway/src/ipc/http-api-test-server.ts`** and `makeInMemoryVault` from
+`packages/gateway/test/helpers/in-memory-vault.ts` — both were extracted in Task 4 specifically so
+this task does not make a fourth copy. Do NOT write a new harness; if the existing one cannot pass
+the option this route needs, EXTEND it.
 
 **Interfaces:**
 
