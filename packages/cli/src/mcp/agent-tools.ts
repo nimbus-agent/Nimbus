@@ -229,6 +229,20 @@ const DEFS: readonly AgentToolDef[] = [
     build: (a) => withOptional({}, { term: a["term"], limit: optNum(a, "limit") }),
   },
   {
+    tool: "findOwners",
+    agent: "ownership",
+    description:
+      "Answer 'who owns this code?' from recency-weighted git blame already in the local index. Pass `path` for a file or directory inside a configured root, or `service` for a [ci.service.<id>] id, or neither for a coverage summary. `path` and `service` are mutually exclusive. This is AUTHORSHIP-derived ownership — who wrote the lines, not who is formally accountable.",
+    // Bounds mirror the gateway's requireOwnershipParams: path 1..2048, service 1..64.
+    // The mutual exclusion is enforced gateway-side and stated in the description, since a
+    // zod schema cannot express it without a refinement the tool surface does not carry.
+    schema: {
+      path: z.string().min(1).max(2048).optional(),
+      service: z.string().min(1).max(MAX_SERVICE_LEN).optional(),
+    },
+    build: (a) => withOptional({}, { path: optStr(a, "path"), service: optStr(a, "service") }),
+  },
+  {
     tool: "checkResourceUsage",
     agent: "janitor",
     description:

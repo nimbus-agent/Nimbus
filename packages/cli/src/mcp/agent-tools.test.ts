@@ -54,7 +54,7 @@ test("no agent tool exposes a timeout parameter to the calling model", () => {
   }
 });
 
-test("all ten async agents are registered, and preflight is not", () => {
+test("all eleven async agents are registered, and preflight is not", () => {
   const names = AGENT_TOOL_SPECS.map((s) => s.name).sort();
   expect(names).toEqual(
     [
@@ -64,6 +64,7 @@ test("all ten async agents are registered, and preflight is not", () => {
       "findConflicts",
       "findDecisions",
       "findExpert",
+      "findOwners",
       "getCatchup",
       "getGlossary",
       "getPeerContext",
@@ -265,6 +266,7 @@ test("each tool calls its own agents.* method with the declared params", async (
   await specFor("getPeerContext").run(deps, { file: "a.ts" });
   await specFor("getGlossary").run(deps, { term: "SLO", limit: 5 });
   await specFor("findDecisions").run(deps, { limit: 3 });
+  await specFor("findOwners").run(deps, { path: "src/a.ts" });
   expect(calls).toEqual([
     { method: "agents.impact", params: { fileOrPrUrl: "a.ts", depth: 3 } },
     { method: "agents.huddle", params: { namespace: "team" } },
@@ -272,6 +274,7 @@ test("each tool calls its own agents.* method with the declared params", async (
     { method: "agents.ghost", params: { file: "a.ts" } },
     { method: "agents.glossary", params: { term: "SLO", limit: 5 } },
     { method: "agents.decisions", params: { limit: 3 } },
+    { method: "agents.ownership", params: { path: "src/a.ts" } },
   ]);
 });
 
@@ -289,8 +292,12 @@ test("absent optionals are omitted and wrong-typed required args degrade to empt
   // `limit` is not a number and `topicOrFile` is not a string: both degrade rather than crash.
   await specFor("findExpert").run(deps, { topicOrFile: 42, limit: "10" });
   await specFor("getGlossary").run(deps, {});
+  await specFor("findOwners").run(deps, {});
   expect(calls[0]?.params).toEqual({ topicOrFile: "" });
   expect(calls[1]?.params).toEqual({});
+  // toStrictEqual, not toEqual: this repo's toEqual ignores undefined-valued keys, so
+  // { path: undefined } would pass here even if `build` leaked one instead of omitting it.
+  expect(calls[2]?.params).toStrictEqual({});
 });
 
 // ---------------------------------------------------------------------------
@@ -384,7 +391,13 @@ const AGENTS_RPC_ACCEPTED_KEYS: ReadonlyArray<{
     args: { namespace: "team" },
   },
   {
-    // The eleventh `agents.*` caller. It lives in TOOL_SPECS rather than AGENT_TOOL_SPECS, so
+    tool: "findOwners",
+    method: "agents.ownership",
+    accepted: ["path", "service"],
+    args: { path: "src/a.ts", service: "github" },
+  },
+  {
+    // The twelfth `agents.*` caller. It lives in TOOL_SPECS rather than AGENT_TOOL_SPECS, so
     // nothing else in this file can see it — and it shipped with the same `fileOrPrUrl` defect.
     // `agents.whyPeek` is validated by the very same `requireWhyParams` as `agents.why`.
     tool: "peekWhy",
