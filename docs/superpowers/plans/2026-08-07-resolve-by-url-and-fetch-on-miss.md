@@ -2087,7 +2087,19 @@ export type TargetedFetchOutcome =
   | { readonly status: "no_targeted_fetch"; readonly service: string }
   | { readonly status: "not_configured" }
   | { readonly status: "rate_limited" };
+```
 
+**MANDATORY, carried forward from Task 7's review — pin `https:` before fetching.** The host boundary
+keys on HOST ONLY, so it deliberately cannot distinguish `http://github.com/...` from
+`https://github.com/...` — both resolve to `"github"`. If this orchestrator fetches the caller's URL
+as supplied over `http:`, the connector's PAT goes out in **cleartext** and a passive network observer
+harvests it. The parse guard below therefore rejects anything that is not `https:` **except** when the
+resolved service's own configured origin is itself `http:` (a self-hosted Jenkins on a LAN legitimately
+may be), in which case the scheme must match that origin exactly rather than being caller-chosen. Do
+not treat this as optional hardening: it is the one gap the host boundary structurally cannot close,
+and Task 7's module is correct to leave it here.
+
+```ts
 export type TargetedFetchDeps = {
   readonly hostMap: ReadonlyMap<string, FetchableService>;
   readonly syncableFor: (service: FetchableService) => Syncable | undefined;
