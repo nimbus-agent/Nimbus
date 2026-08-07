@@ -2089,6 +2089,16 @@ export type TargetedFetchOutcome =
   | { readonly status: "rate_limited" };
 ```
 
+**MANDATORY, carried forward from Task 8's review — prove the host gate runs BEFORE `fetchOne`.**
+Both connectors' URL regexes match ANY host: they discard the host and fetch a CONSTRUCTED API URL, so
+`https://evil.example/o/r/pull/1` would cause github's `fetchOne` to index `o/r#1` under the user's PAT
+if it were ever called directly. That is acceptable ONLY because this orchestrator applies the host
+boundary first — which today is call-site discipline with no test behind it. Task 4 shipped a real
+fail-open on exactly that pattern (a route mounted on the wrong side of an auth boundary), so add a
+test asserting `fetchOne` is **never invoked** for a URL whose host `fetch-host-boundary.ts` did not
+claim for that exact service. Inject a `syncableFor` whose `fetchOne` sets a flag, pass an unclaimed
+host, and assert the flag is still false and the outcome is `not_configured`.
+
 **MANDATORY, carried forward from Task 7's review — pin `https:` before fetching.** The host boundary
 keys on HOST ONLY, so it deliberately cannot distinguish `http://github.com/...` from
 `https://github.com/...` — both resolve to `"github"`. If this orchestrator fetches the caller's URL
