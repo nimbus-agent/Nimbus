@@ -1,10 +1,10 @@
-// packages/gateway/src/egress/mcp-brief-egress.test.ts
+// packages/gateway/src/egress/agent-brief-egress.test.ts
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { recordAgentBriefEgress } from "./agent-brief-egress.ts";
 import { verifyEgressChain } from "./egress-verify.ts";
-import { recordMcpBriefEgress } from "./mcp-brief-egress.ts";
 
 /**
  * The REAL V44 `egress_ledger`, built by the migration runner rather than a hand-copied
@@ -19,7 +19,8 @@ function ledgerDb(): Database {
 
 test("appends exactly one row with source_type 'mcp'", () => {
   const db = ledgerDb();
-  recordMcpBriefEgress(db, {
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
     method: "agents.why",
     params: { fileOrPrUrl: "src/a.ts" },
     clientId: "c1",
@@ -45,17 +46,47 @@ test("appends exactly one row with source_type 'mcp'", () => {
 
 test("the appended row participates in the BLAKE3 chain like any other", () => {
   const db = ledgerDb();
-  recordMcpBriefEgress(db, { method: "agents.why", params: {}, clientId: "c1", now: 1 });
-  recordMcpBriefEgress(db, { method: "agents.catchup", params: {}, clientId: "c1", now: 2 });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.why",
+    params: {},
+    clientId: "c1",
+    now: 1,
+  });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.catchup",
+    params: {},
+    clientId: "c1",
+    now: 2,
+  });
   expect(verifyEgressChain(db).ok).toBe(true);
   db.close();
 });
 
 test("federation-touching agents record a distinguishable destination", () => {
   const db = ledgerDb();
-  recordMcpBriefEgress(db, { method: "agents.ghost", params: {}, clientId: "c1", now: 1 });
-  recordMcpBriefEgress(db, { method: "agents.huddle", params: {}, clientId: "c1", now: 2 });
-  recordMcpBriefEgress(db, { method: "agents.why", params: {}, clientId: "c1", now: 3 });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.ghost",
+    params: {},
+    clientId: "c1",
+    now: 1,
+  });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.huddle",
+    params: {},
+    clientId: "c1",
+    now: 2,
+  });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.why",
+    params: {},
+    clientId: "c1",
+    now: 3,
+  });
   const dests = (
     db.query(`SELECT destination FROM egress_ledger ORDER BY id`).all() as Array<{
       destination: string;
@@ -67,7 +98,8 @@ test("federation-touching agents record a distinguishable destination", () => {
 
 test("the payload summary is redacted and capped", () => {
   const db = ledgerDb();
-  recordMcpBriefEgress(db, {
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
     method: "agents.expert",
     params: { topicOrFile: "x", token: "ghp_averysecretvaluethatmustnotsurvive" },
     clientId: "c1",
@@ -83,7 +115,13 @@ test("the payload summary is redacted and capped", () => {
 
 test("hitl status is not_required and result is authorized", () => {
   const db = ledgerDb();
-  recordMcpBriefEgress(db, { method: "agents.why", params: {}, clientId: "c1", now: 1 });
+  recordAgentBriefEgress(db, {
+    sourceType: "mcp",
+    method: "agents.why",
+    params: {},
+    clientId: "c1",
+    now: 1,
+  });
   const row = db.query(`SELECT hitl_status, result_status FROM egress_ledger`).get() as {
     hitl_status: string;
     result_status: string;
@@ -93,10 +131,45 @@ test("hitl status is not_required and result is authorized", () => {
   db.close();
 });
 
+test("the sourceType drives BOTH the column and the destination", () => {
+  // The parameterisation is the whole point of the rename: one appender, two transports, and the
+  // federation-touching distinction preserved on each. A bare "http" destination here would hide
+  // outbound peer traffic inside a local-looking record — the exact failure the mcp destinations
+  // were split to avoid.
+  const db = ledgerDb();
+  recordAgentBriefEgress(db, {
+    sourceType: "http",
+    method: "agents.ghost",
+    params: {},
+    clientId: "chrome",
+    now: 1,
+  });
+  recordAgentBriefEgress(db, {
+    sourceType: "http",
+    method: "agents.why",
+    params: {},
+    clientId: "chrome",
+    now: 2,
+  });
+  const rows = db
+    .query(`SELECT source_type, destination, source_id FROM egress_ledger ORDER BY id`)
+    .all() as Array<{ source_type: string; destination: string; source_id: string }>;
+  expect(rows.map((r) => r.source_type)).toEqual(["http", "http"]);
+  expect(rows.map((r) => r.destination)).toEqual(["http+federation", "http"]);
+  expect(rows[0]?.source_id).toBe("chrome");
+  db.close();
+});
+
 test("an append failure propagates so the caller can fail closed", () => {
   const db = new Database(":memory:"); // no egress_ledger table
   expect(() =>
-    recordMcpBriefEgress(db, { method: "agents.why", params: {}, clientId: "c1", now: 1 }),
+    recordAgentBriefEgress(db, {
+      sourceType: "mcp",
+      method: "agents.why",
+      params: {},
+      clientId: "c1",
+      now: 1,
+    }),
   ).toThrow();
   db.close();
 });

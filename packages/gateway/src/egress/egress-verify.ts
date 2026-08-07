@@ -376,7 +376,7 @@ export type EgressCompleteness = {
    * `THIS_BINARY_COVERAGE` had exactly one non-"none" class (`task`, at `"per-call"`), so that
    * "authorized gated-connector actions, one row per call" was the whole of what this binary
    * observed. The agents-as-MCP-tools work raised a SECOND class — `mcp` at `"per-call"`
-   * (`egress/mcp-brief-egress.ts`, I29/D22(c)) — so the binary now observes more than
+   * (`egress/agent-brief-egress.ts`, I29/D22(c)) — so the binary now observes more than
    * "authorized-actions" describes, and this field misstates coverage exactly the way the old
    * scalar `tier` used to.
    *

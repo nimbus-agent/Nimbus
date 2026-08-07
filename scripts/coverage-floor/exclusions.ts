@@ -59,6 +59,10 @@ export const EXCLUSIONS: readonly ExclusionPattern[] = Object.freeze([
   // imported by brief tests rather than redefined. Defensive branches (TOCTOU, stop() errors) can't
   // meet the production floor.
   { kind: "exact", path: "packages/gateway/src/briefs/brief-test-server.ts" },
+  // `agent-test-server.ts` is the same shape and excluded for the same reason: test-only, not
+  // .test.ts-suffixed, imported by the agents e2e suite rather than redefined, and its defensive
+  // branches (the three swallowing try/catch blocks in stop()) cannot meet the production floor.
+  { kind: "exact", path: "packages/gateway/src/agent-runs/agent-test-server.ts" },
 
   // ── Generated SQL ── (retired 2026-08-01)
   // The `index/*-v<N>-sql.ts` migration constants are single exported template literals that the

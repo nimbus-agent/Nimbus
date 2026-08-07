@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { encodeBase64, generateEd25519Keypair } from "@nimbus-dev/sdk";
+import { checkAgentEmitterImportConfinement } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -407,15 +408,21 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
     expect(writableOpens).toBeLessThanOrEqual(1);
   });
 
-  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events routes", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the deployment + SCIM provisioning + admin-policy + teams-events + clip + brief + agent routes", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
     // The count IS the integrity check (see nimbus-http-write-surface). Adding a write route
     // requires bumping this assertion in the same commit. 1 deploy route + 3 SCIM routes +
     // 1 admin-console anchor-policy route (PUT /v1/admin/policy, Task 18b) +
     // 1 ChatOps Teams inbound route (POST /v1/messaging/teams/events, Slice 5 — Bot Framework JWT) +
     // 2 web-clipper routes (POST /v1/clips + POST /v1/clips/pair/confirm, I30) +
-    // 4 research-brief routes (POST /v1/briefs + .../sources + .../run + .../save).
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
+    // 4 research-brief routes (POST /v1/briefs + .../sources + .../run + .../save) +
+    // 1 agent-invocation route (POST /v1/agents/{agent}, agents-scoped).
+    //
+    // The agent route is a WRITE by CLASSIFICATION, not because it mutates the index — it does not.
+    // Listing it here is what subjects it to the bearer gate, the per-route body cap and the
+    // per-token rate limiter; reclassifying it as a read to slip past this allowlist would be the
+    // exact evasion the allowlist exists to prevent.
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
     expect([...WRITE_ROUTE_ALLOWLIST]).toEqual([
       "POST /v1/deployments",
       "POST /scim/v2/Users",
@@ -429,6 +436,7 @@ describe("I13 — HTTP write routes go through allowlist + bearer auth", () => {
       "POST /v1/briefs/{id}/sources",
       "POST /v1/briefs/{id}/run",
       "POST /v1/briefs/{id}/save",
+      "POST /v1/agents/{agent}",
     ]);
   });
 });
@@ -1260,11 +1268,84 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
   });
 
-  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, and the MCP brief append to agents-rpc.ts", async () => {
+  test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, and emitter imports to agents-rpc.ts", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D22-connectors-dispatch");
     expect(audit).toContain("D22-egress-append");
-    expect(audit).toContain("D22-mcp-brief-egress");
+    expect(audit).toContain("D22-agent-brief-egress");
+    expect(audit).toContain("D22-agent-emitter-import");
+  });
+
+  test("D22(d): the emitter-import rule flags ALL THREE module-resolution forms", async () => {
+    // Rule (c) pins the CALLER of the appender, which catches a second file ACQUIRING the appender
+    // — but not a second file that serves a brief WITHOUT calling it. That path spells nothing (c)
+    // matches: it would append no row, serve the brief, and leave audit:invariants green. This file
+    // predicted that gap in prose before it was closed; rule (d) closes it.
+    //
+    // Both forms are required. A static-only regex is defeated by the one-character change from
+    // `import x from "…"` to `await import("…")` — a bypass hiding in plain sight, and the reason
+    // this asserts the two constants exist rather than trusting one pattern to cover both.
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    expect(audit).toContain("D22_EMITTER_STATIC_RE");
+    expect(audit).toContain("D22_EMITTER_DYNAMIC_RE");
+    // `require` is the third spelling, and Bun honours it from a .ts module — a rule matching only
+    // the two `import` forms reported green while that door stood open.
+    expect(audit).toContain("D22_EMITTER_REQUIRE_RE");
+
+    // ...and the rule is exercised, not merely declared. A name-presence assertion passes for a
+    // regex that is defined and never wired into the check, which is exactly the state this rule
+    // was in before the `require` gap was closed. Each form is planted and the audit must flag it.
+    for (const contents of [
+      'import { emitWhyBrief } from "../agents/why.ts";',
+      'const m = await import("../agents/why.ts");',
+      'const m = require("../agents/why.ts");',
+    ]) {
+      const violations = checkAgentEmitterImportConfinement([
+        { relPath: "packages/gateway/src/ipc/http-server.ts", contents: `${contents}\n` },
+      ]);
+      expect({ contents, flagged: violations.map((v) => v.rule) }).toEqual({
+        contents,
+        flagged: ["D22-agent-emitter-import"],
+      });
+    }
+    // The negative control: the allowed door and the excluded `_lib` path must NOT be flagged, or
+    // the loop above would pass for a rule that simply rejects everything.
+    expect(
+      checkAgentEmitterImportConfinement([
+        {
+          relPath: "packages/gateway/src/ipc/agents-rpc.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'import type { GapNote } from "../agents/_lib/findings.ts";\n',
+        },
+      ]),
+    ).toEqual([]);
+    expect(audit).toContain("checkAgentEmitterImportConfinement");
+  });
+
+  test("D22(d): agents/_lib re-exports no emitter — the gap the import regex cannot see", async () => {
+    // A regex over import SPECIFIERS does not follow re-export chains. Were an emitter re-exported
+    // through `agents/_lib/`, a file could import it from the EXCLUDED path and rule (d) would miss
+    // — the same shape as D22's recorded wrapper/façade limit. That gap is closed by ASSERTION
+    // here, not by trusting the import rule to cover something it structurally cannot.
+    //
+    // Resolved from REPO_ROOT (which derives from import.meta.dir), never the process CWD: a
+    // CWD-relative read passes from the repo root and throws ENOENT under CI's sharded runner,
+    // which is how a guard ends up dead in the only place it has to work.
+    const libDir = resolve(REPO_ROOT, "packages/gateway/src/agents/_lib");
+    const entries = await readdir(libDir);
+    const offenders: string[] = [];
+    for (const f of entries) {
+      if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+      const src = await readFile(resolve(libDir, f), "utf8");
+      // Any re-export whose specifier climbs out of _lib and back into agents/ itself.
+      if (/export\s[^;]*from\s+["'`]\.\.\/[A-Za-z][\w-]*\.ts["'`]/.test(src)) offenders.push(f);
+    }
+    expect(offenders).toEqual([]);
+    // Guard the guard: if the directory scan finds nothing, the assertion above is vacuous.
+    expect(entries.filter((f) => f.endsWith(".ts")).length).toBeGreaterThan(5);
   });
 
   test("I29: the D22 comment does not claim totality it cannot enforce", async () => {
@@ -1307,7 +1388,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     expect(offenders).toEqual([]);
   });
 
-  test("I29/D22(c): recordMcpBriefEgress is named by exactly two production files", async () => {
+  test("I29/D22(c): recordAgentBriefEgress is named by exactly two production files", async () => {
     // The MCP brief chokepoint is TOTAL only if the appender has one caller. Scanned the same way
     // as the `appendEgressEntry(` guard above — a `readdir` walk of production `.ts`/`.tsx` under
     // `packages/gateway/src`, with `relative()` + `sep` so the paths hold up on every platform —
@@ -1319,7 +1400,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // does not. So naming the appender in a doc comment elsewhere fails HERE and not there. That
     // asymmetry is the conservative direction and is kept on purpose (it also keeps this guard
     // free of a comment-stripper of its own to drift); refer to the module path
-    // `egress/mcp-brief-egress.ts` in prose rather than the bare symbol.
+    // `egress/agent-brief-egress.ts` in prose rather than the bare symbol.
     const dir = resolve(REPO_ROOT, "packages/gateway/src");
     const entries = await readdir(dir, { recursive: true, withFileTypes: true });
     const namers: string[] = [];
@@ -1331,11 +1412,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const parentDir = "path" in entry && typeof entry.path === "string" ? entry.path : dir;
       const abs = resolve(parentDir, entry.name);
       const contents = await readFile(abs, "utf8");
-      if (contents.includes("recordMcpBriefEgress")) {
+      if (contents.includes("recordAgentBriefEgress")) {
         namers.push(relative(dir, abs).split(sep).join("/"));
       }
     }
-    expect(namers.sort()).toEqual(["egress/mcp-brief-egress.ts", "ipc/agents-rpc.ts"]);
+    expect(namers.sort()).toEqual(["egress/agent-brief-egress.ts", "ipc/agents-rpc.ts"]);
   });
 
   test("I29: the MCP brief append runs BEFORE the dispatch and is not swallowed", async () => {
@@ -1350,7 +1431,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // narrow window would have proved nothing.
     const src = await read("packages/gateway/src/ipc/agents-rpc.ts");
     const fnAt = src.indexOf("export async function dispatchAgentsRpc(");
-    const appendAt = src.indexOf("recordMcpBriefEgress(ctx.db");
+    const appendAt = src.indexOf("recordAgentBriefEgress(ctx.db");
     const dispatchAt = src.indexOf("dispatchByMethod<AgentsRpcContext>");
     expect(fnAt).toBeGreaterThan(-1);
     expect(appendAt).toBeGreaterThan(-1);
@@ -1367,8 +1448,15 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // append-only column (`payload_summary` is capped at 256 bytes; `method` is not).
     expect(guardedRegion).toContain("Object.hasOwn(AGENTS_RPC_HANDLERS, method)");
     expect(guardedRegion).not.toContain('method.startsWith("agents.")');
-    // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params.
-    expect(src).toContain('ctx.caller?.kind === "mcp"');
+    // The caller kind is server-derived (`ctx.caller`), never read out of the RPC params. The
+    // condition is a lookup over a TOTAL map rather than an equality on one transport, so a new
+    // client kind is a compile error rather than a silently unledgered surface — see
+    // egress/egress-bearing-kinds.ts.
+    expect(src).toContain("egressSourceTypeForClientKind(ctx.caller?.kind)");
+    // ...and the kind is never reconstructed from the payload. Asserted as an absence because the
+    // presence check above would still pass if a params-derived fallback were added beside it.
+    expect(src).not.toMatch(/params\s*\.\s*kind/);
+    expect(src).not.toMatch(/\bp\.kind\b/);
   });
 
   test("I29: COVERAGE_CLASSES is exactly the non-marker source types", () => {
@@ -1383,11 +1471,14 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
-    // `mcp` is per-call because recordMcpBriefEgress ships in the same commit. The others stay none
-    // until theirs do. Raising an entry without its appender is the defect the vector exists to
-    // catch, so widening this expected list is a review moment, not a test to re-bank.
+    // `mcp` and `http` are per-call because recordAgentBriefEgress serves BOTH transports and its
+    // dispatcher condition ships in the same commit as this claim. The others stay none until
+    // theirs do — `sync` in particular is a later PR's, and the design document that lists it in
+    // the end-state vector is describing that PR, not this one. Raising an entry without its
+    // appender is the defect the vector exists to catch, so widening this expected list is a review
+    // moment, not a test to re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["mcp", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {
@@ -1446,9 +1537,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 });
 
 describe("I30 — web-clipper token minting is fail-closed behind an owner-opened pairing window", () => {
-  test("WRITE_ROUTE_ALLOWLIST is exactly the 12 sanctioned write routes (adds the 2 clip routes)", async () => {
+  test("WRITE_ROUTE_ALLOWLIST is exactly the 13 sanctioned write routes (still includes the 2 clip routes)", async () => {
     const { WRITE_ROUTE_ALLOWLIST } = await import("./ipc/http-write-routes.ts");
-    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(12);
+    expect(WRITE_ROUTE_ALLOWLIST).toHaveLength(13);
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips");
     expect([...WRITE_ROUTE_ALLOWLIST]).toContain("POST /v1/clips/pair/confirm");
   });

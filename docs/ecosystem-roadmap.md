@@ -587,7 +587,7 @@ accidentally by whichever item ships first.
   agents-as-MCP-tools work.** Five items independently planned to add a value; it is committed by
   the row hash, so the taxonomy is permanent, and the standing instruction was to close the union
   before the first new appender. That first appender was the MCP agent-brief ledger append
-  (`egress/mcp-brief-egress.ts`), and this is the decision it forced, made once and recorded here.
+  (`egress/agent-brief-egress.ts`), and this is the decision it forced, made once and recorded here.
 
   **What was decided.** `mcp` was added as the ninth member of `EGRESS_SOURCE_TYPES`, overriding
   #1038's prescription that a ninth class reuse `session` with a reserved `method`. That

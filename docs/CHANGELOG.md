@@ -25,6 +25,39 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `ownership_pass_state` counters; **V50 is permanently consumed as a no-op** and must never be
   backfilled (see `index/ownership-v51-sql.ts`). No new invariant, no HTTP route, no IPC read
   surface yet — the read path lands in PR B.
+- **2026-08-06 — the read-only agents are invocable over the local HTTP API, and every such brief is
+  in the egress ledger.** Second PR of the HTTP-agents work. Three routes:
+  `POST /v1/agents/{agent}` (on the `I13` write allowlist; returns `202` + a `runId`),
+  `GET /v1/agents/runs/{id}` (poll: `200` running/done/failed, `404` unknown, `410` expired) and
+  `GET /v1/agents` (the invokable set). All three require the `agents` scope minted in the previous
+  PR — **a legacy bare-string token, which resolves to exactly `clip,briefs`, is refused with `403`
+  on every one of them** and appends nothing. **Ten** agents are exposed: `agents.preflight` stays
+  off the surface (`I24` — an external caller must never originate a consent prompt on the owner's
+  machine) and `agents.whyPeek` is excluded because it is synchronous, returning its payload inline
+  and never notifying, so on a run/poll contract it would create a run that can never complete.
+  Delivery is dependency injection, not a notification bridge: the route builds an
+  `AgentsRpcContext` whose `notify` writes into an in-memory `AgentRunController` — **no agent code
+  changed**, and an HTTP caller's brief is never broadcast to socket clients. Runs are in-memory and
+  a restart drops them, deliberately: persisting them would write synthesised brief text derived
+  from the private index into a new on-disk table. The contract is stated rather than implied —
+  `404` means "unknown **or** lost to a restart", and the client's answer to both is to re-issue.
+  **Egress.** The append site did not move: `dispatchAgentsRpc` already appended before dispatch,
+  and its condition generalised from `ctx.caller?.kind === "mcp"` to a lookup over a map that is
+  **total** over `ClientKind`, so a future transport is a compile error rather than a surface that
+  serves briefs and ledgers nothing. `recordMcpBriefEgress` became `recordAgentBriefEgress`
+  (parameterised by transport; `destination` is `mcp`/`http`, or `…+federation` for the
+  peer-querying agents), and **`D22` gained a fourth rule**: no file outside `ipc/agents-rpc.ts` may
+  import an agent emitter, matching both the static and the dynamic `import()` form. The previous
+  `SECURITY-INVARIANTS.md` text predicted this exact bypass — a browser-reachable agent route that
+  called the emitters directly would have appended nothing and left `audit:invariants` green — so
+  rule (d) landed ahead of the surface that would have hit it.
+  **One operational consequence, by design:** the coverage vector gained an `http` class, and
+  `parseCoverage` rejects a marker with an unknown **or** a missing key. So **every `nimbus prove`
+  window spanning this upgrade reports `indeterminate` on every class.** That is the intended
+  fail-safe — an old marker must not contribute understated-but-plausible coverage — and it is the
+  only such blackout in this sequence, since later work changes coverage *values*, which degrade
+  gracefully. Also in this PR: `hasScope` is now module-private, so a handler can no longer name a
+  scope inline and bypass the `HTTP_ROUTE_AUTH` table.
 
 - **2026-08-06 — HTTP API bearer tokens are now scoped.** First PR of the HTTP-agents route work.
   A minted token used to be an all-or-nothing bearer secret; it now carries an explicit `scopes[]`

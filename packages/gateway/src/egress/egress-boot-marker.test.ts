@@ -11,6 +11,7 @@ import { coverageForWindow, listEgress, verifyEgressChain } from "./egress-verif
 const RICH_COVERAGE = {
   task: "per-call",
   mcp: "per-call",
+  http: "per-call",
   session: "per-call",
   sync: "per-run",
   model: "per-call",
@@ -32,7 +33,7 @@ describe("boot marker", () => {
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
     expect(rows[0]?.sourceId).toBe(
-      "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call",
+      "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call",
     );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
@@ -50,6 +51,7 @@ describe("boot marker", () => {
     expect(coverageForWindow(db, { since: 500, until: 3_000 })).toEqual({
       task: "per-call", // both non-none
       mcp: "per-call", // both non-none
+      http: "per-call", // both non-none
       session: "none", // the covering marker (400) saw nothing here
       sync: "none",
       model: "none",
@@ -143,7 +145,7 @@ describe("boot marker", () => {
       timestamp: 500,
       sourceType: "task",
       sourceId:
-        "mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
+        "http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call",
       destination: "local",
       method: "egress.boot",
       payloadSummary: "{}",

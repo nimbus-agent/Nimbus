@@ -20,7 +20,8 @@ import {
   loadNimbusDecisionsFromConfigDir,
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
-import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";
+import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
+import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
@@ -572,20 +573,90 @@ const AGENTS_RPC_HANDLERS = {
   "agents.decisions": handleDecisions,
 } as const satisfies RpcMethodHandlerMap<AgentsRpcContext>;
 
+const AGENTS_METHOD_PREFIX = "agents.";
+
+/**
+ * Methods served on the socket but deliberately NOT exposed on the HTTP API.
+ *
+ * `agents.preflight` — the I24 federated-action path. A caller that can invoke it can queue consent
+ * prompts on the owner's machine; an external caller must never originate one. Carried over
+ * unchanged from the MCP tool surface, for the same reason.
+ *
+ * `agents.whyPeek` — the namespace's one SYNCHRONOUS method. It returns a WhyPeek payload directly
+ * and never calls `notify`, so it cannot be represented on the HTTP `{runId}` + poll contract: the
+ * run would never complete and the caller would poll until the TTL turned a success into a 410.
+ * Exposing it needs its own inline-result route, which is a later decision rather than a second
+ * response shape bolted onto this one. Note it is still LEDGERED when reached over any transport —
+ * it is a member of AGENTS_RPC_HANDLERS, and the egress append is gated on that map, not on this
+ * one.
+ */
+const HTTP_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
+  "agents.preflight",
+  "agents.whyPeek",
+]);
+
+/**
+ * The agent names `POST /v1/agents/{agent}` accepts and `GET /v1/agents` publishes.
+ *
+ * DERIVED from AGENTS_RPC_HANDLERS so it cannot drift from the served set — a hand-maintained
+ * second list of the same names is the defect shape that cost the most on the MCP work. Sorted for
+ * a stable wire response.
+ */
+export const HTTP_AGENT_NAMES: readonly string[] = Object.freeze(
+  Object.keys(AGENTS_RPC_HANDLERS)
+    .filter((m) => !HTTP_EXCLUDED_AGENT_METHODS.has(m))
+    .map((m) => m.slice(AGENTS_METHOD_PREFIX.length))
+    // Explicit code-unit comparator, NOT `localeCompare` (which S2871's message suggests) and not a
+    // bare `.sort()` (whose implicit string coercion is what S2871 flags). This array is a WIRE
+    // RESPONSE: `localeCompare` is locale-sensitive, so two gateways under different locales could
+    // publish the same ten agents in different orders. The names are ASCII identifiers, so a
+    // code-unit comparison is total, stable and identical on every machine.
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+);
+
+/**
+ * The `agents.*` method for an HTTP path segment, or null when that segment names nothing this
+ * surface serves.
+ *
+ * `Object.hasOwn`, never `in`: the segment is caller-supplied, and `in` would resolve
+ * `"constructor"` / `"toString"` against the object prototype. Same reasoning as the egress
+ * append's membership gate.
+ *
+ * AGENTS_RPC_HANDLERS itself is NOT exported. Handing the map out would let another file invoke an
+ * agent directly — a bypass D22(d) cannot see, since it is not an `agents/<name>.ts` import.
+ */
+export function resolveHttpAgentMethod(agent: string): string | null {
+  const method = `${AGENTS_METHOD_PREFIX}${agent}`;
+  if (!Object.hasOwn(AGENTS_RPC_HANDLERS, method)) return null;
+  if (HTTP_EXCLUDED_AGENT_METHODS.has(method)) return null;
+  return method;
+}
+
 export async function dispatchAgentsRpc(
   method: string,
   params: unknown,
   ctx: AgentsRpcContext,
 ): Promise<RpcMissOrHit> {
-  // I29/D22(c): an MCP-originated brief is egress — the gateway synthesises from the private index
-  // and hands the result to whatever model the calling client uses. Append BEFORE any work, and let
-  // a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the namespace
-  // prefix, so an unrecognised call is a `miss` that ledgers nothing.
-  if (ctx.caller?.kind === "mcp" && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
-    recordMcpBriefEgress(ctx.db, {
+  // I29/D22(c): an externally-originated brief is egress — the gateway synthesises from the private
+  // index and hands the result to whatever model the calling client uses. Append BEFORE any work,
+  // and let a failure propagate: no row, no brief. Gated on a RECOGNISED method, never on the
+  // namespace prefix, so an unrecognised call is a `miss` that ledgers nothing.
+  //
+  // The caller kind selects the source type through a TOTAL map (egress/egress-bearing-kinds.ts)
+  // rather than an equality. This read `ctx.caller?.kind === "mcp"` while stdio was the only
+  // external transport; as an equality it was not wrong so much as unable to grow — the second
+  // transport would have served briefs and appended nothing, passing every test. `cli`/`ui`/
+  // `unknown`/absent map to null and append nothing, exactly as before.
+  const egressSourceType = egressSourceTypeForClientKind(ctx.caller?.kind);
+  if (egressSourceType !== null && Object.hasOwn(AGENTS_RPC_HANDLERS, method)) {
+    recordAgentBriefEgress(ctx.db, {
+      sourceType: egressSourceType,
       method,
       params,
-      clientId: ctx.caller.clientId,
+      // Unreachable when null: a non-null source type implies ctx.caller exists. TypeScript cannot
+      // narrow across the helper call, and `!` would assert what the compiler declines to check —
+      // so the impossible branch is spelled out and made harmless instead.
+      clientId: ctx.caller?.clientId ?? "",
       now: Date.now(),
     });
   }

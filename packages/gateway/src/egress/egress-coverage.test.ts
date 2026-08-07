@@ -1,6 +1,8 @@
 // packages/gateway/src/egress/egress-coverage.test.ts
 import { describe, expect, test } from "bun:test";
 import {
+  ALL_NONE_COVERAGE,
+  COVERAGE_CLASSES,
   type CoverageVector,
   parseCoverage,
   serializeCoverage,
@@ -11,6 +13,7 @@ import {
 const NONE: CoverageVector = {
   task: "none",
   mcp: "none",
+  http: "none",
   session: "none",
   sync: "none",
   model: "none",
@@ -22,24 +25,72 @@ const NONE: CoverageVector = {
  * `COVERAGE_CLASSES` (which IS the wire order) shows up as a diff here rather than being absorbed
  * by a round-trip through `serializeCoverage`.
  *
- * Every hardcoded coverage string in this file must list ALL six classes. A string that omits one
+ * Every hardcoded coverage string in this file must list ALL SEVEN classes. A string that omits one
  * makes `parseCoverage` return `null` for the MISSING-class reason, which would let a test that
  * targets some other defect keep passing while exercising nothing.
+ *
+ * `http` heads the string because the array is key-sorted and `http` < `mcp`.
  */
-const CANONICAL = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
+const CANONICAL =
+  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
+
+/** The six-class string every binary before the `http` class wrote. See the blackout test below. */
+const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
 
 describe("coverage vector", () => {
-  test("this binary observes gated actions AND MCP-originated briefs per-call, nothing else", () => {
-    // `mcp` is per-call because `recordMcpBriefEgress` ships alongside this entry. Every other
-    // class stays `none` until its appender lands.
+  test("this binary observes gated actions AND externally-originated briefs per-call, nothing else", () => {
+    // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
+    // transports and its dispatcher condition ships alongside this entry. Every other class stays
+    // `none` until its appender lands — `sync` especially: it is named in the end-state vector of
+    // the design doc, and raising it here on that basis would be a claim with no code behind it,
+    // which is the exact defect this vector prevents.
     expect(THIS_BINARY_COVERAGE).toEqual({
       task: "per-call",
       mcp: "per-call",
+      http: "per-call",
       session: "none",
       sync: "none",
       model: "none",
       peer: "none",
     });
+  });
+
+  test("COVERAGE_CLASSES stays key-sorted, with http at the head", () => {
+    // The array IS the wire format: serializeCoverage maps over it to build the canonical string
+    // stored in a boot marker's HASHED source_id. A non-sorted array would still typecheck and
+    // still round-trip within one binary — and would produce a different canonical string from any
+    // other binary that sorted correctly, silently splitting the fleet.
+    expect([...COVERAGE_CLASSES]).toEqual([
+      "http",
+      "mcp",
+      "model",
+      "peer",
+      "session",
+      "sync",
+      "task",
+    ]);
+    expect([...COVERAGE_CLASSES]).toEqual([...COVERAGE_CLASSES].sort());
+  });
+
+  test("ALL_NONE_COVERAGE covers the new class too", () => {
+    // It is the contribution of an UNPARSEABLE marker. A class missing from it would not typecheck,
+    // but this pins the intent: the all-none vector must stay total as the union grows.
+    expect(ALL_NONE_COVERAGE).toEqual(NONE);
+  });
+
+  test("a pre-http marker does not parse — the accepted `nimbus prove` blackout", () => {
+    // parseCoverage rejects a vector MISSING a known class, so every marker written by a binary
+    // older than this one now yields null, the caller substitutes ALL_NONE_COVERAGE, and any
+    // `prove` window spanning the upgrade reads `indeterminate` on EVERY class.
+    //
+    // Asserted rather than merely documented because it is a real operational consequence someone
+    // will hit and want "fixed". Softening parseCoverage to tolerate it would let an old marker
+    // contribute understated-but-plausible coverage — the forward-compatibility failure the
+    // strictness exists to prevent. This is the fail-safe direction. Do not relax it.
+    expect(parseCoverage(PRE_HTTP_MARKER)).toBeNull();
+    // ...and the reason is genuinely the missing class, not some unrelated malformation: the same
+    // string with the class restored parses fine.
+    expect(parseCoverage(`http=none;${PRE_HTTP_MARKER}`)).not.toBeNull();
   });
 
   test("serialize is stable and key-sorted", () => {
@@ -90,6 +141,7 @@ describe("coverage vector", () => {
     const rich: CoverageVector = {
       task: "per-call",
       mcp: "per-call",
+      http: "per-call",
       session: "per-call",
       sync: "per-run",
       model: "per-call",
@@ -98,6 +150,7 @@ describe("coverage vector", () => {
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
+      http: "per-call", // both per-call
       session: "none", // this binary saw nothing
       sync: "none",
       model: "none",

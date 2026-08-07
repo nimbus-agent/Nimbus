@@ -46,6 +46,10 @@ type ProveResult = {
 const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   task: "gated connector actions",
   mcp: "agents.* briefs served to MCP clients",
+  // NOT "the HTTP API" — the class covers agent briefs only. The other HTTP reads append nothing,
+  // and saying so here is the whole point of a hand-written label: this is what a human reads when
+  // `nimbus prove` prints its scope, and a label wider than the appender would overstate the proof.
+  http: "agents.* briefs served over the local HTTP API",
 };
 
 /**

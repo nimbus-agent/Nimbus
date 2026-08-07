@@ -17,6 +17,8 @@ import type { ApiScope } from "../clips/api-scopes.ts";
  */
 export const ROUTE_KEY_BRIEF_GET = "GET /v1/briefs/*";
 export const ROUTE_KEY_CLIPS_RELATED = "POST /v1/clips/related";
+export const ROUTE_KEY_AGENTS_LIST = "GET /v1/agents";
+export const ROUTE_KEY_AGENT_RUN_GET = "GET /v1/agents/runs/*";
 
 export type RouteAuth =
   | { readonly kind: "public" }
@@ -62,6 +64,8 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // their requirement up by these keys, so the table is genuinely the single source of truth.
   [ROUTE_KEY_BRIEF_GET]: { kind: "clip", scope: "briefs" },
   [ROUTE_KEY_CLIPS_RELATED]: { kind: "clip", scope: "clip" },
+  [ROUTE_KEY_AGENTS_LIST]: { kind: "clip", scope: "agents" },
+  [ROUTE_KEY_AGENT_RUN_GET]: { kind: "clip", scope: "agents" },
 
   // --- Writes. Keys are the `ROUTE_*` constant VALUES from http-write-routes.ts, verbatim.
   // Note `{id}`, not `:id` — copied from source, not guessed.
@@ -75,13 +79,27 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   // Gated by the short-lived pairing CODE, not a bearer — it is how a token is obtained, so it
   // cannot require one.
   "POST /v1/clips/pair/confirm": { kind: "pairing" },
+  // `{agent}`, not `:agent` — matches the `{id}` convention the brief and SCIM item routes already
+  // use. The key is the STATIC route constant; the request's own segment is captured into
+  // `route.id` and never substituted in here (see scopeRefusal's contract).
+  "POST /v1/agents/{agent}": { kind: "clip", scope: "agents" },
   "POST /v1/briefs": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/sources": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/run": { kind: "clip", scope: "briefs" },
   "POST /v1/briefs/{id}/save": { kind: "clip", scope: "briefs" },
 });
 
-export function hasScope(granted: readonly ApiScope[], required: ApiScope): boolean {
+/**
+ * Exact membership. MODULE-PRIVATE on purpose.
+ *
+ * While this was exported, any handler could write `hasScope(scopes, "briefs")` inline, which would
+ * make HTTP_ROUTE_AUTH decorative: the table would keep passing its completeness test while the
+ * requirement actually enforced lived at the call site. Every enforcement site goes through
+ * `enforceClipScope`, so the table is the single source of truth BY CONSTRUCTION rather than by
+ * convention — and naming a scope inline is now a compile error, which needs no static rule and no
+ * maintenance.
+ */
+function hasScope(granted: readonly ApiScope[], required: ApiScope): boolean {
   return granted.includes(required);
 }
 
@@ -110,7 +128,11 @@ export function insufficientScopeBody(
  * exported constants — narrowing the parameter type to their union makes passing anything else
  * (in particular a raw request path) a compile error rather than a runtime fail-open.
  */
-export type ClipReadRouteKey = typeof ROUTE_KEY_CLIPS_RELATED | typeof ROUTE_KEY_BRIEF_GET;
+export type ClipReadRouteKey =
+  | typeof ROUTE_KEY_CLIPS_RELATED
+  | typeof ROUTE_KEY_BRIEF_GET
+  | typeof ROUTE_KEY_AGENTS_LIST
+  | typeof ROUTE_KEY_AGENT_RUN_GET;
 
 export type ClipScopeVerdict =
   | { readonly ok: true }

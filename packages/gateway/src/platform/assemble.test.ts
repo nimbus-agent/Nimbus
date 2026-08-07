@@ -66,6 +66,7 @@ describe("appendBootMarkerOrWarn", () => {
     expect(coverageForWindow(db, { since: 2_000, until: 3_000 })).toEqual({
       task: "none",
       mcp: "none",
+      http: "none",
       session: "none",
       sync: "none",
       model: "none",

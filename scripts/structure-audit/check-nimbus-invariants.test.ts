@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import {
+  checkAgentEmitterImportConfinement,
   checkConnectorWriteConfinement,
   checkEgressChokepointConfinement,
   checkForwardShareConfinement,
@@ -440,41 +441,158 @@ describe("D22 — egress chokepoint confinement", () => {
     expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
   });
 
-  test("(c) flags recordMcpBriefEgress named outside its definition and single caller", () => {
+  test("(c) flags recordAgentBriefEgress named outside its definition and single caller", () => {
     const files: FileEntry[] = [
       {
         relPath: "packages/gateway/src/ipc/clip-rpc.ts",
-        contents: "recordMcpBriefEgress(db, args);\n",
+        contents: "recordAgentBriefEgress(db, args);\n",
       },
     ];
     const v = checkEgressChokepointConfinement(files);
-    expect(v.some((x) => x.rule === "D22-mcp-brief-egress")).toBe(true);
+    expect(v.some((x) => x.rule === "D22-agent-brief-egress")).toBe(true);
   });
 
-  test("(c) allows recordMcpBriefEgress in its definition file and in agents-rpc.ts", () => {
+  test("(c) allows recordAgentBriefEgress in its definition file and in agents-rpc.ts", () => {
     const files: FileEntry[] = [
       {
-        relPath: "packages/gateway/src/egress/mcp-brief-egress.ts",
-        contents: "export function recordMcpBriefEgress(db, args) {}\n",
+        relPath: "packages/gateway/src/egress/agent-brief-egress.ts",
+        contents: "export function recordAgentBriefEgress(db, args) {}\n",
       },
       {
         relPath: "packages/gateway/src/ipc/agents-rpc.ts",
-        contents: "recordMcpBriefEgress(ctx.db, { method, params });\n",
+        contents: "recordAgentBriefEgress(ctx.db, { method, params });\n",
       },
     ];
     expect(checkEgressChokepointConfinement(files)).toHaveLength(0);
   });
 
-  test("(c) an IMPORT of recordMcpBriefEgress elsewhere is flagged too — the name is pinned, not just the call", () => {
+  test("(c) an IMPORT of recordAgentBriefEgress elsewhere is flagged too — the name is pinned, not just the call", () => {
     // The rule matches the bare identifier deliberately: a file that imports the appender has
     // already acquired the capability, whether or not the call sits on the same line.
     const files: FileEntry[] = [
       {
         relPath: "packages/gateway/src/ipc/rogue-rpc.ts",
-        contents: 'import { recordMcpBriefEgress } from "../egress/mcp-brief-egress.ts";\n',
+        contents: 'import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";\n',
       },
     ];
     const v = checkEgressChokepointConfinement(files);
-    expect(v.some((x) => x.rule === "D22-mcp-brief-egress")).toBe(true);
+    expect(v.some((x) => x.rule === "D22-agent-brief-egress")).toBe(true);
+  });
+});
+
+describe("D22(d) — agent emitter import confinement", () => {
+  const flagged = (files: FileEntry[]): boolean =>
+    checkAgentEmitterImportConfinement(files).some((x) => x.rule === "D22-agent-emitter-import");
+
+  test("flags a STATIC emitter import outside agents-rpc.ts", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a DYNAMIC emitter import outside agents-rpc.ts", () => {
+    // Without this arm the rule is defeated by a one-character change from `import x from` to
+    // `await import(`, which would be a bypass hiding in plain sight.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'const m = await import("../agents/why.ts");\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("flags a require() emitter import outside agents-rpc.ts", () => {
+    // Not theoretical: Bun resolves `require("../agents/why.ts")` from a TypeScript module and
+    // returns the live emitter — verified by running it. A rule matching only the two `import`
+    // spellings would have left this door open while reporting green.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: 'const m = require("../agents/why.ts");\n',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  test("require() of an agents/_lib path is still allowed", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'const m = require("../agents/_lib/findings.ts");\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("allows every emitter import in agents-rpc.ts — the one door", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/agents-rpc.ts",
+          contents:
+            'import { emitWhyBrief } from "../agents/why.ts";\nimport { runWhyPeek } from "../agents/why-peek.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("allows agents/_lib imports from anywhere — types and shared helpers, not emitters", () => {
+    // federation/peer-fanout.ts imports _lib/findings.ts (a type) and
+    // ipc/index-demo-symbol-rpc.ts imports _lib/demo-symbol.ts (a helper). Both are legitimate and
+    // must stay legitimate, or the rule would force a pointless re-plumbing of unrelated code.
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/federation/peer-fanout.ts",
+          contents: 'import type { GapNote } from "../agents/_lib/findings.ts";\n',
+        },
+        {
+          relPath: "packages/gateway/src/ipc/index-demo-symbol-rpc.ts",
+          contents: 'import { pickDemoSymbol } from "../agents/_lib/demo-symbol.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("allows an emitter importing a sibling emitter — internal, not a second entry point", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/agents/why.ts",
+          contents: 'import { emitGhostBrief } from "./ghost.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("ignores test files, matching every sibling rule", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/some.test.ts",
+          contents: 'import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(false);
+  });
+
+  test("a commented-out import does not trip it — comments are stripped first", () => {
+    expect(
+      flagged([
+        {
+          relPath: "packages/gateway/src/ipc/http-server.ts",
+          contents: '// import { emitWhyBrief } from "../agents/why.ts";\n',
+        },
+      ]),
+    ).toBe(false);
   });
 });

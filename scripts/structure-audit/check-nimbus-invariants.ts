@@ -596,19 +596,87 @@ export function checkForwardShareConfinement(files: readonly FileEntry[]): Viola
 // are addressed by removing the capability (Phase 2 of the I29 security spec), not by this regex.
 //
 // What it does enforce: no NEW site may spell `connectors.dispatch` outside engine/executor.ts,
-// `appendEgressEntry` stays inside egress/, and `recordMcpBriefEgress` is named only by its
+// `appendEgressEntry` stays inside egress/, and `recordAgentBriefEgress` is named only by its
 // definition and its single caller (rule (c), below). Test files are exempt.
 const D22_DISPATCH_ALLOWED = "packages/gateway/src/engine/executor.ts";
 const D22_DISPATCH_RE = /\bconnectors\.dispatch\b/;
 const D22_APPEND_RE = /\bappendEgressEntry\b/;
 const D22_APPEND_ALLOWED_PREFIX = "packages/gateway/src/egress/";
 
-// (c) the MCP brief egress chokepoint must be TOTAL: `recordMcpBriefEgress` is CALLED from exactly
-// one file. This mirrors (a) — it pins the caller, it does not merely permit an appender. Adding a
-// file to an allowlist here would satisfy the checker while dissolving the property it protects.
-const D22_MCP_RECORD_RE = /\brecordMcpBriefEgress\b/;
-const D22_MCP_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
-const D22_MCP_RECORD_DEFINITION = "packages/gateway/src/egress/mcp-brief-egress.ts";
+// (c) the agent brief egress chokepoint must be TOTAL: `recordAgentBriefEgress` is CALLED from
+// exactly one file. This mirrors (a) — it pins the caller, it does not merely permit an appender.
+// Adding a file to an allowlist here would satisfy the checker while dissolving the property it
+// protects.
+//
+// The symbol was `recordMcpBriefEgress` until agent briefs became reachable over HTTP as well as
+// stdio. The rule moved with it IN THE SAME COMMIT: a rule pinning a symbol that no longer exists
+// passes vacuously, which is indistinguishable from a rule that is working.
+const D22_AGENT_RECORD_RE = /\brecordAgentBriefEgress\b/;
+const D22_AGENT_RECORD_CALLER = "packages/gateway/src/ipc/agents-rpc.ts";
+const D22_AGENT_RECORD_DEFINITION = "packages/gateway/src/egress/agent-brief-egress.ts";
+
+// (d) the EMITTER chokepoint. Rule (c) pins the caller of the appender, which catches a second file
+// acquiring the appender — but NOT a second file that serves a brief without calling it at all.
+// That path spells nothing (c) matches: it would append no row, serve the brief, and leave
+// audit:invariants green. docs/SECURITY-INVARIANTS.md recorded that gap in prose, naming a
+// browser-reachable agent route as the surface that would hit it; this rule closes it before that
+// surface can.
+//
+// The property: only ipc/agents-rpc.ts may import an agent EMITTER module. Emitters are
+// `packages/gateway/src/agents/<name>.ts`; `agents/_lib/` is excluded because it holds types and
+// shared helpers (findings.ts, demo-symbol.ts) that federation/ and ipc/ legitimately consume.
+//
+// ALL THREE module-resolution forms are matched. A static-only regex is defeated by the
+// one-character change from `import x from "…"` to `await import("…")`, and BOTH are defeated by
+// `require("…")` — which is not theoretical here: Bun resolves `require("../agents/why.ts")` from a
+// TypeScript module and hands back the live emitter, verified by running it. An enumeration of
+// import forms is only as good as its completeness, so adding a fourth spelling must add a fourth
+// pattern rather than assume the existing ones generalise.
+//
+// KNOWN LIMIT, stated because D22's existing weakness is exactly this: a regex over import
+// specifiers does not follow re-export chains. An emitter re-exported through `agents/_lib/` could
+// be imported from the excluded path and this rule would miss. That is closed by an assertion in
+// security-invariants.test.ts ("agents/_lib re-exports no emitter"), not by this regex — the same
+// answer as the wrapper/façade limit above: address the capability, do not pretend the regex sees it.
+const D22_EMITTER_ALLOWED = "packages/gateway/src/ipc/agents-rpc.ts";
+const D22_EMITTER_DIR = "packages/gateway/src/agents/";
+/** `from ".../agents/<name>.ts"` — any quote style, excluding an `_lib/` segment. */
+const D22_EMITTER_STATIC_RE = /\bfrom\s+["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+/** `import(".../agents/<name>.ts")` — the dynamic form. */
+const D22_EMITTER_DYNAMIC_RE =
+  /\bimport\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+/** `require(".../agents/<name>.ts")` — the CommonJS form, which Bun honours from a .ts module. */
+const D22_EMITTER_REQUIRE_RE =
+  /\brequire\s*\(\s*["'`][^"'`]*\/agents\/(?!_lib\/)[A-Za-z][\w-]*\.ts["'`]/;
+
+export function checkAgentEmitterImportConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    // An emitter importing a sibling emitter is internal to the agents package, not a second entry
+    // point. The rule is about who can reach IN from outside.
+    if (f.relPath.startsWith(D22_EMITTER_DIR)) continue;
+    if (f.relPath === D22_EMITTER_ALLOWED) continue;
+    const strippedLines = stripComments(f.contents).split("\n");
+    const originalLines = f.contents.split("\n");
+    for (let i = 0; i < strippedLines.length; i++) {
+      const line = strippedLines[i] ?? "";
+      if (
+        D22_EMITTER_STATIC_RE.test(line) ||
+        D22_EMITTER_DYNAMIC_RE.test(line) ||
+        D22_EMITTER_REQUIRE_RE.test(line)
+      ) {
+        out.push({
+          rule: "D22-agent-emitter-import",
+          file: f.relPath,
+          line: i + 1,
+          snippet: (originalLines[i] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
 
 export function checkEgressChokepointConfinement(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -635,12 +703,12 @@ export function checkEgressChokepointConfinement(files: readonly FileEntry[]): V
         });
       }
       if (
-        D22_MCP_RECORD_RE.test(line) &&
-        f.relPath !== D22_MCP_RECORD_CALLER &&
-        f.relPath !== D22_MCP_RECORD_DEFINITION
+        D22_AGENT_RECORD_RE.test(line) &&
+        f.relPath !== D22_AGENT_RECORD_CALLER &&
+        f.relPath !== D22_AGENT_RECORD_DEFINITION
       ) {
         out.push({
-          rule: "D22-mcp-brief-egress",
+          rule: "D22-agent-brief-egress",
           file: f.relPath,
           line: i + 1,
           snippet: (originalLines[i] ?? "").trim(),
@@ -828,7 +896,16 @@ async function run(): Promise<void> {
     const v = checkEgressChokepointConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordMcpBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D22 egress chokepoint breach (connectors.dispatch outside executor.ts, appendEgressEntry outside egress/, or recordAgentBriefEgress outside agents-rpc.ts) — bypasses I29: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkAgentEmitterImportConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(d) agent emitter imported outside ipc/agents-rpc.ts — a second entry point would serve a brief with no egress row; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
