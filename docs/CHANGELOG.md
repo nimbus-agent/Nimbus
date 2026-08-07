@@ -8,6 +8,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-07 — The ownership graph is readable: `agents.ownership`, `nimbus owners`, `ownership.refresh` (schema stays V51).**
+  PR B (read surface) of the S1 ownership work, completing the graph PR A wrote. A twelfth
+  built-in read-only agent (`agents/ownership.ts`) resolves a requested file/directory path
+  (via the same containment fence `why` uses, `agents/_lib/why-subject.ts` `matchConfiguredRoot`,
+  plus a root-itself case that helper deliberately rejects) or a `[ci.service.<id>]` id against
+  the `person --owns--> source_file | directory | service` edges the pass already wrote, falls
+  back to the parent directory so a one-committer file still routes somewhere, and reports the
+  bound-service list + last-pass coverage with no argument at all. Root resolution consults
+  **both** root sources (`[[filesystem.roots]]` and `nimbus index add` registrations,
+  `ownershipRoots()` — the same merged set the derivation pass reads), not the narrower
+  TOML-only set `why` uses, so a path indexed only via `nimbus index add` is never falsely
+  reported as out of scope. `nimbus owners [<path>] [--service <name>] [--json] [--refresh]`
+  hard-rejects an unrecognised flag, matching `nimbus glossary`. `ownership.refresh` drives an
+  on-demand derivation pass (`nimbus owners --refresh`); it takes **no parameters** — the pass
+  clears and re-emits every edge it owns wholesale each run, so a caller-supplied root list
+  would silently erase ownership for the omitted roots — and there is deliberately **no**
+  `ownership.rebuild`, since a rebuild would be a synonym for refresh. Both the read agent and
+  the refresh verb mirror glossary/decisions exactly: `agents.ownership` is renderer-exposed
+  (Tauri `ALLOWED_METHODS` **103 → 104**, I7) and answerable over the LAN wire (I5 default-allow);
+  `ownership.refresh` is write-class, so the whole `ownership` namespace is LAN-forbidden and
+  absent from Tauri's allowlist — local/CLI-only. Also ships `findOwners`, the MCP tool exposing
+  `agents.ownership` to external MCP clients (egressed via the existing `source_type='mcp'` I29
+  append path — no new invariant, no new egress-ledger code). **Every brief states plainly that
+  this is authorship-derived ownership, not accountability** — an unconditional gap note reads:
+  *"Blame measures who wrote lines, not who is accountable. There is no CODEOWNERS, no reviewer
+  data and no on-call rotation in the index, so this is authorship-derived ownership,"* with the
+  remediation *"Treat the ranking as a starting point for who to ask, not as an approval list."*
+  No new HTTP route, no migration (schema stays **V51** — this PR adds no table), no new
+  invariant: read-only end to end, no `connectors.dispatch`, zero `egress_ledger` rows from the
+  read path itself. **Also fixes a stale cross-check**: `security-invariants.test.ts`'s
+  `allowlist_exact_size` test scanned `gateway_bridge.rs` for a hardcoded `103`, left behind
+  when an earlier commit on this branch bumped the real Rust count to 104 for `agents.ownership`
+  — the file-content assertion had drifted from the source it checks. Dated detail for the
+  derivation pass this reads: PR A entry immediately below.
 - **2026-08-07 — Ownership graph derived from git blame (schema V51).** PR A (derivation) of the
   S1 ownership work. A debounced post-sync pass (`ownership/ownership-pass.ts`, `[ownership]` in
   `nimbus.toml`, default ON) aggregates the already-indexed `git_blame_line` rows into graph edges:

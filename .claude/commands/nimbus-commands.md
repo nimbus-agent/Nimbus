@@ -268,6 +268,14 @@ nimbus decisions [--since <dur>] [--service <name>] [--min-confidence <0..1>] [-
 
 The `USAGE` constant in each command file (`packages/cli/src/commands/{glossary,decisions}.ts`) is canonical — copy it, do not reassemble it from the flag parser. `nimbus glossary` **hard-rejects** an unrecognised flag rather than ignoring it. `--refresh`/`--rebuild` drive a long-running, write-class pass (`glossary.*` / `decisions.*`), are mutually exclusive, and `--rebuild` needs `--yes`; both namespaces are LAN-forbidden and not Tauri-exposed.
 
+### Spine S1 — ownership graph
+
+```bash
+nimbus owners [<path>] [--service <name>] [--json] [--refresh]    # IPC: agents.ownership; pass via ownership.refresh
+```
+
+The `USAGE` constant in `packages/cli/src/commands/owners.ts` is canonical. `nimbus owners` also **hard-rejects** an unrecognised flag, and `<path>`/`--service` are mutually exclusive. `--refresh` drives a long-running, write-class derivation pass (`ownership.refresh`) — unlike glossary/decisions there is **no** `--rebuild` counterpart (the pass already clears and re-emits every edge wholesale each run, so a rebuild would be a synonym for refresh) and the RPC takes **no parameters at all**. The `ownership` namespace is LAN-forbidden and not Tauri-exposed; the read-only `agents.ownership` is exposed on both, like every other agent.
+
 ### Index maintenance
 
 ```bash

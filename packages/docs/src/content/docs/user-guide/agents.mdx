@@ -1,6 +1,6 @@
 ---
 title: Built-in agents
-description: The eleven read-only agents that ship inside the Gateway — expert, impact, catchup, why, glossary, decisions, ghost, conflicts, huddle, janitor, and preflight.
+description: The twelve read-only agents that ship inside the Gateway — expert, impact, catchup, why, glossary, decisions, ownership, ghost, conflicts, huddle, janitor, and preflight.
 ---
 
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
@@ -19,7 +19,7 @@ Three properties hold for every built-in agent:
 - **Local-first.** Every sub-agent reads from the local SQLite index. No live
   API call is made unless a connector explicitly resolves a missing reference.
 
-Eleven ship today:
+Twelve ship today:
 
 | Agent | Answers | Needs |
 |---|---|---|
@@ -29,6 +29,7 @@ Eleven ship today:
 | [`nimbus why`](#nimbus-why-ref) | Why is this line the way it is? | Local index (+ local `git blame`) |
 | [`nimbus glossary`](#nimbus-glossary-term) | What does this term mean on this team? | Local index (+ optional local LLM) |
 | [`nimbus decisions`](#nimbus-decisions) | What did we decide, and why? | Local index (+ optional local LLM) |
+| [`nimbus owners`](#nimbus-owners-path) | Who wrote this code, and how much? | Local index (git blame) |
 | [`nimbus ghost`](#nimbus-ghost-file) | Who else knows this file? | Paired peers |
 | [`nimbus conflicts`](#nimbus-conflicts-file) | Is someone already working on this? | Paired peers |
 | [`nimbus huddle`](#nimbus-huddle) | What did the team do yesterday? | Paired peers |
@@ -238,6 +239,47 @@ how many of its sources were indexed with a truncated body, so a decision
 stated deep in a long document is never silently missed.
 
 **Notification:** `decisions.briefReady { sessionId, brief, findings }`.
+
+---
+
+## `nimbus owners [<path>]`
+
+Answers *who wrote this code, and how much?* — ranks people against a file,
+directory, or `[ci.service.<id>]` service by recency-weighted `git blame`
+share, using blame data the Gateway already indexes for `nimbus why`. With no
+argument it prints a coverage summary: when the derivation pass last ran, how
+many roots and files it covered, and which services it bound.
+
+**Read this before you trust the ranking: this is authorship-derived
+ownership, not accountability.** It answers *who wrote these lines*, from
+`git blame` — never *who is responsible for approving a change to them*.
+There is no CODEOWNERS file, no code-review data, and no on-call rotation
+anywhere in the local index. Treat the result as a starting point for who to
+ask, not an approval list — and every brief repeats this, not just this page.
+
+```bash
+nimbus owners
+nimbus owners src/billing/retry.ts
+nimbus owners src/billing
+nimbus owners --service billing
+nimbus owners --refresh
+nimbus owners --json
+```
+
+`<path>` must be inside a configured git-aware root — either a
+`[[filesystem.roots]]` block or a `nimbus index add` registration — and is
+mutually exclusive with `--service`. A path with no owners of its own still
+routes to its parent directory, so a one-line file isn't a dead end. Owners
+below a configurable share (`[ownership].min_share`, default `5%`) are
+dropped from the list but still counted toward the true total, and vendored /
+generated / lock files are excluded from aggregation by default
+(`[ownership].ignore_globs`) so nobody is credited with "owning" a directory
+because they last ran `npm install`.
+
+`--refresh` runs the derivation pass on demand instead of waiting for the
+next debounced post-sync run.
+
+**Notification:** `ownership.briefReady { sessionId, brief, findings }`.
 
 ---
 

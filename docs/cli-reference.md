@@ -459,6 +459,58 @@ nimbus decisions --json
 
 ---
 
+### `nimbus owners`
+
+The read surface over the git-blame-derived ownership graph (schema **V51**): ranks who wrote a file or directory's lines, recency-weighted, and rolls a repository root up to the `[ci.service.<id>]` it is bound to. With no argument it prints a coverage summary (last-pass timestamp, roots/files covered, services bound).
+
+**This is authorship-derived ownership, not accountability.** It answers "who wrote this," from `git blame`, not "who is responsible for approving a change to it." There is no CODEOWNERS file, no code-review data, and no on-call rotation anywhere in the local index, so the ranking is a starting point for who to ask — never an approval list. Every brief says so explicitly via an unconditional gap note.
+
+```text
+Usage: nimbus owners [<path>] [--service <name>] [--json] [--refresh]
+  <path>       a file or directory inside a configured git-aware root
+  --service    a [ci.service.<id>] service id
+  (no args)    ownership coverage summary
+```
+
+```bash
+nimbus owners
+nimbus owners src/billing/retry.ts
+nimbus owners src/billing
+nimbus owners --service billing
+nimbus owners --refresh
+nimbus owners --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `<path>` | A file or directory inside a configured git-aware root (either a `[[filesystem.roots]]` block or a `nimbus index add` registration). Resolves to the nearest graph entity; a path with no owners still routes to its parent directory so a one-committer file isn't a dead end. Mutually exclusive with `--service`. |
+| `--service <name>` | Look up the owners of a bound `[ci.service.<id>]` service directly, instead of a path. Mutually exclusive with `<path>`. |
+| `--json` | Machine-readable JSON output (otherwise Markdown). |
+| `--refresh` | Run an on-demand derivation pass now (`ownership.refresh`), then print the (possibly updated) brief. Fails if a pass is already running. |
+
+Like `nimbus glossary`, `nimbus owners` **hard-rejects** an unrecognised flag rather than ignoring it — a typo'd `--srevice` would otherwise silently fall through to a whole-repo coverage summary that looks like a successful answer to a different question. `<path>` and `--service` together are also rejected, not silently resolved by picking one.
+
+**Output (Markdown):** the requested target's ranked owners (each with a recency-weighted share and a resolved-person-or-git-email label), the parent directory's owners as a fallback lane, the service the containing root rolls up to (if any), and the coverage summary. Gap notes explain a `0`-coverage result (no git-aware roots configured, the pass hasn't run yet, the path is outside every configured root, `[ownership].ignore_globs` excluded it) rather than looking broken, plus the standing authorship-vs-accountability disclaimer described above.
+
+**Configuration — `[ownership]` in `nimbus.toml`:**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Run the background derivation pass at all. Like `[glossary]` and `[decisions]`, this opens no network surface — it reads the local `git_blame_line` index and writes local graph edges — so it defaults on. |
+| `half_life_days` | `365` | Recency half-life for blame-line weighting: a line blamed today counts more than one blamed a half-life ago. |
+| `min_share` | `0.05` | An owner below this recency-weighted share of a path is dropped from the emitted set (but still counted toward the true total). |
+| `max_owners_per_path` | `10` | Cap on owners emitted per path; the true count above the floor is kept on the entity's metadata and reported as a truncation fact. |
+| `ignore_globs` | a default list of lock files, `vendor/`, `node_modules/`, `dist/`, `build/`, minified/generated/snapshot files | Root-relative globs excluded from aggregation. `git log --name-only` consults no exclude list on its own, so an unfiltered lock file would otherwise hand a directory to whoever last ran the installer. An explicit `[]` disables filtering entirely. |
+| `debounce_ms` | `30000` | How long a burst of connector syncs coalesces before triggering one pass. |
+
+**Read-only:** never triggers HITL, never makes a live connector API call, never calls `connectors.dispatch` — the derivation pass reads only the already-indexed `git_blame_line` table and calls no model. Zero `egress_ledger` rows.
+
+**Exit codes:** `1` = gateway not running; `2` = agent error (timeout or a malformed `agents.ownership` response).
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).
