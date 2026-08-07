@@ -437,7 +437,7 @@ function spec(name: string) {
 }
 
 describe("TOOL_SPECS", () => {
-  it("exposes exactly the seventeen read-only tools", () => {
+  it("exposes exactly the eighteen read-only tools", () => {
     expect(TOOL_SPECS.map((t) => t.name).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "assessImpact",
@@ -446,6 +446,7 @@ describe("TOOL_SPECS", () => {
         "findConflicts",
         "findDecisions",
         "findExpert",
+        "findOwners",
         "getCatchup",
         "getConnectorStatus",
         "getDoraMetrics",
@@ -529,7 +530,7 @@ describe("TOOL_SPECS", () => {
 });
 
 describe("buildMcpServer", () => {
-  it("registers all seventeen tools without throwing", () => {
+  it("registers all eighteen tools without throwing", () => {
     const { deps } = recordingDeps({ result: [] });
     const server = buildMcpServer(deps);
     expect(server).toBeDefined();
@@ -538,7 +539,7 @@ describe("buildMcpServer", () => {
 
 /**
  * Owner decision: on a gateway that rejects `session.declareKind` as an unsupported method, the
- * eleven agent-classified tools are withdrawn and the six read-only index tools are kept. The
+ * twelve agent-classified tools are withdrawn and the six read-only index tools are kept. The
  * previous behaviour — warn on stderr, serve the briefs anyway — handed the operator unrecorded
  * briefs while `nimbus prove` reported a clean scope, and editor-spawned MCP servers usually
  * discard stderr, so nothing said otherwise.
@@ -585,7 +586,7 @@ describe("degraded mode on a gateway without session.declareKind", () => {
     // Derived, not retyped: the withheld set is exactly TOOL_SPECS minus INDEX_TOOL_SPECS, and it
     // includes peekWhy — synchronous, but still `agents.whyPeek` and still ledgered gateway-side.
     const withheld = TOOL_SPECS.filter((s) => !names.includes(s.name)).map((s) => s.name);
-    expect(withheld).toHaveLength(11);
+    expect(withheld).toHaveLength(12);
     expect(withheld).toContain("peekWhy");
     expect(withheld).toContain("explainWhy");
     expect(INDEX_TOOL_SPECS.map((s) => s.name).sort()).toEqual(names);
@@ -638,7 +639,7 @@ describe("degraded mode on a gateway without session.declareKind", () => {
     expect(names).toContain("explainWhy");
   });
 
-  it("a DISCONNECT-class declareKind failure is not degraded mode — all seventeen tools stay", async () => {
+  it("a DISCONNECT-class declareKind failure is not degraded mode — all eighteen tools stay", async () => {
     // The distinction shipped earlier on this branch: a dead transport must not be reported as an
     // old gateway. It keeps its behaviour exactly, including full tool registration.
     const deps = createDeps(envRejectingDeclareKind(new Error("IPC connection closed")));
@@ -901,8 +902,8 @@ test("peekWhy sends `ref` — the key agents.whyPeek's validator actually reads"
   expect(Object.keys(spec("peekWhy").schema)).toEqual(["ref"]);
 });
 
-test("the registered tool set is the six index tools plus peekWhy plus ten agents", () => {
-  expect(TOOL_SPECS).toHaveLength(17);
+test("the registered tool set is the six index tools plus peekWhy plus eleven agents", () => {
+  expect(TOOL_SPECS).toHaveLength(18);
   const names = new Set(TOOL_SPECS.map((s) => s.name));
   expect(names.has("searchIndex")).toBe(true);
   expect(names.has("peekWhy")).toBe(true);

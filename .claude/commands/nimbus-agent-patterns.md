@@ -2,7 +2,7 @@
 name: nimbus-agent-patterns
 description: >
   Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
-  janitor, preflight, why, glossary, decisions): file location, the
+  janitor, preflight, why, glossary, decisions, ownership): file location, the
   read-only/HITL-free shape invariant, parallel sub-agent decomposition via
   AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
@@ -16,7 +16,7 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
 
 ### Implicit-knowledge agents (Spine S1 — Local Brain)
 
@@ -32,6 +32,18 @@ Three agents mine knowledge nobody wrote down, from content already in the index
 
 1. **State the recall limit in the brief, not just the docs.** `decisions` reports a per-brief truncated-source count keyed on `body_complete = 0` (`N of M source(s) … indexed with a truncated body`) and stays silent when nothing is truncated — it does not carry a standing disclaimer that readers learn to ignore.
 2. **Never present a full-marks scale the user cannot reach.** `migration`/`iac` evidence is in the V47 schema but no connector indexes changed-file paths, so the confidence ceiling is **0.86, not 1.0** — and the brief says so.
+
+### Ownership agent (Spine S1 — Local Brain)
+
+**`ownership`** (`packages/gateway/src/agents/ownership.ts`) — IPC `agents.ownership`, CLI `nimbus owners [<path>] [--service <name>] [--json] [--refresh]` (the `USAGE` constant in `packages/cli/src/commands/owners.ts` is canonical). Backed by `person --owns--> source_file | directory | service` graph edges + the single-row `ownership_pass_state` watermark (**V51**), fed by a debounced post-sync pass (`ownership/ownership-pass.ts`) that aggregates already-indexed `git_blame_line` rows — it opens no connector and calls no model. `nimbus owners` also **hard-rejects** an unrecognised flag, matching `nimbus glossary`/`nimbus decisions`.
+
+It sits beside the implicit-knowledge trio (same S1 slot, same persisted-pass-plus-watermark shape, same `emitBriefWithSynthesis` read path) but is **not** implicit-knowledge extraction — blame data is not knowledge nobody wrote down, it is aggregated quantitative attribution over data the Stage 2a blame indexer already captured. Four parallel lanes via `AgentCoordinator`: the requested target (path or service), its parent directory as a fallback so a one-committer file still routes somewhere, the service the containing root rolls up to, and coverage + the bound-service list.
+
+**Root resolution is not `why`'s `whyRoots`.** `ownership/ownership-target.ts` `ownershipRoots()` merges **both** root sources — `[[filesystem.roots]]` **and** the `nimbus index add` registrations in `registered-roots.json` — because that is the exact set `platform/assemble.ts` hands the derivation pass; copying `why`'s TOML-only root set would report "no ownership data" for a path the pass has already blamed and written edges for.
+
+**The honesty rule this agent adds:** every brief carries an **unconditional** gap note stating that this is authorship-derived ownership, not accountability — there is no CODEOWNERS, no reviewer data, and no on-call rotation in the index. Unlike the conditional gap notes above it, this one never turns off: a standing disclaimer that readers could learn to skip is judged worse here than the alternative, because getting this specific fact wrong (mistaking "wrote the most lines" for "owns the approval") is the one failure mode the agent exists to prevent.
+
+`ownership.refresh` takes **no parameters** and has **no rebuild counterpart** — the pass clears and re-emits every edge it owns wholesale each run, so a caller-supplied root list would silently erase ownership for the omitted roots, and a "rebuild" verb would be a synonym for refresh. Like `glossary`/`decisions`, the whole `ownership` namespace is LAN-forbidden and absent from Tauri's `ALLOWED_METHODS` — only the read-only `agents.ownership` is renderer- and LAN-exposed.
 
 ### Cross-Colleague Agents (Phase 6 Slice 6a)
 

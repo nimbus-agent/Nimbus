@@ -11,6 +11,7 @@ import type {
   PreflightBrief,
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
+import type { OwnershipBrief } from "./ownership-types.ts";
 import {
   renderCatchup,
   renderConflict,
@@ -21,6 +22,7 @@ import {
   renderHuddle,
   renderImpact,
   renderJanitor,
+  renderOwnership,
   renderPreflight,
   renderWhy,
 } from "./render.ts";
@@ -56,7 +58,26 @@ type SynthInput =
   | PreflightBrief
   | WhyBrief
   | GlossaryBrief
-  | DecisionsBrief;
+  | DecisionsBrief
+  | OwnershipBrief;
+
+/**
+ * Turns a missing dispatch arm into a COMPILE error.
+ *
+ * Both dispatches below previously ended in a bare `return renderHuddle(brief)` /
+ * `return "agents.huddle"`. Extending `SynthInput` without extending them therefore
+ * compiled, ran, and rendered the new brief as a huddle — reporting itself to the model
+ * as `agents.huddle` into the bargain. Nothing failed. Every member of the union carries
+ * a distinct `kind` literal, so this guard is a genuine exhaustiveness check.
+ *
+ * The runtime throw is unreachable while the union and the arms agree, and is safe if it
+ * ever is not: `synthesize` is awaited inside `emitBriefWithSynthesis`'s async IIFE, whose
+ * `.catch` emits `<agent>.briefError`. A named error beats a plausible wrong answer.
+ */
+function assertNeverBrief(x: never): never {
+  const kind = (x as { kind?: unknown }).kind;
+  throw new Error(`synthesize: unhandled brief kind ${String(kind)}`);
+}
 
 function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "expert") return renderExpert(brief);
@@ -69,7 +90,9 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "why") return renderWhy(brief);
   if (brief.kind === "glossary") return renderGlossary(brief);
   if (brief.kind === "decisions") return renderDecisions(brief);
-  return renderHuddle(brief);
+  if (brief.kind === "ownership") return renderOwnership(brief);
+  if (brief.kind === "huddle") return renderHuddle(brief);
+  return assertNeverBrief(brief);
 }
 
 function toolNameFor(brief: SynthInput): string {
@@ -83,7 +106,9 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "why") return "agents.why";
   if (brief.kind === "glossary") return "agents.glossary";
   if (brief.kind === "decisions") return "agents.decisions";
-  return "agents.huddle";
+  if (brief.kind === "ownership") return "agents.ownership";
+  if (brief.kind === "huddle") return "agents.huddle";
+  return assertNeverBrief(brief);
 }
 
 const DETERMINISTIC_FOOTER = "_Rendered deterministically — configure an LLM for prose synthesis._";

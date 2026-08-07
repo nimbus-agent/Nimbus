@@ -592,12 +592,37 @@ jobs:
           fail-on-error: false
           fail-on-empty: false
 
+      # Ordering is load-bearing: this must run BEFORE the cleanup step below, which
+      # deletes the only copy of the evidence. See the script header for what the
+      # bundle can and cannot reach.
+      - name: Collect failure artifacts (triage bundle)
+        if: failure()
+        shell: bash
+        run: bash scripts/ci/collect-failure-artifacts.sh integration
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failure-integration-${{ inputs.runner }}
+          path: failure-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Cleanup integration test artifacts
         if: always()
         shell: bash
         run: |
-          rm -rf /tmp/nimbus-test-* 2>/dev/null || true
-          rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
+          # `nimbus-*`, not `nimbus-test-*`. The glob was mismatched to its own job:
+          # `nimbus-test-*` is produced by UNIT tests (registry-fetcher, engine-ask-stream,
+          # the CLI test-runner suite), which run in `unit-coverage` — a job with no
+          # cleanup step at all. The suites THIS job runs name their scratch dirs after
+          # themselves — `nimbus-share-e2e-`, `nimbus-bindfirst-`, `nimbus-assemble-`,
+          # `nimbus-dep-lifecycle-e2e-` — so none of them ever matched and their leftovers
+          # stayed put. Measured on a dev machine: 42,400 surviving `nimbus-*` dirs, of
+          # which 228 matched the old glob.
+          rm -rf /tmp/nimbus-* 2>/dev/null || true
+          rm -rf "${TEMP:-/tmp}/nimbus-"* 2>/dev/null || true
 
   # ── E2E Gateway tests ──────────────────────────────────────────────────────
   e2e-gateway:
@@ -672,12 +697,31 @@ jobs:
           fail-on-error: false
           fail-on-empty: false
 
+      # Highest-value job for this bundle: these are the tests that spawn a real
+      # gateway subprocess, and a Linux-only hang here currently leaves nothing to
+      # read. Must precede the cleanup step.
+      - name: Collect failure artifacts (triage bundle)
+        if: failure()
+        shell: bash
+        run: bash scripts/ci/collect-failure-artifacts.sh e2e-gateway
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failure-e2e-gateway-${{ inputs.runner }}
+          path: failure-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Cleanup E2E test artifacts
         if: always()
         shell: bash
         run: |
-          rm -rf /tmp/nimbus-test-* 2>/dev/null || true
-          rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
+          # See the integration job above: `nimbus-test-*` belongs to the unit suites,
+          # not to anything this job runs, so it never matched here.
+          rm -rf /tmp/nimbus-* 2>/dev/null || true
+          rm -rf "${TEMP:-/tmp}/nimbus-"* 2>/dev/null || true
 
   # ── E2E CLI tests ──────────────────────────────────────────────────────────
   e2e-cli:
@@ -742,12 +786,28 @@ jobs:
           fail-on-error: false
           fail-on-empty: false
 
+      - name: Collect failure artifacts (triage bundle)
+        if: failure()
+        shell: bash
+        run: bash scripts/ci/collect-failure-artifacts.sh e2e-cli
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: failure-e2e-cli-${{ inputs.runner }}
+          path: failure-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Cleanup E2E test artifacts
         if: always()
         shell: bash
         run: |
-          rm -rf /tmp/nimbus-test-* 2>/dev/null || true
-          rm -rf "${TEMP:-/tmp}/nimbus-test-"* 2>/dev/null || true
+          # See the integration job above: `nimbus-test-*` belongs to the unit suites,
+          # not to anything this job runs, so it never matched here.
+          rm -rf /tmp/nimbus-* 2>/dev/null || true
+          rm -rf "${TEMP:-/tmp}/nimbus-"* 2>/dev/null || true
 
   # ── Headless bundle + Linux installers ─────────────────────────────────────
   # Runs only when explicitly enabled (currently: ubuntu-24.04 on both PR and

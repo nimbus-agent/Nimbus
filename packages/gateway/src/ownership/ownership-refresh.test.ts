@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { OwnershipPassSummary } from "./ownership-pass.ts";
-import { createOwnershipRefresher } from "./ownership-refresh.ts";
+import { createOwnershipRefresher, OwnershipRefresherError } from "./ownership-refresh.ts";
 
 const SUMMARY: OwnershipPassSummary = {
   rootsTotal: 0,
@@ -221,5 +221,39 @@ describe("createOwnershipRefresher", () => {
     r.trigger();
     await tick(40);
     expect(calls).toBe(0);
+  });
+
+  test("run() rejects with an rpcCode-carrying error while a pass is in flight", async () => {
+    let release: (() => void) | undefined;
+    const r = createOwnershipRefresher({
+      debounceMs: 5,
+      runPass: async () => {
+        await new Promise<void>((res) => {
+          release = res;
+        });
+        return SUMMARY;
+      },
+    });
+
+    const first = r.run();
+    const err = await r.run().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OwnershipRefresherError);
+    expect((err as OwnershipRefresherError).rpcCode).toBe(-32000);
+    expect((err as Error).message).toContain("ERR_OWNERSHIP_PASS_RUNNING");
+
+    release?.();
+    await first;
+    r.stop();
+  });
+
+  test("run() after stop() rejects with an rpcCode-carrying error", async () => {
+    const r = createOwnershipRefresher({ debounceMs: 5, runPass: async () => SUMMARY });
+    r.stop();
+    const err = await r.run().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OwnershipRefresherError);
+    expect((err as OwnershipRefresherError).rpcCode).toBe(-32000);
+    expect((err as Error).message).toContain("ERR_OWNERSHIP_STOPPED");
   });
 });

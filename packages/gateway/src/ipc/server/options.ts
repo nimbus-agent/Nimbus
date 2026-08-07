@@ -17,6 +17,7 @@ import type { IdentityStore } from "../../identity/identity-store.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
+import type { OwnershipRefresher } from "../../ownership/ownership-refresh.ts";
 import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
 import type { ShareFile } from "../../share/share-format.ts";
 import type { ForwardShareDeps, ReceiveShareDeps } from "../../share/share-forward.ts";
@@ -150,6 +151,11 @@ export type CreateIpcServerOptions = {
   // found" rather than an explicit ERR_DECISIONS_DISABLED. Not Tauri-exposed (I7 — no desktop
   // decisions maintenance surface; the read-only agents.decisions covers that).
   decisionsRefresher?: DecisionRefresher;
+  /**
+   * Present only when `[ownership].enabled`. Absent → `ownership.*` is Method not found,
+   * exactly like decisions.
+   */
+  ownershipRefresher?: OwnershipRefresher;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
   // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).

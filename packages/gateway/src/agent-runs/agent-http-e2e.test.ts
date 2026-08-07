@@ -151,7 +151,7 @@ describe("agents over HTTP — end to end", () => {
       expect(agents).not.toContain("preflight");
       expect(agents).not.toContain("whyPeek");
       expect(agents).toContain("expert");
-      expect(agents).toHaveLength(10);
+      expect(agents).toHaveLength(11);
     } finally {
       s.stop();
     }

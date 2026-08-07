@@ -159,6 +159,7 @@ Everything else follows the standard triple. These break from it in a way worth 
 | `packages/gateway/src/agents/why.ts` + `why-peek.ts` | `nimbus why <ref>` — six-lane provenance briefs over the relationship graph |
 | `packages/gateway/src/agents/glossary.ts` | `nimbus glossary [<term>]` — implicit-knowledge glossary; `glossary_term` + `glossary_pass_state` (V45/V46) |
 | `packages/gateway/src/agents/decisions.ts` | `nimbus decisions` — implicit ADR extractor; `decision_record`/`_evidence`/`_pass_state` (V47) |
+| `packages/gateway/src/agents/ownership.ts` | `nimbus owners [<path>]` — git-blame-derived ownership read surface; `person --owns--> file\|directory\|service` graph edges + `ownership_pass_state` (V51) |
 
 ## Metrics + CI/CD
 

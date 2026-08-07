@@ -229,6 +229,28 @@ const DEFS: readonly AgentToolDef[] = [
     build: (a) => withOptional({}, { term: a["term"], limit: optNum(a, "limit") }),
   },
   {
+    tool: "findOwners",
+    agent: "ownership",
+    description:
+      "Answer 'who owns this code?' from recency-weighted git blame already in the local index. Pass `path` for a file or directory inside a configured root, or `service` for a [ci.service.<id>] id, or neither for a coverage summary. `path` and `service` are mutually exclusive. This is AUTHORSHIP-derived ownership — who wrote the lines, not who is formally accountable.",
+    // `path` is a bare z.string(): the gateway's requireOwnershipParams trims BEFORE checking
+    // 1..2048, so a raw-length bound here would reject whitespace-padded input the gateway
+    // accepts — the same reason `ref`/`file`/`fileOrPrUrl` carry no length bound elsewhere in
+    // this file. `service` does NOT mirror the gateway exactly: this schema's `min(1)` is an
+    // UNTRIMMED-length check, so a whitespace-only string like "  " passes it here, while the
+    // gateway (`agents-rpc.ts`) rejects that same value via `p.service.trim().length === 0`.
+    // That is fail-safe, not a gap — the request still gets rejected, just one hop later — so
+    // the schema is left as-is rather than reshaped to pre-trim. Both sides do agree on the
+    // untrimmed max (1..MAX_SERVICE_LEN). The mutual exclusion of path/service is enforced
+    // gateway-side and stated in the description, since a zod schema cannot express it without
+    // a refinement the tool surface does not carry.
+    schema: {
+      path: z.string().optional(),
+      service: z.string().min(1).max(MAX_SERVICE_LEN).optional(),
+    },
+    build: (a) => withOptional({}, { path: optStr(a, "path"), service: optStr(a, "service") }),
+  },
+  {
     tool: "checkResourceUsage",
     agent: "janitor",
     description:

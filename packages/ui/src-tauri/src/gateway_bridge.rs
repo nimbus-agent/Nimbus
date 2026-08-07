@@ -65,6 +65,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "agents.huddle",
     "agents.impact",
     "agents.janitor",
+    "agents.ownership",
     "agents.preflight",
     "agents.why",
     "agents.whyPeek",
@@ -531,8 +532,21 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_ownership_brief_only() {
+        // S1 ownership: the read-only brief is renderer-callable; the maintenance verb that
+        // re-derives the graph is not (I7). ownership.refresh clears and re-emits every
+        // ownership edge wholesale, and is LAN-forbidden, so it must not reach the renderer.
+        //
+        // Named explicitly for the same reason as the decisions test above: allowlist_exact_size
+        // alone stays green if a later change swaps agents.ownership out for ownership.refresh,
+        // since the count is unchanged by a one-for-one substitution.
+        assert!(is_method_allowed("agents.ownership"));
+        assert!(!is_method_allowed("ownership.refresh"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 103);
+        assert_eq!(ALLOWED_METHODS.len(), 104);
     }
 
     #[test]

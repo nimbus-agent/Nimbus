@@ -1078,6 +1078,7 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | S1 | `why` | `nimbus why <ref> [--line <n>] [--peek] [--json]` | `agents.why` / `agents.whyPeek` | ✅ Shipped 2026-07-24 — six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, plus a sub-300ms `--peek` one-liner; on-demand root-fenced cached single-line `git blame` (not a connector call); emits `why.briefReady` |
 | S1 | `glossary` | `nimbus glossary [<term>] [--limit <n>] [--json] [--refresh \| --rebuild [--yes]]` | `agents.glossary` (read); `glossary.refresh` / `glossary.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-07-30, LLM wiring + `--refresh`/`--rebuild` 2026-07-31, manual term authoring 2026-08-01 — two-lane brief over a materialized `glossary_term` table (V46): term resolution (exact → synonym → near-miss, with authored terms sorted first) and coverage stats; the extraction pass consolidates via a local LLM when configured and available, runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; a `[glossary.terms]`/`[glossary.synonyms]` pre-pass upserts authored definitions with `definition_source='manual'`, exempt from demotion and veto but not from the statistics sweep; emits `glossary.briefReady` |
 | S1 | `decisions` | `nimbus decisions [--since <duration>] [--service <name>] [--min-confidence <0..1>] [--explain] [--json] [--refresh \| --rebuild [--yes]]` | `agents.decisions` (read); `decisions.refresh` / `decisions.rebuild` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-02 — the third member of the implicit-knowledge triad, after `why` and `glossary`: recovers "we decided X because Y, alternatives were Z" statements buried in chat / wiki / issue prose and corroborates each against downstream PRs, commits and ADRs already in the Phase 3 relationship graph; the brief is a chronological, confidence-scored list read straight from the materialized `decision_record` table (V47) — no model call on the read path; the extraction pass (discover → extract → corroborate) runs off the debounced connector-sync seam by default, or on-demand via `--refresh`/`--rebuild`; emits `decisions.briefReady` |
+| S1 | `ownership` | `nimbus owners [<path>] [--service <name>] [--json] [--refresh]` | `agents.ownership` (read); `ownership.refresh` (on-demand pass, LAN-forbidden, not Tauri-exposed) | ✅ Shipped 2026-08-07 — the read surface over the git-blame-derived ownership graph (**V51**, PR A 2026-08-07): ranks `person --owns--> source_file \| directory \| service` edges for a requested path or `[ci.service.<id>]` id, falls back to the parent directory so a one-committer file still routes somewhere, and reports the bound-service list + last-pass coverage stats with no argument at all; the pass itself is a debounced post-sync aggregation of already-indexed `git_blame_line` rows, not a live git call on the read path. **This is authorship-derived ownership — who wrote the lines, not who is formally accountable** — there is no CODEOWNERS, reviewer or on-call data in the index, and every brief says so via an unconditional gap note; emits `ownership.briefReady` |
 | 7 | `excellence` | `nimbus excellence [--service \| --team]` | `agents.excellence` | Planned — parallel sub-agents over service catalog, DORA, feature flags, recent activity |
 | 8 | `security` | `nimbus security <repo\|service>` | `agents.security` | Planned — vulns, CVEs, secrets, IaC misconfigs, license issues for a repo or service |
 | 8 | `posture` | `nimbus posture <cloud-account\|cluster>` | `agents.posture` | Planned — CSPM findings + IaC drift + over-privileged identities + exposure ranked by exploitability × blast radius |
@@ -1295,7 +1296,7 @@ const streamReq: JSONRPCRequest = {
 //   able to restate. Unreachable over LAN by construction: the LAN path routes only to
 //   `dispatchFederationRpc`, which never sees this method.
 //   Client side: `packages/cli/src/mcp/adapter.ts` calls it once per connection; a gateway that
-//   rejects it as an unsupported method makes the MCP adapter withhold its eleven agent tools
+//   rejects it as an unsupported method makes the MCP adapter withhold its twelve agent tools
 //   (fail-closed — see I29 in docs/SECURITY-INVARIANTS.md), while a disconnect-class failure is
 //   treated as a dead transport and changes nothing.
 //
@@ -1348,6 +1349,34 @@ const streamReq: JSONRPCRequest = {
 //   asserted by name, not by count — local/CLI-only, unlike the read-only agents.decisions above.
 //   Both exist only when `[decisions].enabled`; otherwise the refresher is never constructed and
 //   the methods surface as "Method not found".
+//
+// Phase 6 S1 surfaces — ownership agent (git-blame-derived ownership graph; V51 `owns` /
+// `contains` / `tracks_remote` relation types + `ownership_pass_state`):
+// agents.ownership  — async, returns { sessionId } immediately, emits ownership.briefReady /
+//   ownership.briefError; renderer-exposed (Tauri count 104). Reads only `path` / `service` from
+//   params — mutually exclusive, rejected with -32602 if both are given.
+//   Read-only, never HITL, never `connectors.dispatch` — but NOT zero `egress_ledger` rows in
+//   general: an MCP-declared caller appends exactly one `source_type='mcp'` row and an HTTP
+//   caller (`POST /v1/agents/ownership`) appends exactly one `source_type='http'` row (I29,
+//   asserted end-to-end in `ownership.e2e.test.ts`); only a CLI-declared caller appends zero.
+// ownership.refresh — drives an on-demand derivation pass now (`nimbus owners --refresh`);
+//   long-running job via LongRunningJobRegistry, returns { jobId } and emits ownership.passDone /
+//   ownership.passError. Like decisions there is NO ownership.passProgress payload in practice:
+//   `OwnershipRefresher.run()` carries no `onProgress` hook. The "already running" guard is
+//   checked synchronously inside `run()`, so a caller can receive { jobId } and then an almost
+//   immediate ownership.passError (ERR_OWNERSHIP_PASS_RUNNING) rather than never receiving a
+//   jobId at all.
+//   Takes NO parameters, and that is a safety property, not tidiness: the pass clears and
+//   re-emits every ownership edge it owns wholesale each run, so a caller-supplied root list
+//   would silently ERASE the ownership of every path under an omitted root.
+//   No ownership.rebuild counterpart exists — the pass already clears-and-re-emits wholesale
+//   every run, so a "rebuild" verb would be a synonym for refresh.
+//   ownership.refresh: write-class (clears and re-derives the whole graph), so the whole
+//   `ownership` namespace is LAN-forbidden (I5) and it is NOT in Tauri's ALLOWED_METHODS (I7) —
+//   local/CLI-only, unlike the read-only agents.ownership above.
+//   Exists only when `[ownership].enabled` (default true); otherwise the refresher is never
+//   constructed and the method surfaces as "Method not found" — `agents.ownership` still serves
+//   whatever the graph last held (or an empty-graph gap note if no pass has ever run).
 ```
 
 ### AbortController scope in `engine.cancelStream`

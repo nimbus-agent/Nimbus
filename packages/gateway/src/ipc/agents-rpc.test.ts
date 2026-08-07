@@ -634,7 +634,7 @@ describe("dispatchAgentsRpc — agents.decisions", () => {
 });
 
 describe("the HTTP-invokable agent set", () => {
-  test("is exactly the ten asynchronous, non-preflight agents", () => {
+  test("is exactly the eleven asynchronous, non-preflight agents", () => {
     expect([...HTTP_AGENT_NAMES]).toEqual([
       "catchup",
       "conflicts",
@@ -645,6 +645,7 @@ describe("the HTTP-invokable agent set", () => {
       "huddle",
       "impact",
       "janitor",
+      "ownership",
       "why",
     ]);
   });

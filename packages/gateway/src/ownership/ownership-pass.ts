@@ -64,22 +64,55 @@ export function rankOwners(
 ): {
   readonly emitted: { externalId: string; share: number }[];
   readonly totalOwners: number;
+  readonly aboveFloor: number;
   readonly totalWeight: number;
 } {
   let totalWeight = 0;
   for (const w of weights.values()) totalWeight += w;
   const totalOwners = weights.size;
-  if (totalWeight <= 0) return { emitted: [], totalOwners, totalWeight: 0 };
+  if (totalWeight <= 0) return { emitted: [], totalOwners, aboveFloor: 0, totalWeight: 0 };
 
-  const ranked = [...weights.entries()]
+  // `aboveFloor` is captured BETWEEN the floor and the cap, and that ordering is the
+  // whole fix. Reporting `emitted.length < totalOwners` as truncation conflated two
+  // unrelated facts: owners excluded by `min_share` (a policy the reader chose) and
+  // owners dropped by `max_owners_per_path` (a display cap the reader did not).
+  const survivors = [...weights.entries()]
     .map(([externalId, w]) => ({ externalId, share: w / totalWeight }))
     .filter((e) => e.share >= minShare)
     .sort((a, b) =>
       b.share !== a.share ? b.share - a.share : a.externalId.localeCompare(b.externalId),
-    )
-    .slice(0, Math.max(0, maxOwners));
+    );
 
-  return { emitted: ranked, totalOwners, totalWeight };
+  return {
+    emitted: survivors.slice(0, Math.max(0, maxOwners)),
+    totalOwners,
+    aboveFloor: survivors.length,
+    totalWeight,
+  };
+}
+
+/**
+ * The owner-count facts recorded on every ownable entity (`source_file`, `directory`,
+ * `service`).
+ *
+ * One constructor for all three sites on purpose. `truncated` means the CAP bound —
+ * `max_owners_per_path` dropped someone who cleared the floor — and NOTHING else. Its
+ * predecessor compared against `totalOwners`, so it also fired whenever `min_share`
+ * excluded a contributor, which made "showing top N of M" a claim the data did not
+ * support. Two call sites computed that independently and both were wrong the same way.
+ */
+function ownerCountsMetadata(ranked: ReturnType<typeof rankOwners>): {
+  ownerCount: number;
+  ownersAboveFloor: number;
+  truncated: boolean;
+  totalWeightedLines: number;
+} {
+  return {
+    ownerCount: ranked.totalOwners,
+    ownersAboveFloor: ranked.aboveFloor,
+    truncated: ranked.emitted.length < ranked.aboveFloor,
+    totalWeightedLines: ranked.totalWeight,
+  };
 }
 
 function fileExternalId(root: string, path: string): string {
@@ -473,11 +506,7 @@ export async function runOwnershipPass(
           externalId: fileExternalId(root, path),
           label: path,
           service: "filesystem",
-          metadata: {
-            ownerCount: ranked.totalOwners,
-            truncated: ranked.emitted.length < ranked.totalOwners,
-            totalWeightedLines: ranked.totalWeight,
-          },
+          metadata: ownerCountsMetadata(ranked),
         });
         emitOwners(fileId, weights);
 
@@ -504,11 +533,7 @@ export async function runOwnershipPass(
           externalId: dirExternalId(root, dir),
           label: dir === "" ? root : dir,
           service: rootMarker,
-          metadata: {
-            ownerCount: ranked.totalOwners,
-            truncated: ranked.emitted.length < ranked.totalOwners,
-            totalWeightedLines: ranked.totalWeight,
-          },
+          metadata: ownerCountsMetadata(ranked),
         });
         emitOwners(dirId, weights);
 
@@ -549,13 +574,19 @@ export async function runOwnershipPass(
     clearServiceOwnershipEdges(db);
 
     for (const [serviceId, weights] of serviceWeights) {
+      // Ranked BEFORE the upsert so the same counts that drive emission also land on
+      // the entity. A service's owner list is capped exactly like a file's, and until
+      // now carried nothing to say so — leaving `--service`, the one lookup the whole
+      // workspace → repo → service bridge exists to serve, unable to report its own
+      // truncation.
+      const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
       const svcId = upsertGraphEntity(db, {
         type: "service",
         externalId: `service:${serviceId}`,
         label: serviceId,
         service: "nimbus",
+        metadata: ownerCountsMetadata(ranked),
       });
-      const ranked = rankOwners(weights, cfg.minShare, cfg.maxOwnersPerPath);
       for (const e of ranked.emitted) {
         const personId = upsertGraphEntity(db, {
           type: "person",

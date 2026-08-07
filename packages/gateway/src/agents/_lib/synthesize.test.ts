@@ -8,6 +8,7 @@ import type {
   JanitorBrief,
   PreflightBrief,
 } from "./findings.ts";
+import type { OwnershipBrief } from "./ownership-types.ts";
 import { synthesize } from "./synthesize.ts";
 
 const EXPERT_FIXTURE: ExpertBrief = {
@@ -283,6 +284,51 @@ describe("synthesize(HuddleBrief)", () => {
     expect(md).toBe("# LLM-rewritten Huddle Markdown");
     expect(seenPrompt[0]).toMatch(
       /<tool_output service="nimbus" tool="agents\.huddle">[^<]*"kind":"huddle"[^<]*<\/tool_output>/,
+    );
+  });
+});
+
+const OWNERSHIP_FIXTURE: OwnershipBrief = {
+  kind: "ownership",
+  agentVersion: 1,
+  generatedAt: 0,
+  latencyMs: 0,
+  gaps: [],
+  query: { path: null, service: null },
+  target: null,
+  parentDirectory: null,
+  service: null,
+  coverage: {
+    lastPassAt: null,
+    lastDurationMs: 0,
+    rootsTotal: 0,
+    rootsCovered: 0,
+    rootsWithRemote: 0,
+    filesCovered: 0,
+    filesExcluded: 0,
+    servicesBound: 0,
+    ownersEmitted: 0,
+    entitiesReaped: 0,
+  },
+};
+
+describe("synthesize(OwnershipBrief)", () => {
+  // toolNameFor's ownership arm (`agents.ownership`) is reached only on the
+  // LLM path (synthesize.ownership.test.ts calls synthesize with no LLM, which
+  // never reaches toolNameFor). Without this test the arm could be deleted —
+  // mislabelling the envelope as e.g. agents.huddle — and no test would fail.
+  test("wraps OwnershipBrief payload with tool name agents.ownership (I11)", async () => {
+    const seenPrompt: string[] = [];
+    const llm = {
+      generateMarkdown: mock(async (prompt: string) => {
+        seenPrompt.push(prompt);
+        return "# LLM-rewritten Ownership Markdown";
+      }),
+    };
+    const md = await synthesize(OWNERSHIP_FIXTURE, { llm });
+    expect(md).toBe("# LLM-rewritten Ownership Markdown");
+    expect(seenPrompt[0]).toMatch(
+      /<tool_output service="nimbus" tool="agents\.ownership">[^<]*"kind":"ownership"[^<]*<\/tool_output>/,
     );
   });
 });
