@@ -73,6 +73,27 @@ test("an unparseable url is unresolvable, never a stored key lookup", () => {
   db.close();
 });
 
+test("a parseable URL with a non-http(s) scheme is unresolvable", () => {
+  // `new URL()` ACCEPTS all of these, so only the explicit protocol check rejects them. Planting a
+  // row whose stored key IS the input proves the scheme gate runs BEFORE any lookup — otherwise
+  // these would match and report found:true.
+  const db = dbWith([{ id: "a", key: "file:///etc/passwd" }]);
+  for (const raw of [
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "ftp://h/x",
+    "data:text/plain,x",
+  ]) {
+    expect(resolveItemByUrl(db, raw)).toMatchObject({
+      found: false,
+      reason: "unresolvable_url",
+      service: null,
+      fetchable: false,
+    });
+  }
+  db.close();
+});
+
 test("a well-formed url with nothing indexed is not_indexed", () => {
   const db = dbWith([]);
   const out = resolveItemByUrl(db, "https://github.com/o/r/pull/9");

@@ -54,10 +54,13 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  *
  * READ THE `http` ENTRY THE SAME WAY, and more narrowly still. It is `per-call` over exactly one
  * thing: an `agents.*` brief served to a caller verified on the local HTTP API. It is
- * NOT "everything on the HTTP API". `GET /v1/items`, `GET /v1/people`, `GET /v1/audit` and the rest
- * of the read surface hand index rows to a local process and append NO row. Conversely a targeted
- * connector fetch on the same port WILL append, but under `sync`, not `http` — the class tracks the
- * kind of egress, not the port it arrived on.
+ * NOT "everything on the HTTP API". `GET /v1/items`, `GET /v1/items/resolve`, `GET /v1/people`,
+ * `GET /v1/audit` and the rest of the read surface hand index rows to a local process and append
+ * NO row. `GET /v1/items/resolve` is called out by name because it is the newest of them and the
+ * one most likely to be mistaken for egress: it takes a URL from an external caller and answers
+ * from the LOCAL index without any outbound request. Conversely a targeted connector fetch on the
+ * same port WILL append, but under `sync`, not `http` — the class tracks the kind of egress, not
+ * the port it arrived on.
  */
 export const THIS_BINARY_COVERAGE: CoverageVector = {
   task: "per-call",
