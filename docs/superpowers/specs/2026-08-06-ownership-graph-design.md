@@ -95,15 +95,15 @@ cannot exist at all.
 
 ## 4. Schema version: V51, not V50
 
-**V50 is reserved for the HTTP agents PR 3**, which claims it for a resolve-by-URL key
-column. That PR is not yet started, so nothing on `main` shows the reservation — a
-file-overlap check between the two branches would come back clean and both would still
-silently break each other, because the schema version is a shared namespace enforced by the
-migration ledger, and the second to merge loses.
+**V50 was *initially* reserved for the HTTP agents PR 3**, which was to claim it for a
+resolve-by-URL key column. That PR is not yet started, so nothing on `main` showed the
+reservation — a file-overlap check between the two branches would come back clean and both
+would still silently break each other, because the schema version is a shared namespace
+enforced by the migration ledger, and the second to merge loses.
 
-This work therefore takes **V51** and fills the 49→50 slot with a permanent no-op step, so
-the ladder stays contiguous. This spec is the record that V51 was chosen deliberately rather
-than sequentially.
+**This PR permanently consumes V50 as a no-op** and takes **V51** for the ownership work, so
+the ladder stays contiguous. V50 is no longer reserved for anyone: it is a spent, retired
+slot. This spec is the record that V51 was chosen deliberately rather than sequentially.
 
 **V50 must never be backfilled.** The reservation framing was wrong and is corrected here:
 the runner applies a step only while `PRAGMA user_version === step.fromVersion`

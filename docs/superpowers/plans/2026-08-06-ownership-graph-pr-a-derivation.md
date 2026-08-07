@@ -1865,6 +1865,19 @@ export async function runOwnershipPass(
 }
 ```
 
+> **SUPERSEDED — this paragraph describes a draft that did not ship.** It claimed the
+> `ownership:<root>` marker for `source_file` entities too, and that `syncCodeSymbolGraph` uses a
+> different `external_id` namespace. Neither holds. Both populators build the byte-identical
+> `file:<repoRoot>:<path>` id **deliberately**, so that ownership edges land on the same node as
+> `defined_in` / `in_repo`; and `upsertGraphEntity` overwrites `service` unconditionally, so a
+> code-symbol sync would flip any per-root marker on a file straight back. The shipped pass
+> therefore writes `service: "filesystem"` on files — matching that populator exactly so neither
+> side churns the other's column — and scopes files via the `contains` edges it emits itself
+> (exclusively ours: nothing outside `ownership/` creates a `directory`), pre-collected into a
+> temp table before the clear destroys them. Read
+> `packages/gateway/src/ownership/ownership-pass.ts` (`collectFileScopeForRoot` /
+> `clearOwnershipEdgesForRoot`) as the record, not this block.
+
 Note the `service` column on `source_file` / `directory` entities is set to `ownership:<root>`. That marker column is what lets both the clear and the reap scope by **exact equality** — root-scoped, a single bulk statement each, and with none of the widening hazard a `LIKE 'file:<root>:%'` prefix query would carry for a `repoRoot` containing `%` or `_`. `source_file` entities created by `syncCodeSymbolGraph` carry `service: "filesystem"` and a different `external_id` namespace, so they are never in scope here — and even if one were, the degree-0 test would spare it.
 
 - [ ] **Step 4: Run the pure-helper tests**

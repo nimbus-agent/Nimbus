@@ -8,6 +8,24 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-07 — Ownership graph derived from git blame (schema V51).** PR A (derivation) of the
+  S1 ownership work. A debounced post-sync pass (`ownership/ownership-pass.ts`, `[ownership]` in
+  `nimbus.toml`, default ON) aggregates the already-indexed `git_blame_line` rows into graph edges:
+  `person --owns--> source_file | directory | service`, plus `workspace --tracks_remote--> repo` and
+  `repo --belongs_to--> service`. Blame lines are weighted by a configurable recency half-life
+  (`half_life_days`, default 365) and filtered through an `ignore_globs` default list, because
+  `git log --name-only` consults no exclude list and an unfiltered lock file would otherwise hand a
+  directory to whoever last ran the installer. Owners below `min_share` are dropped and the emitted
+  set is capped at `max_owners_per_path`, with the true count kept on the entity's metadata. The
+  pass is read-only against cloud services — it opens nothing, calls no model, and takes no egress
+  ledger row. Its root set spans **both** root sources (`[[filesystem.roots]]` and the
+  `nimbus index add` registrations in `registered-roots.json`), re-read on every pass, since the
+  pass clears and re-emits ownership wholesale and a partial root set would erase what it cannot
+  reach. Schema **V51** adds the `owns` / `contains` / `tracks_remote` relation types and the
+  `ownership_pass_state` counters; **V50 is permanently consumed as a no-op** and must never be
+  backfilled (see `index/ownership-v51-sql.ts`). No new invariant, no HTTP route, no IPC read
+  surface yet — the read path lands in PR B.
+
 - **2026-08-06 — HTTP API bearer tokens are now scoped.** First PR of the HTTP-agents route work.
   A minted token used to be an all-or-nothing bearer secret; it now carries an explicit `scopes[]`
   drawn from a five-name vocabulary (`clip`, `briefs`, `agents`, `resolve`, `fetch` —

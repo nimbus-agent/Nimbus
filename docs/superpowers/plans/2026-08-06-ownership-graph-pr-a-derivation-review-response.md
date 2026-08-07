@@ -67,9 +67,18 @@ immune and uses the existing `idx_graph_relation_from` / `idx_graph_relation_to`
 pre-collected an explicit candidate id set specifically to avoid a `LIKE 'file:<root>:%'` prefix
 delete, since a `repoRoot` containing `%` or `_` would silently widen it. The review's
 `service = ?1` is an **exact equality on a dedicated marker column**, which carries none of that
-hazard *and* is a single statement — strictly better than materializing ids first. The spec's
-"Orphan reaping" section now states the rule as scoped-by-exact-equality rather than
-explicit-candidate-set, and records why `NOT EXISTS` over `NOT IN`.
+hazard *and* is a single statement — strictly better than materializing ids first.
+
+**That exact-equality scoping applies to `directory` entities ONLY**, and the shipped pass says
+so. Directories carry the `ownership:<root>` marker safely because this pass is their sole
+writer. `source_file` entities cannot use it: they are shared with `syncCodeSymbolGraph`, which
+builds the byte-identical `file:<repoRoot>:<path>` external id, and `upsertGraphEntity`
+overwrites `service` unconditionally — so a code-symbol sync would flip any per-root marker back.
+Files therefore carry the same `service: "filesystem"` value that populator writes, which cannot
+identify one root, and their scope comes instead from the `contains` edges emitted by this pass
+(exclusively ours, since nothing outside `ownership/` creates a `directory`), pre-collected into
+a temp table before the clear destroys them. The spec's "Orphan reaping" section records both
+scoping rules and why `NOT EXISTS` over `NOT IN`.
 
 **`changes` for the stat:** verified available. `dbRun` returns bun's run result, and a probe
 gives `{"changes":2,"lastInsertRowid":2}`; the codebase already relies on it

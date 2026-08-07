@@ -126,7 +126,8 @@ a second root whose path contains `%` and `_` must be untouched by the first roo
 
 ## Net effect on delivery
 
-All five amendments land in **PR A**. None touches IPC, CLI, Tauri, or
+The four adopted amendments (1, 2, 3b, 4) land in **PR A**; item **3a is deferred**, with the
+revisit trigger stated in §5.7 — it is not part of this delivery. None touches IPC, CLI, Tauri, or
 `security-invariants.test.ts`, so the parallel-isolation property the review credited is
 preserved. Schema stays **V51** — `files_excluded` and `entities_reaped` are two more columns on
 the not-yet-created `ownership_pass_state` table, not a second migration.

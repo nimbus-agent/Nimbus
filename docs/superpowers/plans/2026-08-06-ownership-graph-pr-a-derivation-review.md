@@ -1,6 +1,6 @@
 # Review of Ownership Graph — PR A (Derivation) Plan
 
-Here are the open questions, suggestions, and performance improvements identified during the review of [2026-08-06-ownership-graph-pr-a-derivation.md](file:///C:/gitrep/Nimbus/.claude/worktrees/ownership-graph/docs/superpowers/plans/2026-08-06-ownership-graph-pr-a-derivation.md).
+Here are the open questions, suggestions, and performance improvements identified during the review of [2026-08-06-ownership-graph-pr-a-derivation.md](./2026-08-06-ownership-graph-pr-a-derivation.md).
 
 ---
 

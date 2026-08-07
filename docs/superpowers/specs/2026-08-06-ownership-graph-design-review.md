@@ -1,6 +1,6 @@
 # Review of Ownership Graph Design Spec
 
-Here are the open questions, suggestions, and potential improvements identified during the review of [2026-08-06-ownership-graph-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/ownership-graph/docs/superpowers/specs/2026-08-06-ownership-graph-design.md).
+Here are the open questions, suggestions, and potential improvements identified during the review of [2026-08-06-ownership-graph-design.md](./2026-08-06-ownership-graph-design.md).
 
 ## Key Strengths
 
