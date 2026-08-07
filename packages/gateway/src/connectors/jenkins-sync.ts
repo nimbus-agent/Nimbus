@@ -280,8 +280,8 @@ const JOB_PATH_PREFIX = "/job/";
  * Decodes a captured `/job/<a>/job/<b>` path into `["a", "b"]`, the exact inverse of
  * `jobPathFromFullName`'s `segs.map((s) => s.trim()).filter(...).map(encodeURIComponent).join("/job/")`.
  * Rejects (returns `null`) on any segment that fails to `decodeURIComponent`, that once decoded
- * is entirely dots, that contains a literal `/` (smuggled via a percent-encoded slash), OR whose
- * round-trip through `jobPathFromFullName` does not reproduce `capturedPath` EXACTLY.
+ * is entirely dots, that contains a literal `/` (smuggled via a percent-encoded slash), OR that
+ * `.trim()`s to something different from itself.
  *
  * Unlike GitLab's single opaque `/projects/:id` path parameter, each Jenkins job segment is
  * re-`encodeURIComponent`-ed and re-joined with a literal `/job/` separator by
@@ -290,13 +290,20 @@ const JOB_PATH_PREFIX = "/job/";
  * traversal segment the URL parser would normalize away. Every segment must be checked
  * individually — a single all-dots segment anywhere in a multi-folder path is still dangerous.
  *
- * The round-trip check exists because `jobPathFromFullName` ALSO `.trim()`s each segment before
- * re-encoding it, so a decoded name carrying leading/trailing whitespace (reachable via `%20`,
- * `%09`, `%0a`, `%c2%a0`, ...) is not a fixed point of it: the request this file actually issues
- * goes to the TRIMMED job (a real, different job that may legitimately exist), while a naive
- * write would key the row on the UNTRIMMED name — forking a duplicate external id that shares the
- * real job's `url`/`resolve_key` and makes the real build permanently `ambiguous` on resolve.
- * Asserting the round-trip closes this whole class rather than special-casing whitespace.
+ * The `name !== name.trim()` check exists because `jobPathFromFullName` ALSO `.trim()`s each
+ * segment before re-encoding it, so a decoded name carrying leading/trailing whitespace
+ * (reachable via `%20`, `%09`, `%0a`, `%c2%a0`, ...) is not a fixed point of it: the request this
+ * file actually issues goes to the TRIMMED job (a real, different job that may legitimately
+ * exist), while a naive write would key the row on the UNTRIMMED name — forking a duplicate
+ * external id that shares the real job's `url`/`resolve_key` and makes the real build permanently
+ * `ambiguous` on resolve.
+ *
+ * Deliberately NOT a round-trip through `jobPathFromFullName`'s re-`encodeURIComponent` output:
+ * that would also reject perfectly valid, differently-cased or over-encoded percent-encoding
+ * (lowercase hex, or `%2E`/`%7E`/`%27`/`%21`/`%2A`/`%28` for characters `encodeURIComponent`
+ * itself never escapes) — `decodeURIComponent` already normalizes those to the same string
+ * either way, so there is nothing ambiguous about them to reject. The whitespace check targets
+ * exactly the one place `jobPathFromFullName` transforms its input beyond a straight decode.
  */
 function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] | null {
   const withoutLeadingJob = capturedPath.startsWith(JOB_PATH_PREFIX)
@@ -314,14 +321,10 @@ function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] 
     // A decoded segment containing "/" (from a percent-encoded slash, e.g. "%2F") would smuggle
     // an extra job-path level past the regex's per-segment character class when re-encoded by
     // `jobPathFromFullName` — reject it outright rather than let it re-split unexpectedly.
-    if (name === "" || name.includes("/") || ALL_DOTS_RE.test(name)) {
+    if (name === "" || name.includes("/") || name !== name.trim() || ALL_DOTS_RE.test(name)) {
       return null;
     }
     decoded.push(name);
-  }
-  const jobFullName = decoded.join("/");
-  if (`${JOB_PATH_PREFIX}${jobPathFromFullName(jobFullName)}` !== capturedPath) {
-    return null;
   }
   return decoded;
 }
@@ -385,10 +388,14 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
     return { status: "not_found" };
   }
   const br = bRes.json as Record<string, unknown>;
-  // Fallback `url` mirrors the shape `syncJenkinsJobBuilds` passes via `job.url` for the same
-  // purpose: if the build response itself omits its `url` field, `upsertJenkinsBuildRowIfNew`
-  // falls back to this one instead of leaving `url`/`canonicalUrl` (and therefore `resolve_key`)
-  // null — an indexed-but-unresolvable row that the fetch-on-miss loop could never converge on.
+  // Fallback `url` serves the same PURPOSE `syncJenkinsJobBuilds` uses `job.url` for — if the
+  // build response itself omits its `url` field, `upsertJenkinsBuildRowIfNew` falls back to
+  // whatever `job.url` was passed instead of leaving `url`/`canonicalUrl` (and therefore
+  // `resolve_key`) null, which would be an indexed-but-unresolvable row the fetch-on-miss loop
+  // could never converge on. But it is NOT the same VALUE: `syncJenkinsJobBuilds`'s `job.url` is
+  // the job's own root URL (`<jobRoot>/`, with no build number — that's all the periodic listing
+  // API hands it), whereas this constructs the actual per-build URL (`<jobRoot>/<n>/`), which is
+  // more precise and is what a browser resolving this exact build would have.
   const fallbackUrl = `${jobRoot}/${String(requestedNum)}/`;
   const upserted = upsertJenkinsBuildRowIfNew(
     ctx,

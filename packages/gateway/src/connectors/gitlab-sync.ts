@@ -106,13 +106,20 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   const modifiedIso =
     stringField(mr, "updated_at") ?? stringField(mr, "created_at") ?? new Date().toISOString();
   const actionName = stringField(mr, "state") ?? "unknown";
-  // Prefer the response's own `web_url` — the authoritative, unencoded browser URL — over the
-  // constructed fallback: `upsertGitlabEventItem` otherwise `encodeURIComponent`s the whole
+  // The CALLER's URL — never anything read off the response — is what becomes the canonical
+  // URL/`resolve_key`. `upsertGitlabEventItem` otherwise `encodeURIComponent`s the whole
   // namespaced path into `canonicalUrl` (correctly, for the periodic-sync codepath which never
-  // has this field), which makes `resolve_key` byte-different from the plain caller URL and
-  // therefore UNRESOLVABLE. Falls back to the caller's own URL (never the response's) if GitLab's
-  // response happens to omit `web_url`.
-  const webUrl = stringField(mr, "web_url") ?? url;
+  // sets `webUrl`), which makes `resolve_key` byte-different from the plain caller URL and
+  // therefore UNRESOLVABLE — that's the bug `webUrl` exists to fix. But the response's own
+  // `web_url` is a REMOTE-SUPPLIED string: it can be empty (`stringField` returns `""`
+  // verbatim, which is non-nullish and would win a `??`), it can legitimately differ from the
+  // caller's URL after a GitLab redirect (a renamed project's old path 200s with the project's
+  // CURRENT `web_url`), and a compromised/misconfigured GitLab could mint a row at an arbitrary
+  // `resolve_key` — becoming the answer for an unrelated URL, or colliding with a legitimate one
+  // to make `resolve` report `ambiguous`. The caller's `url` has none of those problems: it is
+  // already anchored-regex-validated (so never empty, never `javascript:`-schemed) and IS the
+  // browser URL being resolved.
+  const webUrl = url;
   upsertFromMergeRequestEvent({
     ctx,
     pathWithNamespace,

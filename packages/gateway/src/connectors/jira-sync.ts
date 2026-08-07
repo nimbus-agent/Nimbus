@@ -330,6 +330,15 @@ function jiraKeyFromUrl(url: string): string | null {
   }
   const selected = parsed.searchParams.get("selectedIssue");
   if (selected !== null && JIRA_SELECTED_ISSUE_KEY_RE.test(selected)) {
+    // KNOWN BOUND: `jiraIndexOneIssue` always writes `resolve_key` as the issue's canonical
+    // `<base>/browse/<KEY>` URL (see its `browseUrl` construction), never this board/backlog deep
+    // link — that's intentional, since the `/browse/` URL is the durable, shareable identity for
+    // the issue and this board URL is one of arbitrarily many deep links that can point at it. It
+    // does mean a fetch initiated from THIS board URL indexes the issue under a DIFFERENT key, so
+    // re-opening a resolve-by-URL panel on the same board URL will miss again and re-fetch rather
+    // than resolve on the first try — bounded by the connector's rate limiter, but not the
+    // one-shot fix a `/browse/` link gets. Do not "fix" this by writing the board URL as the
+    // resolve key instead: that would make the row unresolvable from its own canonical link.
     return selected;
   }
   return null;

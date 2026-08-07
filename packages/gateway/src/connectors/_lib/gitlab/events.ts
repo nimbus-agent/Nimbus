@@ -35,15 +35,20 @@ export type GitlabEventUpsertFields = {
   authorUsername: string | undefined;
   authorName: string | undefined;
   /**
-   * The API's own authoritative browser URL (GitLab's `web_url` field on an MR/issue detail
-   * response), when the caller has one. When present, used VERBATIM for both `url` and
-   * `canonicalUrl` — it is already the exact, unencoded browser URL that
+   * The exact, unencoded browser URL a caller is fetching-one-by, when there is one. When
+   * present, used VERBATIM for both `url` and `canonicalUrl` — it is already the exact URL that
    * `GET /v1/items/resolve` canonicalizes an incoming URL to, whereas the constructed fallback
-   * below `encodeURIComponent`s the whole namespaced path (correctly, to defend the `/projects/:id`
-   * request path against injection — see `gitlab-sync.ts`'s `ALL_DOTS_RE` docstring), which makes
-   * it byte-different from the plain URL and therefore UNRESOLVABLE. The periodic events sync has
-   * no such field on an event payload, so `webUrl` stays undefined there and behavior is
-   * unchanged.
+   * below `encodeURIComponent`s the whole namespaced path (correctly, to defend the
+   * `/projects/:id` request path against injection — see `gitlab-sync.ts`'s `ALL_DOTS_RE`
+   * docstring), which makes it byte-different from the plain URL and therefore UNRESOLVABLE.
+   *
+   * MUST be sourced from the CALLER's own URL, never from anything the API response says (e.g.
+   * GitLab's `web_url` field) — a remote-supplied string can be empty, can legitimately differ
+   * from the caller's URL after a redirect (a renamed project's old path still 200s, but with the
+   * project's CURRENT `web_url`), or could be used by a compromised/misconfigured GitLab to mint
+   * a row at an arbitrary `resolve_key`. The periodic events sync has no caller URL to speak of
+   * (it discovers items, it doesn't fetch one by URL), so `webUrl` stays undefined there and
+   * behavior is unchanged.
    */
   webUrl?: string;
 };

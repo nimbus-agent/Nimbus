@@ -60,11 +60,12 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     expect(row?.resolve_key).toBe(callerUrl);
   });
 
-  test("gitlab fetchOne still resolves when the response omits web_url", async () => {
+  test("gitlab fetchOne resolves even when the response has no web_url at all", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     const callerUrl = "https://gitlab.com/g/p/-/merge_requests/7";
-    // No `web_url` field on the mocked response — exercises the fallback-to-caller-URL branch.
+    // No `web_url` field on the mocked response — the caller URL is used regardless; this
+    // connector never reads a remote-supplied URL into `resolve_key`.
     globalThis.fetch = ((): Promise<Response> =>
       Promise.resolve(
         new Response(JSON.stringify(mrPayload()), { status: 200 }),
@@ -79,6 +80,39 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     } | null;
     expect(row).not.toBeNull();
     expect(row?.resolve_key).toBe(callerUrl);
+  });
+
+  // Regression: a REMOTE-supplied `web_url` must never become the `resolve_key`. An empty
+  // string is non-nullish (so a naive `?? url` fallback would keep it), and GitLab redirects
+  // (e.g. a renamed project) make a differing `web_url` a realistic, non-malicious case — not
+  // just an adversarial one. Either way the row must resolve under the CALLER's URL.
+  test.each([
+    ["is an empty string", ""],
+    [
+      "points at a different project entirely (a GitLab redirect)",
+      "https://gitlab.com/g/renamed-p/-/merge_requests/7",
+    ],
+    ["points at a completely different host", "https://evil.example/g/p/-/merge_requests/7"],
+  ])("gitlab fetchOne ignores a response web_url that %s", async (_label, responseWebUrl) => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    const callerUrl = "https://gitlab.com/g/p/-/merge_requests/7";
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify(mrPayload({ web_url: responseWebUrl })), { status: 200 }),
+      )) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "gitlab:g/p!7" });
+    const row = db.query("SELECT resolve_key, url FROM item WHERE id = 'gitlab:g/p!7'").get() as {
+      resolve_key: string | null;
+      url: string | null;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
+    expect(row?.url).toBe(callerUrl);
   });
 
   test("gitlab fetchOne declines an issue url", async () => {
