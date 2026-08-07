@@ -16,7 +16,7 @@ limits remain authoritative and are cited throughout.
 PR A derives an ownership graph on every connector sync and writes it to SQLite. **Nothing reads
 it.** This PR makes it observable, as a built-in read-only agent:
 
-```
+```text
 agents.ownership  { path? , service? }   → { sessionId } → ownership.briefReady
 ownership.refresh { }                    → { jobId }     → ownership.passDone
 ```

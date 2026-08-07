@@ -77,10 +77,12 @@ Tasks 1–2 are writer-side and independent of everything else. Tasks 3–4 are 
 ### Task 1: Separate the share floor from the owner cap
 
 **Files:**
+
 - Modify: `packages/gateway/src/ownership/ownership-pass.ts:60-83` (`rankOwners`), `:471-481`, `:502-512`, `:551-569`
 - Test: `packages/gateway/src/ownership/ownership-pass.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `rankOwners(weights, minShare, maxOwners)` now returns
   `{ emitted: { externalId: string; share: number }[]; totalOwners: number; aboveFloor: number; totalWeight: number }`.
@@ -349,10 +351,12 @@ git commit -m "fix(ownership): separate the share floor from the owner cap in en
 ### Task 2: Give the refresher an rpcCode-carrying error class
 
 **Files:**
+
 - Modify: `packages/gateway/src/ownership/ownership-refresh.ts:1-20`, `:84-89`
 - Test: `packages/gateway/src/ownership/ownership-refresh.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `export class OwnershipRefresherError extends Error { readonly rpcCode: number }` — `rpcCode` is `-32000`, `name` is `"OwnershipRefresherError"`.
 
@@ -474,10 +478,12 @@ git commit -m "fix(ownership): carry rpcCode on refresher errors instead of plai
 ### Task 3: Resolve a caller path onto a configured root
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/ownership-target.ts`
 - Test: `packages/gateway/src/ownership/ownership-target.test.ts`
 
 **Interfaces:**
+
 - Consumes: `matchConfiguredRoot` from `../agents/_lib/why-subject.ts`; `gitAwareRootPaths`, `loadRegisteredRoots` from `../index/registered-roots-store.ts`; `loadNimbusFilesystemRootsFromConfigDir` from `../config/filesystem-toml.ts`.
 - Produces:
   - `type ResolvedOwnershipPath = { readonly repoRoot: string; readonly relPath: string }` — `relPath` is `""` for the root itself, POSIX-separated otherwise.
@@ -710,10 +716,12 @@ git commit -m "feat(ownership): resolve a caller path onto the merged git-aware 
 ### Task 4: Read the ownership graph
 
 **Files:**
+
 - Create: `packages/gateway/src/ownership/ownership-store.ts`
 - Test: `packages/gateway/src/ownership/ownership-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ResolvedOwnershipPath` from Task 3 (by shape only — the store takes `repoRoot`/`relPath` as strings).
 - Produces:
   - `type OwnershipOwner = { externalId: string; label: string; share: number; resolved: boolean }`
@@ -1117,11 +1125,13 @@ git commit -m "feat(ownership): read owners, rollups and coverage from the graph
 ### Task 5: Brief type, renderer, and an exhaustive synthesize dispatch
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/_lib/ownership-types.ts`
 - Modify: `packages/gateway/src/agents/_lib/render.ts`, `synthesize.ts:48,61,75`, `emit-brief.ts:16`
 - Test: `packages/gateway/src/agents/_lib/synthesize.ownership.test.ts`
 
 **Interfaces:**
+
 - Consumes: `OwnershipOwner`, `OwnershipCounts`, `OwnershipCoverage` from Task 4.
 - Produces: `OwnershipBrief`, `OwnershipTargetView`, `renderOwnership(brief): string`.
 
@@ -1336,7 +1346,7 @@ In `toolNameFor`, replace `return "agents.huddle";` with:
   return assertNeverBrief(brief);
 ```
 
-4. In `packages/gateway/src/agents/_lib/emit-brief.ts`, add the same import and `| OwnershipBrief` to the `AnyBrief` union (`:16`). **Missing this makes `agents/ownership.ts` fail to compile in Task 6.**
+1. In `packages/gateway/src/agents/_lib/emit-brief.ts`, add the same import and `| OwnershipBrief` to the `AnyBrief` union (`:16`). **Missing this makes `agents/ownership.ts` fail to compile in Task 6.**
 
 - [ ] **Step 6: Run to verify it passes**
 
@@ -1368,10 +1378,12 @@ git commit -m "feat(agents): ownership brief type, renderer, and an exhaustive s
 ### Task 6: The agent
 
 **Files:**
+
 - Create: `packages/gateway/src/agents/ownership.ts`
 - Test: `packages/gateway/src/agents/ownership.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 3–5.
 - Produces:
   - `type OwnershipContext = { db: Database; roots: readonly string[]; notify: (m: string, p: unknown) => void; sessionId: string; llm?: SynthesizerLlm }`
@@ -1818,10 +1830,12 @@ git commit -m "feat(agents): ownership brief over the derived ownership graph"
 ### Task 7: Register `agents.ownership`
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/agents-rpc.ts:195-210`, `:561-574`, plus a new handler
 - Test: `packages/gateway/src/ipc/agents-rpc.ownership.test.ts`; update `packages/gateway/src/ipc/agents-rpc.test.ts:637-649`
 
 **Interfaces:**
+
 - Consumes: `emitOwnershipBrief`, `OwnershipInput` from Task 6; `ownershipRoots` from Task 3.
 - Produces: the `agents.ownership` method; `HTTP_AGENT_NAMES` grows to 11.
 
@@ -1921,9 +1935,9 @@ import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 ```
 
-2. Add `| "ownership"` to the `newSessionId` kind union (`:195-207`).
+1. Add `| "ownership"` to the `newSessionId` kind union (`:195-207`).
 
-3. Add the validator and handler before `AGENTS_RPC_HANDLERS`:
+1. Add the validator and handler before `AGENTS_RPC_HANDLERS`:
 
 ```ts
 function requireOwnershipParams(params: unknown): OwnershipInput {
@@ -1987,7 +2001,7 @@ async function handleOwnership(
 }
 ```
 
-4. Add `"agents.ownership": handleOwnership,` to `AGENTS_RPC_HANDLERS` (after `"agents.janitor"`, keeping the map readable).
+1. Add `"agents.ownership": handleOwnership,` to `AGENTS_RPC_HANDLERS` (after `"agents.janitor"`, keeping the map readable).
 
 - [ ] **Step 4: Update the HTTP-set assertions**
 
@@ -2019,11 +2033,13 @@ git commit -m "feat(ipc): serve agents.ownership, reaching HTTP through the deri
 ### Task 8: `ownership.refresh` and its wiring
 
 **Files:**
+
 - Create: `packages/gateway/src/ipc/ownership-rpc.ts`
 - Modify: `packages/gateway/src/ipc/server/options.ts:144-152`, `dispatchers.ts:997-1016`, `packages/gateway/src/platform/assemble.ts` (near `:2367`), `packages/gateway/src/ipc/lan-rpc.ts:10`
 - Test: `packages/gateway/src/ipc/ownership-rpc.test.ts`; `packages/gateway/src/ipc/lan-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `OwnershipRefresher`, `OwnershipRefresherError` from Task 2.
 - Produces: `OwnershipRpcError`, `dispatchOwnershipRpc(method, params, ctx)`, `tryDispatchOwnershipRpc(ctx, method, params)`; `ServerOptions.ownershipRefresher?: OwnershipRefresher`.
 
@@ -2289,9 +2305,11 @@ git commit -m "feat(ipc): ownership.refresh, wired to the refresher and forbidde
 ### Task 9: Tauri allowlist
 
 **Files:**
+
 - Modify: `packages/ui/src-tauri/src/gateway_bridge.rs:57-70` (list), `:535` (count), plus a new test beside `:519`
 
 **Interfaces:**
+
 - Consumes: the `agents.ownership` method name from Task 7.
 - Produces: nothing consumed by later tasks.
 
@@ -2344,10 +2362,12 @@ git commit -m "feat(ui): expose agents.ownership to the renderer, not ownership.
 ### Task 10: `nimbus owners` CLI
 
 **Files:**
+
 - Create: `packages/cli/src/commands/owners.ts`, `packages/cli/src/commands/owners.test.ts`
 - Modify: `packages/cli/src/commands/registry.ts:1-63`, `packages/cli/src/commands/index.ts`, `packages/cli/src/index.ts:17,99`
 
 **Interfaces:**
+
 - Consumes: `runAgentBriefCli` from `./_agent-brief-cli.ts`; the `agents.ownership` + `ownership.refresh` methods.
 - Produces: `parseOwnersArgs(args)`, `runOwnersCommand(args, deps?)`, `OwnersCommandDeps`.
 
@@ -2604,9 +2624,11 @@ git commit -m "feat(cli): nimbus owners over agents.ownership"
 ### Task 11: MCP tool
 
 **Files:**
+
 - Modify: `packages/cli/src/mcp/agent-tools.ts:140-255`, `packages/cli/src/mcp/adapter.test.ts:588,904-905`
 
 **Interfaces:**
+
 - Consumes: the `agents.ownership` method and its param bounds from Task 7.
 - Produces: an MCP tool named `findOwners`.
 
@@ -2636,6 +2658,7 @@ Append to the `DEFS` array in `packages/cli/src/mcp/agent-tools.ts`, after the `
 - [ ] **Step 2: Update the two count assertions and the stale test name**
 
 In `packages/cli/src/mcp/adapter.test.ts`:
+
 - `:588` — `expect(withheld).toHaveLength(11);` → `12`
 - `:905` — `expect(TOOL_SPECS).toHaveLength(17);` → `18`
 - `:904` — change the test **name** from `"the registered tool set is the six index tools plus peekWhy plus ten agents"` to `"… plus eleven agents"`.
@@ -2688,9 +2711,11 @@ git commit -m "feat(mcp): expose agents.ownership as the findOwners tool"
 ### Task 12: End-to-end and egress coverage
 
 **Files:**
+
 - Create: `packages/gateway/test/e2e/scenarios/ownership.e2e.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything above.
 - Produces: nothing.
 
@@ -2730,6 +2755,7 @@ git commit -m "test(ownership): e2e brief, HITL-free property, and egress-ledger
 ### Task 13: Docs, coverage, and the full pre-flight
 
 **Files:**
+
 - Modify: `docs/architecture.md`, `docs/cli-reference.md`, `docs/CHANGELOG.md`, `docs/roadmap.md`, `packages/docs/src/content/docs/user-guide/agents.mdx`, `.claude/commands/nimbus-agent-patterns.md`, `.claude/commands/nimbus-file-map.md`, `.claude/commands/nimbus-commands.md`
 
 - [ ] **Step 1: Update the docs**
@@ -2741,6 +2767,7 @@ grep -rn "nimbus decisions" docs/ packages/docs/src/content/docs/ .claude/comman
 ```
 
 Required content in each:
+
 - `docs/architecture.md` — `agents.ownership` and `ownership.refresh` in the IPC catalogue.
 - `docs/cli-reference.md` — the full `nimbus owners` usage block, matching `USAGE` in `owners.ts` verbatim.
 - `docs/CHANGELOG.md` — a dated entry under the current unreleased heading. This is where connector/feature deliveries go; do **not** edit the CLAUDE.md status line.
@@ -2805,6 +2832,7 @@ git push -u origin dev/asafgolombek/ownership-agent
 Title (release-please parses this): `feat(gateway): read the ownership graph through the agents.ownership brief`
 
 The description is the permanent commit body. It must state:
+
 - What PR B adds and that PR A's graph was previously unreadable.
 - The four writer-side corrections (spec §6), each with its defect.
 - The count deltas actually applied, and that `WRITE_ROUTE_ALLOWLIST` stayed at 13 and the schema stayed at V51.
