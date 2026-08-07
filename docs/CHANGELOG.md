@@ -8,6 +8,40 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-07 — Targeted fetch-on-miss** (`POST /v1/items/fetch`, `fetch` token scope, an explicit
+  `I13` write on the 8 KiB control-plane body cap). Built on top of Resolve-by-URL (below): where a
+  resolve misses, this route fetches the one named item server-side and indexes it, rather than
+  requiring a full connector sync. `Syncable` gains an optional `fetchOne`, implemented for a
+  five-connector starter set — github, gitlab, bitbucket, jenkins, jira; the other ~62 connectors
+  are untouched and the route answers `no_targeted_fetch` for them. A URL is fetchable only when its
+  host maps to a CONFIGURED connector (`sync/fetch-host-boundary.ts`): static SaaS hosts for
+  github/gitlab/bitbucket, union the host of each service's Vault-stored origin secret
+  (`jenkins.base_url`, `jira.base_url`, `gitlab.api_base` — GitLab's key does not follow the
+  Jenkins/Jira `base_url` convention). Matching is EXACT (host + port), with no wildcard, no suffix
+  match and deliberately no first-segment guessing fallback — unlike `agents/impact.ts`'s
+  `HOST_TO_SERVICE`. Absent credentials a service is not in the map at all, and a host claimed by
+  two different services is refused for both rather than resolved to whichever ran last. The
+  gateway re-derives `{service}` from the URL's host server-side, never trusts a caller's
+  classification, and fetches via that connector's own constructed API URL under its stored
+  credential — never by dereferencing the caller's URL. An `http:` URL is accepted only when it is
+  exactly a service's own configured `http:` origin (self-hosted Jenkins/GitLab/Jira); every other
+  URL must be `https:`. Jira is restricted to `<base>/browse/<KEY>-<N>` plus a board/backlog deep
+  link carrying `selectedIssue=<KEY>-<N>` in its query string — every other Jira URL shape answers
+  `unsupported_url`. A board-initiated fetch indexes the issue under its canonical `/browse/` key,
+  so re-resolving from the same board URL misses `resolve` and re-fetches here again (bounded by the
+  rate limiter below, so this is a cost, not a loop). Not HITL-gated: the owner already authorised
+  continuous sync of that service with those credentials, so fetching one already-in-scope item is
+  strictly less than what runs on a timer; bounded instead by the `fetch` scope, the host boundary,
+  and `ProviderRateLimiter.tryAcquire(service)` on the same bucket the scheduler uses (a
+  non-blocking poll, so an abandoned targeted-fetch attempt cannot starve the scheduler). Egress
+  class `sync` rises from `none` to `per-run`, with two appenders sharing one function
+  (`egress/sync-egress.ts`'s `recordSyncEgress`): `sync/scheduler.ts`'s per-run scheduled-sync
+  append and `sync/targeted-fetch.ts`'s per-call targeted-fetch append — `per-run` is the honest
+  granularity for the class as a whole, since a scheduled sync is a paginated run that can make many
+  upstream calls per ledgered row. `LOCAL_ONLY_SYNC_SERVICES` (`filesystem`, `blame`, `openapi`,
+  `obsidian`) is excluded from both appenders and records nothing, since those syncables index local
+  machine state and never call `fetch` — ledgering their runs as egress would be the same honesty
+  failure I29 exists to prevent, pointed the other way (`I29`).
 - **2026-08-07 — Resolve-by-URL** (`GET /v1/items/resolve`, `resolve` token scope). Schema **V52** adds
   the derived `item.resolve_key` (`canonicalizeUrl(canonical_url ?? url)`) plus
   `idx_item_resolve_key`, written at the `upsertIndexedItem` SQL chokepoint every connector's item

@@ -2559,7 +2559,7 @@ from five names:
 | `briefs` | The research-briefs write routes (`POST /v1/briefs`, `.../sources`, `.../run`, `.../save`) and `GET /v1/briefs/*` |
 | `agents` | The browser-reachable agent-invocation route: `POST /v1/agents/{agent}`, `GET /v1/agents/runs/{id}`, `GET /v1/agents` |
 | `resolve` | The resolve-by-URL read: `GET /v1/items/resolve` |
-| `fetch` | Reserved for a future fetch surface — no route consumes it yet |
+| `fetch` | The targeted fetch-on-miss write: `POST /v1/items/fetch` — makes an outbound request through a configured connector, so it is a separate scope from `resolve`'s local-index-only read |
 
 If `--scopes` is omitted, the minted token is granted `clip,briefs` — the two surfaces that shipped
 before scopes existed. **A client paired before this change holds exactly `clip,briefs` and gains
