@@ -1482,13 +1482,17 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
 
   test("I29: every coverage class claiming non-none has a landed appender", () => {
     // `mcp` and `http` are per-call because recordAgentBriefEgress serves BOTH transports and its
-    // dispatcher condition ships in the same commit as this claim. The others stay none until
-    // theirs do — `sync` in particular is a later PR's, and the design document that lists it in
-    // the end-state vector is describing that PR, not this one. Raising an entry without its
-    // appender is the defect the vector exists to catch, so widening this expected list is a review
-    // moment, not a test to re-bank.
+    // dispatcher condition ships in the same commit as this claim. `sync` joined at `per-run` —
+    // weaker than `per-call`, and deliberately so (a sync is a paginated run, not a call) — with
+    // BOTH its appenders landing in the same commit as this widened claim: the scheduler's
+    // per-run boundary (`sync/scheduler.ts` `runJob`, gated by the optional `appendSyncEgress`
+    // closure) and the targeted single-item fetch (`sync/targeted-fetch.ts`, gated by
+    // `appendEgress`, which throws-aborts before any outbound call). The remaining classes stay
+    // `none` until THEIR appenders land. Raising an entry without its appender is the defect the
+    // vector exists to catch, so widening this expected list is a review moment, not a test to
+    // re-bank.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
-    expect([...claimed].sort()).toEqual(["http", "mcp", "task"]);
+    expect([...claimed].sort()).toEqual(["http", "mcp", "sync", "task"]);
   });
 
   test("the executor's egress sink is a REQUIRED constructor parameter", async () => {

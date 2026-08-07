@@ -32,24 +32,25 @@ const NONE: CoverageVector = {
  * `http` heads the string because the array is key-sorted and `http` < `mcp`.
  */
 const CANONICAL =
-  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
+  "http=per-call;mcp=per-call;model=none;peer=none;session=none;sync=per-run;task=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
 
 describe("coverage vector", () => {
-  test("this binary observes gated actions AND externally-originated briefs per-call, nothing else", () => {
+  test("this binary observes gated actions, externally-originated briefs, and syncs; nothing else", () => {
     // `mcp` and `http` are per-call because ONE appender (`recordAgentBriefEgress`) serves both
-    // transports and its dispatcher condition ships alongside this entry. Every other class stays
-    // `none` until its appender lands — `sync` especially: it is named in the end-state vector of
-    // the design doc, and raising it here on that basis would be a claim with no code behind it,
-    // which is the exact defect this vector prevents.
+    // transports and its dispatcher condition ships alongside this entry. `sync` is `per-run`,
+    // weaker than `per-call` and deliberately so — see the doc comment on `THIS_BINARY_COVERAGE`.
+    // Every other class stays `none` until its appender lands; raising an entry on the strength of
+    // the design doc's end-state vector alone, with no code behind it, is the exact defect this
+    // vector prevents.
     expect(THIS_BINARY_COVERAGE).toEqual({
       task: "per-call",
       mcp: "per-call",
       http: "per-call",
+      sync: "per-run",
       session: "none",
-      sync: "none",
       model: "none",
       peer: "none",
     });
@@ -151,8 +152,8 @@ describe("coverage vector", () => {
       task: "per-call", // both per-call
       mcp: "per-call", // both per-call
       http: "per-call", // both per-call
+      sync: "per-run", // both per-run
       session: "none", // this binary saw nothing
-      sync: "none",
       model: "none",
       peer: "none",
     });

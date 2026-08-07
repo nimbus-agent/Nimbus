@@ -52,6 +52,10 @@ const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   // a human reads when `nimbus prove` prints its scope, and a label wider than the appender would
   // overstate the proof.
   http: "agents.* briefs served over the local HTTP API",
+  // `per-run`, not per-call: a scheduled sync appends ONE row for a whole paginated run, and a
+  // targeted single-item fetch appends one row for its one call. The label says "runs" so a human
+  // reading `nimbus prove` does not read the count as a request count.
+  sync: "connector sync runs and targeted item fetches",
 };
 
 /**

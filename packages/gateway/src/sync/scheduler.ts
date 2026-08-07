@@ -109,6 +109,9 @@ export class SyncScheduler {
   private readonly onConnectorSyncSuccess:
     | ((serviceId: string, result: SyncResult, durationMs: number) => void)
     | undefined;
+  private readonly appendSyncEgress:
+    | ((row: { destination: string; sourceType: "sync"; method: string }) => void)
+    | undefined;
 
   constructor(
     syncContext: SyncContext,
@@ -121,6 +124,14 @@ export class SyncScheduler {
       isOnline?: () => Promise<boolean>;
       initialOnline?: boolean;
       schedulerStateRepository?: SchedulerStateRepository;
+      /**
+       * Appends ONE `sync` egress row per RUN, immediately before `connector.sync(...)` in
+       * `runJob`. Optional so existing tests/callers construct unchanged; when absent, this
+       * scheduler instance appends nothing — an omitted closure is that explicit "no egress from
+       * here" decision, the same shape as `NULL_EGRESS_SINK` elsewhere. Throwing aborts the run —
+       * fail-closed, no row means no sync.
+       */
+      appendSyncEgress?: (row: { destination: string; sourceType: "sync"; method: string }) => void;
     },
   ) {
     this.db = syncContext.db;
@@ -133,6 +144,7 @@ export class SyncScheduler {
     this.onConnectorSyncSuccess = options?.onConnectorSyncSuccess;
     this.connectivityProbeHost = options?.connectivityProbeHost;
     this.isOnlineFn = options?.isOnline ?? (() => isOnline(this.connectivityProbeHost));
+    this.appendSyncEgress = options?.appendSyncEgress;
     if (options?.initialOnline !== undefined) {
       this._online = options.initialOnline;
     }
@@ -651,6 +663,15 @@ export class SyncScheduler {
         ...this.ctx,
         depth: this.getDepthForService(job.serviceId),
       };
+      // One `sync` egress row per RUN, appended before the connector makes any outbound call.
+      // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
+      // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
+      // as an ordinary sync failure, since it happens before any real work started).
+      this.appendSyncEgress?.({
+        destination: job.serviceId,
+        sourceType: "sync",
+        method: "sync.run",
+      });
       result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
       if (err instanceof RateLimitError) {

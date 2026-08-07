@@ -823,4 +823,101 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
       .get("never-configured") as { depth: string } | null;
     expect(row?.depth).toBe("full");
   });
+
+  describe("appendSyncEgress", () => {
+    test("a sync run appends exactly one per-run sync egress row before syncing", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      let syncCalls = 0;
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      sched.register({
+        serviceId: "egress-svc",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          syncCalls++;
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("egress-svc");
+      await sched.stop();
+
+      expect(syncCalls).toBe(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ destination: "egress-svc", sourceType: "sync" });
+    });
+
+    test("appendSyncEgress fires again on a second run — one row per run, not per registration", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      sched.register({
+        serviceId: "egress-svc-2",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("egress-svc-2");
+      await sched.forceSync("egress-svc-2");
+      await sched.stop();
+
+      expect(rows).toHaveLength(2);
+    });
+
+    test("a failing egress append aborts the run — the connector's sync() is never called", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      let synced = false;
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: () => {
+          throw new Error("ledger down");
+        },
+      });
+      sched.register({
+        serviceId: "egress-fail-svc",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          synced = true;
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("egress-fail-svc").catch(() => {});
+      await sched.stop();
+
+      expect(synced).toBe(false);
+    });
+
+    test("omitting appendSyncEgress leaves sync behavior unchanged (existing callers construct as-is)", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const sched = new SyncScheduler(ctx);
+      let syncCalls = 0;
+      sched.register({
+        serviceId: "no-egress-svc",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          syncCalls++;
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("no-egress-svc");
+      await sched.stop();
+
+      expect(syncCalls).toBe(1);
+    });
+  });
 });
