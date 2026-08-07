@@ -156,9 +156,14 @@ async function acquireWithinTimeout(
  *      is exactly a service's own configured (self-hosted) origin, never caller-chosen.
  *   2. Resolve the host against the derived fetch-host boundary. A miss is `not_configured`.
  *   3. Look up the registered connector for that service, and its `fetchOne`.
- *   4. Append ONE `sync` egress row. A throw here aborts — no row, no fetch.
- *   5. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
- *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`.
+ *   4. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
+ *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`. A
+ *      timeout returns `rate_limited` and appends NOTHING — `fetchOne` deterministically never
+ *      runs past this point, so there is nothing to record.
+ *   5. Append ONE `sync` egress row. A throw here aborts — no row, no fetch. Deliberately AFTER
+ *      the acquire (not before it): appending before a rate-limit timeout would have recorded
+ *      `authorized` egress for a call that never left the machine — still fail-closed either way,
+ *      since this still runs before any outbound request.
  *   6. Call `fetchOne`, canonicalizing the URL first and retrying once query-stripped.
  */
 export async function targetedFetch(
@@ -211,18 +216,26 @@ export async function targetedFetch(
     return { status: "no_targeted_fetch", service };
   }
 
-  // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
-  // means no fetch.
-  deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
-
   const ctx = deps.contextFor(service);
   // The SAME bucket the scheduler uses, so a targeted fetch can neither starve nor bypass it —
   // polled non-blockingly (see `acquireWithinTimeout`'s doc comment for why this is `tryAcquire`
   // and not a raced, abandonable `acquire()`).
+  //
+  // Deliberately BEFORE the egress append, not after: a rate-limit timeout below means `fetchOne`
+  // is NEVER called (see the `rate_limited` return), so an append made before this point would
+  // record `authorized` egress for a call that deterministically never left the machine — the
+  // exact over-claim the `sync` class must not make (see `egress/sync-egress.ts`'s
+  // `LOCAL_ONLY_SYNC_SERVICES` for the same principle applied to a different cause). Placing the
+  // append AFTER the acquire keeps it no less fail-closed: it still runs before `fetchOneWithRetry`
+  // ever reaches the network, so a throw here still aborts before any outbound request.
   const acquired = await acquireWithinTimeout(ctx.rateLimiter, service, deps.sleep);
   if (!acquired) {
     return { status: "rate_limited" };
   }
+
+  // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
+  // means no fetch.
+  deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
 
   // Mirrors `resolveItemByUrl`'s first two rungs (`index/resolve-by-url.ts`) for the three cases
   // they close: a fragment, one extra (non-tracking) query param, and a non-root trailing slash.

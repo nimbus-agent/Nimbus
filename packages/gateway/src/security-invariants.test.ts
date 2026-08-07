@@ -1495,7 +1495,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // paginated run (many upstream calls), the weaker of the two shapes this class actually backs.
     // `model`/`peer`/`session` stay `none` until THEIR appenders land — raising an entry without a
     // landed appender behind it is the defect this vector exists to catch, so widening this
-    // expected list further is a review moment, not a test to re-bank.
+    // expected list further is a review moment, not a test to re-bank. Whoever lands the FIFTH
+    // non-`none` class and edits this assertion must ALSO read (and either settle or re-defer) the
+    // `EgressCompleteness.tier` #1057 note in `egress/egress-verify.ts` — this assertion is the
+    // exact file that raise is forced to touch, so the pointer belongs here, not merely in that
+    // file's own comment, where a fifth-class author might never look.
     const claimed = COVERAGE_CLASSES.filter((c) => THIS_BINARY_COVERAGE[c] !== "none");
     expect([...claimed].sort()).toEqual(["http", "mcp", "sync", "task"]);
   });

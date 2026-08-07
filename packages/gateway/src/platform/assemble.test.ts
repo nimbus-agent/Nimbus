@@ -367,9 +367,12 @@ describe("assemblePlatformServices — in-process assembly", () => {
     await services.syncScheduler.forceSync(probeServiceId);
 
     // Filtered by `destination = probeServiceId` rather than just `source_type = 'sync'`: other
-    // syncables registered at boot (e.g. filesystem/blame-index) may ALSO have run a scheduled
-    // sync in the background by the time this assertion runs, appending their own `sync` rows —
-    // this test is about proving the wiring exists, not about being the only sync in the process.
+    // TRULY-EXTERNAL syncables registered at boot could in principle also run a scheduled sync in
+    // the background by the time this assertion runs, appending their own `sync` rows — this test
+    // is about proving the wiring exists, not about being the only sync in the process. It is NOT
+    // about the four local-only indexers (filesystem/blame/openapi/obsidian): those are excluded
+    // from this class entirely (`LOCAL_ONLY_SYNC_SERVICES`, `egress/sync-egress.ts`) and append
+    // ZERO rows regardless — proven directly below, not merely assumed here.
     const db = services.localIndex.getDatabase();
     const rows = db
       .query(
@@ -389,5 +392,40 @@ describe("assemblePlatformServices — in-process assembly", () => {
       hitl_status: "not_required",
       result_status: "authorized",
     });
+  }, 30000);
+
+  // I29 CRITICAL fix: `filesystem`/`blame`/`openapi`/`obsidian` are registered on the SAME
+  // scheduler as every cloud connector but make NO outbound network request — a syncable that
+  // performs a LOCAL mutation, not egress, must not be ledgered as egress (the `NULL_EGRESS_SINK`
+  // precedent, applied to this class). Proven against a REAL assembly with a REAL
+  // `[[filesystem.roots]]` block (the exact config shape that registers `filesystem` + `blame` on
+  // the scheduler, per `registerFilesystemRootSyncables`), not a fake scheduler: a forced sync of
+  // `filesystem` must append ZERO `sync` egress rows, never an `authorized` row for a request that
+  // provably never left the machine.
+  it("appends ZERO sync egress rows for a local-only indexer (filesystem) even on a forced sync", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    const rootDir = join(tmpDir, "fs-root");
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(
+      join(paths.configDir, "nimbus.toml"),
+      `[[filesystem.roots]]\npath = "${rootDir.replace(/\\/g, "/")}"\n`,
+    );
+
+    services = await assemblePlatformServices(paths);
+    // `registerFilesystemRootSyncables` (called synchronously inside assembly) registers both
+    // `filesystem` and `blame` for any non-empty root set — forcing either proves the exclusion;
+    // `filesystem` is forced here, `blame` is covered by the unit-level
+    // `LOCAL_ONLY_SYNC_SERVICES` tests in `egress/sync-egress.test.ts`.
+    await services.syncScheduler.forceSync("filesystem");
+
+    const db = services.localIndex.getDatabase();
+    const count = db
+      .query(
+        `SELECT COUNT(*) AS n FROM egress_ledger WHERE source_type = 'sync' AND destination = 'filesystem'`,
+      )
+      .get() as { n: number };
+    expect(count.n).toBe(0);
   }, 30000);
 });

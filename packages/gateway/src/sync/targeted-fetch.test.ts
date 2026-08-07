@@ -414,6 +414,29 @@ describe("targetedFetch", () => {
       await targetedFetch(deps, "https://github.com/o/r/pull/1");
       expect(rows).toHaveLength(0);
     });
+
+    // MINOR fix (Task 11 review): the append moved to AFTER acquireWithinTimeout. Before this fix
+    // a rate-limit timeout still recorded an `authorized` egress row for a call that
+    // deterministically never reached `fetchOne` — a fabricated-egress bug in miniature, the same
+    // shape as the CRITICAL over-count this same review round fixed for local-only syncables.
+    test("no egress row is appended when the rate-limit acquire times out — fetchOne never runs, so nothing to record", async () => {
+      const rows: EgressRow[] = [];
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
+        tryAcquire: async () => false, // always saturated
+        sleep: async () => {},
+        syncable: {
+          fetchOne: async () => ({ status: "indexed", itemId: "x" }),
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
+      expect(out).toEqual({ status: "rate_limited" });
+      expect(rows).toHaveLength(0);
+    });
   });
 
   describe("rate limiting", () => {

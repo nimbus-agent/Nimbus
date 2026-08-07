@@ -5,6 +5,35 @@ import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
 
 /**
+ * Syncables registered on the SAME `SyncScheduler` as every cloud connector that make NO outbound
+ * network request at all — they index local machine state (the filesystem, git blame, a local
+ * OpenAPI spec file, a local Obsidian vault) and never call `fetch`.
+ * `sync/scheduler.ts`'s `appendSyncEgress` fires unconditionally for every registered syncable's
+ * run, so without this exclusion a machine with ZERO cloud connectors configured would still see a
+ * `sync` egress row every ~10 minutes per local indexer — hundreds of fabricated
+ * "outbound egress" events a day on a genuinely local-first install. That is the same honesty
+ * failure I29 exists to prevent, pointed the other way: over-claiming egress that provably never
+ * left the machine, instead of under-claiming egress that did.
+ *
+ * Mirrors the `NULL_EGRESS_SINK` precedent (`egress-ledger.ts`): a syncable that performs a LOCAL
+ * mutation, not egress, must not be ledgered as egress. Frozen and exported so a rename of one of
+ * these `serviceId`s, or a future fifth local-only indexer, is a deliberate edit here — pinned by
+ * `sync-egress.test.ts`, which asserts both this exact set AND that each real syncable's
+ * `serviceId` constant is a member — rather than a silent resumption of the over-count.
+ *
+ * Service ids, not `Syncable` references: `recordSyncEgress` only ever sees the `destination`
+ * string a caller already resolved (`job.serviceId` from the scheduler, a `FetchableService` from
+ * `targetedFetch` — never a member of this set, since none of the four local indexers are
+ * fetch-host-boundary services), so a string-keyed set is the natural check at this chokepoint.
+ */
+export const LOCAL_ONLY_SYNC_SERVICES: ReadonlySet<string> = new Set([
+  "filesystem", // connectors/filesystem-v2-sync.ts
+  "blame", // connectors/blame-index-sync.ts (git blame)
+  "openapi", // connectors/openapi-indexer-sync.ts (a local API-spec FILE, not an HTTP call)
+  "obsidian", // connectors/obsidian-sync.ts (a local vault)
+]);
+
+/**
  * The sole append site for `sync` egress rows (I29, D22(b)) — shared by BOTH of that class's
  * appenders: `sync/scheduler.ts`'s per-RUN `appendSyncEgress` (one row before `connector.sync(...)`
  * in `runJob`) and `sync/targeted-fetch.ts`'s per-CALL `appendEgress` (one row before `fetchOne`).
@@ -18,6 +47,11 @@ import { redactEgressSummary } from "./egress-record.ts";
  * that can make many upstream calls and appends exactly ONE row for the whole run, while a targeted
  * fetch appends one row for its one call — the weaker of the two shapes is what the coverage vector
  * must claim, and `per-run` is that shape.
+ *
+ * A `destination` in `LOCAL_ONLY_SYNC_SERVICES` is a no-op — deliberately, and checked HERE rather
+ * than at either call site, so BOTH appenders (and any future one) enforce the rule identically
+ * instead of each needing its own copy of the exclusion list. Returns `undefined` in that case too,
+ * so a caller cannot distinguish "skipped" from "appended" and is never tempted to branch on it.
  *
  * Called BEFORE the outbound call by both callers; throwing here aborts the caller's run/fetch
  * before any connector call is made — fail-closed, no row means no dispatch. Returns `undefined`,
@@ -35,6 +69,9 @@ export function recordSyncEgress(
     readonly now: number;
   },
 ): undefined {
+  if (LOCAL_ONLY_SYNC_SERVICES.has(args.destination)) {
+    return undefined;
+  }
   appendEgressEntry(db, {
     timestamp: args.now,
     sourceType: "sync",

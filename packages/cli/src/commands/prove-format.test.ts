@@ -127,4 +127,39 @@ describe("formatProveResult", () => {
     expect(out).toContain("indeterminate");
     expect(out).not.toContain("0 ✓");
   });
+
+  // I29 Task 11: `sync` was raised `none` -> `per-run` (the fourth non-none class, alongside the
+  // `http` class that landed after COVERED/REAL_SCOPE above were last updated). Without this test,
+  // deleting the `sync` entry from `COVERAGE_CLASS_LABELS` (prove.ts) would leave the whole suite
+  // green while `formatProveResult` fell through to the bare-key fallback and printed a raw `sync`
+  // — exactly the "a class with no label reads as a much bigger claim than it is" trap the map's
+  // own docstring warns about. A fresh, ACCURATE fixture here, deliberately not folded into
+  // `COVERED` above: `COVERED` is missing `http` already (pre-existing drift out of this task's
+  // scope — see the module doc comment) and is shared by five other tests whose exact-string
+  // assertions would all need rewriting for an unrelated reason if `COVERED` itself changed.
+  test("the sync class renders its OWN label ('runs', not 'calls'), never falls through to a bare key", () => {
+    const out = formatProveResult({
+      delta: 0,
+      completeness: {
+        coverage: {
+          task: "per-call",
+          mcp: "per-call",
+          http: "per-call",
+          sync: "per-run",
+          session: "none",
+          model: "none",
+          peer: "none",
+        },
+        outboundEgressEvents: 0,
+        indeterminate: false,
+      },
+      chainOk: true,
+      label: "during this query",
+    });
+    expect(out).toContain("connector sync runs and targeted fetch-on-miss calls");
+    // The bare fallback never fires: a lone "sync" (unlabelled) would appear as its own
+    // comma-delimited scope-clause token, which this rules out without over-matching the labelled
+    // occurrence above (which contains the substring "sync" too, inside "targeted fetch-on-miss").
+    expect(out).not.toMatch(/scope:.*(?:^|, )sync(?:,|\))/);
+  });
 });
