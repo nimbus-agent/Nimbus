@@ -74,6 +74,38 @@ async function credentialSecret(
 }
 
 /**
+ * Extra Vault keys `fetchOne` reads BEYOND `credentialSecret`'s single primary key, that this
+ * boundary must ALSO prove present before claiming a host — otherwise a partially-configured
+ * service (e.g. `bitbucket.app_password` set but `bitbucket.username` absent) is claimed
+ * "configured" here while `fetchOne` still declines for missing credentials with zero network
+ * activity: a deterministic egress-ledger over-claim, repeatable on EVERY request (I29
+ * Critical 2). Mirrors exactly the keys each connector's own `fetchOne` reads before making a
+ * request — bitbucket-sync.ts / jenkins-sync.ts / jira-sync.ts's `loadJiraVaultCreds`.
+ */
+async function extraRequiredSecretsPresent(
+  vault: NimbusVault,
+  service: FetchableService,
+): Promise<boolean> {
+  switch (service) {
+    case "bitbucket": {
+      const username = await readConnectorSecret(vault, "bitbucket", "username");
+      return username !== null && username.trim() !== "";
+    }
+    case "jenkins": {
+      const username = await readConnectorSecret(vault, "jenkins", "username");
+      return username !== null && username.trim() !== "";
+    }
+    case "jira": {
+      const email = await readConnectorSecret(vault, "jira", "email");
+      return email !== null && email.trim() !== "";
+    }
+    case "github":
+    case "gitlab":
+      return true;
+  }
+}
+
+/**
  * The Vault secret whose value carries a service's self-hosted origin, or `null` for a
  * SaaS-only service (`github`, `bitbucket`) that has no self-hosted variant to resolve.
  *
@@ -156,22 +188,34 @@ export async function deriveFetchHostMap(
     if (credential === null || credential.trim() === "") {
       continue;
     }
-
-    for (const [host, saasService] of Object.entries(SAAS_HOSTS)) {
-      if (saasService === service) {
-        claim(host, service);
-      }
+    if (!(await extraRequiredSecretsPresent(vault, service))) {
+      continue;
     }
 
     const origin = await selfHostedOriginSecret(vault, service);
-    if (origin === null) {
-      continue;
+    const selfHostedHost = origin === null ? null : hostOf(origin);
+
+    for (const [host, saasService] of Object.entries(SAAS_HOSTS)) {
+      if (saasService !== service) {
+        continue;
+      }
+      // A self-hosted-only deployment (a validly-configured origin secret that resolves to a
+      // DIFFERENT host than the public SaaS one) must not ALSO claim the public host — claiming
+      // `gitlab.com` alongside a genuinely self-hosted `gitlab.api_base` would send a
+      // `gitlab.com` URL to the INTERNAL instance under the internal credential (Important 2).
+      // No origin at all (the common case: no self-hosted variant configured) still claims the
+      // SaaS host as before; an origin that resolves to the SAME host as the SaaS one (the
+      // self-hosted secret simply points back at the public instance) is not a divergence and
+      // still claims it too.
+      if (selfHostedHost !== null && selfHostedHost !== host) {
+        continue;
+      }
+      claim(host, service);
     }
-    const host = hostOf(origin);
-    if (host === null) {
-      continue;
+
+    if (selfHostedHost !== null) {
+      claim(selfHostedHost, service);
     }
-    claim(host, service);
   }
   return map;
 }

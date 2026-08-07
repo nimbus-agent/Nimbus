@@ -8,6 +8,7 @@ import {
   transitionHealth,
 } from "../connectors/health.ts";
 import { isOnline } from "./connectivity.ts";
+import { isConnectorConfigured } from "./connector-configured.ts";
 import {
   type SchedulerStateRepository,
   type SchedulerStateRow,
@@ -686,15 +687,26 @@ export class SyncScheduler {
         ...this.ctx,
         depth: this.getDepthForService(job.serviceId),
       };
+      // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
+      // with NO credential gate, and each one's `sync()` short-circuits to a network-free noop
+      // when unconfigured — so appending unconditionally here fabricated an "authorized" `sync`
+      // egress row for every registered-but-unconfigured connector's every run, on BOTH the
+      // scheduled and forced paths (`forceSync` bypasses the tick-level health/enqueue gates
+      // entirely, so the gate has to live here to cover it too). `isConnectorConfigured` answers
+      // the same question `sync/fetch-host-boundary.ts` answers for the 5 fetch-on-miss services,
+      // generalized to the full connector-secrets manifest.
+      //
       // One `sync` egress row per RUN, appended before the connector makes any outbound call.
       // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
       // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
       // as an ordinary sync failure, since it happens before any real work started).
-      this.appendSyncEgress?.({
-        destination: job.serviceId,
-        sourceType: "sync",
-        method: "sync.run",
-      });
+      if (await isConnectorConfigured(this.ctx.vault, job.serviceId)) {
+        this.appendSyncEgress?.({
+          destination: job.serviceId,
+          sourceType: "sync",
+          method: "sync.run",
+        });
+      }
       result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
       if (err instanceof RateLimitError) {

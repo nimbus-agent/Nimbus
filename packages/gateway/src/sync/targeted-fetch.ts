@@ -53,6 +53,22 @@ export interface TargetedFetchDeps {
    */
   readonly httpOriginFor: (service: FetchableService) => string | null;
   /**
+   * Pure, synchronous, NETWORK-FREE: does `service`'s `fetchOne` accept `url` — i.e. will it make
+   * an outbound request for it, or decline with `unsupported_url` before touching the network?
+   *
+   * Exists so this module can decide whether to append an egress row WITHOUT first calling
+   * `fetchOne` (I29 Critical 2). `fetchOne`'s own `unsupported_url` return is guaranteed
+   * network-free by contract (`sync/types.ts`), but CONFIRMING that guarantee still requires
+   * calling `fetchOne` — which the append-before-dispatch rule below forbids doing before the
+   * append. This predicate answers the same question without paying that cost, by reusing each
+   * connector's own URL-shape parser (never a reimplementation, so the two can never disagree).
+   *
+   * Each of the 5 fetch-on-miss connectors exports one: `githubFetchOneUrlIsSupported`,
+   * `gitlabFetchOneUrlIsSupported`, `bitbucketFetchOneUrlIsSupported`,
+   * `jenkinsFetchOneUrlIsSupported`, `jiraFetchOneUrlIsSupported`.
+   */
+  readonly urlIsSupported: (service: FetchableService, url: string) => boolean;
+  /**
    * Appends ONE `sync` egress row. Called BEFORE the outbound call; throwing aborts the fetch —
    * fail-closed, no row means no fetch. Kept as an injected closure rather than importing
    * `appendEgressEntry` directly into this module, because the static D22 rule confines that
@@ -233,10 +249,6 @@ export async function targetedFetch(
     return { status: "rate_limited" };
   }
 
-  // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
-  // means no fetch.
-  deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
-
   // Mirrors `resolveItemByUrl`'s first two rungs (`index/resolve-by-url.ts`) for the three cases
   // they close: a fragment, one extra (non-tracking) query param, and a non-root trailing slash.
   // `canonicalizeUrl` is REUSED, never reimplemented here — `externalIdFor` hashes its output, so
@@ -250,5 +262,27 @@ export async function targetedFetch(
   // a loop — a decline is terminal and free (it never reaches the network) — it just means those
   // URL shapes cannot be targeted-fetched today.
   const canonical = canonicalizeUrl(parsed.toString());
+
+  // I29 Critical 2: know in advance — via `deps.urlIsSupported`, never by calling `fetchOne` — that
+  // BOTH the shape `fetchOneWithRetry` will try first (rung 1) AND its query-stripped retry
+  // (rung 2) will decline before appending anything. A URL shape `fetchOne` would reject (e.g. a
+  // PR's "Files changed" tab) must never ledger an `authorized` row for a call that provably never
+  // left the machine. This check must precede the append (not follow calling `fetchOne`) — the
+  // append-failure test below pins that `fetchOne` is never reached when the append throws, which
+  // is only true if the append happens before `fetchOne` is ever invoked.
+  const willAttempt =
+    deps.urlIsSupported(service, canonical) ||
+    (() => {
+      const stripped = queryStrippedCanonical(canonical);
+      return stripped !== canonical && deps.urlIsSupported(service, stripped);
+    })();
+  if (!willAttempt) {
+    return { status: "unsupported_url" };
+  }
+
+  // BEFORE the outbound call. A throw here propagates and no fetch happens — fail-closed, no row
+  // means no fetch.
+  deps.appendEgress({ destination: service, sourceType: "sync", method: "items.fetch" });
+
   return fetchOneWithRetry(fetchOne, ctx, canonical);
 }

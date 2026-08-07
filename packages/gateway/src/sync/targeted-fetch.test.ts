@@ -1,5 +1,5 @@
 // packages/gateway/src/sync/targeted-fetch.test.ts
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import pino from "pino";
 
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
@@ -24,13 +24,30 @@ type DepsOverrides = {
   /** Fake for `ctx.rateLimiter.tryAcquire`. Defaults to always-succeeds-immediately. */
   tryAcquire?: (service: FetchableService) => Promise<boolean>;
   httpOriginFor?: (service: FetchableService) => string | null;
+  /** Defaults to always-supported, matching the pre-fix behavior every existing test relies on. */
+  urlIsSupported?: (service: FetchableService, url: string) => boolean;
 };
+
+/**
+ * `depsWith()` opens a fresh `:memory:` index database per call (`openMemoryIndexDatabase`) that
+ * nothing previously closed — ~28 leaked handles across this file's test run. Tracked here and
+ * closed in the module-level `afterEach` below.
+ */
+const openedDbs: SyncContext["db"][] = [];
+
+afterEach(() => {
+  for (const db of openedDbs.splice(0)) {
+    db.close();
+  }
+});
 
 function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
   const hostMap = overrides.hostMap ?? new Map<string, FetchableService>();
   const tryAcquire = overrides.tryAcquire ?? (async () => true);
+  const db = openMemoryIndexDatabase();
+  openedDbs.push(db);
   const fakeCtx: SyncContext = {
-    db: openMemoryIndexDatabase(),
+    db,
     vault: createMemoryVault(),
     logger: pino({ level: "silent" }),
     // A plain object structurally satisfies `SyncContext["rateLimiter"]` for the fields this
@@ -67,6 +84,7 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
     httpOriginFor: overrides.httpOriginFor ?? (() => null),
     appendEgress: overrides.appendEgress ?? (() => undefined),
     sleep: overrides.sleep ?? (() => Promise.resolve()),
+    urlIsSupported: overrides.urlIsSupported ?? (() => true),
   };
 }
 
@@ -413,6 +431,66 @@ describe("targetedFetch", () => {
       });
       await targetedFetch(deps, "https://github.com/o/r/pull/1");
       expect(rows).toHaveLength(0);
+    });
+
+    // CRITICAL 2: `unsupported_url` (e.g. a PR's "Files changed" tab, `/pull/7/files`) makes ZERO
+    // outbound requests by contract — appending an `authorized` row for it is the exact
+    // over-claim this fix removes. `urlIsSupported` false on BOTH the plain and query-stripped
+    // canonical forms is what proves `fetchOne` would never even be reached — its own `called`
+    // flag would stay false, but this test's fixture always returns `unsupported_url` regardless,
+    // so `rows` is the only assertion doing real work here.
+    test("no egress row is appended when the URL shape is unsupported (fetchOne never called)", async () => {
+      const rows: EgressRow[] = [];
+      let called = false;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        urlIsSupported: () => false,
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
+        syncable: {
+          fetchOne: async () => {
+            called = true;
+            return { status: "unsupported_url" };
+          },
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/7/files");
+      expect(out).toEqual({ status: "unsupported_url" });
+      expect(called).toBe(false);
+      expect(rows).toHaveLength(0);
+    });
+
+    // The query-stripped retry form must ALSO be checked before deciding "unsupported" — a URL
+    // that `urlIsSupported` rejects in its plain form but accepts once query-stripped must still
+    // append (exactly once) and still let `fetchOneWithRetry` run its normal two-rung sequence.
+    test("a URL unsupported in its plain form but supported query-stripped still appends and retries", async () => {
+      const rows: EgressRow[] = [];
+      let fetchOneCalls = 0;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        urlIsSupported: (_service, u) => new URL(u).search === "",
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
+        syncable: {
+          fetchOne: async (_ctx, u): Promise<FetchOneResult> => {
+            fetchOneCalls++;
+            if (new URL(u).search !== "") {
+              return { status: "unsupported_url" };
+            }
+            return { status: "indexed", itemId: "github:o/r#1" };
+          },
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1?focusedCommentId=1");
+      expect(out).toEqual({ status: "indexed", itemId: "github:o/r#1" });
+      // rung 1 (query present) declines, rung 2 (query-stripped) succeeds — the normal
+      // canonicalize+retry sequence, unaffected by the new pre-check.
+      expect(fetchOneCalls).toBe(2);
+      expect(rows).toHaveLength(1);
     });
 
     // MINOR fix (Task 11 review): the append moved to AFTER acquireWithinTimeout. Before this fix

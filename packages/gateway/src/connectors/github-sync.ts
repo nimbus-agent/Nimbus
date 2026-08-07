@@ -188,7 +188,7 @@ function modifiedMsFromGithubTimestamps(
  * returns can never diverge from the id the row was actually written under (e.g. a caller URL's
  * `/pull/007` vs. the API's normalized `number: 7`).
  */
-export function githubPrExternalId(repoFull: string, num: number): string {
+function githubPrExternalId(repoFull: string, num: number): string {
   return `${repoFull}#${String(num)}`;
 }
 
@@ -197,6 +197,21 @@ export function upsertPr(
   repoFull: string,
   pr: Record<string, unknown>,
   now: number,
+  /**
+   * The exact, unencoded browser URL a caller is fetching-one-by, when there is one. When
+   * present, used VERBATIM for both `url` and `canonicalUrl` in place of the API's own
+   * `html_url` — mirrors `_lib/gitlab/events.ts`'s `GitlabEventUpsertFields.webUrl` exactly.
+   *
+   * MUST be sourced from the CALLER's own URL, never from anything the API response says: GitHub
+   * 301s a renamed repo and returns the NEW `html_url`, so trusting it would write a row whose
+   * `resolve_key` no longer matches the caller's URL (a permanent miss), while the periodic
+   * events sync — which has no caller URL to speak of — then indexes the SAME PR again under the
+   * new path, leaving two rows sharing one `resolve_key` (`ambiguous` forever). `html_url` can
+   * also be entirely absent from a response, which must not leave `resolve_key` NULL on an
+   * `{"status":"indexed"}` reply. The periodic sync has no caller URL, so `webUrl` stays
+   * undefined there and its rows are byte-identical to before this fix.
+   */
+  webUrl?: string,
 ): void {
   const num = numberField(pr, "number");
   if (num === undefined) {
@@ -205,6 +220,7 @@ export function upsertPr(
   const title = stringField(pr, "title") ?? `PR #${String(num)}`;
   const body = stringField(pr, "body");
   const htmlUrl = stringField(pr, "html_url");
+  const url = webUrl ?? htmlUrl ?? null;
   const modified = modifiedMsFromGithubTimestamps(pr, now);
   const user = asRecord(pr["user"]);
   const authorId = resolveGithubActorPersonId(ctx.db, user);
@@ -216,8 +232,8 @@ export function upsertPr(
     externalId,
     title: title.length > 512 ? title.slice(0, 512) : title,
     body: body ?? "",
-    url: htmlUrl ?? null,
-    canonicalUrl: htmlUrl ?? null,
+    url,
+    canonicalUrl: url,
     modifiedAt: modified,
     authorId,
     metadata: meta,
@@ -560,15 +576,18 @@ const GITHUB_PR_URL_RE = /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/p
 /** A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a name. */
 const ALL_DOTS_RE = /^\.+$/;
 
+type ParsedGithubPrUrl = { readonly owner: string; readonly repo: string; readonly num: string };
+
 /**
- * Fetch and index ONE GitHub PR by its web URL. See `Syncable.fetchOne` for the contract: no
- * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
- * that calls this. This function's job is parse → call → map → upsert → return.
+ * Pure, synchronous, NETWORK-FREE parse of a GitHub PR URL. Single source of truth for "does this
+ * URL match the shape `fetchOne` supports" — reused by `fetchOnePullRequest` (below) AND by
+ * `githubFetchOneUrlIsSupported` (the targeted-fetch orchestrator's pre-check, `sync/targeted-fetch.ts`),
+ * so the two can never disagree about which URLs are supported.
  */
-async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+function parseGithubPrUrl(url: string): ParsedGithubPrUrl | null {
   const m = GITHUB_PR_URL_RE.exec(url);
   if (m === null) {
-    return { status: "unsupported_url" };
+    return null;
   }
   const owner = m[1] as string;
   const repo = m[2] as string;
@@ -576,17 +595,48 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   // traverse the API path (e.g. `repos/../secret/pulls/1` — the WHATWG URL parser normalizes away
   // the `repos/` prefix). Reject outright rather than sanitize: neither is a real owner or repo.
   if (ALL_DOTS_RE.test(owner) || ALL_DOTS_RE.test(repo)) {
+    return null;
+  }
+  return { owner, repo, num: m[3] as string };
+}
+
+/**
+ * Whether `parseGithubPrUrl` accepts `url` — i.e. whether `fetchOne` would make an outbound
+ * request for it. `sync/targeted-fetch.ts` calls this BEFORE appending an egress row, so a URL
+ * shape `fetchOne` would decline (e.g. a PR's "Files changed" tab, `/pull/7/files`) never
+ * ledgers an `authorized` row for a call that provably never left the machine (I29 Critical 2).
+ */
+export function githubFetchOneUrlIsSupported(url: string): boolean {
+  return parseGithubPrUrl(url) !== null;
+}
+
+/**
+ * Fetch and index ONE GitHub PR by its web URL. See `Syncable.fetchOne` for the contract: no
+ * rate-limiter call, no egress append, no host-boundary check — those belong to the orchestrator
+ * that calls this. This function's job is parse → call → map → upsert → return.
+ */
+async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const parsedUrl = parseGithubPrUrl(url);
+  if (parsedUrl === null) {
     return { status: "unsupported_url" };
   }
-  const requestedNum = m[3] as string;
+  const { owner, repo, num: requestedNum } = parsedUrl;
   const pat = await readConnectorSecret(ctx.vault, "github", "pat");
   if (pat === null || pat === "") {
     return { status: "not_found" };
   }
   const repoFull = `${owner}/${repo}`;
-  const res = await fetch(pullDetailUrl(repoFull, Number.parseInt(requestedNum, 10)), {
-    headers: buildGithubEventHeaders(pat, null),
-  });
+  let res: Response;
+  try {
+    res = await fetch(pullDetailUrl(repoFull, Number.parseInt(requestedNum, 10)), {
+      headers: buildGithubEventHeaders(pat, null),
+    });
+  } catch {
+    // A DNS/TLS/connect failure can carry the request URL in its message. Swallow it entirely
+    // rather than let it propagate — mirrors gitlab-sync.ts/jenkins-sync.ts/jira-sync.ts, whose
+    // fetchOne already reports not_found (never a 500) for the same offline condition.
+    return { status: "not_found" };
+  }
   if (!res.ok) {
     return { status: "not_found" };
   }
@@ -607,7 +657,7 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   if (num === undefined) {
     return { status: "not_found" };
   }
-  upsertPr(ctx, repoFull, pr, Date.now());
+  upsertPr(ctx, repoFull, pr, Date.now(), url);
   return {
     status: "indexed",
     itemId: itemPrimaryKey(SERVICE_ID, githubPrExternalId(repoFull, num)),

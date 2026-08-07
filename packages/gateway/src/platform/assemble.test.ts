@@ -366,13 +366,13 @@ describe("assemblePlatformServices — in-process assembly", () => {
     services.syncScheduler.register(fakeSyncable);
     await services.syncScheduler.forceSync(probeServiceId);
 
-    // Filtered by `destination = probeServiceId` rather than just `source_type = 'sync'`: other
-    // TRULY-EXTERNAL syncables registered at boot could in principle also run a scheduled sync in
-    // the background by the time this assertion runs, appending their own `sync` rows — this test
-    // is about proving the wiring exists, not about being the only sync in the process. It is NOT
-    // about the four local-only indexers (filesystem/blame/openapi/obsidian): those are excluded
-    // from this class entirely (`LOCAL_ONLY_SYNC_SERVICES`, `egress/sync-egress.ts`) and append
-    // ZERO rows regardless — proven directly below, not merely assumed here.
+    // Filtered by `destination = probeServiceId` rather than just `source_type = 'sync'`: this
+    // test is about proving the wiring exists for THIS probe, not about being the only sync in
+    // the process — a background scheduled sync for another registered connector would add an
+    // unrelated row with a different `destination` and must not be mistaken for this one's.
+    // (It does NOT rely on other real cloud connectors staying silent because they are
+    // unconfigured on this test machine — I29 Critical 1 makes that true regardless, proven
+    // directly by the empty-Vault multi-connector test below, not merely assumed here.)
     const db = services.localIndex.getDatabase();
     const rows = db
       .query(
@@ -392,6 +392,31 @@ describe("assemblePlatformServices — in-process assembly", () => {
       hitl_status: "not_required",
       result_status: "authorized",
     });
+  }, 30000);
+
+  // I29 CRITICAL 1: an EMPTY Vault (a fresh install, or a machine with zero connectors
+  // configured) must ledger ZERO `sync` egress rows when several real cloud connectors are
+  // force-synced — before this fix, each one's `sync()` short-circuited to a network-free noop
+  // while the scheduler still appended an unconditional "authorized" row per run, fabricating
+  // outbound-egress events for a machine that made zero outbound requests. Proven against a REAL
+  // assembly (real `registerConnectorMeshSyncables` registrations, real Vault-backed
+  // `isConnectorConfigured` check), not a fake scheduler.
+  it("force-syncing several cloud connectors against an EMPTY Vault ledgers ZERO sync egress rows", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    services = await assemblePlatformServices(paths);
+
+    const probeServiceIds = ["github", "slack", "notion"] as const;
+    await Promise.all(probeServiceIds.map((id) => services?.syncScheduler.forceSync(id)));
+
+    const db = services.localIndex.getDatabase();
+    const rows = db
+      .query(
+        `SELECT destination FROM egress_ledger WHERE source_type = 'sync' AND destination IN (?, ?, ?)`,
+      )
+      .all(...probeServiceIds) as Array<{ destination: string }>;
+    expect(rows).toHaveLength(0);
   }, 30000);
 
   // I29 CRITICAL fix: `filesystem`/`blame`/`openapi`/`obsidian` are registered on the SAME

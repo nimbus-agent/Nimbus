@@ -299,6 +299,14 @@ function jiraShouldStopPaging(
  * `<base>/browse/<KEY>-<N>` — emitted by both Cloud and Server/DC.
  *
  * Anchored at both ends and every quantifier bounded: the caller-supplied URL feeds an API path.
+ *
+ * KNOWN BOUND: a Jira Server/Data Center instance mounted under a context path (a common
+ * self-hosted deployment shape, e.g. `https://jira.acme.com/jira/browse/ABC-1`) can never match
+ * this regex — `[^/]+` stops at the first `/` after the host, so the path must start with
+ * `/browse/` directly. Such a URL is `unsupported_url` here, same as the board-deep-link bound
+ * documented on `jiraKeyFromUrl` below: declining is free (zero network calls), so this is a
+ * capability gap, not a correctness bug, but a context-pathed Jira Server cannot be
+ * targeted-fetched by ANY URL shape today.
  */
 export const JIRA_BROWSE_URL_RE = /^https?:\/\/[^/]+\/browse\/([A-Z][A-Z0-9_]{0,50}-\d{1,10})$/;
 
@@ -308,7 +316,7 @@ export const JIRA_BROWSE_URL_RE = /^https?:\/\/[^/]+\/browse\/([A-Z][A-Z0-9_]{0,
  * across Cloud and Server to support blind, and `unsupported_url` is what declining them is for —
  * this function does not guess a key from an arbitrary path.
  */
-export const JIRA_SELECTED_ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,50}-\d{1,10}$/;
+const JIRA_SELECTED_ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,50}-\d{1,10}$/;
 
 /**
  * Extracts an issue key from either supported shape, or returns `null` for anything else
@@ -342,6 +350,17 @@ function jiraKeyFromUrl(url: string): string | null {
     return selected;
   }
   return null;
+}
+
+/**
+ * Whether `jiraKeyFromUrl` accepts `url` — i.e. whether `fetchOne` would make an outbound request
+ * for it. `sync/targeted-fetch.ts` calls this BEFORE appending an egress row, so a URL shape
+ * `fetchOne` would decline (e.g. a board deep link with no `selectedIssue`, or a context-pathed
+ * Jira Server URL) never ledgers an `authorized` row for a call that provably never left the
+ * machine (I29 Critical 2).
+ */
+export function jiraFetchOneUrlIsSupported(url: string): boolean {
+  return jiraKeyFromUrl(url) !== null;
 }
 
 /**

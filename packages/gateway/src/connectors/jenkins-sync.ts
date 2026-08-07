@@ -120,6 +120,21 @@ function upsertJenkinsBuildRowIfNew(
   lastSeen: number,
   floorMs: number,
   now: number,
+  /**
+   * The exact, unencoded browser URL a caller is fetching-one-by, when there is one. Used
+   * VERBATIM for both `url` and `canonicalUrl`, ahead of BOTH the build response's own `url`
+   * field AND `job.url` — mirrors `_lib/gitlab/events.ts`'s `GitlabEventUpsertFields.webUrl`
+   * exactly.
+   *
+   * MUST be sourced from the CALLER's own URL, never from anything remote-supplied: the build
+   * response's `url` and `job.url` (built from the Vault-stored `jenkins.base_url`) can both
+   * diverge from the URL the caller actually used — a misconfigured `base_url`
+   * (`http://localhost:8080/` while the instance is really reached at `https://ci.example.com`)
+   * would otherwise write a cleartext-localhost `resolve_key` the caller's real URL can never
+   * match. The periodic sync has no caller URL, so `webUrl` stays undefined there and its rows
+   * are byte-identical to before this fix.
+   */
+  webUrl?: string,
 ): { upserted: boolean; num: number } | null {
   const b = asRecord(br);
   if (b === undefined) {
@@ -136,7 +151,7 @@ function upsertJenkinsBuildRowIfNew(
   }
   const result = stringField(b, "result");
   const building = b["building"] === true;
-  const url = stringField(b, "url") ?? job.url ?? null;
+  const url = webUrl ?? stringField(b, "url") ?? job.url ?? null;
   const duration = numberField(b, "duration");
   const titleRaw = buildTitle(job.fullName, num, result, building);
   const externalId = jenkinsBuildExternalId(job.fullName, num);
@@ -345,18 +360,43 @@ function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] 
  * never as success: this function checks it and returns `not_found` rather than reporting
  * `indexed` for a row that does not exist.
  */
-async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+type ParsedJenkinsBuildUrl = { readonly jobFullName: string; readonly num: number };
+
+/**
+ * Pure, synchronous, NETWORK-FREE parse of a Jenkins build URL. Single source of truth for "does
+ * this URL match the shape `fetchOne` supports" — reused by `fetchOneBuild` (below) AND by
+ * `jenkinsFetchOneUrlIsSupported` (the targeted-fetch orchestrator's pre-check,
+ * `sync/targeted-fetch.ts`), so the two can never disagree about which URLs are supported.
+ */
+function parseJenkinsBuildUrl(url: string): ParsedJenkinsBuildUrl | null {
   const m = JENKINS_BUILD_URL_RE.exec(url);
   if (m === null) {
-    return { status: "unsupported_url" };
+    return null;
   }
   const capturedJobPath = m[1] as string;
   const segments = jenkinsJobNameSegmentsFromCapturedPath(capturedJobPath);
   if (segments === null) {
+    return null;
+  }
+  return { jobFullName: segments.join("/"), num: Number.parseInt(m[2] as string, 10) };
+}
+
+/**
+ * Whether `parseJenkinsBuildUrl` accepts `url` — i.e. whether `fetchOne` would make an outbound
+ * request for it. `sync/targeted-fetch.ts` calls this BEFORE appending an egress row, so a URL
+ * shape `fetchOne` would decline never ledgers an `authorized` row for a call that provably never
+ * left the machine (I29 Critical 2).
+ */
+export function jenkinsFetchOneUrlIsSupported(url: string): boolean {
+  return parseJenkinsBuildUrl(url) !== null;
+}
+
+async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneResult> {
+  const parsedUrl = parseJenkinsBuildUrl(url);
+  if (parsedUrl === null) {
     return { status: "unsupported_url" };
   }
-  const jobFullName = segments.join("/");
-  const requestedNum = Number.parseInt(m[2] as string, 10);
+  const { jobFullName, num: requestedNum } = parsedUrl;
 
   const baseRaw = await readConnectorSecret(ctx.vault, "jenkins", "base_url");
   const user = await readConnectorSecret(ctx.vault, "jenkins", "username");
@@ -404,6 +444,7 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
     0,
     0,
     Date.now(),
+    url,
   );
   // A `null` return means NOTHING was written (see the docstring above) — the row does not exist,
   // so this must report `not_found`, not `indexed`. The returned itemId is built from `num` on

@@ -38,6 +38,7 @@ describe("fetch-host-boundary", () => {
     const map = await deriveFetchHostMap(
       fakeVault({
         "jenkins.api_token": "t",
+        "jenkins.username": "u",
         "jenkins.base_url": "https://ci.corp.example:8443/jenkins/",
       }),
     );
@@ -56,13 +57,37 @@ describe("fetch-host-boundary", () => {
     expect(map.size).toBe(0);
   });
 
+  // IMPORTANT 2 + I29 Critical 2 (credential parity): jenkins fetchOne also requires
+  // `jenkins.username` — a stray api_token+base_url with no username must contribute no entry,
+  // or a partially-configured Jenkins would be claimed "configured" here while `fetchOne`
+  // deterministically declines with zero network activity on every request.
+  test("jenkins with api_token and base_url but no username contributes no entry", async () => {
+    const map = await deriveFetchHostMap(
+      fakeVault({
+        "jenkins.api_token": "t",
+        "jenkins.base_url": "https://ci.corp.example:8443/",
+      }),
+    );
+    expect(serviceForHost(map, "ci.corp.example:8443")).toBeNull();
+    expect(map.size).toBe(0);
+  });
+
   test("self-hosted GitLab is reachable via api_base, not base_url", async () => {
     // The design said self-hosted GitLab was unreachable. The secret is `gitlab.api_base`.
     const map = await deriveFetchHostMap(
       fakeVault({ "gitlab.pat": "t", "gitlab.api_base": "https://git.corp.example/api/v4" }),
     );
     expect(serviceForHost(map, "git.corp.example")).toBe("gitlab");
-    // gitlab.com stays reachable too: it is a static SaaS host, independent of api_base.
+    // IMPORTANT 2: a genuinely self-hosted-only GitLab must NOT also claim the public gitlab.com
+    // host — claiming both would send a gitlab.com URL to the INTERNAL instance under the
+    // internal credential.
+    expect(serviceForHost(map, "gitlab.com")).toBeNull();
+  });
+
+  test("gitlab with no api_base still claims the public gitlab.com host", async () => {
+    // The other direction of IMPORTANT 2's fix: absent a self-hosted origin, gitlab.com stays
+    // reachable exactly as before.
+    const map = await deriveFetchHostMap(fakeVault({ "gitlab.pat": "t" }));
     expect(serviceForHost(map, "gitlab.com")).toBe("gitlab");
   });
 
@@ -71,9 +96,35 @@ describe("fetch-host-boundary", () => {
     // self-hosted origin — base_url alone (without a credential) must not resolve; see
     // "jira without a base_url secret" and "jira without a credential" below.
     const map = await deriveFetchHostMap(
-      fakeVault({ "jira.api_token": "t", "jira.base_url": "https://Corp.Atlassian.NET" }),
+      fakeVault({
+        "jira.api_token": "t",
+        "jira.email": "e@corp.example",
+        "jira.base_url": "https://Corp.Atlassian.NET",
+      }),
     );
     expect(serviceForHost(map, "corp.atlassian.net")).toBe("jira");
+  });
+
+  // I29 Critical 2 (credential parity): jira's `fetchOne` also requires `jira.email` —
+  // api_token+base_url alone must contribute no entry, or a partially-configured Jira would be
+  // claimed "configured" here while `fetchOne` deterministically declines with zero network
+  // activity on every request.
+  test("jira with api_token and base_url but no email contributes no entry", async () => {
+    const map = await deriveFetchHostMap(
+      fakeVault({ "jira.api_token": "t", "jira.base_url": "https://corp.atlassian.net" }),
+    );
+    expect(serviceForHost(map, "corp.atlassian.net")).toBeNull();
+    expect(map.size).toBe(0);
+  });
+
+  // I29 Critical 2 (credential parity): bitbucket's `fetchOne` also requires
+  // `bitbucket.username` — app_password alone must contribute no entry, or a
+  // partially-configured Bitbucket would be claimed "configured" here while `fetchOne`
+  // deterministically declines with zero network activity on every request.
+  test("bitbucket with app_password but no username contributes no entry", async () => {
+    const map = await deriveFetchHostMap(fakeVault({ "bitbucket.app_password": "p" }));
+    expect(serviceForHost(map, "bitbucket.org")).toBeNull();
+    expect(map.size).toBe(0);
   });
 
   test("a malformed base_url contributes nothing rather than throwing", async () => {
@@ -149,6 +200,7 @@ describe("fetch-host-boundary", () => {
       fakeVault({
         "github.pat": "t",
         "jira.api_token": "t",
+        "jira.email": "e@corp.example",
         "jira.base_url": "https://github.com",
       }),
     );
@@ -167,8 +219,10 @@ describe("fetch-host-boundary", () => {
       fakeVault({
         "github.pat": "t",
         "jenkins.api_token": "t",
+        "jenkins.username": "u",
         "jenkins.base_url": "https://github.com",
         "jira.api_token": "t",
+        "jira.email": "e@corp.example",
         "jira.base_url": "https://github.com",
       }),
     );

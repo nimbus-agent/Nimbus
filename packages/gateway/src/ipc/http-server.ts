@@ -90,6 +90,14 @@ export type ReadOnlyHttpServerOptions = {
   // into connectors or the Vault itself. Reuses clipsVault for bearer auth (clipIngest precedent),
   // under its own `fetch` scope, distinct from `resolve`'s read-only local-index lookup.
   readonly fetchItem?: (url: string) => Promise<TargetedFetchOutcome>;
+  // IMPORTANT 1 fix: the `fetchable` predicate `GET /v1/items/resolve` passes to
+  // `resolveItemByUrl`. Absent => every resolve answers `fetchable: false` (the same default
+  // `resolveItemByUrl` itself falls back to). A CLOSURE, not a raw host map: the map must be
+  // derived FRESH on every call (never cached) — a revoked credential must stop advertising
+  // `fetchable` immediately — exactly like `fetchItem`'s own host-map derivation above. The HTTP
+  // layer never reaches into the Vault itself; assemble time builds this the same way it builds
+  // `fetchItem`'s host map.
+  readonly resolveFetchable?: () => Promise<(host: string) => boolean>;
 };
 
 export type ReadOnlyHttpServerHandle = {
@@ -605,7 +613,10 @@ async function handleItemsResolve(
   if (raw === null || raw.trim() === "") {
     return json({ error: "missing_url" }, 400);
   }
-  return json(resolveItemByUrl(db, raw));
+  // IMPORTANT 1: derived FRESH on every call (never cached), same as `fetchItem`'s own host map —
+  // a revoked credential must stop advertising `fetchable` on the very next request.
+  const fetchable = opts.resolveFetchable === undefined ? undefined : await opts.resolveFetchable();
+  return json(resolveItemByUrl(db, raw, fetchable === undefined ? undefined : { fetchable }));
 }
 
 // GET /v1/briefs/{id} — bearer-authed read of an in-memory run. Mounted in the fetch handler,

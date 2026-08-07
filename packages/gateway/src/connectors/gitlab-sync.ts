@@ -44,6 +44,36 @@ export const GITLAB_MR_URL_RE =
  */
 const ALL_DOTS_RE = /^\.+$/;
 
+type ParsedGitlabMrUrl = { readonly pathWithNamespace: string; readonly iid: string };
+
+/**
+ * Pure, synchronous, NETWORK-FREE parse of a GitLab MR URL. Single source of truth for "does this
+ * URL match the shape `fetchOne` supports" — reused by `fetchOneMergeRequest` (below) AND by
+ * `gitlabFetchOneUrlIsSupported` (the targeted-fetch orchestrator's pre-check,
+ * `sync/targeted-fetch.ts`), so the two can never disagree about which URLs are supported.
+ */
+function parseGitlabMrUrl(url: string): ParsedGitlabMrUrl | null {
+  const m = GITLAB_MR_URL_RE.exec(url);
+  if (m === null) {
+    return null;
+  }
+  const pathWithNamespace = m[1] as string;
+  if (ALL_DOTS_RE.test(pathWithNamespace)) {
+    return null;
+  }
+  return { pathWithNamespace, iid: m[2] as string };
+}
+
+/**
+ * Whether `parseGitlabMrUrl` accepts `url` — i.e. whether `fetchOne` would make an outbound
+ * request for it. `sync/targeted-fetch.ts` calls this BEFORE appending an egress row, so a URL
+ * shape `fetchOne` would decline never ledgers an `authorized` row for a call that provably never
+ * left the machine (I29 Critical 2).
+ */
+export function gitlabFetchOneUrlIsSupported(url: string): boolean {
+  return parseGitlabMrUrl(url) !== null;
+}
+
 /**
  * Fetch and index ONE GitLab merge request by its web URL. See `Syncable.fetchOne` for the
  * contract: no rate-limiter call, no egress append, no host-boundary check — those belong to the
@@ -55,15 +85,11 @@ const ALL_DOTS_RE = /^\.+$/;
  * the caller-supplied URL's own origin (it IS the real web origin, by construction).
  */
 async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<FetchOneResult> {
-  const m = GITLAB_MR_URL_RE.exec(url);
-  if (m === null) {
+  const parsedUrl = parseGitlabMrUrl(url);
+  if (parsedUrl === null) {
     return { status: "unsupported_url" };
   }
-  const pathWithNamespace = m[1] as string;
-  if (ALL_DOTS_RE.test(pathWithNamespace)) {
-    return { status: "unsupported_url" };
-  }
-  const requestedIid = m[2] as string;
+  const { pathWithNamespace, iid: requestedIid } = parsedUrl;
   const pat = await readConnectorSecret(ctx.vault, "gitlab", "pat");
   if (pat === null || pat === "") {
     return { status: "not_found" };

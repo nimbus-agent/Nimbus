@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -103,6 +104,41 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     } | null;
     expect(row).not.toBeNull();
     expect(row?.resolve_key).toBe(callerUrl);
+  });
+
+  // CRITICAL 3: the build response's own `url` field (and the `job.url` fallback, built from the
+  // Vault-stored `jenkins.base_url`) must never win over the CALLER's URL. A misconfigured
+  // `jenkins.base_url` (e.g. left at `http://localhost:8080/` while the instance is really
+  // reached at `https://ci.example.com`) would otherwise write a cleartext-localhost
+  // `resolve_key` the caller's real URL can never match — this is the executed failure CRITICAL 3
+  // names for Jenkins specifically.
+  test("caller URL wins over both the build response's own url and the base_url-derived fallback", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "http://localhost:8080");
+    const callerUrl = "https://ci.example.com/job/build/12";
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify(buildPayload({ url: "http://localhost:8080/job/build/12/" })), {
+          status: 200,
+        }),
+      )) as unknown as typeof fetch;
+
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "jenkins:build#12" });
+    const row = db
+      .query("SELECT url, canonical_url, resolve_key FROM item WHERE id = 'jenkins:build#12'")
+      .get() as {
+      url: string | null;
+      canonical_url: string | null;
+      resolve_key: string | null;
+    } | null;
+    expect(row).not.toBeNull();
+    expect(row?.resolve_key).toBe(callerUrl);
+    expect(row?.url).toBe(callerUrl);
+    expect(row?.canonical_url).not.toContain("localhost");
+    expect(resolveItemByUrl(db, callerUrl)).toMatchObject({ found: true, matchKind: "exact" });
   });
 
   test("jenkins fetchOne declines a job url with no build number", async () => {

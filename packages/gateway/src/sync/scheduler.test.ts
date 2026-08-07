@@ -919,5 +919,92 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
 
       expect(syncCalls).toBe(1);
     });
+
+    // I29 CRITICAL 1: a connector with NO Vault credential must not ledger `sync` egress at all —
+    // its own `sync()` already short-circuits to a noop without touching the network, so an
+    // unconditional append before every run fabricated an "authorized" row for a call that
+    // provably never left the machine. `github` is a real `connector-secrets-manifest.ts` entry
+    // (`["github.pat"]`); `testContext`'s vault (`createMemoryVault()`) starts empty, so this is
+    // exactly the "empty Vault" scenario the review's executed proof describes.
+    test("a registered connector with no Vault credential ledgers ZERO sync egress rows on a forced sync", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      let syncCalls = 0;
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      sched.register({
+        serviceId: "github",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          syncCalls++;
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("github");
+      await sched.stop();
+
+      // The connector's own sync() still runs (and, in production, still no-ops without any
+      // network call) — only the egress append is gated on configuration.
+      expect(syncCalls).toBe(1);
+      expect(rows).toHaveLength(0);
+    });
+
+    test("the SAME connector ledgers a row once its Vault credential is set", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      await ctx.vault.set("github.pat", "t");
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      sched.register({
+        serviceId: "github",
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(): Promise<SyncResult> {
+          return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+        },
+      });
+
+      await sched.forceSync("github");
+      await sched.stop();
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ destination: "github", sourceType: "sync" });
+    });
+
+    test("multiple unconfigured cloud connectors, force-synced, ledger ZERO rows total", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      for (const serviceId of ["github", "slack", "notion"]) {
+        sched.register({
+          serviceId,
+          defaultIntervalMs: 60_000,
+          initialSyncDepthDays: 30,
+          async sync(): Promise<SyncResult> {
+            return {
+              cursor: null,
+              itemsUpserted: 0,
+              itemsDeleted: 0,
+              hasMore: false,
+              durationMs: 0,
+            };
+          },
+        });
+      }
+
+      await Promise.all(["github", "slack", "notion"].map((id) => sched.forceSync(id)));
+      await sched.stop();
+
+      expect(rows).toHaveLength(0);
+    });
   });
 });

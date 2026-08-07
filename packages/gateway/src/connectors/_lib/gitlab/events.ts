@@ -63,7 +63,7 @@ export function gitlabMrExternalId(pathWithNamespace: string, iid: number): stri
 }
 
 /** The `<pathWithNamespace>#<iid>` external-id shape for GitLab issue events. */
-export function gitlabIssueExternalId(pathWithNamespace: string, iid: number): string {
+function gitlabIssueExternalId(pathWithNamespace: string, iid: number): string {
   return `${pathWithNamespace}#${String(iid)}`;
 }
 

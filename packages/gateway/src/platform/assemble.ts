@@ -58,6 +58,7 @@ import {
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
 import { applyLlmTomlOverrides, Config } from "../config.ts";
+import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
 import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
 import {
   CONNECTOR_SERVICE_IDS,
@@ -73,8 +74,12 @@ import {
 } from "../connectors/connector-vault.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
+import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
+import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { createConnectorDispatcher } from "../connectors/index.ts";
+import { jenkinsFetchOneUrlIsSupported } from "../connectors/jenkins-sync.ts";
+import { jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createObsidianSyncable } from "../connectors/obsidian-sync.ts";
 import {
@@ -192,7 +197,11 @@ import {
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
-import { deriveFetchHostMap, type FetchableService } from "../sync/fetch-host-boundary.ts";
+import {
+  deriveFetchHostMap,
+  type FetchableService,
+  serviceForHost,
+} from "../sync/fetch-host-boundary.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
 import { SyncScheduler } from "../sync/scheduler.ts";
 import { type TargetedFetchOutcome, targetedFetch } from "../sync/targeted-fetch.ts";
@@ -674,6 +683,8 @@ interface HttpSidecarOpts {
   agentInvoke?: AgentHttpInvoker;
   // Targeted fetch-on-miss (Task 11): threaded into ReadOnlyHttpServerOptions the same way.
   fetchItem?: (url: string) => Promise<TargetedFetchOutcome>;
+  // IMPORTANT 1 fix: threaded into ReadOnlyHttpServerOptions the same way.
+  resolveFetchable?: () => Promise<(host: string) => boolean>;
 }
 
 /** Parse a sidecar port from a raw env value: a positive finite integer, else undefined. */
@@ -716,6 +727,9 @@ function buildReadOnlyHttpServerOpts(
     ...(httpOpts.agentRuns === undefined ? {} : { agentRuns: httpOpts.agentRuns }),
     ...(httpOpts.agentInvoke === undefined ? {} : { agentInvoke: httpOpts.agentInvoke }),
     ...(httpOpts.fetchItem === undefined ? {} : { fetchItem: httpOpts.fetchItem }),
+    ...(httpOpts.resolveFetchable === undefined
+      ? {}
+      : { resolveFetchable: httpOpts.resolveFetchable }),
   };
 }
 
@@ -2014,6 +2028,44 @@ async function buildHttpOriginMap(
 }
 
 /**
+ * Whether `service`'s `fetchOne` would make an outbound request for `url` — i.e. whether
+ * `targetedFetch` should append an egress row before attempting it (I29 Critical 2). Delegates to
+ * each connector's own exported, pure, network-free URL-shape parser (never a reimplementation
+ * here), so this can never disagree with what `fetchOne` itself would decide.
+ */
+function fetchOneUrlIsSupported(service: FetchableService, url: string): boolean {
+  switch (service) {
+    case "github":
+      return githubFetchOneUrlIsSupported(url);
+    case "gitlab":
+      return gitlabFetchOneUrlIsSupported(url);
+    case "bitbucket":
+      return bitbucketFetchOneUrlIsSupported(url);
+    case "jenkins":
+      return jenkinsFetchOneUrlIsSupported(url);
+    case "jira":
+      return jiraFetchOneUrlIsSupported(url);
+  }
+}
+
+/**
+ * IMPORTANT 1 fix: builds the `GET /v1/items/resolve` `fetchable` predicate and assigns it onto
+ * the caller's `httpSidecarOpts`. Derives the host map the SAME way `bootTargetedFetchIntoHttpSidecar`
+ * does — fresh on every call, never cached — so a revoked credential stops advertising
+ * `fetchable` on the very next resolve, not just the next fetch.
+ */
+function bootResolveFetchableIntoHttpSidecar(deps: {
+  vault: NimbusVault;
+  httpSidecarOpts: HttpSidecarOpts;
+}): void {
+  const { vault } = deps;
+  deps.httpSidecarOpts.resolveFetchable = async (): Promise<(host: string) => boolean> => {
+    const hostMap = await deriveFetchHostMap(vault);
+    return (host: string) => serviceForHost(hostMap, host) !== null;
+  };
+}
+
+/**
  * Targeted-fetch-on-miss boot (Task 11): builds the `POST /v1/items/fetch` closure and assigns it
  * onto the caller's `httpSidecarOpts`, mirroring `bootAgentsIntoHttpSidecar`'s shape.
  *
@@ -2046,6 +2098,7 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
         syncableFor: (service) => syncScheduler.syncableFor(service),
         contextFor: (service) => syncScheduler.syncContextFor(service),
         httpOriginFor: (service) => httpOrigins.get(service) ?? null,
+        urlIsSupported: fetchOneUrlIsSupported,
         appendEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       },
@@ -2314,6 +2367,10 @@ export async function assemblePlatformServices(paths: PlatformPaths): Promise<Pl
   // Targeted fetch-on-miss (Task 11). Unconditional, like agents: reaching it requires the
   // `fetch` scope, which no legacy token carries and `nimbus clip pair --scopes` must name.
   bootTargetedFetchIntoHttpSidecar({ db, vault, syncScheduler, httpSidecarOpts });
+
+  // IMPORTANT 1 fix: wires `GET /v1/items/resolve`'s `fetchable` predicate. Unconditional, same
+  // as the fetch seam above — the route itself still requires the `resolve` scope.
+  bootResolveFetchableIntoHttpSidecar({ vault, httpSidecarOpts });
 
   const identityBoot = bootIdentityIntoIpcOpts({
     configDir: paths.configDir,
