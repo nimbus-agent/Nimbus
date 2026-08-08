@@ -259,6 +259,7 @@
     "@nimbus-dev/client": "^0.15.1",
     "@nimbus-dev/sdk": "^1.16.0",
     "astro": "^7.1.6",
+    "nanoid": "^6.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
