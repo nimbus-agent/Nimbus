@@ -42,4 +42,44 @@ describe("filterFlagsmithFeatures", () => {
     const many = Array.from({ length: 10 }, (_, i) => feature({ name: `flag-${String(i)}` }));
     expect(filterFlagsmithFeatures(many, { query: "flag-", limit: 3 })).toHaveLength(3);
   });
+
+  test("handles missing or non-array tags gracefully", () => {
+    expect(
+      filterFlagsmithFeatures([feature({ name: "checkout", tags: undefined })], {
+        query: "checkout",
+      }),
+    ).toHaveLength(1);
+    // @ts-expect-error - intentional invalid type to test runtime check
+    expect(
+      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" })], {
+        query: "checkout",
+      }),
+    ).toHaveLength(1);
+    // @ts-expect-error - intentional invalid type to test runtime check
+    expect(
+      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" })], {
+        query: "not-an-array",
+      }),
+    ).toHaveLength(0);
+  });
+
+  test("ignores invalid tag types", () => {
+    const featureWithInvalidTags = feature({
+      name: "valid-feature",
+      tags: [1, "valid", null, undefined, { key: "value" }, [1, 2, 3]],
+    });
+    expect(filterFlagsmithFeatures([featureWithInvalidTags], { query: "valid" })).toHaveLength(1);
+    expect(filterFlagsmithFeatures([featureWithInvalidTags], { query: "1" })).toHaveLength(1);
+    expect(filterFlagsmithFeatures([featureWithInvalidTags], { query: "null" })).toHaveLength(0);
+    expect(filterFlagsmithFeatures([featureWithInvalidTags], { query: "undefined" })).toHaveLength(
+      0,
+    );
+    expect(filterFlagsmithFeatures([featureWithInvalidTags], { query: "object" })).toHaveLength(0);
+  });
+
+  test("handles missing name and description gracefully", () => {
+    const incompleteFeature = { tags: [42] };
+    expect(filterFlagsmithFeatures([incompleteFeature], { query: "42" })).toHaveLength(1);
+    expect(filterFlagsmithFeatures([incompleteFeature], { query: "checkout" })).toHaveLength(0);
+  });
 });
