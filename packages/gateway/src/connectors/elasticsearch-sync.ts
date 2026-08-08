@@ -126,7 +126,9 @@ async function walkIndices(
 
   // 3. Process and upsert items
   for (let i = 0; i < validRows.length; i++) {
-    const { row, name } = validRows[i];
+    const rowEntry = validRows[i];
+    if (!rowEntry) continue;
+    const { row, name } = rowEntry;
     const fields = mappingResults[name]?.fields ?? [];
 
     const mapped = mapElasticsearchIndexToItem(row, { fields, syncedAt: now });
