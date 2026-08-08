@@ -4,6 +4,7 @@ import type { PersonSyncHints } from "../people/person-types.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { msFromIso, normalizeLinearStateType, TICKET_META_VERSION } from "./ticket-depth.ts";
 import { asRecord, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "linear";
@@ -24,6 +25,21 @@ query LinearSync($first: Int!, $after: String, $gt: DateTimeOrDuration!) {
         id
         name
         email
+      }
+      createdAt
+      completedAt
+      canceledAt
+      dueDate
+      state {
+        name
+        type
+      }
+      parent {
+        identifier
+      }
+      project {
+        id
+        name
       }
     }
     pageInfo {
@@ -142,6 +158,57 @@ function resolveLinearIssueAuthorId(
   return null;
 }
 
+/**
+ * Same key names as `jiraDepthMetadata` in `jira-sync.ts` — the contract is
+ * shared so no consumer branches on service. `project_id` is Linear-only:
+ * Linear has no Epic issue type, so a project is its epic-shaped grouping.
+ * `parent_key` is independent of it and both may be present.
+ */
+function linearDepthMetadata(row: Record<string, unknown>): Record<string, unknown> {
+  const meta: Record<string, unknown> = { meta_v: TICKET_META_VERSION };
+
+  const state = asRecord(row["state"]);
+  const stateName = state === undefined ? undefined : stringField(state, "name");
+  if (stateName !== undefined && stateName !== "") {
+    meta["status"] = stateName;
+  }
+  const stateType = state === undefined ? undefined : stringField(state, "type");
+  if (stateType !== undefined && stateType !== "") {
+    meta["status_category_raw"] = stateType;
+  }
+  meta["status_category"] = normalizeLinearStateType(stateType);
+
+  const created = msFromIso(stringField(row, "createdAt"));
+  if (created !== undefined) {
+    meta["created_at_ms"] = created;
+  }
+  // A canceled issue is resolved too — it left the board. `completedAt` wins
+  // when both are set; `status_category` carries which outcome it was.
+  const resolved =
+    msFromIso(stringField(row, "completedAt")) ?? msFromIso(stringField(row, "canceledAt"));
+  if (resolved !== undefined) {
+    meta["resolved_at_ms"] = resolved;
+  }
+  const due = msFromIso(stringField(row, "dueDate"));
+  if (due !== undefined) {
+    meta["due_at_ms"] = due;
+  }
+
+  const parent = asRecord(row["parent"]);
+  const parentKey = parent === undefined ? undefined : stringField(parent, "identifier");
+  if (parentKey !== undefined && parentKey !== "") {
+    meta["parent_key"] = parentKey;
+  }
+
+  const project = asRecord(row["project"]);
+  const projectId = project === undefined ? undefined : stringField(project, "id");
+  if (projectId !== undefined && projectId !== "") {
+    meta["project_id"] = projectId;
+  }
+
+  return meta;
+}
+
 function linearUpsertSingleIssue(
   ctx: SyncContext,
   row: Record<string, unknown>,
@@ -177,7 +244,7 @@ function linearUpsertSingleIssue(
     canonicalUrl: url ?? null,
     modifiedAt: Number.isFinite(modified) ? modified : syncTime,
     authorId,
-    metadata: { linearId: id, identifier },
+    metadata: { linearId: id, identifier, ...linearDepthMetadata(row) },
     pinned: false,
     syncedAt: syncTime,
   });

@@ -716,3 +716,132 @@ describeWithFetchRestore("linear-sync", () => {
     expect(capturedGt).toBe(sinceDateStr);
   });
 });
+
+// ── ticket-depth metadata contract ───────────────────────────────────────────
+
+/**
+ * Runs one full single-page sync over `nodes`, optionally handing each request
+ * body to `onBody`. Assertions are made against the STORED row rather than
+ * against what this stub received.
+ */
+async function runLinearSyncWithNodes(
+  ctx: Parameters<ReturnType<typeof createLinearSyncable>["sync"]>[0],
+  nodes: ReadonlyArray<Record<string, unknown>>,
+  onBody?: (body: string) => void,
+): Promise<void> {
+  globalThis.fetch = (async (
+    _input: SyncTestFetchParams[0],
+    init?: SyncTestFetchParams[1],
+  ): Promise<Response> => {
+    onBody?.(typeof init?.body === "string" ? init.body : "");
+    return new Response(makeLinearResponse([...nodes]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+
+  const syncable = createLinearSyncable({ ensureLinearMcpRunning: async () => {} });
+  await syncable.sync(ctx, null);
+}
+
+function depthCtx(): {
+  db: ReturnType<typeof createMemoryIndexDb>;
+  ctx: Parameters<ReturnType<typeof createLinearSyncable>["sync"]>[0];
+} {
+  const db = createMemoryIndexDb();
+  return { db, ctx: syncTestContext(db, createStubVault({ "linear.api_key": "key" })) };
+}
+
+function storedMetadata(db: ReturnType<typeof createMemoryIndexDb>, externalId: string) {
+  const row = db.prepare("SELECT metadata FROM item WHERE external_id = ?").get(externalId) as
+    | { metadata: string }
+    | undefined;
+  return JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+}
+
+describeWithFetchRestore("linear-sync ticket depth", () => {
+  test("linear issue metadata carries the ticket-depth contract", async () => {
+    const { db, ctx } = depthCtx();
+    await runLinearSyncWithNodes(ctx, [
+      {
+        id: "uuid-1",
+        identifier: "ENG-42",
+        title: "Ship the thing",
+        description: "body",
+        updatedAt: "2026-02-01T00:00:00.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-20T00:00:00.000Z",
+        dueDate: "2026-01-15",
+        state: { name: "Merged", type: "completed" },
+        parent: { identifier: "ENG-1" },
+        project: { id: "proj-9", name: "Q1 Platform" },
+      },
+    ]);
+
+    const meta = storedMetadata(db, "ENG-42");
+
+    expect(meta["status"]).toBe("Merged");
+    expect(meta["status_category"]).toBe("done");
+    expect(meta["status_category_raw"]).toBe("completed");
+    expect(meta["created_at_ms"]).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
+    expect(meta["resolved_at_ms"]).toBe(Date.parse("2026-01-20T00:00:00.000Z"));
+    expect(meta["due_at_ms"]).toBe(Date.parse("2026-01-15"));
+    expect(meta["parent_key"]).toBe("ENG-1");
+    expect(meta["project_id"]).toBe("proj-9");
+    expect(meta["meta_v"]).toBe(1);
+    expect(meta["linearId"]).toBe("uuid-1");
+  });
+
+  test("a canceled linear issue is canceled, not done", async () => {
+    // The one place the two services genuinely differ: Linear keeps abandoned
+    // work distinct, Jira folds it into `done`. Consumers must not compare
+    // cancel rates across services.
+    const { db, ctx } = depthCtx();
+    await runLinearSyncWithNodes(ctx, [
+      {
+        id: "uuid-2",
+        identifier: "ENG-43",
+        title: "Abandoned",
+        updatedAt: "2026-02-01T00:00:00.000Z",
+        canceledAt: "2026-01-25T00:00:00.000Z",
+        state: { name: "Cancelled", type: "canceled" },
+      },
+    ]);
+
+    const meta = storedMetadata(db, "ENG-43");
+    expect(meta["status_category"]).toBe("canceled");
+    // canceledAt fills resolved_at_ms when completedAt is absent.
+    expect(meta["resolved_at_ms"]).toBe(Date.parse("2026-01-25T00:00:00.000Z"));
+  });
+
+  test("absent linear depth fields omit their keys", async () => {
+    const { db, ctx } = depthCtx();
+    await runLinearSyncWithNodes(ctx, [
+      { id: "uuid-3", identifier: "ENG-44", title: "Bare", updatedAt: "2026-02-01T00:00:00.000Z" },
+    ]);
+
+    const meta = storedMetadata(db, "ENG-44");
+    expect("created_at_ms" in meta).toBe(false);
+    expect("project_id" in meta).toBe(false);
+    expect(meta["status_category"]).toBe("unknown");
+  });
+
+  test("the linear sync query selects the depth fields", async () => {
+    const { ctx } = depthCtx();
+    const payloads: string[] = [];
+    await runLinearSyncWithNodes(ctx, [], (b) => payloads.push(b));
+
+    const query = (JSON.parse(payloads[0] ?? "{}") as { query?: string }).query ?? "";
+    for (const f of [
+      "createdAt",
+      "completedAt",
+      "canceledAt",
+      "dueDate",
+      "state",
+      "parent",
+      "project",
+    ]) {
+      expect(query).toContain(f);
+    }
+  });
+});
