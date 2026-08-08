@@ -461,6 +461,89 @@ describe("listAllExpectations — filesystem walk", () => {
     expect(rows).toEqual([]);
   });
 
+  it("stops recursing at MAX_WALK_DEPTH (12)", async () => {
+    // Create nested directories up to depth 13
+    let currentDir = dir;
+    for (let i = 1; i <= 13; i++) {
+      currentDir = join(currentDir, `level${i}`);
+      await mkdir(currentDir, { recursive: true });
+    }
+
+    const doc = {
+      meta: { expectation_suite_name: "nested" },
+      results: [
+        { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
+      ],
+    };
+
+    // Level 12 (at MAX_WALK_DEPTH) should be found
+    let level12 = dir;
+    for (let i = 1; i <= 12; i++) {
+      level12 = join(level12, `level${i}`);
+    }
+    await writeFile(join(level12, "depth12.json"), JSON.stringify(doc), "utf8");
+
+    // Level 13 (beyond MAX_WALK_DEPTH) should NOT be found
+    const level13 = join(level12, "level13");
+    await writeFile(join(level13, "depth13.json"), JSON.stringify(doc), "utf8");
+
+    const rows = await listAllExpectations();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sourceFile).toContain("depth12.json");
+  });
+
+  it("stops collecting files at MAX_FILES (1000)", async () => {
+    const doc = {
+      meta: { expectation_suite_name: "many" },
+      results: [
+        { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
+      ],
+    };
+    const content = JSON.stringify(doc);
+
+    // Create 1001 files sequentially to avoid EMFILE (too many open files) on some systems
+    for (let i = 0; i < 1001; i++) {
+      await writeFile(join(dir, `file${i}.json`), content, "utf8");
+    }
+
+    const rows = await listAllExpectations();
+    expect(rows).toHaveLength(1000); // 1000 expectations, as one file is skipped
+  });
+
+  it("skips files larger than MAX_FILE_BYTES", async () => {
+    // 4 MiB + 1 byte
+    const oversizedContent = "x".repeat(4 * 1024 * 1024 + 1);
+    await writeFile(join(dir, "oversized.json"), oversizedContent, "utf8");
+
+    // Normal file
+    const doc = {
+      meta: { expectation_suite_name: "normal" },
+      results: [
+        { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
+      ],
+    };
+    await writeFile(join(dir, "normal.json"), JSON.stringify(doc), "utf8");
+
+    const rows = await listAllExpectations();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.suiteName).toBe("normal");
+  });
+
+  it("gracefully handles unreadable directories during walk", async () => {
+    const sub = join(dir, "unreadable");
+    await mkdir(sub, { recursive: true });
+    // This will cause readdir to fail on this directory
+    await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o000));
+
+    try {
+      const rows = await listAllExpectations();
+      expect(rows).toEqual([]);
+    } finally {
+      // Restore permissions so cleanup works
+      await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o755));
+    }
+  });
+
   it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is unset", async () => {
     delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
     await expect(listAllExpectations()).rejects.toThrow(/GREAT_EXPECTATIONS_RESULTS_DIR/);
