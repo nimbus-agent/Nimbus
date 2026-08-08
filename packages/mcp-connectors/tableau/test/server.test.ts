@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { McpListResult, ZodObjectSchema } from "../../shared/mcp-tool-kit.ts";
-import { registerTableauTools } from "../src/server.ts";
+import { registerTableauTools, startConnector } from "../src/server.ts";
 
 type Handler = (args: unknown) => Promise<McpListResult>;
 
@@ -207,6 +207,20 @@ describe("tableau server", () => {
       const out = parsePayload(await tool(tools, "tableau_search")({ query: "sale", limit: 10 }));
       expect(out.matches).toHaveLength(1);
       expect(out.matches![0]).toEqual({ luid: "v1", name: "Sales" });
+    });
+  });
+
+  describe("startConnector", () => {
+    it("starts a read-only server with tableau tools", async () => {
+      const mockRun = mock(() => Promise.resolve());
+      mock.module("../../shared/run-read-only-mcp-connector.ts", () => ({
+        runReadOnlyMcpConnector: mockRun,
+      }));
+
+      await startConnector();
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun.mock.calls[0]?.[0]).toBe("nimbus-tableau");
+      expect(mockRun.mock.calls[0]?.[1]).toBe(registerTableauTools);
     });
   });
 });
