@@ -67,4 +67,23 @@ describe("filterZendeskTickets", () => {
     const many = Array.from({ length: 10 }, (_, i) => ticket({ id: i }));
     expect(filterZendeskTickets(many, { query: "checkout button", limit: 3 })).toHaveLength(3);
   });
+
+  test("empty query matches all items up to limit", () => {
+    const many = Array.from({ length: 10 }, (_, i) => ticket({ id: i }));
+    expect(filterZendeskTickets(many, { query: "" })).toHaveLength(10);
+    expect(filterZendeskTickets(many, { query: "", limit: 5 })).toHaveLength(5);
+  });
+
+  test("matches cross-field boundary strings", () => {
+    // haystack will be "checkout button unresponsive on safari customer reports the checkout button does nothing on safari 17 open high incident checkout safari"
+    // "safari customer" crosses subject/description boundary
+    expect(filterZendeskTickets([ticket()], { query: "safari customer" })).toHaveLength(1);
+    // "17 open" crosses description/status boundary
+    expect(filterZendeskTickets([ticket()], { query: "17 open" })).toHaveLength(1);
+  });
+
+  test("partial substring matches", () => {
+    expect(filterZendeskTickets([ticket()], { query: "check" })).toHaveLength(1);
+    expect(filterZendeskTickets([ticket()], { query: "ident" })).toHaveLength(1); // from incident
+  });
 });
