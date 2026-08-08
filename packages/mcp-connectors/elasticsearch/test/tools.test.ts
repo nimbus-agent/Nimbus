@@ -123,12 +123,9 @@ describe("elasticsearch tools", () => {
         },
       );
 
-      await withEnv(
-        { ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" },
-        async () => {
-          await handlers["elasticsearch_list"]({});
-        },
-      );
+      await withEnv({ ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" }, async () => {
+        await handlers["elasticsearch_list"]({});
+      });
       expect(mockFetch).toHaveBeenCalled();
     });
 
@@ -250,13 +247,16 @@ describe("elasticsearch tools", () => {
 
     it("ignores non-record and invalid entries when matching", async () => {
       spyOn(globalThis, "fetch").mockImplementation(
-        async () => new Response(JSON.stringify([
-          null,
-          "string",
-          { notIndex: "app" },
-          { index: 123 }, // number
-          { index: "app-valid" }
-        ])),
+        async () =>
+          new Response(
+            JSON.stringify([
+              null,
+              "string",
+              { notIndex: "app" },
+              { index: 123 }, // number
+              { index: "app-valid" },
+            ]),
+          ),
       );
 
       await withEnv(validEnv, async () => {
