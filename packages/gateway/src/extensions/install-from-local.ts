@@ -259,7 +259,7 @@ function assertNoEntryEscapes(destDir: string): void {
   }
 }
 
-function extractTarGzToDirectory(archivePath: string, destDir: string): void {
+export function extractTarGzToDirectory(archivePath: string, destDir: string): void {
   const cmd = resolveSystemTarCommand();
   const args = ["-xzf", resolve(archivePath), "-C", resolve(destDir)];
   if (process.platform === "linux") {

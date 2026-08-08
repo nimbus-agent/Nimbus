@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -11,6 +11,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
   assertSafeExtensionId,
+  extractTarGzToDirectory,
   extensionInstallDirectory,
   installExtensionFromLocalDirectory,
   resolveSystemTarCommand,
@@ -2468,4 +2469,45 @@ describe("resolveSystemTarCommand — win32 SystemRoot + fallback (Tier C-24)", 
       }
     },
   );
+});
+
+describe("extractTarGzToDirectory leading-hyphen paths regression test", () => {
+  test("successfully extracts when archive and destDir start with a hyphen (-)", () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-hyphen-test-")));
+    const sourceDir = join(tmp, "src");
+    mkdirSync(sourceDir);
+    writeFileSync(join(sourceDir, "hello.txt"), "hello world", "utf8");
+
+    const tarBin = resolveSystemTarCommand();
+    const absoluteArchive = join(tmp, "archive.tar.gz");
+    const pack = spawnSync(tarBin, ["-czf", absoluteArchive, "-C", tmp, "src"], {
+      windowsHide: true,
+    });
+    expect(pack.status).toBe(0);
+
+    const originalCwd = process.cwd();
+    process.chdir(tmp);
+
+    try {
+      const relativeArchive = "./-archive.tar.gz";
+      const relativeDest = "./-dest";
+
+      const absRelativeArchive = join(tmp, relativeArchive);
+      const absRelativeDest = join(tmp, relativeDest);
+      renameSync(absoluteArchive, absRelativeArchive);
+      mkdirSync(absRelativeDest, { recursive: true });
+
+      extractTarGzToDirectory(relativeArchive, relativeDest);
+
+      expect(existsSync(join(absRelativeDest, "src", "hello.txt"))).toBe(true);
+      expect(readFileSync(join(absRelativeDest, "src", "hello.txt"), "utf8")).toBe("hello world");
+    } finally {
+      process.chdir(originalCwd);
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* Windows EBUSY */
+      }
+    }
+  });
 });
