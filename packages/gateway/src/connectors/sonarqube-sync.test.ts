@@ -621,6 +621,9 @@ describeWithFetchRestore("sonarqube-sync", () => {
       if (u.includes("/api/components/search")) {
         return new Response(makeComponentsResponse(["proj-a", "proj-b"]), { status: 200 });
       }
+      if (u.includes("componentKeys=proj-a%2Cproj-b")) {
+        return new Response(makeIssuesResponse([issueA, issueB]), { status: 200 });
+      }
       if (u.includes("componentKeys=proj-a")) {
         return new Response(makeIssuesResponse([issueA]), { status: 200 });
       }

@@ -96,17 +96,25 @@ interface ProjectSyncOutcome {
   readonly bytes: number;
 }
 
-async function syncOneProject(
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
+async function syncProjects(
   ctx: SyncContext,
   creds: SonarCreds,
-  projectKey: string,
+  projectKeys: string[],
   now: number,
 ): Promise<ProjectSyncOutcome> {
   let upserted = 0;
   let bytes = 0;
   for (let page = 1; page <= MAX_PAGES_PER_PROJECT; page += 1) {
     const issuesParams = new URLSearchParams({
-      componentKeys: projectKey,
+      componentKeys: projectKeys.join(","),
       types: ISSUE_TYPES,
       statuses: OPEN_STATUSES,
       ps: String(PAGE_SIZE),
@@ -191,8 +199,11 @@ export function createSonarqubeSyncable(options: SonarqubeSyncableOptions): Sync
       const now = Date.now();
       let totalUpserted = 0;
       let totalBytes = projectsOutcome.bytes;
-      for (const projectKey of extractProjectKeys(projectsOutcome.parsed)) {
-        const projectOutcome = await syncOneProject(ctx, creds, projectKey, now);
+      const allProjectKeys = extractProjectKeys(projectsOutcome.parsed);
+      const batches = chunkArray(allProjectKeys, 50);
+
+      for (const batch of batches) {
+        const projectOutcome = await syncProjects(ctx, creds, batch, now);
         totalUpserted += projectOutcome.upserted;
         totalBytes += projectOutcome.bytes;
       }
