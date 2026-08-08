@@ -16,7 +16,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
@@ -43,7 +43,7 @@ export async function startServerWithClipToken(
   scopes: readonly ApiScope[],
   extraOpts: Partial<ReadOnlyHttpServerOptions> = {},
 ): Promise<ClipTestServer> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-"));
+  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-")));
   const dbPath = join(tmpDir, "nimbus.db");
 
   // Migrate + close, then reopen writable — the server opens its own readonly + (conditionally)
@@ -99,7 +99,7 @@ export async function startServerWithoutClipsVault(
   // turning a fail-closed regression test into one that asserts nothing.
   extraOpts: Partial<Omit<ReadOnlyHttpServerOptions, "clipsVault">> = {},
 ): Promise<Omit<ClipTestServer, "token">> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-"));
+  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-")));
   const dbPath = join(tmpDir, "nimbus.db");
   const setupDb = new Database(dbPath);
   runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);

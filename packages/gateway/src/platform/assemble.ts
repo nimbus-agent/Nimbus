@@ -2119,13 +2119,16 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
   };
 }
 
-export async function assemblePlatformServices(paths: PlatformPaths): Promise<PlatformServices> {
+export async function assemblePlatformServices(
+  paths: PlatformPaths,
+  customVault?: NimbusVault,
+): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
-  const vault = await createNimbusVault(paths);
+  const vault = customVault ?? (await createNimbusVault(paths));
   const sandboxRunner = await createSandboxRunner();
   const db = openGatewaySqlite(paths.dataDir, sidecarStops);
   // I29: record what THIS binary is built to observe, before anything can emit egress. Without a

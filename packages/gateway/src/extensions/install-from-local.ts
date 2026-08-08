@@ -261,7 +261,7 @@ function assertNoEntryEscapes(destDir: string): void {
 
 function extractTarGzToDirectory(archivePath: string, destDir: string): void {
   const cmd = resolveSystemTarCommand();
-  const args = ["-xzf", archivePath, "-C", destDir];
+  const args = ["-xzf", resolve(archivePath), "-C", resolve(destDir)];
   if (process.platform === "linux") {
     args.push("--no-overwrite-dir", "--no-same-owner", "--no-same-permissions");
   }

@@ -4,9 +4,22 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
   assertWithinResultsDir,
+  FORBIDDEN_RESULT_KEYS,
   listAllExpectations,
   parseValidationResult,
 } from "../src/gx-parse.ts";
+
+describe("FORBIDDEN_RESULT_KEYS", () => {
+  it("contains the exact set of keys that must be stripped to prevent row-data leaks", () => {
+    expect([...FORBIDDEN_RESULT_KEYS]).toEqual([
+      "unexpected_list",
+      "partial_unexpected_list",
+      "partial_unexpected_index_list",
+      "unexpected_index_list",
+      "partial_unexpected_counts",
+    ]);
+  });
+});
 
 /**
  * Unit coverage for the pure parser surface in gx-parse.ts. The no-row-data

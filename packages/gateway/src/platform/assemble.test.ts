@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
@@ -17,9 +17,9 @@ import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
 
 describe("assemblePlatformServices (smoke)", () => {
-  it("is an async function with arity 1 (paths)", () => {
+  it("is an async function with arity 2 (paths, customVault?)", () => {
     expect(typeof assemblePlatformServices).toBe("function");
-    expect(assemblePlatformServices).toHaveLength(1);
+    expect(assemblePlatformServices).toHaveLength(2);
     expect(assemblePlatformServices.constructor.name).toBe("AsyncFunction");
   });
 });
@@ -132,7 +132,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
   let services: PlatformServices | null = null;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "nimbus-assemble-"));
+    tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-assemble-")));
     originalSkipEmbed = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
     processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", "1");
   });
@@ -197,7 +197,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
     expect(services).toBeDefined();
     expect(typeof services.vault.get).toBe("function");
     expect(typeof services.ipc.stop).toBe("function");
@@ -228,7 +228,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     processEnvSet("NIMBUS_HTTP_PORT", httpPort);
     processEnvSet("NIMBUS_METRICS_PORT", metricsPort);
     try {
-      services = await assemblePlatformServices(paths);
+      services = await assemblePlatformServices(paths, makeInMemoryVault());
       expect(typeof services.disposeSidecars).toBe("function");
       services.disposeSidecars?.();
     } finally {
@@ -263,7 +263,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
 
     // The owner-side delegation dep is built only when federation is enabled (I20). The executor
     // gate uses it to route a HITL action to an active delegate before the local owner prompt.
@@ -290,7 +290,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ),
     );
 
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
 
     expect(services.chatops).toBeDefined();
     const status = services.chatops?.rpcCtx.status();
@@ -309,7 +309,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
     expect(services.chatops).toBeUndefined();
   }, 30000);
 
@@ -332,7 +332,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
     expect(services).toBeDefined();
     expect(typeof services.ipc.stop).toBe("function");
   }, 30000);
@@ -348,7 +348,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
 
     const probeServiceId = "assemble-egress-probe";
     const fakeSyncable: Syncable = {
@@ -410,7 +410,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
 
     const probeServiceIds = ["github", "slack", "notion"] as const;
     await Promise.all(probeServiceIds.map((id) => services?.syncScheduler.forceSync(id)));
@@ -438,7 +438,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
 
     const emptyManifestServiceIds = [
       "google_drive",
@@ -501,7 +501,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
     // `github_actions` has a 60s scheduled interval and the scheduler is already ticking at this
     // point — pausing it (a paused connector's own tick is skipped, but "forceSync on a paused
     // connector still runs" per `scheduler.test.ts`) rules out a natural scheduled tick racing
@@ -553,7 +553,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       `[[filesystem.roots]]\npath = "${rootDir.replace(/\\/g, "/")}"\n`,
     );
 
-    services = await assemblePlatformServices(paths);
+    services = await assemblePlatformServices(paths, makeInMemoryVault());
     // `registerFilesystemRootSyncables` (called synchronously inside assembly) registers both
     // `filesystem` and `blame` for any non-empty root set — forcing either proves the exclusion;
     // `filesystem` is forced here, `blame` is covered by the unit-level
