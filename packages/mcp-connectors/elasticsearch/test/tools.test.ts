@@ -114,6 +114,41 @@ describe("elasticsearch tools", () => {
         );
       });
     });
+
+    it("trims trailing slash from ELASTICSEARCH_URL", async () => {
+      const mockFetch = spyOn(globalThis, "fetch").mockImplementation(
+        async (url: URL | RequestInfo) => {
+          expect(url.toString()).toBe("http://localhost:9200/_cat/indices?format=json&bytes=b");
+          return new Response(JSON.stringify([]));
+        },
+      );
+
+      await withEnv(
+        { ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" },
+        async () => {
+          await handlers["elasticsearch_list"]({});
+        },
+      );
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("handles non-array response from esGet gracefully", async () => {
+      spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(JSON.stringify({ error: "not an array" })),
+      );
+
+      await withEnv(validEnv, async () => {
+        const result = await handlers["elasticsearch_list"]({});
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ items: [] }, null, 2),
+            },
+          ],
+        });
+      });
+    });
   });
 
   describe("elasticsearch_get", () => {
@@ -224,7 +259,7 @@ describe("elasticsearch tools", () => {
               [],
               { notIndex: "app" },
               { index: 123 },
-              { index: "app-logs" },
+              { index: "app-valid" },
             ]),
           ),
       );
@@ -237,7 +272,7 @@ describe("elasticsearch tools", () => {
               type: "text",
               text: JSON.stringify(
                 {
-                  matches: [{ index: "app-logs" }],
+                  matches: [{ index: "app-valid" }],
                 },
                 null,
                 2,
