@@ -25,7 +25,9 @@ describe("filterTableauViews", () => {
   });
 
   test("skips non-object entries", () => {
-    expect(filterTableauViews([null, 42, "x", [], [1, 2], view({})], { query: "sales" })).toHaveLength(1);
+    expect(
+      filterTableauViews([null, 42, "x", [], [1, 2], view({})], { query: "sales" }),
+    ).toHaveLength(1);
   });
 
   test("tolerates a missing name without throwing", () => {
