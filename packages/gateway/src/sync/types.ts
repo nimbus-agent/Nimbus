@@ -47,6 +47,28 @@ export interface SyncContext {
 }
 
 /**
+ * Bounds the single outbound request each connector's `fetchOne` makes (github/gitlab/bitbucket/
+ * jenkins/jira today). Without this, an incomplete or stalled upstream response keeps
+ * `POST /v1/items/fetch` — which awaits `fetchOne` end to end — pending indefinitely.
+ *
+ * `sync/targeted-fetch.ts` already bounds its rate-limit acquire at `ACQUIRE_TIMEOUT_MS` (5s), so
+ * this is the SECOND half of the route's total worst-case latency: `ACQUIRE_TIMEOUT_MS +
+ * FETCH_ONE_TIMEOUT_MS` ≈ 15s — seconds, not minutes, and comfortably under typical reverse-proxy
+ * and client patience (30–60s+). Passed as `signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS)` to
+ * the connector's outbound `fetch` call; on abort the connector's existing catch already maps the
+ * failure to `{ status: "not_found" }` (see `Syncable.fetchOne`'s doc below) — the caller may
+ * retry, and the periodic sync picks the item up regardless, so a timeout is a genuine miss, never
+ * a hang.
+ *
+ * MUST NOT be threaded into a helper the PERIODIC sync also calls without an opt-in — a scheduled
+ * sync is paginated and legitimately runs far longer than one item fetch; a caller-facing timeout
+ * on a shared helper would abort real syncs. Where a connector's `fetchOne` reaches the network
+ * through a helper the periodic sync also uses (jenkins' `jenkinsGetJson`), the signal is an
+ * OPTIONAL parameter only `fetchOne`'s own call site supplies.
+ */
+export const FETCH_ONE_TIMEOUT_MS = 10_000;
+
+/**
  * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing them is how a
  * panel ends up telling a user to check credentials that are fine.
  */

@@ -1,5 +1,6 @@
 import { itemPrimaryKey } from "../index/item-store.ts";
 import {
+  FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
   type Syncable,
   type SyncContext,
@@ -98,7 +99,15 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   const detailUrl = `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${requestedIid}`;
   let res: Response;
   try {
-    res = await fetch(detailUrl, { headers: { "PRIVATE-TOKEN": pat } });
+    // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled upstream
+    // response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers the body read
+    // below too — an abort mid-stream rejects `res.text()`, caught by the same handler. This call
+    // is NOT shared with the periodic sync — `_lib/gitlab/events.ts` and `_lib/gitlab/pipelines.ts`
+    // each make their own separate `fetch` calls — so the periodic sync is unaffected.
+    res = await fetch(detailUrl, {
+      headers: { "PRIVATE-TOKEN": pat },
+      signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS),
+    });
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `api_base` — in its message. Swallow it entirely rather than let it propagate.

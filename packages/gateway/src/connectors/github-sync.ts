@@ -4,6 +4,7 @@ import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import {
+  FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
   RateLimitError,
   retryAfterDateFromHeader,
@@ -630,6 +631,11 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   try {
     res = await fetch(pullDetailUrl(repoFull, Number.parseInt(requestedNum, 10)), {
       headers: buildGithubEventHeaders(pat, null),
+      // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled
+      // upstream response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers
+      // the body read below too — an abort mid-stream rejects `res.text()`, caught by the same
+      // handler.
+      signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS),
     });
   } catch {
     // A DNS/TLS/connect failure can carry the request URL in its message. Swallow it entirely

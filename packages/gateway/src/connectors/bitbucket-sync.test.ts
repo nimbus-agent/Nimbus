@@ -5,6 +5,7 @@ import {
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
+  type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
 
@@ -95,6 +96,27 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
     expect(out).toEqual({ status: "not_found" });
+  });
+
+  // A stalled/aborted upstream request must report not_found rather than hang the caller
+  // (`POST /v1/items/fetch`) indefinitely — and the outbound request must actually carry a bounded
+  // abort signal, not merely happen to survive an unrelated rejection.
+  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "app-pass");
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = ((_input: unknown, init?: SyncTestFetchParams[1]): Promise<Response> => {
+      capturedSignal = init?.signal ?? undefined;
+      return Promise.reject(
+        Object.assign(new Error("The operation was aborted."), { name: "AbortError" }),
+      );
+    }) as unknown as typeof fetch;
+
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
+
+    expect(out).toEqual({ status: "not_found" });
+    expect(capturedSignal).toBeDefined();
   });
 
   // CRITICAL 3: `links.html.href` is REMOTE-supplied and must never become the `resolve_key` —

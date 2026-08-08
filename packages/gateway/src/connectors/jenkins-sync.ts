@@ -2,6 +2,7 @@ import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { clampSyncTitle } from "../sync/pass-cursor-sync-result.ts";
 import {
+  FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
   type Syncable,
   type SyncContext,
@@ -72,12 +73,25 @@ function basicAuthHeader(user: string, token: string): string {
   return `Basic ${b64}`;
 }
 
+/**
+ * `signal` is OPTIONAL and deliberately absent from every PERIODIC-sync call site
+ * (`runJenkinsSyncAfterAuth`'s `jobsUrl` fetch, `syncJenkinsJobBuilds`'s `bUrl` fetch) — a
+ * scheduled sync is paginated and legitimately runs far longer than one item fetch, so a
+ * caller-facing timeout on this SHARED helper would abort real syncs. Only `fetchOneBuild`
+ * supplies it, bounding the single targeted-fetch request behind `POST /v1/items/fetch` (see
+ * `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). The `signal` key is OMITTED entirely
+ * (not passed as `signal: undefined`) when absent — `exactOptionalPropertyTypes` rejects the
+ * latter, and omitting the key is byte-identical to `fetch`'s own no-abort-controller default, so
+ * the periodic-sync call sites are unaffected either way.
+ */
 async function jenkinsGetJson(
   url: string,
   auth: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number; text: string; json: unknown }> {
   const res = await fetch(url, {
     headers: { Authorization: auth, Accept: "application/json" },
+    ...(signal !== undefined ? { signal } : {}),
   });
   const text = await res.text();
   let parsedBody: unknown = null;
@@ -418,7 +432,12 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
   const buildApiUrl = `${jobRoot}/${String(requestedNum)}/api/json`;
   let bRes: Awaited<ReturnType<typeof jenkinsGetJson>>;
   try {
-    bRes = await jenkinsGetJson(buildApiUrl, auth);
+    // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled upstream
+    // response — the ONE call site that supplies `jenkinsGetJson`'s optional `signal` (see its doc
+    // comment above; the periodic sync's own calls pass none). Covers the body read inside
+    // `jenkinsGetJson` too — an abort mid-stream rejects its `res.text()`, caught by this same
+    // handler.
+    bRes = await jenkinsGetJson(buildApiUrl, auth, AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS));
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `base_url` — in its message. Swallow it entirely rather than let it propagate.

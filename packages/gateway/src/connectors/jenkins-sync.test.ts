@@ -5,6 +5,7 @@ import {
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
+  type SyncTestFetchParams,
   silentSyncContextExtras,
 } from "./connector-sync-test-helpers.ts";
 import { createJenkinsSyncable } from "./jenkins-sync.ts";
@@ -182,6 +183,31 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
     expect(out).toEqual({ status: "not_found" });
+  });
+
+  // A stalled/aborted upstream request must report not_found rather than hang the caller
+  // (`POST /v1/items/fetch`) indefinitely — and the outbound request must actually carry a bounded
+  // abort signal, not merely happen to survive an unrelated rejection. `jenkinsGetJson` is SHARED
+  // with the periodic sync (`runJenkinsSyncAfterAuth`/`syncJenkinsJobBuilds`), so this only proves
+  // `fetchOneBuild`'s own call site passes a signal — the periodic-sync callers are untouched (see
+  // jenkins-sync.ts's `jenkinsGetJson` signature: the `signal` parameter is optional and only
+  // `fetchOneBuild` supplies it).
+  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "https://ci.corp.example");
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = ((_input: unknown, init?: SyncTestFetchParams[1]): Promise<Response> => {
+      capturedSignal = init?.signal ?? undefined;
+      return Promise.reject(
+        Object.assign(new Error("The operation was aborted."), { name: "AbortError" }),
+      );
+    }) as unknown as typeof fetch;
+
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
+
+    expect(out).toEqual({ status: "not_found" });
+    expect(capturedSignal).toBeDefined();
   });
 
   // Regression: the returned itemId must match the row's ACTUAL id — derived from the API

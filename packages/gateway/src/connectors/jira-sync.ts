@@ -1,6 +1,7 @@
 import { itemPrimaryKey, upsertIndexedItemForSync } from "../index/item-store.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import {
+  FETCH_ONE_TIMEOUT_MS,
   type FetchOneResult,
   RateLimitError,
   retryAfterDateFromHeader,
@@ -478,6 +479,11 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
         Accept: "application/json",
         Authorization: basicAuthHeader(creds.email, creds.token),
       },
+      // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled
+      // upstream response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers
+      // the body read below too — an abort mid-stream rejects `res.text()`, caught by the same
+      // handler.
+      signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS),
     });
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
