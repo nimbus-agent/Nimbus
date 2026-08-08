@@ -147,8 +147,6 @@ describe("flattenMappingFields", () => {
     ]);
   });
 
-
-
   test("returns [] for non-record / missing mappings", () => {
     expect(flattenMappingFields(null, "x")).toEqual([]);
     expect(flattenMappingFields({}, "x")).toEqual([]);
