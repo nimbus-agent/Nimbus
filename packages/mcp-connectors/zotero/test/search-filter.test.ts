@@ -92,4 +92,20 @@ describe("filterZoteroItems", () => {
     const many = Array.from({ length: 10 }, (_, i) => item({ key: `K${String(i)}` }));
     expect(filterZoteroItems(many, { query: "exponential backoff", limit: 3 })).toHaveLength(3);
   });
+
+  test("supports creators with only firstName or only lastName", () => {
+    const onlyFirst = item({ data: { creators: [{ creatorType: "author", firstName: "Cher" }] } });
+    const onlyLast = item({ data: { creators: [{ creatorType: "author", lastName: "Prince" }] } });
+
+    expect(filterZoteroItems([onlyFirst], { query: "Cher" })).toHaveLength(1);
+    expect(filterZoteroItems([onlyLast], { query: "Prince" })).toHaveLength(1);
+  });
+
+  test("ignores tag when it is not a string", () => {
+    // The previous item() has a baseline title of "Exponential backoff..."
+    // so if we search for "12345", it might match DOI which is "10.1145/1234567.8901234"
+    // We should clear DOI to ensure we are only testing the tag filter.
+    const badTag = item({ data: { DOI: undefined, tags: [{ tag: 12345 }] } });
+    expect(filterZoteroItems([badTag], { query: "12345" })).toHaveLength(0);
+  });
 });
