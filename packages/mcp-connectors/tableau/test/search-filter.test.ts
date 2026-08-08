@@ -25,13 +25,23 @@ describe("filterTableauViews", () => {
   });
 
   test("skips non-object entries", () => {
-    expect(filterTableauViews([null, 42, "x", view({})], { query: "sales" })).toHaveLength(1);
+    expect(filterTableauViews([null, 42, "x", [], [1, 2], view({})], { query: "sales" })).toHaveLength(1);
   });
 
   test("tolerates a missing name without throwing", () => {
     const noName = { luid: "ghi-789" };
     expect(filterTableauViews([noName], { query: "ghi-789" })).toHaveLength(1);
     expect(filterTableauViews([noName], { query: "rollup" })).toHaveLength(0);
+  });
+
+  test("handles non-string values gracefully", () => {
+    const nonString = { name: 123, luid: true };
+    // Should skip since they aren't matched as strings
+    expect(filterTableauViews([nonString], { query: "123" })).toHaveLength(0);
+    expect(filterTableauViews([nonString], { query: "true" })).toHaveLength(0);
+
+    // An empty query will match empty strings which is what the non-string values become
+    expect(filterTableauViews([nonString], { query: "" })).toHaveLength(1);
   });
 
   test("honors the limit cap", () => {
