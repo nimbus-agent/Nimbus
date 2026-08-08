@@ -43,10 +43,8 @@ function parsePayload(res: McpListResult): {
 
 describe("tableau server", () => {
   const origFetch = globalThis.fetch;
-  let _calls: { url: string; method: string }[] = [];
 
   beforeEach(() => {
-    _calls = [];
     process.env["TABLEAU_URL"] = "https://tab.example.com";
     process.env["TABLEAU_PAT_NAME"] = "pat";
     process.env["TABLEAU_PAT_SECRET"] = "secret";
