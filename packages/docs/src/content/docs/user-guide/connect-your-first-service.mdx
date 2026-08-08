@@ -3,7 +3,9 @@ title: Connect your first service
 description: Authorise Nimbus to read from one of your cloud services and watch the local index light up.
 ---
 
+import { Image } from "astro:assets";
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+import driveConnectedImg from "../../../assets/connectors/drive-connected.png";
 
 Nimbus indexes your data locally — but first it needs permission to read from
 your cloud services. This page walks through adding your first connector,
@@ -72,7 +74,7 @@ Approve the scopes on the Google consent screen. Your browser will show:
 Switch back to Nimbus. The Google Drive connector tile now shows a green health
 dot and the status **Connected**.
 
-{/* TODO: screenshot — Connectors panel with a connected Google Drive tile */}
+<Image src={driveConnectedImg} alt="Connectors panel with a connected Google Drive tile" />
 
 ---
 
