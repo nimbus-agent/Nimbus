@@ -114,6 +114,41 @@ describe("elasticsearch tools", () => {
         );
       });
     });
+
+    it("trims trailing slash from ELASTICSEARCH_URL", async () => {
+      const mockFetch = spyOn(globalThis, "fetch").mockImplementation(
+        async (url: URL | RequestInfo) => {
+          expect(url.toString()).toBe("http://localhost:9200/_cat/indices?format=json&bytes=b");
+          return new Response(JSON.stringify([]));
+        },
+      );
+
+      await withEnv(
+        { ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" },
+        async () => {
+          await handlers["elasticsearch_list"]({});
+        },
+      );
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("handles non-array response from esGet gracefully", async () => {
+      spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(JSON.stringify({ error: "not an array" })),
+      );
+
+      await withEnv(validEnv, async () => {
+        const result = await handlers["elasticsearch_list"]({});
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ items: [] }, null, 2),
+            },
+          ],
+        });
+      });
+    });
   });
 
   describe("elasticsearch_get", () => {
@@ -203,6 +238,36 @@ describe("elasticsearch tools", () => {
               text: JSON.stringify(
                 {
                   matches: [],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        });
+      });
+    });
+
+    it("ignores non-record and invalid entries when matching", async () => {
+      spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(JSON.stringify([
+          null,
+          "string",
+          { notIndex: "app" },
+          { index: 123 }, // number
+          { index: "app-valid" }
+        ])),
+      );
+
+      await withEnv(validEnv, async () => {
+        const result = await handlers["elasticsearch_search"]({ query: "app" });
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  matches: [{ index: "app-valid" }],
                 },
                 null,
                 2,
