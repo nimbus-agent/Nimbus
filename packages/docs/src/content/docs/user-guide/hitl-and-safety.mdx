@@ -3,6 +3,8 @@ title: HITL & safety
 description: What gets gated by human-in-the-loop consent, what doesn't, and why the gate cannot be turned off.
 ---
 
+import { Image } from "astro:assets";
+import hitlPopupImg from "../../../assets/hitl-popup.png";
 import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
 **HITL** (Human-In-The-Loop) is the mechanism that requires your explicit
@@ -127,7 +129,7 @@ A dedicated HITL popup window appears above all other windows. It shows the
 action type, a structured diff-style preview of the payload, and two buttons:
 **Approve** and **Reject**. The agent waits until you respond; no timeout.
 
-![HITL popup window showing a file.create action](../../../assets/hitl-popup.png)
+<Image src={hitlPopupImg} alt="HITL popup window showing a file.create action" />
 
 ### CLI
 
