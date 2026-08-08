@@ -261,10 +261,11 @@ function assertNoEntryEscapes(destDir: string): void {
 
 export function extractTarGzToDirectory(archivePath: string, destDir: string): void {
   const cmd = resolveSystemTarCommand();
-  const args = ["-xzf", resolve(archivePath), "-C", resolve(destDir)];
+  const args = ["-x", "-z"];
   if (process.platform === "linux") {
     args.push("--no-overwrite-dir", "--no-same-owner", "--no-same-permissions");
   }
+  args.push(`--file=${resolve(archivePath)}`, `--directory=${resolve(destDir)}`);
   const r = spawnSync(cmd, args, {
     encoding: "utf8",
     windowsHide: true,
