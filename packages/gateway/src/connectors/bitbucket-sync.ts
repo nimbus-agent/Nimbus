@@ -128,10 +128,10 @@ function upsertFromPullRequest(
    * are byte-identical to before this fix.
    */
   webUrl?: string,
-): void {
+): boolean {
   const id = numberField(pr, "id");
   if (id === undefined) {
-    return;
+    return false;
   }
   const title = stringField(pr, "title") ?? `PR #${String(id)}`;
   const desc = stringField(pr, "description") ?? "";
@@ -172,6 +172,7 @@ function upsertFromPullRequest(
     pinned: false,
     syncedAt: now,
   });
+  return true;
 }
 
 function parseRepositoryFullNames(body: unknown): string[] {
@@ -225,8 +226,9 @@ function ingestBitbucketPullRequestPage(
     if (uo !== undefined) {
       maxUpdated = maxIso(maxUpdated, uo);
     }
-    upsertFromPullRequest(ctx, repoFull, pr, now);
-    upsertedDelta += 1;
+    if (upsertFromPullRequest(ctx, repoFull, pr, now)) {
+      upsertedDelta += 1;
+    }
   }
   const next = stringFieldFromBody(json, "next");
   const nextPrUrl = next !== undefined && next !== "" ? next : null;

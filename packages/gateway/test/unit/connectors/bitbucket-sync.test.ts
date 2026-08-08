@@ -342,7 +342,7 @@ describe("bitbucket-sync — indexing skip paths", () => {
     expect(rows[0].external_id).toBe("acme/app#1");
     expect(res.hasMore).toBe(false);
 
-    expect(res.itemsUpserted).toBe(2);
+    expect(res.itemsUpserted).toBe(1);
   });
 
   test("pull request with malformed full_name (no slash) is filtered out at workspace parse", async () => {
