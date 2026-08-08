@@ -3,7 +3,9 @@ title: First-run setup
 description: What happens the first time you launch Nimbus. The desktop onboarding wizard, the system tray, and the global Quick Query hotkey.
 ---
 
+import { Image } from "astro:assets";
 import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+import onboardingWelcomeImg from "../../../assets/onboarding-welcome.png";
 
 When you start the Nimbus desktop app for the first time, it launches the
 headless Gateway, opens the onboarding wizard, registers a system tray icon,
@@ -41,7 +43,7 @@ Click **Continue** to proceed to service selection, or **Skip** to go straight
 to the dashboard with no connectors configured (you can add them later via
 Settings → Connectors).
 
-![Onboarding welcome page](../../../assets/onboarding-welcome.png)
+<Image src={onboardingWelcomeImg} alt="Onboarding welcome page" />
 
 ---
 
