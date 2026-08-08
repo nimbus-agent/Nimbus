@@ -85,10 +85,8 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
       },
       { index: "products", health: "yellow", status: "open", "docs.count": "5" },
     ]);
-    fx.fetchMock.respond("GET", mappingUrl("orders"), {
+    fx.fetchMock.respond("GET", mappingUrl("orders,products"), {
       orders: { mappings: { properties: { id: { type: "keyword" } } } },
-    });
-    fx.fetchMock.respond("GET", mappingUrl("products"), {
       products: { mappings: { properties: { sku: { type: "keyword" } } } },
     });
 

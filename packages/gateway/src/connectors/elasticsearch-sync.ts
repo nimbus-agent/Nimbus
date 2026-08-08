@@ -93,28 +93,41 @@ async function walkIndices(
 ): Promise<WalkResult> {
   let upserted = 0;
   let bytes = 0;
-  let seen = 0;
-  let detailsFetched = 0;
 
+  // 1. Filter and cap the valid indices
+  const validRows: { row: unknown; name: string }[] = [];
   for (const row of rows) {
-    if (seen >= MAX_INDICES) {
+    if (validRows.length >= MAX_INDICES) {
       break;
     }
     const name = indexNameOf(row);
-    if (name === null || isSystemIndex(name)) {
-      continue;
+    if (name !== null && !isSystemIndex(name)) {
+      validRows.push({ row, name });
     }
-    seen += 1;
+  }
 
-    let fields: Array<{ name: string; type: string }> = [];
-    if (detailsFetched < MAX_INDEX_DETAIL) {
-      detailsFetched += 1;
-      const detail = await esGet(ctx, creds, `/${encodeURIComponent(name)}/_mapping`);
-      bytes += detail.bytes;
-      if (detail.kind === "ok") {
-        fields = flattenMappingFields(detail.parsed, name);
+  // 2. Fetch details in batches of 50 for the first MAX_INDEX_DETAIL indices
+  const mappingResults: Record<string, { fields: Array<{ name: string; type: string }> }> = {};
+  const indicesWithDetails = validRows.slice(0, MAX_INDEX_DETAIL);
+  const BATCH_SIZE = 50;
+
+  for (let i = 0; i < indicesWithDetails.length; i += BATCH_SIZE) {
+    const batch = indicesWithDetails.slice(i, i + BATCH_SIZE);
+    const names = batch.map((b) => encodeURIComponent(b.name)).join(",");
+    const detail = await esGet(ctx, creds, `/${names}/_mapping`);
+    bytes += detail.bytes;
+
+    if (detail.kind === "ok") {
+      for (const { name } of batch) {
+        mappingResults[name] = { fields: flattenMappingFields(detail.parsed, name) };
       }
     }
+  }
+
+  // 3. Process and upsert items
+  for (let i = 0; i < validRows.length; i++) {
+    const { row, name } = validRows[i];
+    const fields = mappingResults[name]?.fields ?? [];
 
     const mapped = mapElasticsearchIndexToItem(row, { fields, syncedAt: now });
     if (mapped !== null) {
@@ -122,6 +135,7 @@ async function walkIndices(
       upserted += 1;
     }
   }
+
   return { upserted, bytes };
 }
 
