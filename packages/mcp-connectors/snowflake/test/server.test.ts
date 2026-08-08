@@ -80,7 +80,9 @@ describe("snowflake server main tools", () => {
 
   it("snowflake_get rejects when the table is not found", async () => {
     const handler = captureTools().get("snowflake_get") as Handler;
-    await expect(handler({ id: "DB1.PUBLIC.UNKNOWN" })).rejects.toThrow(/Snowflake table not found/);
+    await expect(handler({ id: "DB1.PUBLIC.UNKNOWN" })).rejects.toThrow(
+      /Snowflake table not found/,
+    );
   });
 
   it("snowflake_search returns matched tables via filterSnowflakeTables", async () => {
@@ -97,7 +99,9 @@ describe("snowflake server main tools", () => {
   it("throws when SNOWFLAKE_ACCOUNT is unset", async () => {
     delete process.env["SNOWFLAKE_ACCOUNT"];
     const handler = captureTools().get("snowflake_get") as Handler;
-    await expect(handler({ id: "DB1.PUBLIC.USERS" })).rejects.toThrow("SNOWFLAKE_ACCOUNT is not set");
+    await expect(handler({ id: "DB1.PUBLIC.USERS" })).rejects.toThrow(
+      "SNOWFLAKE_ACCOUNT is not set",
+    );
   });
 
   it("throws when SNOWFLAKE_TOKEN is unset", async () => {
