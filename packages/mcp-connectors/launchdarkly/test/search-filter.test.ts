@@ -113,4 +113,26 @@ describe("filterLaunchDarklyFlags", () => {
     // still matches on name
     expect(filterLaunchDarklyFlags([f], { query: "Enable new" })).toHaveLength(1);
   });
+
+  test("uses default limit of 50 when limit is undefined", () => {
+    const many = Array.from({ length: 60 }, (_, i) => flag({ key: `flag-${String(i)}` }));
+    expect(filterLaunchDarklyFlags(many, { query: "Enable new" })).toHaveLength(50);
+  });
+
+  test("empty tags array yields empty tags text", () => {
+    const f = flag({ tags: [] });
+    // name still matches
+    expect(filterLaunchDarklyFlags([f], { query: "Enable new" })).toHaveLength(1);
+    expect(filterLaunchDarklyFlags([f], { query: "frontend" })).toHaveLength(0);
+  });
+
+  test("does not match against unrelated properties", () => {
+    const f = flag({ unrelatedField: "secret-search-term" });
+    // search for the unrelated term should yield no results
+    expect(filterLaunchDarklyFlags([f], { query: "secret-search-term" })).toHaveLength(0);
+  });
+
+  test("empty input list returns empty output list", () => {
+    expect(filterLaunchDarklyFlags([], { query: "anything" })).toHaveLength(0);
+  });
 });
