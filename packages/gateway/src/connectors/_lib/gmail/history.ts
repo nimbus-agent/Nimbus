@@ -5,7 +5,6 @@ import {
   fetchMessageMetadataOrNullOn404,
   fetchProfile,
   GMAIL_SERVICE_ID,
-  type GmailMessageResource,
   gmailFetchJson,
   type HistoryListResponse,
   type HistoryRecord,
@@ -21,28 +20,36 @@ async function gmailHistoryApplyAdded(
   now: number,
 ): Promise<number> {
   let n = 0;
-  for (const a of added) {
-    const m = a.message;
-    if (m === undefined) {
-      continue;
-    }
-    const mid = m.id;
-    if (mid === undefined || mid === "") {
-      continue;
-    }
-    const hasSubject = m.payload !== undefined && headerFrom(m.payload, "Subject") !== null;
-    let full: GmailMessageResource | null;
-    if (hasSubject) {
-      full = m;
-    } else {
-      full = await fetchMessageMetadataOrNullOn404(ctx, accessToken, mid);
-      if (full === null) {
-        ctx.logger.warn(
-          { service: GMAIL_SERVICE_ID, messageId: mid, stage: "delta" },
-          "Gmail messages.get returned 404; skipping message",
-        );
-        continue;
+
+  const batchResults = await Promise.all(
+    added.map(async (a) => {
+      const m = a.message;
+      if (m === undefined) {
+        return null;
       }
+      const mid = m.id;
+      if (mid === undefined || mid === "") {
+        return null;
+      }
+      const hasSubject = m.payload !== undefined && headerFrom(m.payload, "Subject") !== null;
+      if (hasSubject) {
+        return { mid, full: m };
+      } else {
+        const full = await fetchMessageMetadataOrNullOn404(ctx, accessToken, mid);
+        return { mid, full };
+      }
+    }),
+  );
+
+  for (const res of batchResults) {
+    if (res === null) continue;
+    const { mid, full } = res;
+    if (full === null) {
+      ctx.logger.warn(
+        { service: GMAIL_SERVICE_ID, messageId: mid, stage: "delta" },
+        "Gmail messages.get returned 404; skipping message",
+      );
+      continue;
     }
     upsertGmailMessage(ctx, full, now);
     n += 1;

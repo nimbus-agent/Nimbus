@@ -4,7 +4,6 @@ import {
   fetchMessageMetadataOrNullOn404,
   fetchProfile,
   GMAIL_SERVICE_ID,
-  type GmailMessageResource,
   gmailFetchJson,
   listQueryForInitial,
   parseMessagesList,
@@ -62,16 +61,20 @@ export function createGmailSyncable(options: GmailSyncableOptions): Syncable {
         bytesTransferred += bytes;
         const data = parseMessagesList(json);
         const entries = data.messages ?? [];
-        for (const e of entries) {
-          const mid = e.id;
-          if (mid === undefined || mid === "") {
-            continue;
-          }
-          const meta: GmailMessageResource | null = await fetchMessageMetadataOrNullOn404(
-            ctx,
-            accessToken,
-            mid,
-          );
+        const batchResults = await Promise.all(
+          entries.map(async (e) => {
+            const mid = e.id;
+            if (mid === undefined || mid === "") {
+              return null;
+            }
+            const meta = await fetchMessageMetadataOrNullOn404(ctx, accessToken, mid);
+            return { e, mid, meta };
+          }),
+        );
+
+        for (const res of batchResults) {
+          if (res === null) continue;
+          const { e, mid, meta } = res;
           if (meta === null) {
             ctx.logger.warn(
               { service: GMAIL_SERVICE_ID, messageId: mid, stage: "list" },
