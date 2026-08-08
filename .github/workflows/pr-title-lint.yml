@@ -49,7 +49,8 @@ jobs:
 
           # type(optional-scope)!: subject
           # Types are the ones this repo actually uses, per `git log` on main.
-          pattern='^(feat|fix|chore|docs|ci|build|test|refactor|perf|style|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          # We also allow an optional emoji prefix like 🧹 for code health PRs.
+          pattern='^(🧹 )?(feat|fix|chore|docs|ci|build|test|refactor|perf|style|revert)(\([a-z0-9._/-]+\))?!?: .+'
 
           if [[ ! "$PR_TITLE" =~ $pattern ]]; then
             echo "::error title=PR title is not a Conventional Commit::${PR_TITLE}"
