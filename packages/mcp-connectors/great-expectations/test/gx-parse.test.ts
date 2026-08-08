@@ -7,6 +7,7 @@ import {
   FORBIDDEN_RESULT_KEYS,
   listAllExpectations,
   parseValidationResult,
+  resultsDir,
 } from "../src/gx-parse.ts";
 
 describe("FORBIDDEN_RESULT_KEYS", () => {
@@ -427,5 +428,32 @@ describe("listAllExpectations — filesystem walk", () => {
   it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is unset", async () => {
     delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
     await expect(listAllExpectations()).rejects.toThrow(/GREAT_EXPECTATIONS_RESULTS_DIR/);
+  });
+});
+
+describe("resultsDir", () => {
+  const originalEnv = process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+    } else {
+      process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = originalEnv;
+    }
+  });
+
+  it("returns the resolved path when GREAT_EXPECTATIONS_RESULTS_DIR is set", () => {
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "/tmp/gx-results";
+    expect(resultsDir()).toBe(resolve("/tmp/gx-results"));
+  });
+
+  it("throws an error when GREAT_EXPECTATIONS_RESULTS_DIR is not set", () => {
+    delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+    expect(() => resultsDir()).toThrow("GREAT_EXPECTATIONS_RESULTS_DIR is not set");
+  });
+
+  it("throws an error when GREAT_EXPECTATIONS_RESULTS_DIR is an empty string", () => {
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "   ";
+    expect(() => resultsDir()).toThrow("GREAT_EXPECTATIONS_RESULTS_DIR is not set");
   });
 });
