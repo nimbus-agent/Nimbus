@@ -79,4 +79,12 @@ describe("filterTestflightBuilds", () => {
   test("empty list returns empty", () => {
     expect(filterTestflightBuilds([], { query: "anything" })).toEqual([]);
   });
+
+  test("empty query returns all (up to limit)", () => {
+    const builds = Array.from({ length: 10 }, (_, i) =>
+      build({ id: `s-${i}`, processingState: "VALID" }),
+    );
+    const out = filterTestflightBuilds(builds, { query: "" });
+    expect(out).toHaveLength(10);
+  });
 });
