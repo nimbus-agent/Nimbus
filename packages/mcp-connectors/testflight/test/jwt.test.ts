@@ -29,6 +29,20 @@ describe("jwtParamsFromEnv", () => {
     });
   });
 
+  test("trims whitespace from environment variables", () => {
+    process.env["TESTFLIGHT_ISSUER_ID"] = "  issuer-123  ";
+    process.env["TESTFLIGHT_KEY_ID"] = "  KEY456  ";
+    // NOTE: privateKeyPem is explicitly NOT trimmed in the returned object,
+    // only trimmed for validation purposes in the source code.
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "  test-private-key-placeholder  ";
+
+    expect(jwtParamsFromEnv()).toEqual({
+      issuerId: "issuer-123",
+      keyId: "KEY456",
+      privateKeyPem: "  test-private-key-placeholder  ",
+    });
+  });
+
   test("throws when any of the three is unset", () => {
     for (const k of KEYS) {
       delete process.env[k];
@@ -39,6 +53,40 @@ describe("jwtParamsFromEnv", () => {
     expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_KEY_ID is not set");
 
     process.env["TESTFLIGHT_KEY_ID"] = "k";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_PRIVATE_KEY is not set");
+  });
+
+  test("throws when environment variables are empty strings", () => {
+    process.env["TESTFLIGHT_ISSUER_ID"] = "";
+    process.env["TESTFLIGHT_KEY_ID"] = "KEY456";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "test-private-key-placeholder";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_ISSUER_ID is not set");
+
+    process.env["TESTFLIGHT_ISSUER_ID"] = "issuer-123";
+    process.env["TESTFLIGHT_KEY_ID"] = "";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "test-private-key-placeholder";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_KEY_ID is not set");
+
+    process.env["TESTFLIGHT_ISSUER_ID"] = "issuer-123";
+    process.env["TESTFLIGHT_KEY_ID"] = "KEY456";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_PRIVATE_KEY is not set");
+  });
+
+  test("throws when environment variables are whitespace-only strings", () => {
+    process.env["TESTFLIGHT_ISSUER_ID"] = "   ";
+    process.env["TESTFLIGHT_KEY_ID"] = "KEY456";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "test-private-key-placeholder";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_ISSUER_ID is not set");
+
+    process.env["TESTFLIGHT_ISSUER_ID"] = "issuer-123";
+    process.env["TESTFLIGHT_KEY_ID"] = "   ";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "test-private-key-placeholder";
+    expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_KEY_ID is not set");
+
+    process.env["TESTFLIGHT_ISSUER_ID"] = "issuer-123";
+    process.env["TESTFLIGHT_KEY_ID"] = "KEY456";
+    process.env["TESTFLIGHT_PRIVATE_KEY"] = "   ";
     expect(() => jwtParamsFromEnv()).toThrow("TESTFLIGHT_PRIVATE_KEY is not set");
   });
 });
