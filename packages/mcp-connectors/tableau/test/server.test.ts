@@ -208,7 +208,7 @@ describe("tableau server", () => {
       const tools = captureTools();
       const out = parsePayload(await tool(tools, "tableau_search")({ query: "sale", limit: 10 }));
       expect(out.matches).toHaveLength(1);
-      expect(out.matches[0]).toEqual({ luid: "v1", name: "Sales" });
+      expect(out.matches![0]).toEqual({ luid: "v1", name: "Sales" });
     });
   });
 });
