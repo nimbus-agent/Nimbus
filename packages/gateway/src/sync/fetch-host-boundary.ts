@@ -146,13 +146,38 @@ function hostOf(raw: string): string | null {
 }
 
 /**
- * Builds the host→service map from what is ACTUALLY configured in the Vault right now.
+ * Whether `service` is actually configured in the Vault right now, and — if so — which host (if
+ * any) its self-hosted origin secret resolves to.
  *
- * Absent credentials, a service is not in the map at all — so "unknown host" and "service not
- * configured" collapse to the same fail-closed answer, and the boundary is derived from the
+ * Absent credentials, `configured: false` — so "unknown host" and "service not configured"
+ * collapse to the same fail-closed answer one level up, and the boundary is derived from the
  * machine's real configuration rather than declared in a list that can drift from it. Every path
- * that cannot prove a service is configured (missing/blank credential, missing/malformed origin,
- * non-http(s) scheme) contributes no entry and never throws.
+ * that cannot prove `service` is configured (missing/blank credential, missing extra secret)
+ * returns `configured: false`; a missing/malformed origin or non-http(s) scheme resolves to
+ * `selfHostedHost: null` rather than throwing.
+ */
+async function resolveServiceConfig(
+  vault: NimbusVault,
+  service: FetchableService,
+): Promise<
+  | { readonly configured: false }
+  | { readonly configured: true; readonly selfHostedHost: string | null }
+> {
+  const credential = await credentialSecret(vault, service);
+  if (credential === null || credential.trim() === "") {
+    return { configured: false };
+  }
+  if (!(await extraRequiredSecretsPresent(vault, service))) {
+    return { configured: false };
+  }
+
+  const origin = await selfHostedOriginSecret(vault, service);
+  const selfHostedHost = origin === null ? null : hostOf(origin);
+  return { configured: true, selfHostedHost };
+}
+
+/**
+ * Claims `host` for `service` in `map`, refusing it for both sides of a collision.
  *
  * A host can be claimed by at most one service. If two DIFFERENT services would claim the same
  * host — e.g. a pasted-wrong `jira.base_url = "https://github.com"` alongside a real
@@ -160,9 +185,81 @@ function hostOf(raw: string): string | null {
  * to run last (`Map.set` is otherwise last-write-wins, and iteration order is an implementation
  * detail, not a security boundary). Guessing which of two claimants owns a contested host is
  * exactly the kind of guess this module refuses to make elsewhere; once a host is marked
- * ambiguous it stays refused even if a later service in this same pass would also claim it. A
- * service re-claiming a host it already holds (e.g. its self-hosted origin secret happens to
- * equal its own static SaaS host) is not a collision and resolves normally.
+ * ambiguous (present in `ambiguousHosts`) it stays refused even if a later service in this same
+ * pass would also claim it. A service re-claiming a host it already holds (e.g. its self-hosted
+ * origin secret happens to equal its own static SaaS host) is not a collision and resolves
+ * normally.
+ */
+function claimHost(
+  map: Map<string, FetchableService>,
+  ambiguousHosts: Set<string>,
+  host: string,
+  service: FetchableService,
+): void {
+  if (ambiguousHosts.has(host)) {
+    return;
+  }
+  const existing = map.get(host);
+  if (existing !== undefined && existing !== service) {
+    map.delete(host);
+    ambiguousHosts.add(host);
+    return;
+  }
+  map.set(host, service);
+}
+
+/**
+ * Decides which hosts a single, already-confirmed-configured `service` claims, and claims each
+ * via `claimHost`: every static SaaS host that maps to `service`, plus its self-hosted origin
+ * host (if any).
+ *
+ * A self-hosted-only deployment (a validly-configured origin secret that resolves to a
+ * DIFFERENT host than the public SaaS one) must not ALSO claim the public host — claiming
+ * `gitlab.com` alongside a genuinely self-hosted `gitlab.api_base` would send a `gitlab.com` URL
+ * to the INTERNAL instance under the internal credential (Important 2). No origin at all (the
+ * common case: no self-hosted variant configured) still claims the SaaS host as before; an
+ * origin that resolves to the SAME host as the SaaS one (the self-hosted secret simply points
+ * back at the public instance) is not a divergence and still claims it too.
+ *
+ * NOTE (no behavior change here, just recording a consequence): before this skip existed, a
+ * self-hosted service ALWAYS claimed its static SaaS host too, so a self-hosted GitLab and a
+ * mis-pasted `jira.base_url = https://gitlab.com` would BOTH claim `gitlab.com` and collide —
+ * `ambiguousHosts` refused `gitlab.com` for BOTH services. Now that a self-hosted-only
+ * deployment does NOT also claim its SaaS host, that same misconfiguration no longer collides
+ * with anything: `gitlab.com` resolves to `jira` alone instead of being refused for both. This is
+ * bounded (jira's own `fetchOne` only accepts `/browse/KEY-N`-shaped URLs, and it still requires
+ * an actual misconfiguration — a `base_url` that is not jira's own host — to reach), but it is a
+ * strictly weaker collision posture than before the self-hosted skip: fewer ambiguous-host
+ * refusals means fewer configuration mistakes get caught this way.
+ */
+function claimHostsForService(
+  map: Map<string, FetchableService>,
+  ambiguousHosts: Set<string>,
+  service: FetchableService,
+  selfHostedHost: string | null,
+): void {
+  for (const [host, saasService] of Object.entries(SAAS_HOSTS)) {
+    if (saasService !== service) {
+      continue;
+    }
+    if (selfHostedHost !== null && selfHostedHost !== host) {
+      continue;
+    }
+    claimHost(map, ambiguousHosts, host, service);
+  }
+
+  if (selfHostedHost !== null) {
+    claimHost(map, ambiguousHosts, selfHostedHost, service);
+  }
+}
+
+/**
+ * Builds the host→service map from what is ACTUALLY configured in the Vault right now.
+ *
+ * Per service: `resolveServiceConfig` decides whether it is configured at all (and, if so, its
+ * self-hosted origin host); `claimHostsForService` then claims every host that service is
+ * entitled to, with `claimHost` refusing any host two different services both claim. See those
+ * functions' docs for the collision and self-hosted-skip rules.
  */
 export async function deriveFetchHostMap(
   vault: NimbusVault,
@@ -170,62 +267,12 @@ export async function deriveFetchHostMap(
   const map = new Map<string, FetchableService>();
   const ambiguousHosts = new Set<string>();
 
-  const claim = (host: string, service: FetchableService): void => {
-    if (ambiguousHosts.has(host)) {
-      return;
-    }
-    const existing = map.get(host);
-    if (existing !== undefined && existing !== service) {
-      map.delete(host);
-      ambiguousHosts.add(host);
-      return;
-    }
-    map.set(host, service);
-  };
-
   for (const service of FETCHABLE_SERVICES) {
-    const credential = await credentialSecret(vault, service);
-    if (credential === null || credential.trim() === "") {
+    const config = await resolveServiceConfig(vault, service);
+    if (!config.configured) {
       continue;
     }
-    if (!(await extraRequiredSecretsPresent(vault, service))) {
-      continue;
-    }
-
-    const origin = await selfHostedOriginSecret(vault, service);
-    const selfHostedHost = origin === null ? null : hostOf(origin);
-
-    for (const [host, saasService] of Object.entries(SAAS_HOSTS)) {
-      if (saasService !== service) {
-        continue;
-      }
-      // A self-hosted-only deployment (a validly-configured origin secret that resolves to a
-      // DIFFERENT host than the public SaaS one) must not ALSO claim the public host — claiming
-      // `gitlab.com` alongside a genuinely self-hosted `gitlab.api_base` would send a
-      // `gitlab.com` URL to the INTERNAL instance under the internal credential (Important 2).
-      // No origin at all (the common case: no self-hosted variant configured) still claims the
-      // SaaS host as before; an origin that resolves to the SAME host as the SaaS one (the
-      // self-hosted secret simply points back at the public instance) is not a divergence and
-      // still claims it too.
-      // NOTE (no behavior change here, just recording a consequence): before this skip existed, a
-      // self-hosted service ALWAYS claimed its static SaaS host too, so a self-hosted GitLab and a
-      // mis-pasted `jira.base_url = https://gitlab.com` would BOTH claim `gitlab.com` and collide —
-      // `ambiguousHosts` refused `gitlab.com` for BOTH services. Now that a self-hosted-only
-      // deployment does NOT also claim its SaaS host, that same misconfiguration no longer
-      // collides with anything: `gitlab.com` resolves to `jira` alone instead of being refused for
-      // both. This is bounded (jira's own `fetchOne` only accepts `/browse/KEY-N`-shaped URLs, and
-      // it still requires an actual misconfiguration — a `base_url` that is not jira's own host —
-      // to reach), but it is a strictly weaker collision posture than before the self-hosted skip:
-      // fewer ambiguous-host refusals means fewer configuration mistakes get caught this way.
-      if (selfHostedHost !== null && selfHostedHost !== host) {
-        continue;
-      }
-      claim(host, service);
-    }
-
-    if (selfHostedHost !== null) {
-      claim(selfHostedHost, service);
-    }
+    claimHostsForService(map, ambiguousHosts, service, config.selfHostedHost);
   }
   return map;
 }
