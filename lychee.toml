@@ -29,6 +29,7 @@ exclude = [
   "asciinema\\.org/?$",    # homepage times out from runner egress; verified live (200)
   "asciinema\\.org/a/",    # cast pages also time out under load from runner egress; verified live (200)
   "nimbus-agent\\.dev",    # exclude until PR 1 DNS propagates
+  "glama\\.ai",            # 525/403 to scripted UAs due to Cloudflare
   # github-action-benchmark dashboard on the perf-data orphan branch — the branch
   # and dev/bench dir are created by the first post-merge push, so the link 404s
   # while the PR documenting it is open. Resolves automatically post-merge.
