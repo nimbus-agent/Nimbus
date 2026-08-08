@@ -261,6 +261,9 @@
     "astro": "^7.1.6",
     "zod": "^4.4.3"
   },
+  "resolutions": {
+    "nanoid": "^3.3.17"
+  },
   "devDependencies": {
     "@babel/core": "8.0.1",
     "@babel/plugin-syntax-jsx": "8.0.1",
