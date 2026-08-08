@@ -291,8 +291,14 @@ export function createLinearSyncable(options: LinearSyncableOptions): Syncable {
 
       const prev = decodeCursor(cursor);
       const now = Date.now();
-      const floorMs = now - initialSyncDepthDays * 86_400_000;
-      const sinceGt = prev?.since ?? new Date(floorMs).toISOString();
+      // Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a
+      // COLD START only — `prev.since` is always more recent.
+      const defaultFloorMs = now - initialSyncDepthDays * 86_400_000;
+      const coldFloorMs =
+        ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
+          ? ctx.historyFloorMs
+          : defaultFloorMs;
+      const sinceGt = prev?.since ?? new Date(coldFloorMs).toISOString();
 
       await ctx.rateLimiter.acquire("linear");
 

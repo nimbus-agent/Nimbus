@@ -1167,4 +1167,52 @@ describeWithFetchRestore("jira-sync ticket depth", () => {
       expect(requested.fields).toContain(f);
     }
   });
+
+  // ── historyFloorMs (cold-start override) ───────────────────────────────────
+
+  test("historyFloorMs widens the jira cold-start JQL floor", async () => {
+    const { ctx } = credCtx();
+    const bodies: string[] = [];
+    const floorMs = Date.parse("2024-03-05T00:00:00.000Z");
+    await runJiraSyncWithIssues({ ...ctx, historyFloorMs: floorMs }, [], (b) => bodies.push(b));
+
+    const jql = (JSON.parse(bodies[0] ?? "{}") as { jql?: string }).jql ?? "";
+    // An absolute floor, not the relative 30-day window.
+    expect(jql).toContain("2024/03/05");
+    expect(jql).not.toContain("-30d");
+  });
+
+  test("without historyFloorMs jira still cold-starts at 30 days", async () => {
+    const { ctx } = credCtx();
+    const bodies: string[] = [];
+    await runJiraSyncWithIssues(ctx, [], (b) => bodies.push(b));
+
+    const jql = (JSON.parse(bodies[0] ?? "{}") as { jql?: string }).jql ?? "";
+    expect(jql).toContain("updated >= -30d");
+  });
+
+  test("historyFloorMs is ignored once a real cursor exists", async () => {
+    // The floor is a COLD-START override. An established incremental cursor is
+    // always more recent, and honouring the floor over it would re-walk history
+    // on every subsequent tick.
+    const { ctx } = credCtx();
+    const cursor = encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: "2026/01/01 00:00" });
+    const bodies: string[] = [];
+    globalThis.fetch = (async (
+      _input: SyncTestFetchParams[0],
+      init?: SyncTestFetchParams[1],
+    ): Promise<Response> => {
+      bodies.push(typeof init?.body === "string" ? init.body : "");
+      return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    await syncable.sync({ ...ctx, historyFloorMs: Date.parse("2020-01-01T00:00:00.000Z") }, cursor);
+
+    const jql = (JSON.parse(bodies[0] ?? "{}") as { jql?: string }).jql ?? "";
+    expect(jql).toContain("2026/01/01");
+    expect(jql).not.toContain("2020");
+  });
 });

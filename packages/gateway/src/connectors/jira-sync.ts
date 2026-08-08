@@ -189,11 +189,35 @@ export function jiraUrlMatchesConfiguredBase(url: string, configuredBaseUrl: str
   return pathIsUnderBase(base.pathname, requested.pathname);
 }
 
-function jiraJqlFromCursor(prev: JiraSyncCursorV1 | null, initialSyncDepthDays: number): string {
+/** `historyFloorMs` (epoch ms) as a JQL-comparable `yyyy/MM/dd HH:mm` literal. */
+function jqlFloorFromMs(ms: number): string {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const da = String(d.getUTCDate()).padStart(2, "0");
+  const h = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${String(y)}/${mo}/${da} ${h}:${mi}`;
+}
+
+/**
+ * Honors `SyncContext.historyFloorMs` (opt-in, see `sync/types.ts`) on a COLD
+ * START only — an existing cursor is always more recent.
+ */
+function jiraJqlFromCursor(
+  prev: JiraSyncCursorV1 | null,
+  initialSyncDepthDays: number,
+  historyFloorMs: number | undefined,
+): string {
   const hasFloor = prev?.floorJql !== null && prev?.floorJql !== undefined && prev.floorJql !== "";
-  const jqlBase = hasFloor
-    ? `updated > "${prev.floorJql}"`
-    : `updated >= -${String(initialSyncDepthDays)}d`;
+  let jqlBase: string;
+  if (hasFloor) {
+    jqlBase = `updated > "${prev.floorJql}"`;
+  } else if (historyFloorMs !== undefined && Number.isFinite(historyFloorMs)) {
+    jqlBase = `updated >= "${jqlFloorFromMs(historyFloorMs)}"`;
+  } else {
+    jqlBase = `updated >= -${String(initialSyncDepthDays)}d`;
+  }
   return `${jqlBase} ORDER BY updated ASC`;
 }
 
@@ -624,7 +648,7 @@ export function createJiraSyncable(options: JiraSyncableOptions): Syncable {
       }
 
       const prev = decodeCursor(cursor);
-      const jql = jiraJqlFromCursor(prev, initialSyncDepthDays);
+      const jql = jiraJqlFromCursor(prev, initialSyncDepthDays, ctx.historyFloorMs);
 
       await ctx.rateLimiter.acquire("jira");
 

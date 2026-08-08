@@ -844,4 +844,27 @@ describeWithFetchRestore("linear-sync ticket depth", () => {
       expect(query).toContain(f);
     }
   });
+
+  // ── historyFloorMs (cold-start override) ───────────────────────────────────
+
+  test("historyFloorMs widens the linear cold-start filter", async () => {
+    const { ctx } = depthCtx();
+    const payloads: string[] = [];
+    const floorMs = Date.parse("2024-03-05T00:00:00.000Z");
+    await runLinearSyncWithNodes({ ...ctx, historyFloorMs: floorMs }, [], (b) => payloads.push(b));
+
+    const vars = (JSON.parse(payloads[0] ?? "{}") as { variables?: { gt?: string } }).variables;
+    expect(vars?.gt).toBe(new Date(floorMs).toISOString());
+  });
+
+  test("without historyFloorMs linear still cold-starts at 30 days", async () => {
+    const { ctx } = depthCtx();
+    const payloads: string[] = [];
+    const before = Date.now() - 31 * 86_400_000;
+    await runLinearSyncWithNodes(ctx, [], (b) => payloads.push(b));
+
+    const vars = (JSON.parse(payloads[0] ?? "{}") as { variables?: { gt?: string } }).variables;
+    const gtMs = Date.parse(vars?.gt ?? "");
+    expect(gtMs).toBeGreaterThan(before);
+  });
 });

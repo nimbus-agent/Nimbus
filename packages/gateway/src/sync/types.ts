@@ -44,6 +44,18 @@ export interface SyncContext {
    * do not read this and must not be trusted to honour it individually.
    */
   depth: "metadata_only" | "summary" | "full";
+  /**
+   * One-shot cold-start floor (epoch ms) for a history backfill, set by the
+   * scheduler for a single run when the owner asked for one via
+   * `nimbus index rebody --since <days>`.
+   *
+   * OPT-IN per connector: a connector that does not read it is unaffected, and
+   * the two that do (jira, linear) say so in their own doc comments. Absent —
+   * the normal case — every connector keeps its own `initialSyncDepthDays`.
+   * It overrides only the COLD-START floor; an established cursor always wins,
+   * since it is more recent by construction.
+   */
+  historyFloorMs?: number;
 }
 
 /**
