@@ -93,6 +93,33 @@ describe("GET /v1/items/resolve (integration)", () => {
     }
   });
 
+  // FIX A: `resolveFetchable()` calls `deriveFetchHostMap(vault)` in production, which reads
+  // several Vault keys. A locked keychain / transient backend error must degrade to the
+  // documented default (`fetchable: false`), not fail the whole resolve request — before this
+  // branch wired `fetchable` in, this route could not fail for a Vault reason at all.
+  test("degrades to fetchable: false (still 200) when resolveFetchable rejects", async () => {
+    const { port, token, stop } = await startServerWithClipToken(["resolve"], {
+      resolveFetchable: async () => {
+        throw new Error("vault locked: base https://acme.example.invalid");
+      },
+    });
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/v1/items/resolve?url=${encodeURIComponent("https://github.com/o/r/pull/999")}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        found: false,
+        reason: "not_indexed",
+        service: null,
+        fetchable: false,
+      });
+    } finally {
+      stop();
+    }
+  });
+
   test("defaults to fetchable: false when resolveFetchable is not wired", async () => {
     const { port, token, stop } = await startServerWithClipToken(["resolve"]);
     try {

@@ -615,7 +615,18 @@ async function handleItemsResolve(
   }
   // IMPORTANT 1: derived FRESH on every call (never cached), same as `fetchItem`'s own host map —
   // a revoked credential must stop advertising `fetchable` on the very next request.
-  const fetchable = opts.resolveFetchable === undefined ? undefined : await opts.resolveFetchable();
+  //
+  // IMPORTANT 2 (availability): `resolveFetchable()` calls `deriveFetchHostMap(vault)` in
+  // production, which reads several Vault keys. A locked keychain or a transient backend error
+  // must degrade this route to the documented default (`fetchable: false`) rather than fail the
+  // whole resolve answer — before `fetchable` was wired in, this route could not fail for a Vault
+  // reason at all, so a Vault outage regressing resolve availability would be new breakage. The
+  // rejection reason is deliberately NOT logged: a Vault error message can embed a base URL, which
+  // is a secret.
+  const fetchable =
+    opts.resolveFetchable === undefined
+      ? undefined
+      : await opts.resolveFetchable().catch(() => undefined);
   return json(resolveItemByUrl(db, raw, fetchable === undefined ? undefined : { fetchable }));
 }
 

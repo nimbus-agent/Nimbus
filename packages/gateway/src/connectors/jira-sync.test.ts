@@ -909,15 +909,81 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
   // Regression: the returned itemId must match the row's ACTUAL id — derived from the API
   // response's own `key` field, never the raw regex capture from the caller's URL. A Jira issue
   // can be MOVED between projects, changing its key; the old `/browse/` link still 200s, but with
-  // the issue's CURRENT key.
+  // the issue's CURRENT key. This pins the KNOWN BOUND documented beside `returnedKey` in
+  // `fetchOneIssue` (jira-sync.ts): the written `resolve_key` follows the issue's CURRENT
+  // canonical URL, never the caller's stale original link — kept deliberately, not fixed.
   test("a moved issue resolves to the API's current key, not the requested one", async () => {
-    const { ctx } = credCtx();
+    const { db, ctx } = credCtx();
     globalThis.fetch = singlePageIssueFetch(makeIssue({ key: "NEWPROJ-1", id: "10042" }));
 
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
     expect(out).toEqual({ status: "indexed", itemId: "jira:NEWPROJ-1" });
+    const row = db.query("SELECT resolve_key FROM item WHERE id = 'jira:NEWPROJ-1'").get() as {
+      resolve_key: string | null;
+    } | null;
+    expect(row?.resolve_key).toBe("https://example.atlassian.net/browse/NEWPROJ-1");
+  });
+
+  // ── base-URL vs request-URL mismatch (the loop-class bug) ──────────────────
+  //
+  // The host boundary (`sync/fetch-host-boundary.ts`) proves only that the request's HOST is
+  // claimed by Jira; it says nothing about scheme, port, or a context path. Without a check here,
+  // a caller URL whose spelling merely diverges from the configured `jira.base_url` would still
+  // dispatch, and `jiraIndexOneIssue` would write `resolve_key` under the CONFIGURED base rather
+  // than the CALLER's URL — a stored key the caller's own link can never resolve again, so the
+  // client re-fetches forever (the loop this fix closes).
+
+  test("rejects a /browse/ request when the configured base_url carries a context path the caller omitted", async () => {
+    const { db, ctx } = credCtx({ "jira.base_url": "https://example.atlassian.net/jira" });
+    // A counter, not a throw: a throwing fetch would be swallowed by fetchOneIssue's own
+    // DNS/TLS-failure handler and come back `not_found`, which would mask "was the network ever
+    // reached" behind a status this function already returns for an unrelated reason. Counting
+    // calls proves the request was rejected BEFORE dispatch, not merely that dispatch failed.
+    let fetchCalls = 0;
+    globalThis.fetch = ((): Promise<Response> => {
+      fetchCalls += 1;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-1");
+
+    expect(out).toEqual({ status: "unsupported_url" });
+    expect(fetchCalls).toBe(0);
+    const row = db.query("SELECT id FROM item WHERE id = 'jira:ENG-1'").get();
+    expect(row).toBeNull();
+  });
+
+  test("accepts and round-trips a caller URL when the configured base_url has an explicit default port", async () => {
+    const { db, ctx } = credCtx({ "jira.base_url": "https://example.atlassian.net:443" });
+    globalThis.fetch = singlePageIssueFetch(makeIssue({ key: "ENG-42", id: "10042" }));
+
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    const callerUrl = "https://example.atlassian.net/browse/ENG-42";
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "jira:ENG-42" });
+    const row = db.query("SELECT resolve_key FROM item WHERE id = 'jira:ENG-42'").get() as {
+      resolve_key: string | null;
+    } | null;
+    expect(row?.resolve_key).toBe(callerUrl);
+  });
+
+  test("accepts and round-trips a caller URL when the configured base_url carries a trailing slash", async () => {
+    const { db, ctx } = credCtx({ "jira.base_url": "https://example.atlassian.net/" });
+    globalThis.fetch = singlePageIssueFetch(makeIssue({ key: "ENG-42", id: "10042" }));
+
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    const callerUrl = "https://example.atlassian.net/browse/ENG-42";
+    const out = await syncable.fetchOne?.(ctx, callerUrl);
+
+    expect(out).toEqual({ status: "indexed", itemId: "jira:ENG-42" });
+    const row = db.query("SELECT resolve_key FROM item WHERE id = 'jira:ENG-42'").get() as {
+      resolve_key: string | null;
+    } | null;
+    expect(row?.resolve_key).toBe(callerUrl);
   });
 
   test("reports not_found for a malformed (non-JSON) ok response", async () => {

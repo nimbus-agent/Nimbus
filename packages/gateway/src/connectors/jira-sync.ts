@@ -10,6 +10,7 @@ import {
   syncNoopResult,
   UnauthenticatedError,
 } from "../sync/types.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
   asRecord,
   basicAuthHeader,
@@ -118,6 +119,72 @@ async function loadJiraVaultCreds(ctx: SyncContext): Promise<JiraVaultCreds | nu
     return null;
   }
   return { token, email, baseUrl };
+}
+
+/**
+ * Just the normalized `jira.base_url`, independent of the `email`/`api_token` credentials
+ * `loadJiraVaultCreds` also requires. `sync/targeted-fetch.ts`'s pre-dispatch `urlIsSupported`
+ * check (via `jiraFetchOneUrlIsSupported` below) needs ONLY this to decide whether `fetchOneIssue`
+ * would accept a request's base — reading the other two secrets there too would be pointless
+ * Vault traffic on every targeted-fetch request that never reaches `fetchOne`.
+ */
+export async function jiraConfiguredBaseUrl(vault: NimbusVault): Promise<string | null> {
+  const baseRaw = await readConnectorSecret(vault, "jira", "base_url");
+  if (baseRaw === null || baseRaw === "") {
+    return null;
+  }
+  const baseUrl = normalizeAtlassianSiteBaseUrl(baseRaw);
+  return baseUrl === "" ? null : baseUrl;
+}
+
+/**
+ * Whether `basePath` (the configured base URL's `pathname`) is a genuine prefix of
+ * `requestPath` — `/jira` matches `/jira` and `/jira/browse/ENG-1`, but never `/jiraxyz`. A root
+ * base (`/`, the common no-context-path case) imposes no constraint: every request path is under
+ * it.
+ */
+function pathIsUnderBase(basePath: string, requestPath: string): boolean {
+  const trimmed = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+  if (trimmed === "") {
+    return true;
+  }
+  return requestPath === trimmed || requestPath.startsWith(`${trimmed}/`);
+}
+
+/**
+ * Whether `url` — the caller's targeted-fetch request — actually belongs to the Jira instance
+ * `configuredBaseUrl` (the normalized, Vault-configured `jira.base_url`) names: scheme, host,
+ * port AND path prefix must all agree.
+ *
+ * The host boundary (`sync/fetch-host-boundary.ts`) proves only that the request's HOST is
+ * claimed by Jira; it says nothing about scheme, port, or a context path
+ * (`https://acme.atlassian.net/jira`). Without this check, a caller `/browse/` URL whose spelling
+ * merely diverges from the configured base — most concretely, a context path the caller's URL
+ * omits — would still dispatch, and `jiraIndexOneIssue` would write `resolve_key` under the
+ * CONFIGURED base rather than the CALLER's URL: a stored key the caller's own link can never
+ * resolve again, so a resolve-then-fetch client loops forever.
+ *
+ * Both sides are re-parsed with `new URL()` (never compared as raw strings) so a spelling variant
+ * that collapses to the same origin under URL normalization — an explicit default port, a
+ * trailing slash — is accepted rather than treated as a mismatch; in practice this rarely matters
+ * for the port/slash cases specifically, since `index/item-store.ts`'s `upsertIndexedItemForSync`
+ * already canonicalizes `resolve_key` through the same `new URL()`-based `canonicalizeUrl` at the
+ * write chokepoint, but a context-path mismatch is a genuine path difference `canonicalizeUrl`
+ * cannot and does not paper over.
+ */
+export function jiraUrlMatchesConfiguredBase(url: string, configuredBaseUrl: string): boolean {
+  let base: URL;
+  let requested: URL;
+  try {
+    base = new URL(configuredBaseUrl);
+    requested = new URL(url);
+  } catch {
+    return false;
+  }
+  if (base.protocol !== requested.protocol || base.host !== requested.host) {
+    return false;
+  }
+  return pathIsUnderBase(base.pathname, requested.pathname);
 }
 
 function jiraJqlFromCursor(prev: JiraSyncCursorV1 | null, initialSyncDepthDays: number): string {
@@ -358,9 +425,26 @@ function jiraKeyFromUrl(url: string): string | null {
  * `fetchOne` would decline (e.g. a board deep link with no `selectedIssue`, or a context-pathed
  * Jira Server URL) never ledgers an `authorized` row for a call that provably never left the
  * machine (I29 Critical 2).
+ *
+ * `configuredBaseUrl` — when the caller has one to give (assemble.ts's dispatcher fetches it
+ * fresh, same as the host map, never cached) — additionally runs `jiraUrlMatchesConfiguredBase`,
+ * so this predicate stays in lockstep with `fetchOneIssue`'s own base-URL check below: a URL
+ * `fetchOneIssue` will reject for a base mismatch must ALSO be declined here, or the egress
+ * append above would over-claim for a call that never reaches the network. Omitting it (the
+ * argument is optional) falls back to the shape-only check — never a mismatch beyond what
+ * `jiraKeyFromUrl` already catches.
  */
-export function jiraFetchOneUrlIsSupported(url: string): boolean {
-  return jiraKeyFromUrl(url) !== null;
+export function jiraFetchOneUrlIsSupported(
+  url: string,
+  configuredBaseUrl?: string | null,
+): boolean {
+  if (jiraKeyFromUrl(url) === null) {
+    return false;
+  }
+  if (configuredBaseUrl === undefined || configuredBaseUrl === null) {
+    return true;
+  }
+  return jiraUrlMatchesConfiguredBase(url, configuredBaseUrl);
 }
 
 /**
@@ -376,6 +460,15 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   const creds = await loadJiraVaultCreds(ctx);
   if (creds === null) {
     return { status: "not_found" };
+  }
+  // The host boundary (`sync/fetch-host-boundary.ts`) proves only that `url`'s HOST is claimed by
+  // Jira — it does not check scheme, port, or a context path. A caller URL whose spelling
+  // diverges from the CONFIGURED base (chiefly: the base has a context path the caller's URL
+  // omits) must be rejected here, before any outbound request — dispatching anyway would write
+  // `resolve_key` under the configured base, a key the caller's own URL could never resolve
+  // again.
+  if (!jiraUrlMatchesConfiguredBase(url, creds.baseUrl)) {
+    return { status: "unsupported_url" };
   }
   const detailUrl = `${creds.baseUrl}/rest/api/3/issue/${encodeURIComponent(requestedKey)}`;
   let res: Response;
@@ -408,6 +501,17 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   // the API response's own `key` field — never the raw regex capture from the caller's URL. A
   // Jira issue can be MOVED between projects, which changes its key; an old `/browse/` link then
   // 200s with the issue's CURRENT key, which can differ from the one in the URL.
+  //
+  // KNOWN BOUND, same shape as the board-deep-link and context-path bounds documented above: a
+  // `/browse/` link to an issue that has since MOVED indexes the issue under its CURRENT key, with
+  // `resolve_key` set to the issue's CURRENT canonical URL — never the caller's original (now
+  // stale) `/browse/<old-key>` link. This is intentional, not a bug to fix: the row id is derived
+  // from the API response's key, so the periodic sync owns this row and would overwrite any
+  // caller-URL key with the canonical one on its next pass regardless — storing the old URL would
+  // be transient and inconsistent, and the issue's canonical URL has genuinely changed. The
+  // consequence is that a resolve-by-URL panel opened on the OLD link keeps missing and
+  // re-fetching rather than resolving on the first try — bounded by the connector's rate limiter,
+  // but not the one-shot fix an unmoved issue's `/browse/` link gets.
   const returnedKey = stringField(issue, "key");
   if (returnedKey === undefined || returnedKey === "") {
     return { status: "not_found" };

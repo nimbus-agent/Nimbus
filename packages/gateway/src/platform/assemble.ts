@@ -79,7 +79,7 @@ import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { createConnectorDispatcher } from "../connectors/index.ts";
 import { jenkinsFetchOneUrlIsSupported } from "../connectors/jenkins-sync.ts";
-import { jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
+import { jiraConfiguredBaseUrl, jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import { createObsidianSyncable } from "../connectors/obsidian-sync.ts";
 import {
@@ -2032,8 +2032,19 @@ async function buildHttpOriginMap(
  * `targetedFetch` should append an egress row before attempting it (I29 Critical 2). Delegates to
  * each connector's own exported, pure, network-free URL-shape parser (never a reimplementation
  * here), so this can never disagree with what `fetchOne` itself would decide.
+ *
+ * `jiraBaseUrl` — resolved fresh per call by the caller, alongside the host map (see
+ * `bootTargetedFetchIntoHttpSidecar`) — lets the `jira` case also apply `fetchOneIssue`'s own
+ * base-URL match, so a caller URL whose spelling diverges from the configured `jira.base_url`
+ * (e.g. a context path the caller's URL omits) is declined HERE too, before the egress append —
+ * otherwise `fetchOneIssue`'s later, correct `unsupported_url` would come one step too late to
+ * stop an over-claimed `authorized` row for a call that never left the machine.
  */
-function fetchOneUrlIsSupported(service: FetchableService, url: string): boolean {
+function fetchOneUrlIsSupported(
+  service: FetchableService,
+  url: string,
+  jiraBaseUrl: string | null,
+): boolean {
   switch (service) {
     case "github":
       return githubFetchOneUrlIsSupported(url);
@@ -2044,7 +2055,7 @@ function fetchOneUrlIsSupported(service: FetchableService, url: string): boolean
     case "jenkins":
       return jenkinsFetchOneUrlIsSupported(url);
     case "jira":
-      return jiraFetchOneUrlIsSupported(url);
+      return jiraFetchOneUrlIsSupported(url, jiraBaseUrl);
   }
 }
 
@@ -2088,9 +2099,10 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
 }): void {
   const { db, vault, syncScheduler } = deps;
   deps.httpSidecarOpts.fetchItem = async (url: string): Promise<TargetedFetchOutcome> => {
-    const [hostMap, httpOrigins] = await Promise.all([
+    const [hostMap, httpOrigins, jiraBaseUrl] = await Promise.all([
       deriveFetchHostMap(vault),
       buildHttpOriginMap(vault),
+      jiraConfiguredBaseUrl(vault),
     ]);
     return targetedFetch(
       {
@@ -2098,7 +2110,7 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
         syncableFor: (service) => syncScheduler.syncableFor(service),
         contextFor: (service) => syncScheduler.syncContextFor(service),
         httpOriginFor: (service) => httpOrigins.get(service) ?? null,
-        urlIsSupported: fetchOneUrlIsSupported,
+        urlIsSupported: (service, u) => fetchOneUrlIsSupported(service, u, jiraBaseUrl),
         appendEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       },

@@ -1,5 +1,6 @@
 // packages/gateway/src/sync/targeted-fetch.test.ts
 import { afterEach, describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
@@ -54,7 +55,10 @@ function depsWith(overrides: DepsOverrides = {}): TargetedFetchDeps {
     // module actually calls (`tryAcquire`) — the same pattern used elsewhere for a fake rate
     // limiter (see connectors/mendeley-sync.test.ts).
     rateLimiter: { tryAcquire } as unknown as SyncContext["rateLimiter"],
-    sandboxCwd: "/tmp",
+    // Repo convention (matches scheduler.test.ts): os.tmpdir(), never a hardcoded POSIX path — the
+    // Windows CI matrix has no `/tmp`. `targetedFetch` itself never reads this field, but the
+    // fixture should still hold a real cross-platform value rather than a platform-specific one.
+    sandboxCwd: os.tmpdir(),
     credentialFor: () => ({ credential: "personal" }),
     runTeamList: async () => [],
     depth: "full",
