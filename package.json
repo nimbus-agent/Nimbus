@@ -261,9 +261,6 @@
     "astro": "^7.1.6",
     "zod": "^4.4.3"
   },
-  "resolutions": {
-    "nanoid": "^3.3.17"
-  },
   "devDependencies": {
     "@babel/core": "8.0.1",
     "@babel/plugin-syntax-jsx": "8.0.1",
@@ -288,7 +285,7 @@
     "knip": "^6.31.0",
     "markdownlint-cli2": "^0.23.2",
     "tweetnacl": "^1.0.3",
-    "typescript": "5.7.3",
+    "typescript": "^7.0.2",
     "typescript-compiler-api": "npm:typescript@^6.0.3",
     "yaml": "^2.9.0"
   }
