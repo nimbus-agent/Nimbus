@@ -2,6 +2,22 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.25.2](https://github.com/nimbus-agent/Nimbus/compare/v1.25.1...v1.25.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* **bitbucket:** 🧹 correct itemsUpserted overcount ([#1086](https://github.com/nimbus-agent/Nimbus/issues/1086)) ([9657921](https://github.com/nimbus-agent/Nimbus/commit/965792107ebcafba10667aab9bd5c7166388dc00))
+* **gateway:** 🔒 Prevent command injection in tar extraction ([#1091](https://github.com/nimbus-agent/Nimbus/issues/1091)) ([575e2aa](https://github.com/nimbus-agent/Nimbus/commit/575e2aa5648d101c02f06450df4016500e3cfe50))
+* **gateway:** resolve WAL mode race in http-api-test-server ([#1093](https://github.com/nimbus-agent/Nimbus/issues/1093)) ([1323567](https://github.com/nimbus-agent/Nimbus/commit/1323567a7a2d07bea4b39a6ba1b4a974cccc2b00))
+
+
+### Performance Improvements
+
+* **connectors:** ⚡ batch fetch message metadata in Gmail sync ([#1099](https://github.com/nimbus-agent/Nimbus/issues/1099)) ([cf1dfe1](https://github.com/nimbus-agent/Nimbus/commit/cf1dfe1d50b61682a7a27849e4678ecd734bc078))
+* **gateway:** ⚡ batch API calls in SonarQube Sync to resolve N+1 issue ([#1089](https://github.com/nimbus-agent/Nimbus/issues/1089)) ([892e96b](https://github.com/nimbus-agent/Nimbus/commit/892e96b62839e9bc1a94d73b206a49fa1dd3233a))
+* **jenkins:** ⚡ batch jenkins job builds sync ([#1087](https://github.com/nimbus-agent/Nimbus/issues/1087)) ([d94d632](https://github.com/nimbus-agent/Nimbus/commit/d94d63274a0d8f4a29771816e77911363ea24c11))
+
 ## [1.25.1](https://github.com/nimbus-agent/Nimbus/compare/v1.25.0...v1.25.1) (2026-08-08)
 
 
