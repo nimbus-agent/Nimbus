@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.25.0](https://github.com/nimbus-agent/Nimbus/compare/v1.24.0...v1.25.0) (2026-08-08)
+
+
+### Features
+
+* **gateway:** resolve an indexed item by URL (V52 resolve_key) ([#1070](https://github.com/nimbus-agent/Nimbus/issues/1070)) ([0a32751](https://github.com/nimbus-agent/Nimbus/commit/0a32751f6e97af93b5fc405080df14bd7a77911d))
+* **gateway:** targeted fetch-on-miss behind a derived host boundary ([#1072](https://github.com/nimbus-agent/Nimbus/issues/1072)) ([369f9af](https://github.com/nimbus-agent/Nimbus/commit/369f9af1a81e10599dc3d9b9f6c86c43bfa95fbc))
+
 ## [1.24.0](https://github.com/nimbus-agent/Nimbus/compare/v1.23.0...v1.24.0) (2026-08-07)
 
 
