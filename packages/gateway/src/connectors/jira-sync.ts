@@ -20,6 +20,7 @@ import {
 } from "./atlassian-api-sync-helpers.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
+import { msFromIso, normalizeJiraStatusCategory, TICKET_META_VERSION } from "./ticket-depth.ts";
 
 const SERVICE_ID = "jira";
 const CURSOR_PREFIX = "nimbus-jra1:";
@@ -214,7 +215,18 @@ async function jiraFetchSearchPage(p: {
     jql,
     startAt,
     maxResults: pageSize,
-    fields: ["summary", "description", "updated", "issuetype", "status", "creator"],
+    fields: [
+      "summary",
+      "description",
+      "updated",
+      "issuetype",
+      "status",
+      "creator",
+      "created",
+      "resolutiondate",
+      "parent",
+      "duedate",
+    ],
   });
   const res = await fetch(`${creds.baseUrl}/rest/api/3/search`, {
     method: "POST",
@@ -312,6 +324,63 @@ function jiraIssueDerivedFromFields(
   };
 }
 
+/**
+ * The shared ticket-depth metadata contract (see
+ * `docs/superpowers/specs/2026-08-07-ticket-depth-jira-linear-design.md`).
+ * Linear's mapper writes the SAME key names, so no consumer branches on
+ * service. A field the API did not supply omits its key entirely.
+ */
+function jiraDepthMetadata(fields: Record<string, unknown> | undefined): Record<string, unknown> {
+  const meta: Record<string, unknown> = { meta_v: TICKET_META_VERSION };
+  if (fields === undefined) {
+    meta["status_category"] = normalizeJiraStatusCategory(undefined);
+    return meta;
+  }
+
+  const issueType = asRecord(fields["issuetype"]);
+  const typeName = issueType === undefined ? undefined : stringField(issueType, "name");
+  if (typeName !== undefined && typeName !== "") {
+    meta["issue_type"] = typeName;
+  }
+
+  const status = asRecord(fields["status"]);
+  const statusName = status === undefined ? undefined : stringField(status, "name");
+  if (statusName !== undefined && statusName !== "") {
+    meta["status"] = statusName;
+  }
+  const category = status === undefined ? undefined : asRecord(status["statusCategory"]);
+  const rawKey = category === undefined ? undefined : stringField(category, "key");
+  if (rawKey !== undefined && rawKey !== "") {
+    meta["status_category_raw"] = rawKey;
+  }
+  meta["status_category"] = normalizeJiraStatusCategory(rawKey);
+
+  const created = msFromIso(stringField(fields, "created"));
+  if (created !== undefined) {
+    meta["created_at_ms"] = created;
+  }
+  const resolved = msFromIso(stringField(fields, "resolutiondate"));
+  if (resolved !== undefined) {
+    meta["resolved_at_ms"] = resolved;
+  }
+  const due = msFromIso(stringField(fields, "duedate"));
+  if (due !== undefined) {
+    meta["due_at_ms"] = due;
+  }
+
+  // Populated on team-managed projects only. Classic company-managed projects
+  // express epic membership through a per-instance `customfield_100xx`, which
+  // this connector deliberately does not chase — `parent_key` is simply absent
+  // there, and epics stay identifiable via `issue_type`.
+  const parent = asRecord(fields["parent"]);
+  const parentKey = parent === undefined ? undefined : stringField(parent, "key");
+  if (parentKey !== undefined && parentKey !== "") {
+    meta["parent_key"] = parentKey;
+  }
+
+  return meta;
+}
+
 function jiraIndexOneIssue(p: {
   ctx: SyncContext;
   issue: Record<string, unknown>;
@@ -339,7 +408,7 @@ function jiraIndexOneIssue(p: {
     canonicalUrl: browseUrl,
     modifiedAt: Number.isFinite(d.modified) ? d.modified : syncTime,
     authorId,
-    metadata: { jiraId: id ?? key, key },
+    metadata: { jiraId: id ?? key, key, ...jiraDepthMetadata(fields) },
     pinned: false,
     syncedAt: syncTime,
   });

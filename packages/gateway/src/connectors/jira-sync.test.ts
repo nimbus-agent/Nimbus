@@ -1040,3 +1040,131 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     expect(out).toEqual({ status: "not_found" });
   });
 });
+
+// ── ticket-depth metadata contract ───────────────────────────────────────────
+
+/**
+ * Runs one full search-page sync over `issues`, optionally handing each request
+ * body to `onBody`. Assertions are made against the STORED row rather than
+ * against what this stub received — a fake echoing params back proves nothing
+ * about what the mapper wrote.
+ */
+async function runJiraSyncWithIssues(
+  ctx: Parameters<ReturnType<typeof createJiraSyncable>["sync"]>[0],
+  issues: ReadonlyArray<Record<string, unknown>>,
+  onBody?: (body: string) => void,
+): Promise<void> {
+  globalThis.fetch = (async (
+    input: SyncTestFetchParams[0],
+    init?: SyncTestFetchParams[1],
+  ): Promise<Response> => {
+    onBody?.(typeof init?.body === "string" ? init.body : "");
+    const url = urlFromFetchInput(input);
+    if (url.includes("/rest/api/3/search")) {
+      return new Response(
+        JSON.stringify({ issues, startAt: 0, maxResults: 50, total: issues.length }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+  await syncable.sync(ctx, null);
+}
+
+function storedMetadata(db: ReturnType<typeof createMemoryIndexDb>, externalId: string) {
+  const row = db.prepare("SELECT metadata FROM item WHERE external_id = ?").get(externalId) as
+    | { metadata: string }
+    | undefined;
+  return JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+}
+
+describeWithFetchRestore("jira-sync ticket depth", () => {
+  test("jira issue metadata carries the ticket-depth contract", async () => {
+    const { db, ctx } = credCtx();
+    await runJiraSyncWithIssues(ctx, [
+      {
+        id: "10001",
+        key: "PROJ-7",
+        fields: {
+          summary: "Ship the thing",
+          updated: "2026-02-01T00:00:00.000Z",
+          created: "2026-01-01T00:00:00.000Z",
+          resolutiondate: "2026-01-20T00:00:00.000Z",
+          duedate: "2026-01-15",
+          issuetype: { name: "Epic" },
+          status: { name: "Shipped To Prod", statusCategory: { key: "done" } },
+          parent: { key: "PROJ-1" },
+        },
+      },
+    ]);
+
+    const meta = storedMetadata(db, "PROJ-7");
+
+    expect(meta["issue_type"]).toBe("Epic");
+    expect(meta["status"]).toBe("Shipped To Prod");
+    // Normalized, NOT the renamed display status.
+    expect(meta["status_category"]).toBe("done");
+    expect(meta["status_category_raw"]).toBe("done");
+    expect(meta["created_at_ms"]).toBe(Date.parse("2026-01-01T00:00:00.000Z"));
+    expect(meta["resolved_at_ms"]).toBe(Date.parse("2026-01-20T00:00:00.000Z"));
+    expect(meta["due_at_ms"]).toBe(Date.parse("2026-01-15"));
+    expect(meta["parent_key"]).toBe("PROJ-1");
+    expect(meta["meta_v"]).toBe(1);
+    // Pre-existing keys survive.
+    expect(meta["jiraId"]).toBe("10001");
+    expect(meta["key"]).toBe("PROJ-7");
+  });
+
+  test("a renamed jira status does not change the normalized category", async () => {
+    const { db, ctx } = credCtx();
+    await runJiraSyncWithIssues(ctx, [
+      {
+        id: "10002",
+        key: "PROJ-8",
+        fields: {
+          summary: "In flight",
+          updated: "2026-02-01T00:00:00.000Z",
+          status: { name: "Yak Shaving", statusCategory: { key: "indeterminate" } },
+        },
+      },
+    ]);
+
+    const meta = storedMetadata(db, "PROJ-8");
+    expect(meta["status_category"]).toBe("in_progress");
+    expect(meta["status"]).toBe("Yak Shaving");
+  });
+
+  test("absent jira depth fields omit their keys rather than writing zeros", async () => {
+    const { db, ctx } = credCtx();
+    await runJiraSyncWithIssues(ctx, [
+      {
+        id: "10003",
+        key: "PROJ-9",
+        fields: { summary: "Bare", updated: "2026-02-01T00:00:00.000Z" },
+      },
+    ]);
+
+    const meta = storedMetadata(db, "PROJ-9");
+
+    // A consumer must be able to tell "no due date" from "due at the epoch".
+    expect("created_at_ms" in meta).toBe(false);
+    expect("resolved_at_ms" in meta).toBe(false);
+    expect("due_at_ms" in meta).toBe(false);
+    expect("parent_key" in meta).toBe(false);
+    expect(meta["status_category"]).toBe("unknown");
+    expect(meta["meta_v"]).toBe(1);
+  });
+
+  test("jira requests the depth fields from the search API", async () => {
+    const { ctx } = credCtx();
+    const bodies: string[] = [];
+    await runJiraSyncWithIssues(ctx, [], (body) => bodies.push(body));
+
+    const requested = JSON.parse(bodies[0] ?? "{}") as { fields?: string[] };
+    for (const f of ["created", "resolutiondate", "parent", "duedate", "issuetype", "status"]) {
+      expect(requested.fields).toContain(f);
+    }
+  });
+});
