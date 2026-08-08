@@ -177,6 +177,57 @@ describe("tableau server", () => {
     });
   });
 
+  describe("tableau_list", () => {
+    it("returns views successfully", async () => {
+      globalThis.fetch = (async (url: string) => {
+        const u = String(url);
+        if (u.includes("/auth/signin")) {
+          return new Response(
+            JSON.stringify({ credentials: { token: "tok", site: { id: "site-1" } } }),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/views")) {
+          return new Response(
+            JSON.stringify({
+              views: { view: [{ luid: "view-123", name: "My View" }] },
+              pagination: { totalAvailable: 1 },
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error("unexpected url");
+      }) as unknown as typeof fetch;
+
+      const tools = captureTools();
+      const out = parsePayload(await tool(tools, "tableau_list")({ cursor: null, limit: 10 }));
+      expect(out.items).toHaveLength(1);
+      expect(out.items![0]).toEqual({ luid: "view-123", name: "My View" });
+      expect(out.nextCursor).toBeNull();
+    });
+
+    it("throws on non-ok views response", async () => {
+      globalThis.fetch = (async (url: string) => {
+        const u = String(url);
+        if (u.includes("/auth/signin")) {
+          return new Response(
+            JSON.stringify({ credentials: { token: "tok", site: { id: "site-1" } } }),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/views")) {
+          return new Response("Bad Request", { status: 400 });
+        }
+        throw new Error("unexpected url");
+      }) as unknown as typeof fetch;
+
+      const tools = captureTools();
+      await expect(tool(tools, "tableau_list")({ cursor: null, limit: 10 })).rejects.toThrow(
+        "Tableau views 400",
+      );
+    });
+  });
+
   describe("tableau_search", () => {
     it("returns matched views successfully", async () => {
       globalThis.fetch = (async (url: string) => {
