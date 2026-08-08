@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { CLOUDWATCH_TOOL_NAMES, registerCloudwatchTools } from "../src/tools.ts";
+import { registerCloudwatchTools } from "../src/tools.ts";
 
 function stubServer() {
   const tools: Record<string, (input: unknown) => Promise<unknown>> = {};
@@ -43,10 +43,11 @@ describe("registerCloudwatchTools", () => {
     const { server, tools } = stubServer();
     // @ts-expect-error test mock
     registerCloudwatchTools(server);
-    for (const name of CLOUDWATCH_TOOL_NAMES) {
+    const expectedTools = ["cloudwatch_list", "cloudwatch_get", "cloudwatch_search"];
+    for (const name of expectedTools) {
       expect(typeof tools[name]).toBe("function");
     }
-    expect(Object.keys(tools)).toHaveLength(CLOUDWATCH_TOOL_NAMES.length);
+    expect(Object.keys(tools)).toHaveLength(expectedTools.length);
   });
 
   it("cloudwatch_list calls aws cli and returns results", async () => {

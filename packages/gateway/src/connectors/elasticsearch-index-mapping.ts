@@ -52,12 +52,8 @@ export function flattenMappingFields(
   if (root === undefined) {
     return [];
   }
-  // Prefer the entry keyed by the index name; otherwise unwrap the first key.
-  let indexBlock = asRecord(root[indexName]);
-  if (indexBlock === undefined) {
-    const firstKey = Object.keys(root)[0];
-    indexBlock = firstKey === undefined ? undefined : asRecord(root[firstKey]);
-  }
+  // Prefer the entry keyed by the index name; return [] when the requested index name is absent
+  const indexBlock = asRecord(root[indexName]);
   if (indexBlock === undefined) {
     return [];
   }

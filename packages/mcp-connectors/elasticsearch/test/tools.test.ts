@@ -123,12 +123,9 @@ describe("elasticsearch tools", () => {
         },
       );
 
-      await withEnv(
-        { ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" },
-        async () => {
-          await handlers["elasticsearch_list"]({});
-        },
-      );
+      await withEnv({ ...validEnv, ELASTICSEARCH_URL: "http://localhost:9200/" }, async () => {
+        await handlers["elasticsearch_list"]({});
+      });
       expect(mockFetch).toHaveBeenCalled();
     });
 

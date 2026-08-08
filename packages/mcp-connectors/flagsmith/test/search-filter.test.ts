@@ -49,15 +49,13 @@ describe("filterFlagsmithFeatures", () => {
         query: "checkout",
       }),
     ).toHaveLength(1);
-    // @ts-expect-error - intentional invalid type to test runtime check
     expect(
-      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" })], {
+      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" as never })], {
         query: "checkout",
       }),
     ).toHaveLength(1);
-    // @ts-expect-error - intentional invalid type to test runtime check
     expect(
-      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" })], {
+      filterFlagsmithFeatures([feature({ name: "checkout", tags: "not-an-array" as never })], {
         query: "not-an-array",
       }),
     ).toHaveLength(0);

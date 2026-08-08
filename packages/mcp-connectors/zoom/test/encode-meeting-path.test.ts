@@ -24,9 +24,7 @@ describe("encodeZoomMeetingPathSegment", () => {
   });
 
   it("single-encodes a UUID that contains a single / not at the beginning", () => {
-    expect(encodeZoomMeetingPathSegment("ab/cd")).toBe(
-      encodeURIComponent("ab/cd"),
-    );
+    expect(encodeZoomMeetingPathSegment("ab/cd")).toBe(encodeURIComponent("ab/cd"));
   });
 
   it("handles empty string correctly", () => {
@@ -34,8 +32,6 @@ describe("encodeZoomMeetingPathSegment", () => {
   });
 
   it("single-encodes other special characters", () => {
-    expect(encodeZoomMeetingPathSegment("abc?def&ghi")).toBe(
-      encodeURIComponent("abc?def&ghi"),
-    );
+    expect(encodeZoomMeetingPathSegment("abc?def&ghi")).toBe(encodeURIComponent("abc?def&ghi"));
   });
 });

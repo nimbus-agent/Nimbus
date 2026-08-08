@@ -55,25 +55,21 @@ describe("validateZoomRecordingsWindow", () => {
   });
 
   it("rejects empty string `to`", () => {
-    expect(() => validateZoomRecordingsWindow("2026-05-01T00:00:00Z", "")).toThrow(
-      /Invalid 'to'/,
-    );
+    expect(() => validateZoomRecordingsWindow("2026-05-01T00:00:00Z", "")).toThrow(/Invalid 'to'/);
   });
 
   it("accepts exactly 31 days boundary", () => {
     // 31 days = 31 * 24 * 60 * 60 * 1000 = 2678400000 ms
     const from = new Date("2026-05-01T00:00:00.000Z");
     const to = new Date(from.getTime() + 2678400000);
-    expect(() =>
-      validateZoomRecordingsWindow(from.toISOString(), to.toISOString()),
-    ).not.toThrow();
+    expect(() => validateZoomRecordingsWindow(from.toISOString(), to.toISOString())).not.toThrow();
   });
 
   it("rejects exactly 31 days + 1 millisecond boundary", () => {
     const from = new Date("2026-05-01T00:00:00.000Z");
     const to = new Date(from.getTime() + 2678400000 + 1);
-    expect(() =>
-      validateZoomRecordingsWindow(from.toISOString(), to.toISOString()),
-    ).toThrow(/<= 1 month/);
+    expect(() => validateZoomRecordingsWindow(from.toISOString(), to.toISOString())).toThrow(
+      /<= 1 month/,
+    );
   });
 });

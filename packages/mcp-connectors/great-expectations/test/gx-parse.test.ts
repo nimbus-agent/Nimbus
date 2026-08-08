@@ -335,8 +335,9 @@ describe("resultsDir", () => {
   });
 
   it("resolves the GREAT_EXPECTATIONS_RESULTS_DIR env var", () => {
-    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "/tmp/some-dir";
-    expect(resultsDir()).toBe(resolve("/tmp/some-dir"));
+    const targetDir = join(tmpdir(), "some-dir");
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = targetDir;
+    expect(resultsDir()).toBe(resolve(targetDir));
   });
 
   it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is unset", () => {
@@ -530,8 +531,22 @@ describe("listAllExpectations — filesystem walk", () => {
   });
 
   it("gracefully handles unreadable directories during walk", async () => {
+    if (process.platform === "win32") {
+      // chmod 000 does not block directory reading for administrators/owners on Windows
+      return;
+    }
     const sub = join(dir, "unreadable");
     await mkdir(sub, { recursive: true });
+
+    // Write a dummy JSON expectation file inside the sub-directory first
+    const doc = {
+      meta: { expectation_suite_name: "unreadable-dummy" },
+      results: [
+        { success: true, expectation_config: { expectation_type: "t", kwargs: {} }, result: {} },
+      ],
+    };
+    await writeFile(join(sub, "dummy.json"), JSON.stringify(doc), "utf8");
+
     // This will cause readdir to fail on this directory
     await import("node:fs/promises").then((fs) => fs.chmod(sub, 0o000));
 
@@ -562,8 +577,9 @@ describe("resultsDir", () => {
   });
 
   it("returns the resolved path when GREAT_EXPECTATIONS_RESULTS_DIR is set", () => {
-    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "/tmp/gx-results";
-    expect(resultsDir()).toBe(resolve("/tmp/gx-results"));
+    const targetDir = join(tmpdir(), "gx-results");
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = targetDir;
+    expect(resultsDir()).toBe(resolve(targetDir));
   });
 
   it("throws an error when GREAT_EXPECTATIONS_RESULTS_DIR is not set", () => {

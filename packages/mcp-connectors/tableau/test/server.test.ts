@@ -206,6 +206,33 @@ describe("tableau server", () => {
       expect(out.nextCursor).toBeNull();
     });
 
+    it("returns non-terminal nextCursor pagination successfully", async () => {
+      globalThis.fetch = (async (url: string) => {
+        const u = String(url);
+        if (u.includes("/auth/signin")) {
+          return new Response(
+            JSON.stringify({ credentials: { token: "tok", site: { id: "site-1" } } }),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/views")) {
+          return new Response(
+            JSON.stringify({
+              views: { view: [{ luid: "view-123", name: "My View" }] },
+              pagination: { totalAvailable: 11 },
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error("unexpected url");
+      }) as unknown as typeof fetch;
+
+      const tools = captureTools();
+      const out = parsePayload(await tool(tools, "tableau_list")({ cursor: null, limit: 10 }));
+      expect(out.items).toHaveLength(1);
+      expect(out.nextCursor).toBe("2");
+    });
+
     it("throws on non-ok views response", async () => {
       globalThis.fetch = (async (url: string) => {
         const u = String(url);
