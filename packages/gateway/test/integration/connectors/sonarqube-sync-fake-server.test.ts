@@ -46,31 +46,35 @@ function startFakeSonar(): FakeSonar {
         });
       }
       if (req.method === "GET" && u.pathname === "/api/issues/search") {
-        const projectKey = u.searchParams.get("componentKeys") ?? "";
-        const issueKey = projectKey === "myorg_web" ? "AYxr-web-1" : "AYxr-api-1";
+        const componentKeysParam = u.searchParams.get("componentKeys") ?? "";
+        const projectKeys = componentKeysParam.split(",");
+
+        const issues = projectKeys.map((projectKey) => {
+          const issueKey = projectKey === "myorg_web" ? "AYxr-web-1" : "AYxr-api-1";
+          return {
+            key: issueKey,
+            rule: "java:S1234",
+            severity: projectKey === "myorg_web" ? "MAJOR" : "CRITICAL",
+            component: `${projectKey}:src/main/java/Foo.java`,
+            project: projectKey,
+            line: 42,
+            status: "OPEN",
+            message:
+              projectKey === "myorg_web"
+                ? "Replace null check with Optional"
+                : "Use parameterized query to avoid SQL injection",
+            effort: "10min",
+            debt: "10min",
+            tags: ["security"],
+            creationDate: "2024-03-15T12:00:00+0000",
+            updateDate: "2024-03-16T09:30:00+0000",
+            type: projectKey === "myorg_web" ? "CODE_SMELL" : "VULNERABILITY",
+          };
+        });
+
         return Response.json({
-          issues: [
-            {
-              key: issueKey,
-              rule: "java:S1234",
-              severity: projectKey === "myorg_web" ? "MAJOR" : "CRITICAL",
-              component: `${projectKey}:src/main/java/Foo.java`,
-              project: projectKey,
-              line: 42,
-              status: "OPEN",
-              message:
-                projectKey === "myorg_web"
-                  ? "Replace null check with Optional"
-                  : "Use parameterized query to avoid SQL injection",
-              effort: "10min",
-              debt: "10min",
-              tags: ["security"],
-              creationDate: "2024-03-15T12:00:00+0000",
-              updateDate: "2024-03-16T09:30:00+0000",
-              type: projectKey === "myorg_web" ? "CODE_SMELL" : "VULNERABILITY",
-            },
-          ],
-          paging: { pageIndex: 1, pageSize: 100, total: 1 },
+          issues: issues,
+          paging: { pageIndex: 1, pageSize: 100, total: issues.length },
         });
       }
       return new Response("not found", { status: 404 });
