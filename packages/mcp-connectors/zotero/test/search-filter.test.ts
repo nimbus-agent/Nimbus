@@ -94,18 +94,49 @@ describe("filterZoteroItems", () => {
   });
 
   test("supports creators with only firstName or only lastName", () => {
+    // @ts-expect-error Intentionally passing incomplete creator objects
     const onlyFirst = item({ data: { creators: [{ creatorType: "author", firstName: "Cher" }] } });
+    // @ts-expect-error Intentionally passing incomplete creator objects
     const onlyLast = item({ data: { creators: [{ creatorType: "author", lastName: "Prince" }] } });
 
     expect(filterZoteroItems([onlyFirst], { query: "Cher" })).toHaveLength(1);
     expect(filterZoteroItems([onlyLast], { query: "Prince" })).toHaveLength(1);
   });
 
-  test("ignores tag when it is not a string", () => {
-    // The previous item() has a baseline title of "Exponential backoff..."
-    // so if we search for "12345", it might match DOI which is "10.1145/1234567.8901234"
-    // We should clear DOI to ensure we are only testing the tag filter.
-    const badTag = item({ data: { DOI: undefined, tags: [{ tag: 12345 }] } });
-    expect(filterZoteroItems([badTag], { query: "12345" })).toHaveLength(0);
+  test("ignores creator objects that are null, primitive, or lack valid name fields", () => {
+    const edgeCaseCreators = item({
+      data: {
+        creators: [
+          // @ts-expect-error Intentionally passing invalid creator objects
+          null,
+          // @ts-expect-error Intentionally passing invalid creator objects
+          "invalid string creator",
+          // @ts-expect-error Intentionally passing invalid creator objects
+          42,
+          { creatorType: "author", firstName: "", lastName: "" }, // empty names
+          // @ts-expect-error Intentionally passing invalid creator objects
+          { creatorType: "author", name: "" }, // empty name
+          // @ts-expect-error Intentionally passing invalid creator objects
+          { creatorType: "author" }, // no name fields at all
+        ]
+      }
+    });
+    // Ensure it doesn't crash and correctly parses missing info
+    expect(filterZoteroItems([edgeCaseCreators], { query: "exponential backoff" })).toHaveLength(1);
+  });
+
+  test("ignores tags when tag property is missing or not a string", () => {
+    // Clear DOI to prevent false positives from default data
+    const badTags = item({
+      data: {
+        DOI: undefined,
+        // @ts-expect-error Intentionally passing invalid tag shape
+        tags: [{ tag: 12345 }, { notTag: "hello" }, null, "string_instead_of_object"]
+      }
+    });
+    // None of these should be indexed
+    expect(filterZoteroItems([badTags], { query: "12345" })).toHaveLength(0);
+    expect(filterZoteroItems([badTags], { query: "hello" })).toHaveLength(0);
+    expect(filterZoteroItems([badTags], { query: "string_instead_of_object" })).toHaveLength(0);
   });
 });
