@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { registerCloudwatchTools, CLOUDWATCH_TOOL_NAMES } from "../src/tools.ts";
+import { CLOUDWATCH_TOOL_NAMES, registerCloudwatchTools } from "../src/tools.ts";
 
 /**
  * Minimal stub MCP server that captures registered tool handlers keyed by name.
