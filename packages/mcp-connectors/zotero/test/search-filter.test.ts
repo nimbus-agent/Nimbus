@@ -118,8 +118,8 @@ describe("filterZoteroItems", () => {
           { creatorType: "author", name: "" }, // empty name
           // @ts-expect-error Intentionally passing invalid creator objects
           { creatorType: "author" }, // no name fields at all
-        ]
-      }
+        ],
+      },
     });
     // Ensure it doesn't crash and correctly parses missing info
     expect(filterZoteroItems([edgeCaseCreators], { query: "exponential backoff" })).toHaveLength(1);
@@ -131,8 +131,8 @@ describe("filterZoteroItems", () => {
       data: {
         DOI: undefined,
         // @ts-expect-error Intentionally passing invalid tag shape
-        tags: [{ tag: 12345 }, { notTag: "hello" }, null, "string_instead_of_object"]
-      }
+        tags: [{ tag: 12345 }, { notTag: "hello" }, null, "string_instead_of_object"],
+      },
     });
     // None of these should be indexed
     expect(filterZoteroItems([badTags], { query: "12345" })).toHaveLength(0);
