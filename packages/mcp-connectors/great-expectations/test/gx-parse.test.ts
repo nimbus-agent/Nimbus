@@ -7,6 +7,7 @@ import {
   FORBIDDEN_RESULT_KEYS,
   listAllExpectations,
   parseValidationResult,
+  resultsDir,
 } from "../src/gx-parse.ts";
 
 describe("FORBIDDEN_RESULT_KEYS", () => {
@@ -154,6 +155,11 @@ describe("parseValidationResult — no-row-data stripping", () => {
     expect(rows[0]?.expectationType).toBe("unknown");
     expect(rows[0]?.column).toBeNull();
     expect(rows[0]?.observedValue).toBeNull();
+  });
+
+  it("returns empty when results is not an array", () => {
+    const doc = { results: { success: true } };
+    expect(parseValidationResult(doc, "x.json")).toEqual([]);
   });
 
   it("defaults suite/expectation type and column when meta/config are absent", () => {
@@ -310,6 +316,37 @@ describe("assertWithinResultsDir", () => {
 
   it("rejects an absolute path outside the dir", () => {
     expect(() => assertWithinResultsDir(resolve(sep, "etc", "passwd"), root)).toThrow();
+  });
+});
+
+describe("resultsDir", () => {
+  let prevEnv: string | undefined;
+
+  beforeEach(() => {
+    prevEnv = process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) {
+      delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+    } else {
+      process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = prevEnv;
+    }
+  });
+
+  it("resolves the GREAT_EXPECTATIONS_RESULTS_DIR env var", () => {
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "/tmp/some-dir";
+    expect(resultsDir()).toBe(resolve("/tmp/some-dir"));
+  });
+
+  it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is unset", () => {
+    delete process.env["GREAT_EXPECTATIONS_RESULTS_DIR"];
+    expect(() => resultsDir()).toThrow("GREAT_EXPECTATIONS_RESULTS_DIR is not set");
+  });
+
+  it("throws when GREAT_EXPECTATIONS_RESULTS_DIR is empty", () => {
+    process.env["GREAT_EXPECTATIONS_RESULTS_DIR"] = "   ";
+    expect(() => resultsDir()).toThrow("GREAT_EXPECTATIONS_RESULTS_DIR is not set");
   });
 });
 
