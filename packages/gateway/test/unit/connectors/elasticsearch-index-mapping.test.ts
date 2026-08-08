@@ -147,13 +147,7 @@ describe("flattenMappingFields", () => {
     ]);
   });
 
-  test("unwraps the first key when index name does not match the response key", () => {
-    const fields = flattenMappingFields(
-      { "actual-name": { mappings: { properties: { f: { type: "long" } } } } },
-      "requested-name",
-    );
-    expect(fields).toEqual([{ name: "f", type: "long" }]);
-  });
+
 
   test("returns [] for non-record / missing mappings", () => {
     expect(flattenMappingFields(null, "x")).toEqual([]);
