@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
 import type { ApiScope } from "../clips/api-scopes.ts";
 import { addApiToken, generateClipToken } from "../clips/clip-token-store.ts";
+import { applyWritablePragmas } from "../db/writable-pragmas.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ReadOnlyHttpServerHandle, ReadOnlyHttpServerOptions } from "./http-server.ts";
@@ -50,6 +51,7 @@ export async function startServerWithClipToken(
   // writable handles on `dbPath`, so the setup connection must not linger (same pattern as
   // agent-runs/agent-test-server.ts / briefs/brief-test-server.ts).
   const setupDb = new Database(dbPath);
+  applyWritablePragmas(setupDb);
   runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
   setupDb.close();
   const db = new Database(dbPath, { create: false, readwrite: true });
@@ -102,6 +104,7 @@ export async function startServerWithoutClipsVault(
   const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-http-api-e2e-unmounted-")));
   const dbPath = join(tmpDir, "nimbus.db");
   const setupDb = new Database(dbPath);
+  applyWritablePragmas(setupDb);
   runIndexedSchemaMigrations(setupDb, CURRENT_SCHEMA_VERSION);
   setupDb.close();
   const db = new Database(dbPath, { create: false, readwrite: true });
