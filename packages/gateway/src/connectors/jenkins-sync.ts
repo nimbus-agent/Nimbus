@@ -272,12 +272,22 @@ async function runJenkinsSyncAfterAuth(
   const now = Date.now();
   const floorMs = now - initialSyncDepthDays * 86_400_000;
 
-  for (const job of flat) {
-    const lastSeen = nextJobs[job.fullName] ?? 0;
-    const r = await syncJenkinsJobBuilds(ctx, job, base, auth, lastSeen, floorMs, now);
-    bytes += r.bytes;
-    upserted += r.upserted;
-    nextJobs[job.fullName] = r.maxNum;
+  const CHUNK_SIZE = 10;
+  for (let i = 0; i < flat.length; i += CHUNK_SIZE) {
+    const chunk = flat.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.all(
+      chunk.map(async (job) => {
+        const lastSeen = nextJobs[job.fullName] ?? 0;
+        const r = await syncJenkinsJobBuilds(ctx, job, base, auth, lastSeen, floorMs, now);
+        return { job, r };
+      }),
+    );
+
+    for (const { job, r } of results) {
+      bytes += r.bytes;
+      upserted += r.upserted;
+      nextJobs[job.fullName] = r.maxNum;
+    }
   }
 
   return {
