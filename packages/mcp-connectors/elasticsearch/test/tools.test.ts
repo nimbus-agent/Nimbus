@@ -212,5 +212,64 @@ describe("elasticsearch tools", () => {
         });
       });
     });
+
+    it("skips non-object or missing-index entries", async () => {
+      spyOn(globalThis, "fetch").mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify([
+              null,
+              "string",
+              123,
+              [],
+              { notIndex: "app" },
+              { index: 123 },
+              { index: "app-logs" },
+            ]),
+          ),
+      );
+
+      await withEnv(validEnv, async () => {
+        const result = await handlers["elasticsearch_search"]({ query: "app" });
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  matches: [{ index: "app-logs" }],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        });
+      });
+    });
+
+    it("returns empty array if response is not an array", async () => {
+      spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(JSON.stringify({ not: "an array" })),
+      );
+
+      await withEnv(validEnv, async () => {
+        const result = await handlers["elasticsearch_search"]({ query: "app" });
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  matches: [],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        });
+      });
+    });
   });
 });
