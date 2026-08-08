@@ -190,6 +190,6 @@ describe("elasticsearch-sync — _cat/indices → _mapping walk", () => {
       )
       .get();
     const meta = JSON.parse(row!.metadata) as Record<string, unknown>;
-    expect(meta.fields).toEqual([]);
+    expect(meta["fields"]).toEqual([]);
   });
 });
