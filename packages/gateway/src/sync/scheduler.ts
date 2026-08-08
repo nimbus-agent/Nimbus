@@ -107,6 +107,14 @@ export class SyncScheduler {
 
   private readonly forceWaiters = new Map<string, Array<(err?: unknown) => void>>();
 
+  /**
+   * One-shot cold-start floors (epoch ms) per service, set by an owner-initiated
+   * `index.rebody --since`. In-memory ONLY: a restart drops a pending backfill
+   * back to the connector's own 30-day floor, which is the safe direction —
+   * the user can ask again, and nothing silently keeps re-walking history.
+   */
+  private readonly historyFloors = new Map<string, number>();
+
   private readonly onConnectorSyncSuccess:
     | ((serviceId: string, result: SyncResult, durationMs: number) => void)
     | undefined;
@@ -255,6 +263,15 @@ export class SyncScheduler {
     if (this.started) {
       this.tick();
     }
+  }
+
+  /**
+   * Arm a one-shot cold-start floor for `serviceId`'s next run. Call it
+   * immediately before `forceSync(serviceId)`; a successful run consumes it,
+   * a rate-limited or failed one keeps it for the retry.
+   */
+  setHistoryFloor(serviceId: string, floorMs: number): void {
+    this.historyFloors.set(serviceId, floorMs);
   }
 
   async forceSync(serviceId: string): Promise<void> {
@@ -683,9 +700,11 @@ export class SyncScheduler {
     const startedAt = Date.now();
     let result: SyncResult;
     try {
+      const historyFloorMs = this.historyFloors.get(job.serviceId);
       const runCtx: SyncContext = {
         ...this.ctx,
         depth: this.getDepthForService(job.serviceId),
+        ...(historyFloorMs === undefined ? {} : { historyFloorMs }),
       };
       // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
       // with NO credential gate, and each one's `sync()` short-circuits to a network-free noop
@@ -732,6 +751,16 @@ export class SyncScheduler {
       return;
     }
 
+    // Consumed only on success. A rate-limited or failed run returns earlier
+    // WITHOUT persisting a cursor, so its retry is still a cold start and must
+    // keep the wide floor — otherwise the backfill silently narrows to 30 days
+    // and never reaches the history it was asked for.
+    //
+    // Deleting on a `hasMore: true` success is correct: `runJobRecordSyncSuccess`
+    // writes `result.cursor` via `updateState` and re-queues a "continuation"
+    // job, and that job resumes from the persisted cursor — which bypasses the
+    // cold-start override entirely. The floor has done its job by then.
+    this.historyFloors.delete(job.serviceId);
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
   }
 }

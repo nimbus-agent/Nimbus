@@ -1008,3 +1008,76 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     });
   });
 });
+
+describe("SyncScheduler — one-shot history floor", () => {
+  /** A syncable that records the `historyFloorMs` it was handed on each run. */
+  function recordingSyncable(
+    seen: Array<number | undefined>,
+    onRun?: (call: number) => void,
+  ): Syncable {
+    let calls = 0;
+    return {
+      serviceId: "jira",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(ctx): Promise<SyncResult> {
+        seen.push(ctx.historyFloorMs);
+        calls += 1;
+        onRun?.(calls);
+        return { cursor: "c1", itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+  }
+
+  test("setHistoryFloor reaches the connector on the next run", async () => {
+    const db = openMemoryIndexDatabase();
+    const seen: Array<number | undefined> = [];
+    const sched = new SyncScheduler(testContext(db));
+    sched.register(recordingSyncable(seen));
+
+    const floor = Date.parse("2024-01-01T00:00:00.000Z");
+    sched.setHistoryFloor("jira", floor);
+    await sched.forceSync("jira");
+    sched.stop();
+
+    expect(seen).toEqual([floor]);
+  });
+
+  test("the floor is consumed by a successful run and not reused", async () => {
+    const db = openMemoryIndexDatabase();
+    const seen: Array<number | undefined> = [];
+    const sched = new SyncScheduler(testContext(db));
+    sched.register(recordingSyncable(seen));
+
+    sched.setHistoryFloor("jira", 1_700_000_000_000);
+    await sched.forceSync("jira");
+    await sched.forceSync("jira");
+    sched.stop();
+
+    expect(seen).toEqual([1_700_000_000_000, undefined]);
+  });
+
+  test("a rate-limited run KEEPS the floor for the retry", async () => {
+    // The scheduler returns without persisting a cursor on RateLimitError, so
+    // the next attempt is still a cold start. Dropping the floor here would
+    // silently narrow the retry back to 30 days and the backfill would never
+    // complete.
+    const db = openMemoryIndexDatabase();
+    const seen: Array<number | undefined> = [];
+    const sched = new SyncScheduler(testContext(db), {}, { random: () => 0 });
+    sched.register(
+      recordingSyncable(seen, (call) => {
+        if (call === 1) {
+          throw new RateLimitError(new Date(Date.now() + 1000), "rate limited");
+        }
+      }),
+    );
+
+    sched.setHistoryFloor("jira", 1_700_000_000_000);
+    await sched.forceSync("jira").catch(() => undefined);
+    await sched.forceSync("jira");
+    sched.stop();
+
+    expect(seen).toEqual([1_700_000_000_000, 1_700_000_000_000]);
+  });
+});
