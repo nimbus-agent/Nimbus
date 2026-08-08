@@ -48,6 +48,34 @@ describe("filterSnowflakeTables", () => {
     expect(filterSnowflakeTables([noSchema], { query: "missing" })).toHaveLength(0);
   });
 
+  test("returns empty when item list is empty", () => {
+    expect(filterSnowflakeTables([], { query: "orders" })).toHaveLength(0);
+  });
+
+  test("handles non-string field values gracefully", () => {
+    const mixedFields = {
+      database_name: 123,
+      schema_name: true,
+      table_name: null,
+      other_field: "match_this",
+    };
+    expect(filterSnowflakeTables([mixedFields], { query: "123" })).toHaveLength(0);
+    expect(filterSnowflakeTables([mixedFields], { query: "true" })).toHaveLength(0);
+    expect(filterSnowflakeTables([mixedFields], { query: "null" })).toHaveLength(0);
+  });
+
+  test("matches queries that span across multiple fields", () => {
+    const row = table({
+      database_name: "PROD_DB",
+      schema_name: "ANALYTICS",
+      table_name: "ORDERS",
+    });
+    // The query filter lowercases both haystack and needle, and splits the extracted fields with space.
+    // e.g. "orders analytics prod_db"
+    expect(filterSnowflakeTables([row], { query: "orders analytics" })).toHaveLength(1);
+    expect(filterSnowflakeTables([row], { query: "analytics prod" })).toHaveLength(1);
+  });
+
   test("honors the limit cap", () => {
     const many = Array.from({ length: 10 }, (_, i) => table({ table_name: `table_${String(i)}` }));
     expect(filterSnowflakeTables(many, { query: "table_", limit: 3 })).toHaveLength(3);
