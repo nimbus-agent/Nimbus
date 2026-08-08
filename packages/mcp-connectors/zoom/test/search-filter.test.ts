@@ -96,4 +96,8 @@ describe("filterZoomMeetings", () => {
     // empty fields still dont match on a real term
     expect(filterZoomMeetings([{ id: 10 }], { query: "anything" })).toHaveLength(0);
   });
+
+  it("handles queries with special characters", () => {
+    expect(filterZoomMeetings(SAMPLE, { query: "1:1" })).toHaveLength(1);
+  });
 });
