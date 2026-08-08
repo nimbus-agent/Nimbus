@@ -212,7 +212,7 @@ describe("tableau server", () => {
 
   describe("startConnector", () => {
     it("starts a read-only server with tableau tools", async () => {
-      const mockRun = mock(() => Promise.resolve());
+      const mockRun = mock((_name: string, _reg: unknown) => Promise.resolve());
       mock.module("../../shared/run-read-only-mcp-connector.ts", () => ({
         runReadOnlyMcpConnector: mockRun,
       }));
