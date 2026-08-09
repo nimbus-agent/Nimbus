@@ -536,6 +536,49 @@ describe("nimbus index rebody — argument parsing", () => {
       /--limit must be a positive integer/,
     );
   });
+
+  it("planned-action output includes --since when provided", async () => {
+    await runIndexCmd(["rebody", "--service", "jira", "--since", "365"]);
+    expect(out.stdout).toContain("since   = 365 days");
+  });
+
+  it("a well-formed but implausibly wide --since prints a typo warning", async () => {
+    // 36500 days IS honoured — it is well-formed, so it cannot be rejected.
+    // But it must not pass silently either: it is one keystroke away from 3650
+    // and would spend hours of API quota.
+    await runIndexCmd(["rebody", "--since", "36500"]);
+    expect(out.stdout).toContain("since   = 36500 days");
+    expect(out.stdout).toMatch(/over 10 years of history/);
+  });
+
+  it("a plausible --since prints no typo warning", async () => {
+    await runIndexCmd(["rebody", "--since", "365"]);
+    expect(out.stdout).not.toMatch(/over 10 years of history/);
+  });
+
+  it("rejects a malformed --since before any IPC call", async () => {
+    // Same reasoning as --limit: this bounds real outbound API traffic, so a
+    // typo must not silently become the connector's own 30-day window.
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          calls.push({ method, params });
+          return { jobId: "unexpected" };
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    for (const bad of ["abc", "0", "-5", "2.5"]) {
+      await expect(runIndexCmd(["rebody", "--since", bad, "--dry-run"])).rejects.toThrow(
+        /--since must be a positive integer/,
+      );
+    }
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("nimbus index rebody — IPC flow (--dry-run)", () => {
@@ -684,6 +727,52 @@ describe("nimbus index rebody — IPC flow (--dry-run)", () => {
     expect(mock.calls[0]).toEqual({
       method: "index.rebody",
       params: { dryRun: true, service: "notion", type: "page", limit: 3 },
+    });
+    // The previous assertion is exact, so this is redundant by construction —
+    // stated anyway because it is the property that matters: an unrequested
+    // history widening must never be sent.
+    expect(mock.calls[0]?.params).not.toHaveProperty("sinceDays");
+  });
+
+  it("forwards --since to the gateway as sinceDays", async () => {
+    const mock = createMockIpcClient([{ jobId: "job-rebody-since" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      const r = await baseClient.call(m, p);
+      if (m === "index.rebody") {
+        setTimeout(() => {
+          mock.emit("index.rebodyDone", {
+            jobId: "job-rebody-since",
+            durationMs: 1,
+            dryRun: true,
+            pending: {},
+            cannotImprove: [],
+          });
+        }, 0);
+      }
+      return r;
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["rebody", "--service", "jira", "--since", "365", "--dry-run"]);
+    expect(mock.calls[0]).toEqual({
+      method: "index.rebody",
+      params: { dryRun: true, service: "jira", sinceDays: 365 },
     });
   });
 

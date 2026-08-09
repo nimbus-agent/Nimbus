@@ -201,12 +201,23 @@ type RebodyDonePayload = {
   warnings?: string[];
   pendingBefore?: Record<string, number>;
   pendingAfter?: Record<string, number>;
+  /**
+   * The SECOND recovery reason, reported separately by the gateway and kept
+   * separate here: rows whose connector metadata is below the version that
+   * service is required to carry. Folding these into the body counts would
+   * make both numbers unreadable — a caller could no longer tell which kind
+   * of depth is still missing.
+   */
+  pendingMeta?: Record<string, number>;
+  pendingMetaBefore?: Record<string, number>;
+  pendingMetaAfter?: Record<string, number>;
 };
 
 interface RebodyOptions {
   service?: string;
   type?: string;
   limit?: number;
+  sinceDays?: number;
 }
 
 /**
@@ -230,14 +241,35 @@ function parseRebodyLimit(raw: string | undefined): number | undefined {
   return n;
 }
 
+/**
+ * Like `--limit`, `--since` bounds real outbound API traffic — it widens the
+ * connector's cold-start window from its built-in 30 days, so a malformed
+ * value is rejected client-side rather than silently becoming the default
+ * walk. Honored only by the connectors that read `SyncContext.historyFloorMs`
+ * (jira, linear); every other connector ignores it.
+ */
+function parseRebodySince(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new Error(
+      `--since must be a positive integer number of days (got "${raw}"). It widens how far back ` +
+        `a connector re-walks, so a malformed value is rejected, not ignored.`,
+    );
+  }
+  return n;
+}
+
 function parseRebodyOptions(args: string[]): RebodyOptions {
   const service = takeFlag(args, "--service");
   const type = takeFlag(args, "--type");
   const limit = parseRebodyLimit(takeFlag(args, "--limit"));
+  const sinceDays = parseRebodySince(takeFlag(args, "--since"));
   const opts: RebodyOptions = {};
   if (service !== undefined) opts.service = service;
   if (type !== undefined) opts.type = type;
   if (limit !== undefined) opts.limit = limit;
+  if (sinceDays !== undefined) opts.sinceDays = sinceDays;
   return opts;
 }
 
@@ -246,11 +278,24 @@ function printPlannedRebody(p: RebodyOptions): void {
   if (p.service !== undefined) console.log(`  service = ${p.service}`);
   if (p.type !== undefined) console.log(`  type    = ${p.type}`);
   if (p.limit !== undefined) console.log(`  limit   = ${String(p.limit)}`);
+  if (p.sinceDays !== undefined) {
+    console.log(`  since   = ${String(p.sinceDays)} days`);
+    // A fat-fingered `--since 36500` is well-formed and would be honoured, so
+    // it cannot be rejected — but it should not pass silently either. The
+    // gateway separately rejects a window reaching before 1970.
+    if (p.sinceDays > 3650) {
+      console.log(
+        `  note: ${String(p.sinceDays)} days is over 10 years of history — expect a long ` +
+          `re-walk and heavy API usage. Ctrl-C now if that was a typo.`,
+      );
+    }
+  }
   console.log(
-    "rebody re-fetches item bodies by clearing a connector's sync watermark and letting it " +
-      "re-sync from scratch — this is real outbound API traffic, potentially tens of thousands " +
-      "of requests for a full-scan connector (e.g. Notion). Bounded-window connectors cost less " +
-      "but recover less too — e.g. Confluence only re-walks roughly the last 30 days.",
+    "rebody re-fetches indexed depth (item bodies, and connector metadata such as Jira/Linear " +
+      "status and dates) by clearing a connector's sync watermark and letting it re-sync — this " +
+      "is real outbound API traffic, potentially tens of thousands of requests for a full-scan " +
+      "connector (e.g. Notion). Bounded-window connectors default to roughly the last 30 days; " +
+      "pass --since <days> to widen that for connectors that support it (jira, linear).",
   );
   console.log(
     "Re-run with --yes to execute, or --dry-run to see the per-service pending counts first.",
@@ -314,6 +359,32 @@ function printPendingTransition(
   }
 }
 
+/**
+ * Printed on its own line, never summed with the body counts: "stale
+ * metadata" and "missing body" are different questions about the same rows,
+ * and a row can be behind on both. Silence when the map is empty keeps the
+ * common case (no connector registered a metadata version, or all are
+ * current) as quiet as it was before.
+ */
+function printPendingMeta(counts: Record<string, number>): void {
+  if (Object.keys(counts).length === 0) return;
+  console.log(`pending metadata: ${formatCounts(counts)}`);
+}
+
+function printPendingMetaTransition(
+  before: Record<string, number>,
+  after: Record<string, number>,
+): void {
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  if (keys.length === 0) return;
+  console.log("pending metadata (before -> after):");
+  for (const k of keys) {
+    console.log(`  ${k}: ${String(before[k] ?? 0)} -> ${String(after[k] ?? 0)}`);
+  }
+}
+
 function streamRebody(
   c: IPCClient,
   params: Record<string, unknown>,
@@ -340,7 +411,7 @@ function printRebodySummaryJson(summary: RebodyDonePayload): void {
   console.log(JSON.stringify(summary));
 }
 
-function printRebodySummaryText(summary: RebodyDonePayload): void {
+function printRebodySummaryText(summary: RebodyDonePayload, sinceDays?: number): void {
   if (summary.dryRun) {
     const pending = summary.pending ?? {};
     console.log(
@@ -348,12 +419,14 @@ function printRebodySummaryText(summary: RebodyDonePayload): void {
         ? "pending bodies: none."
         : `pending bodies: ${formatCounts(pending)}`,
     );
+    printPendingMeta(summary.pendingMeta ?? {});
     printCannotImprove(summary.cannotImprove);
     printRewalkCaveat();
     return;
   }
 
   printPendingTransition(summary.pendingBefore ?? {}, summary.pendingAfter ?? {});
+  printPendingMetaTransition(summary.pendingMetaBefore ?? {}, summary.pendingMetaAfter ?? {});
   printCannotImprove(summary.cannotImprove);
   printRewalkCaveat();
   console.log(
@@ -362,6 +435,19 @@ function printRebodySummaryText(summary: RebodyDonePayload): void {
   );
   for (const w of summary.warnings ?? []) {
     console.error(`WARN: ${w}`);
+  }
+  if (sinceDays !== undefined && (summary.failedServices?.length ?? 0) > 0) {
+    // A failed forceSync (rate limit, auth) never persisted a cursor, so its
+    // retry is still a cold start and the gateway KEEPS the wide window for
+    // it — but only in memory. Say both halves: the retry is wide, and a
+    // gateway restart silently narrows it back to the connector's own 30 days
+    // with nothing in the output to show it happened.
+    console.error(
+      `WARN: the --since ${String(sinceDays)}-day window is held in gateway memory for the ` +
+        `retry of ${(summary.failedServices ?? []).join(", ")}, since a failed run advanced no ` +
+        `watermark. A gateway restart drops it back to the connector's own 30-day floor — ` +
+        `re-run with --since if that happens, or with a smaller window if it does not converge.`,
+    );
   }
 }
 
@@ -380,12 +466,13 @@ async function runRebody(args: string[]): Promise<void> {
   if (opts.service !== undefined) params["service"] = opts.service;
   if (opts.type !== undefined) params["type"] = opts.type;
   if (opts.limit !== undefined) params["limit"] = opts.limit;
+  if (opts.sinceDays !== undefined) params["sinceDays"] = opts.sinceDays;
 
   const summary = await withGatewayIpc((c) => streamRebody(c, params, isJson));
   if (isJson) {
     printRebodySummaryJson(summary);
   } else {
-    printRebodySummaryText(summary);
+    printRebodySummaryText(summary, opts.sinceDays);
   }
 }
 
@@ -440,13 +527,17 @@ Usage:
   nimbus index rebody [--service <name>]
                       [--type <t>]
                       [--limit N]
+                      [--since <days>]      (jira/linear only; others ignore it)
                       [--dry-run]
                       [--yes]               (required for non-dry runs)
                       [--json]
-                       Re-fetch full item bodies for services left with truncated legacy text
-                       (clears the connector's sync watermark and re-syncs from scratch — real
-                       outbound API traffic, potentially the WHOLE account for a full-scan
-                       connector, not just the pending count shown).
+                       Re-fetch indexed depth — item bodies left as truncated legacy text, and
+                       connector metadata (Jira/Linear status and dates) below the version the
+                       service is required to carry. Clears the connector's sync watermark and
+                       re-syncs from scratch — real outbound API traffic, potentially the WHOLE
+                       account for a full-scan connector, not just the pending count shown.
+                       --since widens the cold-start window past the connector's built-in 30
+                       days, for the connectors that honor it (jira, linear).
   nimbus index regraph [--json]
                        Re-run the graph populator over every indexed item (backfills resolves/mentions/correlates_with)
                        Note: 'graphed' counts items that actually wrote graph rows, not items dispatched.
