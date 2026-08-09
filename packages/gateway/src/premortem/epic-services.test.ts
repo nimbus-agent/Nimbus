@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-
+import { upsertGraphEntity } from "../graph/relationship-graph.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { affectedServicesForEpic } from "./epic-services.ts";
 
@@ -10,26 +10,40 @@ function freshDb(): Database {
   return db;
 }
 
-function addItem(db: Database, id: string, externalId: string, metadata: object): void {
+function addItem(
+  db: Database,
+  id: string,
+  externalId: string,
+  metadata: object,
+  service = "jira",
+): void {
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
-     VALUES (?, 'jira', 'issue', ?, 'T', ?, 1, 1, 0)`,
-    [id, externalId, JSON.stringify(metadata)],
+     VALUES (?, ?, 'issue', ?, 'T', ?, 1, 1, 0)`,
+    [id, service, externalId, JSON.stringify(metadata)],
   );
 }
 
 /**
- * Real `graph_entity` columns (graph-v7-sql.ts): id, type, external_id, label,
- * service, metadata — there is NO `kind` column and `external_id` is NOT NULL.
- * A PR entity carries its repo as `metadata.repo`, which is the hop this
- * traversal reads.
+ * Mints a `graph_entity` row through the REAL production write path
+ * (`upsertGraphEntity`), so `graph_entity.id` is the same deterministic
+ * `sha256(type + "\0" + externalId)` hash production writes — never the raw
+ * item id. A hand-rolled `INSERT` that set `graph_entity.id` to the
+ * caller-supplied id previously made `graph_entity.id == item.id` true only
+ * in the fixture, hiding a query that could never match in production.
+ *
+ * `externalId` is the item id for `issue`/`pr` entities (mirrors
+ * `graph-populator.ts`'s `syncIssueGraph`/`syncPrGraph`, both of which pass
+ * `externalId: row.id`).
  */
-function addEntity(db: Database, id: string, type: string, repo?: string): void {
-  db.run(
-    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
-     VALUES (?, ?, ?, ?, 'github', ?)`,
-    [id, type, id, id, repo === undefined ? null : JSON.stringify({ repo })],
-  );
+function addEntity(db: Database, externalId: string, type: string, repo?: string): string {
+  return upsertGraphEntity(db, {
+    type,
+    externalId,
+    label: externalId,
+    service: "github",
+    metadata: repo === undefined ? null : { repo },
+  });
 }
 
 /** Real `graph_relation` columns: from_id, to_id, type, weight, metadata, created_at. */
@@ -44,9 +58,9 @@ test("derives services through children -> resolving PRs -> the PR's repo", () =
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
-  addEntity(db, "jira:PROJ-2", "issue");
-  addEntity(db, "github:pr:7", "pr", "acme/billing-api");
-  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt, issueEnt, "resolves");
 
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
@@ -61,9 +75,9 @@ test("merges and sorts services across several children", () => {
     ["jira:PROJ-4", "github:pr:9", "acme/billing-api"],
   ] as const) {
     addItem(db, child, child.split(":")[1] ?? child, { meta_v: 1, parent_key: "PROJ-1" });
-    addEntity(db, child, "issue");
-    addEntity(db, pr, "pr", repo);
-    addRelation(db, pr, child, "resolves");
+    const issueEnt = addEntity(db, child, "issue");
+    const prEnt = addEntity(db, pr, "pr", repo);
+    addRelation(db, prEnt, issueEnt, "resolves");
   }
   // Sorted and de-duplicated: the caller compares these sets, so a stable
   // order keeps cohort ranking deterministic across runs.
@@ -78,9 +92,9 @@ test("a PR with no repo in its metadata contributes nothing, not a null service"
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
-  addEntity(db, "jira:PROJ-2", "issue");
-  addEntity(db, "github:pr:7", "pr"); // no repo
-  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr"); // no repo
+  addRelation(db, prEnt, issueEnt, "resolves");
 
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
   db.close();
@@ -108,9 +122,30 @@ test("a child of a DIFFERENT epic is not counted", () => {
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:OTHER-9", "OTHER-9", { meta_v: 1, parent_key: "OTHER-1" });
-  addEntity(db, "jira:OTHER-9", "issue");
-  addEntity(db, "github:pr:7", "pr", "acme/search");
-  addRelation(db, "github:pr:7", "jira:OTHER-9", "resolves");
+  const issueEnt = addEntity(db, "jira:OTHER-9", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/search");
+  addRelation(db, prEnt, issueEnt, "resolves");
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  db.close();
+});
+
+test("a same-key child in a DIFFERENT service is not counted (service scoping)", () => {
+  // Two trackers can collide on a bare key like `PROJ-1`. Only the epic's own
+  // `item.service` may contribute — `child.id <> ?` alone does not prevent
+  // this, since it only excludes one exact row, not a whole other tracker.
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" }, "jira");
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" }, "jira");
+  const jiraIssueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const jiraPrEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, jiraPrEnt, jiraIssueEnt, "resolves");
+
+  // A different tracker's item happens to carry the SAME parent_key value.
+  addItem(db, "linear:LIN-9", "LIN-9", { meta_v: 1, parent_key: "PROJ-1" }, "linear");
+  const linearIssueEnt = addEntity(db, "linear:LIN-9", "issue");
+  const linearPrEnt = addEntity(db, "github:pr:99", "pr", "acme/unrelated-service");
+  addRelation(db, linearPrEnt, linearIssueEnt, "resolves");
+
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
