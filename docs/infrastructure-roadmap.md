@@ -311,6 +311,15 @@ moves to P6).
   file, or winget dir-or-open-PR) — and emits a per-edge verdict. A new
   `release-staleness` job runs it `--strict` on the weekly `org-drift-sweep`
   cron. Public reads only, so no App token is minted.
+  **Superseded 2026-08-09:** that job now lives in its own
+  `release-channel-drift.yml` on a **daily** cron and files a `release-health`
+  issue naming the findings (closing it again when they clear). Weekly proved
+  too slow and too quiet: winget served 1.19.1 for six days across seven
+  releases, the break landed one day after a sweep, and the sweep's own
+  `release-staleness` job was already red on an unrelated edge — a red job
+  inside a large sweep is not a signal anyone reads. The publish side got the
+  complementary fix in `publish-package-managers.yml`, which now files the same
+  kind of issue the moment a channel publish fails.
 - **Design decisions that matter:** the phantom edge gates on the *bump
   commit's* age, not the release's, so a normal build window is never red;
   winget counts as caught-up on a merged dir **or** an open PR, so the gate

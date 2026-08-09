@@ -31,10 +31,32 @@ describe("classifyPatProbe", () => {
     expect(classifyPatProbe(s, { status: 500, scopes: null })).toBe("indeterminate");
   });
   test("scopes: required present → ok, absent → insufficient", () => {
-    const s = { kind: "scopes", required: "public_repo" } as const;
+    const s = { kind: "scopes", required: ["public_repo"] } as const;
     expect(classifyPatProbe(s, { status: 200, scopes: "public_repo, gist" })).toBe("ok");
     expect(classifyPatProbe(s, { status: 200, scopes: "gist" })).toBe("insufficient");
     expect(classifyPatProbe(s, { status: 401, scopes: null })).toBe("dead");
+  });
+  // The WINGET_PAT shape: a PARTIAL grant must not read as healthy. A `public_repo`-only
+  // classic PAT probes 200 and looks fine, but cannot sync a fork across an upstream
+  // `.github/workflows/` commit — the failure that froze winget at 1.19.1.
+  test("scopes: ALL required must be present, a partial grant → insufficient", () => {
+    const s = { kind: "scopes", required: ["public_repo", "workflow"] } as const;
+    expect(classifyPatProbe(s, { status: 200, scopes: "public_repo, workflow, gist" })).toBe("ok");
+    expect(classifyPatProbe(s, { status: 200, scopes: "public_repo" })).toBe("insufficient");
+    expect(classifyPatProbe(s, { status: 200, scopes: "workflow" })).toBe("insufficient");
+    expect(classifyPatProbe(s, { status: 200, scopes: "" })).toBe("insufficient");
+  });
+  // `repo` subsumes `public_repo` but is the only name reported, so a literal
+  // membership test would call a WORKING token insufficient. Crying wolf at a healthy
+  // credential is how the real finding gets ignored — the failure mode this file exists
+  // to prevent. The implication is one-way: it never excuses a genuinely missing scope.
+  test("scopes: a broader scope satisfies the narrower one it subsumes", () => {
+    const s = { kind: "scopes", required: ["public_repo", "workflow"] } as const;
+    expect(classifyPatProbe(s, { status: 200, scopes: "repo, workflow" })).toBe("ok");
+    expect(classifyPatProbe(s, { status: 200, scopes: "repo" })).toBe("insufficient");
+    // …and not the reverse: public_repo does NOT stand in for repo.
+    const t = { kind: "scopes", required: ["repo"] } as const;
+    expect(classifyPatProbe(t, { status: 200, scopes: "public_repo" })).toBe("insufficient");
   });
   test("alive: 200 → ok, 401 → dead, other → indeterminate", () => {
     const s = { kind: "alive" } as const;
@@ -836,6 +858,6 @@ describe("describePatOutcome", () => {
   });
 
   test("a healthy PAT keeps the original strategy-kind detail", () => {
-    expect(describePatOutcome("ok", { kind: "scopes", required: "public_repo" })).toBe("scopes");
+    expect(describePatOutcome("ok", { kind: "scopes", required: ["public_repo"] })).toBe("scopes");
   });
 });

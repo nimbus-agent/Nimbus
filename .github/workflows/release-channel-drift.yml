@@ -1,0 +1,103 @@
+name: Release channel drift
+
+# Does every download channel actually serve the version we published?
+#
+# This ran weekly inside `org-drift-sweep.yml` until 2026-08-09. That cadence was
+# how winget sat at 1.19.1 for six days across seven releases: the break began on
+# a Tuesday, one day after the last sweep, and the next scheduled look was six
+# days out. `publish-package-managers.yml` now files an issue the moment a publish
+# FAILS, which is faster than any poll — but it cannot see the other half of the
+# problem, where our publish job goes green and the channel still does not serve
+# the version. A winget PR that Microsoft's validation closes unmerged looks
+# exactly like success from here. That is what this daily read catches.
+#
+# Every read is public (our releases + manifest, the channel repos,
+# microsoft/winget-pkgs), so `github.token` suffices — no App token, no PAT.
+on:
+  schedule:
+    # 07:00 UTC daily — a break is at most ~24h old when it surfaces, not ~7d.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release-channel-drift
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  staleness:
+    name: release-staleness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      # `continue-on-error` is NOT swallowing the failure — the findings are
+      # captured and become the issue body below, and the job still ends red via
+      # the final gate step. A bare red job is precisely the signal that went
+      # unread nine times; the issue is what a human actually sees.
+      - name: Audit release-train staleness
+        id: audit
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          bun scripts/structure-audit/check-release-staleness.ts --strict > findings.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat findings.txt
+
+      - name: File a release-health issue
+        if: ${{ steps.audit.outputs.code != '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: release-channel-drift
+          HEALTH_TITLE: "🚨 A release channel is not serving the published version"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "\`audit:release-staleness\` found a channel behind the published version. Until it clears, users of that channel install an older Nimbus than the release notes claim."
+            echo
+            echo '```'
+            cat findings.txt
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+          } > body.md
+          HEALTH_BODY="$(cat body.md)" bun scripts/release/open-health-issue.ts
+
+      - name: Close the release-health issue, if any
+        if: ${{ steps.audit.outputs.code == '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: release-channel-drift
+          HEALTH_RESOLVE: "1"
+          HEALTH_BODY: "Resolved: every channel now serves the published version. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts
+
+      # The audit's own verdict decides the job's colour, after the issue exists.
+      - name: Fail if the audit found drift
+        if: ${{ steps.audit.outputs.code != '0' }}
+        run: |
+          echo "::error::release-staleness reported drift — see the release-health issue"
+          exit 1

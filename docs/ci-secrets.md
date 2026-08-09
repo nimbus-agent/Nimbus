@@ -68,7 +68,7 @@ at repository scope.
 | `APPLE_DEVELOPER_ID_INSTALLER` | macOS installer signing identity | Cert common-name | `release.yml` |
 | `APPLE_NOTARY_ID` | Apple notarization | Apple ID e-mail | `release.yml` |
 | `APPLE_NOTARY_PASSWORD` | Apple notarization | App-specific password | `release.yml` |
-| `WINGET_PAT` | winget submission PR | **Classic** PAT — `public_repo` scope | `publish-package-managers.yml` |
+| `WINGET_PAT` | winget submission PR | **Classic** PAT — `public_repo` + `workflow` scopes | `publish-package-managers.yml` |
 | `VSCE_PAT` | VS Code Marketplace publish | Azure DevOps PAT — Marketplace (Manage) | `publish-vscode.yml` |
 | `OVSX_PAT` | Open VSX publish | Open VSX token | `publish-vscode.yml` |
 | `SONAR_TOKEN` | SonarCloud quality gate (optional) | SonarCloud token | `ci.yml`, `_test-suite.yml`, `release.yml` |
@@ -265,9 +265,44 @@ carries the whole commit as one base64 request body, which cannot fit a
 GitHub App installed on the `nimbus-agent` org can only mint tokens for repos
 *inside* that org's installation — it has no way to authenticate against an
 external org's repo or fork it. So this one credential cannot be migrated to
-the App and remains a **classic** PAT with the **`public_repo`** scope
-(<https://github.com/settings/tokens/new>). This is a deliberate, documented
-exception, not an oversight.
+the App and remains a **classic** PAT with the **`public_repo`** *and*
+**`workflow`** scopes (<https://github.com/settings/tokens/new>). This is a
+deliberate, documented exception, not an oversight.
+
+**What GitHub actually issues.** Ticking `workflow` in the classic-PAT UI pulls
+in the whole `repo` group, so `public_repo` + `workflow` is **not an obtainable
+combination** — every real `WINGET_PAT` reports `repo, workflow`. That is the
+narrowest shape available for this job, not an over-selection, and
+`check-secret-health.ts` accepts it (`repo` subsumes `public_repo`). It does
+mean the token grants full control of every private repo its owner can reach,
+for a job that only ever touches public ones. The scope can't be narrowed; the
+only lever is **whose account it is** — a dedicated machine account reaches
+nothing private of yours. See the options discussion below.
+
+**Both scopes are load-bearing.** Before submitting, `wingetcreate` syncs its
+fork of `winget-pkgs` with upstream, and GitHub refuses any token-attributed
+write that creates or updates files under `.github/workflows/` unless the token
+carries `workflow`. `winget-pkgs` commits workflow files regularly, so a
+`public_repo`-only PAT probes healthy and publishes fine — right up until the
+first upstream workflow commit, after which **every** release fails with
+`wingetcreate`'s opaque
+
+```text
+The forked repository could not be synced with the upstream commits. Sync your fork manually and try again.
+```
+
+**Check a candidate token before storing it** — `pwsh
+scripts/release/check-winget-pat.ps1` (prompts for the token without echoing it,
+reads `$env:WINGET_PAT` if set). It reports the granted scopes, names the missing
+one, and compares the submission fork against upstream; `-Sync` additionally
+performs the fork sync, which is both the operation that fails without `workflow`
+and the manual remediation after it has failed. Read-only otherwise.
+
+That is precisely what happened on 2026-08-04: upstream added
+`.github/workflows/missing-dependency-assist.lock.yml` hours after the v1.19.1
+publish, and the winget manifest then sat at 1.19.1 through v1.26.0 while
+brew/scoop stayed current. `check-secret-health.ts` now requires **both**
+scopes, so a partial grant reports `insufficient` instead of `ok`.
 
 ---
 
@@ -382,6 +417,11 @@ specifically:
   PAT is at least present (it does not prove the token is unexpired — a
   valid-but-expired token still passes the guard and fails later at the
   API call).
+- The **`Sync the winget-pkgs fork with upstream`** step that follows it does
+  reach the API, so it *is* an authentication check: a revoked/expired PAT and
+  a fork the token may not sync both fail there, each with a message naming
+  the cause. A missing fork is deliberately **not** a failure — the first-ever
+  submission has none yet.
 
 ---
 

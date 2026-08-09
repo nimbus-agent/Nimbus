@@ -266,7 +266,7 @@ export const CREDENTIAL_REGISTRY: readonly CredentialEntry[] = [
     ],
     maxAgeDays: 90,
     hardDeadline: null,
-    note: "Stays a PAT: it must fork microsoft/winget-pkgs, which the App cannot reach.",
+    note: "Stays a PAT: it must fork microsoft/winget-pkgs, which the App cannot reach. Classic PAT, scopes `public_repo` AND `workflow` — `workflow` is not optional: syncing the fork replays upstream commits that touch `.github/workflows/`, which GitHub refuses without it (winget froze at 1.19.1 for five days in 2026-08 on exactly this).",
   },
 
   // --- Nimbus: signing material ---

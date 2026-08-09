@@ -10,10 +10,31 @@ import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.t
 
 export type PatStrategy =
   | { readonly kind: "repo-write"; readonly targetRepos: readonly string[] }
-  | { readonly kind: "scopes"; readonly required: string }
+  | { readonly kind: "scopes"; readonly required: readonly string[] }
   | { readonly kind: "alive" };
 export type PatStatus = "ok" | "dead" | "insufficient" | "indeterminate" | "not-configured";
 export type CertStatus = "ok" | "expiring" | "expired" | "indeterminate" | "not-configured";
+
+/**
+ * Classic-PAT scope implication: `<required>` → the broader scopes that satisfy it.
+ *
+ * `repo` grants everything `public_repo` does (and private repos besides), but
+ * `x-oauth-scopes` reports only the name that was ticked — so a literal membership
+ * test calls a perfectly working `repo`-scoped token `insufficient`.
+ *
+ * This is load-bearing, not a courtesy: ticking `workflow` in the classic-PAT UI
+ * pulls in the whole `repo` group, so `public_repo` + `workflow` is not a
+ * combination GitHub will issue. Every real WINGET_PAT therefore reports
+ * `repo, workflow`, and without this map the check would reject the ONLY obtainable
+ * token — crying wolf at a healthy credential, which is how a real finding gets
+ * ignored, which is the failure this whole file exists to prevent.
+ *
+ * Widening here is safe ONLY where the broader scope genuinely subsumes the
+ * narrower one. It is not a place to record "close enough".
+ */
+const SCOPE_IMPLIED_BY: Record<string, readonly string[]> = {
+  public_repo: ["repo"],
+};
 
 export function classifyPatProbe(
   strategy: PatStrategy,
@@ -23,8 +44,15 @@ export function classifyPatProbe(
   if (probe.status !== 200) return "indeterminate";
   if (strategy.kind === "repo-write") return probe.push === true ? "ok" : "insufficient";
   if (strategy.kind === "scopes") {
+    // EVERY required scope must be present. A PAT holding only some of them is
+    // `insufficient`, not `ok` — a partial grant is exactly how the winget channel
+    // broke silently at v1.20.0 (see the WINGET_PAT entry below).
     const have = (probe.scopes ?? "").split(",").map((s) => s.trim());
-    return have.includes(strategy.required) ? "ok" : "insufficient";
+    return strategy.required.every(
+      (r) => have.includes(r) || (SCOPE_IMPLIED_BY[r] ?? []).some((b) => have.includes(b)),
+    )
+      ? "ok"
+      : "insufficient";
   }
   return "ok";
 }
@@ -628,7 +656,15 @@ if (import.meta.main) {
     {
       env: "WINGET_PAT",
       token: process.env["WINGET_PAT"],
-      strategy: { kind: "scopes", required: "public_repo" } as PatStrategy,
+      // `public_repo` alone is NOT enough. wingetcreate syncs its fork of
+      // microsoft/winget-pkgs before submitting, and GitHub refuses a token-attributed
+      // write that creates or updates files under `.github/workflows/` unless the token
+      // also carries `workflow`. winget-pkgs commits workflow files regularly, so a
+      // `public_repo`-only PAT works until the first such upstream commit and then fails
+      // every release with wingetcreate's opaque "The forked repository could not be
+      // synced with the upstream commits" — which is what froze the winget manifest at
+      // 1.19.1 from 2026-08-04 (v1.20.0) until 2026-08-09.
+      strategy: { kind: "scopes", required: ["public_repo", "workflow"] } as PatStrategy,
     },
     {
       env: "NIMBUS_CHECKS_TOKEN",

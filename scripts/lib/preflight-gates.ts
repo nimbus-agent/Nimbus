@@ -146,7 +146,7 @@ export const CI_ONLY_GATES: readonly string[] = [
   "audit:pin-freshness", // needs network + gh (release + tag reads per pinned action); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:ci-latency", // needs network + gh (Actions API across 9 repos); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:ci-latency:update-baseline", // explicit human action that rewrites the committed baseline; never a gate
-  "audit:release-staleness", // needs network + gh (public reads across release + channel repos); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
+  "audit:release-staleness", // needs network + gh (public reads across release + channel repos); runs DAILY in release-channel-drift.yml with --strict (moved out of the weekly org-drift-sweep 2026-08-09), never the local FAST tier
   "audit:actions-allowlist", // needs network + gh (reads each repo's Actions permissions); runs only in org-drift-sweep.yml with --strict, never the local FAST tier
   "audit:advisories", // needs network (npm registry via `bun audit`); runs beside `bun audit` in security.yml, never the local FAST tier
   "audit:bypass-actors", // needs an OWNER gh token (admin:org) — the CI App token cannot read bypass_actors; an explicit human action, never a gate
