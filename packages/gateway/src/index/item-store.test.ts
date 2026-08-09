@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { upsertIndexedItem } from "./item-store.ts";
+import { EMPTY_NIMBUS_VAULT, syncTestContext } from "../connectors/connector-sync-test-helpers.ts";
+import { upsertIndexedItem, upsertIndexedItemForSync } from "./item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "./local-index.ts";
 import { runIndexedSchemaMigrations } from "./migrations/runner.ts";
 
@@ -66,5 +67,45 @@ test("upsertIndexedItem leaves resolve_key NULL when both urls are null", () => 
     resolve_key: string | null;
   };
   expect(row.resolve_key).toBeNull();
+  db.close();
+});
+
+test("metadata survives every index depth", () => {
+  // `applyDepth` strips only body fields. Metadata passing through at
+  // `metadata_only` is correct by that depth's own name — that depth withholds
+  // item TEXT, not the connector facts a consumer selects on — and it is the
+  // first thing a reviewer will question, so assert it rather than explain it.
+  //
+  // This is a REGRESSION LOCK, not a driver: it passes on the code as written.
+  // If it ever fails, `applyDepth` has started touching metadata and the
+  // ticket-depth contract (status_category, meta_v, the lifecycle timestamps)
+  // is silently gone below `full`.
+  //
+  // `depth` MUST come after the spread: `silentSyncContextExtras()` supplies
+  // `depth: "full"`, so spreading it last would run all three iterations at
+  // `full` and assert nothing.
+  const db = freshIndexedDb();
+  for (const depth of ["metadata_only", "summary", "full"] as const) {
+    upsertIndexedItemForSync(
+      { db, ...syncTestContext(db, EMPTY_NIMBUS_VAULT), depth },
+      {
+        service: "jira",
+        type: "issue",
+        externalId: `PROJ-${depth}`,
+        title: "t",
+        body: "some body text",
+        modifiedAt: 1,
+        syncedAt: 1,
+        metadata: { key: `PROJ-${depth}`, status_category: "done", meta_v: 1 },
+      },
+    );
+    const row = db
+      .query("SELECT metadata FROM item WHERE external_id = ?")
+      .get(`PROJ-${depth}`) as { metadata: string };
+    const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+    expect(meta["status_category"]).toBe("done");
+    expect(meta["meta_v"]).toBe(1);
+    expect(meta["key"]).toBe(`PROJ-${depth}`);
+  }
   db.close();
 });

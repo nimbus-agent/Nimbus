@@ -8,6 +8,50 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-09 — Ticket depth (Jira + Linear)** — enough indexed depth on `jira:issue` and
+  `linear:issue` for a consumer to select epics, tell delivered from in-flight, and measure cycle
+  time. **No migration, no new item type, no new relation type**: `item.metadata` is a JSON column,
+  so the new keys need no schema change. Both mappers write ONE shared, service-agnostic contract —
+  `issue_type`, `status`, `status_category`, `status_category_raw`, `created_at_ms`,
+  `resolved_at_ms`, `due_at_ms`, `parent_key`, `meta_v` — plus `project_id` for Linear only (Linear
+  has no Epic issue type, so a project is its epic-shaped grouping). Key names are identical across
+  the two services on purpose: **no consumer branches on service**. `status_category` is normalized
+  at the mapper by `connectors/ticket-depth.ts` from `statusCategory.key` (Jira) / `state.type`
+  (Linear) — never from a display name, which is renameable per-instance — into
+  `todo | in_progress | done | canceled | unknown`, with the platform's own value preserved
+  alongside as `status_category_raw` so normalizing destroys nothing. An unrecognized or absent
+  value maps to `unknown`, never `todo`: "not started yet" is a claim, and a wrong one silently
+  distorts every cohort built on it. The one genuine asymmetry, pinned by a drift-tripwire test:
+  **Jira never yields `canceled`** — it folds "Won't Do" into `done`, and the distinction lives only
+  in `fields.resolution`, which this sync does not fetch — so a Jira `done` reads as "closed,
+  outcome unknown" and cancel rates are not comparable across the two services. A missing or
+  unparseable timestamp **omits its key entirely**, never `0`/`NaN`/`null`, so a consumer can tell
+  "no due date" from "due at the epoch". `parent_key` is populated on team-managed Jira projects
+  only; classic company-managed projects express epic membership through a per-instance
+  `customfield_100xx` this connector deliberately does not chase, and epics stay identifiable there
+  via `issue_type`. Metadata is unaffected by index depth — `applyDepth` strips body fields only,
+  now locked by a regression test at all three depths, since `metadata_only` withholds item TEXT,
+  not the connector facts a consumer selects on.
+
+  Recovering that depth for already-indexed rows needed two more pieces. **`rebody` now recovers
+  indexed depth, not just bodies**: a row is eligible when its body is incomplete **OR** its
+  service's `metadata.meta_v` is below what `REBODY_REQUIRED_META_VERSION` requires (`jira` and
+  `linear` at 1 today; a later depth PR adds a row, not a mechanism). The two reasons are counted
+  and reported separately (`pending*` vs `pendingMeta*`) rather than summed — `pending` has meant
+  `body_complete = 0` since V48 and still does, and a caller has to be able to tell which kind of
+  depth is missing. **`nimbus index rebody --since <days>`** widens the cold-start window via a new
+  optional `SyncContext.historyFloorMs` (epoch ms), honored by jira and linear and silently ignored
+  by every other connector, which keeps its own `initialSyncDepthDays = 30`. Without it no backfill
+  could ever reach the closed historical tickets this work exists to analyze: clearing a watermark
+  re-walks 30 days and stops. The floor overrides the **cold start only** — an established cursor is
+  more recent by construction and always wins — and the scheduler holds it **in memory only**,
+  consuming it when a run completes: a restart drops a pending backfill back to 30 days (the safe
+  direction), while a rate-limited run that advanced no watermark keeps it for the retry, and the
+  CLI says so on a failed run rather than letting the backfill silently narrow. Malformed `--since`
+  values are rejected client-side like `--limit`, a window reaching before 1970 is rejected by the
+  gateway (it would render as a negative JQL year and return an opaque 400), and a well-formed but
+  implausible one (>3650 days) is honored with a printed typo warning.
+
 - **2026-08-07 — Targeted fetch-on-miss** (`POST /v1/items/fetch`, `fetch` token scope, an explicit
   `I13` write on the 8 KiB control-plane body cap). Built on top of Resolve-by-URL (below): where a
   resolve misses, this route fetches the one named item server-side and indexes it, rather than

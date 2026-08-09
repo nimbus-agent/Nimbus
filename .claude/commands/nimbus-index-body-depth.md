@@ -6,10 +6,13 @@ description: >
   512 cap split, the two-arm `IndexedItemBodyInput` union, and
   `upsertIndexedItemForSync` — the single site every connector's item write must go
   through so `metadata_only` / `summary` / `full` is enforced on EVERY sync, not just at
-  reindex. Also covers `nimbus index rebody`, the `index.rebody` IPC, and how to derive
+  reindex. Also covers `nimbus index rebody` — which recovers indexed DEPTH, both missing
+  bodies and connector metadata below `REBODY_REQUIRED_META_VERSION` (jira/linear ticket
+  depth), plus its `--since` cold-start widening — the `index.rebody` IPC, and how to derive
   which connectors actually index a body (the list has drifted three times — derive it,
   do not trust a hand-written table). Use when adding or changing a connector's body
-  indexing, adding an item type to `PROSE_HEAVY_TYPES`, touching
+  indexing, adding an item type to `PROSE_HEAVY_TYPES`, registering a service's metadata
+  version for recovery, touching
   `packages/gateway/src/index/{item-store,body-caps}.ts`, wiring a new depth-aware code
   path, or asking why an item's body is empty / truncated / not searchable.
 ---
@@ -160,18 +163,43 @@ dated follow-ups), stated as *N full / N partial / N inert*, not as a bare conne
 
 ## `nimbus index rebody`
 
-Backfills bodies for **already-indexed** items by clearing a connector's sync watermark so the
-next sync re-fetches them.
+Backfills indexed **depth** for **already-indexed** items by clearing a connector's sync watermark
+so the next sync re-fetches them. Bodies were the first kind of depth and are no longer the only
+one.
 
-- IPC `index.rebody` / `index.rebodyCancel`, params `{ service?, dryRun? }`; emits
-  `index.rebodyProgress` / `index.rebodyDone` / `index.rebodyError`
+- IPC `index.rebody` / `index.rebodyCancel`, params `{ service?, type?, limit?, sinceDays?,
+  dryRun? }`; emits `index.rebodyProgress` / `index.rebodyDone` / `index.rebodyError`
   (`ipc/index-rebody-rpc.ts`, via `LongRunningJobRegistry`).
 - **CLI-only.** Not renderer-exposed (I7) and `FORBIDDEN_OVER_LAN` (I5) — a strictly stronger case
   than `index.reembed`, which only recomputes local embeddings, whereas rebody drives real
   outbound third-party API traffic on the owner's quota.
-- `--dry-run` reports per-service pending-body counts **and names the services it cannot
+- `--dry-run` reports per-service pending counts **and names the services it cannot
   improve** — a connector below `full` depth, or one that never declared a body, stays pending by
   design and saying so is the point.
+
+**Two eligibility reasons, reported separately.** A row is recoverable when `body_complete = 0`
+**OR** its service's `metadata.meta_v` is below the version that service must carry —
+`REBODY_REQUIRED_META_VERSION` in `ipc/index-rebody-rpc.ts`, today `jira` and `linear` at
+`TICKET_META_VERSION` (`connectors/ticket-depth.ts`). **This map is where a future metadata-depth
+PR registers itself** — bump the version constant and add a row; the mechanism already exists.
+The counts stay separate (`pending*` for bodies, `pendingMeta*` for metadata) and are deliberately
+never summed: `pending` has meant `body_complete = 0` since V48, a silently widened meaning would
+make every historical reading of it wrong, and a caller must be able to tell which kind of depth
+is missing. A row can be behind on both — they are two questions about the same rows, not a
+partition.
+
+**Metadata is depth-invariant.** `applyDepth` strips body fields only; `metadata` passes through
+at `metadata_only` too, which is correct by that depth's own name — it withholds item TEXT, not
+the connector facts a consumer selects on. Locked by "metadata survives every index depth" in
+`index/item-store.test.ts`.
+
+**`--since <days>`** widens the **cold-start** window for one run via the optional
+`SyncContext.historyFloorMs` (epoch ms). Opt-in per connector: jira and linear read it, every
+other connector ignores it and keeps its own `initialSyncDepthDays`. An established cursor always
+wins (it is more recent by construction), so it can never cause a re-walk on a later tick. The
+scheduler holds the floor **in memory only** (`SyncScheduler.setHistoryFloor`) and consumes it on a
+completed run — a restart drops it back to 30 days, and a failed run that advanced no watermark
+keeps it for the retry.
 
 **Deepening is not retroactive.** Lowering depth rewrites rows immediately; raising it reports
 `0` items affected and applies to future syncs only. The gateway has no copy of discarded bodies.
