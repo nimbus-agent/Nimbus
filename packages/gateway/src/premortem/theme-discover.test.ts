@@ -109,6 +109,22 @@ test("exposes the epic key children point at, and no connector service field", (
   db.close();
 });
 
+test("a NULL body comes back as an empty string, never null", () => {
+  // The `body` column is nullable (an epic can be indexed with no body at
+  // all); the discover row mapper must coalesce it rather than leak `null`
+  // into DiscoveredEpic.body, which is typed as `string`.
+  const db = freshDb();
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
+                       metadata, modified_at, synced_at, pinned)
+     VALUES ('jira:NB', 'jira', 'issue', 'NB', 'T', NULL, 1, ?, 10, 1, 0)`,
+    [JSON.stringify({ meta_v: 1, status_category: "done", issue_type: "Epic" })],
+  );
+  const [found] = discoverClosedEpics(db, { watermarkMs: 0, watermarkId: "", batchSize: 50 });
+  expect(found?.body).toBe("");
+  db.close();
+});
+
 test("a missing resolved_at_ms is absent, never 0", () => {
   // Same rule the ticket-depth contract set: 0 would read as 1970, and a
   // consumer must be able to tell "unresolved" from "resolved at the epoch".

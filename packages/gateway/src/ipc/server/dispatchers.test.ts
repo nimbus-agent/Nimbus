@@ -59,6 +59,7 @@ import {
   tryDispatchPhase4Rpc,
   tryDispatchPolicyRpc,
   tryDispatchPreflightRpc,
+  tryDispatchPremortemRpc,
   tryDispatchProfileRpc,
   tryDispatchReindexRpc,
   tryDispatchSessionRpc,
@@ -1008,6 +1009,75 @@ describe("tryDispatchChatopsRpc", () => {
     const { ctx } = makeCtx({ chatopsRpcCtx: makeChatopsRpcCtx() });
     expect(await tryDispatchChatopsRpc(ctx, "chatops.__nope__", {})).toBe(phase4RpcSkipped);
   });
+});
+
+describe("tryDispatchPremortemRpc", () => {
+  function fakePremortemRefresher(
+    over: Partial<NonNullable<ServerCtx["options"]["premortemRefresher"]>> = {},
+  ): NonNullable<ServerCtx["options"]["premortemRefresher"]> {
+    return {
+      trigger: () => undefined,
+      stop: () => undefined,
+      runNow: () =>
+        Promise.resolve({
+          scanned: 0,
+          themesWritten: 0,
+          demoted: 0,
+          prunedEvidence: 0,
+          llmCalls: 0,
+          noModel: false,
+        }),
+      ...over,
+    };
+  }
+
+  test("skips a non-premortem method", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchPremortemRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+
+  test(
+    "premortem.refresh throws ERR_PREMORTEM_DISABLED (remapped to RpcMethodError) when the " +
+      "refresher is unset — unlike decisions/glossary/ownership this dispatcher does NOT skip",
+    async () => {
+      const { ctx } = makeCtx();
+      let caught: unknown;
+      try {
+        await tryDispatchPremortemRpc(ctx, "premortem.refresh", {});
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(RpcMethodError);
+      expect((caught as RpcMethodError).message).toMatch(/ERR_PREMORTEM_DISABLED/);
+    },
+  );
+
+  test("premortem.refresh with a wired refresher returns the hit value", async () => {
+    const { ctx } = makeCtx({ premortemRefresher: fakePremortemRefresher() });
+    const out = await tryDispatchPremortemRpc(ctx, "premortem.refresh", {});
+    expect(out).toMatchObject({ scanned: 0, themesWritten: 0 });
+  });
+
+  test("a non-PremortemRpcError from the refresher propagates unchanged (not wrapped)", async () => {
+    const { ctx } = makeCtx({
+      premortemRefresher: fakePremortemRefresher({
+        runNow: () => Promise.reject(new Error("raw premortem error")),
+      }),
+    });
+    await expect(tryDispatchPremortemRpc(ctx, "premortem.refresh", {})).rejects.toThrow(
+      "raw premortem error",
+    );
+  });
+
+  test(
+    "an unrecognised premortem.* method misses inside dispatchPremortemRpc and falls through " +
+      "to phase4RpcSkipped (covers the refresher-wired branch without hitting)",
+    async () => {
+      const { ctx } = makeCtx({ premortemRefresher: fakePremortemRefresher() });
+      const out = await tryDispatchPremortemRpc(ctx, "premortem.nope", {});
+      expect(out).toBe(phase4RpcSkipped);
+    },
+  );
 });
 
 describe("extractKbPageRef", () => {

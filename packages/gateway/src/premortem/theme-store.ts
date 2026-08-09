@@ -97,7 +97,10 @@ export function themesForServices(db: Database, services: readonly string[]): Pr
     id: r.id,
     service: r.service,
     label: r.label,
-    status: r.status === "demoted" ? "demoted" : "extracted",
+    // The query above filters `WHERE t.status = 'extracted'`, so `r.status` is
+    // never `"demoted"` here — assign the literal rather than re-deriving a
+    // value the SQL already guaranteed.
+    status: "extracted",
     confidence: r.confidence,
     evidenceCount: r.n,
     lastSeenAt: r.last_seen_at,

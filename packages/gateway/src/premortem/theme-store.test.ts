@@ -161,3 +161,13 @@ test("pass state round-trips the composite watermark", () => {
   expect(readPassState(db)).toEqual({ watermarkMs: 42, watermarkId: "jira:PROJ-9" });
   db.close();
 });
+
+test('readPassState falls back to (0, "") rather than throwing when the singleton row is gone', () => {
+  // V53 seeds `premortem_pass_state` with `INSERT OR IGNORE`, so the row is
+  // never absent in normal operation — but a corrupted or manually-truncated
+  // table must not crash the pass; it must resume from the start instead.
+  const db = freshDb();
+  db.run(`DELETE FROM premortem_pass_state`);
+  expect(readPassState(db)).toEqual({ watermarkMs: 0, watermarkId: "" });
+  db.close();
+});
