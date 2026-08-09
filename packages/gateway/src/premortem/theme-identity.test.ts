@@ -54,3 +54,10 @@ test("delimiter-collision: naive single-separator join would merge distinct them
   // into the PRIMARY KEY. Length-prefixing eliminates the ambiguity.
   expect(themeId("x y", "z")).not.toBe(themeId("x", "y z"));
 });
+
+test("a digit-only service and label cannot collide across the boundary", () => {
+  // Length prefixes alone are NOT self-terminating: with an undelimited
+  // decimal prefix, ("1","1".repeat(11)) and ("1".repeat(11),"1") both encode
+  // to fifteen '1' characters. The ":" terminator closes that class.
+  expect(themeId("1", "1".repeat(11))).not.toBe(themeId("1".repeat(11), "1"));
+});

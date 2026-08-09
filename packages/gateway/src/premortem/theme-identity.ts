@@ -21,13 +21,20 @@ export function normalizeThemeLabel(raw: string): string {
  * must not re-hash this theme and orphan its accumulated evidence rows.
  * Service-scoped, because "rate limits" on `billing-api` and on `search` are
  * two different findings.
+ *
+ * Uses length-prefixed encoding with ":" terminators: the boundary between a
+ * length prefix (decimal digits) and the data itself is ambiguous if left
+ * undelimited, since digit-starting data can create collisions. For example,
+ * themeId("1", "1".repeat(11)) and themeId("1".repeat(11), "1") would both
+ * encode to fifteen '1' characters without the terminator. The ":" separator
+ * (which cannot appear in a decimal length) makes the boundary unambiguous.
  */
 export function themeId(service: string, rawLabel: string): string {
   const normalized = normalizeThemeLabel(rawLabel);
   const h = createHash("sha256");
-  h.update(String(service.length));
+  h.update(`${String(service.length)}:`);
   h.update(service);
-  h.update(String(normalized.length));
+  h.update(`${String(normalized.length)}:`);
   h.update(normalized);
   return h.digest("hex").slice(0, 32);
 }
