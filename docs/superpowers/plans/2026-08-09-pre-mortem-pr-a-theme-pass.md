@@ -15,6 +15,15 @@ debounced post-sync refresher wired in `platform/assemble.ts`. The pass writes
 Design spec: `docs/superpowers/specs/2026-08-09-pre-mortem-design.md`
 (+ its `-review` / `-review-response`).
 
+> **FIXTURE RULE FOR EVERY TASK IN THIS PLAN.** Seed graph entities through the REAL
+> `upsertGraphEntity` helper from `../graph/relationship-graph.ts` — never a hand-rolled
+> `INSERT INTO graph_entity`. `graph_entity.id` is `deterministicGraphEntityId(type, externalId)`,
+> a sha256, and is NOT the item id. A hand-rolled insert that sets `id` to the item id makes
+> `graph_entity.id == item.id` true in the fixture and nowhere else, which already hid a query that
+> returned nothing in production behind six green tests. `epic-services.test.ts` does this
+> correctly — copy it. Any raw `INSERT OR IGNORE INTO graph_entity` still shown in the code blocks
+> below is a KNOWN DEFECT in this plan's text; use the helper instead.
+
 ## Global Constraints
 
 - **No `any`** — external/model output is `unknown`, narrowed explicitly.
@@ -2047,6 +2056,9 @@ export type PremortemPassResult = {
   scanned: number;
   themesWritten: number;
   demoted: number;
+  /** Dead evidence rows removed by the reconcile sweep. Omitting this field
+   *  contradicts the return statement below and fails tsc strict. */
+  prunedEvidence: number;
   llmCalls: number;
 };
 
