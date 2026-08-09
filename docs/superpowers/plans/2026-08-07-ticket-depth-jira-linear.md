@@ -58,7 +58,7 @@ rather than twice.
   - `msFromIso(raw: string | undefined): number | undefined`
   - `const TICKET_META_VERSION = 1`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/gateway/src/connectors/ticket-depth.test.ts`:
 
@@ -121,12 +121,12 @@ test("the metadata version is 1", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/connectors/ticket-depth.test.ts`
 Expected: FAIL — `Cannot find module './ticket-depth.ts'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `packages/gateway/src/connectors/ticket-depth.ts`:
 
@@ -197,12 +197,12 @@ export function msFromIso(raw: string | undefined): number | undefined {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/connectors/ticket-depth.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/connectors/ticket-depth.ts packages/gateway/src/connectors/ticket-depth.test.ts
@@ -227,7 +227,7 @@ git commit -m "feat(gateway): shared ticket-depth normalization helpers"
   `created_at_ms`, `resolved_at_ms`, `due_at_ms`, `parent_key`. Task 3 mirrors these key names
   exactly for Linear.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/connectors/jira-sync.test.ts`. Note the existing `makeIssue` helper
 spreads a `fields` object — pass depth fields through it the same way the file's other tests pass
@@ -352,13 +352,13 @@ async function runJiraSyncWithIssues(
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/connectors/jira-sync.test.ts`
 Expected: FAIL — `expect(meta["issue_type"]).toBe("Epic")` receives `undefined`, and the requested
 `fields` array lacks `created` / `resolutiondate` / `parent` / `duedate`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `packages/gateway/src/connectors/jira-sync.ts`, add the import:
 
@@ -450,12 +450,12 @@ Then in `jiraIndexOneIssue`, replace the `metadata:` line at `:273`:
     metadata: { jiraId: id ?? key, key, ...jiraDepthMetadata(fields) },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/connectors/jira-sync.test.ts`
 Expected: PASS — all pre-existing tests in the file still pass too.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/connectors/jira-sync.ts packages/gateway/src/connectors/jira-sync.test.ts
@@ -478,7 +478,7 @@ git commit -m "feat(gateway): index Jira issue type, status category, and lifecy
 - Produces: `linear:issue` rows with the identical key names from Task 2, plus `project_id`
   (Linear-only; Jira never writes it).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/connectors/linear-sync.test.ts`, following that file's existing
 fetch-stub pattern for the GraphQL endpoint:
@@ -589,12 +589,12 @@ async function runLinearSyncWithNodes(
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/connectors/linear-sync.test.ts`
 Expected: FAIL — `meta["status_category"]` is `undefined`, and the query lacks `state`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Import in `packages/gateway/src/connectors/linear-sync.ts`:
 
@@ -685,12 +685,12 @@ Replace the `metadata:` line at `:180`:
 Confirm `asRecord` / `stringField` are already imported in this file; add them from
 `./atlassian-api-sync-helpers.ts` if not.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/connectors/linear-sync.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/connectors/linear-sync.ts packages/gateway/src/connectors/linear-sync.test.ts
@@ -720,7 +720,7 @@ analyze.
 - Produces: `SyncContext.historyFloorMs?: number` — epoch ms. When present, Jira and Linear
   cold-start from it; when absent both use their own `initialSyncDepthDays = 30`. Task 5 sets it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/connectors/jira-sync.test.ts`:
 
@@ -791,13 +791,13 @@ test("without historyFloorMs linear still cold-starts at 30 days", async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/connectors/jira-sync.test.ts packages/gateway/src/connectors/linear-sync.test.ts`
 Expected: FAIL — the JQL still contains `-30d`, and `variables.gt` is the 30-day floor. TypeScript
 also errors on `historyFloorMs` not existing on `SyncContext`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `packages/gateway/src/sync/types.ts`, add to `SyncContext` (after `depth`):
 
@@ -872,12 +872,12 @@ In `packages/gateway/src/connectors/linear-sync.ts`, replace the floor computati
       const sinceGt = prev?.since ?? new Date(coldFloorMs).toISOString();
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/connectors/jira-sync.test.ts packages/gateway/src/connectors/linear-sync.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/sync/types.ts packages/gateway/src/connectors/jira-sync.ts packages/gateway/src/connectors/linear-sync.ts packages/gateway/src/connectors/jira-sync.test.ts packages/gateway/src/connectors/linear-sync.test.ts
@@ -900,7 +900,7 @@ git commit -m "feat(gateway): optional SyncContext.historyFloorMs cold-start ove
 - Produces: `SyncScheduler.setHistoryFloor(serviceId: string, floorMs: number): void` — Task 6 calls
   it immediately before `forceSync(serviceId)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/sync/scheduler.test.ts`, matching that file's existing scheduler
 construction and fake-syncable pattern:
@@ -967,12 +967,12 @@ test("a rate-limited run KEEPS the floor for the retry", async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/sync/scheduler.test.ts`
 Expected: FAIL — `scheduler.setHistoryFloor is not a function`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `packages/gateway/src/sync/scheduler.ts`, add the field beside the other private maps:
 
@@ -1017,12 +1017,12 @@ And at the success path (`:679`), consume it only once the walk actually complet
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/sync/scheduler.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/sync/scheduler.ts packages/gateway/src/sync/scheduler.test.ts
@@ -1047,7 +1047,7 @@ git commit -m "feat(gateway): scheduler carries a one-shot history floor per ser
   `REBODY_REQUIRED_META_VERSION: ReadonlyMap<string, number>`; a per-reason pending breakdown
   (`pending_body` / `pending_meta`) in the progress payload, consumed by Task 7.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/ipc/index-rebody-rpc.test.ts`:
 
@@ -1099,12 +1099,12 @@ test("sinceDays is validated, not silently dropped", () => {
 Reuse the file's existing `createMemoryIndexDb` / item-insert helper; if it inserts items through a
 different helper name, use that one rather than adding a second.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/gateway/src/ipc/index-rebody-rpc.test.ts`
 Expected: FAIL — the stale-metadata service is not selected, and `sinceDays` is dropped.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `packages/gateway/src/ipc/index-rebody-rpc.ts`:
 
@@ -1222,12 +1222,12 @@ Extend `computePendingByService` (and the progress payload it feeds) to report t
 separately as `pending_body` and `pending_meta` — a single count whose meaning silently widened
 would be worse than no count.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/gateway/src/ipc/index-rebody-rpc.test.ts`
 Expected: PASS — including the pre-existing eligibility tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/ipc/index-rebody-rpc.ts packages/gateway/src/ipc/index-rebody-rpc.test.ts
@@ -1250,7 +1250,7 @@ git commit -m "feat(gateway): rebody recovers indexed depth, not just bodies"
 - Consumes: `RebodyParams.sinceDays` (Task 6).
 - Produces: `nimbus index rebody --since <days>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/cli/src/commands/index-cmd.test.ts`:
 
@@ -1272,12 +1272,12 @@ test("omitting --since sends no sinceDays", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/cli/src/commands/index-cmd.test.ts`
 Expected: FAIL — `sinceDays` is `undefined`; the malformed cases do not throw.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `packages/cli/src/commands/index-cmd.ts`, add `sinceDays?: number` to `RebodyOptions`, then
 mirror `parseRebodyLimit`:
@@ -1344,12 +1344,12 @@ that no cursor progress was made:
 
 Update the `rebody` usage line in `packages/cli/src/commands/help.ts` to include `[--since <days>]`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/cli/src/commands/index-cmd.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/cli/src/commands/index-cmd.ts packages/cli/src/commands/index-cmd.test.ts packages/cli/src/commands/help.ts
@@ -1374,7 +1374,7 @@ change.
 
 - Consumes: everything above. Produces nothing new.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/gateway/src/index/item-store.test.ts`:
 
@@ -1409,7 +1409,7 @@ test("metadata survives every index depth", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails or passes for the right reason**
+- [x] **Step 2: Run test to verify it fails or passes for the right reason**
 
 Run: `bun test packages/gateway/src/index/item-store.test.ts`
 Expected: PASS immediately — `applyDepth` already behaves this way. This test is a **regression
@@ -1417,7 +1417,7 @@ lock**, not a driver: if it fails, `applyDepth` has started touching metadata an
 is broken. Confirm it is genuinely exercising the path by temporarily making `applyDepth` drop
 `metadata` and watching it fail, then revert that edit.
 
-- [ ] **Step 3: Update the docs**
+- [x] **Step 3: Update the docs**
 
 - `docs/cli-reference.md`: add `--since <days>` to the `index rebody` entry; state that it widens the
   cold-start window for connectors that honor it (jira, linear) and that other connectors ignore it.
@@ -1428,7 +1428,7 @@ is broken. Confirm it is genuinely exercising the path by temporarily making `ap
   well as bodies, and point at `REBODY_REQUIRED_META_VERSION` as the place a future depth PR
   registers itself.
 
-- [ ] **Step 4: Run the branch gates**
+- [x] **Step 4: Run the branch gates**
 
 ```bash
 bun run preflight:fast
@@ -1440,7 +1440,7 @@ Expected: all green. If `preflight:fast` fails inside the worktree for a reason 
 diff (a known worktree-path limitation for some gates), re-run the failing gate from a main-repo
 branch before concluding.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/index/item-store.test.ts docs/cli-reference.md docs/CHANGELOG.md .claude/commands/nimbus-index-body-depth.md
