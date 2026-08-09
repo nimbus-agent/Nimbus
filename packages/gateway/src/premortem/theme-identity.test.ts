@@ -43,3 +43,14 @@ test("confidence rises with corroboration and never reaches 1.0", () => {
 test("zero evidence is zero confidence, not a floor", () => {
   expect(themeConfidence(0)).toBe(0);
 });
+
+test("different labels under the same service produce different ids", () => {
+  expect(themeId("billing-api", "rate limits")).not.toBe(themeId("billing-api", "timeout"));
+});
+
+test("delimiter-collision: naive single-separator join would merge distinct themes", () => {
+  // A bare space delimiter creates a collision: themeId("x y", "z") hashes the same
+  // as themeId("x", "y z"). This would silently merge two distinct themes' evidence
+  // into the PRIMARY KEY. Length-prefixing eliminates the ambiguity.
+  expect(themeId("x y", "z")).not.toBe(themeId("x", "y z"));
+});

@@ -23,10 +23,12 @@ export function normalizeThemeLabel(raw: string): string {
  * two different findings.
  */
 export function themeId(service: string, rawLabel: string): string {
+  const normalized = normalizeThemeLabel(rawLabel);
   const h = createHash("sha256");
+  h.update(String(service.length));
   h.update(service);
-  h.update(" ");
-  h.update(normalizeThemeLabel(rawLabel));
+  h.update(String(normalized.length));
+  h.update(normalized);
   return h.digest("hex").slice(0, 32);
 }
 
