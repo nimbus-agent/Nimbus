@@ -840,6 +840,18 @@ git commit -m "feat(gateway): pre-mortem theme store with evidence-derived confi
 
 ### Task 4: `[premortem]` config section
 
+> **CORRECTION (found in review, fix round 1).** The code below originally specified
+> `parseNimbusPremortemToml(raw: unknown)` treating the input as an already-parsed object. That is
+> WRONG for this file. `loadTomlSection` is typed `parse: (raw: string) => T` and passes
+> `readFileSync(path, "utf8")` — the raw TOML **text**. An object-shaped parser therefore returns
+> defaults for every real config file, silently discarding the whole section, and it TYPECHECKS
+> because a function taking `unknown` is assignable where `(raw: string)` is expected. Follow the
+> neighbouring `parseNimbusOwnershipToml`: take `raw: string`, drive it with
+> `forEachSectionEntry(raw, "[premortem]", ...)` plus a private `applyNimbusPremortemKey`, and use
+> the file's own `parseBool` / `parseIntWithMin(valRaw, 1)` value helpers. Test through
+> `loadNimbusPremortemFromConfigDir` with a real temp-dir `nimbus.toml`, not by calling the parser
+> with an object literal — that shortcut is exactly what hid this.
+
 **Files:**
 
 - Modify: `packages/gateway/src/config/nimbus-toml.ts` (append a section after the `[ownership]`
@@ -993,7 +1005,19 @@ git commit -m "feat(gateway): [premortem] config section"
 
 ---
 
-### Task 5: Affected-service resolution for an epic
+### Task 5: Affected-service resolution
+
+> **CORRECTION (found in review, fix round 1).** Two further errors were in the original text here.
+> (a) `graph_relation.to_id` is a `graph_entity.id`, which is
+> `deterministicGraphEntityId(type, externalId)` = a sha256 — **never** the `item.id`. Joining
+> `res.to_id = child.id` therefore matched nothing in production. The child side must go through
+> `graph_entity` on `type` + `external_id`, the precedent `agents/impact.ts` already follows.
+> (b) The child lookup needs scoping by the epic's own `service`, or two trackers colliding on a
+> bare key like `PROJ-1` merge an unrelated epic's services.
+> **And the tests hid (a):** the fixture inserted `graph_entity.id` = the raw item id, making the
+> two coincide only in the fixture. Mint fixture entities with the real `upsertGraphEntity`, never a
+> hand-rolled INSERT — this same fixture-shape trap has now concealed three separate defects in
+> this plan. for an epic
 
 **The axis everything else depends on.** A theme's `service` is the **affected** service the work
 touched (`billing-api`), derived through the graph — **not** the connector that owns the row
@@ -1201,14 +1225,17 @@ export function affectedServicesForEpic(
     .query(
       `SELECT DISTINCT json_extract(pr.metadata, '$.repo') AS service
          FROM item child
-         JOIN graph_relation res ON res.to_id = child.id AND res.type = 'resolves'
-         JOIN graph_entity   pr  ON pr.id     = res.from_id
+         JOIN graph_entity   child_ent ON child_ent.type = 'issue'
+                                       AND child_ent.external_id = child.id
+         JOIN graph_relation res       ON res.to_id = child_ent.id AND res.type = 'resolves'
+         JOIN graph_entity   pr        ON pr.id     = res.from_id
         WHERE json_extract(child.metadata, '$.parent_key') = ?
           AND child.id <> ?
+          AND child.service = (SELECT service FROM item WHERE id = ?)
           AND json_extract(pr.metadata, '$.repo') IS NOT NULL
         ORDER BY service ASC`,
     )
-    .all(epicKey, epicItemId) as Array<{ service: string }>;
+    .all(epicKey, epicItemId, epicItemId) as Array<{ service: string }>;
   return rows.map((r) => r.service);
 }
 ```
