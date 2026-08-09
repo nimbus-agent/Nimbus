@@ -43,8 +43,8 @@ Design spec: `docs/superpowers/specs/2026-08-09-pre-mortem-design.md`
 
 - Create: `packages/gateway/src/index/premortem-v53-sql.ts`
 - Modify: `packages/gateway/src/index/local-index.ts` (`CURRENT_SCHEMA_VERSION` 52 → 53)
-- Modify: `packages/gateway/src/index/migrations/runner.ts` (import, one `simpleStep`, one
-  `BACKFILL_LABELS` entry)
+- Modify: `packages/gateway/src/index/migrations/runner.ts` (import + one `simpleStep`; **no**
+  `BACKFILL_LABELS` change — see the step below)
 - Test: `packages/gateway/src/index/migrations/runner.test.ts` (append)
 
 **Interfaces:**
@@ -99,8 +99,8 @@ test("deleting a theme cascades its evidence", () => {
   db.run("PRAGMA foreign_keys = ON");
   runIndexedSchemaMigrations(db, 53);
   db.run(
-    `INSERT INTO premortem_theme (id, service, label, status, confidence, updated_at)
-     VALUES ('t1', 'billing-api', 'rate limits', 'extracted', 0.5, 1)`,
+    `INSERT INTO premortem_theme (id, service, label, normalized, status, confidence, updated_at)
+     VALUES ('t1', 'acme/billing-api', 'rate limits', 'rate limits', 'extracted', 0.5, 1)`,
   );
   db.run(
     `INSERT INTO premortem_theme_evidence (theme_id, item_id, evidence_key, label, occurred_at)
@@ -218,11 +218,11 @@ entry:
   simpleStep(52, 53, "premortem theme extraction tables", PREMORTEM_V53_SQL),
 ```
 
-Append one entry to the end of `BACKFILL_LABELS`:
-
-```ts
-  "premortem theme extraction tables (backfilled)",
-```
+**Do NOT touch `BACKFILL_LABELS`.** An earlier draft of this plan said to append a label here; that
+was wrong. `runner.ts` carries an explicit comment above that array — *"BACKFILL_LABELS
+intentionally stops at v37 ... Do NOT append a label per new migration or that error branch becomes
+unreachable"* — and `runner.test.ts` pins the missing-label throw to v38. Appending would turn a
+passing pinned test red and make the error branch unreachable. The array stays at 37 entries.
 
 - [ ] **Step 4: Run test to verify it passes**
 
