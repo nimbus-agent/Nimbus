@@ -15,6 +15,7 @@ import {
   IndexRebodyRpcError,
   parseRebodyParams,
   REBODY_IMPROVABLE_SERVICES,
+  REBODY_REQUIRED_META_VERSION,
   resolveTargetServices,
 } from "./index-rebody-rpc.ts";
 
@@ -31,6 +32,24 @@ function freshCtx(overrides: Partial<IndexRebodyRpcContext> = {}) {
     ...overrides,
   };
   return { db, ctx, events };
+}
+
+/**
+ * A scheduler stub carrying BOTH members the rebody context picks. Written as
+ * one helper rather than an inline literal per test so that widening the
+ * picked surface again lands in a single place — and so no test can quietly
+ * omit `setHistoryFloor` and stop covering the `--since` wiring.
+ */
+function schedulerStub(
+  forceSync: (serviceId: string) => Promise<void>,
+  onFloor?: (serviceId: string, floorMs: number) => void,
+): NonNullable<IndexRebodyRpcContext["syncScheduler"]> {
+  return {
+    forceSync,
+    setHistoryFloor: (serviceId: string, floorMs: number) => {
+      onFloor?.(serviceId, floorMs);
+    },
+  };
 }
 
 function seedIncomplete(db: Database, service: string, externalId: string, type = "message") {
@@ -246,11 +265,9 @@ describe("dispatchIndexRebodyRpc", () => {
   test("real run with a live syncScheduler that succeeds", async () => {
     const calls: string[] = [];
     const { ctx, db, events } = freshCtx({
-      syncScheduler: {
-        forceSync: async (serviceId: string) => {
-          calls.push(serviceId);
-        },
-      },
+      syncScheduler: schedulerStub(async (serviceId: string) => {
+        calls.push(serviceId);
+      }),
     });
     seedIncomplete(db, "slack", "1");
 
@@ -268,13 +285,64 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(payload?.["pendingAfter"]).toEqual({ slack: 1 });
   });
 
+  test("sinceDays arms the connector's cold-start floor BEFORE the forced run", async () => {
+    // Ordering is the whole point: the scheduler reads its stored floor while
+    // building the run context inside `forceSync`. Setting it afterwards would
+    // typecheck, pass a naive "was it called" assertion, and still let the run
+    // it was meant to widen go out at the connector's own 30-day floor.
+    const order: string[] = [];
+    let floorArgs: { serviceId: string; floorMs: number } | undefined;
+    const { ctx, db } = freshCtx({
+      syncScheduler: schedulerStub(
+        async (serviceId: string) => {
+          order.push(`forceSync:${serviceId}`);
+        },
+        (serviceId, floorMs) => {
+          order.push(`setHistoryFloor:${serviceId}`);
+          floorArgs = { serviceId, floorMs };
+        },
+      ),
+    });
+    seedIncomplete(db, "jira", "1", "issue");
+
+    const before = Date.now();
+    await dispatchIndexRebodyRpc("index.rebody", { service: "jira", sinceDays: 365 }, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(order).toEqual(["setHistoryFloor:jira", "forceSync:jira"]);
+    expect(floorArgs?.serviceId).toBe("jira");
+    // 365 days back from "now", allowing for the clock moving during the run.
+    const expected = before - 365 * 86_400_000;
+    expect(floorArgs?.floorMs).toBeGreaterThanOrEqual(expected);
+    expect(floorArgs?.floorMs).toBeLessThanOrEqual(expected + 60_000);
+  });
+
+  test("omitting sinceDays arms no floor at all", async () => {
+    // The floor is an explicit, owner-initiated widening. An unconditional
+    // call here would re-walk history on a plain `nimbus index rebody`, which
+    // is real API spend nobody asked for.
+    let floorCalls = 0;
+    const { ctx, db } = freshCtx({
+      syncScheduler: schedulerStub(
+        async () => undefined,
+        () => {
+          floorCalls += 1;
+        },
+      ),
+    });
+    seedIncomplete(db, "jira", "1", "issue");
+
+    await dispatchIndexRebodyRpc("index.rebody", { service: "jira" }, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(floorCalls).toBe(0);
+  });
+
   test("real run with a live syncScheduler that throws counts it as failed, not fatal", async () => {
     const { ctx, db, events } = freshCtx({
-      syncScheduler: {
-        forceSync: async () => {
-          throw new Error("rate limited");
-        },
-      },
+      syncScheduler: schedulerStub(async () => {
+        throw new Error("rate limited");
+      }),
     });
     seedIncomplete(db, "jira", "1");
 
@@ -299,12 +367,10 @@ describe("dispatchIndexRebodyRpc", () => {
   test("cancel aborts a real run before it processes further targets — observably fewer than all 3 targets get forceSync'd", async () => {
     const forceSyncCalls: string[] = [];
     const { ctx, db, events } = freshCtx({
-      syncScheduler: {
-        forceSync: async (serviceId: string) => {
-          forceSyncCalls.push(serviceId);
-          await new Promise((r) => setTimeout(r, 30));
-        },
-      },
+      syncScheduler: schedulerStub(async (serviceId: string) => {
+        forceSyncCalls.push(serviceId);
+        await new Promise((r) => setTimeout(r, 30));
+      }),
     });
     seedIncomplete(db, "a", "1");
     seedIncomplete(db, "b", "1");
@@ -526,13 +592,90 @@ describe("buildTargetServicesSql", () => {
   test("no type filter", () => {
     const { sql, params } = buildTargetServicesSql({});
     expect(sql).not.toContain("AND type");
-    expect(params).toEqual([]);
+    // One (service, version) pair per registered service, and nothing else.
+    expect(params).toEqual([...REBODY_REQUIRED_META_VERSION].flat());
   });
 
   test("with type filter", () => {
     const { sql, params } = buildTargetServicesSql({ type: "issue" });
     expect(sql).toContain("AND type = ?");
-    expect(params).toEqual(["issue"]);
+    // The type filter is appended AFTER the metadata pairs — order is load-bearing,
+    // since these are positional `?` bindings.
+    expect(params.at(-1)).toBe("issue");
+    expect(params).toHaveLength([...REBODY_REQUIRED_META_VERSION].flat().length + 1);
+  });
+});
+
+describe("rebody eligibility by metadata version", () => {
+  function freshDb(): Database {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    return db;
+  }
+
+  /** A row with a genuinely complete body, plus whatever metadata is passed. */
+  function seedCompleteWithMeta(
+    db: Database,
+    service: string,
+    externalId: string,
+    type: string,
+    metadata: Record<string, unknown>,
+  ) {
+    upsertIndexedItem(db, {
+      service,
+      type,
+      externalId,
+      title: "T",
+      body: "short full body",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata,
+    });
+  }
+
+  test("a service with complete bodies but stale metadata is eligible", () => {
+    const db = freshDb();
+    seedCompleteWithMeta(db, "jira", "PROJ-1", "issue", { jiraId: "1", key: "PROJ-1" });
+    expect(resolveTargetServices({ service: "jira" }, db)).toEqual(["jira"]);
+  });
+
+  test("a service current on both counts is still refused", () => {
+    const db = freshDb();
+    seedCompleteWithMeta(db, "jira", "PROJ-1", "issue", {
+      jiraId: "1",
+      key: "PROJ-1",
+      meta_v: 1,
+    });
+    expect(() => resolveTargetServices({ service: "jira" }, db)).toThrow(/nothing to recover/);
+  });
+
+  test("a service with no metadata requirement keeps body-only eligibility", () => {
+    const db = freshDb();
+    seedCompleteWithMeta(db, "slack", "C1", "message", {});
+    expect(() => resolveTargetServices({ service: "slack" }, db)).toThrow(/nothing to recover/);
+  });
+
+  test("an incomplete body is still eligible regardless of metadata version", () => {
+    const db = freshDb();
+    seedIncomplete(db, "slack", "C1");
+    expect(resolveTargetServices({ service: "slack" }, db)).toEqual(["slack"]);
+  });
+
+  test("sinceDays is validated, not silently dropped", () => {
+    expect(parseRebodyParams({ sinceDays: 365 }).sinceDays).toBe(365);
+    expect(() => parseRebodyParams({ sinceDays: 0 })).toThrow(/positive/);
+    expect(() => parseRebodyParams({ sinceDays: -5 })).toThrow(/positive/);
+    expect(() => parseRebodyParams({ sinceDays: "365" })).toThrow(/positive/);
+  });
+
+  test("a sinceDays window reaching before 1970 is refused with a legible message", () => {
+    // `jqlFloorFromMs` would emit a negative year and Jira would answer with an
+    // opaque 400; reject it here instead.
+    expect(() => parseRebodyParams({ sinceDays: 40_000 })).toThrow(/before 1970/);
+  });
+
+  test("omitting sinceDays leaves it unset", () => {
+    expect(parseRebodyParams({}).sinceDays).toBeUndefined();
   });
 });
 

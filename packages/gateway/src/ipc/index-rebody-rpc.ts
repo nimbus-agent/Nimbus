@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
+import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import { clearSchedulerCursor } from "../sync/scheduler-store.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -99,8 +100,14 @@ export type IndexRebodyRpcContext = {
    * cleared. Optional: when no live `SyncScheduler` is wired, the watermark
    * clear is still durable on disk and the connector's next scheduled tick
    * picks it up.
+   *
+   * `setHistoryFloor` is picked as a REQUIRED member rather than an optional
+   * one so a scheduler wired here without it is a compile error. The
+   * alternative — an optional method called with `?.` — would silently drop a
+   * `--since` the owner explicitly asked for and narrow the backfill back to
+   * the connector's own 30-day floor, with nothing to show it happened.
    */
-  syncScheduler?: Pick<SyncScheduler, "forceSync">;
+  syncScheduler?: Pick<SyncScheduler, "forceSync" | "setHistoryFloor">;
 };
 
 export type RebodyParams = {
@@ -108,7 +115,26 @@ export type RebodyParams = {
   type?: string;
   limit?: number;
   dryRun?: boolean;
+  /**
+   * Widens the cold-start window a connector re-walks, in days, for THIS run
+   * only. Honored by the connectors that read `SyncContext.historyFloorMs`
+   * (jira, linear); every other connector ignores it and keeps its own
+   * `initialSyncDepthDays`.
+   */
+  sinceDays?: number;
 };
+
+/**
+ * Services whose rows must carry at least this `metadata.meta_v` to count as
+ * fully recovered. This is the SECOND eligibility reason, alongside
+ * `body_complete = 0` — `rebody` recovers indexed DEPTH, of which bodies were
+ * the first kind. A later depth PR adds a row here; it does not add a
+ * mechanism.
+ */
+export const REBODY_REQUIRED_META_VERSION: ReadonlyMap<string, number> = new Map([
+  ["jira", TICKET_META_VERSION],
+  ["linear", TICKET_META_VERSION],
+]);
 
 /**
  * Services whose connector passes `body:` (the declared-full variant of
@@ -317,6 +343,27 @@ export function parseRebodyParams(params: unknown): RebodyParams {
       out.dryRun = true;
     }
   }
+  if ("sinceDays" in rec) {
+    const raw = rec["sinceDays"];
+    // Same reasoning as `limit`: this bounds real outbound API traffic, so a
+    // malformed value must not silently become the connector's default window.
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+      throw new IndexRebodyRpcError(
+        -32602,
+        "params.sinceDays must be a positive finite number when provided",
+      );
+    }
+    out.sinceDays = Math.floor(raw);
+    // A floor before the epoch cannot be rendered as a valid JQL date literal
+    // (`jqlFloorFromMs` would emit a negative year and Jira would reject the
+    // query with an opaque 400). Reject it here with a legible message instead.
+    if (Date.now() - out.sinceDays * 86_400_000 < 0) {
+      throw new IndexRebodyRpcError(
+        -32602,
+        "params.sinceDays reaches before 1970; pass a window that starts after the epoch",
+      );
+    }
+  }
   return out;
 }
 
@@ -337,12 +384,52 @@ export function computePendingByService(db: Database): Record<string, number> {
   return out;
 }
 
+/**
+ * The SECOND recovery reason, counted SEPARATELY rather than folded into
+ * `computePendingByService`: rows whose service is registered in
+ * `REBODY_REQUIRED_META_VERSION` and whose `metadata.meta_v` is below the
+ * required version.
+ *
+ * The two counts are deliberately not summed. `pending` has meant
+ * "body_complete = 0" since V48 and still does — silently widening it to also
+ * include metadata staleness would make every historical reading of that
+ * number wrong, and the caller could no longer tell which kind of depth is
+ * missing. A row can be counted in BOTH maps (incomplete body AND stale
+ * metadata); they are separate questions, not a partition.
+ */
+export function computePendingMetaByService(db: Database): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [service, version] of REBODY_REQUIRED_META_VERSION) {
+    const row = db
+      .query(
+        `SELECT COUNT(*) AS pending FROM item
+          WHERE service = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?`,
+      )
+      .get(service, version) as { pending: number } | undefined;
+    const pending = row?.pending ?? 0;
+    if (pending > 0) {
+      out[service] = pending;
+    }
+  }
+  return out;
+}
+
+/**
+ * A row is recoverable when its body is incomplete OR its service's metadata
+ * is below the version that service is required to carry. Bound parameters
+ * only — never interpolation (I9).
+ */
 export function buildTargetServicesSql(p: RebodyParams): {
   sql: string;
-  params: string[];
+  params: Array<string | number>;
 } {
-  const params: string[] = [];
-  let sql = `SELECT DISTINCT service FROM item WHERE body_complete = 0`;
+  const params: Array<string | number> = [];
+  const metaClauses: string[] = [];
+  for (const [service, version] of REBODY_REQUIRED_META_VERSION) {
+    metaClauses.push(`(service = ? AND COALESCE(json_extract(metadata, '$.meta_v'), 0) < ?)`);
+    params.push(service, version);
+  }
+  let sql = `SELECT DISTINCT service FROM item WHERE (body_complete = 0 OR ${metaClauses.join(" OR ")})`;
   if (p.type !== undefined) {
     sql += ` AND type = ?`;
     params.push(p.type);
@@ -352,10 +439,13 @@ export function buildTargetServicesSql(p: RebodyParams): {
 }
 
 /**
- * An explicit `service` is validated against the SAME `body_complete = 0` /
- * `type` query used for auto-detection — never trusted blind. Two failure
- * modes this closes, both real API-quota spend for zero benefit if left
- * silent:
+ * An explicit `service` is validated against the SAME eligibility query used
+ * for auto-detection — never trusted blind. Eligibility has TWO reasons since
+ * the ticket-depth change: an incomplete body, OR a metadata version below
+ * what `REBODY_REQUIRED_META_VERSION` requires for that service. "Nothing to
+ * recover" below therefore means "nothing to recover BY BODY OR BY METADATA
+ * VERSION", not bodies alone. Two failure modes this closes, both real
+ * API-quota spend for zero benefit if left silent:
  *
  *   - A typo'd or unknown `service` would otherwise reach `clearSchedulerCursor`
  *     + `forceSync` in `runRebody` for a connector that was never going to
@@ -378,8 +468,8 @@ export function resolveTargetServices(p: RebodyParams, db: Database): string[] {
       throw new IndexRebodyRpcError(
         -32602,
         p.type === undefined
-          ? `params.service "${p.service}" has no pending (body_complete = 0) rows; refusing to spend API quota on a service with nothing to recover`
-          : `params.service "${p.service}" has no pending (body_complete = 0) rows of type "${p.type}"; refusing to spend API quota on a service/type combination with nothing to recover`,
+          ? `params.service "${p.service}" has no recoverable rows (no incomplete body, and no metadata below the required version); refusing to spend API quota on a service with nothing to recover`
+          : `params.service "${p.service}" has no recoverable rows of type "${p.type}" (no incomplete body, and no metadata below the required version); refusing to spend API quota on a service/type combination with nothing to recover`,
       );
     }
     return [p.service];
@@ -398,10 +488,16 @@ async function runRebody(
 ): Promise<Record<string, unknown>> {
   if (p.dryRun === true) {
     const pending = computePendingByService(ctx.db);
-    return { dryRun: true, pending, cannotImprove: cannotImproveAmong(pending) };
+    return {
+      dryRun: true,
+      pending,
+      pendingMeta: computePendingMetaByService(ctx.db),
+      cannotImprove: cannotImproveAmong(pending),
+    };
   }
 
   const pendingBefore = computePendingByService(ctx.db);
+  const pendingMetaBefore = computePendingMetaByService(ctx.db);
   const targets = resolveTargetServices(p, ctx.db);
   let succeeded = 0;
   let failed = 0;
@@ -419,6 +515,12 @@ async function runRebody(
     if (ctx.syncScheduler === undefined) {
       succeeded += 1;
     } else {
+      // Armed immediately before the forced run so the connector cold-starts
+      // from the requested window instead of its own 30-day floor. Connectors
+      // that do not read `SyncContext.historyFloorMs` ignore it.
+      if (p.sinceDays !== undefined) {
+        ctx.syncScheduler.setHistoryFloor(service, Date.now() - p.sinceDays * 86_400_000);
+      }
       try {
         await ctx.syncScheduler.forceSync(service);
         succeeded += 1;
@@ -438,6 +540,11 @@ async function runRebody(
   }
 
   const pendingAfter = computePendingByService(ctx.db);
+  // Reported alongside, never summed into, the body counts: a caller has to be
+  // able to tell WHICH kind of depth is still missing, and a `rebody` that
+  // recovered every body while leaving metadata stale is a different outcome
+  // from one that recovered both.
+  const pendingMetaAfter = computePendingMetaByService(ctx.db);
   return {
     dryRun: false,
     targeted: targets,
@@ -448,6 +555,8 @@ async function runRebody(
     cannotImprove: cannotImproveAmong(pendingBefore),
     pendingBefore,
     pendingAfter,
+    pendingMetaBefore,
+    pendingMetaAfter,
   };
 }
 
