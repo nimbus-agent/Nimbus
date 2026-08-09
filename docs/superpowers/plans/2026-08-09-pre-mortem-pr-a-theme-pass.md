@@ -295,6 +295,19 @@ test("the id is service-scoped: the same label in two services is two themes", (
   expect(themeId("billing-api", "rate limits")).not.toBe(themeId("payments", "rate limits"));
 });
 
+test("different labels under one service are different themes", () => {
+  expect(themeId("billing-api", "rate limits")).not.toBe(themeId("billing-api", "review drag"));
+});
+
+test("a shifted boundary between service and label does not collide", () => {
+  // A naive `service + separator + label` join is ambiguous, because a
+  // normalized label legitimately contains internal spaces. These two pairs
+  // would hash identically under that construction, and since this value is
+  // `premortem_theme.id`'s PRIMARY KEY, the collision would merge two distinct
+  // themes' evidence into one row.
+  expect(themeId("x y", "z")).not.toBe(themeId("x", "y z"));
+});
+
 test("confidence rises with corroboration and never reaches 1.0", () => {
   // No connector indexes ticket comments (#1128 fetches summary/description/
   // status/dates only), so a blocker argued out entirely in a comment thread is
@@ -345,10 +358,18 @@ export function normalizeThemeLabel(raw: string): string {
  * two different findings.
  */
 export function themeId(service: string, rawLabel: string): string {
+  const normalized = normalizeThemeLabel(rawLabel);
   const h = createHash("sha256");
+  // LENGTH-PREFIXED, not joined by a separator. A normalized label legitimately
+  // contains internal spaces, so a bare `service + " " + label` join is
+  // ambiguous: ("x y", "z") and ("x", "y z") hash identically. Since this value
+  // is `premortem_theme.id`'s PRIMARY KEY, that collision would merge two
+  // distinct themes' evidence into one row — the same orphaning failure the
+  // content-derived id exists to prevent.
+  h.update(String(service.length));
   h.update(service);
-  h.update(" ");
-  h.update(normalizeThemeLabel(rawLabel));
+  h.update(String(normalized.length));
+  h.update(normalized);
   return h.digest("hex").slice(0, 32);
 }
 
