@@ -73,8 +73,10 @@ Current schema is **V52**; #1128 added no migration, so V53 is the next free ver
 Two decisions inherited deliberately from `decision_record` (V47):
 
 - **The theme id is content-derived, not positional.** Keying on a character offset would mean a
-  typo fix earlier in a document re-hashes every later theme, re-queueing extracted rows and
-  resurrecting vetoed ones under new ids.
+  typo fix earlier in a document re-hashes every later theme, orphaning its accumulated evidence
+  rows and re-spending the extraction budget on a theme already mined. (`decision_record` states
+  this rule partly to protect its `vetoed` rows; pre-mortem has no veto concept — see
+  *IPC and exposure* — so the reason here is evidence continuity and budget, not veto durability.)
 - **The watermark is composite.** `watermark_ms` alone cannot express "resume inside a group of
   items sharing one `modified_at`", and a bulk import stamping thousands of rows with a single
   job-level timestamp makes that ordinary. `watermark_id` breaks the tie on `item.id`, a primary key
