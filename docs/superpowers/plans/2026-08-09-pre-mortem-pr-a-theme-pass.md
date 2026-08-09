@@ -2657,6 +2657,10 @@ so the next reader does not go looking for `nimbus pre-mortem`.
   to the IPC catalogue, marked LAN-forbidden and not renderer-exposed.
 - `docs/schema-reference.md`: document the four V53 tables alongside the V47 decisions and V51
   ownership entries already there.
+- **State the Jira-only limitation** in the CHANGELOG entry and in `docs/architecture.md`: the
+  discover stage keys on `metadata.issue_type = 'Epic'`, which only Jira writes, and no
+  `linear:project` items are indexed, so no Linear epic-shaped row exists to mine. Supporting
+  Linear requires a connector change and is not in PR A.
 - `docs/CHANGELOG.md`: an Unreleased entry naming the V53 tables and the theme pass, and stating
   plainly that **no user-facing command ships in this PR** — `nimbus pre-mortem` arrives in PR B.
   Note the no-model behaviour (zero themes, watermark still advances) since that is the surprising

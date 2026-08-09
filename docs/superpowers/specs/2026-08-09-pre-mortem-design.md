@@ -151,7 +151,16 @@ named gap, never an empty cohort presented as a result.
 
 ### Lane 2 — cohort
 
-Candidates are epics — `issue_type = 'Epic'` (Jira) or a non-null `project_id` (Linear) — with
+**CORRECTION (found during PR A implementation): pre-mortem is JIRA-ONLY today.** This paragraph
+originally said candidates are `issue_type = 'Epic'` (Jira) *or* a non-null `project_id` (Linear).
+The Linear half does not work and cannot, as written: `linear-sync.ts` never writes `issue_type`,
+and — the deeper problem — **no `linear:project` items are indexed at all**. #1128 added
+`project_id` as a FIELD on Linear *issues*; it did not create project items. So there is no
+Linear epic-shaped ROW to discover, and keying on a non-null `project_id` would wrongly treat every
+Linear issue in a project as an epic. Supporting Linear needs a connector change (index projects as
+items) and is out of scope for PR A. Every brief must say Jira-only until then.
+
+Candidates are epics — `issue_type = 'Epic'` (Jira only, see the correction above) — with
 `status_category ∈ {done, canceled}` and a `resolved_at_ms` inside the indexed window. Each
 candidate's service set is derived exactly as the target's was.
 
