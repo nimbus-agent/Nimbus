@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.26.0](https://github.com/nimbus-agent/Nimbus/compare/v1.25.2...v1.26.0) (2026-08-09)
+
+
+### Features
+
+* **gateway:** index Jira/Linear ticket depth and recover it via rebody --since ([#1128](https://github.com/nimbus-agent/Nimbus/issues/1128)) ([bdbecd1](https://github.com/nimbus-agent/Nimbus/commit/bdbecd16438824333aa5014bcf10a3ef19225a58))
+
 ## [1.25.2](https://github.com/nimbus-agent/Nimbus/compare/v1.25.1...v1.25.2) (2026-08-08)
 
 
