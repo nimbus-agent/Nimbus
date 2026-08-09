@@ -400,6 +400,7 @@ git commit -m "feat(gateway): pre-mortem theme identity and confidence helpers"
   - `themesForServices(db, services: readonly string[]): PremortemTheme[]`
   - `readPassState(db): { watermarkMs: number; watermarkId: string }`
   - `writePassState(db, s: { watermarkMs: number; watermarkId: string; nowMs: number; newThemes: number; scanned: number }): void`
+  - `pruneOrphanedEvidence(db): number`
   - `demoteThemesWithNoLiveEvidence(db, nowMs: number): number`
 
 - [ ] **Step 1: Write the failing test**
@@ -413,6 +414,7 @@ import { expect, test } from "bun:test";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   demoteThemesWithNoLiveEvidence,
+  pruneOrphanedEvidence,
   readPassState,
   themesForServices,
   upsertTheme,
@@ -516,6 +518,41 @@ test("a theme with at least one live source survives the sweep", () => {
   });
   expect(demoteThemesWithNoLiveEvidence(db, 500)).toBe(0);
   expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
+  db.close();
+});
+
+test("pruning removes dead evidence rows and lowers the theme's confidence", () => {
+  const db = freshDb();
+  upsertTheme(db, {
+    service: "billing-api",
+    label: "rate limits",
+    nowMs: 1,
+    evidence: [
+      { itemId: "jira:PROJ-1", evidenceKey: "k1", label: "live" },
+      { itemId: "jira:GONE", evidenceKey: "k2", label: "dead" },
+    ],
+  });
+  const before = themesForServices(db, ["billing-api"])[0]?.confidence ?? 0;
+
+  expect(pruneOrphanedEvidence(db)).toBe(1);
+
+  const after = themesForServices(db, ["billing-api"])[0];
+  expect(after?.evidenceCount).toBe(1);
+  // Corroboration the user can no longer inspect must not still be counted.
+  expect(after?.confidence).toBeLessThan(before);
+  db.close();
+});
+
+test("pruning is a no-op when every source is live", () => {
+  const db = freshDb();
+  upsertTheme(db, {
+    service: "billing-api",
+    label: "rate limits",
+    nowMs: 1,
+    evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "k1", label: "live" }],
+  });
+  expect(pruneOrphanedEvidence(db)).toBe(0);
+  expect(themesForServices(db, ["billing-api"])[0]?.evidenceCount).toBe(1);
   db.close();
 });
 
@@ -672,6 +709,57 @@ export function writePassState(
       WHERE id = 1`,
     [s.watermarkMs, s.watermarkId, s.nowMs, s.newThemes, s.scanned],
   );
+}
+
+/**
+ * Delete evidence whose source item has left the index, and recompute the
+ * confidence of every theme that lost a row.
+ *
+ * There is no foreign key from `premortem_theme_evidence.item_id` to `item(id)`
+ * — items are synced and pruned dynamically — so without this sweep dead rows
+ * accumulate forever behind every removed item. It also keeps confidence
+ * honest: corroboration the user can no longer inspect should not still be
+ * counted toward it.
+ *
+ * KNOWN LIMIT, accepted deliberately: an item that is pruned and later
+ * re-synced UNCHANGED keeps its original `modified_at`, so it lands behind the
+ * watermark and is never re-mined — its evidence does not come back, and the
+ * theme's confidence stays permanently lower. The alternative (keeping dead
+ * rows forever so a hypothetical restore works) overstates corroboration in
+ * the common case to protect the rare one.
+ */
+export function pruneOrphanedEvidence(db: Database): number {
+  const orphans = db
+    .query(
+      `SELECT e.theme_id AS theme_id, e.evidence_key AS evidence_key
+         FROM premortem_theme_evidence e
+        WHERE NOT EXISTS (SELECT 1 FROM item i WHERE i.id = e.item_id)`,
+    )
+    .all() as Array<{ theme_id: string; evidence_key: string }>;
+  if (orphans.length === 0) {
+    return 0;
+  }
+
+  const touched = new Set<string>();
+  for (const o of orphans) {
+    dbRun(
+      db,
+      `DELETE FROM premortem_theme_evidence WHERE theme_id = ? AND evidence_key = ?`,
+      [o.theme_id, o.evidence_key],
+    );
+    touched.add(o.theme_id);
+  }
+
+  for (const themeIdValue of touched) {
+    const row = db
+      .query(`SELECT COUNT(*) AS n FROM premortem_theme_evidence WHERE theme_id = ?`)
+      .get(themeIdValue) as { n: number };
+    dbRun(db, `UPDATE premortem_theme SET confidence = ? WHERE id = ?`, [
+      themeConfidence(row.n),
+      themeIdValue,
+    ]);
+  }
+  return orphans.length;
 }
 
 /**
@@ -870,7 +958,216 @@ git commit -m "feat(gateway): [premortem] config section"
 
 ---
 
-### Task 5: Discover stage — bounded scan of closed epics per service
+### Task 5: Affected-service resolution for an epic
+
+**The axis everything else depends on.** A theme's `service` is the **affected** service the work
+touched (`billing-api`), derived through the graph — **not** the connector that owns the row
+(`jira`). Storing the connector service would make PR B's Lane 4, which matches themes against a
+cohort's affected services, return zero rows for every epic while looking perfectly healthy.
+
+Shared deliberately: PR B's Lane 1 (target services) and Lane 2 (candidate services) call this same
+function, so the two halves can never drift onto different definitions of "service".
+
+**Files:**
+
+- Create: `packages/gateway/src/premortem/epic-services.ts`
+- Create: `packages/gateway/src/premortem/epic-services.test.ts`
+
+**Interfaces:**
+
+- Consumes: nothing from earlier tasks.
+- Produces: `affectedServicesForEpic(db, epicItemId: string, epicKey: string): string[]` — sorted,
+  de-duplicated, `[]` when nothing resolves.
+
+The traversal is: epic → children (`item.metadata.parent_key = epicKey`, from #1128) → each child's
+**incoming** `resolves` edges (the graph stores `PR --resolves--> issue`) → each PR's `in_repo`
+edge → the repo entity's id.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `packages/gateway/src/premortem/epic-services.test.ts`:
+
+```ts
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { affectedServicesForEpic } from "./epic-services.ts";
+
+function freshDb(): Database {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 53);
+  return db;
+}
+
+function addItem(db: Database, id: string, externalId: string, metadata: object): void {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES (?, 'jira', 'issue', ?, 'T', ?, 1, 1, 0)`,
+    [id, externalId, JSON.stringify(metadata)],
+  );
+}
+
+/** Minimal graph rows: an entity plus a typed relation, matching graph-v7. */
+function addEntity(db: Database, id: string, kind: string): void {
+  db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [id, kind, id]);
+}
+
+function addRelation(db: Database, from: string, to: string, type: string): void {
+  db.run(
+    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, ?, 1)`,
+    [from, to, type],
+  );
+}
+
+test("derives services through children -> resolving PRs -> repo", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  addEntity(db, "jira:PROJ-2", "issue");
+  addEntity(db, "github:pr:7", "pull_request");
+  addEntity(db, "billing-api", "repo");
+  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
+  addRelation(db, "github:pr:7", "billing-api", "in_repo");
+
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["billing-api"]);
+  db.close();
+});
+
+test("merges and sorts services across several children", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  for (const [child, pr, repo] of [
+    ["jira:PROJ-2", "github:pr:7", "billing-api"],
+    ["jira:PROJ-3", "github:pr:8", "payments-worker"],
+    ["jira:PROJ-4", "github:pr:9", "billing-api"],
+  ] as const) {
+    addItem(db, child, child.split(":")[1] ?? child, { meta_v: 1, parent_key: "PROJ-1" });
+    addEntity(db, child, "issue");
+    addEntity(db, pr, "pull_request");
+    addEntity(db, repo, "repo");
+    addRelation(db, pr, child, "resolves");
+    addRelation(db, pr, repo, "in_repo");
+  }
+  // Sorted and de-duplicated: the caller compares these sets, so a stable
+  // order keeps cohort ranking deterministic across runs.
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([
+    "billing-api",
+    "payments-worker",
+  ]);
+  db.close();
+});
+
+test("an epic with no children resolves to no services", () => {
+  // The brand-new-epic case. PR B turns this into a named gap and the
+  // `--service` prompt; it must never look like an answer.
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  db.close();
+});
+
+test("children whose PRs never referenced them resolve to no services", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  addEntity(db, "jira:PROJ-2", "issue");
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  db.close();
+});
+
+test("a PR with a resolves edge but no repo edge contributes nothing", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  addEntity(db, "jira:PROJ-2", "issue");
+  addEntity(db, "github:pr:7", "pull_request");
+  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  db.close();
+});
+
+test("a child of a DIFFERENT epic is not counted", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:OTHER-9", "OTHER-9", { meta_v: 1, parent_key: "OTHER-1" });
+  addEntity(db, "jira:OTHER-9", "issue");
+  addEntity(db, "github:pr:7", "pull_request");
+  addEntity(db, "search", "repo");
+  addRelation(db, "github:pr:7", "jira:OTHER-9", "resolves");
+  addRelation(db, "github:pr:7", "search", "in_repo");
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
+  db.close();
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `bun test packages/gateway/src/premortem/epic-services.test.ts`
+Expected: FAIL — `Cannot find module './epic-services.ts'`
+
+If instead it fails on `no such table: graph_entity` / `graph_relation`, or on a missing column,
+open `packages/gateway/src/index/graph-v7-sql.ts` and match the real column names in the two
+helpers — the graph schema is the source of truth, not this plan's fixture.
+
+- [ ] **Step 3: Write minimal implementation**
+
+Create `packages/gateway/src/premortem/epic-services.ts`:
+
+```ts
+import type { Database } from "bun:sqlite";
+
+/**
+ * The AFFECTED services an epic touched — `billing-api`, not `jira`.
+ *
+ * This is the single definition of "service" for pre-mortem. The theme pass
+ * writes themes under these values and PR B's cohort lanes read them back, so
+ * a second, divergent definition anywhere would leave every theme lookup
+ * matching zero rows while both halves looked individually correct.
+ *
+ * Traversal: epic → children (`metadata.parent_key`, #1128) → each child's
+ * INCOMING `resolves` edges (the graph stores `PR --resolves--> issue`) →
+ * each PR's `in_repo` edge → the repo entity id.
+ *
+ * Returns `[]` rather than guessing when any hop is missing. A brand-new epic
+ * legitimately has no children, and PR B turns the empty result into a named
+ * gap plus the `--service` prompt — never into a silently weaker cohort.
+ */
+export function affectedServicesForEpic(
+  db: Database,
+  epicItemId: string,
+  epicKey: string,
+): string[] {
+  const rows = db
+    .query(
+      `SELECT DISTINCT repo.to_id AS service
+         FROM item child
+         JOIN graph_relation res  ON res.to_id   = child.id AND res.type = 'resolves'
+         JOIN graph_relation repo ON repo.from_id = res.from_id AND repo.type = 'in_repo'
+        WHERE json_extract(child.metadata, '$.parent_key') = ?
+          AND child.id <> ?
+        ORDER BY service ASC`,
+    )
+    .all(epicKey, epicItemId) as Array<{ service: string }>;
+  return rows.map((r) => r.service);
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `bun test packages/gateway/src/premortem/epic-services.test.ts`
+Expected: PASS (6 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/gateway/src/premortem/epic-services.ts packages/gateway/src/premortem/epic-services.test.ts
+git commit -m "feat(gateway): derive an epic's affected services through the graph"
+```
+
+---
+
+### Task 6: Discover stage — bounded scan of closed epics per service
 
 **Files:**
 
@@ -881,12 +1178,20 @@ git commit -m "feat(gateway): [premortem] config section"
 
 - Consumes: `readPassState` (Task 3).
 - Produces:
-  - `type DiscoveredEpic = { itemId: string; service: string; title: string; body: string; bodyComplete: boolean; resolvedAtMs: number; modifiedAt: number }`
+  - `type DiscoveredEpic = { itemId: string; epicKey: string; title: string; body: string; bodyComplete: boolean; resolvedAtMs?: number; modifiedAt: number }`
   - `discoverClosedEpics(db, opts: { watermarkMs: number; watermarkId: string; batchSize: number }): DiscoveredEpic[]`
 
-Service here is the **connector** service (`jira` / `linear`) that owns the row — the theme's
-service key. PR B maps a cohort's *affected* services separately; these are not the same axis and
-must not be conflated.
+**`DiscoveredEpic` deliberately carries no `service` field.** A theme's service is the *affected*
+service from Task 5, never the connector (`jira`) that owns the row. Exposing `item.service` here
+would invite exactly that mix-up, and it is the one that silently empties every theme lookup in
+PR B.
+
+`epicKey` is the ticket key (`PROJ-1`) that children point at via `metadata.parent_key` — Task 5
+needs it, and it is not derivable from `itemId` for every connector.
+
+`resolvedAtMs` is **optional**, not `0`-defaulted: the ticket-depth contract this workstream
+established says a missing timestamp omits its key rather than claiming the epoch, and evidence
+rows store `occurred_at` as nullable for the same reason.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -991,6 +1296,33 @@ test("reports body truncation so the brief can count it", () => {
   expect(found?.bodyComplete).toBe(false);
   db.close();
 });
+
+test("exposes the epic key children point at, and no connector service field", () => {
+  // `epicKey` feeds affectedServicesForEpic. There is deliberately no `service`
+  // field: a theme's service is the AFFECTED service, and surfacing the
+  // connector one here is how that distinction gets lost.
+  const db = freshDb();
+  seedEpic(db, { id: "jira:A", modifiedAt: 10, statusCategory: "done" });
+  const [found] = discoverClosedEpics(db, { watermarkMs: 0, watermarkId: "", batchSize: 50 });
+  expect(found?.epicKey).toBe("A");
+  expect(found).not.toHaveProperty("service");
+  db.close();
+});
+
+test("a missing resolved_at_ms is absent, never 0", () => {
+  // Same rule the ticket-depth contract set: 0 would read as 1970, and a
+  // consumer must be able to tell "unresolved" from "resolved at the epoch".
+  const db = freshDb();
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
+                       metadata, modified_at, synced_at, pinned)
+     VALUES ('jira:N', 'jira', 'issue', 'N', 'T', 'b', 1, ?, 10, 1, 0)`,
+    [JSON.stringify({ meta_v: 1, status_category: "done", issue_type: "Epic" })],
+  );
+  const [found] = discoverClosedEpics(db, { watermarkMs: 0, watermarkId: "", batchSize: 50 });
+  expect(found?.resolvedAtMs).toBeUndefined();
+  db.close();
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1016,11 +1348,13 @@ import type { Database } from "bun:sqlite";
 
 export type DiscoveredEpic = {
   itemId: string;
-  service: string;
+  /** The ticket key children reference via `metadata.parent_key` (e.g. `PROJ-1`). */
+  epicKey: string;
   title: string;
   body: string;
   bodyComplete: boolean;
-  resolvedAtMs: number;
+  /** Absent when the source never supplied one — never 0, which would read as 1970. */
+  resolvedAtMs?: number;
   modifiedAt: number;
 };
 
@@ -1036,7 +1370,7 @@ export function discoverClosedEpics(
 ): DiscoveredEpic[] {
   const rows = db
     .query(
-      `SELECT id, service, title, body, body_complete, metadata, modified_at
+      `SELECT id, external_id, title, body, body_complete, metadata, modified_at
          FROM item
         WHERE json_extract(metadata, '$.status_category') IN ('done','canceled')
           AND json_extract(metadata, '$.issue_type') = 'Epic'
@@ -1046,7 +1380,7 @@ export function discoverClosedEpics(
     )
     .all(opts.watermarkMs, opts.watermarkMs, opts.watermarkId, opts.batchSize) as Array<{
     id: string;
-    service: string;
+    external_id: string;
     title: string;
     body: string | null;
     body_complete: number;
@@ -1059,11 +1393,12 @@ export function discoverClosedEpics(
     const resolved = meta["resolved_at_ms"];
     return {
       itemId: r.id,
-      service: r.service,
+      epicKey: r.external_id,
       title: r.title,
       body: r.body ?? "",
       bodyComplete: r.body_complete === 1,
-      resolvedAtMs: typeof resolved === "number" ? resolved : 0,
+      // Omit the key entirely when absent — never 0.
+      ...(typeof resolved === "number" ? { resolvedAtMs: resolved } : {}),
       modifiedAt: r.modified_at,
     };
   });
@@ -1084,7 +1419,7 @@ git commit -m "feat(gateway): pre-mortem discover stage over closed epics"
 
 ---
 
-### Task 6: Extract stage — LLM adapter with a hard no-model path
+### Task 7: Extract stage — LLM adapter with a hard no-model path
 
 **Files:**
 
@@ -1093,7 +1428,7 @@ git commit -m "feat(gateway): pre-mortem discover stage over closed epics"
 
 **Interfaces:**
 
-- Consumes: `DiscoveredEpic` (Task 5).
+- Consumes: `DiscoveredEpic` (Task 6).
 - Produces:
   - `type ThemeLlm = { complete: (prompt: string) => Promise<string | null> }`
   - `type ExtractedTheme = { label: string; sourceItemIds: string[] }`
@@ -1186,6 +1521,24 @@ test("a null completion yields no themes", async () => {
   expect(await extractThemes(EPICS, { llm })).toEqual([]);
 });
 
+test("a label that normalizes to nothing is dropped", async () => {
+  // "..." survives a `trim() !== ""` check but normalizes to "", which would
+  // key a theme on the empty string and surface a blank bullet in the brief.
+  const llm = {
+    complete: async () =>
+      JSON.stringify({
+        themes: [
+          { label: "...", sources: ["jira:A"] },
+          { label: "   ", sources: ["jira:A"] },
+          { label: "rate limits", sources: ["jira:A"] },
+        ],
+      }),
+  };
+  expect(await extractThemes(EPICS, { llm })).toEqual([
+    { label: "rate limits", sourceItemIds: ["jira:A"] },
+  ]);
+});
+
 test("an empty epic batch never calls the model", async () => {
   let calls = 0;
   const llm = {
@@ -1211,6 +1564,7 @@ Create `packages/gateway/src/premortem/theme-llm-adapter.ts`:
 ```ts
 import { wrapToolOutput } from "../engine/tool-output-envelope.ts";
 import type { DiscoveredEpic } from "./theme-discover.ts";
+import { normalizeThemeLabel } from "./theme-identity.ts";
 
 /** Minimal local-model surface; the real adapter is injected from assemble.ts. */
 export type ThemeLlm = { complete: (prompt: string) => Promise<string | null> };
@@ -1283,7 +1637,11 @@ export async function extractThemes(
     const t = asRecord(entry);
     if (t === undefined) continue;
     const label = t["label"];
-    if (typeof label !== "string" || label.trim() === "") continue;
+    if (typeof label !== "string") continue;
+    // Normalize to test emptiness, not `trim()`: a label of "..." passes a trim
+    // check but normalizes to "", which would key a theme on the empty string
+    // and render as a blank bullet.
+    if (normalizeThemeLabel(label) === "") continue;
     const sources = t["sources"];
     if (!Array.isArray(sources)) continue;
     // A source the model invented would fabricate corroboration, and
@@ -1310,7 +1668,7 @@ git commit -m "feat(gateway): pre-mortem theme extraction with a hard no-model p
 
 ---
 
-### Task 7: Pass orchestrator
+### Task 8: Pass orchestrator
 
 **Files:**
 
@@ -1319,11 +1677,12 @@ git commit -m "feat(gateway): pre-mortem theme extraction with a hard no-model p
 
 **Interfaces:**
 
-- Consumes: `discoverClosedEpics` (5), `extractThemes` + `ThemeLlm` (6), `upsertTheme` /
-  `readPassState` / `writePassState` / `demoteThemesWithNoLiveEvidence` (3).
+- Consumes: `affectedServicesForEpic` (Task 5), `discoverClosedEpics` (Task 6),
+  `extractThemes` + `ThemeLlm` (Task 7), `upsertTheme` / `readPassState` / `writePassState` /
+  `demoteThemesWithNoLiveEvidence` / `pruneOrphanedEvidence` / `ThemeEvidenceInput` (Task 3).
 - Produces:
   - `type PremortemPassOptions = { nowMs: number; batchSize?: number; maxLlmCalls: number; llm?: ThemeLlm; signal?: AbortSignal }`
-  - `type PremortemPassResult = { scanned: number; themesWritten: number; demoted: number; llmCalls: number }`
+  - `type PremortemPassResult = { scanned: number; themesWritten: number; demoted: number; prunedEvidence: number; llmCalls: number }`
   - `runPremortemPass(db, opts: PremortemPassOptions): Promise<PremortemPassResult>`
 
 - [ ] **Step 1: Write the failing test**
@@ -1338,18 +1697,56 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { runPremortemPass } from "./premortem-pass.ts";
 import { readPassState, themesForServices } from "./theme-store.ts";
 
-function seedClosedEpic(db: Database, id: string, modifiedAt: number, body: string): void {
+/**
+ * Seeds a closed epic AND the graph path that gives it an affected service:
+ * epic → child → resolving PR → repo. Without that path the epic resolves to
+ * no services and contributes no themes, so every test here needs it.
+ */
+function seedClosedEpic(
+  db: Database,
+  id: string,
+  modifiedAt: number,
+  body: string,
+  service = "billing-api",
+): void {
+  const key = id.split(":")[1] ?? id;
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
                        metadata, modified_at, synced_at, pinned)
      VALUES (?, 'jira', 'issue', ?, 'T', ?, 1, ?, ?, 1, 0)`,
     [
       id,
-      id.split(":")[1] ?? id,
+      key,
       body,
       JSON.stringify({ meta_v: 1, status_category: "done", issue_type: "Epic", resolved_at_ms: 9 }),
       modifiedAt,
     ],
+  );
+  const childId = `jira:${key}-child`;
+  const prId = `github:pr:${key}`;
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES (?, 'jira', 'issue', ?, 'C', ?, 1, 1, 0)`,
+    [childId, `${key}-child`, JSON.stringify({ meta_v: 1, parent_key: key })],
+  );
+  for (const [eid, kind] of [
+    [childId, "issue"],
+    [prId, "pull_request"],
+    [service, "repo"],
+  ] as const) {
+    db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [
+      eid,
+      kind,
+      eid,
+    ]);
+  }
+  db.run(
+    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, 'resolves', 1)`,
+    [prId, childId],
+  );
+  db.run(
+    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, 'in_repo', 1)`,
+    [prId, service],
   );
 }
 
@@ -1364,14 +1761,65 @@ const okLlm = {
     JSON.stringify({ themes: [{ label: "rate limits", sources: ["jira:A"] }] }),
 };
 
-test("writes themes and advances the watermark", async () => {
+test("writes themes under the AFFECTED service, not the connector", async () => {
+  // The single most important assertion in this file. Keying on 'jira' would
+  // make PR B's theme lookup — which matches a cohort's affected services —
+  // return zero rows for every epic, while this pass looked perfectly healthy.
   const db = freshDb();
-  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "billing-api");
 
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
   expect(r.scanned).toBe(1);
   expect(r.themesWritten).toBe(1);
-  expect(themesForServices(db, ["jira"]).map((t) => t.label)).toEqual(["rate limits"]);
+  expect(themesForServices(db, ["billing-api"]).map((t) => t.label)).toEqual(["rate limits"]);
+  expect(themesForServices(db, ["jira"])).toEqual([]);
+  expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
+  db.close();
+});
+
+test("an epic touching two services writes the theme under both", async () => {
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "billing-api");
+  // A second child of the same epic, landing in a different repo.
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES ('jira:A-two', 'jira', 'issue', 'A-two', 'C2', ?, 1, 1, 0)`,
+    [JSON.stringify({ meta_v: 1, parent_key: "A" })],
+  );
+  for (const [eid, kind] of [
+    ["jira:A-two", "issue"],
+    ["github:pr:A2", "pull_request"],
+    ["payments-worker", "repo"],
+  ] as const) {
+    db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [eid, kind, eid]);
+  }
+  db.run(
+    `INSERT INTO graph_relation (from_id, to_id, type, updated_at) VALUES ('github:pr:A2', 'jira:A-two', 'resolves', 1)`,
+  );
+  db.run(
+    `INSERT INTO graph_relation (from_id, to_id, type, updated_at) VALUES ('github:pr:A2', 'payments-worker', 'in_repo', 1)`,
+  );
+
+  const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
+  expect(r.themesWritten).toBe(2);
+  expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
+  expect(themesForServices(db, ["payments-worker"])).toHaveLength(1);
+  db.close();
+});
+
+test("an epic whose services cannot be resolved contributes no theme", async () => {
+  // Correct, not a silent drop: with no service there is no key under which
+  // PR B could ever find the theme. The watermark still advances.
+  const db = freshDb();
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
+                       metadata, modified_at, synced_at, pinned)
+     VALUES ('jira:A', 'jira', 'issue', 'A', 'T', 'b', 1, ?, 10, 1, 0)`,
+    [JSON.stringify({ meta_v: 1, status_category: "done", issue_type: "Epic" })],
+  );
+
+  const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
+  expect(r.themesWritten).toBe(0);
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
   db.close();
 });
@@ -1403,7 +1851,7 @@ test("with NO model: zero themes, but the watermark still advances", async () =>
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5 });
   expect(r.themesWritten).toBe(0);
   expect(r.llmCalls).toBe(0);
-  expect(themesForServices(db, ["jira"])).toEqual([]);
+  expect(themesForServices(db, ["billing-api"])).toEqual([]);
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
   db.close();
 });
@@ -1454,16 +1902,23 @@ test("an aborted pass keeps the watermark it had already checkpointed", async ()
   db.close();
 });
 
-test("the reconcile sweep demotes a theme whose sources all vanished", async () => {
+test("the reconcile sweep prunes orphaned evidence and demotes the theme", async () => {
   const db = freshDb();
   seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
   await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
-  expect(themesForServices(db, ["jira"])).toHaveLength(1);
+  expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
 
   db.run(`DELETE FROM item WHERE id = 'jira:A'`);
   const r = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5, llm: okLlm });
+  expect(r.prunedEvidence).toBe(1);
   expect(r.demoted).toBe(1);
-  expect(themesForServices(db, ["jira"])).toEqual([]);
+  expect(themesForServices(db, ["billing-api"])).toEqual([]);
+  // The evidence row is gone, not merely ignored — otherwise dead rows
+  // accumulate forever behind every pruned item.
+  const left = db.query(`SELECT COUNT(*) AS n FROM premortem_theme_evidence`).get() as {
+    n: number;
+  };
+  expect(left.n).toBe(0);
   db.close();
 });
 ```
@@ -1480,11 +1935,14 @@ Create `packages/gateway/src/premortem/premortem-pass.ts`:
 ```ts
 import type { Database } from "bun:sqlite";
 
+import { affectedServicesForEpic } from "./epic-services.ts";
 import { type DiscoveredEpic, discoverClosedEpics } from "./theme-discover.ts";
 import { extractThemes, type ThemeLlm } from "./theme-llm-adapter.ts";
 import {
   demoteThemesWithNoLiveEvidence,
+  pruneOrphanedEvidence,
   readPassState,
+  type ThemeEvidenceInput,
   upsertTheme,
   writePassState,
 } from "./theme-store.ts";
@@ -1540,21 +1998,41 @@ export async function runPremortemPass(
       llmCalls += 1;
       const themes = await extractThemes(batch, { llm: opts.llm });
       const byId = new Map(batch.map((e) => [e.itemId, e]));
+
+      // A theme's service is the AFFECTED service its attesting epics touched
+      // (`billing-api`), never the connector that owns the row (`jira`). PR B
+      // matches themes against a cohort's affected services, so writing the
+      // connector service here would leave every lookup returning zero rows
+      // while both halves looked individually correct.
+      const servicesByEpic = new Map<string, string[]>();
+      for (const e of batch) {
+        servicesByEpic.set(e.itemId, affectedServicesForEpic(db, e.itemId, e.epicKey));
+      }
+
       for (const t of themes) {
-        // A theme's service is the connector service of its attesting epics.
-        // Sources can in principle span services, so group before writing.
-        const services = new Set(
-          t.sourceItemIds.map((id) => byId.get(id)?.service).filter((s): s is string => s !== undefined),
-        );
-        for (const service of services) {
-          const evidence = t.sourceItemIds
-            .filter((id) => byId.get(id)?.service === service)
-            .map((id) => ({
+        // One theme row per affected service, each carrying only the evidence
+        // that actually touched that service.
+        const evidenceByService = new Map<string, ThemeEvidenceInput[]>();
+        for (const id of t.sourceItemIds) {
+          const epic = byId.get(id);
+          if (epic === undefined) continue;
+          for (const service of servicesByEpic.get(id) ?? []) {
+            const list = evidenceByService.get(service) ?? [];
+            list.push({
               itemId: id,
               evidenceKey: id,
-              label: byId.get(id)?.title ?? id,
-              occurredAt: byId.get(id)?.resolvedAtMs ?? 0,
-            }));
+              label: epic.title,
+              // Omit rather than default to 0 — `occurred_at` is nullable and
+              // 1970 is a lie.
+              ...(epic.resolvedAtMs === undefined ? {} : { occurredAt: epic.resolvedAtMs }),
+            });
+            evidenceByService.set(service, list);
+          }
+        }
+        // An epic whose services could not be resolved contributes nothing.
+        // That is correct, not a silent drop: with no service there is no key
+        // under which PR B could ever find the theme.
+        for (const [service, evidence] of evidenceByService) {
           upsertTheme(db, { service, label: t.label, nowMs: opts.nowMs, evidence });
           themesWritten += 1;
         }
@@ -1579,8 +2057,13 @@ export async function runPremortemPass(
     if (batch.length < batchSize) break;
   }
 
+  // Reconcile: prune first, then demote. Pruning removes evidence whose source
+  // item has left the index, which both stops dead rows accumulating forever
+  // and keeps confidence honest — corroboration the user can no longer see
+  // should not still be counted. Demotion then reduces to "no evidence left".
+  const prunedEvidence = pruneOrphanedEvidence(db);
   const demoted = demoteThemesWithNoLiveEvidence(db, opts.nowMs);
-  return { scanned, themesWritten, demoted, llmCalls };
+  return { scanned, themesWritten, demoted, prunedEvidence, llmCalls };
 }
 ```
 
@@ -1598,7 +2081,7 @@ git commit -m "feat(gateway): pre-mortem pass orchestrator with per-batch checkp
 
 ---
 
-### Task 8: Debounced refresher
+### Task 9: Debounced refresher
 
 Copies `decisions/decision-refresh.ts` in shape: a debounce timer, a single-flight guard, and a
 `dirty` re-arm so a sync landing mid-pass schedules exactly one follow-up rather than queueing.
@@ -1610,7 +2093,7 @@ Copies `decisions/decision-refresh.ts` in shape: a debounce timer, a single-flig
 
 **Interfaces:**
 
-- Consumes: `PremortemPassResult` (Task 7).
+- Consumes: `PremortemPassResult` (Task 8).
 - Produces:
   - `type PremortemRefresher = { trigger: () => void; runNow: () => Promise<PremortemPassResult>; stop: () => void }`
   - `createPremortemRefresher(deps: { debounceMs: number; runPass: (signal: AbortSignal) => Promise<PremortemPassResult>; onError: (err: unknown) => void }): PremortemRefresher`
@@ -1624,7 +2107,7 @@ import { expect, test } from "bun:test";
 
 import { createPremortemRefresher } from "./premortem-refresh.ts";
 
-const EMPTY = { scanned: 0, themesWritten: 0, demoted: 0, llmCalls: 0 };
+const EMPTY = { scanned: 0, themesWritten: 0, demoted: 0, prunedEvidence: 0, llmCalls: 0 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("many triggers inside the debounce window run the pass once", async () => {
@@ -1707,10 +2190,16 @@ test("a throwing pass reaches onError and does not wedge the refresher", async (
 test("runNow bypasses the debounce and returns the result", async () => {
   const r = createPremortemRefresher({
     debounceMs: 10_000,
-    runPass: async () => ({ scanned: 3, themesWritten: 1, demoted: 0, llmCalls: 1 }),
+    runPass: async () => ({ scanned: 3, themesWritten: 1, demoted: 0, prunedEvidence: 0, llmCalls: 1 }),
     onError: () => {},
   });
-  expect(await r.runNow()).toEqual({ scanned: 3, themesWritten: 1, demoted: 0, llmCalls: 1 });
+  expect(await r.runNow()).toEqual({
+    scanned: 3,
+    themesWritten: 1,
+    demoted: 0,
+    prunedEvidence: 0,
+    llmCalls: 1,
+  });
   r.stop();
 });
 ```
@@ -1828,7 +2317,7 @@ git commit -m "feat(gateway): pre-mortem debounced refresher"
 
 ---
 
-### Task 9: Wire the pass into the gateway + `premortem.refresh` IPC
+### Task 10: Wire the pass into the gateway + `premortem.refresh` IPC
 
 **Files:**
 
@@ -1856,7 +2345,7 @@ import { expect, test } from "bun:test";
 
 import { dispatchPremortemRpc } from "./premortem-rpc.ts";
 
-const RESULT = { scanned: 4, themesWritten: 2, demoted: 1, llmCalls: 1 };
+const RESULT = { scanned: 4, themesWritten: 2, demoted: 1, prunedEvidence: 0, llmCalls: 1 };
 
 test("premortem.refresh runs the pass and returns its counts", async () => {
   let ran = 0;
@@ -2060,7 +2549,7 @@ git commit -m "feat(gateway): wire the pre-mortem pass and premortem.refresh IPC
 
 ---
 
-### Task 10: Docs and branch gates
+### Task 11: Docs and branch gates
 
 PR A ships a schema and a background pass with no user-facing command — the docs say exactly that,
 so the next reader does not go looking for `nimbus pre-mortem`.
@@ -2130,10 +2619,11 @@ git commit -m "docs: V53 pre-mortem tables and the theme pass"
 
 **Spec coverage.** V53 tables → Task 1 (all four, including `premortem_watcher_proposal`, which PR B
 writes — schema precedes its reader). Content-derived id + normalization → Task 2. Confidence from
-evidence count + the 0.86 ceiling → Task 2, enforced in Task 3. Composite watermark → Tasks 1, 3, 5,
-7. Explicit column list + batching → Tasks 5, 7. `[premortem]` config + `enabled`-gated construction
-→ Tasks 4, 9. No-model ⇒ zero themes with the watermark still advancing → Tasks 6, 7. Reconcile
-demote-not-delete → Tasks 3, 7. `premortem.refresh`, no params, no rebuild, LAN-forbidden → Task 9.
+evidence count + the 0.86 ceiling → Task 2, enforced in Task 3. Composite watermark → Tasks 1, 3, 6,
+8. Explicit column list + batching → Tasks 6, 8. **Themes keyed on the AFFECTED service** → Task 5,
+enforced in Task 8. `[premortem]` config + `enabled`-gated construction → Tasks 4, 10. No-model ⇒
+zero themes with the watermark still advancing → Tasks 7, 8. Reconcile prune-then-demote → Tasks 3,
+8. `premortem.refresh`, no params, no rebuild, LAN-forbidden → Task 10.
 
 **Deferred to PR B, by design:** the `agents.premortem` brief and its four lanes, cohort selection
 with IDF weighting, the five structural risks, watcher creation and the three re-run rules, every
@@ -2143,11 +2633,18 @@ surface exists.
 
 **Naming consistency.** `premortem_theme`, `premortem_theme_evidence`, `premortem_pass_state`,
 `premortem_watcher_proposal`, `themeId`, `normalizeThemeLabel`, `themeConfidence`,
-`THEME_CONFIDENCE_CEILING`, `upsertTheme`, `themesForServices`, `readPassState`, `writePassState`,
-`demoteThemesWithNoLiveEvidence`, `discoverClosedEpics`, `DiscoveredEpic`, `extractThemes`,
-`ThemeLlm`, `ExtractedTheme`, `runPremortemPass`, `PremortemPassOptions`, `PremortemPassResult`,
+`THEME_CONFIDENCE_CEILING`, `upsertTheme`, `ThemeEvidenceInput`, `themesForServices`,
+`readPassState`, `writePassState`, `pruneOrphanedEvidence`, `demoteThemesWithNoLiveEvidence`,
+`affectedServicesForEpic`, `discoverClosedEpics`, `DiscoveredEpic`, `extractThemes`, `ThemeLlm`,
+`ExtractedTheme`, `runPremortemPass`, `PremortemPassOptions`, `PremortemPassResult`,
 `createPremortemRefresher`, `PremortemRefresher`, `dispatchPremortemRpc`, `premortemRefresher` are
 each used with one spelling and one type in every task that mentions them.
+
+**The word "service" has exactly one meaning in this plan: the AFFECTED service an epic's work
+touched** (`billing-api`), produced by `affectedServicesForEpic` in Task 5. It is never the
+connector that owns the row (`jira`). `DiscoveredEpic` deliberately has no `service` field so the
+two cannot be confused at a call site. An earlier draft of this plan got this backwards, which
+would have left PR B's theme lookup matching zero rows while every test here still passed.
 
 **Traps this plan inherits from prior workstreams in this repo** — re-check rather than trust:
 
@@ -2158,5 +2655,5 @@ each used with one spelling and one type in every task that mentions them.
 - `bun test --coverage` is inert in this repo (bunfig sets `coverage = false`); the istanbul
   preloads in Step 3 are the only working local path.
 - Confirm `decisionLlm` is the correct local-model handle in `assemble.ts` at implementation time.
-  Task 9 reuses it for `premortemLlmForPass`; if that variable has been renamed, follow the
+  Task 10 reuses it for `premortemLlmForPass`; if that variable has been renamed, follow the
   `decisionsRefresher` construction rather than this plan's literal name.
