@@ -1571,7 +1571,6 @@ describe("[premortem] (Spine S1)", () => {
       debounceMs: 60_000,
       useLlm: true,
       maxLlmCallsPerPass: 25,
-      retryCooldownMs: 3_600_000,
       maxCohortSize: 10,
       maxCandidateScan: 200,
     });

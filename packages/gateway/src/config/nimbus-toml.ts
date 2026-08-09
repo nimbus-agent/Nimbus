@@ -1852,8 +1852,6 @@ export type NimbusPremortemToml = {
   useLlm: boolean;
   /** Hard ceiling on model calls per pass. */
   maxLlmCallsPerPass: number;
-  /** Cooldown before a failed extraction is retried. */
-  retryCooldownMs: number;
   /** Cap on the cohort PR B assembles. */
   maxCohortSize: number;
   /** Cap on closed epics scanned for a service set before the cohort lane stops. */
@@ -1865,7 +1863,6 @@ export const DEFAULT_NIMBUS_PREMORTEM_TOML: NimbusPremortemToml = {
   debounceMs: 60_000,
   useLlm: true,
   maxLlmCallsPerPass: 25,
-  retryCooldownMs: 3_600_000,
   maxCohortSize: 10,
   maxCandidateScan: 200,
 };
@@ -1902,9 +1899,6 @@ function applyNimbusPremortemKey(
       break;
     case "max_llm_calls_per_pass":
       out.maxLlmCallsPerPass = n;
-      break;
-    case "retry_cooldown_ms":
-      out.retryCooldownMs = n;
       break;
     case "max_cohort_size":
       out.maxCohortSize = n;

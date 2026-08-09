@@ -22,12 +22,19 @@ export function normalizeThemeLabel(raw: string): string {
  * Service-scoped, because "rate limits" on `billing-api` and on `search` are
  * two different findings.
  *
- * Uses length-prefixed encoding with ":" terminators: the boundary between a
- * length prefix (decimal digits) and the data itself is ambiguous if left
- * undelimited, since digit-starting data can create collisions. For example,
- * themeId("1", "1".repeat(11)) and themeId("1".repeat(11), "1") would both
- * encode to fifteen '1' characters without the terminator. The ":" separator
- * (which cannot appear in a decimal length) makes the boundary unambiguous.
+ * Guards against TWO hash-collision classes, both real:
+ *
+ * 1. A naive bare-join of `service` and `label` (`h.update(service + label)`)
+ *    lets a boundary shift produce the same bytes from different inputs:
+ *    `themeId("x y", "z")` and `themeId("x", "y z")` would hash identically,
+ *    silently merging two unrelated themes under one id. This bug shipped
+ *    once at this exact site.
+ * 2. Uses length-prefixed encoding with ":" terminators: the boundary between a
+ *    length prefix (decimal digits) and the data itself is ambiguous if left
+ *    undelimited, since digit-starting data can create collisions. For example,
+ *    themeId("1", "1".repeat(11)) and themeId("1".repeat(11), "1") would both
+ *    encode to fifteen '1' characters without the terminator. The ":" separator
+ *    (which cannot appear in a decimal length) makes the boundary unambiguous.
  */
 export function themeId(service: string, rawLabel: string): string {
   const normalized = normalizeThemeLabel(rawLabel);

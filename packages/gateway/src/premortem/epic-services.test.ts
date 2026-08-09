@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { upsertGraphEntity } from "../graph/relationship-graph.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { affectedServicesForEpic } from "./epic-services.ts";
+import { affectedServicesForEpic, affectedServicesForEpics } from "./epic-services.ts";
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -147,5 +147,55 @@ test("a same-key child in a DIFFERENT service is not counted (service scoping)",
   addRelation(db, linearPrEnt, linearIssueEnt, "resolves");
 
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  db.close();
+});
+
+test("FINDING 3 — the batch form (affectedServicesForEpics) resolves several epics in ONE call, agreeing with the single-epic form", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt1 = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt1 = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt1, issueEnt1, "resolves");
+
+  addItem(db, "jira:PROJ-10", "PROJ-10", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-11", "PROJ-11", { meta_v: 1, parent_key: "PROJ-10" });
+  const issueEnt2 = addEntity(db, "jira:PROJ-11", "issue");
+  const prEnt2 = addEntity(db, "github:pr:8", "pr", "acme/search");
+  addRelation(db, prEnt2, issueEnt2, "resolves");
+
+  // A third epic with no children at all — must resolve to "not in the map"
+  // (never a spurious empty-array entry that shadows a real miss).
+  addItem(db, "jira:PROJ-20", "PROJ-20", { meta_v: 1, issue_type: "Epic" });
+
+  const result = affectedServicesForEpics(db, ["jira:PROJ-1", "jira:PROJ-10", "jira:PROJ-20"]);
+  expect(result.get("jira:PROJ-1")).toEqual(["acme/billing-api"]);
+  expect(result.get("jira:PROJ-10")).toEqual(["acme/search"]);
+  expect(result.has("jira:PROJ-20")).toBe(false);
+  db.close();
+});
+
+test("affectedServicesForEpics: an empty input never queries and returns an empty map", () => {
+  const db = freshDb();
+  expect(affectedServicesForEpics(db, [])).toEqual(new Map());
+  db.close();
+});
+
+test("affectedServicesForEpics: honors service scoping the same way the single-epic form does", () => {
+  // Mirrors the test above, but through the batch entry point.
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" }, "jira");
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" }, "jira");
+  const jiraIssueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const jiraPrEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, jiraPrEnt, jiraIssueEnt, "resolves");
+
+  addItem(db, "linear:LIN-9", "LIN-9", { meta_v: 1, parent_key: "PROJ-1" }, "linear");
+  const linearIssueEnt = addEntity(db, "linear:LIN-9", "issue");
+  const linearPrEnt = addEntity(db, "github:pr:99", "pr", "acme/unrelated-service");
+  addRelation(db, linearPrEnt, linearIssueEnt, "resolves");
+
+  const result = affectedServicesForEpics(db, ["jira:PROJ-1"]);
+  expect(result.get("jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });

@@ -165,16 +165,98 @@ test("a second pass over unchanged data scans nothing and calls no model", async
   db.close();
 });
 
-test("with NO model: zero themes, but the watermark still advances", async () => {
-  // The watermark must advance so a later pass, once a model is available, does
-  // not re-scan the entire corpus from zero.
+test("with no llm supplied at all: zero themes, watermark still advances (nothing was ever attempted)", async () => {
+  // Distinct from the `opts.llm` supplied-but-unavailable case below: with no
+  // `opts.llm` at all, extraction is skipped for every batch by construction
+  // (never even calls `extractThemes`' model branch), so there is nothing to
+  // retry — advancing is correct here, matching the pre-fix behaviour for
+  // this one case only.
   const db = freshDb();
   seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
 
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5 });
   expect(r.themesWritten).toBe(0);
   expect(r.llmCalls).toBe(0);
+  expect(r.noModel).toBe(false);
   expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
+  expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
+  db.close();
+});
+
+test("FINDING 1 — an llm that returns null: zero themes, watermark UNCHANGED, and recovers on a later pass with a working model", async () => {
+  // This is the corpus-consumption bug: an `opts.llm` that IS supplied but
+  // cannot complete (no local provider selected) must not advance past the
+  // batch it could not examine. Asserting the RECOVERY, not just the
+  // non-advance, is the point — a watermark that merely "doesn't move" could
+  // still hide a bug where the batch is silently dropped on the next attempt.
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  const noProviderLlm = { complete: async () => null };
+
+  const r1 = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: noProviderLlm });
+  expect(r1.themesWritten).toBe(0);
+  expect(r1.llmCalls).toBe(0);
+  expect(r1.noModel).toBe(true);
+  expect(readPassState(db)).toEqual({ watermarkMs: 0, watermarkId: "" });
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
+
+  // A later pass with a WORKING model still mines the exact same epic.
+  const r2 = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5, llm: okLlm });
+  expect(r2.scanned).toBe(1);
+  expect(r2.themesWritten).toBe(1);
+  expect(r2.noModel).toBe(false);
+  expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
+  expect(themesForServices(db, ["acme/billing-api"]).map((t) => t.label)).toEqual(["rate limits"]);
+  db.close();
+});
+
+test("FINDING 1 — a throwing llm: watermark unchanged (transient failure is retryable)", async () => {
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  const throwingLlm = {
+    complete: async (): Promise<string | null> => {
+      throw new Error("ECONNREFUSED");
+    },
+  };
+
+  const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: throwingLlm });
+  expect(r.themesWritten).toBe(0);
+  expect(r.noModel).toBe(true);
+  expect(readPassState(db)).toEqual({ watermarkMs: 0, watermarkId: "" });
+  db.close();
+});
+
+test("FINDING 1 — a working model returning unparseable text: watermark DOES advance (not retryable forever)", async () => {
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  const garbageLlm = { complete: async () => "not json at all" };
+
+  const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: garbageLlm });
+  expect(r.themesWritten).toBe(0);
+  expect(r.llmCalls).toBe(1);
+  expect(r.noModel).toBe(false);
+  expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
+  db.close();
+});
+
+test("FINDING 1 — the reconcile sweep still runs on a no-model pass", async () => {
+  // Extraction and reconciliation are independent: a no-model batch must not
+  // suppress pruning/demotion of themes written by an EARLIER, working pass.
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
+  expect(themesForServices(db, ["acme/billing-api"])).toHaveLength(1);
+
+  db.run(`DELETE FROM item WHERE id = 'jira:A'`);
+  seedClosedEpic(db, "jira:B", 20, "unrelated new epic");
+  const noProviderLlm = { complete: async () => null };
+  const r = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5, llm: noProviderLlm });
+
+  expect(r.noModel).toBe(true);
+  expect(r.prunedEvidence).toBe(1);
+  expect(r.demoted).toBe(1);
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
+  // And the no-model batch (jira:B) still was not examined.
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
   db.close();
 });

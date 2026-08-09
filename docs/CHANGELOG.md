@@ -28,18 +28,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   Reconciliation prunes evidence whose source item has left the index, then demotes (never
   deletes) a theme with no live evidence left — a demoted theme is the durable record of
   extraction budget already spent, so the next pass never re-mines it.
-  **No-model behaviour is deliberate and worth flagging**: with `[premortem].use_llm = false` or
-  no local model configured, the pass still runs and the watermark still advances — it just writes
-  zero themes, because the alternative (not advancing) would re-scan the whole corpus on every
-  tick forever for a configuration that will never extract anything from it.
-  **The discover stage is Jira-only today.** It keys on `metadata.issue_type = 'Epic'`
-  (`theme-discover.ts`), which only `jira-sync.ts` writes; `linear-sync.ts` never writes
-  `issue_type`, and — the deeper reason — no `linear:project` items are indexed at all, so there
-  is no Linear epic-shaped row to mine. Supporting Linear needs a connector change and is out of
-  scope for this PR, even though the upstream workstream is named "Jira + Linear."
-  One IPC method, `premortem.refresh` — no parameters, no `premortem.rebuild` counterpart (the
-  pass already owns and re-derives every row it writes, so "rebuild" would be a synonym for
-  refresh), LAN-forbidden (I5), and deliberately **not** in Tauri's `ALLOWED_METHODS` (I7; count
+  **No-model behaviour distinguishes "could not run" from "ran and found nothing."** With
+  `[premortem].use_llm = false`, no local model configured, or a transient provider failure, the
+  pass stops WITHOUT advancing its watermark for the affected batch — the batch was never actually
+  examined, so a later pass (once a working local model is available) still mines those same
+  epics. Only a model that genuinely responded, with output that was empty or unparseable, burns
+  the batch and advances the watermark — otherwise a persistently misconfigured provider would
+  loop the same batch forever. `PremortemPassResult.noModel` surfaces the first case to callers.
+  **The discover stage is Jira-only today**, and narrower still within Jira: it keys on
+  `metadata.issue_type = 'Epic'` (`theme-discover.ts`), which only `jira-sync.ts` writes;
+  `linear-sync.ts` never writes `issue_type`, and — the deeper reason — no `linear:project` items
+  are indexed at all, so there is no Linear epic-shaped row to mine. Supporting Linear needs a
+  connector change and is out of scope for this PR, even though the upstream workstream is named
+  "Jira + Linear." Within Jira, `metadata.parent_key` — which the discover→services hop keys on —
+  is populated only on **team-managed** projects; a closed epic on a classic company-managed
+  project is still discovered but resolves to zero affected services, so the pass yields nothing
+  for it.
+  One IPC method, `premortem.refresh` — no parameters. The pass RESUMES from a persisted
+  `(watermark_ms, watermark_id)` cursor rather than re-deriving its tables wholesale, so `refresh`
+  mines only epics newer than the watermark, the same as `glossary`/`decisions`. No
+  `premortem.rebuild` counterpart in this PR — not because there is nothing to rebuild FROM, but
+  because there is no reader yet (`agents.premortem` does not exist here) and no vetoes to
+  recover, so a reset verb would have nothing to visibly fix; it can land with PR B if a need
+  shows up. LAN-forbidden (I5), and deliberately **not** in Tauri's `ALLOWED_METHODS` (I7; count
   stays 104, unchanged by this PR) — local/CLI-only, and there is no renderer-exposed read
   counterpart yet since `agents.premortem` does not exist in this PR.
 - **2026-08-09 — Ticket depth (Jira + Linear)** — enough indexed depth on `jira:issue` and

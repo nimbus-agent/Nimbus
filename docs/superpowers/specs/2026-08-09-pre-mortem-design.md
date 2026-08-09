@@ -96,9 +96,12 @@ opposite of why the work was moved off the request path.
 ## Configuration
 
 A `[premortem]` block mirroring `[decisions]`: `enabled`, `debounce_ms`, `use_llm`,
-`max_llm_calls_per_pass`, `retry_cooldown_ms`, plus two bounds specific to this agent —
-`max_cohort_size` (default 10) and `max_candidate_scan` (default 200, the ceiling on how many closed
-epics the cohort lane will derive a service set for before it stops looking).
+`max_llm_calls_per_pass`, plus two bounds specific to this agent — `max_cohort_size` (default 10)
+and `max_candidate_scan` (default 200, the ceiling on how many closed epics the cohort lane will
+derive a service set for before it stops looking). There is deliberately no `retry_cooldown_ms`:
+retry needs per-candidate attempt state, which V53 has no column for, and the pass's actual retry
+behaviour (a no-model batch is retried on the very next pass, unconditionally) needs no cooldown to
+express.
 
 Construction is **gated on `enabled`**, so a disabled pass leaves the refresher unset rather than
 idling — the `decisionsRefresher` pattern in `platform/assemble.ts`, not the always-constructed
@@ -122,10 +125,13 @@ idling — the `decisionsRefresher` pattern in `platform/assemble.ts`, not the a
 Notification: `premortem.briefReady { sessionId, brief, findings }`, per the `<agentName>.briefReady`
 contract.
 
-`premortem.refresh` takes **no parameters and has no `rebuild` counterpart**, following
-`ownership.refresh` rather than `glossary`/`decisions`. The pass owns every row in its three tables
-and re-derives them from the index each run; there are no vetoes to recover and no user-authored
-content to preserve, so a "rebuild" verb would be a synonym for refresh.
+`premortem.refresh` takes **no parameters and has no `rebuild` counterpart** — but NOT for the
+`ownership.refresh` reason. The pass does not re-derive its tables wholesale each run; it RESUMES
+from a persisted `(watermark_ms, watermark_id)` cursor (`premortem_pass_state`), so `refresh` mines
+only epics newer than the watermark, the same as `glossary`/`decisions`. The actual reason there is
+no `rebuild` verb in PR A is narrower: PR A ships no reader (`agents.premortem` does not exist yet),
+so there is nothing yet a reset would visibly fix, and there are no vetoes to recover either. A
+reset verb can land with PR B if a real need shows up once a reader exists.
 
 ## Request path
 
@@ -159,6 +165,14 @@ and — the deeper problem — **no `linear:project` items are indexed at all**.
 Linear epic-shaped ROW to discover, and keying on a non-null `project_id` would wrongly treat every
 Linear issue in a project as an epic. Supporting Linear needs a connector change (index projects as
 items) and is out of scope for PR A. Every brief must say Jira-only until then.
+
+**Narrower still, within Jira: `parent_key` is team-managed-project-only.** `connectors/jira-sync.ts`
+populates `metadata.parent_key` only on team-managed Jira projects; classic company-managed projects
+express epic membership through a per-instance `customfield_100xx` this connector deliberately does
+not chase, so `parent_key` is simply absent there. The discover stage still finds a closed
+company-managed epic (it keys on `issue_type`, not `parent_key`), but `epic-services.ts` has no
+children to walk and resolves it to zero affected services — so the pass silently yields no theme
+for it, not an error.
 
 Candidates are epics — `issue_type = 'Epic'` (Jira only, see the correction above) — with
 `status_category ∈ {done, canceled}` and a `resolved_at_ms` inside the indexed window. Each
@@ -304,8 +318,11 @@ an answer while comparing unrelated work.
   ranking; theme matching; and the two watcher rules: id determinism across re-runs, and that an
   armed watcher survives a re-run **un-paused**.
 - **Pass** — discover / extract / reconcile against a fake LLM, plus the no-model path asserting
-  that it writes **zero** themes and leaves the watermark advanced (so a later pass with a model
-  available does not re-scan from scratch).
+  that it writes **zero** themes and leaves the watermark **UNCHANGED** for the affected batch (so
+  a later pass, once a model is available, still mines those same epics rather than finding the
+  corpus already marked as examined). A separate case covers a model that DID respond with
+  empty/unparseable output: that batch's watermark DOES advance, since a persistently bad model
+  must not loop the same batch forever.
 - **E2E** — `packages/gateway/test/e2e/scenarios/premortem.e2e.test.ts`: brief sections, the
   `premortem.briefReady` notification, and zero HITL fires. The structural HITL check still holds —
   pre-mortem writes through `insertWatcher`, not `ToolExecutor`, so it neither imports the executor

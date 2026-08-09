@@ -3,7 +3,14 @@ import { expect, test } from "bun:test";
 import { PremortemRefresherError } from "../premortem/premortem-refresh.ts";
 import { dispatchPremortemRpc, PremortemRpcError } from "./premortem-rpc.ts";
 
-const RESULT = { scanned: 4, themesWritten: 2, demoted: 1, prunedEvidence: 0, llmCalls: 1 };
+const RESULT = {
+  scanned: 4,
+  themesWritten: 2,
+  demoted: 1,
+  prunedEvidence: 0,
+  llmCalls: 1,
+  noModel: false,
+};
 
 test("premortem.refresh runs the pass and returns its counts", async () => {
   let ran = 0;

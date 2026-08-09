@@ -55,3 +55,63 @@ export function affectedServicesForEpic(
     .all(epicKey, epicItemId, epicItemId) as Array<{ service: string }>;
   return rows.map((r) => r.service);
 }
+
+/**
+ * The batch form of `affectedServicesForEpic`, for a whole discover batch at
+ * once. `premortem-pass.ts` used to call the single-epic form once per epic —
+ * up to `DEFAULT_BATCH_SIZE` full scans of `item` per pass batch, back to
+ * back with no `await` between them, on a job whose entire justification is
+ * that it must not degrade the interactive gateway (there is no expression
+ * index on `json_extract(metadata, '$.parent_key')` anywhere in this repo).
+ * This collapses that to ONE query.
+ *
+ * Joins `item` to itself (`epic` / `child`) rather than taking `epicKey`
+ * per-call: `child.service = epic.service` and
+ * `json_extract(child.metadata, '$.parent_key') = epic.external_id` reproduce
+ * the single-epic query's own-service scoping and parent-key match without a
+ * second round-trip to look either up. Bound params only (I9): the `IN (...)`
+ * placeholder count is built from the input length, never interpolated
+ * values.
+ *
+ * Returns a `Map` so a caller can distinguish "resolved, zero services" from
+ * "not in the input at all" — though today every epic that was queried gets
+ * an (possibly empty) entry only when it produced at least one row; callers
+ * fall back to `[]` via `?? []`, matching the single-epic function's return
+ * shape for an unresolved epic.
+ */
+export function affectedServicesForEpics(
+  db: Database,
+  epicItemIds: readonly string[],
+): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  if (epicItemIds.length === 0) {
+    return result;
+  }
+  const placeholders = epicItemIds.map(() => "?").join(", ");
+  const rows = db
+    .query(
+      `SELECT epic.id AS epicItemId, json_extract(pr.metadata, '$.repo') AS service
+         FROM item epic
+         JOIN item child             ON json_extract(child.metadata, '$.parent_key') = epic.external_id
+                                      AND child.service = epic.service
+                                      AND child.id <> epic.id
+         JOIN graph_entity   child_ent ON child_ent.type = 'issue'
+                                       AND child_ent.external_id = child.id
+         JOIN graph_relation res       ON res.to_id = child_ent.id AND res.type = 'resolves'
+         JOIN graph_entity   pr        ON pr.id     = res.from_id
+        WHERE epic.id IN (${placeholders})
+          AND json_extract(pr.metadata, '$.repo') IS NOT NULL
+        ORDER BY epic.id ASC, service ASC`,
+    )
+    .all(...epicItemIds) as Array<{ epicItemId: string; service: string }>;
+  for (const r of rows) {
+    const services = result.get(r.epicItemId) ?? [];
+    // DISTINCT per epic: rows arrive service-sorted, so a plain de-dupe
+    // preserves the same sorted order the single-epic function returns.
+    if (services[services.length - 1] !== r.service) {
+      services.push(r.service);
+    }
+    result.set(r.epicItemId, services);
+  }
+  return result;
+}

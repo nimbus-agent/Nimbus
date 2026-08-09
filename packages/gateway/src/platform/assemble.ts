@@ -554,9 +554,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   // Pre-mortem theme pass (S1 Local Brain). Construction itself is gated on
   // `[premortem].enabled` — like decisionsRefresher above, not glossaryRefresher — so a
   // disabled pass leaves `premortemRefresher` unset rather than idling, and `premortem.refresh`
-  // fails loudly instead of silently reporting success. `premortemCfg.retryCooldownMs` /
-  // `maxCohortSize` / `maxCandidateScan` are deliberately NOT passed to `runPremortemPass`: they
-  // feed PR B's cohort-assembly read path, not this write pass, which only takes
+  // fails loudly instead of silently reporting success. `premortemCfg.maxCohortSize` /
+  // `maxCandidateScan` are deliberately NOT passed to `runPremortemPass`: they feed PR B's
+  // cohort-assembly read path, not this write pass, which only takes
   // `nowMs`/`maxLlmCalls`/`llm`/`signal`.
   const premortemCfg = loadNimbusPremortemFromConfigDir(paths.configDir);
   const premortemLlmForPass = premortemCfg.useLlm ? decisionLlm : undefined;

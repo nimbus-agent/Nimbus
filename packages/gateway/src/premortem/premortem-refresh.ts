@@ -49,8 +49,12 @@ export type PremortemRefresher = {
  * Unlike `decisions/decision-refresh.ts` (whose `runPass` takes no signal,
  * per the LIMIT note there — "the abort has nowhere to go"), this module's
  * `runPass` takes an `AbortSignal`, mirroring `glossary/glossary-refresh.ts`.
- * So `stop()` here can actually cancel an in-flight pass rather than only
- * clearing the debounce timer.
+ * So `stop()` here can end an in-flight pass at its NEXT BATCH BOUNDARY —
+ * `runPremortemPass` checks the signal between batches — rather than only
+ * clearing the debounce timer. It is still not truly cancellable: a pass
+ * blocked inside `llm.complete()` mid-batch cannot be interrupted, since
+ * `ThemeLlm.complete` takes no signal of its own (mirrors the LIMIT note in
+ * `decisions/decision-llm-adapter.ts`).
  *
  * The debounce timer is `unref`'d: a pending pass must never hold this
  * long-lived gateway process open.

@@ -1378,7 +1378,7 @@ const streamReq: JSONRPCRequest = {
 //   constructed and the method surfaces as "Method not found" — `agents.ownership` still serves
 //   whatever the graph last held (or an empty-graph gap note if no pass has ever run).
 //
-// Phase 6 S1 surfaces — pre-mortem theme pass (PR A only: schema + a debounced background pass;
+// Spine S1 surfaces — pre-mortem theme pass (PR A only: schema + a debounced background pass;
 // V53 `premortem_theme` / `premortem_theme_evidence` / `premortem_pass_state` /
 // `premortem_watcher_proposal` — the last table is written by a later PR, not this one; the table
 // lands here because schema precedes its reader):
@@ -1387,9 +1387,13 @@ const streamReq: JSONRPCRequest = {
 //   only, so `agents.premortem` does not exist yet and there is nothing renderer-exposed.
 // premortem.refresh — drives an on-demand theme-extraction pass now. Takes NO parameters —
 //   rejected with -32602 if any are supplied (`dispatchPremortemRpc` → `handleRefresh` in
-//   `ipc/premortem-rpc.ts`). No premortem.rebuild counterpart: following `ownership.refresh`,
-//   the pass owns every row in its tables and re-derives them from the index each run, so
-//   "rebuild" would be a synonym for refresh.
+//   `ipc/premortem-rpc.ts`). The pass RESUMES from a persisted `(watermark_ms, watermark_id)`
+//   cursor (`premortem_pass_state`) rather than re-deriving its tables wholesale, so `refresh`
+//   mines only epics newer than the watermark — unlike `ownership.refresh`, which clears and
+//   re-emits everything each run. No premortem.rebuild counterpart in this PR: not because there
+//   is nothing to rebuild FROM, but because PR A ships no reader (`agents.premortem` does not
+//   exist yet) and there are no vetoes to recover, so a reset verb would have nothing to visibly
+//   fix. That verb can land with PR B if a need shows up once a reader exists.
 //   premortem.refresh: write-class, so the whole `premortem` namespace is LAN-forbidden (I5).
 //   It is NOT in Tauri's ALLOWED_METHODS (I7) — Tauri count stays 104, unchanged by this PR.
 //   Exists only when `[premortem].enabled` (default true); otherwise the refresher is never
@@ -1400,6 +1404,12 @@ const streamReq: JSONRPCRequest = {
 //   writes `issue_type`, and — the deeper reason — no `linear:project` items are indexed at all,
 //   so there is no Linear epic-shaped row to mine. Supporting Linear needs a connector change and
 //   is out of scope here.
+//   **`parent_key` is TEAM-MANAGED-Jira-only, narrower still:** `connectors/jira-sync.ts` writes
+//   `metadata.parent_key` only on team-managed projects; classic company-managed projects express
+//   epic membership through a per-instance `customfield_100xx` this connector does not chase, so
+//   `parent_key` is simply absent there. On a company-managed project the discover stage still
+//   finds the closed epic, but `epic-services.ts` resolves it to zero affected services (no
+//   children to walk), so the pass yields no theme for it.
 ```
 
 ### AbortController scope in `engine.cancelStream`

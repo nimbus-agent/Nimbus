@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { affectedServicesForEpic } from "./epic-services.ts";
+import { affectedServicesForEpics } from "./epic-services.ts";
 import { type DiscoveredEpic, discoverClosedEpics } from "./theme-discover.ts";
 import { extractThemes, type ThemeLlm } from "./theme-llm-adapter.ts";
 import {
@@ -27,17 +27,40 @@ export type PremortemPassResult = {
   demoted: number;
   prunedEvidence: number;
   llmCalls: number;
+  /**
+   * True when the pass stopped early because no local model was available for
+   * a batch it needed to extract from (never configured, or a transient
+   * failure) — distinct from `themesWritten === 0`, which can also mean a
+   * working model genuinely found nothing. Mirrors the counter
+   * `decisions/decision-extract.ts` carries for the same distinction; boolean
+   * here rather than a count because a pass stops at the FIRST no-model batch
+   * rather than tallying across many.
+   */
+  noModel: boolean;
 };
 
-const DEFAULT_BATCH_SIZE = 20;
+// Lowered from 20: `theme-llm-adapter.ts` caps each epic body at 2 KiB
+// (`EPIC_BODY_MAX`), and a batch of 4 keeps the rendered prompt (bodies +
+// titles/ids + the wrapToolOutput envelope + INSTRUCTIONS) comfortably inside
+// Ollama's default 4096-token (~16 KiB) `num_ctx` with headroom left for the
+// completion — 20 uncapped bodies could reach ~320 KiB and get front-truncated
+// past the instructions entirely. A smaller batch means more calls to cover
+// the same corpus, bounded by `maxLlmCallsPerPass` (default 25) as before.
+const DEFAULT_BATCH_SIZE = 4;
 
 /**
  * discover -> extract -> reconcile, checkpointing the watermark PER BATCH.
  *
- * The watermark advances even when no model is available and zero themes are
- * written. That is deliberate: the alternative re-scans the whole corpus on
- * every tick forever, and the batch genuinely has been examined — there was
- * simply nothing this configuration could extract from it.
+ * The watermark advances only when the batch was actually examined — a
+ * working model that ran and found nothing, or no model configured for the
+ * WHOLE pass (`opts.llm === undefined`, so extraction is skipped for every
+ * batch by construction). It does NOT advance when `extractThemes` reports
+ * `{ kind: "no-model" }` for an `opts.llm` that WAS supplied but could not
+ * complete this call (absent local provider, or a transient failure) — that
+ * batch was never actually examined, so advancing past it would permanently
+ * consume the corpus the moment the gateway ever ran without a working local
+ * model. The loop stops there rather than trying the next batch, since a
+ * model that failed once is likely to fail again for the rest of this pass.
  */
 export async function runPremortemPass(
   db: Database,
@@ -48,6 +71,7 @@ export async function runPremortemPass(
   let scanned = 0;
   let themesWritten = 0;
   let llmCalls = 0;
+  let noModel = false;
 
   for (;;) {
     if (opts.signal?.aborted === true) break;
@@ -61,8 +85,18 @@ export async function runPremortemPass(
     if (batch.length === 0) break;
 
     if (opts.llm !== undefined) {
+      const outcome = await extractThemes(batch, { llm: opts.llm });
+      if (outcome.kind === "no-model") {
+        // The corpus was NOT examined this batch — stop without advancing or
+        // checkpointing the watermark, and without charging a call that did
+        // not produce a usable result. A later pass (this gateway restarted
+        // against a working Ollama, or the same one once it recovers) resumes
+        // here and re-tries these exact epics.
+        noModel = true;
+        break;
+      }
       llmCalls += 1;
-      const themes = await extractThemes(batch, { llm: opts.llm });
+      const themes = outcome.themes;
       const byId = new Map(batch.map((e) => [e.itemId, e]));
 
       // A theme's service is the AFFECTED service its attesting epics touched
@@ -70,10 +104,16 @@ export async function runPremortemPass(
       // matches themes against a cohort's affected services, so writing the
       // connector service here would leave every lookup returning zero rows
       // while both halves looked individually correct.
-      const servicesByEpic = new Map<string, string[]>();
-      for (const e of batch) {
-        servicesByEpic.set(e.itemId, affectedServicesForEpic(db, e.itemId, e.epicKey));
-      }
+      //
+      // Resolved for the WHOLE batch in one query, not once per epic: each
+      // call scans `item` in full (no expression index on `metadata.parent_key`
+      // exists anywhere in this repo), and this pass must not stall the
+      // interactive gateway with up to `batchSize` back-to-back scans and no
+      // `await` between them.
+      const servicesByEpic = affectedServicesForEpics(
+        db,
+        batch.map((e) => e.itemId),
+      );
 
       for (const t of themes) {
         // One theme row per affected service, each carrying only the evidence
@@ -129,5 +169,5 @@ export async function runPremortemPass(
   // should not still be counted. Demotion then reduces to "no evidence left".
   const prunedEvidence = pruneOrphanedEvidence(db);
   const demoted = demoteThemesWithNoLiveEvidence(db, opts.nowMs);
-  return { scanned, themesWritten, demoted, prunedEvidence, llmCalls };
+  return { scanned, themesWritten, demoted, prunedEvidence, llmCalls, noModel };
 }

@@ -9,6 +9,7 @@ const EMPTY: PremortemPassResult = {
   demoted: 0,
   prunedEvidence: 0,
   llmCalls: 0,
+  noModel: false,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -91,6 +92,7 @@ test("runNow bypasses the debounce and returns the result", async () => {
       demoted: 0,
       prunedEvidence: 0,
       llmCalls: 1,
+      noModel: false,
     }),
     onError: () => {},
   });
@@ -100,6 +102,7 @@ test("runNow bypasses the debounce and returns the result", async () => {
     demoted: 0,
     prunedEvidence: 0,
     llmCalls: 1,
+    noModel: false,
   });
   r.stop();
 });

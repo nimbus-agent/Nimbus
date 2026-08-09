@@ -24,14 +24,12 @@ const EPICS: DiscoveredEpic[] = [
   },
 ];
 
-test("with no model, extraction yields ZERO themes — never a guess", () => {
+test("with no llm supplied at all, extraction reports no-model — never a guess", async () => {
   // There is no snippet fallback and deliberately so: glossary can pick a
   // snippet because it already knows the term, but here DISCOVERY is the task,
   // so there is nothing to look up. Inventing themes from keywords would
   // fabricate findings from a single incidental mention.
-  return extractThemes(EPICS, {}).then((themes) => {
-    expect(themes).toEqual([]);
-  });
+  expect(await extractThemes(EPICS, {})).toEqual({ kind: "no-model" });
 });
 
 test("parses labels and their attributed sources from the model", async () => {
@@ -44,11 +42,14 @@ test("parses labels and their attributed sources from the model", async () => {
         ],
       }),
   };
-  const themes = await extractThemes(EPICS, { llm });
-  expect(themes).toEqual([
-    { label: "third-party rate limits", sourceItemIds: ["jira:A", "jira:B"] },
-    { label: "vendor quota approval", sourceItemIds: ["jira:B"] },
-  ]);
+  const outcome = await extractThemes(EPICS, { llm });
+  expect(outcome).toEqual({
+    kind: "ok",
+    themes: [
+      { label: "third-party rate limits", sourceItemIds: ["jira:A", "jira:B"] },
+      { label: "vendor quota approval", sourceItemIds: ["jira:B"] },
+    ],
+  });
 });
 
 test("drops a source the model invented, keeping the theme", async () => {
@@ -59,15 +60,18 @@ test("drops a source the model invented, keeping the theme", async () => {
     complete: async () =>
       JSON.stringify({ themes: [{ label: "rate limits", sources: ["jira:A", "jira:NOPE"] }] }),
   };
-  const themes = await extractThemes(EPICS, { llm });
-  expect(themes).toEqual([{ label: "rate limits", sourceItemIds: ["jira:A"] }]);
+  const outcome = await extractThemes(EPICS, { llm });
+  expect(outcome).toEqual({
+    kind: "ok",
+    themes: [{ label: "rate limits", sourceItemIds: ["jira:A"] }],
+  });
 });
 
 test("drops a theme left with no valid source at all", async () => {
   const llm = {
     complete: async () => JSON.stringify({ themes: [{ label: "ghost", sources: ["jira:NOPE"] }] }),
   };
-  expect(await extractThemes(EPICS, { llm })).toEqual([]);
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "ok", themes: [] });
 });
 
 test("duplicate source ids cannot inflate a theme's corroboration", async () => {
@@ -80,18 +84,35 @@ test("duplicate source ids cannot inflate a theme's corroboration", async () => 
         themes: [{ label: "rate limits", sources: ["jira:A", "jira:A", "jira:A"] }],
       }),
   };
-  const themes = await extractThemes(EPICS, { llm });
-  expect(themes).toEqual([{ label: "rate limits", sourceItemIds: ["jira:A"] }]);
+  const outcome = await extractThemes(EPICS, { llm });
+  expect(outcome).toEqual({
+    kind: "ok",
+    themes: [{ label: "rate limits", sourceItemIds: ["jira:A"] }],
+  });
 });
 
-test("malformed model output yields no themes rather than throwing", async () => {
+test("malformed model output yields ok/zero themes — the model ran and produced nothing usable", async () => {
   const llm = { complete: async () => "not json at all" };
-  expect(await extractThemes(EPICS, { llm })).toEqual([]);
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "ok", themes: [] });
 });
 
-test("a null completion yields no themes", async () => {
+test("a null completion reports no-model — the real no-Ollama case", async () => {
   const llm = { complete: async () => null };
-  expect(await extractThemes(EPICS, { llm })).toEqual([]);
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "no-model" });
+});
+
+test("an empty-string completion reports no-model", async () => {
+  const llm = { complete: async () => "" };
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "no-model" });
+});
+
+test("a throwing complete() reports no-model — transient failure, not proof no model exists", async () => {
+  const llm = {
+    complete: async (): Promise<string | null> => {
+      throw new Error("ECONNREFUSED");
+    },
+  };
+  expect(await extractThemes(EPICS, { llm })).toEqual({ kind: "no-model" });
 });
 
 test("a label that normalizes to nothing is dropped", async () => {
@@ -107,12 +128,13 @@ test("a label that normalizes to nothing is dropped", async () => {
         ],
       }),
   };
-  expect(await extractThemes(EPICS, { llm })).toEqual([
-    { label: "rate limits", sourceItemIds: ["jira:A"] },
-  ]);
+  expect(await extractThemes(EPICS, { llm })).toEqual({
+    kind: "ok",
+    themes: [{ label: "rate limits", sourceItemIds: ["jira:A"] }],
+  });
 });
 
-test("an empty epic batch never calls the model", async () => {
+test("an empty epic batch never calls the model, and reports ok/zero — not no-model", async () => {
   let calls = 0;
   const llm = {
     complete: async () => {
@@ -120,6 +142,39 @@ test("an empty epic batch never calls the model", async () => {
       return "{}";
     },
   };
-  expect(await extractThemes([], { llm })).toEqual([]);
+  expect(await extractThemes([], { llm })).toEqual({ kind: "ok", themes: [] });
   expect(calls).toBe(0);
+});
+
+test("a very long epic body is truncated in the emitted prompt", async () => {
+  const longBody = "x".repeat(50_000);
+  let capturedPrompt = "";
+  const llm = {
+    complete: async (prompt: string) => {
+      capturedPrompt = prompt;
+      return JSON.stringify({ themes: [] });
+    },
+  };
+  await extractThemes([{ ...EPICS[0]!, body: longBody }], { llm });
+  // The prompt must contain SOME of the body (truncation, not omission) but
+  // never the whole 50,000-char string — otherwise a single oversized epic
+  // still blows the local model's context window front-truncation was meant
+  // to fix.
+  expect(capturedPrompt).not.toContain(longBody);
+  expect(capturedPrompt.length).toBeLessThan(longBody.length);
+});
+
+test("INSTRUCTIONS is placed AFTER the sources, so front-truncation degrades data, not the ask", async () => {
+  let capturedPrompt = "";
+  const llm = {
+    complete: async (prompt: string) => {
+      capturedPrompt = prompt;
+      return JSON.stringify({ themes: [] });
+    },
+  };
+  await extractThemes(EPICS, { llm });
+  const sourcesIdx = capturedPrompt.indexOf("Sources:");
+  const instructionsIdx = capturedPrompt.indexOf("Respond with JSON only");
+  expect(sourcesIdx).toBeGreaterThanOrEqual(0);
+  expect(instructionsIdx).toBeGreaterThan(sourcesIdx);
 });
