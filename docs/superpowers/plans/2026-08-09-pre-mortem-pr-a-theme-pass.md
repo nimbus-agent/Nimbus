@@ -2373,7 +2373,11 @@ export function createPremortemRefresher(deps: PremortemRefresherDeps): Premorte
     if (stopped) return;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(fire, deps.debounceMs);
-    // Never hold the process open for a background pass.
+    // Never hold the process open for a background pass. NOTE: an earlier draft
+    // justified this by claiming the sibling refreshers do it too — they do NOT
+    // (grep `unref` under packages/gateway/src). Keep it on its own merit: a
+    // pending debounce must not keep a long-lived gateway or a test process
+    // alive, and this repo has hit unref-related test hangs before.
     timer.unref?.();
   }
 
@@ -2387,6 +2391,19 @@ export function createPremortemRefresher(deps: PremortemRefresherDeps): Premorte
       arm();
     },
     async runNow(): Promise<PremortemPassResult> {
+      // SINGLE-FLIGHT GUARD, not a bare `execute()`. Without it, calling
+      // `runNow()` while a debounced pass is in flight runs two passes over the
+      // same watermark concurrently. All three siblings (decisions, glossary,
+      // ownership) throw an `ERR_*_PASS_RUNNING` here instead — follow that
+      // contract, since `premortem.refresh` surfaces it to the caller.
+      if (stopped) {
+        throw new PremortemRefresherError("ERR_PREMORTEM_STOPPED: the gateway is shutting down");
+      }
+      if (running) {
+        throw new PremortemRefresherError(
+          "ERR_PREMORTEM_PASS_RUNNING: a premortem pass is already running",
+        );
+      }
       return await execute();
     },
     stop(): void {
