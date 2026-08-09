@@ -179,16 +179,54 @@ jobs:
       # Fail fast with an actionable message if the winget submission PAT is missing.
       # wingetcreate must fork microsoft/winget-pkgs + open a cross-repo PR, which the
       # fine-grained PACKAGE_MANAGER_PAT (scoped to our own channel repos) cannot do —
-      # this needs a classic PAT with the `public_repo` scope.
+      # this needs a classic PAT with the `public_repo` AND `workflow` scopes (see the
+      # sync step below for why `workflow` is not optional).
       - name: Require WINGET_PAT
         shell: pwsh
         env:
           WINGET_PAT: ${{ secrets.WINGET_PAT }}
         run: |
           if ([string]::IsNullOrEmpty($env:WINGET_PAT)) {
-            Write-Output "::error::WINGET_PAT is not set. Add a classic PAT with the 'public_repo' scope so wingetcreate can fork microsoft/winget-pkgs, push to the fork, and open a PR (the fine-grained PACKAGE_MANAGER_PAT cannot). Repo Settings -> Secrets -> Actions."
+            Write-Output "::error::WINGET_PAT is not set. Add a classic PAT with the 'public_repo' AND 'workflow' scopes so wingetcreate can fork microsoft/winget-pkgs, sync + push to the fork, and open a PR (the fine-grained PACKAGE_MANAGER_PAT cannot). Repo Settings -> Secrets -> Actions."
             exit 1
           }
+
+      # wingetcreate syncs its fork of winget-pkgs before submitting, and when that sync
+      # fails it reports only "The forked repository could not be synced with the upstream
+      # commits" — naming no cause. The cause is normally scope: GitHub refuses a
+      # token-attributed write that creates or updates files under `.github/workflows/`
+      # unless the PAT carries `workflow`, and winget-pkgs commits workflow files
+      # regularly. A `public_repo`-only PAT therefore publishes fine until the first such
+      # upstream commit, then fails EVERY release — winget sat at 1.19.1 from v1.20.0
+      # through v1.26.0 exactly this way, while brew/scoop in this same workflow stayed
+      # current, so the run was red but the symptom was one stale channel.
+      #
+      # Doing the sync here, explicitly, means the failure names its own cause. Idempotent:
+      # a fork already level with upstream is a no-op, and a not-yet-existing fork is not
+      # an error (wingetcreate creates it on the first-ever submission).
+      - name: Sync the winget-pkgs fork with upstream
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_PAT }}
+        run: |
+          $login = gh api user --jq .login
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::WINGET_PAT was rejected by the GitHub API — it is revoked or expired. Re-issue it (classic PAT, 'public_repo' + 'workflow')."
+            exit 1
+          }
+          $fork = "$login/winget-pkgs"
+          $branch = gh api "repos/$fork" --jq .default_branch 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "No $fork yet — wingetcreate will create it on submit."
+            exit 0
+          }
+          $out = gh api -X POST "repos/$fork/merge-upstream" -f "branch=$branch" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output $out
+            Write-Output "::error::Could not sync $fork ($branch) with microsoft/winget-pkgs. The usual cause is a WINGET_PAT missing the 'workflow' scope: upstream commits touch .github/workflows/, and GitHub refuses to replay those without it. Re-issue the classic PAT with BOTH 'public_repo' and 'workflow' (https://github.com/settings/tokens), or sync the fork by hand and re-run this workflow."
+            exit 1
+          }
+          Write-Output $out
 
       - name: Download the released .msi + SHA256SUMS
         shell: pwsh

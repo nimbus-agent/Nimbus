@@ -10,7 +10,7 @@ import { closeHealthIssue, openOrUpdateHealthIssue } from "./open-health-issue.t
 
 export type PatStrategy =
   | { readonly kind: "repo-write"; readonly targetRepos: readonly string[] }
-  | { readonly kind: "scopes"; readonly required: string }
+  | { readonly kind: "scopes"; readonly required: readonly string[] }
   | { readonly kind: "alive" };
 export type PatStatus = "ok" | "dead" | "insufficient" | "indeterminate" | "not-configured";
 export type CertStatus = "ok" | "expiring" | "expired" | "indeterminate" | "not-configured";
@@ -23,8 +23,11 @@ export function classifyPatProbe(
   if (probe.status !== 200) return "indeterminate";
   if (strategy.kind === "repo-write") return probe.push === true ? "ok" : "insufficient";
   if (strategy.kind === "scopes") {
+    // EVERY required scope must be present. A PAT holding only some of them is
+    // `insufficient`, not `ok` — a partial grant is exactly how the winget channel
+    // broke silently at v1.20.0 (see the WINGET_PAT entry below).
     const have = (probe.scopes ?? "").split(",").map((s) => s.trim());
-    return have.includes(strategy.required) ? "ok" : "insufficient";
+    return strategy.required.every((r) => have.includes(r)) ? "ok" : "insufficient";
   }
   return "ok";
 }
@@ -628,7 +631,15 @@ if (import.meta.main) {
     {
       env: "WINGET_PAT",
       token: process.env["WINGET_PAT"],
-      strategy: { kind: "scopes", required: "public_repo" } as PatStrategy,
+      // `public_repo` alone is NOT enough. wingetcreate syncs its fork of
+      // microsoft/winget-pkgs before submitting, and GitHub refuses a token-attributed
+      // write that creates or updates files under `.github/workflows/` unless the token
+      // also carries `workflow`. winget-pkgs commits workflow files regularly, so a
+      // `public_repo`-only PAT works until the first such upstream commit and then fails
+      // every release with wingetcreate's opaque "The forked repository could not be
+      // synced with the upstream commits" — which is what froze the winget manifest at
+      // 1.19.1 from 2026-08-04 (v1.20.0) until 2026-08-09.
+      strategy: { kind: "scopes", required: ["public_repo", "workflow"] } as PatStrategy,
     },
     {
       env: "NIMBUS_CHECKS_TOKEN",
