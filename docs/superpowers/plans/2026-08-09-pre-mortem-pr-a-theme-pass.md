@@ -2582,6 +2582,9 @@ so the next reader does not go looking for `nimbus pre-mortem`.
 **Files:**
 
 - Modify: `docs/architecture.md` (V53 tables + the `premortem.refresh` method)
+- Modify: `docs/schema-reference.md` (the four V53 tables) — the `nimbus-db-migrations` New Table
+  Checklist calls for this and Task 1's review flagged it as the one real gap. V51 and V52 both
+  skipped it in their own commits, so the precedent is drift, not permission: close it here.
 - Modify: `docs/CHANGELOG.md` (Unreleased entry)
 - Modify: `CLAUDE.md` and `GEMINI.md` (schema V52 → V53 in the status line — **both**, they mirror)
 
@@ -2593,6 +2596,8 @@ so the next reader does not go looking for `nimbus pre-mortem`.
 
 - `docs/architecture.md`: add the four V53 tables to the schema reference and `premortem.refresh`
   to the IPC catalogue, marked LAN-forbidden and not renderer-exposed.
+- `docs/schema-reference.md`: document the four V53 tables alongside the V47 decisions and V51
+  ownership entries already there.
 - `docs/CHANGELOG.md`: an Unreleased entry naming the V53 tables and the theme pass, and stating
   plainly that **no user-facing command ships in this PR** — `nimbus pre-mortem` arrives in PR B.
   Note the no-model behaviour (zero themes, watermark still advances) since that is the surprising
