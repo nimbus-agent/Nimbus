@@ -35,7 +35,8 @@ export function discoverClosedEpics(
     .query(
       `SELECT id, external_id, title, body, body_complete, metadata, modified_at
          FROM item
-        WHERE json_extract(metadata, '$.status_category') IN ('done','canceled')
+        WHERE service = 'jira'
+          AND json_extract(metadata, '$.status_category') IN ('done','canceled')
           AND json_extract(metadata, '$.issue_type') = 'Epic'
           AND (modified_at > ? OR (modified_at = ? AND id > ?))
         ORDER BY modified_at ASC, id ASC

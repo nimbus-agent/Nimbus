@@ -695,9 +695,10 @@ CREATE INDEX IF NOT EXISTS idx_premortem_evidence_item
 -- `decision_pass_state` / `glossary_pass_state` above: `watermark_ms` alone cannot express "resume
 -- inside a group of items sharing one modified_at", and a bulk import stamping thousands of rows
 -- with one job-level timestamp makes that ordinary. `watermark_id` breaks the tie on `item.id`, a
--- primary key and therefore total. The watermark advances even when no model is configured and
--- zero themes are written — the batch was genuinely examined, there was simply nothing this
--- configuration could extract from it; re-scanning the whole corpus forever is the alternative.
+-- primary key and therefore total. The watermark advances ONLY for a batch whose model call
+-- actually ran: no configured model, an unavailable local provider, or a thrown call all leave it
+-- untouched so those epics are retried later. A model that DID respond but returned unusable output
+-- does advance it — otherwise a persistently bad model would loop on the same epics forever.
 CREATE TABLE IF NOT EXISTS premortem_pass_state (
     id            INTEGER PRIMARY KEY CHECK(id = 1),
     watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- modified_at of the last row the scan consumed

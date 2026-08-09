@@ -109,6 +109,24 @@ test("exposes the epic key children point at, and no connector service field", (
   db.close();
 });
 
+test("a non-jira row is never discovered, even with jira-shaped metadata", () => {
+  // The Jira-only guarantee must be STRUCTURAL, not incidental. Today no
+  // linear-sync row carries `issue_type`, so nothing leaks — but that is a
+  // property of another module, not of this query. This row is deliberately
+  // impossible-looking (a Linear item wearing Jira metadata) precisely so the
+  // `service = 'jira'` predicate is what excludes it: delete that predicate and
+  // this test goes red.
+  const db = freshDb();
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
+                       metadata, modified_at, synced_at, pinned)
+     VALUES ('linear:L1', 'linear', 'issue', 'L1', 'T', 'b', 1, ?, 10, 1, 0)`,
+    [JSON.stringify({ meta_v: 1, status_category: "done", issue_type: "Epic" })],
+  );
+  expect(discoverClosedEpics(db, { watermarkMs: 0, watermarkId: "", batchSize: 50 })).toEqual([]);
+  db.close();
+});
+
 test("a NULL body comes back as an empty string, never null", () => {
   // The `body` column is nullable (an epic can be indexed with no body at
   // all); the discover row mapper must coalesce it rather than leak `null`
