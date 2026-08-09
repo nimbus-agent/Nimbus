@@ -52,6 +52,7 @@ import { PERSON_HANDLES_V5_ALTER_SQL } from "../person-handles-v5-sql.ts";
 import { PERSON_LINKED_V4_ALTER_SQL } from "../person-linked-v4-sql.ts";
 import { POLICY_V36_SQL } from "../policy-v36-sql.ts";
 import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.ts";
+import { PREMORTEM_V53_SQL } from "../premortem-v53-sql.ts";
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
 import { RESOLVE_KEY_V52_SQL } from "../resolve-key-v52-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
@@ -544,6 +545,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     OWNERSHIP_PASS_STATE_V51_SQL,
   ]),
   { fromVersion: 51, toVersion: 52, apply: migrateIndexedV51ToV52 },
+  simpleStep(52, 53, "premortem theme extraction tables", PREMORTEM_V53_SQL),
 ];
 
 const BACKFILL_LABELS: readonly string[] = [

@@ -781,10 +781,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 52, so V52 runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 53, so V53 runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(52);
+  expect(CURRENT_SCHEMA_VERSION).toBe(53);
   const db = freshDb();
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
   expect(tableNames(db)).toContain("item");
@@ -878,5 +878,65 @@ test("V52 backfill leaves FTS search working for a row that existed before the m
     .query("SELECT rowid FROM item_fts WHERE item_fts MATCH 'frobnicator'")
     .all() as Array<{ rowid: number }>;
   expect(hits.length).toBe(1);
+  db.close();
+});
+
+// ---------------------------------------------------------------------------
+// V53 — pre-mortem theme extraction tables
+// ---------------------------------------------------------------------------
+
+test("V53 creates the four pre-mortem tables and seeds the pass-state row", () => {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 53);
+
+  const tables = db
+    .query(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'premortem_%' ORDER BY name`,
+    )
+    .all() as Array<{ name: string }>;
+  expect(tables.map((t) => t.name)).toEqual([
+    "premortem_pass_state",
+    "premortem_theme",
+    "premortem_theme_evidence",
+    "premortem_watcher_proposal",
+  ]);
+
+  // Single-row watermark, seeded so the pass never has to branch on "no row yet".
+  const state = db.query(`SELECT id, watermark_ms, watermark_id FROM premortem_pass_state`).all();
+  expect(state).toEqual([{ id: 1, watermark_ms: 0, watermark_id: "" }]);
+
+  db.close();
+});
+
+test("premortem_pass_state cannot hold a second row", () => {
+  const db = new Database(":memory:");
+  runIndexedSchemaMigrations(db, 53);
+  expect(() => {
+    db.run(`INSERT INTO premortem_pass_state (id, watermark_ms) VALUES (2, 0)`);
+  }).toThrow();
+  db.close();
+});
+
+test("deleting a theme cascades its evidence", () => {
+  const db = new Database(":memory:");
+  // REQUIRED. SQLite defaults `foreign_keys` to OFF per connection; production
+  // turns it ON in `index/local-index.ts`, but a bare `new Database` in a test
+  // does not. Without this line the DELETE below leaves the evidence row and
+  // this test fails while the schema is perfectly correct.
+  db.run("PRAGMA foreign_keys = ON");
+  runIndexedSchemaMigrations(db, 53);
+  db.run(
+    `INSERT INTO premortem_theme (id, service, label, normalized, status, confidence, updated_at)
+     VALUES ('t1', 'acme/billing-api', 'rate limits', 'rate limits', 'extracted', 0.5, 1)`,
+  );
+  db.run(
+    `INSERT INTO premortem_theme_evidence (theme_id, item_id, evidence_key, label, occurred_at)
+     VALUES ('t1', 'jira:PROJ-1', 'jira:PROJ-1', 'PROJ-1', 1)`,
+  );
+  db.run(`DELETE FROM premortem_theme WHERE id = 't1'`);
+  const left = db.query(`SELECT COUNT(*) AS n FROM premortem_theme_evidence`).get() as {
+    n: number;
+  };
+  expect(left.n).toBe(0);
   db.close();
 });
