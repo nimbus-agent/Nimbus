@@ -34,7 +34,7 @@ history; the interactive command does only fast SQL and never calls a model.
 │    discover  → closed epics + their children's ticket bodies and   │
 │                mentioning threads, grouped by service              │
 │    extract   → local LLM names recurring blocker themes            │
-│                (verbatim-snippet fallback when no local model)     │
+│                (NO fallback: no model ⇒ no themes, stated in brief)│
 │    reconcile → pure-SQL sweep; demote themes whose sources vanish  │
 │  writes: premortem_theme, premortem_theme_evidence,                │
 │          premortem_pass_state (watermark)                          │
@@ -69,6 +69,7 @@ Current schema is **V52**; #1128 added no migration, so V53 is the next free ver
 | `premortem_theme` | one recurring blocker theme per `(service, theme)`. Id is **content-derived** = hash(service, normalized theme label), where normalization is lowercase + collapsed whitespace + stripped surrounding punctuation — enough that "Rate limits." and "rate  limits" converge, deliberately not stemming or synonym-folding, which would silently merge distinct blockers |
 | `premortem_theme_evidence` | cohort epics/threads attesting a theme; drives the deterministic corroboration count |
 | `premortem_pass_state` | single-row **composite** watermark (`watermark_ms` + `watermark_id`) |
+| `premortem_watcher_proposal` | every watcher id pre-mortem has ever proposed, so a user-deleted watcher is never re-created (see *Watchers*, rule 3) |
 
 Two decisions inherited deliberately from `decision_record` (V47):
 
@@ -84,6 +85,13 @@ Two decisions inherited deliberately from `decision_record` (V47):
 
 **Confidence is computed from the evidence count, never from the model's self-report** — the rule
 `decisions` established and the reason its scoring is deterministic.
+
+**Read bounds on the pass.** `max_llm_calls_per_pass` bounds model calls but not rows read, and
+ticket bodies run to 16 KiB since V48, so the discover stage selects only the columns it needs
+(`id`, `service`, `title`, `body`, the depth metadata) — never `SELECT *` — and processes candidates
+in bounded batches, checkpointing the watermark per batch. A pass that reads a whole epic corpus
+into memory at once would be a background job that degrades the interactive gateway, which is the
+opposite of why the work was moved off the request path.
 
 ## Configuration
 
@@ -145,11 +153,27 @@ named gap, never an empty cohort presented as a result.
 
 Candidates are epics — `issue_type = 'Epic'` (Jira) or a non-null `project_id` (Linear) — with
 `status_category ∈ {done, canceled}` and a `resolved_at_ms` inside the indexed window. Each
-candidate's service set is derived exactly as the target's was, then candidates are ranked by
-overlap size.
+candidate's service set is derived exactly as the target's was.
+
+**Candidates are scanned in `resolved_at_ms DESC` order**, so `max_candidate_scan` truncates the
+*oldest* history rather than an arbitrary slice of it. Without an explicit order the cap would take
+whatever SQLite returned first, which is neither recent nor stable.
+
+**Ranking is IDF-weighted overlap, not overlap count.** A raw count makes a monolithic or ubiquitous
+service (`api-gateway`, `shared-utils`) match nearly every closed epic, drowning the signal from the
+specific service that actually characterises the work. Each service is therefore weighted by
+`log(N / epics_touching_service)` over the scanned candidates, and a candidate's score is the sum of
+weights of the services it shares with the target. An overlap on a rare service outranks an overlap
+on a ubiquitous one.
+
+This is deliberately **derived rather than configured**: a service present in every epic earns a
+weight near zero automatically, so no exclusion list is needed. A hand-maintained blacklist would be
+one more table to drift out of date — the failure mode the body-depth connector list hit three
+times.
 
 **Both bounds are explicit and configurable**, because the per-candidate traversal is otherwise
-unbounded: the candidate scan is capped, and the resulting cohort is capped at `max_cohort_size`.
+unbounded: the candidate scan is capped at `max_candidate_scan`, and the resulting cohort at
+`max_cohort_size`.
 
 ### Lane 3 — structural risks
 
@@ -157,11 +181,27 @@ Five dimensions. Every figure traces to rows the brief can cite.
 
 | Risk | Computation |
 |---|---|
-| Cycle time | cohort median `resolved_at_ms − created_at_ms`, vs the target's elapsed-so-far |
+| Cycle time | cohort median `resolved_at_ms − created_at_ms`; **framing depends on the target's age** (below) |
 | Size overrun | cohort median cycle time split by child-count band, vs the target's child count |
 | Review drag | median PR open→merge across cohort children's PRs, vs the repo median over the same indexed window |
 | Incident coupling | share of cohort epics with an incident `correlates_with` a deploy in-window |
 | Abandonment | share of cohort epics ending `canceled` |
+
+**Cycle time is an expectation on a young epic, a comparison on an old one.** Running pre-mortem
+minutes after creating an epic makes elapsed-so-far ≈ 0, and "47d vs 0d" reads as an alarming
+overrun when it means nothing at all. Below a threshold (target age < 1 day) the risk is phrased as
+an expectation — *"comparable epics took a median 24 days"* — and only above it does it become a
+comparison against elapsed time. Since the roadmap's whole trigger is "when a new Epic is created",
+the young case is the common one, not the edge case.
+
+**Incident coupling inherits `correlates_with`'s existing semantics, which are looser than they
+sound.** `graph/graph-populator.ts` already pairs a deployment with an incident on the **same
+affected service** within `CORRELATION_WINDOW_MS` (2 hours), directed deployment→incident. It is
+keyed on service and time — **not** on any link between the deploy and a child PR of the epic. So
+this risk reads "incidents correlated with deploys of the cohort's services during each epic's
+window", and a busy shared service will attract correlations from work unrelated to the epic. The
+brief must not imply the epic caused them; this is the sharpest instance of the unconditional
+correlation-not-causation note. Do not invent a second correlation rule here — reuse the edge.
 
 **Abandonment is Jira-blind, and the brief says so.** #1128 established that Jira folds "Won't Do"
 into `done` — `canceled` is unreachable there by construction, since the distinction lives only in
@@ -193,13 +233,23 @@ with nothing to retype.
 Only risks with a genuine watchable condition produce a watcher — incident coupling and deploy
 failure. Review drag and cycle time produce none, rather than a contrived condition.
 
-**Two rules make re-runs safe:**
+**Three rules make re-runs safe:**
 
 1. **Content-derived watcher id** = hash(epic id, risk kind, service). Running `pre-mortem PROJ-120`
    twice creates nothing the second time. Same technique as `decision_record.id`.
 2. **Insert-if-absent; never update `enabled`.** If the user armed a watcher yesterday, today's
    re-run must not quietly re-pause it. This is the one place a naive upsert would silently undo a
    deliberate user action.
+3. **A deleted watcher stays deleted.** `watcher.delete` exists, so "user deletes a proposal they
+   don't want" is a real flow, and rules 1–2 alone would resurrect it on the next run — inert, but
+   still the tool overriding an explicit "no". pre-mortem therefore records every watcher id it has
+   proposed in a fourth V53 table, `premortem_watcher_proposal`. An id that is **in that table but
+   absent from `watcher`** was deleted deliberately and is never re-created; the brief lists it as
+   suppressed, with the command to un-suppress.
+
+Rule 3 is the reason the proposal table exists rather than deriving proposals on the fly: without a
+record of what was proposed, "absent" and "deleted" are indistinguishable. It is pre-mortem-owned,
+so no tombstone semantics leak into the shared `watcher` table that other subsystems read.
 
 ## Honesty rules
 
@@ -244,8 +294,9 @@ an answer while comparing unrelated work.
 - **Unit** — each structural calculator as a pure function over fixture rows; cohort selection and
   ranking; theme matching; and the two watcher rules: id determinism across re-runs, and that an
   armed watcher survives a re-run **un-paused**.
-- **Pass** — discover / extract / reconcile against a fake LLM, plus the verbatim-snippet fallback
-  when no local model is available.
+- **Pass** — discover / extract / reconcile against a fake LLM, plus the no-model path asserting
+  that it writes **zero** themes and leaves the watermark advanced (so a later pass with a model
+  available does not re-scan from scratch).
 - **E2E** — `packages/gateway/test/e2e/scenarios/premortem.e2e.test.ts`: brief sections, the
   `premortem.briefReady` notification, and zero HITL fires. The structural HITL check still holds —
   pre-mortem writes through `insertWatcher`, not `ToolExecutor`, so it neither imports the executor
@@ -290,3 +341,12 @@ migration lands before anything reads it. The planning step decides.
 - **Federated cross-team cohorts.** The roadmap mentions composing with the Phase 6 consent-scoped
   federated query for cross-team history. Local-only here.
 - **A shared harness for the four extraction passes.** See *Acknowledged duplication*.
+- **A deterministic (no-LLM) theme-discovery fallback.** Deferred, with the reasoning recorded
+  because it was actively considered. `glossary`'s snippet fallback works only because glossary
+  already knows the term and needs its definition; pre-mortem has no candidate theme, since
+  discovery *is* the task, so there is nothing to look up. A keyword list (`"blocked"`, `"waiting"`,
+  `"rate limit"`…) would be a hand-maintained, English-only table that drifts and, worse, fabricates
+  themes from a single mention. A recurring-n-gram pass across the cohort would be a legitimate
+  deterministic alternative — language-agnostic and frequency-grounded — but it is a distinct
+  discovery algorithm, not a fallback, and belongs in its own change. Until then: **no model, no
+  themes**, said plainly in the brief, with the structural risks still fully computed.
