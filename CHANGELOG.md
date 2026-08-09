@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [1.26.1](https://github.com/nimbus-agent/Nimbus/compare/v1.26.0...v1.26.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **ci:** accept repo as satisfying public_repo on WINGET_PAT, and add a scope-check script ([#1131](https://github.com/nimbus-agent/Nimbus/issues/1131)) ([ba54754](https://github.com/nimbus-agent/Nimbus/commit/ba54754432f3fb15d61020dff948b6ec8b4fdaf2))
+
 ## [1.26.0](https://github.com/nimbus-agent/Nimbus/compare/v1.25.2...v1.26.0) (2026-08-09)
 
 
