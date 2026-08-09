@@ -292,3 +292,88 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "wingetcreate submit failed. If this is the first release, $id may not yet exist in winget-pkgs — bootstrap it once with 'wingetcreate new' (see docs/install.md)."
           }
+
+  # A failure here used to alert NOBODY. This workflow runs on `workflow_run`, so
+  # nothing blocks on it, no PR turns red, and the only notification goes to the
+  # actor of the upstream run. The winget job failed nine consecutive times across
+  # v1.20.0 → v1.26.0 while brew and scoop kept publishing, so even the run list
+  # looked half-healthy; the stale channel was found by hand, six days late.
+  #
+  # `release.yml` has filed a release-health issue on failure since it shipped —
+  # this is the same mechanism, one workflow later, where the assets actually
+  # reach users.
+  #
+  # ONE issue per key, not one per tag: this failure mode recurs every release
+  # until someone fixes the cause, and nine issues for one root cause is the kind
+  # of noise people learn to filter. The state hash still comments on each new
+  # tag, so a recurrence is visible without spawning a new thread.
+  alert-on-failure:
+    name: Alert on publish failure
+    needs:
+      - generate-and-publish
+      - winget
+    # failure() fires when a needed job FAILED; a skipped job is neutral, so the
+    # by-design skips (sdk-*/client-* tags) never trip this. Not always() — that
+    # would fire on success too.
+    if: ${{ failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+      - name: File a release-health issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: publish-package-managers
+          HEALTH_TITLE: "🚨 Package-manager publish is failing"
+          HEALTH_BODY: "Publishing `${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}` to the package managers failed — brew/scoop: `${{ needs.generate-and-publish.result }}`, winget: `${{ needs.winget.result }}`. Users of the failed channel stay on the previous version, and nothing else blocks on this workflow, so this issue is the only signal. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts
+
+  # The other half: an alert that never clears is one people stop reading. A fully
+  # successful publish closes the issue the failure opened.
+  resolve-alert:
+    name: Resolve publish alert
+    needs:
+      - generate-and-publish
+      - winget
+    if: ${{ success() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+      - name: Close the release-health issue, if any
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: publish-package-managers
+          HEALTH_RESOLVE: "1"
+          HEALTH_BODY: "Resolved: `${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}` published to every package-manager channel. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts

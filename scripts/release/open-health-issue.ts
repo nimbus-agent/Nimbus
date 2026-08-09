@@ -63,16 +63,26 @@ if (import.meta.main) {
   const key = process.env["HEALTH_KEY"];
   const title = process.env["HEALTH_TITLE"];
   const body = process.env["HEALTH_BODY"];
-  if (!repo || !token || !key || !title || !body) {
+  // `HEALTH_RESOLVE` closes the issue this key owns instead of opening one. A
+  // recurring-failure alert needs BOTH halves: without a resolve path, a stable
+  // key leaves an issue open after the fault clears, and an alert that stays red
+  // once fixed is one people learn to scroll past — the disease, not the cure.
+  // No open issue for the key is success, not an error: nothing to close.
+  const resolve = (process.env["HEALTH_RESOLVE"] ?? "") !== "";
+  if (!repo || !token || !key || !body) {
     console.error(
-      "open-health-issue: GITHUB_REPOSITORY, GITHUB_TOKEN, HEALTH_KEY, HEALTH_TITLE, HEALTH_BODY required",
+      "open-health-issue: GITHUB_REPOSITORY, GITHUB_TOKEN, HEALTH_KEY, HEALTH_BODY required",
     );
     process.exit(2);
   }
-  await openOrUpdateHealthIssue(createGitHubApi({ token, repo }), {
-    key,
-    title,
-    body,
-    state: body,
-  });
+  const api = createGitHubApi({ token, repo });
+  if (resolve) {
+    await closeHealthIssue(api, key, body);
+  } else {
+    if (!title) {
+      console.error("open-health-issue: HEALTH_TITLE required unless HEALTH_RESOLVE is set");
+      process.exit(2);
+    }
+    await openOrUpdateHealthIssue(api, { key, title, body, state: body });
+  }
 }
