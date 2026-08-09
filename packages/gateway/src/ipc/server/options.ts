@@ -19,6 +19,7 @@ import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import type { OwnershipRefresher } from "../../ownership/ownership-refresh.ts";
 import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
+import type { PremortemRefresher } from "../../premortem/premortem-refresh.ts";
 import type { ShareFile } from "../../share/share-format.ts";
 import type { ForwardShareDeps, ReceiveShareDeps } from "../../share/share-forward.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
@@ -156,6 +157,15 @@ export type CreateIpcServerOptions = {
    * exactly like decisions.
    */
   ownershipRefresher?: OwnershipRefresher;
+  // Pre-mortem theme pass (S1 Local Brain). The dependency seam behind the premortem.refresh IPC
+  // method (see ipc/premortem-rpc.ts + premortem/premortem-refresh.ts). Construction is gated on
+  // `[premortem].enabled`, like decisionsRefresher — but UNLIKE decisions/ownership, an absent
+  // refresher does NOT fall through to "Method not found": `premortem.refresh` is dispatched
+  // either way and throws an explicit ERR_PREMORTEM_DISABLED, since a silent success (or a
+  // generic method-not-found) would tell the caller their themes were refreshed when the
+  // subsystem is switched off entirely. Not Tauri-exposed (I7); LAN-forbidden (I5) — it writes
+  // local rows and spends the local model budget.
+  premortemRefresher?: PremortemRefresher;
   // Share forwarding — asker-side (Slice 8d, I27 second chokepoint). Present only when federation is
   // enabled; the federation dispatcher fails closed (ERR_SHARE_FORWARD_UNAVAILABLE) when unset.
   // `federation.shareForward` is local-only (FORBIDDEN_OVER_LAN, I5).

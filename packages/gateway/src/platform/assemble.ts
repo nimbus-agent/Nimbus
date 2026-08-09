@@ -44,6 +44,7 @@ import {
   loadNimbusOwnershipFromConfigDir,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusPreflightFromConfigDir,
+  loadNimbusPremortemFromConfigDir,
   loadNimbusQuorumFromConfigDir,
   loadNimbusScimFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
@@ -185,6 +186,11 @@ import { refreshPolicy } from "../policy/policy-runtime.ts";
 import { PolicyStore } from "../policy/policy-store.ts";
 import { trustAnchorPubkey } from "../policy/policy-trust.ts";
 import { resolveQuorumRule } from "../policy/quorum-override.ts";
+import { runPremortemPass } from "../premortem/premortem-pass.ts";
+import {
+  createPremortemRefresher,
+  type PremortemRefresher,
+} from "../premortem/premortem-refresh.ts";
 import { vectorSearchChunks } from "../search/vec-store.ts";
 import { shareConsent } from "../share/share-consent-broker.ts";
 import type { ShareFile } from "../share/share-format.ts";
@@ -454,6 +460,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   glossaryRefresher: GlossaryRefresher;
   decisionsRefresher: DecisionRefresher | undefined;
   ownershipRefresher: OwnershipRefresher | undefined;
+  premortemRefresher: PremortemRefresher | undefined;
 }> {
   const {
     paths,
@@ -544,6 +551,31 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       })
     : undefined;
 
+  // Pre-mortem theme pass (S1 Local Brain). Construction itself is gated on
+  // `[premortem].enabled` — like decisionsRefresher above, not glossaryRefresher — so a
+  // disabled pass leaves `premortemRefresher` unset rather than idling, and `premortem.refresh`
+  // fails loudly instead of silently reporting success. `premortemCfg.retryCooldownMs` /
+  // `maxCohortSize` / `maxCandidateScan` are deliberately NOT passed to `runPremortemPass`: they
+  // feed PR B's cohort-assembly read path, not this write pass, which only takes
+  // `nowMs`/`maxLlmCalls`/`llm`/`signal`.
+  const premortemCfg = loadNimbusPremortemFromConfigDir(paths.configDir);
+  const premortemLlmForPass = premortemCfg.useLlm ? decisionLlm : undefined;
+  const premortemRefresher = premortemCfg.enabled
+    ? createPremortemRefresher({
+        debounceMs: premortemCfg.debounceMs,
+        runPass: (signal) =>
+          runPremortemPass(db, {
+            nowMs: Date.now(),
+            maxLlmCalls: premortemCfg.maxLlmCallsPerPass,
+            ...(premortemLlmForPass === undefined ? {} : { llm: premortemLlmForPass }),
+            signal,
+          }),
+        onError: (err) => {
+          syncLogger.warn({ err }, "premortem theme pass failed");
+        },
+      })
+    : undefined;
+
   // Ownership graph (S1 Local Brain). Construction itself is gated on `[ownership].enabled`,
   // mirroring decisionsRefresher above — a disabled pass leaves `ownershipRefresher` unset
   // rather than idling. `runPass` re-reads BOTH the git-aware filesystem roots and the service
@@ -605,6 +637,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
       glossaryRefresher.trigger();
       decisionsRefresher?.trigger();
+      premortemRefresher?.trigger();
       ownershipRefresher?.trigger();
     },
     // I29/D22(b): the ONE production appender for the `sync` egress class — one `sync` row per
@@ -659,6 +692,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     glossaryRefresher,
     decisionsRefresher,
     ownershipRefresher,
+    premortemRefresher,
   };
 }
 
@@ -2256,6 +2290,7 @@ export async function assemblePlatformServices(
     glossaryRefresher,
     decisionsRefresher,
     ownershipRefresher,
+    premortemRefresher,
   } = await createSchedulerWithMesh({
     paths,
     vault,
@@ -2274,6 +2309,9 @@ export async function assemblePlatformServices(
   }
   if (ownershipRefresher !== undefined) {
     sidecarStops.push(() => ownershipRefresher.stop());
+  }
+  if (premortemRefresher !== undefined) {
+    sidecarStops.push(() => premortemRefresher.stop());
   }
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
@@ -2569,6 +2607,9 @@ export async function assemblePlatformServices(
   }
   if (ownershipRefresher !== undefined) {
     ipcOpts.ownershipRefresher = ownershipRefresher;
+  }
+  if (premortemRefresher !== undefined) {
+    ipcOpts.premortemRefresher = premortemRefresher;
   }
 
   collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);

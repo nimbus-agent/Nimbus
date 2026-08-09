@@ -238,6 +238,15 @@ describe("ownership over LAN (I5 — on-demand passes are write-class and local-
   });
 });
 
+describe("premortem over LAN (I5 — writes local rows and spends the local model budget)", () => {
+  test("premortem.refresh is forbidden over LAN", () => {
+    // It writes local rows and can spend the local model budget. Only the
+    // read-only agents.premortem brief (PR B, a separate namespace) is LAN-reachable.
+    const peer = { peerId: "p1", writeAllowed: true };
+    expect(() => checkLanMethodAllowed("premortem.refresh", peer)).toThrow(/not callable over LAN/);
+  });
+});
+
 describe("index.rebody over LAN (I5 — drives outbound third-party API traffic)", () => {
   test("index.rebody and index.rebodyCancel are forbidden over LAN regardless of grant-write", () => {
     for (const m of ["index.rebody", "index.rebodyCancel"]) {

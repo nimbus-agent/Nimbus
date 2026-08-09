@@ -66,6 +66,12 @@ const FORBIDDEN_OVER_LAN = new Set([
   // peer able to churn the owner's ownership graph on demand. The read-only
   // `agents.ownership` stays admitted, like every other agent.
   "ownership",
+  // Pre-mortem theme pass (Spine S1) — the direct analogue of decisions'/ownership's on-demand
+  // refresh: it writes local `theme` rows and spends the owner's local model budget. It also has
+  // NO read counterpart in this namespace (the read-only `agents.premortem` brief lives in the
+  // separate `agents.*` namespace, unaffected by forbidding this one), so forbidding the whole
+  // `premortem` namespace costs no legitimate LAN caller anything.
+  "premortem",
   // Zero-config onboarding — `nimbus init`'s local demo hint (a file:line from
   // THIS machine's index). A paired peer has no use for it, so it is local/CLI-only
   // rather than riding the `index.*` default-allow for reads (I5 defense-in-depth).

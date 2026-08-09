@@ -42,6 +42,7 @@ import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
+import { dispatchPremortemRpc, PremortemRpcError } from "../premortem-rpc.ts";
 import { dispatchProfileRpc, ProfileRpcError } from "../profile-rpc.ts";
 import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
 import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
@@ -1016,6 +1017,34 @@ export async function tryDispatchDecisionsRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * Unlike decisions/glossary/ownership, this dispatcher does NOT skip cleanly when
+ * `ctx.options.premortemRefresher` is unset — it always calls `dispatchPremortemRpc`, which
+ * throws an explicit `ERR_PREMORTEM_DISABLED` in that case. A `premortem.refresh` call must
+ * fail loudly when `[premortem].enabled = false`, not surface as a generic "Method not found"
+ * one level up: a silent miss here would look identical to the method never having existed,
+ * which is not the honest answer for "this subsystem is switched off".
+ */
+export async function tryDispatchPremortemRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("premortem.")) return phase4RpcSkipped;
+  try {
+    const out = await dispatchPremortemRpc(method, params, {
+      ...(ctx.options.premortemRefresher === undefined
+        ? {}
+        : { premortemRefresher: ctx.options.premortemRefresher }),
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof PremortemRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
 export async function tryDispatchOwnershipRpc(
   ctx: ServerCtx,
   method: string,
@@ -1139,7 +1168,7 @@ async function dispatchPhase4TeamMetricsGroup(
   return tryDispatchDataRpc(ctx, method, params, clientId);
 }
 
-/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → ownership → clip → admin. */
+/** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
@@ -1174,6 +1203,8 @@ async function dispatchPhase4PlatformGroup(
   if (glossaryOutcome !== phase4RpcSkipped) return glossaryOutcome;
   const decisionsOutcome = await tryDispatchDecisionsRpc(ctx, method, params);
   if (decisionsOutcome !== phase4RpcSkipped) return decisionsOutcome;
+  const premortemOutcome = await tryDispatchPremortemRpc(ctx, method, params);
+  if (premortemOutcome !== phase4RpcSkipped) return premortemOutcome;
   const ownershipOutcome = await tryDispatchOwnershipRpc(ctx, method, params);
   if (ownershipOutcome !== phase4RpcSkipped) return ownershipOutcome;
   const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
