@@ -1531,10 +1531,13 @@ import { expect, test } from "bun:test";
 import type { DiscoveredEpic } from "./theme-discover.ts";
 import { extractThemes } from "./theme-llm-adapter.ts";
 
+// NOTE: `DiscoveredEpic` has NO `service` field and DOES require `epicKey`.
+// An earlier draft of this fixture had it backwards and would not have compiled
+// — the same invent-your-own-shape trap that hid three defects in this plan.
 const EPICS: DiscoveredEpic[] = [
   {
     itemId: "jira:A",
-    service: "jira",
+    epicKey: "PROJ-1",
     title: "Billing v1",
     body: "Stripe capped us at 100 rps, had to batch",
     bodyComplete: true,
@@ -1543,7 +1546,7 @@ const EPICS: DiscoveredEpic[] = [
   },
   {
     itemId: "jira:B",
-    service: "jira",
+    epicKey: "PROJ-2",
     title: "Billing v1.5",
     body: "waiting on Twilio quota increase",
     bodyComplete: true,
