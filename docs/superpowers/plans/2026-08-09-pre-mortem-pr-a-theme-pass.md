@@ -299,6 +299,13 @@ test("different labels under one service are different themes", () => {
   expect(themeId("billing-api", "rate limits")).not.toBe(themeId("billing-api", "review drag"));
 });
 
+test("a digit-only service and label cannot collide across the boundary", () => {
+  // Length prefixes alone are NOT self-terminating: with an undelimited decimal
+  // prefix, ("1","1".repeat(11)) and ("1".repeat(11),"1") both encode to fifteen
+  // '1' characters. The ":" terminator closes that class.
+  expect(themeId("1", "1".repeat(11))).not.toBe(themeId("1".repeat(11), "1"));
+});
+
 test("a shifted boundary between service and label does not collide", () => {
   // A naive `service + separator + label` join is ambiguous, because a
   // normalized label legitimately contains internal spaces. These two pairs
@@ -360,15 +367,19 @@ export function normalizeThemeLabel(raw: string): string {
 export function themeId(service: string, rawLabel: string): string {
   const normalized = normalizeThemeLabel(rawLabel);
   const h = createHash("sha256");
-  // LENGTH-PREFIXED, not joined by a separator. A normalized label legitimately
-  // contains internal spaces, so a bare `service + " " + label` join is
-  // ambiguous: ("x y", "z") and ("x", "y z") hash identically. Since this value
-  // is `premortem_theme.id`'s PRIMARY KEY, that collision would merge two
-  // distinct themes' evidence into one row — the same orphaning failure the
-  // content-derived id exists to prevent.
-  h.update(String(service.length));
+  // LENGTH-PREFIXED AND TERMINATED. Two collision classes were found here, one
+  // round apart, and both merged distinct themes under one PRIMARY KEY:
+  //   1. A bare `service + " " + label` join is ambiguous because a normalized
+  //      label legitimately contains internal spaces —
+  //      ("x y","z") and ("x","y z") hashed identically.
+  //   2. A length prefix ALONE is not self-terminating when the data is
+  //      digit-leading — ("1","1"x11) and ("1"x11,"1") both encode to fifteen
+  //      '1' characters.
+  // The ":" terminator closes (2): digits and ":" are disjoint, so the prefix
+  // ends unambiguously for every possible input. Do not "simplify" it away.
+  h.update(`${String(service.length)}:`);
   h.update(service);
-  h.update(String(normalized.length));
+  h.update(`${String(normalized.length)}:`);
   h.update(normalized);
   return h.digest("hex").slice(0, 32);
 }
