@@ -637,6 +637,103 @@ describe("nimbus index rebody — IPC flow (--dry-run)", () => {
     expect(out.stdout).toMatch(/pending bodies: notion 4210, slack 122/);
     expect(out.stdout).toMatch(/cannot improve: notion/);
     expect(out.stdout).toMatch(/re-walk the ENTIRE/);
+    // No pendingMeta in this payload — the metadata line must stay absent
+    // rather than print an empty or zero row.
+    expect(out.stdout).not.toMatch(/pending metadata/);
+  });
+
+  it("prints the metadata pending counts separately from the body counts", async () => {
+    // The two reasons are never summed: a caller must be able to tell whether
+    // it is bodies or connector metadata that is still missing.
+    const mock = createMockIpcClient([{ jobId: "job-rebody-meta" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      const r = await baseClient.call(m, p);
+      if (m === "index.rebody") {
+        setTimeout(() => {
+          mock.emit("index.rebodyDone", {
+            jobId: "job-rebody-meta",
+            durationMs: 5,
+            dryRun: true,
+            pending: { slack: 12 },
+            pendingMeta: { jira: 340, linear: 88 },
+            cannotImprove: [],
+          });
+        }, 0);
+      }
+      return r;
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["rebody", "--dry-run"]);
+    expect(out.stdout).toMatch(/pending bodies: slack 12/);
+    expect(out.stdout).toMatch(/pending metadata: jira 340, linear 88/);
+  });
+
+  it("prints the metadata transition and the retained-window warning on a failed --since run", async () => {
+    const mock = createMockIpcClient([{ jobId: "job-rebody-real" }]);
+    const baseClient = mock.client as unknown as {
+      call: (m: string, p: unknown) => Promise<unknown>;
+    };
+    const wrappedCall = async (m: string, p: unknown): Promise<unknown> => {
+      const r = await baseClient.call(m, p);
+      if (m === "index.rebody") {
+        setTimeout(() => {
+          mock.emit("index.rebodyDone", {
+            jobId: "job-rebody-real",
+            durationMs: 5,
+            dryRun: false,
+            targeted: ["jira"],
+            succeeded: 0,
+            failed: 1,
+            failedServices: ["jira"],
+            warnings: ["jira: forceSync failed"],
+            pendingBefore: { jira: 5 },
+            pendingAfter: { jira: 5 },
+            pendingMetaBefore: { jira: 340 },
+            pendingMetaAfter: { jira: 340 },
+          });
+        }, 0);
+      }
+      return r;
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: wrappedCall,
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: (e: string, h: (params: unknown) => void): void => {
+          (
+            mock.client as unknown as {
+              onNotification: (e: string, h: (params: unknown) => void) => void;
+            }
+          ).onNotification(e, h);
+        },
+      },
+    });
+    await runIndexCmd(["rebody", "--service", "jira", "--since", "365", "--yes"]);
+    expect(out.stdout).toMatch(/pending metadata \(before -> after\):/);
+    expect(out.stdout).toMatch(/jira: 340 -> 340/);
+    // Both halves of the retained-floor fact: the retry keeps the wide window,
+    // and a restart silently drops it.
+    expect(out.stderr).toMatch(/--since 365-day window is held in gateway memory/);
+    expect(out.stderr).toMatch(/restart drops it back/);
   });
 
   it("prints 'none' when nothing is pending on a dry run", async () => {
