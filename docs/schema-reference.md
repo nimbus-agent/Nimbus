@@ -2,7 +2,7 @@
 
 The SQLite tables that back the local index, audit log, sync state, embeddings, and extension registry. This is **reference material** — extracted from [`architecture.md`](./architecture.md) so the architecture narrative stays focused on the system's shape rather than every column. Read it when you need exact column names, or when authoring a migration (pair with the [`nimbus-db-migrations`](../.claude/commands/nimbus-db-migrations.md) skill).
 
-> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V49** (`depth-default-v49-sql.ts` — `UPDATE sync_state SET depth = 'full' WHERE depth = 'summary'`, which makes the per-connector depth setting real before connector-index-depth enforcement starts honouring it, deliberately leaving `metadata_only` rows untouched, S1 "Local Brain"; V48 `item.body` + `item.body_complete`, with `item_fts` repointed from `body_preview` to `body` — the full-body store, lifting the 512-character cap to 16 KiB for `PROSE_HEAVY_TYPES`, S1 "Local Brain"; V47 `decision_record` + `decision_evidence` + `decision_pass_state` — implicit ADR extractor, S1 "Local Brain"; V46 full-table rebuild of `glossary_term` widening `definition_source` to `CHECK(... IN ('llm','snippet','manual'))` for manual term authoring — S1 "Local Brain"; V45 `glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
+> **Canonical migration list:** the runner at [`packages/gateway/src/index/migrations/runner.ts`](../packages/gateway/src/index/migrations/runner.ts) holds the authoritative `INDEXED_SCHEMA_STEPS` array — each step pairs a `migrateIndexedV<N>ToV<M>` function with the SQL constants imported from sibling [`packages/gateway/src/index/`](../packages/gateway/src/index/) `*-v<N>-sql.ts` files. The runner wraps each step in a single transaction, writes a pre-migration backup to `<dataDir>/backups/pre-migration-V<N>-<timestamp>.db`, records success in the `_schema_migrations` ledger, and rolls back on a thrown migration. **Latest applied migration: V53** (`premortem-v53-sql.ts` — `premortem_theme` / `premortem_theme_evidence` / `premortem_pass_state` / `premortem_watcher_proposal`, the schema for a debounced background pass that mines recurring blocker themes per service from closed epics; `premortem_watcher_proposal` is written by a later PR, not this one — the table lands here because schema precedes its reader; no user-facing command ships with V53, and the discover stage is Jira-only today (see below) — S1 "Local Brain"; full column detail below. **Note:** V50–V52 are not narrated in this reference — V51 added the ownership relation types (`owns` / `contains` / `tracks_remote`) + `ownership_pass_state`, and V52 added `item.resolve_key`; both landed without a `schema-reference.md` update, and V53 closes that gap only for itself, not retroactively. V49 (`depth-default-v49-sql.ts` — `UPDATE sync_state SET depth = 'full' WHERE depth = 'summary'`, which makes the per-connector depth setting real before connector-index-depth enforcement starts honouring it, deliberately leaving `metadata_only` rows untouched, S1 "Local Brain"; V48 `item.body` + `item.body_complete`, with `item_fts` repointed from `body_preview` to `body` — the full-body store, lifting the 512-character cap to 16 KiB for `PROSE_HEAVY_TYPES`, S1 "Local Brain"; V47 `decision_record` + `decision_evidence` + `decision_pass_state` — implicit ADR extractor, S1 "Local Brain"; V46 full-table rebuild of `glossary_term` widening `definition_source` to `CHECK(... IN ('llm','snippet','manual'))` for manual term authoring — S1 "Local Brain"; V45 `glossary_term` + `glossary_pass_state` implicit-knowledge glossary — S1 "Local Brain"; V44 `egress_ledger` provable-locality ledger, I29/D22 — S1 "Local Brain"; V43 `share_inbox` — Slice 8d; V42 `tool_call_log.params_json` — Slice 8b recipe; V41 `share_records` — Slice 8 Share & Virality; V40 lineage relation types `upstream_refs`/`derived_from`/`monitors` into `graph_relation_type` — Slice 7; V39 `tribal_clusters` — Slice 6c; V38 `federation_known_namespaces` — Slice 6a; V37 `gdpr_purge_job`/`gdpr_purge_request` — federation right-to-erasure; V36 `org_policy_state`/`policy_anchor_pin` — Slice 4 policy; V35 `team_vault_entries`/`team_vault_grants`/`hitl_delegations` — Slice 2 Team Vault + quorum HITL; V34 identity / SCIM tables — Phase 6 Slice 3; V33 added `federation_namespaces` / `federation_namespace_filters` / `federation_grants` + a nullable `audit_log.federation_json` column — Phase 6 Slice 1; V32 added `git_blame_line` — security scan v2; V31 added `extension_dependency` — Phase 5 T2 PR 4). Migrations are append-only and forward-only — no `down()` function. See [`.claude/commands/nimbus-db-migrations.md`](../.claude/commands/nimbus-db-migrations.md) for the authoring contract (numbering, batched backfill, FTS5 / vec0 cautions).
 >
 > The SQL block below is the **shape**, not a snapshot of every column. Phase 6+ tables will land as new migrations and new item types — `service` / `team` / `scorecard` / `dora_metric` (Phase 7), `security_finding` / `posture_finding` / `security_incident` / `sbom_artifact` (Phase 8), `llm_trace` / `ml_model` / `vector_index` / `ai_spend_event` (Phase 9), and the multimodal-understanding / sandbox-execution tables (Phase 14). See [`roadmap.md` § Planned](./roadmap.md#planned) for the phase index.
 
@@ -640,6 +640,86 @@ CREATE TABLE IF NOT EXISTS decision_pass_state (
     last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new candidates discovered by the last pass
     scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass
 );
+
+-- Pre-mortem recurring-blocker-theme extraction (S1 "Local Brain") — V53.
+-- PR A only: schema + a debounced background pass (discover closed epics -> extract themes via a
+-- local LLM -> reconcile). No user-facing command ships with this migration — `nimbus pre-mortem`
+-- and the `agents.premortem` read brief are a later PR. The discover stage is Jira-only today: it
+-- keys on `metadata.issue_type = 'Epic'`, written only by `jira-sync.ts` — `linear-sync.ts` never
+-- writes `issue_type`, and no `linear:project` items are indexed at all, so there is no Linear
+-- epic-shaped row to mine yet.
+-- `premortem_theme.id` is CONTENT-DERIVED = hash(service, normalized label), never positional —
+-- the same reason `decision_record.id` above is content-derived: a positional key would re-hash
+-- every later theme when text earlier in a document changes, orphaning accumulated evidence rows
+-- and re-spending the extraction budget on a theme already mined. `service` is the AFFECTED
+-- service an epic's work touched (e.g. `billing-api`), never the connector that owns the row
+-- (`jira`) — derived by `premortem/epic-services.ts` `affectedServicesForEpic`.
+CREATE TABLE IF NOT EXISTS premortem_theme (
+    id            TEXT PRIMARY KEY,   -- hash(service, normalized label) — content-derived, not positional
+    service       TEXT NOT NULL,      -- the AFFECTED service, never the connector (`jira`)
+    label         TEXT NOT NULL,
+    normalized    TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK(status IN ('extracted','demoted')),
+    confidence    REAL NOT NULL DEFAULT 0,   -- derived from evidence count, ceiling 0.86
+    first_seen_at INTEGER NOT NULL DEFAULT 0,
+    last_seen_at  INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_premortem_theme_service_norm
+    ON premortem_theme(service, normalized);
+CREATE INDEX IF NOT EXISTS idx_premortem_theme_service_status
+    ON premortem_theme(service, status, confidence DESC);
+
+-- Evidence rows carry a composite primary key, so re-supplying one on a later pass is a no-op
+-- rather than a duplicate — which is what keeps `premortem_theme.confidence` (recomputed from the
+-- stored count) honest across repeated passes. No foreign key on `item_id`: items are synced and
+-- pruned dynamically, so a periodic sweep (`pruneOrphanedEvidence`) deletes evidence whose source
+-- item has left the index and recomputes confidence for every theme that lost a row.
+CREATE TABLE IF NOT EXISTS premortem_theme_evidence (
+    theme_id     TEXT NOT NULL REFERENCES premortem_theme(id) ON DELETE CASCADE,
+    item_id      TEXT NOT NULL,      -- references item(id); deliberately NO foreign key — see above
+    evidence_key TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    url          TEXT,
+    occurred_at  INTEGER,            -- CONTENT date (the source epic's resolved_at_ms); omitted, never 0, when absent
+    PRIMARY KEY (theme_id, evidence_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_premortem_evidence_theme
+    ON premortem_theme_evidence(theme_id);
+CREATE INDEX IF NOT EXISTS idx_premortem_evidence_item
+    ON premortem_theme_evidence(item_id);
+
+-- Single-row watermark for the discover stage, same COMPOSITE-cursor pattern as
+-- `decision_pass_state` / `glossary_pass_state` above: `watermark_ms` alone cannot express "resume
+-- inside a group of items sharing one modified_at", and a bulk import stamping thousands of rows
+-- with one job-level timestamp makes that ordinary. `watermark_id` breaks the tie on `item.id`, a
+-- primary key and therefore total. The watermark advances even when no model is configured and
+-- zero themes are written — the batch was genuinely examined, there was simply nothing this
+-- configuration could extract from it; re-scanning the whole corpus forever is the alternative.
+CREATE TABLE IF NOT EXISTS premortem_pass_state (
+    id            INTEGER PRIMARY KEY CHECK(id = 1),
+    watermark_ms  INTEGER NOT NULL DEFAULT 0,   -- modified_at of the last row the scan consumed
+    watermark_id  TEXT    NOT NULL DEFAULT '',  -- item.id tiebreaker within a shared modified_at group
+    last_pass_at  INTEGER,                      -- wall-clock time of the last completed pass
+    last_pass_new INTEGER NOT NULL DEFAULT 0,    -- new themes discovered by the last pass
+    scanned_items INTEGER NOT NULL DEFAULT 0     -- items scanned by the last pass
+);
+
+-- Written by a LATER PR, not this one — the table lands with V53 because schema precedes its
+-- reader. Records every watcher id pre-mortem has ever proposed, so an id present here but ABSENT
+-- from `watcher` is one the user deleted deliberately and must never be re-created.
+CREATE TABLE IF NOT EXISTS premortem_watcher_proposal (
+    watcher_id   TEXT PRIMARY KEY,
+    epic_item_id TEXT NOT NULL,
+    risk_kind    TEXT NOT NULL,
+    service      TEXT NOT NULL,
+    proposed_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_premortem_proposal_epic
+    ON premortem_watcher_proposal(epic_item_id);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
