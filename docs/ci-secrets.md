@@ -281,6 +281,13 @@ first upstream workflow commit, after which **every** release fails with
 The forked repository could not be synced with the upstream commits. Sync your fork manually and try again.
 ```
 
+**Check a candidate token before storing it** — `pwsh
+scripts/release/check-winget-pat.ps1` (prompts for the token without echoing it,
+reads `$env:WINGET_PAT` if set). It reports the granted scopes, names the missing
+one, and compares the submission fork against upstream; `-Sync` additionally
+performs the fork sync, which is both the operation that fails without `workflow`
+and the manual remediation after it has failed. Read-only otherwise.
+
 That is precisely what happened on 2026-08-04: upstream added
 `.github/workflows/missing-dependency-assist.lock.yml` hours after the v1.19.1
 publish, and the winget manifest then sat at 1.19.1 through v1.26.0 while
