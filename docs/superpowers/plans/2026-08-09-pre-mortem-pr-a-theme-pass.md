@@ -18,8 +18,11 @@ Design spec: `docs/superpowers/specs/2026-08-09-pre-mortem-design.md`
 ## Global Constraints
 
 - **No `any`** — external/model output is `unknown`, narrowed explicitly.
-- **All SQLite writes go through `dbRun` / `dbExec` / `dbStmtRun`** (invariant I14, static rule D12).
-  A bare `db.run(...)` fails `bun run audit:invariants`.
+- **All SQLite writes in SOURCE files go through `dbRun` / `dbExec` / `dbStmtRun`** (invariant I14,
+  static rule D12). Scope verified, not assumed: the audit's `iterateSourceFiles` loads 1,154 files
+  and **zero** `.test.ts` among them, and 121 existing test files use bare `db.run(` on a green
+  `main`. **Test files may therefore use `db.run(` directly** — the fixtures in this plan do, and
+  rewriting them to `dbRun` would be wasted work.
 - **Bound parameters only, never string interpolation, in SQL** (invariant I9).
 - **Any indexed third-party content reaching the model must be wrapped in `wrapToolOutput`**
   (invariant I11). The theme prompt carries ticket bodies, so this applies.
@@ -435,20 +438,20 @@ function freshDb(): Database {
 test("upsert is idempotent on (service, normalized label) and accumulates evidence", () => {
   const db = freshDb();
   const a = upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "Rate limits.",
     nowMs: 100,
     evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "jira:PROJ-1", label: "PROJ-1" }],
   });
   const b = upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate  limits",
     nowMs: 200,
     evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "jira:PROJ-2", label: "PROJ-2" }],
   });
   expect(b).toBe(a);
 
-  const [theme] = themesForServices(db, ["billing-api"]);
+  const [theme] = themesForServices(db, ["acme/billing-api"]);
   expect(theme?.evidenceCount).toBe(2);
   // Confidence tracks the accumulated count, not the last write.
   expect(theme?.confidence).toBeGreaterThan(0);
@@ -459,9 +462,9 @@ test("upsert is idempotent on (service, normalized label) and accumulates eviden
 test("re-supplying the same evidence key does not inflate the count", () => {
   const db = freshDb();
   const ev = [{ itemId: "jira:PROJ-1", evidenceKey: "jira:PROJ-1", label: "PROJ-1" }];
-  upsertTheme(db, { service: "billing-api", label: "rate limits", nowMs: 1, evidence: ev });
-  upsertTheme(db, { service: "billing-api", label: "rate limits", nowMs: 2, evidence: ev });
-  const [theme] = themesForServices(db, ["billing-api"]);
+  upsertTheme(db, { service: "acme/billing-api", label: "rate limits", nowMs: 1, evidence: ev });
+  upsertTheme(db, { service: "acme/billing-api", label: "rate limits", nowMs: 2, evidence: ev });
+  const [theme] = themesForServices(db, ["acme/billing-api"]);
   expect(theme?.evidenceCount).toBe(1);
   db.close();
 });
@@ -469,7 +472,7 @@ test("re-supplying the same evidence key does not inflate the count", () => {
 test("themesForServices is service-scoped and skips demoted rows", () => {
   const db = freshDb();
   upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate limits",
     nowMs: 1,
     evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "k1", label: "PROJ-1" }],
@@ -480,8 +483,8 @@ test("themesForServices is service-scoped and skips demoted rows", () => {
     nowMs: 1,
     evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "k2", label: "PROJ-1" }],
   });
-  expect(themesForServices(db, ["billing-api"]).map((t) => t.service)).toEqual(["billing-api"]);
-  expect(themesForServices(db, ["billing-api", "search"])).toHaveLength(2);
+  expect(themesForServices(db, ["acme/billing-api"]).map((t) => t.service)).toEqual(["acme/billing-api"]);
+  expect(themesForServices(db, ["acme/billing-api", "search"])).toHaveLength(2);
   expect(themesForServices(db, [])).toEqual([]);
   db.close();
 });
@@ -492,14 +495,14 @@ test("a theme whose every source item is gone is demoted, not deleted", () => {
   // next pass.
   const db = freshDb();
   upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate limits",
     nowMs: 1,
     evidence: [{ itemId: "jira:GONE", evidenceKey: "k1", label: "GONE" }],
   });
   const demoted = demoteThemesWithNoLiveEvidence(db, 500);
   expect(demoted).toBe(1);
-  expect(themesForServices(db, ["billing-api"])).toEqual([]);
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
   const row = db.query(`SELECT status FROM premortem_theme`).get() as { status: string };
   expect(row.status).toBe("demoted");
   db.close();
@@ -508,7 +511,7 @@ test("a theme whose every source item is gone is demoted, not deleted", () => {
 test("a theme with at least one live source survives the sweep", () => {
   const db = freshDb();
   upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate limits",
     nowMs: 1,
     evidence: [
@@ -517,14 +520,14 @@ test("a theme with at least one live source survives the sweep", () => {
     ],
   });
   expect(demoteThemesWithNoLiveEvidence(db, 500)).toBe(0);
-  expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
+  expect(themesForServices(db, ["acme/billing-api"])).toHaveLength(1);
   db.close();
 });
 
 test("pruning removes dead evidence rows and lowers the theme's confidence", () => {
   const db = freshDb();
   upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate limits",
     nowMs: 1,
     evidence: [
@@ -532,11 +535,11 @@ test("pruning removes dead evidence rows and lowers the theme's confidence", () 
       { itemId: "jira:GONE", evidenceKey: "k2", label: "dead" },
     ],
   });
-  const before = themesForServices(db, ["billing-api"])[0]?.confidence ?? 0;
+  const before = themesForServices(db, ["acme/billing-api"])[0]?.confidence ?? 0;
 
   expect(pruneOrphanedEvidence(db)).toBe(1);
 
-  const after = themesForServices(db, ["billing-api"])[0];
+  const after = themesForServices(db, ["acme/billing-api"])[0];
   expect(after?.evidenceCount).toBe(1);
   // Corroboration the user can no longer inspect must not still be counted.
   expect(after?.confidence).toBeLessThan(before);
@@ -546,13 +549,13 @@ test("pruning removes dead evidence rows and lowers the theme's confidence", () 
 test("pruning is a no-op when every source is live", () => {
   const db = freshDb();
   upsertTheme(db, {
-    service: "billing-api",
+    service: "acme/billing-api",
     label: "rate limits",
     nowMs: 1,
     evidence: [{ itemId: "jira:PROJ-1", evidenceKey: "k1", label: "live" }],
   });
   expect(pruneOrphanedEvidence(db)).toBe(0);
-  expect(themesForServices(db, ["billing-api"])[0]?.evidenceCount).toBe(1);
+  expect(themesForServices(db, ["acme/billing-api"])[0]?.evidenceCount).toBe(1);
   db.close();
 });
 
@@ -980,8 +983,22 @@ function, so the two halves can never drift onto different definitions of "servi
   de-duplicated, `[]` when nothing resolves.
 
 The traversal is: epic → children (`item.metadata.parent_key = epicKey`, from #1128) → each child's
-**incoming** `resolves` edges (the graph stores `PR --resolves--> issue`) → each PR's `in_repo`
-edge → the repo entity's id.
+**incoming** `resolves` edges (the graph stores `PR --resolves--> issue`) → **the PR entity's
+`metadata.repo`**, giving a repo full name such as `acme/billing-api`.
+
+**The last hop is a JSON field on the PR entity, NOT an `in_repo` edge.** This was verified against
+`graph/graph-populator.ts` rather than assumed: `syncPrGraph` builds the PR entity with
+`metadata: { repo: repoFull }`, while `in_repo` edges are written only for **commits** and **files**
+and point at a *workspace*, never for pull requests. A traversal through `in_repo` would return `[]`
+for every epic in a real index while passing any test that seeded its own edges.
+
+**A theme's service key is therefore a repo full name** (`acme/billing-api`), not an abstract
+service name. Accepted deliberately: it needs no configuration and works on any index today. The
+cost is that a monorepo collapses every epic into one bucket, and PR B's brief must print whatever
+key it actually used rather than implying a curated service catalogue exists.
+
+`repoFull` can be absent on a PR whose metadata carried no repo path, so a `NULL` extract is skipped
+rather than becoming a `"null"` service.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1008,29 +1025,37 @@ function addItem(db: Database, id: string, externalId: string, metadata: object)
   );
 }
 
-/** Minimal graph rows: an entity plus a typed relation, matching graph-v7. */
-function addEntity(db: Database, id: string, kind: string): void {
-  db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [id, kind, id]);
+/**
+ * Real `graph_entity` columns (graph-v7-sql.ts): id, type, external_id, label,
+ * service, metadata — there is NO `kind` column and `external_id` is NOT NULL.
+ * A PR entity carries its repo as `metadata.repo`, which is the hop this
+ * traversal reads.
+ */
+function addEntity(db: Database, id: string, type: string, repo?: string): void {
+  db.run(
+    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES (?, ?, ?, ?, 'github', ?)`,
+    [id, type, id, id, repo === undefined ? null : JSON.stringify({ repo })],
+  );
 }
 
+/** Real `graph_relation` columns: from_id, to_id, type, weight, metadata, created_at. */
 function addRelation(db: Database, from: string, to: string, type: string): void {
   db.run(
-    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, ?, 1)`,
+    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, 1)`,
     [from, to, type],
   );
 }
 
-test("derives services through children -> resolving PRs -> repo", () => {
+test("derives services through children -> resolving PRs -> the PR's repo", () => {
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
   addEntity(db, "jira:PROJ-2", "issue");
-  addEntity(db, "github:pr:7", "pull_request");
-  addEntity(db, "billing-api", "repo");
+  addEntity(db, "github:pr:7", "pr", "acme/billing-api");
   addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
-  addRelation(db, "github:pr:7", "billing-api", "in_repo");
 
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["billing-api"]);
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
 
@@ -1038,23 +1063,33 @@ test("merges and sorts services across several children", () => {
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   for (const [child, pr, repo] of [
-    ["jira:PROJ-2", "github:pr:7", "billing-api"],
-    ["jira:PROJ-3", "github:pr:8", "payments-worker"],
-    ["jira:PROJ-4", "github:pr:9", "billing-api"],
+    ["jira:PROJ-2", "github:pr:7", "acme/billing-api"],
+    ["jira:PROJ-3", "github:pr:8", "acme/payments-worker"],
+    ["jira:PROJ-4", "github:pr:9", "acme/billing-api"],
   ] as const) {
     addItem(db, child, child.split(":")[1] ?? child, { meta_v: 1, parent_key: "PROJ-1" });
     addEntity(db, child, "issue");
-    addEntity(db, pr, "pull_request");
-    addEntity(db, repo, "repo");
+    addEntity(db, pr, "pr", repo);
     addRelation(db, pr, child, "resolves");
-    addRelation(db, pr, repo, "in_repo");
   }
   // Sorted and de-duplicated: the caller compares these sets, so a stable
   // order keeps cohort ranking deterministic across runs.
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([
-    "billing-api",
-    "payments-worker",
+    "acme/billing-api",
+    "acme/payments-worker",
   ]);
+  db.close();
+});
+
+test("a PR with no repo in its metadata contributes nothing, not a null service", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  addEntity(db, "jira:PROJ-2", "issue");
+  addEntity(db, "github:pr:7", "pr"); // no repo
+  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
+
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
   db.close();
 });
 
@@ -1076,26 +1111,13 @@ test("children whose PRs never referenced them resolve to no services", () => {
   db.close();
 });
 
-test("a PR with a resolves edge but no repo edge contributes nothing", () => {
-  const db = freshDb();
-  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
-  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
-  addEntity(db, "jira:PROJ-2", "issue");
-  addEntity(db, "github:pr:7", "pull_request");
-  addRelation(db, "github:pr:7", "jira:PROJ-2", "resolves");
-  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
-  db.close();
-});
-
 test("a child of a DIFFERENT epic is not counted", () => {
   const db = freshDb();
   addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
   addItem(db, "jira:OTHER-9", "OTHER-9", { meta_v: 1, parent_key: "OTHER-1" });
   addEntity(db, "jira:OTHER-9", "issue");
-  addEntity(db, "github:pr:7", "pull_request");
-  addEntity(db, "search", "repo");
+  addEntity(db, "github:pr:7", "pr", "acme/search");
   addRelation(db, "github:pr:7", "jira:OTHER-9", "resolves");
-  addRelation(db, "github:pr:7", "search", "in_repo");
   expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual([]);
   db.close();
 });
@@ -1126,8 +1148,13 @@ import type { Database } from "bun:sqlite";
  * matching zero rows while both halves looked individually correct.
  *
  * Traversal: epic → children (`metadata.parent_key`, #1128) → each child's
- * INCOMING `resolves` edges (the graph stores `PR --resolves--> issue`) →
- * each PR's `in_repo` edge → the repo entity id.
+ * INCOMING `resolves` edges (the graph stores `PR --resolves--> issue`) → the
+ * PR ENTITY's `metadata.repo`, e.g. `acme/billing-api`.
+ *
+ * The last hop is a JSON field, NOT an `in_repo` edge: `graph-populator.ts`
+ * writes `in_repo` only for commits and files (pointing at a workspace), never
+ * for pull requests, so an edge traversal would return [] on every real index
+ * while passing any test that seeded its own edges.
  *
  * Returns `[]` rather than guessing when any hop is missing. A brand-new epic
  * legitimately has no children, and PR B turns the empty result into a named
@@ -1140,12 +1167,13 @@ export function affectedServicesForEpic(
 ): string[] {
   const rows = db
     .query(
-      `SELECT DISTINCT repo.to_id AS service
+      `SELECT DISTINCT json_extract(pr.metadata, '$.repo') AS service
          FROM item child
-         JOIN graph_relation res  ON res.to_id   = child.id AND res.type = 'resolves'
-         JOIN graph_relation repo ON repo.from_id = res.from_id AND repo.type = 'in_repo'
+         JOIN graph_relation res ON res.to_id = child.id AND res.type = 'resolves'
+         JOIN graph_entity   pr  ON pr.id     = res.from_id
         WHERE json_extract(child.metadata, '$.parent_key') = ?
           AND child.id <> ?
+          AND json_extract(pr.metadata, '$.repo') IS NOT NULL
         ORDER BY service ASC`,
     )
     .all(epicKey, epicItemId) as Array<{ service: string }>;
@@ -1707,7 +1735,7 @@ function seedClosedEpic(
   id: string,
   modifiedAt: number,
   body: string,
-  service = "billing-api",
+  service = "acme/billing-api",
 ): void {
   const key = id.split(":")[1] ?? id;
   db.run(
@@ -1729,24 +1757,22 @@ function seedClosedEpic(
      VALUES (?, 'jira', 'issue', ?, 'C', ?, 1, 1, 0)`,
     [childId, `${key}-child`, JSON.stringify({ meta_v: 1, parent_key: key })],
   );
-  for (const [eid, kind] of [
-    [childId, "issue"],
-    [prId, "pull_request"],
-    [service, "repo"],
-  ] as const) {
-    db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [
-      eid,
-      kind,
-      eid,
-    ]);
-  }
+  // Real graph_entity columns: id, type, external_id, label, service, metadata.
+  // The PR carries its repo as metadata.repo — that JSON field IS the service
+  // hop, not an `in_repo` edge (which exists only for commits and files).
   db.run(
-    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, 'resolves', 1)`,
-    [prId, childId],
+    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES (?, 'issue', ?, ?, 'jira', NULL)`,
+    [childId, childId, childId],
   );
   db.run(
-    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, updated_at) VALUES (?, ?, 'in_repo', 1)`,
-    [prId, service],
+    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES (?, 'pr', ?, ?, 'github', ?)`,
+    [prId, prId, prId, JSON.stringify({ repo: service })],
+  );
+  db.run(
+    `INSERT OR IGNORE INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, 'resolves', 1)`,
+    [prId, childId],
   );
 }
 
@@ -1766,12 +1792,12 @@ test("writes themes under the AFFECTED service, not the connector", async () => 
   // make PR B's theme lookup — which matches a cohort's affected services —
   // return zero rows for every epic, while this pass looked perfectly healthy.
   const db = freshDb();
-  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "billing-api");
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "acme/billing-api");
 
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
   expect(r.scanned).toBe(1);
   expect(r.themesWritten).toBe(1);
-  expect(themesForServices(db, ["billing-api"]).map((t) => t.label)).toEqual(["rate limits"]);
+  expect(themesForServices(db, ["acme/billing-api"]).map((t) => t.label)).toEqual(["rate limits"]);
   expect(themesForServices(db, ["jira"])).toEqual([]);
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
   db.close();
@@ -1779,31 +1805,30 @@ test("writes themes under the AFFECTED service, not the connector", async () => 
 
 test("an epic touching two services writes the theme under both", async () => {
   const db = freshDb();
-  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "billing-api");
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us", "acme/billing-api");
   // A second child of the same epic, landing in a different repo.
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
      VALUES ('jira:A-two', 'jira', 'issue', 'A-two', 'C2', ?, 1, 1, 0)`,
     [JSON.stringify({ meta_v: 1, parent_key: "A" })],
   );
-  for (const [eid, kind] of [
-    ["jira:A-two", "issue"],
-    ["github:pr:A2", "pull_request"],
-    ["payments-worker", "repo"],
-  ] as const) {
-    db.run(`INSERT OR IGNORE INTO graph_entity (id, kind, label) VALUES (?, ?, ?)`, [eid, kind, eid]);
-  }
   db.run(
-    `INSERT INTO graph_relation (from_id, to_id, type, updated_at) VALUES ('github:pr:A2', 'jira:A-two', 'resolves', 1)`,
+    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES ('jira:A-two', 'issue', 'jira:A-two', 'C2', 'jira', NULL)`,
   );
   db.run(
-    `INSERT INTO graph_relation (from_id, to_id, type, updated_at) VALUES ('github:pr:A2', 'payments-worker', 'in_repo', 1)`,
+    `INSERT OR IGNORE INTO graph_entity (id, type, external_id, label, service, metadata)
+     VALUES ('github:pr:A2', 'pr', 'github:pr:A2', 'PR', 'github', ?)`,
+    [JSON.stringify({ repo: "acme/payments-worker" })],
+  );
+  db.run(
+    `INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES ('github:pr:A2', 'jira:A-two', 'resolves', 1)`,
   );
 
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
   expect(r.themesWritten).toBe(2);
-  expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
-  expect(themesForServices(db, ["payments-worker"])).toHaveLength(1);
+  expect(themesForServices(db, ["acme/billing-api"])).toHaveLength(1);
+  expect(themesForServices(db, ["acme/payments-worker"])).toHaveLength(1);
   db.close();
 });
 
@@ -1851,7 +1876,7 @@ test("with NO model: zero themes, but the watermark still advances", async () =>
   const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5 });
   expect(r.themesWritten).toBe(0);
   expect(r.llmCalls).toBe(0);
-  expect(themesForServices(db, ["billing-api"])).toEqual([]);
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
   db.close();
 });
@@ -1906,13 +1931,13 @@ test("the reconcile sweep prunes orphaned evidence and demotes the theme", async
   const db = freshDb();
   seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
   await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
-  expect(themesForServices(db, ["billing-api"])).toHaveLength(1);
+  expect(themesForServices(db, ["acme/billing-api"])).toHaveLength(1);
 
   db.run(`DELETE FROM item WHERE id = 'jira:A'`);
   const r = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5, llm: okLlm });
   expect(r.prunedEvidence).toBe(1);
   expect(r.demoted).toBe(1);
-  expect(themesForServices(db, ["billing-api"])).toEqual([]);
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
   // The evidence row is gone, not merely ignored — otherwise dead rows
   // accumulate forever behind every pruned item.
   const left = db.query(`SELECT COUNT(*) AS n FROM premortem_theme_evidence`).get() as {
