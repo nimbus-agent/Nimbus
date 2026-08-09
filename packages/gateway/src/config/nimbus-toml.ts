@@ -1876,28 +1876,56 @@ export const DEFAULT_NIMBUS_PREMORTEM_TOML: NimbusPremortemToml = {
  * reads as "no comparable epics ever closed", which is a wrong answer rather
  * than an empty one.
  */
-function positiveIntOr(raw: unknown, fallback: number): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    return fallback;
+function applyNimbusPremortemKey(
+  out: Partial<NimbusPremortemToml>,
+  key: string,
+  valRaw: string,
+): void {
+  // Bool keys MUST come before the integer branch below — same regression the
+  // [glossary] block guards against: routed through `parseIntDec`, `use_llm`
+  // is silently dropped and the section reads as if it were never set.
+  if (key === "enabled") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.enabled = b;
+    return;
   }
-  return Math.floor(raw);
+  if (key === "use_llm") {
+    const b = parseBool(valRaw);
+    if (b !== undefined) out.useLlm = b;
+    return;
+  }
+  const n = parseIntWithMin(valRaw, 1);
+  if (n === undefined) return;
+  switch (key) {
+    case "debounce_ms":
+      out.debounceMs = n;
+      break;
+    case "max_llm_calls_per_pass":
+      out.maxLlmCallsPerPass = n;
+      break;
+    case "retry_cooldown_ms":
+      out.retryCooldownMs = n;
+      break;
+    case "max_cohort_size":
+      out.maxCohortSize = n;
+      break;
+    case "max_candidate_scan":
+      out.maxCandidateScan = n;
+      break;
+    default:
+      break;
+  }
 }
 
-export function parseNimbusPremortemToml(raw: unknown): NimbusPremortemToml {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...DEFAULT_NIMBUS_PREMORTEM_TOML };
-  }
-  const rec = raw as Record<string, unknown>;
-  const d = DEFAULT_NIMBUS_PREMORTEM_TOML;
-  return {
-    enabled: typeof rec["enabled"] === "boolean" ? rec["enabled"] : d.enabled,
-    debounceMs: positiveIntOr(rec["debounce_ms"], d.debounceMs),
-    useLlm: typeof rec["use_llm"] === "boolean" ? rec["use_llm"] : d.useLlm,
-    maxLlmCallsPerPass: positiveIntOr(rec["max_llm_calls_per_pass"], d.maxLlmCallsPerPass),
-    retryCooldownMs: positiveIntOr(rec["retry_cooldown_ms"], d.retryCooldownMs),
-    maxCohortSize: positiveIntOr(rec["max_cohort_size"], d.maxCohortSize),
-    maxCandidateScan: positiveIntOr(rec["max_candidate_scan"], d.maxCandidateScan),
-  };
+export function parseNimbusPremortemToml(
+  raw: string,
+  defaults: NimbusPremortemToml = DEFAULT_NIMBUS_PREMORTEM_TOML,
+): NimbusPremortemToml {
+  const out: Partial<NimbusPremortemToml> = {};
+  forEachSectionEntry(raw, "[premortem]", (key, valRaw) =>
+    applyNimbusPremortemKey(out, key, valRaw),
+  );
+  return { ...defaults, ...out };
 }
 
 export function loadNimbusPremortemFromConfigDir(configDir: string): NimbusPremortemToml {
