@@ -13,7 +13,7 @@ remainder explicitly deferred.**
 
 The finding is correct and it is the most valuable thing in this review. Verified:
 
-```
+```text
 packages/gateway/src/connectors/jira-sync.ts:302    const initialSyncDepthDays = 30;
 packages/gateway/src/connectors/linear-sync.ts:212  const initialSyncDepthDays = 30;
 ```
@@ -34,7 +34,7 @@ backfill problem — no metadata backfill, however thorough, would have surfaced
 a dynamic depth: `Syncable.initialSyncDepthDays` is declared at `sync/types.ts:52` and set by every
 connector, but nothing outside `connectors/` reads it —
 
-```
+```bash
 grep -rn "\.initialSyncDepthDays" packages/gateway/src --include=*.ts | grep -v "connectors/"   # empty
 ```
 

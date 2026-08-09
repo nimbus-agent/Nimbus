@@ -33,7 +33,7 @@ The review frames this as a typing caution — check that callers do not assume 
 problem is not types at all: **two existing tests assert the returned `params` by exact value and
 will fail**, and my plan did not mention updating them.
 
-```
+```text
 packages/gateway/src/ipc/index-rebody-rpc.test.ts:527   expect(params).toEqual([]);
 packages/gateway/src/ipc/index-rebody-rpc.test.ts:535   expect(params).toEqual(["issue"]);
 ```

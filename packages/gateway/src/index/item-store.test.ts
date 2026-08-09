@@ -87,7 +87,7 @@ test("metadata survives every index depth", () => {
   const db = freshIndexedDb();
   for (const depth of ["metadata_only", "summary", "full"] as const) {
     upsertIndexedItemForSync(
-      { db, ...syncTestContext(db, EMPTY_NIMBUS_VAULT), depth },
+      { ...syncTestContext(db, EMPTY_NIMBUS_VAULT), depth },
       {
         service: "jira",
         type: "issue",
