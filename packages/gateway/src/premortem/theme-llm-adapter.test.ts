@@ -70,6 +70,20 @@ test("drops a theme left with no valid source at all", async () => {
   expect(await extractThemes(EPICS, { llm })).toEqual([]);
 });
 
+test("duplicate source ids cannot inflate a theme's corroboration", async () => {
+  // The evidence COUNT is the confidence score, so a model repeating the same
+  // id must not multiply it. Dropping `new Set(...)` in extractThemes must
+  // turn this test red.
+  const llm = {
+    complete: async () =>
+      JSON.stringify({
+        themes: [{ label: "rate limits", sources: ["jira:A", "jira:A", "jira:A"] }],
+      }),
+  };
+  const themes = await extractThemes(EPICS, { llm });
+  expect(themes).toEqual([{ label: "rate limits", sourceItemIds: ["jira:A"] }]);
+});
+
 test("malformed model output yields no themes rather than throwing", async () => {
   const llm = { complete: async () => "not json at all" };
   expect(await extractThemes(EPICS, { llm })).toEqual([]);
