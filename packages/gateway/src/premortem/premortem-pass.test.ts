@@ -165,21 +165,60 @@ test("a second pass over unchanged data scans nothing and calls no model", async
   db.close();
 });
 
-test("with no llm supplied at all: zero themes, watermark still advances (nothing was ever attempted)", async () => {
-  // Distinct from the `opts.llm` supplied-but-unavailable case below: with no
-  // `opts.llm` at all, extraction is skipped for every batch by construction
-  // (never even calls `extractThemes`' model branch), so there is nothing to
-  // retry — advancing is correct here, matching the pre-fix behaviour for
-  // this one case only.
+test("with no llm supplied at all (use_llm = false): zero themes, watermark UNCHANGED, and recovers on a later pass with a working model", async () => {
+  // OLD expectation (the defect this residual fix closes): with no
+  // `opts.llm` at all, extraction was skipped for every batch by
+  // construction, but the loop still fell through to the watermark advance —
+  // so `[premortem].use_llm = false` silently consumed the corpus forever,
+  // the exact same failure mode FINDING 1 fixed for "adapter present but
+  // returns null", just through the `use_llm = false` door instead.
+  //
+  // NEW expectation: `opts.llm === undefined` is treated identically to the
+  // `no-model` outcome below — the batch was never examined, so the
+  // watermark must not move, and `noModel` is true so a caller can tell this
+  // apart from a working model that genuinely found nothing.
   const db = freshDb();
   seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
 
-  const r = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5 });
-  expect(r.themesWritten).toBe(0);
-  expect(r.llmCalls).toBe(0);
-  expect(r.noModel).toBe(false);
+  const r1 = await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5 });
+  expect(r1.scanned).toBe(0);
+  expect(r1.themesWritten).toBe(0);
+  expect(r1.llmCalls).toBe(0);
+  expect(r1.noModel).toBe(true);
   expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
+  expect(readPassState(db)).toEqual({ watermarkMs: 0, watermarkId: "" });
+
+  // RECOVERY is the point of the fix: flipping `use_llm` back on later must
+  // still find — and mine — this exact epic. Asserting only "the watermark
+  // didn't move" on r1 would also pass if something else silently consumed
+  // the corpus; this proves it didn't.
+  const r2 = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5, llm: okLlm });
+  expect(r2.scanned).toBe(1);
+  expect(r2.themesWritten).toBe(1);
+  expect(r2.noModel).toBe(false);
   expect(readPassState(db)).toEqual({ watermarkMs: 10, watermarkId: "jira:A" });
+  expect(themesForServices(db, ["acme/billing-api"]).map((t) => t.label)).toEqual(["rate limits"]);
+  db.close();
+});
+
+test("use_llm = false: the reconcile sweep still runs and still prunes/demotes", async () => {
+  // Regression guard for the risk named in the fix: breaking out of the loop
+  // before discovery must not skip the reconcile sweep that runs AFTER the
+  // loop. Seed a theme via a working pass, delete its source item, then run
+  // a no-llm pass and confirm pruning/demotion still happened.
+  const db = freshDb();
+  seedClosedEpic(db, "jira:A", 10, "Stripe capped us");
+  await runPremortemPass(db, { nowMs: 100, maxLlmCalls: 5, llm: okLlm });
+  expect(themesForServices(db, ["acme/billing-api"])).toHaveLength(1);
+
+  db.run(`DELETE FROM item WHERE id = 'jira:A'`);
+  const r = await runPremortemPass(db, { nowMs: 200, maxLlmCalls: 5 });
+
+  expect(r.noModel).toBe(true);
+  expect(r.scanned).toBe(0);
+  expect(r.prunedEvidence).toBe(1);
+  expect(r.demoted).toBe(1);
+  expect(themesForServices(db, ["acme/billing-api"])).toEqual([]);
   db.close();
 });
 

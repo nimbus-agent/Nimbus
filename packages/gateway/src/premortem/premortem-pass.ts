@@ -51,16 +51,29 @@ const DEFAULT_BATCH_SIZE = 4;
 /**
  * discover -> extract -> reconcile, checkpointing the watermark PER BATCH.
  *
- * The watermark advances only when the batch was actually examined — a
- * working model that ran and found nothing, or no model configured for the
- * WHOLE pass (`opts.llm === undefined`, so extraction is skipped for every
- * batch by construction). It does NOT advance when `extractThemes` reports
- * `{ kind: "no-model" }` for an `opts.llm` that WAS supplied but could not
- * complete this call (absent local provider, or a transient failure) — that
- * batch was never actually examined, so advancing past it would permanently
- * consume the corpus the moment the gateway ever ran without a working local
- * model. The loop stops there rather than trying the next batch, since a
- * model that failed once is likely to fail again for the rest of this pass.
+ * The watermark advances only when a batch was actually examined by a model.
+ * Two cases stop the loop WITHOUT advancing or checkpointing, both surfaced
+ * as `noModel: true`:
+ *
+ *  - `opts.llm === undefined` (`[premortem].use_llm = false`) — there is no
+ *    model to call at all, so the loop breaks before `discoverClosedEpics`
+ *    even runs; no pointless query, no batch claimed as examined.
+ *  - `extractThemes` reports `{ kind: "no-model" }` for an `opts.llm` that
+ *    WAS supplied but could not complete this call (absent local provider,
+ *    or a transient failure) — that batch was fetched but never actually
+ *    examined.
+ *
+ * In both cases, advancing past the batch would permanently consume the
+ * corpus the moment the gateway ever ran without a working local model —
+ * flipping `use_llm` back on, or the provider recovering, would then find
+ * nothing left to mine. The loop stops rather than trying the next batch,
+ * since the condition (no model / a model that just failed) is expected to
+ * hold for the rest of this pass too.
+ *
+ * The reconcile sweep (`pruneOrphanedEvidence` + `demoteThemesWithNoLiveEvidence`)
+ * runs unconditionally after the loop, independent of whether any batch was
+ * examined — a `noModel` pass still prunes/demotes themes written by an
+ * earlier, working pass.
  */
 export async function runPremortemPass(
   db: Database,
@@ -75,7 +88,18 @@ export async function runPremortemPass(
 
   for (;;) {
     if (opts.signal?.aborted === true) break;
-    if (llmCalls >= opts.maxLlmCalls && opts.llm !== undefined) break;
+
+    if (opts.llm === undefined) {
+      // `use_llm = false`. Same rule as the `no-model` outcome below: a batch
+      // whose model call never ran must not be marked mined, or flipping
+      // `use_llm` back on later finds an empty corpus forever. Break BEFORE
+      // discovery — with no model there is no work to do but the reconcile
+      // sweep, which runs after this loop regardless.
+      noModel = true;
+      break;
+    }
+
+    if (llmCalls >= opts.maxLlmCalls) break;
 
     const batch: DiscoveredEpic[] = discoverClosedEpics(db, {
       watermarkMs,
