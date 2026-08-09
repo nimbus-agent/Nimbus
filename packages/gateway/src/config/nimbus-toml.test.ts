@@ -26,6 +26,7 @@ import {
   DEFAULT_NIMBUS_BRIEFS_TOML,
   DEFAULT_NIMBUS_EMBEDDING_TOML,
   DEFAULT_NIMBUS_LAN_TOML,
+  DEFAULT_NIMBUS_PREMORTEM_TOML,
   DEFAULT_NIMBUS_UPDATER_TOML,
   loadNimbusAuditFromConfigDir,
   loadNimbusAuditFromPath,
@@ -61,6 +62,7 @@ import {
   parseNimbusIdentityToml,
   parseNimbusLanToml,
   parseNimbusPagerdutyToml,
+  parseNimbusPremortemToml,
   parseNimbusScimToml,
   parseNimbusSecurityToml,
   parseNimbusShareHttpSink,
@@ -1558,5 +1560,42 @@ describe("[share.http_sink] (Slice 8)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("[premortem] (Spine S1)", () => {
+  test("[premortem] defaults are the documented ones", () => {
+    expect(DEFAULT_NIMBUS_PREMORTEM_TOML).toEqual({
+      enabled: true,
+      debounceMs: 60_000,
+      useLlm: true,
+      maxLlmCallsPerPass: 25,
+      retryCooldownMs: 3_600_000,
+      maxCohortSize: 10,
+      maxCandidateScan: 200,
+    });
+  });
+
+  test("[premortem] parses overrides and ignores unknown keys", () => {
+    const parsed = parseNimbusPremortemToml({
+      enabled: false,
+      max_cohort_size: 4,
+      max_candidate_scan: 50,
+      nonsense: "ignored",
+    });
+    expect(parsed.enabled).toBe(false);
+    expect(parsed.maxCohortSize).toBe(4);
+    expect(parsed.maxCandidateScan).toBe(50);
+    // Untouched keys keep their defaults.
+    expect(parsed.useLlm).toBe(true);
+  });
+
+  test("[premortem] rejects a non-positive bound rather than silently clamping", () => {
+    // These bound real work: max_candidate_scan = 0 would silently produce an
+    // empty cohort that reads as "no comparable epics" — a wrong answer, not an
+    // empty one.
+    expect(parseNimbusPremortemToml({ max_candidate_scan: 0 }).maxCandidateScan).toBe(200);
+    expect(parseNimbusPremortemToml({ max_cohort_size: -3 }).maxCohortSize).toBe(10);
+    expect(parseNimbusPremortemToml({ max_cohort_size: "ten" }).maxCohortSize).toBe(10);
   });
 });
