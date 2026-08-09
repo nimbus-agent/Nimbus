@@ -1,6 +1,6 @@
 # Review: `nimbus pre-mortem` Design
 
-This document contains feedback, open questions, and suggested improvements for the [2026-08-09-pre-mortem-design.md](file:///C:/gitrep/Nimbus/.claude/worktrees/pre-mortem/docs/superpowers/specs/2026-08-09-pre-mortem-design.md) specification.
+This document contains feedback, open questions, and suggested improvements for the [2026-08-09-pre-mortem-design.md](./2026-08-09-pre-mortem-design.md) specification.
 
 ---
 

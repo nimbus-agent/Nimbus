@@ -1,6 +1,6 @@
 # Plan Review: `nimbus pre-mortem` PR A (Theme Pass)
 
-This document contains feedback, open questions, and suggestions for the implementation plan [2026-08-09-pre-mortem-pr-a-theme-pass.md](file:///C:/gitrep/Nimbus/.claude/worktrees/pre-mortem/docs/superpowers/plans/2026-08-09-pre-mortem-pr-a-theme-pass.md).
+This document contains feedback, open questions, and suggestions for the implementation plan [2026-08-09-pre-mortem-pr-a-theme-pass.md](./2026-08-09-pre-mortem-pr-a-theme-pass.md).
 
 ---
 
