@@ -15,6 +15,27 @@ export type PatStrategy =
 export type PatStatus = "ok" | "dead" | "insufficient" | "indeterminate" | "not-configured";
 export type CertStatus = "ok" | "expiring" | "expired" | "indeterminate" | "not-configured";
 
+/**
+ * Classic-PAT scope implication: `<required>` → the broader scopes that satisfy it.
+ *
+ * `repo` grants everything `public_repo` does (and private repos besides), but
+ * `x-oauth-scopes` reports only the name that was ticked — so a literal membership
+ * test calls a perfectly working `repo`-scoped token `insufficient`.
+ *
+ * This is load-bearing, not a courtesy: ticking `workflow` in the classic-PAT UI
+ * pulls in the whole `repo` group, so `public_repo` + `workflow` is not a
+ * combination GitHub will issue. Every real WINGET_PAT therefore reports
+ * `repo, workflow`, and without this map the check would reject the ONLY obtainable
+ * token — crying wolf at a healthy credential, which is how a real finding gets
+ * ignored, which is the failure this whole file exists to prevent.
+ *
+ * Widening here is safe ONLY where the broader scope genuinely subsumes the
+ * narrower one. It is not a place to record "close enough".
+ */
+const SCOPE_IMPLIED_BY: Record<string, readonly string[]> = {
+  public_repo: ["repo"],
+};
+
 export function classifyPatProbe(
   strategy: PatStrategy,
   probe: { status: number; scopes: string | null; push?: boolean },
@@ -27,7 +48,11 @@ export function classifyPatProbe(
     // `insufficient`, not `ok` — a partial grant is exactly how the winget channel
     // broke silently at v1.20.0 (see the WINGET_PAT entry below).
     const have = (probe.scopes ?? "").split(",").map((s) => s.trim());
-    return strategy.required.every((r) => have.includes(r)) ? "ok" : "insufficient";
+    return strategy.required.every(
+      (r) => have.includes(r) || (SCOPE_IMPLIED_BY[r] ?? []).some((b) => have.includes(b)),
+    )
+      ? "ok"
+      : "insufficient";
   }
   return "ok";
 }

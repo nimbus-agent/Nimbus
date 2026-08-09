@@ -269,6 +269,16 @@ the App and remains a **classic** PAT with the **`public_repo`** *and*
 **`workflow`** scopes (<https://github.com/settings/tokens/new>). This is a
 deliberate, documented exception, not an oversight.
 
+**What GitHub actually issues.** Ticking `workflow` in the classic-PAT UI pulls
+in the whole `repo` group, so `public_repo` + `workflow` is **not an obtainable
+combination** — every real `WINGET_PAT` reports `repo, workflow`. That is the
+narrowest shape available for this job, not an over-selection, and
+`check-secret-health.ts` accepts it (`repo` subsumes `public_repo`). It does
+mean the token grants full control of every private repo its owner can reach,
+for a job that only ever touches public ones. The scope can't be narrowed; the
+only lever is **whose account it is** — a dedicated machine account reaches
+nothing private of yours. See the options discussion below.
+
 **Both scopes are load-bearing.** Before submitting, `wingetcreate` syncs its
 fork of `winget-pkgs` with upstream, and GitHub refuses any token-attributed
 write that creates or updates files under `.github/workflows/` unless the token

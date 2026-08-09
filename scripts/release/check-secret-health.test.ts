@@ -46,6 +46,18 @@ describe("classifyPatProbe", () => {
     expect(classifyPatProbe(s, { status: 200, scopes: "workflow" })).toBe("insufficient");
     expect(classifyPatProbe(s, { status: 200, scopes: "" })).toBe("insufficient");
   });
+  // `repo` subsumes `public_repo` but is the only name reported, so a literal
+  // membership test would call a WORKING token insufficient. Crying wolf at a healthy
+  // credential is how the real finding gets ignored — the failure mode this file exists
+  // to prevent. The implication is one-way: it never excuses a genuinely missing scope.
+  test("scopes: a broader scope satisfies the narrower one it subsumes", () => {
+    const s = { kind: "scopes", required: ["public_repo", "workflow"] } as const;
+    expect(classifyPatProbe(s, { status: 200, scopes: "repo, workflow" })).toBe("ok");
+    expect(classifyPatProbe(s, { status: 200, scopes: "repo" })).toBe("insufficient");
+    // …and not the reverse: public_repo does NOT stand in for repo.
+    const t = { kind: "scopes", required: ["repo"] } as const;
+    expect(classifyPatProbe(t, { status: 200, scopes: "public_repo" })).toBe("insufficient");
+  });
   test("alive: 200 → ok, 401 → dead, other → indeterminate", () => {
     const s = { kind: "alive" } as const;
     expect(classifyPatProbe(s, { status: 200, scopes: null })).toBe("ok");

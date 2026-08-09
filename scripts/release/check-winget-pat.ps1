@@ -128,10 +128,13 @@ $failed = $false
 if ($hasPublic) {
   Write-Output "  OK    public_repo — can fork winget-pkgs and open the PR"
 } elseif ($hasRepo) {
-  Write-Output "  WARN  repo (not public_repo) — functionally sufficient, but BROADER than needed, and"
-  Write-Output "        scripts/release/check-secret-health.ts matches the literal string 'public_repo',"
-  Write-Output "        so the weekly health report will call this token 'insufficient'. Prefer re-issuing"
-  Write-Output "        with public_repo only."
+  Write-Output "  OK    repo — subsumes public_repo, so the fork + PR flow works."
+  Write-Output "  NOTE  'repo, workflow' is the NARROWEST shape GitHub will issue here: ticking"
+  Write-Output "        'workflow' in the classic-PAT UI pulls in the whole repo group, so"
+  Write-Output "        public_repo + workflow is not an obtainable combination. The scope is"
+  Write-Output "        therefore broader than the job needs — full control of every PRIVATE repo"
+  Write-Output "        this account can reach — and the only lever left is WHOSE account it is."
+  Write-Output "        A dedicated machine account reaches nothing private of yours."
 } else {
   Write-Output "  FAIL  no public_repo (nor repo) — cannot fork winget-pkgs or open the submission PR"
   $failed = $true
