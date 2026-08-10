@@ -324,11 +324,11 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  // A JSON array passes the top-level `typeof bRes.json !== "object"` shape check (arrays ARE
-  // objects in JS) and only fails downstream, inside `upsertJenkinsBuildRowIfNew`'s `asRecord`
-  // rejecting it — which is the same no-row-written path a null upsert takes, so this reports
-  // `absent`, not `upstream_error`.
-  test("reports absent for valid JSON that is not an object (an array)", async () => {
+  // A JSON array passes `bRes.json !== null && typeof bRes.json === "object"` (arrays ARE objects
+  // in JS) — the explicit `Array.isArray` arm in the shape check exists specifically to still
+  // catch it, so this reports `upstream_error`, never falling through to the null-upsert `absent`
+  // path.
+  test("reports upstream_error for valid JSON that is not an object (an array)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -337,10 +337,13 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found", reason: "absent" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports absent when the response body has no number field", async () => {
+  // A record missing `number` is caught by the explicit identity-field check BEFORE
+  // `upsertJenkinsBuildRowIfNew` is even called, so this reports `upstream_error` — distinct from
+  // the genuine already-seen/stale case below, which still reports `absent`.
+  test("reports upstream_error when the response body has no number field", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -351,7 +354,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found", reason: "absent" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
   // The fused `!ok || json-shape` condition was split into two separate causes: an HTTP failure
