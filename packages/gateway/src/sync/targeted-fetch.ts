@@ -2,7 +2,7 @@
 
 import { canonicalizeUrl } from "../util/url-canonical.ts";
 import { type FetchableService, serviceForHost } from "./fetch-host-boundary.ts";
-import type { FetchOneResult, Syncable, SyncContext } from "./types.ts";
+import type { FetchMissReason, FetchOneResult, Syncable, SyncContext } from "./types.ts";
 
 /** How long a targeted fetch will poll for a rate-limit token before answering `rate_limited`. */
 const ACQUIRE_TIMEOUT_MS = 5_000;
@@ -16,10 +16,10 @@ const MAX_ACQUIRE_POLL_ATTEMPTS = Math.ceil(ACQUIRE_TIMEOUT_MS / RATE_LIMIT_POLL
 
 export type TargetedFetchOutcome =
   | { readonly status: "indexed"; readonly itemId: string }
-  | { readonly status: "not_found" }
+  | { readonly status: "not_found"; readonly reason: FetchMissReason }
   | { readonly status: "unsupported_url" }
   | { readonly status: "no_targeted_fetch"; readonly service: string }
-  | { readonly status: "not_configured" }
+  | { readonly status: "not_configured"; readonly service?: string }
   | { readonly status: "rate_limited" };
 
 export interface TargetedFetchDeps {
@@ -175,7 +175,11 @@ async function acquireWithinTimeout(
  *   4. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
  *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`. A
  *      timeout returns `rate_limited` and appends NOTHING — `fetchOne` deterministically never
- *      runs past this point, so there is nothing to record.
+ *      runs past this point, so there is nothing to record. NOTE `rate_limited` has a SECOND
+ *      provenance: a connector's `fetchOne` returns it for a provider 429, and that one DOES
+ *      carry an appended row, because the request genuinely left the machine. Both are correct
+ *      for I29 — the ledger records real egress in both cases — so do not read this arm as
+ *      "no egress row".
  *   5. Append ONE `sync` egress row. A throw here aborts — no row, no fetch. Deliberately AFTER
  *      the acquire (not before it): appending before a rate-limit timeout would have recorded
  *      `authorized` egress for a call that never left the machine — still fail-closed either way,
@@ -225,7 +229,10 @@ export async function targetedFetch(
 
   const syncable = deps.syncableFor(service);
   if (syncable === undefined) {
-    return { status: "not_configured" };
+    // The boundary already resolved a service here, so naming it is a fact, not a
+    // guess. The host-miss return above stays bare: there is genuinely nothing to
+    // name, and guessing is what the boundary exists to refuse.
+    return { status: "not_configured", service };
   }
   const fetchOne = syncable.fetchOne;
   if (fetchOne === undefined) {

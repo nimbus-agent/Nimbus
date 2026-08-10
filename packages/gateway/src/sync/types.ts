@@ -102,13 +102,13 @@ export type FetchMissReason =
  *
  * `reason` is what lets that promise be kept — but it does not keep it on its
  * own, and this comment must not claim otherwise while it can still be omitted.
- * It is optional ONLY until every connector supplies one; at that point it
- * becomes required, and a `not_found` site that omits a cause is a compile
- * error rather than a silent regression to the old behaviour.
+ * It is REQUIRED: every connector now supplies a cause, and a `not_found` site
+ * that omits one is a compile error, not a silent regression to the old
+ * collapsed behaviour.
  */
 export type FetchOneResult =
   | { readonly status: "indexed"; readonly itemId: string }
-  | { readonly status: "not_found"; readonly reason?: FetchMissReason }
+  | { readonly status: "not_found"; readonly reason: FetchMissReason }
   | { readonly status: "rate_limited" }
   | { readonly status: "unsupported_url" };
 
