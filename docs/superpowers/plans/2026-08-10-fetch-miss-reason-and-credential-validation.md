@@ -450,36 +450,98 @@ git commit -m "feat(connectors): add credential probe with 401-only rejection"
 
 Append to `packages/gateway/src/ipc/connector-rpc.test.ts`, following that file's existing context-construction helper.
 
+Use ONE shared sequence log across the probe and the vault, so ordering is asserted directly rather than inferred from an absence. The rejection path can be proven by an empty write list, but the **valid** path cannot — there, writes legitimately happen, and only a sequence shows the probe came first.
+
 ```ts
+/** Records probe and vault events into one ordered log. */
+function seqHarness() {
+  const seq: string[] = [];
+  return {
+    seq,
+    vault: {
+      set: async (k: string) => {
+        seq.push(`write:${k}`);
+      },
+      get: async () => null,
+      delete: async (k: string) => {
+        seq.push(`delete:${k}`);
+      },
+    } as unknown as NimbusVault,
+    probe: (verdict: ProbeVerdict) => async () => {
+      seq.push("probe");
+      return verdict;
+    },
+  };
+}
+
 test("a rejected credential writes NOTHING to the vault and throws", async () => {
-  const writes: string[] = [];
-  const vault = recordingVault(writes);
+  const h = seqHarness();
   await expect(
     handleConnectorAuth({
-      ...baseCtx({ vault }),
+      ...baseCtx({ vault: h.vault }),
       rec: { service: "github", token: "dead-pat" },
-      runCredentialProbe: async () => ({ kind: "rejected", httpStatus: 401 }),
+      runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
     }),
   ).rejects.toThrow(/github/);
   // The point of probing BEFORE writing: a typo'd token must not clobber a
   // working stored credential on the way to being rejected.
-  expect(writes).toEqual([]);
+  expect(h.seq).toEqual(["probe"]);
 });
 
-test("a valid credential stores and clears a stuck unauthenticated state", async () => {
-  const writes: string[] = [];
+test("on the VALID path the probe still runs before any write", async () => {
+  const h = seqHarness();
   const reauthed: string[] = [];
   const hit = await handleConnectorAuth({
     ...baseCtx({
-      vault: recordingVault(writes),
+      vault: h.vault,
       localIndex: fakeLocalIndex({ onReauth: (id) => reauthed.push(id) }),
     }),
     rec: { service: "github", token: "good-pat" },
-    runCredentialProbe: async () => ({ kind: "valid" }),
+    runCredentialProbe: h.probe({ kind: "valid" }),
   });
-  expect(writes).toContain("github.pat");
+  // Ordering, not just presence: an empty-writes assertion cannot cover this
+  // path, because here the writes are supposed to happen.
+  expect(h.seq[0]).toBe("probe");
+  expect(h.seq).toContain("write:github.pat");
   expect(reauthed).toEqual(["github"]);
   expect((hit.value as { verified: string }).verified).toBe("verified");
+});
+
+// A caller must never be able to supply its own probe through the RPC params.
+// Production builds the context as a fixed object literal whose only
+// caller-derived member is `rec` (connector-rpc.ts:48-56) — `rec` is a sibling
+// field, never spread. If a future refactor "simplified" that to `{...rec, …}`,
+// any caller could inject `{kind:"valid"}` and bypass validation entirely. This
+// pins it. Route through the real dispatcher, NOT handleConnectorAuth directly.
+test("a probe function supplied in RPC params is ignored", async () => {
+  const h = seqHarness();
+  let injectedRan = false;
+  const realFetch = globalThis.fetch;
+  // The REAL probe runs here (no seam injected), so bound its network call.
+  globalThis.fetch = (async () =>
+    new Response("Bad credentials", { status: 401 })) as unknown as typeof fetch;
+  try {
+    await expect(
+      dispatchConnectorRpc({
+        ...baseOpts({}),
+        vault: h.vault,
+        method: "connector.auth",
+        params: {
+          service: "github",
+          token: "dead-pat",
+          // A caller-supplied lookalike. It lands in `rec`, never on the context.
+          runCredentialProbe: async () => {
+            injectedRan = true;
+            return { kind: "valid" };
+          },
+        },
+      }),
+    ).rejects.toThrow(/github/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  expect(injectedRan).toBe(false);
+  expect(h.seq).toEqual([]); // the real probe rejected; nothing was written
 });
 
 test("an unreachable provider stores but does NOT clear health", async () => {
@@ -510,19 +572,9 @@ test("a service with no probe stores and reports verified: null", async () => {
 });
 ```
 
-Add the two helpers near the top of the file if absent:
+Add this helper near the top of the file if absent:
 
 ```ts
-function recordingVault(writes: string[]): NimbusVault {
-  return {
-    set: async (k: string) => {
-      writes.push(k);
-    },
-    get: async () => null,
-    delete: async () => {},
-  } as unknown as NimbusVault;
-}
-
 function fakeLocalIndex(opts: { onReauth?: (id: string) => void } = {}): LocalIndex {
   return {
     ensureConnectorSchedulerRegistration: () => {},
@@ -530,6 +582,10 @@ function fakeLocalIndex(opts: { onReauth?: (id: string) => void } = {}): LocalIn
   } as unknown as LocalIndex;
 }
 ```
+
+The injection test uses the real dispatcher. `dispatchConnectorRpc` takes a single options object (`connector-rpc.ts:25-35`) whose only caller-derived member is `params`; `baseOpts({})` is the existing builder in `connector-rpc-routing.test.ts:82`. Put the injection test in `connector-rpc-routing.test.ts` (it already imports `dispatchConnectorRpc`, `createMockVault`, and builds `db`/`localIndex` in `beforeEach`) and the seam-based tests in `connector-rpc.test.ts`.
+
+Note for the implementer: `dispatchConnectorRpc`'s options type has **no** `runCredentialProbe` member, so a caller structurally cannot supply one today. The test pins that property rather than discovering it — it is there to fail if someone later spreads `rec` into the context object literal.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -804,7 +860,13 @@ git commit -m "feat(cli): report what connector auth actually verified"
 - [ ] **Step 7: Open PR 1**
 
 Title: `fix(connector-auth): validate a credential before storing it`
+
 Body must state: the `verified` field is new on `connector.auth`; a rejected credential now throws and exits 1; a new `reauthenticated` health event clears a stuck `unauthenticated` state that otherwise made the connector permanently unsyncable.
+
+**Desktop-client note for the body.** `connector.startAuth` is in Tauri's `ALLOWED_METHODS` (`packages/ui/src-tauri/src/gateway_bridge.rs:80`) and is a deprecated alias routing to the same `handleConnectorAuth` (`connector-rpc.ts:112-121`). So the desktop client inherits validation with no Rust or renderer change — which is the concrete reason this belongs in the gateway rather than in `packages/cli`. Two consequences to record:
+
+- A rejected credential now **throws** over IPC on a path the renderer can reach. No UI code calls it today (`grep -rn "connector.auth\|connector.startAuth" packages/ui/src/` is empty; desktop is deferred to Phase 13), so nothing breaks now — but whoever builds that surface must render the rejection rather than swallow it.
+- When a desktop auth screen is built it must consume `verified` and not reintroduce an unconditional "Signed in". No task here; no surface to change yet.
 
 ---
 
@@ -1365,3 +1427,10 @@ The body **must** carry the client-coordination note, because `nimbus-web-clippe
 **Deliberately not in any task** (deferred in the spec, with reasons): `X-OAuth-Scopes` reporting; E2E mock servers; Vault write atomicity; the GitLab/Jenkins/Bitbucket `UnauthenticatedError` gap; a never-synced connector reporting `healthy`.
 
 **Ordering note:** `reason` is optional from Task 6 through Task 9 so every task ends green, then becomes required in Task 10. That flip is the completeness check — the typecheck error list at Task 10 Step 3 is the authoritative answer to "did I wire every site", not anyone's reading of the diff.
+
+## Plan-review items considered and rejected
+
+From the 2026-08-10 plan review (`…-review.md`).
+
+- **Retry the probe once before answering `unreachable`.** Rejected. It doubles the worst-case interactive hang to ~20s, and the dominant cause of `unreachable` is a genuinely offline or proxied machine, not a blip — so the retry pays its full cost precisely when it cannot help. The outcome it would improve is already benign: the credential **is** stored, the command exits 0, and the message tells the user to re-run when online. A retry buys a marginally nicer word in that message at the cost of the hang and of nondeterminism in every probe test. If field evidence later shows real blips, revisit with data.
+- **`exactOptionalPropertyTypes` reminder for the optional-`reason` window.** No change needed; already covered in Global Constraints ("omit an optional key entirely; never pass `key: undefined`"). Confirmed correct for Tasks 6-9: returning a bare `{ status: "not_found" }` against `reason?: FetchMissReason` is legal, and the tests assert a *defined* `reason`, so a site that omits one fails — `toEqual` ignores `undefined`-valued keys but not missing expected ones.
