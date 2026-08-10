@@ -1027,7 +1027,7 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 - `Stored: <service> (NOT verified — could not reach the provider)`, plus a follow-up line suggesting a re-run when online — the credential was stored but the check got a non-401 failure (403, 5xx, timeout, DNS failure). It may still be valid.
 - `Stored: <service> (not verified)` — no probe is registered for that service (most PAT/OAuth connectors); the credential was stored as given and nothing was checked.
 
-A credential the provider actively **rejects** (HTTP 401) is never stored: `nimbus connector auth` throws and exits with status `1` (a user-actionable precondition — fix the token and retry). Any other failure to store (e.g. the gateway is unreachable) exits with status `2` (an operational failure). All three outcomes above — verified, unverified, and unprobed — exit `0`: the credential was stored, which is what the command was asked to do.
+A credential the provider actively **rejects** (HTTP 401) is never stored: `nimbus connector auth` throws and exits with status `1` (a user-actionable precondition — fix the token and retry). Any other failure to store — including the gateway being unreachable — also exits with status `1`; `connector auth` has only one error path (an unhandled `Error` reaching the CLI's top-level catch-all), so there is no separate "operational failure" exit code here. All three outcomes above — verified, unverified, and unprobed — exit `0`: the credential was stored, which is what the command was asked to do.
 
 #### Zoom OAuth setup
 

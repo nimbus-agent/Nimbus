@@ -1050,7 +1050,7 @@ describe("runConnector auth — verified reporting", () => {
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runConnector(["auth", "datadog", "--datadog-api-key", "a", "--datadog-app-key", "b"]);
-    expect(out.stdout).toContain("Stored: datadog");
+    expect(out.stdout).toContain("Stored: datadog (not verified)");
     expect(out.stdout).not.toContain("Verified:");
     expect(out.stdout).not.toContain("Signed in");
   });
