@@ -340,7 +340,7 @@ than a shared wrapper around the handlers: the guard against drift is behavioura
 (`null` = no probe registered for this service). The CLI reports what was
 actually checked:
 
-```
+```console
 $ nimbus connector auth github            # probe returned 200
 Verified: github
 Credential: stored in the OS vault (no OAuth scopes).
@@ -383,6 +383,7 @@ so it cannot drift.
 Per `nimbus-testing`, unit layer for both, alongside the code under test.
 
 **Issue 1** — in each of the five `*-sync.test.ts`:
+
 - one test per cause, asserting the exact discriminator: absent credential →
   `no_credential`; a 401 and a 403 → `unauthorized`; a 404 → `absent`; a thrown
   transport error → `unreachable`; a 500, a malformed body, and a body missing
@@ -391,6 +392,7 @@ Per `nimbus-testing`, unit layer for both, alongside the code under test.
 - `fetch-miss-reason.test.ts` covering the mapper's boundaries directly.
 
 In `targeted-fetch.test.ts`:
+
 - `reason` propagates unchanged from `fetchOne` to the outcome;
 - a provider 429 surfaces as `rate_limited` **with** its egress row appended,
   distinguishing it from the acquire-timeout path which appends none — this is
@@ -406,6 +408,7 @@ fail loudly rather than pass silently.)
 
 **Issue 2** — new `credential-probe.test.ts` plus additions to the connector-rpc
 auth tests:
+
 - each verdict from each status: 200 → valid; 401 → rejected; 403 → unverified;
   500 → unverified; transport throw → unverified;
 - **per service, a rejecting probe results in zero Vault writes** — the anti-drift

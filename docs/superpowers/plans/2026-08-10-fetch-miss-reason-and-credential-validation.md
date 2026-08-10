@@ -55,11 +55,13 @@
 Clears a stuck `unauthenticated` state. Without this the rest of PR 1 prints "Verified" while the scheduler keeps skipping the connector forever (`scheduler.ts:400` returns an unconditional `true` for `unauthenticated`).
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/health.ts:31-39` (union), `:49-66` (`nextState`), `:215-227` (reason switch)
 - Modify: `packages/gateway/src/index/local-index.ts` (add method near `ensureConnectorSchedulerRegistration`)
 - Test: `packages/gateway/test/unit/connectors/health.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `HealthEvent` variant `{ type: "reauthenticated" }`; `LocalIndex.markConnectorReauthenticated(serviceId: string): void`.
 
@@ -171,10 +173,12 @@ git commit -m "feat(health): add reauthenticated event to clear a stuck unauthen
 ### Task 2: The probe module
 
 **Files:**
+
 - Create: `packages/gateway/src/connectors/credential-probe.ts`
 - Test: `packages/gateway/src/connectors/credential-probe.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `type ProbeVerdict = { kind: "valid" } | { kind: "rejected"; httpStatus: number } | { kind: "unreachable" }`
@@ -438,11 +442,13 @@ git commit -m "feat(connectors): add credential probe with 401-only rejection"
 ### Task 3: Wire the probe into the five auth handlers
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/connector-rpc-handlers/context.ts:34-47`
 - Modify: `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts` — `authSuccess` (:90), `connectorAuthGithub` (:101), `connectorAuthGitlab` (:120), `connectorAuthBitbucket` (:527), `connectorAuthJenkins` (:493), and the `jira` entry (:733)
 - Test: `packages/gateway/src/ipc/connector-rpc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runCredentialProbe`, `ProbeVerdict` (Task 2); `LocalIndex.markConnectorReauthenticated` (Task 1).
 - Produces: `connector.auth` result gains `verified: "verified" | "unverified" | null`; `ConnectorRpcHandlerContext.runCredentialProbe?` test seam.
 
@@ -705,9 +711,11 @@ git commit -m "feat(connector-auth): probe credentials before storing them"
 The individual pieces passing while the user stays stuck is the exact failure being fixed, so it gets its own test.
 
 **Files:**
+
 - Test: `packages/gateway/test/integration/connector-auth-unsticks-scheduler.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1-3.
 - Produces: nothing.
 
@@ -769,10 +777,12 @@ git commit -m "test(connector-auth): prove re-auth unsticks a skipped connector"
 ### Task 5: CLI output and exit codes
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/connector.ts:912-942`
 - Test: `packages/cli/src/commands/connector.test.ts`
 
 **Interfaces:**
+
 - Consumes: the `verified` field (Task 3).
 - Produces: nothing.
 
@@ -877,11 +887,13 @@ Body must state: the `verified` field is new on `connector.auth`; a rejected cre
 Adds the type and the mapper without touching any connector, so the tree stays green. `reason` is optional at this stage and becomes required in Task 10 — that flip is what proves all five connectors were wired.
 
 **Files:**
+
 - Modify: `packages/gateway/src/sync/types.ts:83-91`
 - Create: `packages/gateway/src/connectors/fetch-miss-reason.ts`
 - Test: `packages/gateway/src/connectors/fetch-miss-reason.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `FetchMissReason`; `FetchOneResult` with optional `reason` and a new `rate_limited` arm; `fetchOneMissForResponse(httpStatus: number): FetchOneResult`.
 
@@ -1005,10 +1017,12 @@ git commit -m "feat(sync): add FetchMissReason and the shared status mapper"
 ### Task 7: Wire github
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/github-sync.ts:619-671`
 - Test: `packages/gateway/src/connectors/github-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `fetchOneMissForResponse`, `FetchMissReason` (Task 6).
 - Produces: the per-connector pattern Tasks 8-9 repeat.
 
@@ -1147,10 +1161,12 @@ git commit -m "feat(github): name the cause of a targeted-fetch miss"
 ### Task 8: Wire gitlab and bitbucket
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/gitlab-sync.ts:88-135`, `packages/gateway/src/connectors/bitbucket-sync.ts:293-341`
 - Test: `packages/gateway/src/connectors/gitlab-sync.test.ts`, `packages/gateway/src/connectors/bitbucket-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `fetchOneMissForResponse` (Task 6).
 - Produces: nothing new.
 
@@ -1188,10 +1204,12 @@ git commit -m "feat(gitlab,bitbucket): name the cause of a targeted-fetch miss"
 Jenkins needs a genuine split, not a substitution: `:456` fuses `!bRes.ok` with the JSON-shape check in one condition, and those are two different causes.
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/jenkins-sync.ts:420-489`, `packages/gateway/src/connectors/jira-sync.ts:549-617`
 - Test: `packages/gateway/src/connectors/jenkins-sync.test.ts`, `packages/gateway/src/connectors/jira-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `fetchOneMissForResponse` (Task 6).
 - Produces: nothing new.
 
@@ -1254,11 +1272,13 @@ git commit -m "feat(jenkins,jira): name the cause of a targeted-fetch miss"
 The flip that proves Tasks 7-9 are complete: with `reason` required, any missed site is a compile error.
 
 **Files:**
+
 - Modify: `packages/gateway/src/sync/types.ts` (drop the `?`)
 - Modify: `packages/gateway/src/sync/targeted-fetch.ts:17-23`, `:176-182`, `:208-213`, `:226-229`
 - Test: `packages/gateway/src/sync/targeted-fetch.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 6-9.
 - Produces: `TargetedFetchOutcome` with required `reason` on `not_found` and optional `service` on `not_configured`.
 
@@ -1351,7 +1371,7 @@ Leave `:208-213` (host miss) returning a bare `{ status: "not_configured" }`.
 
 Correct the doc comment at `:176-182` — it currently implies `rate_limited` ⇒ no egress row, which is no longer true:
 
-```
+```text
  *   4. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
  *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`. A
  *      timeout returns `rate_limited` and appends NOTHING — `fetchOne` deterministically never
@@ -1384,6 +1404,7 @@ git commit -m "feat(sync): require a miss reason and surface it on the fetch wir
 ### Task 11: Docs, changelog, and the green bar
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`, `docs/architecture.md` (targeted-fetch response shape, if documented)
 
 - [ ] **Step 1: Find every place the old shape is documented**
