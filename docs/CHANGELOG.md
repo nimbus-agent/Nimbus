@@ -11,13 +11,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-08-10 — Targeted fetch names the cause of a miss (no schema change).** `FetchOneResult`'s
   `not_found` arm now carries a REQUIRED `reason: "no_credential" | "unauthorized" | "absent" |
   "unreachable" | "upstream_error"`, wired at every miss site across all five `fetchOne`
-  connectors (github, gitlab, bitbucket, jenkins, jira) through one shared mapper,
-  `connectors/fetch-miss-reason.ts`'s `fetchOneMissForResponse` — a status code in, a typed outcome
-  out, never a `Response`/body/URL, so no provider text or Vault-stored base URL can leak through
-  it. `reason` is required by the type, not by convention: a `not_found` site that omits one is a
-  compile error. A provider 429 now routes to the already-handled `rate_limited` arm rather than
-  arriving as an undifferentiated `not_found` — the shared mapper special-cases it before falling
-  through to `upstream_error`. `sync/targeted-fetch.ts`'s `TargetedFetchOutcome` (the
+  connectors (github, gitlab, bitbucket, jenkins, jira). The one `!res.ok` miss site per connector
+  delegates to a shared mapper, `connectors/fetch-miss-reason.ts`'s `fetchOneMissForResponse` — a
+  status code in, a typed outcome out, never a `Response`/body/URL; every OTHER miss site (a
+  malformed body, a missing field, an unsupported URL shape — roughly 25 sites across the five
+  connectors) returns a fixed enum literal directly rather than going through that mapper. Either
+  way no site can carry provider text or a Vault-stored base URL: the mapper by construction, the
+  hand-written sites because a literal has none to leak. `reason` is required by the type, not by
+  convention: a `not_found` site that omits one is a compile error. A provider 429 now routes to
+  the already-handled `rate_limited` arm rather than arriving as an undifferentiated `not_found` —
+  the shared mapper special-cases it before falling through to `upstream_error`.
+  `sync/targeted-fetch.ts`'s `TargetedFetchOutcome` (the
   `POST /v1/items/fetch` wire type) surfaces `reason` on its own `not_found` arm, and its
   `not_configured` arm gains an OPTIONAL `service`, populated only where the derived fetch-host
   boundary already resolved one before the miss (a bare host miss still has nothing to name and

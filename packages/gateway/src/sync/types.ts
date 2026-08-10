@@ -132,6 +132,18 @@ export interface Syncable {
    * (`sync/targeted-fetch.ts`) retries once, query-stripped, whenever it sees this status, and
    * that retry is safe to make ONLY because this status is known to mean "no request was made
    * yet"; returning it after a real outbound call would make the orchestrator double it.
+   *
+   * `not_found` REQUIRES a `reason: FetchMissReason` naming the cause (missing credential,
+   * unauthorized, genuinely absent, unreachable provider, or an upstream error) — see
+   * `FetchOneResult`'s doc comment above. A `not_found` with no reason is a compile error, not an
+   * option.
+   *
+   * `rate_limited` means the provider itself refused the request (e.g. an HTTP 429), NOT that the
+   * orchestrator's own rate-limit token acquisition timed out — that case never reaches this
+   * method at all. Return it only after the outbound request was actually made. Per I29, the
+   * orchestrator has already appended the egress ledger row for this call before invoking
+   * `fetchOne`, so a `rate_limited` return here does NOT mean the attempt was un-ledgered — the
+   * request genuinely left the machine.
    */
   fetchOne?(ctx: SyncContext, url: string): Promise<FetchOneResult>;
 }

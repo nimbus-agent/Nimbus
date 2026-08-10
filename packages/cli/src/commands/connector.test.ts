@@ -1208,12 +1208,19 @@ describe("runConnector auth — non-vault (OAuth) service prints scopes", () => 
   });
 
   it("prints the granted scopes line for an OAuth service id", async () => {
+    // A completed PKCE exchange IS provider confirmation, so the real gateway
+    // handler now reports `verified: "verified"` for every OAuth connector.
     const mock = createMockIpcClient([
-      { ok: true, serviceId: "google_drive", scopesGranted: ["drive.readonly", "profile"] },
+      {
+        ok: true,
+        serviceId: "google_drive",
+        scopesGranted: ["drive.readonly", "profile"],
+        verified: "verified",
+      },
     ]);
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runConnector(["auth", "google_drive"]);
-    expect(out.stdout).toContain("Stored: google_drive (not verified)");
+    expect(out.stdout).toContain("Verified: google_drive");
     expect(out.stdout).toContain("Scopes: drive.readonly, profile");
     expect(out.stdout).not.toContain("stored in the OS vault");
   });

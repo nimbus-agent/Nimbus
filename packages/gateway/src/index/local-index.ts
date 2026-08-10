@@ -362,8 +362,20 @@ export class LocalIndex {
    * route to it — the same reason `ensureConnectorSchedulerRegistration` lives
    * here. Call ONLY on a probe that actually returned `valid`: clearing on an
    * unverified store would reinstate the over-claim this change removes.
+   *
+   * Only fires from `unauthenticated`. `nextState` maps `reauthenticated` to
+   * `healthy` unconditionally, which would otherwise force `paused` back to
+   * dispatching (dispatch actually stays blocked by `scheduler_state.paused`,
+   * so `connector status` would report `healthy` for a connector still not
+   * syncing) and `rate_limited` back to `healthy` mid-Retry-After-window
+   * (`healthGatePreventsDispatchSnapshot` only reads `retryAfter` when
+   * `state === "rate_limited"`, so clearing it resumes dispatch immediately).
+   * Neither is what re-verifying a credential should do to those states.
    */
   markConnectorReauthenticated(serviceId: string): void {
+    if (getConnectorHealth(this.db, serviceId).state !== "unauthenticated") {
+      return;
+    }
     transitionHealth(this.db, serviceId, { type: "reauthenticated" });
   }
 

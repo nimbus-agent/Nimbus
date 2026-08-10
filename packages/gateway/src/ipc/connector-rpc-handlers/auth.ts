@@ -746,12 +746,18 @@ async function connectorAuthOAuthPkce(
   const interval = defaultSyncIntervalMsForService(id);
   localIndex.ensureConnectorSchedulerRegistration(id, interval, Date.now());
 
+  // A completed PKCE exchange IS provider confirmation — the provider issued the
+  // token in response to the browser consent it just granted. Reporting `null`
+  // here (the `authSuccess` default for a connector with no cheap identity-probe)
+  // would under-claim what actually happened, the same defect mirrored: the CLI's
+  // `else` branch says "nothing was checked", which is false for OAuth.
   return {
     kind: "hit",
     value: {
       ok: true,
       serviceId: id,
       scopesGranted: tokens.scopes,
+      verified: "verified" as const,
     },
   };
 }

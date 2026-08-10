@@ -8,14 +8,14 @@ import type { ConnectorServiceId } from "./connector-catalog.ts";
  * Bounds the single probe request. Without it `nimbus connector auth` — an
  * INTERACTIVE command — can hang indefinitely on a stalled provider. Mirrors
  * `FETCH_ONE_TIMEOUT_MS` (`sync/types.ts`); a timeout is a transport failure and
- * resolves to `unreachable`, so the credential is still stored.
+ * resolves to `unconfirmed`, so the credential is still stored.
  */
 export const PROBE_TIMEOUT_MS = 10_000;
 
 export type ProbeVerdict =
   | { readonly kind: "valid" }
   | { readonly kind: "rejected"; readonly httpStatus: number }
-  | { readonly kind: "unreachable" };
+  | { readonly kind: "unconfirmed" };
 
 export interface ProbeRequest {
   readonly url: string;
@@ -75,6 +75,14 @@ export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialPro
  * misconfigured base URL's 404) leaves the question open, so the credential is
  * stored and honestly reported as unverified.
  *
+ * `unconfirmed` means exactly this: the provider did not confirm the
+ * credential. It deliberately does NOT distinguish its causes — 403 (forbidden
+ * on this endpoint, not necessarily on everything Nimbus needs), 429
+ * (rate-limited), 5xx (provider error), 404 (a misconfigured base URL), or a
+ * transport failure (DNS, TLS, timeout) — because none of those prove the
+ * credential is bad, and reporting a specific cause here would claim more than
+ * this one cheap identity-endpoint call actually determined.
+ *
  * NOTE the deliberate divergence from `connectors/fetch-miss-reason.ts`, where
  * 403 maps to `unauthorized`. Fetching a SPECIFIC ITEM, a 403 means the user
  * cannot have it either way, so `unauthorized` is the actionable answer.
@@ -87,7 +95,7 @@ export function verdictForProbeResponse(httpStatus: number): ProbeVerdict {
   if (httpStatus === 401) {
     return { kind: "rejected", httpStatus };
   }
-  return { kind: "unreachable" };
+  return { kind: "unconfirmed" };
 }
 
 type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
@@ -115,8 +123,8 @@ export async function runCredentialProbe(
   if (probe === undefined) {
     return null;
   }
-  const req = probe(creds);
   try {
+    const req = probe(creds);
     const res = await fetchFn(req.url, {
       method: "GET",
       headers: req.headers,
@@ -124,6 +132,6 @@ export async function runCredentialProbe(
     });
     return verdictForProbeResponse(res.status);
   } catch {
-    return { kind: "unreachable" };
+    return { kind: "unconfirmed" };
   }
 }

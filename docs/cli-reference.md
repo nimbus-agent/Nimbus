@@ -1021,11 +1021,11 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 
 **Credential reuse — no separate `connector auth` needed.** `github_actions` / `gitlab_ci` reuse the `github` / `gitlab` credentials; `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
-**Output — the command reports only what it actually checked.** For a handful of PAT-based connectors (`github`, `gitlab`, `bitbucket`, `jira`, `jenkins`) the gateway makes one cheap identity-endpoint call before returning, so the outcome is one of:
+**Output — the command reports only what it actually checked.** For a handful of PAT-based connectors (`github`, `gitlab`, `bitbucket`, `jira`, `jenkins`) the gateway makes one cheap identity-endpoint call before returning; every OAuth connector is confirmed by construction — a completed PKCE browser consent + token exchange IS the provider confirming the credential. So the outcome is one of:
 
-- `Verified: <service>` — the provider confirmed the credential (a 2xx from the identity check).
-- `Stored: <service> (NOT verified — could not reach the provider)`, plus a follow-up line suggesting a re-run when online — the credential was stored but the check got a non-401 failure (403, 5xx, timeout, DNS failure). It may still be valid.
-- `Stored: <service> (not verified)` — no probe is registered for that service (most PAT/OAuth connectors); the credential was stored as given and nothing was checked.
+- `Verified: <service>` — the provider confirmed the credential: a 2xx from the identity check (PAT connectors), or a completed OAuth token exchange (OAuth connectors).
+- `Stored: <service> (NOT verified — the provider did not confirm it)`, plus a follow-up line suggesting a retry — the credential was stored but the check got a non-401 failure (403, 429, 5xx, 404, or a transport failure); those causes are not distinguished. It may still be valid.
+- `Stored: <service> (not verified)` — no probe is registered for that service (the remaining PAT connectors); the credential was stored as given and nothing was checked.
 
 A credential the provider actively **rejects** (HTTP 401) is never stored: `nimbus connector auth` throws and exits with status `1` (a user-actionable precondition — fix the token and retry). Any other failure to store — including the gateway being unreachable — also exits with status `1`; `connector auth` has only one error path (an unhandled `Error` reaching the CLI's top-level catch-all), so there is no separate "operational failure" exit code here. All three outcomes above — verified, unverified, and unprobed — exit `0`: the credential was stored, which is what the command was asked to do.
 

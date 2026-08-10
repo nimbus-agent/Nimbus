@@ -350,6 +350,43 @@ describe("connector.auth — credential probe runs before any Vault write", () =
     expect(h.seq).toEqual(["probe"]);
   });
 
+  test("bitbucket: a rejected credential writes NOTHING to the vault", async () => {
+    const h = seqHarness();
+    await expect(
+      handleConnectorAuth({
+        ...baseCtx({ vault: h.vault }),
+        rec: {
+          service: "bitbucket",
+          bitbucketUsername: "u",
+          token: "x",
+        },
+        runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
+      }),
+    ).rejects.toThrow(/bitbucket/);
+    // Two writes (username, app_password) both guarded by the same pre-write probe.
+    expect(h.seq).toEqual(["probe"]);
+  });
+
+  test("jira: a rejected credential writes NOTHING to the vault", async () => {
+    const h = seqHarness();
+    await expect(
+      handleConnectorAuth({
+        ...baseCtx({ vault: h.vault }),
+        rec: {
+          service: "jira",
+          atlassianEmail: "e@example.com",
+          token: "x",
+          apiBaseUrl: "https://jira.example.com",
+        },
+        runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
+      }),
+    ).rejects.toThrow(/jira/);
+    // jira's writes go through registerAtlassianApiConnectorAuth (email, api_token,
+    // base_url) rather than inline writeConnectorSecret calls — proves the probe
+    // guard holds even through that different write path.
+    expect(h.seq).toEqual(["probe"]);
+  });
+
   test("on the VALID path the probe still runs before any write", async () => {
     const h = seqHarness();
     const reauthed: string[] = [];
@@ -369,7 +406,7 @@ describe("connector.auth — credential probe runs before any Vault write", () =
     expect((hit.value as { verified: string }).verified).toBe("verified");
   });
 
-  test("an unreachable provider stores but does NOT clear health", async () => {
+  test("an unconfirmed provider stores but does NOT clear health", async () => {
     const writes: string[] = [];
     const reauthed: string[] = [];
     const hit = await handleConnectorAuth({
@@ -378,7 +415,7 @@ describe("connector.auth — credential probe runs before any Vault write", () =
         localIndex: fakeLocalIndex({ onReauth: (id) => reauthed.push(id) }),
       }),
       rec: { service: "github", token: "maybe-good" },
-      runCredentialProbe: async () => ({ kind: "unreachable" }),
+      runCredentialProbe: async () => ({ kind: "unconfirmed" }),
     });
     expect(writes).toContain("github.pat");
     // No evidence the credential works — inventing some is the defect being fixed.

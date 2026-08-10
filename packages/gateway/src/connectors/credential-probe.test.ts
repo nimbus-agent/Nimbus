@@ -20,20 +20,20 @@ test("401 is the ONLY rejecting status", () => {
 // not account metadata 403s on /user while working for everything Nimbus needs.
 // Rejecting it would be the same over-claim, pointed the other way.
 test("403 is unverified, never rejected", () => {
-  expect(verdictForProbeResponse(403)).toEqual({ kind: "unreachable" });
+  expect(verdictForProbeResponse(403)).toEqual({ kind: "unconfirmed" });
 });
 
 test("429 and 5xx are unverified, never rejected", () => {
-  expect(verdictForProbeResponse(429)).toEqual({ kind: "unreachable" });
-  expect(verdictForProbeResponse(500)).toEqual({ kind: "unreachable" });
-  expect(verdictForProbeResponse(503)).toEqual({ kind: "unreachable" });
+  expect(verdictForProbeResponse(429)).toEqual({ kind: "unconfirmed" });
+  expect(verdictForProbeResponse(500)).toEqual({ kind: "unconfirmed" });
+  expect(verdictForProbeResponse(503)).toEqual({ kind: "unconfirmed" });
 });
 
-test("a transport failure is unreachable, and the exception never escapes", async () => {
+test("a transport failure is unconfirmed, and the exception never escapes", async () => {
   const verdict = await runCredentialProbe("github", { pat: "t" }, () => {
     throw new TypeError("fetch failed: getaddrinfo ENOTFOUND api.github.com");
   });
-  expect(verdict).toEqual({ kind: "unreachable" });
+  expect(verdict).toEqual({ kind: "unconfirmed" });
 });
 
 test("a service with no registered probe returns null", async () => {

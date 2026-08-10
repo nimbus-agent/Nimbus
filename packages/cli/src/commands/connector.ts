@@ -923,8 +923,8 @@ async function runConnectorAuth(tail: string[]): Promise<void> {
   if (res.verified === "verified") {
     console.log(`Verified: ${res.serviceId}`);
   } else if (res.verified === "unverified") {
-    console.log(`Stored: ${res.serviceId} (NOT verified — could not reach the provider)`);
-    console.log(`Run \`nimbus connector auth ${res.serviceId}\` again when online to verify.`);
+    console.log(`Stored: ${res.serviceId} (NOT verified — the provider did not confirm it)`);
+    console.log(`Run \`nimbus connector auth ${res.serviceId}\` again to retry verification.`);
   } else {
     console.log(`Stored: ${res.serviceId} (not verified)`);
   }

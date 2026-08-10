@@ -106,10 +106,15 @@ function queryStrippedCanonical(canonicalUrl: string): string {
  * Calls `fetchOne` with the canonicalized URL (rung 1). If and only if that answers
  * `unsupported_url` — meaning the connector's `$`-anchored regex rejected it before making any
  * outbound call — retries once with ALL query params stripped (rung 2). Never retries on
- * `not_found`: that attempt already made a real request, so trying again would double it. At most
- * one attempt ever reaches the network, because `unsupported_url` MUST be returned before any
- * outbound request (a contract stated on `Syncable.fetchOne` in `sync/types.ts`, since this retry
- * depends on it).
+ * `not_found`: the behaviour is still correct — a second attempt cannot succeed where the first
+ * did not, since a query-stripped retry changes nothing about a missing credential, an
+ * unauthorized/absent item, or an unreachable/erroring provider — but NOT because every
+ * `not_found` attempt made a real request, which is no longer true. `reason: "no_credential"`
+ * returns before any outbound call, exactly like `unsupported_url` does; the two arms differ in
+ * what a caller should do next (a URL-shape retry can't help either one), not in whether a request
+ * was made. At most one attempt ever reaches the network, because `unsupported_url` MUST be
+ * returned before any outbound request (a contract stated on `Syncable.fetchOne` in
+ * `sync/types.ts`, since this retry depends on it).
  */
 async function fetchOneWithRetry(
   fetchOne: NonNullable<Syncable["fetchOne"]>,
