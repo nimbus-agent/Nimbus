@@ -81,12 +81,29 @@ export interface SyncContext {
 export const FETCH_ONE_TIMEOUT_MS = 10_000;
 
 /**
- * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing them is how a
- * panel ends up telling a user to check credentials that are fine.
+ * Why a targeted single-item fetch missed.
+ *
+ * A fixed enum derived from an HTTP status code and nothing else — never
+ * provider text, a URL, or an exception message, any of which can carry a
+ * credential or a Vault-stored base URL.
+ */
+export type FetchMissReason =
+  | "no_credential"
+  | "unauthorized"
+  | "absent"
+  | "unreachable"
+  | "upstream_error";
+
+/**
+ * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing
+ * them is how a panel ends up telling a user to check credentials that are fine
+ * — and `reason` is why that promise is now actually kept: a bare `not_found`
+ * used to cover a dead credential, an offline machine, and an absent item alike.
  */
 export type FetchOneResult =
   | { readonly status: "indexed"; readonly itemId: string }
-  | { readonly status: "not_found" }
+  | { readonly status: "not_found"; readonly reason?: FetchMissReason }
+  | { readonly status: "rate_limited" }
   | { readonly status: "unsupported_url" };
 
 export interface Syncable {
