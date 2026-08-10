@@ -8,6 +8,47 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-10 — Targeted fetch names the cause of a miss (no schema change).** `FetchOneResult`'s
+  `not_found` arm now carries a REQUIRED `reason: "no_credential" | "unauthorized" | "absent" |
+  "unreachable" | "upstream_error"`, wired at every miss site across all five `fetchOne`
+  connectors (github, gitlab, bitbucket, jenkins, jira) through one shared mapper,
+  `connectors/fetch-miss-reason.ts`'s `fetchOneMissForResponse` — a status code in, a typed outcome
+  out, never a `Response`/body/URL, so no provider text or Vault-stored base URL can leak through
+  it. `reason` is required by the type, not by convention: a `not_found` site that omits one is a
+  compile error. A provider 429 now routes to the already-handled `rate_limited` arm rather than
+  arriving as an undifferentiated `not_found` — the shared mapper special-cases it before falling
+  through to `upstream_error`. `sync/targeted-fetch.ts`'s `TargetedFetchOutcome` (the
+  `POST /v1/items/fetch` wire type) surfaces `reason` on its own `not_found` arm, and its
+  `not_configured` arm gains an OPTIONAL `service`, populated only where the derived fetch-host
+  boundary already resolved one before the miss (a bare host miss still has nothing to name and
+  stays `{ status: "not_configured" }`). **Wire change — additive only, no new `status` arm**: old
+  clients (including `nimbus-web-clipper`, which maps an unrecognized `status` to `server_error`)
+  ignore the new fields and keep working. `no_targeted_fetch` behaviour is unchanged — the 62
+  connectors with no `fetchOne` still answer it, unaffected by this PR.
+- **2026-08-10 — `nimbus connector auth` validates a credential before storing it (no schema
+  change).** A live identity-endpoint probe (`connectors/credential-probe.ts`) now runs against the
+  credentials in the request BEFORE any Vault write, for five PAT-based connectors — github,
+  gitlab, bitbucket, jira, jenkins — one cheap `GET` against each provider's own identity endpoint
+  (`/user`, `/rest/api/3/myself`, `/api/json`, ...), bounded by a 10s timeout so an interactive
+  command can never hang indefinitely on a stalled provider. Only an HTTP 401 rejects: the
+  credential is never stored, `nimbus connector auth` throws, and the CLI exits `1` — a
+  user-actionable precondition (fix the token, retry). A 403 stores as unverified rather than
+  rejecting: verifying a CREDENTIAL, a 403 is proof it authenticated (the opposite reading from
+  fetching a specific ITEM, where a 403 means the user cannot have it either way — the two modules'
+  deliberately divergent 403 handling is documented on both). An unreachable provider (timeout, DNS
+  failure, 5xx) also stores as unverified and exits `0`. The ~14 other PAT-based connectors have no
+  registered probe and store as before — reported honestly as unprobed, not silently claimed
+  verified. A new `reauthenticated` health event (`connectors/health.ts`) clears a stuck
+  `unauthenticated` health state on a successful re-verify — `LocalIndex.markConnectorReauthenticated`
+  is called only when the probe actually returns `valid`, never on an unverified store, since
+  `SKIP_HEALTH_STATES` blocks the scheduled sync path for anything still `unauthenticated` and a
+  re-authenticated connector would otherwise stay permanently unsynced. The CLI's unconditional
+  `Signed in: <service>` — which claimed a check that never happened for most connectors — is
+  retired in favor of three honest outcomes: `Verified: <service>`, `Stored: <service> (NOT
+  verified — could not reach the provider)` (with a follow-up line suggesting a re-run when
+  online), and `Stored: <service> (not verified)`. All three still exit `0`: the credential was
+  stored, which is what the command was asked to do. Documented in `docs/cli-reference.md`'s
+  `nimbus connector auth` section.
 - **2026-08-09 — Pre-mortem recurring-blocker-theme extraction: schema + background pass (schema
   V53).** PR A of the S1 pre-mortem work — schema and a debounced background pass only.
   **THERE IS NO USER-FACING COMMAND IN THIS PR**: `nimbus pre-mortem`, the `agents.premortem`
