@@ -1,4 +1,6 @@
 import type { DecisionEvidence } from "../../decisions/decision-types.ts";
+import type { Risk } from "../../premortem/risks.ts";
+import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
 import type { DecisionsBrief, DecisionsEntry } from "./decisions-types.ts";
 import type {
   CatchupBrief,
@@ -19,6 +21,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type { OwnershipBrief, OwnershipTargetView } from "./ownership-types.ts";
+import type { PremortemBrief } from "./premortem-types.ts";
 import type { WhyBrief, WhyLane } from "./why-types.ts";
 
 function renderGaps(gaps: GapNote[]): string {
@@ -476,4 +479,54 @@ export function renderDecisions(brief: DecisionsBrief): string {
   const gaps = renderGaps(brief.gaps);
   const footer = renderLatency(brief.latencyMs);
   return [header, "", body, gaps, footer].filter((s) => s !== "").join("\n");
+}
+
+function renderPremortemRisk(r: Risk): string {
+  const prefix = r.expectationOnly ? "expectation" : r.kind.replaceAll("_", " ");
+  return `- **${prefix}**: ${r.summary}`;
+}
+
+function renderPremortemWatcher(w: WatcherProposal): string {
+  return `- ${w.service} — ${w.state.replaceAll("_", " ")}`;
+}
+
+export function renderPremortem(brief: PremortemBrief): string {
+  const header = `# Pre-mortem: ${brief.query.epicRef}`;
+  const sections: string[] = [];
+
+  if (brief.epic !== null) {
+    sections.push(`_${brief.epic.key} — ${brief.epic.title}_`);
+  }
+
+  if (brief.services.length > 0) {
+    sections.push(`\n## Services\n\n${brief.services.map((s) => `- ${s}`).join("\n")}`);
+  }
+
+  if (brief.cohort.members.length > 0) {
+    const rows = brief.cohort.members.map((m) => `- ${m.key} — ${m.title}`);
+    sections.push(
+      `\n## Comparable epics (${String(brief.cohort.members.length)})\n\n${rows.join("\n")}`,
+    );
+  }
+
+  if (brief.risks.length > 0) {
+    sections.push(`\n## Risks\n\n${brief.risks.map(renderPremortemRisk).join("\n")}`);
+  }
+
+  if (brief.themes.length > 0) {
+    const rows = brief.themes.map(
+      (t) => `- ${t.label} (${t.service}, confidence ${t.confidence.toFixed(2)})`,
+    );
+    sections.push(`\n## Recurring themes\n\n${rows.join("\n")}`);
+  }
+
+  if (brief.watchers.length > 0) {
+    sections.push(
+      `\n## Watcher proposals\n\n${brief.watchers.map(renderPremortemWatcher).join("\n")}`,
+    );
+  }
+
+  const gaps = renderGaps(brief.gaps);
+  const footer = renderLatency(brief.latencyMs);
+  return [header, "", ...sections, gaps, footer].filter((s) => s !== "").join("\n");
 }

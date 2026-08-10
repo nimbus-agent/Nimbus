@@ -11,6 +11,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
+import type { PremortemBrief } from "./premortem-types.ts";
 import { type SynthesizerLlm, synthesize } from "./synthesize.ts";
 import type { WhyBrief } from "./why-types.ts";
 
@@ -26,7 +27,8 @@ type AnyBrief =
   | WhyBrief
   | GlossaryBrief
   | DecisionsBrief
-  | OwnershipBrief;
+  | OwnershipBrief
+  | PremortemBrief;
 
 export interface EmitBriefWithSynthesisOpts<B extends AnyBrief> {
   readonly sessionId: string;

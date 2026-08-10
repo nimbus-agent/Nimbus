@@ -12,6 +12,7 @@ import type {
 } from "./findings.ts";
 import type { GlossaryBrief } from "./glossary-types.ts";
 import type { OwnershipBrief } from "./ownership-types.ts";
+import type { PremortemBrief } from "./premortem-types.ts";
 import {
   renderCatchup,
   renderConflict,
@@ -24,6 +25,7 @@ import {
   renderJanitor,
   renderOwnership,
   renderPreflight,
+  renderPremortem,
   renderWhy,
 } from "./render.ts";
 import type { WhyBrief } from "./why-types.ts";
@@ -59,7 +61,8 @@ type SynthInput =
   | WhyBrief
   | GlossaryBrief
   | DecisionsBrief
-  | OwnershipBrief;
+  | OwnershipBrief
+  | PremortemBrief;
 
 /**
  * Turns a missing dispatch arm into a COMPILE error.
@@ -92,6 +95,7 @@ function deterministicRender(brief: SynthInput): string {
   if (brief.kind === "decisions") return renderDecisions(brief);
   if (brief.kind === "ownership") return renderOwnership(brief);
   if (brief.kind === "huddle") return renderHuddle(brief);
+  if (brief.kind === "premortem") return renderPremortem(brief);
   return assertNeverBrief(brief);
 }
 
@@ -108,6 +112,7 @@ function toolNameFor(brief: SynthInput): string {
   if (brief.kind === "decisions") return "agents.decisions";
   if (brief.kind === "ownership") return "agents.ownership";
   if (brief.kind === "huddle") return "agents.huddle";
+  if (brief.kind === "premortem") return "agents.premortem";
   return assertNeverBrief(brief);
 }
 
