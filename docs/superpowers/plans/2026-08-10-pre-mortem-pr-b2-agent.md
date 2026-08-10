@@ -94,6 +94,17 @@ export function selectCohort(
 
 **Why IDF and not overlap count.** A monolithic or ubiquitous service (`api-gateway`, `shared-utils`) appears in nearly every closed epic, so a raw count ranks it above the specific service that actually characterises the work. Each service is weighted `log(N / epicsTouchingService)` over the scanned candidates, and a candidate scores the sum of the weights of services it shares with the target. This is **derived, not configured**: a service present in every candidate earns a weight of ~0 automatically, so no exclusion list exists to drift.
 
+**Overlap is a GATE, applied before scoring — this is load-bearing.** A candidate enters the cohort
+only if it shares **at least one** service with the target. Without that gate the ranking has a
+silent correctness bug: `log(N/df)` is 0 when a service touches every candidate, so a candidate
+sharing only a ubiquitous service scores 0 — **and so does a candidate sharing nothing at all.** The
+two become indistinguishable, and once ties fall back to `resolvedAtMs DESC` a completely unrelated
+epic can enter the cohort purely by being recent, which the brief would then present as comparable
+work. Do **not** "fix" the zero scores with a smoothing constant: smoothing makes the numbers
+positive without separating those two cases, so it hides the bug instead of removing it. With the
+gate in place, a `log(N/df) == 0` tie is honest — it means these epics are equally comparable on this
+evidence — and recency is a fair tiebreak among equals.
+
 **Candidates are scanned `resolved_at_ms DESC`,** so `maxCandidateScan` truncates the oldest history rather than an arbitrary slice. Without an explicit order the cap takes whatever SQLite returns first, which is neither recent nor stable.
 
 **Jira-only.** Candidates are `metadata.issue_type = 'Epic'` with `status_category` in `('done','canceled')`. Only `connectors/jira-sync.ts` writes `issue_type`; no `linear:project` items are indexed at all.
@@ -180,6 +191,21 @@ describe("selectCohort", () => {
     expect(out.scannedCount).toBe(8);
   });
 
+  test("a zero-overlap epic never enters the cohort, even as the most recent closed epic", () => {
+    const db = makeDb();
+    seedEpicWithServices(db, { key: "SHARED-1", services: ["billing"], resolvedAtMs: 1_000 });
+    // Newest by a wide margin, but shares no service with the target.
+    seedEpicWithServices(db, { key: "UNRELATED-1", services: ["mail"], resolvedAtMs: 9_000_000 });
+
+    const out = selectCohort(db, ["billing"], {
+      maxCandidateScan: 200,
+      maxCohortSize: 10,
+      excludeItemId: "jira:TARGET-1",
+    });
+
+    expect(out.members.map((m) => m.key)).toEqual(["SHARED-1"]);
+  });
+
   test("maxCandidateScan truncates the OLDEST history, keeping the newest", () => {
     const db = makeDb();
     for (let i = 0; i < 5; i++) {
@@ -205,7 +231,21 @@ Expected: FAIL — `Cannot find module ./cohort.ts`.
 
 - [ ] **Step 3: Implement `cohort.ts`**
 
-Query candidates with a bound-parameter `SELECT` over `item` where `json_extract(metadata,'$.issue_type') = 'Epic'` and `json_extract(metadata,'$.status_category') IN ('done','canceled')`, ordered `resolved_at_ms DESC`, `LIMIT ?` bound to `maxCandidateScan`. Guard every `json_extract` with `json_valid(metadata)` — `json_extract` RAISES `malformed JSON` on non-JSON TEXT, and an uncaught raise here kills the whole brief. Derive each candidate's services with `affectedServicesForEpics`, compute IDF weights across the scanned set, score, sort by score DESC then `resolvedAtMs` DESC for a stable order, and slice to `maxCohortSize`. Set `oldestResolvedAtMs` from the scanned set (not the sliced members) so the honesty note reports real history span.
+Query candidates with a bound-parameter `SELECT` over `item`, ordered `resolved_at_ms DESC`, `LIMIT ?` bound to `maxCandidateScan`. The `json_valid(metadata)` guard is mandatory and goes first — `json_extract` RAISES `malformed JSON` on non-JSON TEXT, and an uncaught raise here kills the whole brief:
+
+```sql
+SELECT id, external_id, title, created_at_ms, resolved_at_ms,
+       json_extract(metadata, '$.status_category') AS status_category
+  FROM item
+ WHERE json_valid(metadata)
+   AND json_extract(metadata, '$.issue_type') = 'Epic'
+   AND json_extract(metadata, '$.status_category') IN ('done', 'canceled')
+   AND id <> ?
+ ORDER BY resolved_at_ms DESC
+ LIMIT ?
+```
+
+Then: derive each candidate's services with `affectedServicesForEpics`; **drop every candidate with zero shared services (the gate above)**; compute IDF weights across the scanned set; score the survivors; sort by score DESC then `resolvedAtMs` DESC for a stable order; slice to `maxCohortSize`. Set `oldestResolvedAtMs` from the scanned set (not the sliced members) so the honesty note reports the real history span.
 
 - [ ] **Step 4: Run to confirm they pass**
 
@@ -327,6 +367,16 @@ describe("computeRisks", () => {
     expect(cycle?.summary).not.toContain("vs 0");
   });
 
+  test("a future-dated epic (clock skew) is treated as YOUNG, never compared to negative elapsed time", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate({ resolvedAtMs: 24 * DAY })],
+      targetCreatedAtMs: 40 * DAY, // ahead of nowMs
+      nowMs: 30 * DAY,
+    });
+    expect(risks.find((r) => r.kind === "cycle_time")?.expectationOnly).toBe(true);
+  });
+
   test("cycle time on an OLD epic compares against elapsed time", () => {
     const risks = computeRisks({
       ...BASE,
@@ -422,7 +472,17 @@ export function proposeWatchers(
   db: Database,
   input: { epicItemId: string; services: readonly string[]; nowMs: number },
 ): WatcherProposal[];
+
+/** Clears THIS epic's tombstones so a deliberately-deleted proposal can be re-created. */
+export function clearProposalTombstones(db: Database, epicItemId: string): number;
 ```
+
+**`clearProposalTombstones` backs `nimbus pre-mortem <ref> --repropose` (Task 5).** Without it the
+brief would report a suppressed watcher and have no command to offer — the plan originally promised
+one that could not exist, since `nimbus watch resume <id>` needs a `watcher` row and the whole point
+of suppression is that the row is gone. It is scoped to one epic; it must never wipe tombstones
+globally. Reversing an explicit user "no" requires an explicit user "yes", which is why this is a
+flag and not automatic expiry.
 
 - Adds to `automation/watcher-store.ts`:
 
@@ -517,6 +577,15 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Add `insertWatcherIfAbsent`, then implement `watcher-proposals.ts`**
 
 Both writes go through `dbRun` (I14). The proposal row is written whenever an id is proposed — including the `already_present` case — so the tombstone record is complete.
+
+**Wrap the pair in `db.transaction(() => { … })`.** This is not general hygiene, it protects rule 3
+specifically: if the `watcher` insert succeeded and the `premortem_watcher_proposal` insert failed,
+the watcher would exist with no tombstone record — and rule 3 depends entirely on that record, since
+without it "never proposed" and "deleted" are indistinguishable. The next run would then resurrect a
+watcher the user had deliberately deleted. `db.transaction()` is the established pattern here
+(`connectors/health.ts:232`, `db/repair.ts:38`, `db/latency-ring-buffer.ts:136`) and is
+I14-compatible: D12's detector matches `db.run(` / `db.exec(` only
+(`check-nimbus-invariants.ts:141`), so a transaction wrapper with `dbRun` inside is clean.
 
 - [ ] **Step 4: Run to confirm they pass, plus the existing watcher suite**
 
@@ -632,9 +701,11 @@ git commit -m "feat(agents): pre-mortem brief over cohort, risks, themes and wat
 
 **Tauri.** Add `"agents.premortem"` to `ALLOWED_METHODS` and change the assertion at `gateway_bridge.rs:549` from `104` to `105`. **`premortem.refresh` stays OUT** — `gateway_bridge.rs:544` and `:530` already assert that `ownership.refresh` and `decisions.refresh` are excluded, because a method that re-derives an entire graph is not renderer-safe (I7). Follow that precedent; do not add a fourth refresh exposure.
 
-**CLI.** `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh]`. Mirror `packages/cli/src/commands/owners.ts`: a canonical `USAGE` const, unknown flags hard-rejected with `Unrecognised flag: …\n${USAGE}`, unexpected positionals rejected. `--service` is **repeatable** — an epic may span several services, and a single-valued flag would force the brand-new-epic case into an artificially narrow cohort. `--refresh` calls `premortem.refresh` and waits before building the brief.
+**CLI.** `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh] [--repropose]`. Mirror `packages/cli/src/commands/owners.ts`: a canonical `USAGE` const, unknown flags hard-rejected with `Unrecognised flag: …\n${USAGE}`, unexpected positionals rejected. `--service` is **repeatable** — an epic may span several services, and a single-valued flag would force the brand-new-epic case into an artificially narrow cohort. `--refresh` calls `premortem.refresh` and waits before building the brief.
 
-The brief prints each proposed watcher's real UUID with its arming command, `nimbus watch resume <id>` (verified: `packages/cli/src/commands/watch.ts` exposes list/pause/resume, and `watcher.resume` exists at `ipc/automation-rpc.ts:142`).
+`--repropose` calls `clearProposalTombstones` for the target epic before the proposal path runs, so a previously-deleted watcher is created fresh (paused). It is the command the brief prints beside a `suppressed` entry.
+
+The brief prints each proposed watcher's real UUID with its arming command, `nimbus watch resume <id>` (verified: `packages/cli/src/commands/watch.ts` exposes list/pause/resume, and `watcher.resume` exists at `ipc/automation-rpc.ts:142`). **A `suppressed` entry gets `nimbus pre-mortem <epic-ref> --repropose` instead** — `watch resume` cannot work there, because the watcher row was deleted and there is nothing to resume.
 
 - [ ] **Step 1: Write the failing CLI + e2e tests**
 
