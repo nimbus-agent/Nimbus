@@ -242,6 +242,62 @@ A `Partial<Record<...>>` keyed by service id: the 14 connectors without a probe
 are **explicitly absent**, not silently unchecked, and adding one later is a
 single entry.
 
+#### Timeout, and no rate limiter
+
+The probe is bounded by its own `AbortSignal.timeout(PROBE_TIMEOUT_MS)`,
+mirroring `FETCH_ONE_TIMEOUT_MS`. Without it, `connector auth` can hang
+indefinitely on a stalled provider — an interactive setup command must not.
+A timeout is a transport failure, so it resolves to `unreachable`: stored,
+reported unverified.
+
+The probe deliberately does **not** acquire from the connector's shared rate
+limiter, unlike `targetedFetch` (`targeted-fetch.ts:247`). The two are different
+kinds of traffic. A targeted fetch is machine-driven and can be swept in a loop,
+so it must share the scheduler's bucket to avoid starving it. A probe is one
+request, issued once, because a human typed a command. Routing it through the
+shared bucket would let a saturated background sync block interactive setup for
+the full acquire timeout, and would consume a token the scheduler needs — paying
+a real cost to solve a problem a single request cannot cause.
+
+A 429 from the probe is not a rejection: it falls into "any other non-2xx" and
+stores as unverified.
+
+#### Clearing a stuck `unauthenticated` health state
+
+A successful probe (`kind: "valid"`) transitions the connector's health via a new
+`{ type: "reauthenticated" }` `HealthEvent` → `"healthy"`.
+
+This is load-bearing, not a nicety. `SKIP_HEALTH_STATES`
+(`sync/scheduler.ts:36-40`) contains `"unauthenticated"`, and
+`healthGatePreventsDispatchSnapshot` returns an unconditional `true` for it
+(`scheduler.ts:400`) — only `rate_limited` has a time-based escape. The sole exit
+is `transitionHealth({type:"resumed"})`, called from exactly one place,
+`SyncScheduler.resume()` (`scheduler.ts:262`), reachable only via `nimbus
+connector resume` or `connector.setConfig enabled:true`. A **forced** sync
+bypasses the gate (`scheduler.ts:482-487`); the **scheduled** path
+(`scheduler.ts:451`) does not.
+
+So without this, the sequence is: token expires → sync throws
+`UnauthenticatedError` → state `unauthenticated` → scheduler skips the connector
+permanently → user runs `nimbus connector auth github` with a valid token → probe
+succeeds → CLI prints `Verified: github` → **the connector is still never
+synced**. Issue 2 would have upgraded a weak false claim ("Signed in") into a
+strong one ("Verified") while leaving the user exactly as broken.
+
+It is worse than that: on `UnauthenticatedError` the gateway notifies the user
+`"Run: nimbus connector auth <service>"` (`scheduler.ts:742-745`). The product's
+own remediation advice names the command that, unfixed, does not remediate.
+
+A new event rather than reusing `resumed`: `resumed` writes the history reason
+`"connector resumed"` (`health.ts:222-226`), which would be false — nothing was
+paused. `reauthenticated` records `"credential re-verified"`.
+
+Only a `valid` verdict clears the state. `unverified` (403, 5xx, unreachable, or
+no probe registered) leaves health untouched — there is no evidence to act on,
+and inventing some is the defect this whole change exists to remove. The probe
+registry is therefore exactly the set of services where the state can be cleared,
+which is the correct coupling.
+
 ### Verdict policy
 
 - **401 → rejected.** Nothing is written. The RPC fails; the CLI exits non-zero.
@@ -271,9 +327,12 @@ is one client of three; validating at `connector.ts:915` would leave the hole
 open for the Tauri desktop app and every other caller.
 
 Each of the five PAT handlers gains one `await` between parsing and its first
-`writeConnectorSecret`. Explicit at five call sites rather than a shared wrapper:
-the guard against drift is behavioural (a rejecting probe ⇒ zero Vault writes,
-asserted per service), not structural.
+`writeConnectorSecret`. That single call runs the probe, throws on `rejected`,
+and on `valid` performs the `reauthenticated` health transition — so the ordering
+guarantee (nothing written, nothing transitioned, on a rejection) lives in one
+place rather than being re-derived five times. Explicit at five call sites rather
+than a shared wrapper around the handlers: the guard against drift is behavioural
+(a rejecting probe ⇒ zero Vault writes, asserted per service), not structural.
 
 ### Response and CLI output
 
@@ -301,6 +360,23 @@ Credential: stored in the OS vault (no OAuth scopes).
 
 The `Signed in:` wording is retired. It claims more than was ever checked, and
 for the 14 unprobed connectors it would keep claiming it.
+
+### Exit codes
+
+The CLI already has a convention: **1 = user-actionable precondition**
+(`agent-cli-dispatcher.ts:29`, "Gateway is not running"), **2 = operational
+failure** (`agent-cli-dispatcher.ts:48`, an RPC or transport fault).
+
+A rejected credential is a user-actionable precondition → **exit 1**. This needs
+no new code: the handler throws a `ConnectorRpcError`, and the CLI's catch-all
+sets `process.exitCode = 1` (`index.ts:197`).
+
+Unreachable and unprobed both **exit 0** — the credential was stored and the
+command did what it was asked to do. Reporting failure for a successful store
+would be the same over-claim in the other direction.
+
+No new exit code is introduced. Asserting this mapping is part of the test plan
+so it cannot drift.
 
 ## Testing
 
@@ -335,8 +411,23 @@ auth tests:
 - **per service, a rejecting probe results in zero Vault writes** — the anti-drift
   guard, asserted against a recording fake vault;
 - a rejected probe does not clobber a previously stored working credential;
-- a rejected probe throws a `ConnectorRpcError` the CLI surfaces non-zero;
+- a rejected probe throws a `ConnectorRpcError` the CLI surfaces as exit 1;
+  unreachable and unprobed both exit 0;
+- a probe that never resolves is bounded by `PROBE_TIMEOUT_MS` and yields
+  `unreachable` (injected clock/signal, not a real wait);
 - a service with no probe entry returns `verified: null` and still stores.
+
+Health-state clearing, the regression this set exists to prevent:
+
+- `nextState({type:"reauthenticated"})` → `"healthy"` (unit, `health.test.ts`);
+- **the end-to-end sequence**: seed health `unauthenticated`, assert the
+  scheduler skips the connector, run `connector.auth` with a probe that returns
+  `valid`, assert health is `healthy` and the scheduler now dispatches it. This
+  test is the point — the individual pieces passing while the user stays stuck is
+  the exact failure being fixed;
+- a `rejected` verdict and an `unverified` verdict each leave an existing
+  `unauthenticated` state **untouched**;
+- a service with no probe entry never transitions health.
 
 **Green bar:** `bun run preflight` (full CI parity), not `test:ci`. Coverage
 floor is Linux-authoritative — new files under `packages/gateway/src` must clear
@@ -364,9 +455,46 @@ now arrives as the already-handled `rate_limited`.
 - GitLab, Jenkins, and Bitbucket never throw `UnauthenticatedError`, so
   `healthState` can never reach `"unauthenticated"` for them — a revoked Jenkins
   token yields zero items silently. Real, adjacent, and a separate change: it
-  touches the periodic sync path, not the targeted-fetch or auth path.
-- A never-synced connector reporting `healthy` (`health.ts:326-328`).
-- `SKIP_HEALTH_STATES` (`scheduler.ts:36-40`) includes `"unauthenticated"`, so a
-  connector that lands there is never re-probed and cannot return to `healthy`
-  without a manual resume. Issue 2 reduces how often a user reaches that state
-  but does not change the state machine.
+  touches the periodic sync path, not the targeted-fetch or auth path. Note the
+  interaction with the health-clearing fix above: that fix can only clear a state
+  a connector can actually reach, which today is github and jira (plus google).
+  For the other three the fix is inert until this gap closes — inert, not wrong.
+- A never-synced connector reporting `healthy` with no evidence
+  (`health.ts:326-328`).
+- **Vault write atomicity.** `writeConnectorSecret` is a thin `vault.set` per key
+  (`connector-vault.ts:110-118`); there is no batch or transaction. Multi-key
+  services write sequentially — jenkins does three (`base_url`, `username`,
+  `api_token`), jira three, bitbucket two — so a mid-sequence failure leaves a
+  partial credential set. Pre-existing and **unchanged** by this design; a fix
+  means a batched/rollback API across three platform backends (DPAPI, Keychain,
+  libsecret), which is Vault-layer work, not auth-handler work. Probe-before-write
+  narrows the exposure rather than widening it: the most likely reason to abandon
+  a write sequence — bad credentials — is now caught before the first write.
+
+## Review items considered and deferred
+
+From the 2026-08-10 design review (`…-design-review.md`). Recorded with reasons so
+they are not silently dropped.
+
+- **Report missing scopes from `X-OAuth-Scopes`.** Deferred. The header is
+  GitHub-specific — none of gitlab, bitbucket, jira, or jenkins has an equivalent
+  — and GitHub returns it **empty for fine-grained PATs**, i.e. blank in exactly
+  the case that motivates the 403 rule. Acting on it would also require a
+  per-connector *required-scopes* model to compare against; `defaultScopes` exists
+  only on `oauthProfileForService`, covering OAuth connectors, none of which are
+  in the probe set. That model would have to be invented first, and nothing yet
+  needs it.
+- **Route probes through a shared rate-limited HTTP client.** Rejected as posed;
+  the named package (`science-skills-common`) does not exist in this repo. The
+  underlying concern is answered above under *Timeout, and no rate limiter* — and
+  it did surface a real omission, the missing probe timeout, which is now
+  specified.
+- **Update E2E mock servers to return the new reasons.** Deferred. The cited path
+  `packages/gateway/test/e2e/mocks/` does not exist, and there is no `mocks`
+  directory anywhere in the repo; `test/e2e/` holds scenario suites (chatops,
+  share, tribal, ask). Covering each reason end-to-end would mean building a new
+  mock provider server, while the unit layer already asserts every cause at the
+  connector, the propagation through `targetedFetch`, and the verbatim
+  serialization at the route. The one genuine end-to-end risk — auth succeeding
+  while the connector stays skipped — is covered by the scheduler test above,
+  which is cheaper and more targeted.
