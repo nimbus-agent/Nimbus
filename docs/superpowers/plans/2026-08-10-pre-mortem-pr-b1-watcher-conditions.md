@@ -393,8 +393,10 @@ Append inside the existing `describe("watcher-engine", ...)` block in `packages/
 
 `incident` and `deployment` are both valid graph entity types (`graph/relationship-graph.ts:6-22`),
 so the predicate path applies to the new kinds exactly as it does to `alert_fired`. The predicate is
-evaluated against `r.type` / `r.external_id` after the query, so this test proves the new kinds did
-not accidentally bypass it.
+evaluated against `r.type` / `r.external_id` after the query, so this test guards against the
+predicate being skipped for a new kind. On its own it cannot prove the predicate ran — it passes
+identically if the row fetch returns nothing — so it is the sibling firing tests, which assert the
+same fixture shape *does* notify without a predicate, that establish rows are actually fetched.
 
 - [ ] **Step 6: Run the engine tests to confirm they fail**
 

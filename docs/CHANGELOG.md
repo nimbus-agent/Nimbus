@@ -8,12 +8,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **Watcher conditions — `incident_opened` + `deploy_failed`** (2026-08-10) — the watcher engine
+- **2026-08-10 — Watcher conditions: `incident_opened` + `deploy_failed`.** The watcher engine
   previously evaluated one condition type, `alert_fired`, which matches an item type no connector
   indexes; a watcher could be created and armed and still never fire. Both new conditions come from
   one condition-kind table that the engine and `watcher.create` share, so an unsupported
   `conditionType` is now rejected at creation rather than accepted and silently ignored.
-  `deploy_failed` covers CI-annotated deployments only. Groundwork for `nimbus pre-mortem` PR B.
+  `incident_opened` narrows to `metadata.status = 'triggered'`, since PagerDuty re-indexes an
+  incident on acknowledgement and resolution too. `deploy_failed` covers CI-annotated deployments
+  only, and its coverage limits are recorded in
+  [`docs/architecture.md` § Watchers](./architecture.md#watchers). The desktop Create Watcher
+  dialog now offers exactly these three condition types, with the graph predicate as an orthogonal
+  option rather than a fourth condition type. Groundwork for `nimbus pre-mortem` PR B.
 - **2026-08-09 — Pre-mortem recurring-blocker-theme extraction: schema + background pass (schema
   V53).** PR A of the S1 pre-mortem work — schema and a debounced background pass only.
   **THERE IS NO USER-FACING COMMAND IN THIS PR**: `nimbus pre-mortem`, the `agents.premortem`

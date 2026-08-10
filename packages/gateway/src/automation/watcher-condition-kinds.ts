@@ -19,12 +19,21 @@ export type WatcherConditionKind = {
   readonly extraSql: string;
 };
 
-export const WATCHER_CONDITION_KINDS: readonly WatcherConditionKind[] = [
+export const WATCHER_CONDITION_KINDS = [
   // Preserved as-is. NOTE: no connector indexes `item.type = 'alert'` today, so this condition
   // cannot currently fire. That is the pre-existing state, recorded rather than silently fixed.
   { conditionType: "alert_fired", itemType: "alert", extraSql: "" },
-  // PagerDuty indexes `type: "incident"` (connectors/pagerduty-sync.ts).
-  { conditionType: "incident_opened", itemType: "incident", extraSql: "" },
+  // PagerDuty indexes `type: "incident"` (connectors/pagerduty-sync.ts), writing the incident's
+  // current status to `metadata.status`. The narrowing to 'triggered' is LOAD-BEARING for the name:
+  // pagerduty-sync fetches `/incidents` with no `statuses[]` filter and sets `modifiedAt` from
+  // `updated_at`, so acknowledging or resolving an incident re-indexes it with a fresh
+  // `modified_at`. Without this clause a watcher called `incident_opened` fires on resolution too.
+  {
+    conditionType: "incident_opened",
+    itemType: "incident",
+    // `json_valid(metadata)` is load-bearing here for the same reason as on `deploy_failed` below.
+    extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.status') = 'triggered'",
+  },
   // CI-annotated deployments only: `deployment/annotate.ts` writes metadata.conclusion. Vercel
   // records its outcome under metadata.state, and Prefect indexes deployment DEFINITIONS with no
   // outcome at all, so neither matches. Keyed on the presence of the conclusion value rather than
@@ -46,7 +55,11 @@ export const WATCHER_CONDITION_KINDS: readonly WatcherConditionKind[] = [
     itemType: "deployment",
     extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.conclusion') = 'failure'",
   },
-];
+  // `as const` keeps each `extraSql` a literal type rather than widening it to `string`. That
+  // matters because the engine binds exactly four positional parameters around this fragment: an
+  // `extraSql` containing a `?` would silently shift every one of them. The table test pins the
+  // absence of `?`; `satisfies` keeps the shape checked without widening.
+] as const satisfies readonly WatcherConditionKind[];
 
 export function watcherConditionKind(conditionType: string): WatcherConditionKind | undefined {
   return WATCHER_CONDITION_KINDS.find((k) => k.conditionType === conditionType);

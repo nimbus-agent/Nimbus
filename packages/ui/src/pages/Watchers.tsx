@@ -11,7 +11,30 @@ import type {
 } from "../ipc/types";
 import { useNimbusStore } from "../store";
 
-const NON_GRAPH_CONDITION_TYPES = ["schedule", "metric"] as const;
+/**
+ * The condition types the gateway's watcher engine can actually evaluate. `watcher.create` rejects
+ * anything else with `-32602`, so an entry here that the gateway does not know makes the dialog
+ * unusable, and a missing entry hides a working condition.
+ *
+ * MUST STAY IN SYNC with `packages/gateway/src/automation/watcher-condition-kinds.ts`, which is the
+ * source of truth. It cannot be imported: `packages/ui` reaches the gateway over IPC only and never
+ * imports gateway source (see the dependency rules in CLAUDE.md).
+ */
+const CONDITION_TYPES = ["alert_fired", "incident_opened", "deploy_failed"] as const;
+type ConditionType = (typeof CONDITION_TYPES)[number];
+
+/**
+ * `incident_opened` is the default because it is the only condition with a live indexing connector
+ * today: nothing indexes `item.type = 'alert'`, and `deploy_failed` needs CI-annotated deployments.
+ */
+const DEFAULT_CONDITION_TYPE: ConditionType = "incident_opened";
+
+/**
+ * The engine reads `condition_json.filter` and evaluates nothing when it is absent, so an empty
+ * `{}` would arm a watcher that can never fire. An empty `filter` means "any service".
+ */
+const DEFAULT_CONDITION_JSON = '{ "filter": {} }';
+
 const ACTION_TYPES = ["notify", "webhook", "workflow"] as const;
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const VALIDATE_DEBOUNCE_MS = 500;
@@ -138,8 +161,11 @@ interface CreateDialogProps {
 
 function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>) {
   const [name, setName] = useState("");
-  const [conditionType, setConditionType] = useState<"graph" | "schedule" | "metric">("graph");
-  const [conditionJson, setConditionJson] = useState("{}");
+  const [conditionType, setConditionType] = useState<ConditionType>(DEFAULT_CONDITION_TYPE);
+  const [conditionJson, setConditionJson] = useState(DEFAULT_CONDITION_JSON);
+  // Orthogonal to the condition type: the engine applies `graph_predicate_json` to whichever kind
+  // the watcher carries, so any of the three can be narrowed by a graph predicate.
+  const [useGraphPredicate, setUseGraphPredicate] = useState(false);
   const [graphFields, setGraphFields] = useState<GraphPredicateFields>({
     relation: "owned_by",
     targetType: "",
@@ -190,12 +216,10 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
       const params: WatcherCreateParams = {
         name: name.trim(),
         conditionType,
-        conditionJson: conditionType === "graph" ? "{}" : conditionJson,
+        conditionJson,
         actionType,
         actionJson,
-        ...(conditionType === "graph"
-          ? { graphPredicateJson: buildGraphPredicateJson(graphFields) }
-          : {}),
+        ...(useGraphPredicate ? { graphPredicateJson: buildGraphPredicateJson(graphFields) } : {}),
       };
       await createIpcClient().watcherCreate(params);
       onCreated();
@@ -207,7 +231,7 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
   }
 
   const graphSubmitDisabled =
-    conditionType === "graph" &&
+    useGraphPredicate &&
     (graphFields.targetType.trim() === "" || graphFields.targetId.trim() === "");
 
   return (
@@ -239,10 +263,9 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
             aria-label="Condition type"
             className="border rounded px-2 py-1"
             value={conditionType}
-            onChange={(e) => setConditionType(e.target.value as "graph" | "schedule" | "metric")}
+            onChange={(e) => setConditionType(e.target.value as ConditionType)}
           >
-            <option value="graph">graph</option>
-            {NON_GRAPH_CONDITION_TYPES.map((t) => (
+            {CONDITION_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -250,23 +273,33 @@ function CreateWatcherDialog({ onClose, onCreated }: Readonly<CreateDialogProps>
           </select>
         </label>
 
-        {conditionType === "graph" ? (
+        <label className="flex flex-col gap-1 text-sm">
+          <span>Condition JSON</span>
+          <textarea
+            aria-label="Condition JSON"
+            className="border rounded px-2 py-1 font-mono text-xs"
+            rows={3}
+            value={conditionJson}
+            onChange={(e) => setConditionJson(e.target.value)}
+          />
+        </label>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            aria-label="Narrow with a graph predicate"
+            checked={useGraphPredicate}
+            onChange={(e) => setUseGraphPredicate(e.target.checked)}
+          />
+          <span>Narrow with a graph predicate</span>
+        </label>
+
+        {useGraphPredicate && (
           <GraphConditionBuilder
             value={graphFields}
             onChange={setGraphFields}
             candidateRelations={candidateRelations}
           />
-        ) : (
-          <label className="flex flex-col gap-1 text-sm">
-            <span>Condition JSON</span>
-            <textarea
-              aria-label="Condition JSON"
-              className="border rounded px-2 py-1 font-mono text-xs"
-              rows={3}
-              value={conditionJson}
-              onChange={(e) => setConditionJson(e.target.value)}
-            />
-          </label>
         )}
 
         <label className="flex flex-col gap-1 text-sm">
