@@ -69,15 +69,15 @@ function extractGatewayConditionTypes(src: string): string[] {
 }
 
 function extractUiConditionTypes(src: string): string[] {
-  const arrayMatch = src.match(/const CONDITION_TYPES = \[([^\]]*)\]/);
-  if (arrayMatch === null) {
+  const arrayBody = src.match(/const CONDITION_TYPES = \[([^\]]*)\]/)?.[1];
+  if (arrayBody === undefined) {
     throw new Error(
       "Watchers condition-type drift guard could not find `const CONDITION_TYPES = [...]` in " +
         "Watchers.tsx — its shape changed and the guard's extraction regex no longer matches. " +
         "Update the regex in Watchers.condition-types.drift.test.ts, do not delete this test.",
     );
   }
-  return [...arrayMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
+  return [...arrayBody.matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
 }
 
 describe("Watchers condition-type drift guard", () => {
