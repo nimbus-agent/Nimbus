@@ -72,7 +72,8 @@ export type CohortCandidate = {
   key: string;
   title: string;
   services: string[];
-  createdAtMs: number;
+  /** Null when the sync never recorded one — cycle time skips these; see Task 1 Step 3. */
+  createdAtMs: number | null;
   resolvedAtMs: number;
   statusCategory: "done" | "canceled";
   childCount: number;
@@ -233,17 +234,43 @@ Expected: FAIL — `Cannot find module ./cohort.ts`.
 
 Query candidates with a bound-parameter `SELECT` over `item`, ordered `resolved_at_ms DESC`, `LIMIT ?` bound to `maxCandidateScan`. The `json_valid(metadata)` guard is mandatory and goes first — `json_extract` RAISES `malformed JSON` on non-JSON TEXT, and an uncaught raise here kills the whole brief:
 
+> **CORRECTION (2026-08-10, found by the Task 1 implementer before writing code).** An earlier draft
+> of this SQL selected `created_at_ms` and `resolved_at_ms` as bare `item` columns. **They do not
+> exist.** `item`'s columns end at `id, service, type, external_id, title, body_preview, url,
+> canonical_url, modified_at, author_id, metadata, synced_at, pinned` plus the V48/V52 additions
+> (`body`, `body_complete`, `resolve_key`) — see `index/unified-item-v3-sql.ts:16-31`. Both timestamps
+> live INSIDE the `metadata` JSON, written by `connectors/jira-sync.ts:384,388`, and the sibling PR A
+> file `premortem/theme-discover.ts` reads them the same way. The query below is the corrected one; it
+> was reproduced failing with `no such column: created_at_ms` before the fix.
+
 ```sql
-SELECT id, external_id, title, created_at_ms, resolved_at_ms,
+SELECT id,
+       external_id,
+       title,
+       json_extract(metadata, '$.created_at_ms')   AS created_at_ms,
+       json_extract(metadata, '$.resolved_at_ms')  AS resolved_at_ms,
        json_extract(metadata, '$.status_category') AS status_category
   FROM item
  WHERE json_valid(metadata)
    AND json_extract(metadata, '$.issue_type') = 'Epic'
    AND json_extract(metadata, '$.status_category') IN ('done', 'canceled')
+   AND json_extract(metadata, '$.resolved_at_ms') IS NOT NULL
    AND id <> ?
- ORDER BY resolved_at_ms DESC
+ ORDER BY json_extract(metadata, '$.resolved_at_ms') DESC
  LIMIT ?
 ```
+
+**Why `resolved_at_ms IS NOT NULL` is a filter and not a fallback.** It is the ordering key, and the
+scan cap's whole meaning — "truncate the OLDEST history" — is undefined without it. A closed epic
+whose resolution date the sync never recorded cannot be placed in that order, cannot contribute to a
+cycle-time median, and cannot report a history span. Excluding it is the honest move; substituting
+`modified_at` would be a guess presented as a date, and substituting `0` would read as 1970 and
+poison both `oldestResolvedAtMs` and the cycle-time risk.
+
+**`created_at_ms` is allowed to be missing**, because it is needed only by the cycle-time risk, and
+dropping an otherwise-valid cohort member would weaken the other four. `CohortCandidate.createdAtMs`
+is therefore `number | null`; Task 2 computes its cycle-time median over members with a non-null
+value, and returns `value: null` (a named gap) when none have one.
 
 Then: derive each candidate's services with `affectedServicesForEpics`; **drop every candidate with zero shared services (the gate above)**; compute IDF weights across the scanned set; score the survivors; sort by score DESC then `resolvedAtMs` DESC for a stable order; slice to `maxCohortSize`. Set `oldestResolvedAtMs` from the scanned set (not the sliced members) so the honesty note reports the real history span.
 
@@ -309,6 +336,7 @@ export function computeRisks(input: {
 2. **Abandonment is Jira-blind.** Jira folds "Won't Do" into `done` (the distinction lives in `fields.resolution`, which the sync does not fetch), so `canceled` is unreachable there. When `cohortIsMixedTracker` is true the abandonment risk returns `value: null` with a summary naming the blindness — a blended rate across trackers must never be presented as comparable.
 3. **Incident coupling reuses the existing `correlates_with` edge and must not invent a second rule.** `graph/graph-populator.ts` pairs a deployment with an incident on the same affected service within a 2-hour window, keyed on service and time — NOT on any link to a child PR of the epic. The summary must therefore say "incidents correlated with deploys of these services during each epic's window" and must not imply the epic caused them.
 4. **A risk with no data returns `value: null`, never 0.** Zero means "measured zero"; null means "cannot measure" and the brief renders a named gap.
+5. **`CohortCandidate.createdAtMs` is `number | null`.** Cycle time computes its median over members with a non-null `createdAtMs` only, and returns `value: null` when none have one — a closed epic whose creation date the sync never recorded is a real case (see Task 1 Step 3). Size overrun, review drag, incident coupling and abandonment do not read `createdAtMs` and are unaffected.
 
 **Who computes the three inputs this function does not derive itself.** `reviewDragMedianMs`,
 `repoReviewMedianMs` and `incidentCoupledCount` require database queries, and `risks.ts` is
