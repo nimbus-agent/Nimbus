@@ -36,12 +36,14 @@
 ### Task 1: The condition-kind table, and an engine that reads it
 
 **Files:**
+
 - Create: `packages/gateway/src/automation/watcher-condition-kinds.ts`
 - Create: `packages/gateway/src/automation/watcher-condition-kinds.test.ts`
 - Modify: `packages/gateway/src/automation/watcher-engine.ts` (lines 86-120)
 - Test: `packages/gateway/src/automation/watcher-engine.test.ts` (append cases)
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks.
 - Produces, for Task 2 and for PR B2:
   - `type WatcherConditionKind = { readonly conditionType: string; readonly itemType: string; readonly extraSql: string }`
@@ -470,10 +472,12 @@ git commit -m "feat(automation): add incident_opened and deploy_failed watcher c
 ### Task 2: Reject an unknown condition type at creation
 
 **Files:**
+
 - Modify: `packages/gateway/src/ipc/automation-rpc.ts` (the `watcher.create` handler, line 114)
 - Test: `packages/gateway/src/ipc/automation-rpc.test.ts` (lines ~240-320)
 
 **Interfaces:**
+
 - Consumes: `isKnownWatcherConditionType` from Task 1.
 - Produces: nothing new for later tasks.
 
@@ -599,10 +603,12 @@ git commit -m "feat(ipc): reject a watcher conditionType the engine cannot evalu
 ### Task 3: Documentation and ship-readiness
 
 **Files:**
+
 - Modify: `docs/architecture.md` (watcher-engine section, ~lines 1016-1030)
 - Modify: `docs/CHANGELOG.md` (add a dated entry)
 
 **Interfaces:**
+
 - Consumes: the finished behaviour from Tasks 1 and 2.
 - Produces: nothing consumed by later tasks.
 

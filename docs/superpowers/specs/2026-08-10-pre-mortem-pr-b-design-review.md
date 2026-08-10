@@ -3,7 +3,7 @@
 ## Open Questions
 
 1. **Vercel/Prefect deploy outcome representation in UI or CLI:**
-   - The design notes that `deploy_failed` covers only CI-annotated deployments because Vercel/Prefect have different vocabularies/structures. 
+   - The design notes that `deploy_failed` covers only CI-annotated deployments because Vercel/Prefect have different vocabularies/structures.
    - *Question:* Should the CLI or agent brief actively warn the user if they query a service whose deployment mapping is Vercel/Prefect, explaining *why* a deploy-failure watcher cannot be set up? (e.g. "deploy_failed watcher is only supported for CI-annotated deployments; Vercel is not supported.")
 
 2. **Tauri Gateway Bridge Method Name:**
