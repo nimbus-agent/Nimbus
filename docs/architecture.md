@@ -1025,8 +1025,16 @@ The watcher engine evaluates post-sync conditions and fires configured automatio
 could never evaluate cannot be created.
 
 **Coverage limits of the conditions above.** A condition being evaluable is not the same as it
-firing on every qualifying event, and three gaps are known and unclosed:
+firing on every qualifying event, and four gaps are known and unclosed:
 
+- **`incident_opened` misses an incident indexed without a status.** The predicate matches only an
+  incident whose indexed `metadata.status` is exactly `triggered`. `pagerduty-sync.ts` writes
+  `metadata.status = status ?? null`, so if PagerDuty's API omits `status` for a row, or returns a
+  non-string, the incident is indexed with `metadata.status = null` and this condition never fires
+  for it — not on open, not ever. Widening the predicate to also match a null status was
+  considered and rejected: that would re-admit the resolution-firing bug the `triggered` narrowing
+  above exists to fix, for precisely the rows whose state is unknown. Fail-closed here is
+  intentional.
 - **The freshness window is shared across connectors.** A watcher only sees items whose
   `modified_at` is newer than its own `last_checked_at`, and the engine updates `last_checked_at`
   for *every* enabled watcher after *every* successful connector sync, regardless of which service

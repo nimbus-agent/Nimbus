@@ -14,7 +14,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   one condition-kind table that the engine and `watcher.create` share, so an unsupported
   `conditionType` is now rejected at creation rather than accepted and silently ignored.
   `incident_opened` narrows to `metadata.status = 'triggered'`, since PagerDuty re-indexes an
-  incident on acknowledgement and resolution too. `deploy_failed` covers CI-annotated deployments
+  incident on acknowledgement and resolution too — the tradeoff, recorded rather than fixed, is
+  that an incident indexed with a null status (PagerDuty omitted the field, or returned a
+  non-string) never fires this condition at all. `deploy_failed` covers CI-annotated deployments
   only, and its coverage limits are recorded in
   [`docs/architecture.md` § Watchers](./architecture.md#watchers). The desktop Create Watcher
   dialog now offers exactly these three condition types, with the graph predicate as an orthogonal
