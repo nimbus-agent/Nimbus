@@ -219,6 +219,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           RELEASES_CREATED: ${{ steps.release-please.outputs.releases_created }}
+          PRS_CREATED: ${{ steps.release-please.outputs.prs_created }}
           RECONCILED: ${{ steps.reconcile.outputs.reconciled }}
           UNACCOUNTED: ${{ steps.reconcile.outputs.unaccounted }}
         run: |
@@ -274,21 +275,34 @@ jobs:
             exit 0
           fi
 
-          # Three ways a run is healthy. The middle one is NOT redundant with the tag
-          # baseline above: it is the direct statement from the recovery step that it
-          # accounted for this release, and it does not depend on the tag it just created
-          # already being visible to a subsequent API read.
+          # FOUR ways a run is healthy, and the ORDER matters: every signal that comes
+          # straight back from the action is consulted before the one that re-queries the
+          # API, because a read issued seconds after a write can still miss it.
+          #
+          # `prs_created` closes a real false positive (#1134 -> v1.27.0). That run created
+          # release PR #1135 at 19:47:55 and this guard ran at 19:47:59. The PR existed and
+          # already carried `autorelease: pending`, but the `gh pr list` search index had
+          # not caught up four seconds later, so `pending` came back 0 and a completely
+          # healthy release went red. Worse, the advice below then pointed at a
+          # `Release-As:` trailer, which would have cut a SECOND version on top of the
+          # pending one. `prs_created` is the action's own return value for the PR it just
+          # opened or updated, so it cannot race with itself.
+          #
+          # The label query stays, LAST: it is the only signal here that can see a release
+          # PR left open by an EARLIER run, which no output of THIS run reports.
           pending=$(gh pr list --repo "$REPO" --state open \
                       --label "autorelease: pending" --json number --jq 'length')
           if [ "${RELEASES_CREATED:-false}" = "true" ] \
+            || [ "${PRS_CREATED:-false}" = "true" ] \
             || [ "${RECONCILED:-false}" = "true" ] \
             || [ "$pending" -gt 0 ]; then
-            echo "Healthy: releases_created=${RELEASES_CREATED:-false}, reconciled=${RECONCILED:-false}, open release PR(s)=${pending}."
+            echo "Healthy: releases_created=${RELEASES_CREATED:-false}, prs_created=${PRS_CREATED:-false}, reconciled=${RECONCILED:-false}, open release PR(s)=${pending}."
             exit 0
           fi
 
-          echo "::error::${facing} user-facing commit(s) since ${tag}, but release-please produced neither a release nor a release PR."
-          echo "::error::Most likely it could not PARSE one of them and skipped it. Open this run's release-please step and look for 'commit could not be parsed' and a 'commits: N' lower than the count above."
-          echo "::error::Unstick with a 'Release-As: X.Y.Z' trailer as the LAST line of a PR description, and keep prose with nested parens out of commit bodies."
+          echo "::error::${facing} user-facing commit(s) since ${tag}, but release-please reported no release, no release PR, and none is open."
+          echo "::error::FIRST check whether a release PR actually exists. If one does, this guard is wrong and the release is fine — do not act on the advice below."
+          echo "::error::If none exists, release-please most likely could not PARSE a commit and skipped it: open this run's release-please step and look for 'commit could not be parsed' and a 'commits: N' lower than the count above."
+          echo "::error::Only then unstick it with a 'Release-As: X.Y.Z' trailer as the LAST line of a PR description. NEVER add that trailer while a release PR is pending — it cuts a second version on top of it, and tags are immutable (see CLAUDE.md)."
           grep -E '^(feat|fix)(\([^)]*\))?!?:' <<<"$subjects" | sed 's/^/  dropped-or-unreleased: /'
           exit 1
