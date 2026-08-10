@@ -96,9 +96,15 @@ export type FetchMissReason =
 
 /**
  * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing
- * them is how a panel ends up telling a user to check credentials that are fine
- * — and `reason` is why that promise is now actually kept: a bare `not_found`
- * used to cover a dead credential, an offline machine, and an absent item alike.
+ * them is how a panel ends up telling a user to check credentials that are fine:
+ * a bare `not_found` covered a dead credential, an offline machine, and a
+ * genuinely absent item alike.
+ *
+ * `reason` is what lets that promise be kept — but it does not keep it on its
+ * own, and this comment must not claim otherwise while it can still be omitted.
+ * It is optional ONLY until every connector supplies one; at that point it
+ * becomes required, and a `not_found` site that omits a cause is a compile
+ * error rather than a silent regression to the old behaviour.
  */
 export type FetchOneResult =
   | { readonly status: "indexed"; readonly itemId: string }
