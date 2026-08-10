@@ -5,7 +5,11 @@ import { type CohortCandidate, type CohortResult, selectCohort } from "../premor
 import { affectedServicesForEpic } from "../premortem/epic-services.ts";
 import { computeRisks, type Risk } from "../premortem/risks.ts";
 import { type PremortemTheme, themesForServices } from "../premortem/theme-store.ts";
-import { proposeWatchers, type WatcherProposal } from "../premortem/watcher-proposals.ts";
+import {
+  clearProposalTombstones,
+  proposeWatchers,
+  type WatcherProposal,
+} from "../premortem/watcher-proposals.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import type { PremortemBrief, PremortemEpicView, PremortemInput } from "./_lib/premortem-types.ts";
@@ -594,6 +598,12 @@ export async function runPremortem(
         });
       }
 
+      // `--repropose` (Task 5): clear THIS epic's tombstones before the proposal path runs,
+      // so a deliberately-deleted watcher is created fresh (paused) instead of staying
+      // `suppressed`. Scoped to `epic.itemId` — never a global clear.
+      if (input.repropose === true) {
+        clearProposalTombstones(ctx.db, epic.itemId);
+      }
       watchers = proposeWatchers(ctx.db, { epicItemId: epic.itemId, services, nowMs: now });
 
       // Honesty rule 1 (conditional) — history span, silent when deep.

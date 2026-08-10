@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { DecisionsInput } from "../agents/_lib/decisions-types.ts";
 import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
+import type { PremortemInput } from "../agents/_lib/premortem-types.ts";
 import type { SynthesizerLlm } from "../agents/_lib/synthesize.ts";
 import type { WhyInput, WhyPeek } from "../agents/_lib/why-types.ts";
 import { emitCatchupBrief } from "../agents/catchup.ts";
@@ -15,17 +16,20 @@ import { emitImpactBrief } from "../agents/impact.ts";
 import { emitJanitorBrief } from "../agents/janitor.ts";
 import { emitOwnershipBrief } from "../agents/ownership.ts";
 import { emitPreflightBrief } from "../agents/preflight.ts";
+import { emitPremortemBrief } from "../agents/premortem.ts";
 import { emitWhyBrief } from "../agents/why.ts";
 import { runWhyPeek } from "../agents/why-peek.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   loadNimbusDecisionsFromConfigDir,
+  loadNimbusServiceConfigsFromConfigDir,
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
 import { recordAgentBriefEgress } from "../egress/agent-brief-egress.ts";
 import { egressSourceTypeForClientKind } from "../egress/egress-bearing-kinds.ts";
 import { KnownNamespaceStore } from "../index/known-namespace-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
 import {
   dispatchByMethod,
@@ -208,7 +212,8 @@ function newSessionId(
     | "preflight"
     | "why"
     | "decisions"
-    | "ownership",
+    | "ownership"
+    | "premortem",
 ): string {
   return `${kind}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -613,10 +618,91 @@ async function handleOwnership(
 }
 
 /**
+ * `services` (array, matching the CLI's repeatable `--service`) overrides derivation entirely —
+ * see `agents/premortem.ts`'s `runPremortem`. `repropose` backs `nimbus pre-mortem <ref>
+ * --repropose` (Task 5): clears this epic's watcher-proposal tombstones before the proposal path
+ * runs. Both optional; omitting `services` lets the agent derive affected services itself.
+ */
+function requirePremortemParams(params: unknown): PremortemInput {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new AgentsRpcError(-32602, "agents.premortem requires { epicRef: string }");
+  }
+  const p = params as { epicRef?: unknown; services?: unknown; repropose?: unknown };
+  if (typeof p.epicRef !== "string") {
+    throw new AgentsRpcError(
+      -32602,
+      `epicRef must be a non-empty string up to ${MAX_REF_LEN} chars`,
+    );
+  }
+  const trimmed = p.epicRef.trim();
+  if (trimmed.length < MIN_REF_LEN || trimmed.length > MAX_REF_LEN) {
+    throw new AgentsRpcError(
+      -32602,
+      `epicRef must be a non-empty string up to ${MAX_REF_LEN} chars`,
+    );
+  }
+  let serviceOverrides: string[] | undefined;
+  if (p.services !== undefined) {
+    if (!Array.isArray(p.services)) {
+      throw new AgentsRpcError(-32602, "services must be an array of strings");
+    }
+    const out: string[] = [];
+    for (const v of p.services) {
+      if (typeof v !== "string" || v.trim().length === 0 || v.length > MAX_SERVICE_LEN) {
+        throw new AgentsRpcError(
+          -32602,
+          `each service must be a non-empty string up to ${MAX_SERVICE_LEN} chars`,
+        );
+      }
+      out.push(v.trim());
+    }
+    serviceOverrides = out;
+  }
+  if (p.repropose !== undefined && typeof p.repropose !== "boolean") {
+    throw new AgentsRpcError(-32602, "repropose must be a boolean");
+  }
+  return {
+    epicRef: trimmed,
+    ...(serviceOverrides === undefined ? {} : { serviceOverrides }),
+    ...(p.repropose === true ? { repropose: true } : {}),
+  };
+}
+
+/**
+ * Resolved HERE, not in the agent, mirroring `handleOwnership`'s root-resolution rule: it keeps
+ * `agents/premortem.ts` free of a config-file dependency, and is re-read per call so a
+ * `[metrics.dora.*]`/`[ci.service.*]` edit applies without a gateway restart. Same construction
+ * `ipc/index-regraph-rpc.ts` uses for the same resolver — the "same place other agents get their
+ * service-identity resolver" the incident-coupling gap (Task 4) pointed at. With no `configDir` —
+ * the test/embedded shape — the resolver is left unset and incident coupling reports a named gap
+ * rather than a fabricated measurement.
+ */
+function premortemResolveServiceId(ctx: AgentsRpcContext) {
+  return ctx.configDir === undefined
+    ? undefined
+    : buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(ctx.configDir));
+}
+
+async function handlePremortem(
+  params: unknown,
+  ctx: AgentsRpcContext,
+): Promise<{ sessionId: string }> {
+  const input = requirePremortemParams(params);
+  const resolveServiceId = premortemResolveServiceId(ctx);
+  return await emitPremortemBrief(input, {
+    db: ctx.db,
+    notify: ctx.notify,
+    sessionId: newSessionId("premortem"),
+    ...(ctx.llm === undefined ? {} : { llm: ctx.llm }),
+    ...(resolveServiceId === undefined ? {} : { resolveServiceId }),
+  });
+}
+
+/**
  * The `agents.*` methods this module answers.
  *
  * Declared once and used for BOTH the egress-append test and the dispatch, so the ledgered set is
- * definitionally the served set. A second, hand-maintained list of the same twelve strings is how
+ * definitionally the served set. A second, hand-maintained list of the same thirteen strings is how
  * the over-counting defect this replaces was introduced: `method.startsWith("agents.")` appended an
  * `authorized` row for `agents.<anything>`, which then failed `-32601` having done no work — so
  * `nimbus prove` over-counted, and an unbounded caller-supplied `method` reached a hashed,
@@ -631,6 +717,7 @@ const AGENTS_RPC_HANDLERS = {
   "agents.huddle": handleHuddle,
   "agents.janitor": handleJanitor,
   "agents.ownership": handleOwnership,
+  "agents.premortem": handlePremortem,
   "agents.preflight": handlePreflight,
   "agents.why": handleWhy,
   "agents.whyPeek": handleWhyPeek,
@@ -654,9 +741,22 @@ const AGENTS_METHOD_PREFIX = "agents.";
  * response shape bolted onto this one. Note it is still LEDGERED when reached over any transport —
  * it is a member of AGENTS_RPC_HANDLERS, and the egress append is gated on that map, not on this
  * one.
+ *
+ * `agents.premortem` — unlike every other brief in this map, building it is NOT a pure read:
+ * `runPremortem` calls `proposeWatchers`, which writes paused `watcher` rows (and their
+ * `premortem_watcher_proposal` tombstone) directly via `insertWatcherIfAbsent` — no HITL gate,
+ * because the watcher is created paused rather than armed. `repropose: true` goes further and
+ * DELETES this epic's tombstones outright. Those writes were reviewed and accepted for a
+ * same-machine caller (CLI socket, Tauri renderer — I7's XSS threat model, not "arbitrary
+ * network caller"), but an external HTTP caller reaching them unprompted is the same shape of
+ * concern `agents.preflight` is excluded for: side effects on the owner's machine an external
+ * caller can trigger without the owner initiating them. Keep this out of the HTTP surface until
+ * that gets its own deliberate review — carried over from the MCP tool surface, which also does
+ * not define a premortem tool.
  */
 const HTTP_EXCLUDED_AGENT_METHODS: ReadonlySet<string> = new Set([
   "agents.preflight",
+  "agents.premortem",
   "agents.whyPeek",
 ]);
 

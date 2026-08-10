@@ -9,6 +9,13 @@ import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
 export type PremortemInput = {
   readonly epicRef: string;
   readonly serviceOverrides?: string[];
+  /**
+   * `nimbus pre-mortem <ref> --repropose` (Task 5): clear this epic's watcher-proposal
+   * tombstones BEFORE the proposal path runs, so a deliberately-deleted proposal is
+   * re-created fresh (paused) instead of staying `suppressed`. See
+   * `premortem/watcher-proposals.ts`'s `clearProposalTombstones`.
+   */
+  readonly repropose?: boolean;
 };
 
 export type PremortemEpicView = {

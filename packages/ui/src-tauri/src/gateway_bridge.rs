@@ -67,6 +67,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "agents.janitor",
     "agents.ownership",
     "agents.preflight",
+    "agents.premortem",
     "agents.why",
     "agents.whyPeek",
     "audit.export",
@@ -545,8 +546,21 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_premortem_brief_only() {
+        // S1 pre-mortem: the read-only brief is renderer-callable; the maintenance verb that
+        // re-derives the theme pass is not (I7). premortem.refresh has no rebuild counterpart
+        // and is LAN-forbidden, so it must not reach the renderer.
+        //
+        // Named explicitly for the same reason as the decisions/ownership tests above:
+        // allowlist_exact_size alone stays green if a later change swaps agents.premortem out
+        // for premortem.refresh, since the count is unchanged by a one-for-one substitution.
+        assert!(is_method_allowed("agents.premortem"));
+        assert!(!is_method_allowed("premortem.refresh"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 104);
+        assert_eq!(ALLOWED_METHODS.len(), 105);
     }
 
     #[test]

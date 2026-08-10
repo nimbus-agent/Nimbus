@@ -32,6 +32,7 @@ export { runMetricsCli } from "./metrics.ts";
 export { runOwnersCommand } from "./owners.ts";
 export { runPeople } from "./people.ts";
 export { runPolicy } from "./policy.ts";
+export { runPreMortemCommand } from "./pre-mortem.ts";
 export { runPreflightCli } from "./preflight.ts";
 export { runProfile } from "./profile.ts";
 export { runEgress, runProve } from "./prove.ts";

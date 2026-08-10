@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { deleteWatcher } from "../automation/watcher-store.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { itemPrimaryKey } from "../index/item-key.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
@@ -170,6 +171,63 @@ describe("runPremortem", () => {
     expect(brief.watchers).toHaveLength(1);
     expect(brief.watchers[0]?.state).toBe("created");
     expect(brief.watchers[0]?.service).toBe("acme/billing-api");
+  });
+
+  // `nimbus pre-mortem <ref> --repropose` (Task 5): `input.repropose` must reach
+  // `clearProposalTombstones(ctx.db, epic.itemId)` BEFORE `proposeWatchers` runs, so a
+  // deliberately-deleted watcher comes back `created` instead of staying `suppressed`.
+  // `watcher-proposals.test.ts` already proves `clearProposalTombstones` itself works;
+  // this proves `runPremortem` actually WIRES `input.repropose` to it.
+  describe("--repropose", () => {
+    function seedComparableEpic(db: Database, key: string): void {
+      seedEpicWithServices(db, {
+        key,
+        services: ["acme/billing-api"],
+        resolvedAtMs: NOW - 10 * DAY_MS,
+        createdAtMs: NOW - 20 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-REPROPOSE-0",
+        services: ["acme/billing-api"],
+        resolvedAtMs: NOW - 30 * DAY_MS,
+        createdAtMs: NOW - 60 * DAY_MS,
+      });
+    }
+
+    test("without --repropose, a deleted watcher stays suppressed", async () => {
+      const db = makeDb();
+      seedComparableEpic(db, "PROJ-REPRO-1");
+      const first = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctx(db));
+      const watcherId = first.watchers[0]?.watcherId as string;
+      expect(first.watchers[0]?.state).toBe("created");
+      deleteWatcher(db, watcherId);
+
+      const second = await runPremortem({ epicRef: "PROJ-REPRO-1" }, ctx(db));
+      expect(second.watchers[0]?.state).toBe("suppressed");
+      expect(second.watchers[0]?.watcherId).toBe(watcherId);
+    });
+
+    test("with --repropose, a deleted watcher is re-created fresh (paused)", async () => {
+      const db = makeDb();
+      seedComparableEpic(db, "PROJ-REPRO-2");
+      const first = await runPremortem({ epicRef: "PROJ-REPRO-2" }, ctx(db));
+      const watcherId = first.watchers[0]?.watcherId as string;
+      deleteWatcher(db, watcherId);
+      // Confirm the tombstone is really in place before repropose clears it.
+      const suppressed = await runPremortem({ epicRef: "PROJ-REPRO-2" }, ctx(db));
+      expect(suppressed.watchers[0]?.state).toBe("suppressed");
+
+      const reproposed = await runPremortem({ epicRef: "PROJ-REPRO-2", repropose: true }, ctx(db));
+      expect(reproposed.watchers[0]?.state).toBe("created");
+      expect(reproposed.watchers[0]?.watcherId).toBe(watcherId);
+    });
+
+    test("--repropose on an epic with NO prior tombstone is a harmless no-op (still created)", async () => {
+      const db = makeDb();
+      seedComparableEpic(db, "PROJ-REPRO-3");
+      const brief = await runPremortem({ epicRef: "PROJ-REPRO-3", repropose: true }, ctx(db));
+      expect(brief.watchers[0]?.state).toBe("created");
+    });
   });
 
   test("no children and no --service names the company-managed cause", async () => {

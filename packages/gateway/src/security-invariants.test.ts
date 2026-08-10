@@ -672,14 +672,14 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toMatch(/^\s*"extension\.install",\s*$/m);
   });
 
-  test("allowlist_exact_size assertion is 104", async () => {
+  test("allowlist_exact_size assertion is 105", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*104\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*105\s*\)/);
   });
 
   // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.
   // agents.ownership swapped out for the LAN-forbidden ownership.refresh, which clears and
-  // re-derives every ownership edge) leaves the count at 104 and would sail through. Name
+  // re-derives every ownership edge) leaves the count unchanged and would sail through. Name
   // the methods, mirroring the Rust-side `allowlist_ownership_brief_only` test.
   test("S1 ownership: agents.ownership is renderer-exposed; ownership.refresh stays absent", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
@@ -690,7 +690,7 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
   // The count above is NOT sufficient on its own. A change that removes
   // agents.decisions and adds decisions.refresh — LAN-forbidden, and the verb
   // that can clear the whole decision store via decisions.rebuild — leaves the
-  // count at 104 and would sail through. Name the methods.
+  // count unchanged and would sail through. Name the methods.
   test("S1 decisions: agents.decisions is renderer-exposed; the pass verbs stay absent", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).toMatch(/^\s*"agents\.decisions",\s*$/m);
@@ -700,6 +700,19 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toContain(`assert!(is_method_allowed("agents.decisions"));`);
     expect(rust).toContain(`assert!(!is_method_allowed("decisions.refresh"));`);
     expect(rust).toContain(`assert!(!is_method_allowed("decisions.rebuild"));`);
+  });
+
+  // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.
+  // agents.premortem swapped out for the LAN-forbidden premortem.refresh, which has no rebuild
+  // counterpart) leaves the count unchanged and would sail through. Name the methods, mirroring
+  // the Rust-side `allowlist_premortem_brief_only` test.
+  test("S1 pre-mortem: agents.premortem is renderer-exposed; premortem.refresh stays absent", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"agents\.premortem",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"premortem\.refresh",\s*$/m);
+    // …and the Rust side asserts the same thing at runtime, not just by count.
+    expect(rust).toContain(`assert!(is_method_allowed("agents.premortem"));`);
+    expect(rust).toContain(`assert!(!is_method_allowed("premortem.refresh"));`);
   });
 
   test("I29: the 4 egress read verbs are renderer-exposed; egress.prune (mutation) stays absent", async () => {

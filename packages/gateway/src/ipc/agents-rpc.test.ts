@@ -634,7 +634,7 @@ describe("dispatchAgentsRpc — agents.decisions", () => {
 });
 
 describe("the HTTP-invokable agent set", () => {
-  test("is exactly the eleven asynchronous, non-preflight agents", () => {
+  test("is exactly the eleven asynchronous, non-preflight, non-premortem agents", () => {
     expect([...HTTP_AGENT_NAMES]).toEqual([
       "catchup",
       "conflicts",
@@ -648,6 +648,15 @@ describe("the HTTP-invokable agent set", () => {
       "ownership",
       "why",
     ]);
+  });
+
+  test("premortem is not reachable over HTTP", () => {
+    // `runPremortem` writes paused watcher rows (and can delete tombstones via `repropose`)
+    // with no HITL gate — an external HTTP caller must not be able to trigger that unprompted,
+    // the same reasoning `agents.preflight` is excluded for. Also carried over from the MCP tool
+    // surface, which defines no premortem tool.
+    expect(resolveHttpAgentMethod("premortem")).toBeNull();
+    expect(HTTP_AGENT_NAMES).not.toContain("premortem");
   });
 
   test("preflight is not reachable over HTTP", () => {
