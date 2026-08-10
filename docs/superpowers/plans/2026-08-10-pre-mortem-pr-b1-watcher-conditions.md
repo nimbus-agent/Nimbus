@@ -12,7 +12,7 @@
 
 - **No `any`** — use `unknown` for external data. TypeScript strict is non-negotiable.
 - **I9 — bound-param SQL.** Every value goes through a bound parameter. The one interpolated SQL fragment in this plan (`kind.extraSql`) is a module-private compile-time constant, never derived from a row, a user, or an IPC parameter. It must stay that way.
-- **I14 — SQLite writes go through `dbRun`/`dbExec`/`dbStmtRun`.** This PR adds no writes, so nothing here touches that path; do not introduce one.
+- **I14 — SQLite writes in PRODUCTION code go through `dbRun`/`dbExec`/`dbStmtRun`.** This PR adds no production writes; do not introduce one. Test files are a different matter and are deliberately outside this rule: the D12 static audit does not scan `*.test.ts`, and many existing suites (e.g. `packages/gateway/src/agents/*.test.ts`) call `db.run` directly. Task 1's corrupt-row regression test does the same, intentionally.
 - **Local error convention** — no repo-wide JSON-RPC error enum exists. Each IPC namespace has its own class over a raw integer. In `ipc/automation-rpc.ts` that is `AutomationRpcError(-32602, message)`. Do not invent an enum.
 - **Coverage floor** — every source file must hold ≥85% line and ≥80% branch. The new file in Task 1 is small; its dedicated test file must cover every branch.
 - **Branch** — work happens on `dev/asafgolombek/pre-mortem-pr-b` in the worktree at `.claude/worktrees/pre-mortem-pr-b`. Never commit to `main`.
