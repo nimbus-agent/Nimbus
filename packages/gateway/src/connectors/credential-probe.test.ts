@@ -71,3 +71,23 @@ test("every registered probe builds an absolute https url", () => {
     expect(new URL(req.url).protocol, `${service} probe scheme`).toBe("https:");
   }
 });
+
+test("a base url with whitespace and a trailing slash normalizes like auth.ts stores it", () => {
+  const jenkinsProbe = CREDENTIAL_PROBES["jenkins"];
+  expect(jenkinsProbe).toBeDefined();
+  const jenkinsReq = jenkinsProbe?.({
+    base_url: "  https://ci.example.com/  ",
+    username: "u",
+    api_token: "t",
+  });
+  expect(jenkinsReq?.url).toBe("https://ci.example.com/api/json");
+
+  const jiraProbe = CREDENTIAL_PROBES["jira"];
+  expect(jiraProbe).toBeDefined();
+  const jiraReq = jiraProbe?.({
+    base_url: "  https://jira.example.com/  ",
+    email: "e@example.com",
+    api_token: "t",
+  });
+  expect(jiraReq?.url).toBe("https://jira.example.com/rest/api/3/myself");
+});

@@ -1,5 +1,7 @@
 // packages/gateway/src/connectors/credential-probe.ts
 
+import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
+import { basicAuthHeader } from "./atlassian-api-sync-helpers.ts";
 import type { ConnectorServiceId } from "./connector-catalog.ts";
 
 /**
@@ -22,14 +24,6 @@ export interface ProbeRequest {
 
 export type CredentialProbe = (creds: Record<string, string>) => ProbeRequest;
 
-function basicAuth(user: string, secret: string): string {
-  return `Basic ${Buffer.from(`${user}:${secret}`, "utf8").toString("base64")}`;
-}
-
-function stripTrailingSlash(s: string): string {
-  return s.replace(/\/+$/, "");
-}
-
 /**
  * Identity endpoints, one per service that has a cheap one.
  *
@@ -47,27 +41,27 @@ export const CREDENTIAL_PROBES: Partial<Record<ConnectorServiceId, CredentialPro
     },
   }),
   gitlab: (c) => ({
-    url: `${stripTrailingSlash(c["api_base"] ?? "https://gitlab.com/api/v4")}/user`,
+    url: `${stripTrailingSlashes(c["api_base"] ?? "https://gitlab.com/api/v4")}/user`,
     headers: { "PRIVATE-TOKEN": c["pat"] ?? "" },
   }),
   bitbucket: (c) => ({
     url: "https://api.bitbucket.org/2.0/user",
     headers: {
-      Authorization: basicAuth(c["username"] ?? "", c["app_password"] ?? ""),
+      Authorization: basicAuthHeader(c["username"] ?? "", c["app_password"] ?? ""),
       Accept: "application/json",
     },
   }),
   jira: (c) => ({
-    url: `${stripTrailingSlash(c["base_url"] ?? "")}/rest/api/3/myself`,
+    url: `${stripTrailingSlashes(c["base_url"] ?? "")}/rest/api/3/myself`,
     headers: {
-      Authorization: basicAuth(c["email"] ?? "", c["api_token"] ?? ""),
+      Authorization: basicAuthHeader(c["email"] ?? "", c["api_token"] ?? ""),
       Accept: "application/json",
     },
   }),
   jenkins: (c) => ({
-    url: `${stripTrailingSlash(c["base_url"] ?? "")}/api/json`,
+    url: `${stripTrailingSlashes(c["base_url"] ?? "")}/api/json`,
     headers: {
-      Authorization: basicAuth(c["username"] ?? "", c["api_token"] ?? ""),
+      Authorization: basicAuthHeader(c["username"] ?? "", c["api_token"] ?? ""),
       Accept: "application/json",
     },
   }),
