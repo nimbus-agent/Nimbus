@@ -494,7 +494,7 @@ describe("runPremortem", () => {
       expect(reviewDrag?.summary).toContain("72 hours");
     });
 
-    test("names the real cause when the cohort has linked PRs but none carry an opened timestamp", async () => {
+    test("names the real cause when the cohort has linked PRs but neither timestamp is recorded", async () => {
       const db = makeDb();
       seedEpicWithServices(db, {
         key: "PROJ-610",
@@ -516,7 +516,48 @@ describe("runPremortem", () => {
       const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
       expect(reviewDrag?.value).toBeNull();
       expect(reviewDrag?.summary).not.toContain("No pull requests were found");
-      expect(reviewDrag?.summary.toLowerCase()).toContain("opened timestamp");
+      expect(reviewDrag?.summary.toLowerCase()).toContain(
+        "does not record both an opened and a merged",
+      );
+    });
+
+    // Round-2 review red-prove: an OPEN PR (opened_at_ms present, merged_at
+    // absent) must NOT produce a message asserting "no connector indexes a
+    // pull request's opened timestamp" — that's false, the index plainly has
+    // it. This is the exact case that becomes common the moment a connector
+    // starts indexing PR-open events at all.
+    test("does not claim the opened timestamp is missing when only the merged timestamp is absent (an open PR)", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-615",
+        services: ["acme/openpr"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedChildlessEpic(db, "HIST-615", NOW - 70 * DAY_MS);
+      db.run(
+        `UPDATE item SET metadata = json_set(metadata, '$.status_category', 'done', '$.resolved_at_ms', ?)
+          WHERE service = 'jira' AND external_id = 'HIST-615'`,
+        [NOW - 40 * DAY_MS],
+      );
+      // opened_at_ms IS present; merged_at is not — a genuinely open PR.
+      seedChildWithPr(db, {
+        epicKey: "HIST-615",
+        childSuffix: "c1",
+        service: "acme/openpr",
+        openedAtMs: NOW - 44 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-615" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).toBeNull();
+      expect(reviewDrag?.summary).not.toMatch(
+        /no connector indexes a pull request's opened timestamp/i,
+      );
+      expect(reviewDrag?.summary.toLowerCase()).toContain(
+        "does not record both an opened and a merged",
+      );
     });
 
     test("keeps the 'no pull requests' message when the cohort truly links none", async () => {
@@ -682,7 +723,7 @@ describe("runPremortem", () => {
       expect(ic?.summary).toMatch(/^0 of 1/);
     });
 
-    test("skips a cohort member with no created_at_ms rather than using a degenerate window", async () => {
+    test("is unmeasurable, not a degenerate-window zero, when the only cohort member has no created_at_ms", async () => {
       const db = makeDb();
       seedEpicWithServices(db, {
         key: "PROJ-740",
@@ -691,10 +732,12 @@ describe("runPremortem", () => {
         createdAtMs: NOW - 15 * DAY_MS,
       });
       const resolvedAtMs = NOW - 40 * DAY_MS;
-      // No createdAtMs at all.
+      // No createdAtMs at all — the only cohort member, so nothing in this
+      // cohort is ever actually queried (measured === 0).
       seedEpicWithServices(db, { key: "HIST-740", services: ["acme/nodate"], resolvedAtMs });
       // Sits EXACTLY at resolvedAtMs — the one instant a degenerate
-      // `resolvedAtMs..resolvedAtMs` window would still (mis)match.
+      // `resolvedAtMs..resolvedAtMs` window would still (mis)match, were
+      // that fallback still in place.
       seedDeploymentCorrelatedWithIncident(db, {
         service: "nodate-svc-id",
         occurredAtMs: resolvedAtMs,
@@ -707,7 +750,10 @@ describe("runPremortem", () => {
       );
 
       const ic = brief.risks.find((r) => r.kind === "incident_coupling");
-      expect(ic?.value).toBe(0);
+      // Not a measured `0` (nothing was actually queried) and not a
+      // coincidental match on the degenerate single-instant window either.
+      expect(ic?.value).toBeNull();
+      expect(ic?.summary.toLowerCase()).toContain("no deployment-service mapping");
     });
 
     test("skips a cohort member whose services don't resolve, while still counting one that does", async () => {
@@ -750,11 +796,15 @@ describe("runPremortem", () => {
 
       expect(brief.cohort.members.map((m) => m.key).sort()).toEqual(["HIST-750A", "HIST-750B"]);
       const ic = brief.risks.find((r) => r.kind === "incident_coupling");
-      // Only HIST-750A (resolvable + correlated) counts; HIST-750B is
-      // skipped, not erroring and not silently counted. `value` is the RATE
-      // (1 coupled / 2 comparable), not the raw count.
-      expect(ic?.value).toBe(0.5);
-      expect(ic?.summary).toContain("1 of 2");
+      // Only HIST-750A (resolvable + correlated) was actually MEASURED;
+      // HIST-750B was skipped (never queried), so the rate denominates on 1
+      // measured epic, not the full 2-member cohort — "1 of 1" (100%), with
+      // the skipped epic noted separately, never folded into a "1 of 2 (50%)"
+      // rate that would imply both were checked.
+      expect(ic?.value).toBe(1);
+      expect(ic?.summary).toContain("1 of 1 comparable epics (100%)");
+      expect(ic?.summary).not.toContain("1 of 2 comparable epics (50%)");
+      expect(ic?.summary.toLowerCase()).toContain("could not be checked");
     });
 
     test("is unmeasurable when a resolver is configured but nothing in the cohort maps to it", async () => {

@@ -207,7 +207,7 @@ function reviewDragMedians(
 ): {
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
-  cohortHasPrsWithoutOpenTimestamp: boolean;
+  cohortHasPrsMissingTimingData: boolean;
 } {
   const epicItemIds = cohort.members.map((m) => m.itemId);
   const timings = cohortPrTimings(db, epicItemIds, services);
@@ -217,15 +217,17 @@ function reviewDragMedians(
   );
 
   if (timed.length === 0) {
-    // Pass null for EITHER median when the cohort has no TIMED PRs — there is
-    // nothing to compare a repo baseline against either. `timings.length > 0`
-    // here means real linked PRs exist but none carry `opened_at_ms` — the
-    // discriminator `computeRisks` needs to name the actual cause, not
-    // "no pull requests were found" when pull requests plainly were.
+    // Pass null for EITHER median when the cohort has no fully-timed PRs —
+    // there is nothing to compare a repo baseline against either.
+    // `timings.length > 0` here means real linked PRs exist but none carry
+    // BOTH `opened_at_ms` and `merged_at` — the discriminator `computeRisks`
+    // needs to name that actual, checked fact, not "no pull requests were
+    // found" when pull requests plainly were, and not a claim about which
+    // SPECIFIC field is missing (a PR can be missing either one, or both).
     return {
       reviewDragMedianMs: null,
       repoReviewMedianMs: null,
-      cohortHasPrsWithoutOpenTimestamp: timings.length > 0,
+      cohortHasPrsMissingTimingData: timings.length > 0,
     };
   }
 
@@ -242,7 +244,7 @@ function reviewDragMedians(
   return {
     reviewDragMedianMs: median(toDurations(timed)),
     repoReviewMedianMs: median(repoDurations),
-    cohortHasPrsWithoutOpenTimestamp: false,
+    cohortHasPrsMissingTimingData: false,
   };
 }
 
@@ -269,27 +271,34 @@ function repoToConfigServiceId(
 }
 
 /**
- * The count of cohort epics having an incident `correlates_with` a deploy of
+ * `coupled` — cohort epics having an incident `correlates_with` a deploy of
  * one of THAT epic's own services, during THAT epic's own window
- * (`createdAtMs` .. `resolvedAtMs`). Reuses the `correlates_with` edge
- * `graph/graph-populator.ts`'s `syncTimelineEventGraph` already writes
- * (deployment --correlates_with--> incident, keyed on
- * `metadata.affectedService`) — no second correlation rule.
+ * (`createdAtMs` .. `resolvedAtMs`). `measured` — how many cohort members
+ * were ACTUALLY queried (a resolvable service AND a usable window). Reuses
+ * the `correlates_with` edge `graph/graph-populator.ts`'s
+ * `syncTimelineEventGraph` already writes (deployment --correlates_with-->
+ * incident, keyed on `metadata.affectedService`) — no second correlation
+ * rule.
  *
- * Returns `null` — never a fabricated `0` — when NO cohort repo translates to
- * a configured DORA service id: that means the join vocabulary cannot match
- * at all, which is a different fact than "measured, and zero incidents
- * correlated". A cohort member missing `createdAtMs` is skipped rather than
- * given a `resolvedAtMs .. resolvedAtMs` window: a single-instant `BETWEEN`
- * can only ever silently fail to match (or, worse, coincidentally match a
- * deploy landing at that exact millisecond) — neither reflects a real
- * "epic's window", so the member is treated as unmeasurable, not queried.
+ * Returns `null` — never a fabricated `0` — when `measured` would be `0`:
+ * either no `resolveServiceId` was supplied, no cohort repo translates to a
+ * configured DORA service id, or every resolvable member lacks
+ * `createdAtMs`. All three collapse to the same fact — nothing in this
+ * cohort could actually be checked — and the caller (`risks.ts`) must
+ * denominate any rate on `measured`, NEVER on the full cohort: a member that
+ * was skipped (no `createdAtMs`, or no resolvable service) was never
+ * queried, so it must not count toward "how many epics this was compared
+ * against" any more than it should count toward a fabricated numerator. A
+ * single-instant `resolvedAtMs .. resolvedAtMs` window (the old fallback for
+ * a missing `createdAtMs`) can only ever silently fail to match, or worse,
+ * coincidentally match a deploy landing at that exact millisecond — neither
+ * reflects a real "epic's window" — so such a member is skipped, not queried.
  */
 function countIncidentCoupledEpics(
   db: Database,
   members: readonly CohortCandidate[],
   resolveServiceId: ServiceIdentityResolver | undefined,
-): number | null {
+): { coupled: number; measured: number } | null {
   if (resolveServiceId === undefined) {
     return null;
   }
@@ -307,18 +316,8 @@ function countIncidentCoupledEpics(
   const configIdsFor = (member: CohortCandidate): string[] =>
     member.services.map(configIdFor).filter((id): id is string => id !== null);
 
-  // Whether the vocabulary can match AT ALL is a fact independent of any one
-  // member's window: a member with a resolvable service but no `createdAtMs`
-  // still proves the config maps something real, so the risk stays a
-  // measured `0` (a real "nothing correlated" fact) rather than collapsing
-  // to `null` ("nothing configured") just because that one member could not
-  // be windowed.
-  const anyServiceResolved = members.some((m) => configIdsFor(m).length > 0);
-  if (!anyServiceResolved) {
-    return null;
-  }
-
-  let count = 0;
+  let coupled = 0;
+  let measured = 0;
   for (const member of members) {
     // A single-instant `resolvedAtMs .. resolvedAtMs` window can only ever
     // silently fail to match (or, worse, coincidentally match a deploy
@@ -331,6 +330,7 @@ function countIncidentCoupledEpics(
     if (configIds.length === 0) {
       continue;
     }
+    measured++;
     const placeholders = configIds.map(() => "?").join(", ");
     const row = db
       .query(
@@ -346,10 +346,10 @@ function countIncidentCoupledEpics(
       )
       .get(...configIds, member.createdAtMs, member.resolvedAtMs);
     if (row !== null) {
-      count++;
+      coupled++;
     }
   }
-  return count;
+  return measured === 0 ? null : { coupled, measured };
 }
 
 /** Honesty rule 2: rows with `body_complete = 0`, over the cohort's own member items. */
@@ -557,9 +557,9 @@ export async function runPremortem(
           "that `--service` names match real repos.",
       });
     } else {
-      const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsWithoutOpenTimestamp } =
+      const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsMissingTimingData } =
         reviewDragMedians(ctx.db, cohort, services, now);
-      const incidentCoupledCount = countIncidentCoupledEpics(
+      const incidentCoupling = countIncidentCoupledEpics(
         ctx.db,
         cohort.members,
         ctx.resolveServiceId,
@@ -572,8 +572,8 @@ export async function runPremortem(
         nowMs: now,
         reviewDragMedianMs,
         repoReviewMedianMs,
-        cohortHasPrsWithoutOpenTimestamp,
-        incidentCoupledCount,
+        cohortHasPrsMissingTimingData,
+        incidentCoupling,
         // Pre-mortem is Jira-only (the unconditional gap above states this),
         // so the cohort can never blend trackers with different cancel/done
         // semantics.

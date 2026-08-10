@@ -25,8 +25,8 @@ const BASE = {
   nowMs: 30 * DAY,
   reviewDragMedianMs: null,
   repoReviewMedianMs: null,
-  cohortHasPrsWithoutOpenTimestamp: false,
-  incidentCoupledCount: 0,
+  cohortHasPrsMissingTimingData: false,
+  incidentCoupling: { coupled: 0, measured: 1 },
   cohortIsMixedTracker: false,
 };
 
@@ -129,14 +129,18 @@ describe("computeRisks", () => {
   });
 
   test("incident coupling never claims causation", () => {
-    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupledCount: 1 });
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      incidentCoupling: { coupled: 1, measured: 1 },
+    });
     const ic = risks.find((r) => r.kind === "incident_coupling");
     expect(ic?.summary).toMatch(/correlat/i);
     expect(ic?.summary).not.toMatch(/caused|because of/i);
   });
 
   test("incident coupling is a named gap, not a fabricated zero, when nothing translates to a deploy-service mapping", () => {
-    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupledCount: null });
+    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupling: null });
     const ic = risks.find((r) => r.kind === "incident_coupling");
     expect(ic?.value).toBeNull();
     expect(ic?.summary).not.toMatch(/^0 of/);
@@ -144,29 +148,80 @@ describe("computeRisks", () => {
   });
 
   test("incident coupling reports a real measured zero once at least one service resolves", () => {
-    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupledCount: 0 });
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      incidentCoupling: { coupled: 0, measured: 1 },
+    });
     const ic = risks.find((r) => r.kind === "incident_coupling");
     expect(ic?.value).toBe(0);
     expect(ic?.summary).toMatch(/^0 of 1/);
   });
 
-  test("review drag names the real cause when the cohort has PRs but none carry an opened timestamp", () => {
+  // Important 2 (round 2 review): the rate must be denominated on the
+  // MEASURED population, not the full cohort — a cohort member that could
+  // never be queried (no createdAtMs, or no resolvable service) must not
+  // count toward "how many epics we compared this against".
+  test("incident coupling denominates on the MEASURED count, not the full cohort, when some members couldn't be checked", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate({ key: "E-1" }), candidate({ key: "E-2" })],
+      // Only 1 of the 2 comparable epics was actually measured.
+      incidentCoupling: { coupled: 1, measured: 1 },
+    });
+    const ic = risks.find((r) => r.kind === "incident_coupling");
+    // A wrong "denominate on cohort.length" implementation would report
+    // value 0.5 and "1 of 2 comparable epics (50%)" as the RATE clause here
+    // instead — the skipped-count note legitimately mentions "1 of 2" too
+    // (in a different sentence), so this checks the rate clause specifically.
+    expect(ic?.value).toBe(1);
+    expect(ic?.summary).toContain("1 of 1 comparable epics (100%)");
+    expect(ic?.summary).not.toContain("1 of 2 comparable epics (50%)");
+    expect(ic?.summary.toLowerCase()).toContain("could not be checked");
+  });
+
+  test("incident coupling states no skipped-epic note when every comparable epic was measured", () => {
     const risks = computeRisks({
       ...BASE,
       cohort: [candidate()],
-      cohortHasPrsWithoutOpenTimestamp: true,
+      incidentCoupling: { coupled: 0, measured: 1 },
+    });
+    const ic = risks.find((r) => r.kind === "incident_coupling");
+    expect(ic?.summary.toLowerCase()).not.toContain("could not be checked");
+  });
+
+  test("review drag names the real cause when the cohort has PRs but the index is missing timing data", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      cohortHasPrsMissingTimingData: true,
     });
     const rd = risks.find((r) => r.kind === "review_drag");
     expect(rd?.value).toBeNull();
     expect(rd?.summary).not.toContain("No pull requests were found");
-    expect(rd?.summary.toLowerCase()).toContain("opened timestamp");
+    expect(rd?.summary.toLowerCase()).toContain("does not record both an opened and a merged");
+  });
+
+  // Important 1 (round 2 review): the message must not assert WHICH single
+  // timestamp is missing — an earlier version named only "opened", which is
+  // false the moment a PR HAS an opened timestamp but no merged one (an
+  // open PR — the common case once a connector indexes PR-open events).
+  test("review drag's missing-timing-data message does not claim only the opened timestamp is absent", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      cohortHasPrsMissingTimingData: true,
+    });
+    const rd = risks.find((r) => r.kind === "review_drag");
+    expect(rd?.summary).not.toMatch(/no connector indexes a pull request's opened timestamp/i);
+    expect(rd?.summary).not.toMatch(/only its merge time/i);
   });
 
   test("review drag keeps the 'no pull requests' message when the cohort truly has none", () => {
     const risks = computeRisks({
       ...BASE,
       cohort: [candidate()],
-      cohortHasPrsWithoutOpenTimestamp: false,
+      cohortHasPrsMissingTimingData: false,
     });
     const rd = risks.find((r) => r.kind === "review_drag");
     expect(rd?.value).toBeNull();
