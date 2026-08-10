@@ -19,6 +19,7 @@ import {
   stringField,
 } from "./atlassian-api-sync-helpers.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { msFromIso, normalizeJiraStatusCategory, TICKET_META_VERSION } from "./ticket-depth.ts";
 
@@ -553,7 +554,7 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   }
   const creds = await loadJiraVaultCreds(ctx);
   if (creds === null) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "no_credential" };
   }
   // The host boundary (`sync/fetch-host-boundary.ts`) proves only that `url`'s HOST is claimed by
   // Jira — it does not check scheme, port, or a context path. A caller URL whose spelling
@@ -581,20 +582,20 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `base_url` — in its message. Swallow it entirely rather than let it propagate.
-    return { status: "not_found" };
+    return { status: "not_found", reason: "unreachable" };
   }
   if (!res.ok) {
-    return { status: "not_found" };
+    return fetchOneMissForResponse(res.status);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(await res.text()) as unknown;
   } catch {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   const issue = asRecord(parsed);
   if (issue === undefined) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   // The returned itemId MUST reflect the row `jiraIndexOneIssue` actually wrote, which keys off
   // the API response's own `key` field — never the raw regex capture from the caller's URL. A
@@ -613,7 +614,7 @@ async function fetchOneIssue(ctx: SyncContext, url: string): Promise<FetchOneRes
   // but not the one-shot fix an unmoved issue's `/browse/` link gets.
   const returnedKey = stringField(issue, "key");
   if (returnedKey === undefined || returnedKey === "") {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   // `jiraIndexOneIssue` returns `false` only when the issue object it's handed has no usable
   // `key` — but that's the SAME `issue` object, and the same field, already checked above as

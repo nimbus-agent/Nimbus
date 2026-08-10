@@ -10,6 +10,7 @@ import {
   syncNoopResult,
 } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import {
   flattenJenkinsApiJobs,
   JENKINS_JOBS_API_TREE,
@@ -433,7 +434,7 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
     token === null ||
     token.trim() === ""
   ) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "no_credential" };
   }
   const base = stripTrailingSlashes(baseRaw);
   const auth = basicAuthHeader(user.trim(), token.trim());
@@ -451,10 +452,13 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `base_url` — in its message. Swallow it entirely rather than let it propagate.
-    return { status: "not_found" };
+    return { status: "not_found", reason: "unreachable" };
   }
-  if (!bRes.ok || bRes.json === null || typeof bRes.json !== "object") {
-    return { status: "not_found" };
+  if (!bRes.ok) {
+    return fetchOneMissForResponse(bRes.status);
+  }
+  if (bRes.json === null || typeof bRes.json !== "object") {
+    return { status: "not_found", reason: "upstream_error" };
   }
   const br = bRes.json as Record<string, unknown>;
   // Fallback `url` serves the same PURPOSE `syncJenkinsJobBuilds` uses `job.url` for — if the
@@ -480,7 +484,7 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
   // the successful result, which is the API response's own `number` field, never the raw regex
   // capture from the caller's URL (which can differ from it — leading zeros, etc.).
   if (upserted === null) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "absent" };
   }
   return {
     status: "indexed",

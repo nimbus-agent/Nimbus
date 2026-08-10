@@ -151,7 +151,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a 404", async () => {
+  test("reports absent for a 404", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -160,10 +160,10 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/999/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
   });
 
-  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+  test("reports unreachable when fetch itself throws (DNS/TLS/connect failure)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> => {
@@ -173,16 +173,17 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
+    expect(JSON.stringify(out)).not.toContain("ci.corp.example");
   });
 
-  test("reports not_found when credentials are missing", async () => {
+  test("reports no_credential when credentials are missing", async () => {
     const ctx = ctxWithCreds(createMemoryIndexDb(), null, null, null);
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
 
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "no_credential" });
   });
 
   // A stalled/aborted upstream request must report not_found rather than hang the caller
@@ -192,7 +193,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
   // `fetchOneBuild`'s own call site passes a signal — the periodic-sync callers are untouched (see
   // jenkins-sync.ts's `jenkinsGetJson` signature: the `signal` parameter is optional and only
   // `fetchOneBuild` supplies it).
-  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+  test("reports unreachable and passes an abort signal when the request is aborted (timeout)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     let capturedSignal: AbortSignal | undefined;
@@ -206,7 +207,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
     expect(capturedSignal).toBeDefined();
   });
 
@@ -233,11 +234,12 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
 
   // Regression: `upsertJenkinsBuildRowIfNew` is a genuine no-op (writes nothing) when the
   // response's own `number` is `<= lastSeen` (0, here) or its `timestamp` predates `floorMs` (0,
-  // here) — `fetchOne` must report `not_found` for BOTH, never `indexed` for a row it never wrote.
+  // here) — a build genuinely was not written, an `absent` row rather than an upstream fault, so
+  // `fetchOne` must report `absent` for BOTH, never `indexed` for a row it never wrote.
   test.each([
     ["number is 0 (num <= lastSeen)", { number: 0 }],
     ["timestamp is negative (modifiedAt < floorMs)", { timestamp: -1 }],
-  ])("reports not_found rather than a phantom indexed when %s", async (_label, overrides) => {
+  ])("reports absent rather than a phantom indexed when %s", async (_label, overrides) => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -248,7 +250,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
     const row = db.query("SELECT COUNT(*) AS c FROM item WHERE service = 'jenkins'").get() as {
       c: number;
     };
@@ -310,7 +312,7 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a malformed (non-JSON) ok response", async () => {
+  test("reports upstream_error for a malformed (non-JSON) ok response", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -319,10 +321,14 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found for valid JSON that is not an object", async () => {
+  // A JSON array passes the top-level `typeof bRes.json !== "object"` shape check (arrays ARE
+  // objects in JS) and only fails downstream, inside `upsertJenkinsBuildRowIfNew`'s `asRecord`
+  // rejecting it — which is the same no-row-written path a null upsert takes, so this reports
+  // `absent`, not `upstream_error`.
+  test("reports absent for valid JSON that is not an object (an array)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -331,10 +337,10 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
   });
 
-  test("reports not_found when the response body has no number field", async () => {
+  test("reports absent when the response body has no number field", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "https://ci.corp.example");
     globalThis.fetch = ((): Promise<Response> =>
@@ -345,6 +351,26 @@ describeWithFetchRestore("jenkins-sync fetchOne", () => {
     const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://ci.corp.example/job/build/12/");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
+  });
+
+  // The fused `!ok || json-shape` condition was split into two separate causes: an HTTP failure
+  // (mapped via `fetchOneMissForResponse`) and a malformed body on an otherwise-ok response. This
+  // pins that a 500 and a 401 — both `!bRes.ok` — land on genuinely different reasons rather than
+  // sharing one arm.
+  test("a 500 reports upstream_error while a 401 reports unauthorized", async () => {
+    const db = createMemoryIndexDb();
+    const ctx500 = ctxWithCreds(db, "https://ci.corp.example");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
+    const syncable = createJenkinsSyncable({ ensureJenkinsMcpRunning: async () => {} });
+    const out500 = await syncable.fetchOne?.(ctx500, "https://ci.corp.example/job/build/12/");
+    expect(out500).toEqual({ status: "not_found", reason: "upstream_error" });
+
+    const ctx401 = ctxWithCreds(createMemoryIndexDb(), "https://ci.corp.example");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("nope", { status: 401 }))) as unknown as typeof fetch;
+    const out401 = await syncable.fetchOne?.(ctx401, "https://ci.corp.example/job/build/12/");
+    expect(out401).toEqual({ status: "not_found", reason: "unauthorized" });
   });
 });

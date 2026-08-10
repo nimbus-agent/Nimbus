@@ -873,7 +873,7 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a 404", async () => {
+  test("reports absent for a 404", async () => {
     const { ctx } = credCtx();
     globalThis.fetch = (async (): Promise<Response> =>
       new Response("nope", { status: 404 })) as unknown as typeof fetch;
@@ -881,20 +881,20 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-999");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
   });
 
-  test("reports not_found when credentials are missing", async () => {
+  test("reports no_credential when credentials are missing", async () => {
     const db = createMemoryIndexDb();
     const ctx = { db, vault: credVault({ "jira.email": "" }), ...silentSyncContextExtras() };
 
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "no_credential" });
   });
 
-  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+  test("reports unreachable when fetch itself throws (DNS/TLS/connect failure)", async () => {
     const { ctx } = credCtx();
     globalThis.fetch = ((): Promise<Response> => {
       throw new TypeError("fetch failed: getaddrinfo ENOTFOUND example.atlassian.net");
@@ -903,14 +903,15 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
+    expect(JSON.stringify(out)).not.toContain("example.atlassian.net");
   });
 
   // A stalled/aborted upstream request must report not_found rather than hang the caller
   // (`POST /v1/items/fetch`) indefinitely — and the outbound request must actually carry a bounded
   // abort signal, not merely happen to survive an unrelated rejection. Recording `init?.signal`
   // proves the timeout is WIRED, not just that some catch block happens to swallow errors.
-  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+  test("reports unreachable and passes an abort signal when the request is aborted (timeout)", async () => {
     const { ctx } = credCtx();
     let capturedSignal: AbortSignal | undefined;
     globalThis.fetch = ((_input: unknown, init?: SyncTestFetchParams[1]): Promise<Response> => {
@@ -923,7 +924,7 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
     expect(capturedSignal).toBeDefined();
   });
 
@@ -1007,7 +1008,7 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     expect(row?.resolve_key).toBe(callerUrl);
   });
 
-  test("reports not_found for a malformed (non-JSON) ok response", async () => {
+  test("reports upstream_error for a malformed (non-JSON) ok response", async () => {
     const { ctx } = credCtx();
     globalThis.fetch = (async (): Promise<Response> =>
       new Response("not json", { status: 200 })) as unknown as typeof fetch;
@@ -1015,10 +1016,10 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found for valid JSON that is not an object", async () => {
+  test("reports upstream_error for valid JSON that is not an object", async () => {
     const { ctx } = credCtx();
     globalThis.fetch = (async (): Promise<Response> =>
       new Response("[1,2,3]", { status: 200 })) as unknown as typeof fetch;
@@ -1026,10 +1027,10 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found when the response body has no key field", async () => {
+  test("reports upstream_error when the response body has no key field", async () => {
     const { ctx } = credCtx();
     globalThis.fetch = (async (): Promise<Response> =>
       new Response(JSON.stringify({ id: "10042" }), { status: 200 })) as unknown as typeof fetch;
@@ -1037,7 +1038,24 @@ describeWithFetchRestore("jira-sync fetchOne", () => {
     const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://example.atlassian.net/browse/ENG-42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
+  });
+
+  // A 500 and a 401 are both `!res.ok`, but `fetchOneMissForResponse` routes them to genuinely
+  // different reasons — mirrors the jenkins test of the same name, which pins the analogous split.
+  test("a 500 reports upstream_error while a 401 reports unauthorized", async () => {
+    const { ctx: ctx500 } = credCtx();
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response("boom", { status: 500 })) as unknown as typeof fetch;
+    const syncable = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
+    const out500 = await syncable.fetchOne?.(ctx500, "https://example.atlassian.net/browse/ENG-42");
+    expect(out500).toEqual({ status: "not_found", reason: "upstream_error" });
+
+    const { ctx: ctx401 } = credCtx();
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response("nope", { status: 401 })) as unknown as typeof fetch;
+    const out401 = await syncable.fetchOne?.(ctx401, "https://example.atlassian.net/browse/ENG-42");
+    expect(out401).toEqual({ status: "not_found", reason: "unauthorized" });
   });
 });
 
