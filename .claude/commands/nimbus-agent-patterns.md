@@ -2,9 +2,9 @@
 name: nimbus-agent-patterns
 description: >
   Authoring built-in Nimbus agents (catchup, expert, impact, ghost, conflicts, huddle,
-  janitor, preflight, why, glossary, decisions, ownership): file location, the
-  read-only/HITL-free shape invariant, parallel sub-agent decomposition via
-  AgentCoordinator, tool-scope restriction, the briefReady
+  janitor, preflight, why, glossary, decisions, ownership, pre-mortem): file location, the
+  read-only/HITL-free shape invariant (and pre-mortem's narrowly-bounded exception to it),
+  parallel sub-agent decomposition via AgentCoordinator, tool-scope restriction, the briefReady
   IPC notification contract, the matching CLI entry point, the e2e test pattern, and the
   latency budget. Use when adding/modifying a built-in agent, deciding sequential-vs-parallel
   decomposition, scoping a sub-agent's tools, wiring an agent's CLI command, testing an
@@ -16,7 +16,7 @@ description: >
 
 ## Built-in Agent Location
 
-Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
+Currently implemented built-in agents live in `packages/gateway/src/agents/` as single files named after the command they serve: `catchup.ts`, `expert.ts`, `impact.ts`, `ghost.ts`, `conflicts.ts`, `huddle.ts`, `janitor.ts`, `preflight.ts`, `why.ts`, `why-peek.ts`, `glossary.ts`, `decisions.ts`, `ownership.ts`, `premortem.ts`. Planning agents (`meeting-prep`, `oncall-brief`, `standup`) are deferred to a future phase per the roadmap.
 
 ### Implicit-knowledge agents (Spine S1 — Local Brain)
 
@@ -65,6 +65,12 @@ Three read-only agents that surface cross-colleague context by fanning the shipp
 
 **`preflight`** (`packages/gateway/src/agents/preflight.ts`) — IPC `agents.preflight`, CLI `nimbus preflight <ref> --namespace <ns> [--strict] [--json]` (plus `nimbus preflight approve <request-id>` to respond to a federated request). Blast-radius preflight over a peer namespace before a change lands; read-only.
 
+### Pre-mortem agent (Spine S1 — Local Brain)
+
+**`pre-mortem`** (`packages/gateway/src/agents/premortem.ts`) — IPC `agents.premortem`, CLI `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh] [--repropose]`. Four sequential lanes (not `AgentCoordinator` — each depends on the previous one's output): resolve a Jira epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics, compute five structural risks over that cohort, and read recurring blocker themes (`premortem_theme`, mined by the debounced background pass Task 1/2 shipped). Jira-only, and `parent_key`-derived cohort membership is team-managed-Jira-only — no `linear:project` items are indexed at all. Confidence tops out at 0.86, matching `glossary`/`decisions`: no connector indexes ticket comments.
+
+**This is the one built-in agent that is not purely read-only — read the exception's bounds below before treating "read-only, no write tools in scope" as unconditional.**
+
 ### Provenance Agents (Spine S1)
 
 **`why`** (`packages/gateway/src/agents/why.ts`) — IPC `agents.why`, CLI `nimbus why <ref> [--line <n>] [--json]`, notification `why.briefReady`. Six parallel lanes (authorship / pull request / ticket / discussion / driver / downstream) over the Phase 3 relationship graph, each degrading to a named gap note rather than going silent. Its one local read outside the index is a root-fenced, cached single-line `git blame` — not a connector call.
@@ -79,6 +85,21 @@ Every built-in agent must be:
 - **Parallel where possible** — use `AgentCoordinator` with independent sub-agents.
 - **HITL-free** — if the coordinator encounters a HITL-required tool it skips it and notes the omission in output. Built-in agents never wait on consent.
 - **Notifying** — emits a `<agentName>.briefReady { sessionId, brief: string, findings }` IPC notification on completion.
+
+### The pre-mortem exception, and its exact bounds
+
+`pre-mortem` is the one built-in agent that is not purely read-only. `runPremortem` calls `proposeWatchers` (`packages/gateway/src/premortem/watcher-proposals.ts`), which writes exactly two things and nothing else:
+
+- **`watcher` rows, always inserted with `enabled = 0`** — via `insertWatcherIfAbsent`, which never touches an existing row's `enabled` on a re-run.
+- **`premortem_watcher_proposal` rows** — a tombstone recording that this epic/service/risk-kind triple was proposed, so a user-deleted watcher stays deleted (`suppressed`) across re-runs instead of being silently resurrected. `--repropose` deletes *only this epic's* tombstones (`clearProposalTombstones`), never a global clear.
+
+No other table is written by this agent. It never calls `connectors.dispatch`, never fires HITL, and never arms a watcher — arming is a separate, unchanged user action.
+
+**This is deliberately not an I2/HITL matter.** I2 governs `HITL_REQUIRED_BACKING` — the frozen set of `action.type`s that leave the machine via `engine/executor.ts`'s `gate()`. A local SQLite insert never reaches that gate, because it is not a connector action: it is a plain local write, exactly the same shape as `glossary`'s, `decisions`'s, `ownership`'s and the egress ledger's own writes to their respective tables, none of which run through I2 either. Treating "writes a local row" as inherently an I2 concern would be a category error — I2 is about actions that leave the machine, not about mutating local state.
+
+**The actual safety property is `enabled = 0`, not a consent gate.** `automation/watcher-store.ts`'s `listEnabledWatchers` filters strictly on `w.enabled === 1`; the watcher engine (`automation/watcher-engine.ts`) only ever evaluates rows that function returns. A paused row `pre-mortem` inserts is therefore structurally inert — it cannot fire, regardless of who or what inserted it — until a human explicitly arms it through the existing watcher-arming path. That is what makes the write safe to leave outside I2: the row itself cannot cause an outbound or user-visible effect on its own.
+
+Do not generalize this exception to a future agent by analogy. If a new agent needs to write something beyond a paused `watcher` row + its own proposal-tombstone table, that is a new design decision requiring its own review — not an extension of this one.
 
 ## Sub-agent Decomposition Pattern
 
@@ -147,7 +168,7 @@ Built-in agents targeting interactive use (`oncall`, `expert`, `standup`) should
 ## Authoring Checklist
 
 - [ ] File created at `packages/gateway/src/agents/<agent-name>.ts`.
-- [ ] Agent is read-only — no write tools in scope.
+- [ ] Agent is read-only — no write tools in scope. (The sole existing exception is `pre-mortem`'s paused-watcher-proposal write — see "The pre-mortem exception" above; do not add a second exception without the same level of review.)
 - [ ] Decomposed into parallel sub-agents via `AgentCoordinator` where independent steps exist.
 - [ ] Each sub-agent's `toolScope` lists exactly the tools it needs — nothing extra.
 - [ ] HITL-required tools are skipped and noted in output, never awaited.

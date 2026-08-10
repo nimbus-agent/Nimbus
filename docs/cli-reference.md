@@ -511,6 +511,50 @@ Like `nimbus glossary`, `nimbus owners` **hard-rejects** an unrecognised flag ra
 
 ---
 
+### `nimbus pre-mortem`
+
+The thirteenth built-in agent: a risk brief for a Jira epic, built from comparable past epics already in the local index. Four sequential lanes — resolve the epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics touching those services, compute five structural risks over that cohort (cycle-time overrun, size overrun, review drag, incident coupling, deploy-failure), and read recurring blocker themes mined by the background pass (schema **V53**). It then proposes — but never arms — one paused `incident_opened` watcher per affected service.
+
+**Jira-only, and narrower still within Jira:** `--service` overrides aside, affected-service derivation walks `parent_key`-linked children, which `jira-sync.ts` only populates for **team-managed** projects — a company-managed epic resolves to zero derived services. No Linear epic is ever recognized: no `linear:project` items are indexed at all, so a `linear:...` reference is reported as an unsupported-tracker gap, not silently ignored.
+
+```text
+Usage: nimbus pre-mortem <epic-ref> [--service <name>]... [--json] [--refresh] [--repropose]
+  <epic-ref>   a Jira epic key, e.g. PROJ-120 or jira:PROJ-120
+  --service    repeatable; overrides the derived affected-service set
+  --refresh    run the pre-mortem theme pass before building the brief
+  --repropose  re-create a previously-deleted watcher proposal for this epic
+```
+
+```bash
+nimbus pre-mortem PROJ-120
+nimbus pre-mortem PROJ-120 --service billing-api --service payments-api
+nimbus pre-mortem PROJ-120 --refresh
+nimbus pre-mortem PROJ-120 --repropose
+nimbus pre-mortem PROJ-120 --json
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `<epic-ref>` | Required. A Jira epic key (`PROJ-120`) or explicitly-prefixed reference (`jira:PROJ-120`). Any other tracker prefix (e.g. `linear:ABC-1`) is reported as an unsupported-tracker gap rather than looked up. |
+| `--service <name>` | Repeatable. Overrides the derived affected-service set entirely — useful for a brand-new epic with no PR-derivable services yet. |
+| `--refresh` | Run `premortem.refresh` (the on-demand theme-extraction pass) before building the brief. Unlike `glossary`/`decisions`/`ownership`'s `.refresh`, this is a bare awaited RPC call, not a `{ jobId }` long-running job — a disabled pass (`[premortem].enabled = false`) or a concurrent pass surfaces as a normal error, exit code 2. |
+| `--repropose` | Deletes this epic's `premortem_watcher_proposal` tombstones before proposing, so a watcher the user had previously deleted is re-created (paused) instead of staying suppressed. Scoped to this one epic only. |
+| `--json` | Machine-readable JSON output (otherwise Markdown). |
+
+Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an unrecognised flag rather than ignoring it.
+
+**Watcher proposals — what they are and are not:** every affected service gets one `watcher` row inserted with `enabled = 0` (paused) plus a `premortem_watcher_proposal` tombstone, wrapped in one transaction so the two can never land separately. A paused row cannot fire — `automation/watcher-store.ts`'s `listEnabledWatchers` filters strictly on `enabled = 1` — until a human arms it through the existing watcher-arming path; `nimbus pre-mortem` never arms anything itself. **No deploy-failure watcher is ever proposed**, even though deploy-failure risk is computed and reported: a deployment item's `item.service` is the annotate provider slug (e.g. `github-actions`), while the watcher engine matches syncable service ids, so a service-filtered deploy-failure watcher could never fire. This is the one narrowly-bounded exception to the built-in-agent read-only shape invariant — see the `nimbus-agent-patterns` skill for its exact bounds and why it is not an I2/HITL matter.
+
+**Review drag cannot currently be measured for most repos:** no connector indexes a pull request's *opened* timestamp (only `merged_at`), so the review-drag risk reports a named gap rather than a fabricated `0` wherever that data is missing.
+
+**Read-only in the request sense, not the write sense:** a plain `nimbus pre-mortem` never triggers HITL and never calls `connectors.dispatch` — the watcher-proposal writes above are plain local SQLite inserts, not egress. `agents.premortem` is deliberately excluded from the HTTP agent-invocation surface (`POST /v1/agents/{agent}`) and the MCP tool surface, matching `agents.preflight`, because those writes have no HITL gate and an external caller must not be able to trigger them unprompted; it remains reachable from the CLI (this command) and the Tauri renderer.
+
+**Exit codes:** `1` = gateway not running; `2` = agent error (unknown or non-Epic epic key, unsupported tracker, or a `--refresh` pass failure).
+
+---
+
 ### `nimbus catchup`
 
 Personalized retrospective digest of everything that happened across connected services while you were away, weighted by your historical involvement. Unlike a uniform, service-scoped digest, `catchup` prioritizes activity by the user's recent work: services they own, repos they contribute to, incidents they've responded to, people they collaborate with frequently. Five parallel sub-agents (`s_owned_services`, `s_active_repos`, `s_responded_incidents`, `s_collaborators`, `s_window_items`); three-tier self-person resolver (override → git email → OS username).

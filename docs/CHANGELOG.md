@@ -8,6 +8,54 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-08-11 — `nimbus pre-mortem`: the thirteenth built-in agent (PR B of the S1 pre-mortem
+  work).** Reads the schema + background pass PR A shipped 2026-08-09 (V53) and adds the missing
+  reader: `agents.premortem`, `nimbus pre-mortem <epic-ref> [--service <name>]… [--json]
+  [--refresh] [--repropose]`. Four SEQUENTIAL lanes, not `AgentCoordinator`-parallel, since each
+  depends on the previous one's output: resolve the epic to its affected services, build an
+  IDF-weighted service-overlap cohort of comparable closed epics, compute five structural risks
+  over that cohort, and read recurring blocker themes from the V53 pass.
+  **Jira-only, and narrower still: team-managed-Jira-only.** Affected-service derivation walks
+  `parent_key`-linked children, and `jira-sync.ts` only populates `parent_key` on team-managed
+  projects — a company-managed epic resolves to zero derived services, reported as a named gap.
+  No `linear:project` items are indexed at all, so a `linear:` reference is reported as an
+  unsupported-tracker gap, never silently ignored.
+  **The one built-in agent that is not purely read-only.** `proposeWatchers`
+  (`premortem/watcher-proposals.ts`) writes exactly two things per affected service: a `watcher`
+  row always inserted with `enabled = 0` (paused), and its `premortem_watcher_proposal` tombstone
+  — both in one transaction, so a watcher row can never exist without its tombstone. This is
+  **not** an I2/HITL matter: I2 governs `HITL_REQUIRED_BACKING` action types that leave the
+  machine via `engine/executor.ts`'s `gate()`, and a local SQLite insert never reaches that gate —
+  the same shape as `glossary`/`decisions`/`ownership`'s own local writes, and the egress
+  ledger's. The safety property is `enabled = 0`: `automation/watcher-store.ts`'s
+  `listEnabledWatchers` filters strictly on `enabled === 1`, so a paused row is structurally inert
+  until a human arms it through the existing watcher-arming path — `nimbus pre-mortem` never arms
+  anything itself. `--repropose` deletes only the target epic's tombstones before proposing, so a
+  deliberately-deleted watcher is re-created (paused) rather than staying `suppressed`; never a
+  global clear.
+  **No deploy-failure watcher is ever proposed**, even though the deploy-failure risk is computed
+  and reported alongside the other four: a deployment item's `item.service` is the annotate
+  provider slug (e.g. `github-actions`), while the watcher engine matches syncable service ids, so
+  a service-filtered deploy-failure watcher could never fire. Reconciling the two vocabularies is
+  a separate, undone change.
+  **Review drag cannot currently be measured for most repos**: no connector indexes a pull
+  request's *opened* timestamp (only `merged_at`), so the brief states this and reports a named
+  gap rather than a fabricated figure wherever the data is missing.
+  **Incident coupling** translates a cohort repo to a DORA `[ci.service.<id>]` config id via the
+  injected `ServiceIdentityResolver`, denominates its rate on `measured` — cohort members actually
+  queried (a resolvable service AND a usable window) — never on the full cohort, and states the
+  skipped count when they differ; it reports `null`, never a fabricated `0`, when nothing could be
+  checked.
+  **Confidence tops out at 0.86**, matching `glossary`/`decisions`: no connector indexes ticket
+  comments, so a blocker argued out entirely in a Jira comment thread is invisible to theme
+  extraction.
+  `agents.premortem` is **excluded from both the HTTP agent surface**
+  (`POST /v1/agents/{agent}`) **and the MCP tool surface**, matching `agents.preflight` —
+  `HTTP_EXCLUDED_AGENT_METHODS` in `ipc/agents-rpc.ts` — because an external caller reaching a
+  write with no HITL gate is the same shape of concern preflight is excluded for. It **is** on
+  Tauri's `ALLOWED_METHODS` (I7; count 104 → 105), since the renderer sits behind the I7 XSS
+  threat model rather than "arbitrary network caller"; `premortem.refresh` (unchanged from PR A)
+  is not Tauri-exposed. No new invariant, no new migration — schema was V53 already.
 - **2026-08-10 — Watcher conditions: `incident_opened` + `deploy_failed`.** The watcher engine
   previously evaluated one condition type, `alert_fired`, which matches an item type no connector
   indexes; a watcher could be created and armed and still never fire. Both new conditions come from

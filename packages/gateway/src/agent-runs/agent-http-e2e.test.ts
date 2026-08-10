@@ -140,6 +140,22 @@ describe("agents over HTTP — end to end", () => {
     }
   });
 
+  test("agents.premortem is not reachable over HTTP", async () => {
+    // pre-mortem writes paused watcher rows with no HITL gate (see the `nimbus-agent-patterns`
+    // skill for the exact bounds of that exception). A 404 here is the whole point, same as
+    // preflight above: an external caller must not be able to trigger those writes unprompted,
+    // and no egress row is written for a route that does not exist.
+    const s = await startAgentTestServer();
+    try {
+      const res = await invoke(s.port, "premortem", s.token, { epicRef: "PROJ-1" });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "unknown_agent" });
+      expect(ledgerRows(s.db, "SELECT id FROM egress_ledger")).toEqual([]);
+    } finally {
+      s.stop();
+    }
+  });
+
   test("GET /v1/agents publishes exactly the invokable set", async () => {
     const s = await startAgentTestServer();
     try {
@@ -149,6 +165,7 @@ describe("agents over HTTP — end to end", () => {
       expect(res.status).toBe(200);
       const { agents } = (await res.json()) as { agents: string[] };
       expect(agents).not.toContain("preflight");
+      expect(agents).not.toContain("premortem");
       expect(agents).not.toContain("whyPeek");
       expect(agents).toContain("expert");
       expect(agents).toHaveLength(11);
