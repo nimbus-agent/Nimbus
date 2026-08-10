@@ -12,6 +12,7 @@ import {
   listCandidateGraphRelations,
   parseGraphPredicate,
 } from "../automation/graph-predicate.ts";
+import { isKnownWatcherConditionType } from "../automation/watcher-condition-kinds.ts";
 import { listWatcherHistory } from "../automation/watcher-history.ts";
 import {
   deleteWatcher,
@@ -116,10 +117,18 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       rec !== undefined && typeof rec["graphPredicateJson"] === "string"
         ? rec["graphPredicateJson"]
         : null;
+    const name = requireString(rec, "name");
+    const conditionType = requireString(rec, "conditionType");
+    if (!isKnownWatcherConditionType(conditionType)) {
+      throw new AutomationRpcError(
+        -32602,
+        `Unsupported conditionType "${conditionType}" — the watcher engine cannot evaluate it`,
+      );
+    }
     const id = insertWatcher(ctx.db, {
-      name: requireString(rec, "name"),
+      name,
       enabled: 1,
-      condition_type: requireString(rec, "conditionType"),
+      condition_type: conditionType,
       condition_json: requireString(rec, "conditionJson"),
       action_type: requireString(rec, "actionType"),
       action_json: requireString(rec, "actionJson"),
