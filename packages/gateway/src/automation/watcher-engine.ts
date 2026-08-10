@@ -6,6 +6,7 @@ import {
   itemMatchesGraphPredicate,
   parseGraphPredicate,
 } from "./graph-predicate.ts";
+import { watcherConditionKind } from "./watcher-condition-kinds.ts";
 import {
   insertWatcherEvent,
   listEnabledWatchers,
@@ -83,7 +84,8 @@ function evaluateOneWatcher(
   syncedServiceId: string | undefined,
   graphEnabled: boolean,
 ): { summary: string; snapshot: string } | null {
-  if (w.condition_type !== "alert_fired") {
+  const kind = watcherConditionKind(w.condition_type);
+  if (kind === undefined) {
     return null;
   }
   const cond = asRecord(w.condition_json);
@@ -104,13 +106,14 @@ function evaluateOneWatcher(
   const rows = db
     .query(
       `SELECT id, title, service, type, external_id, modified_at FROM item
-       WHERE type = 'alert'
+       WHERE type = ?
          AND modified_at > ?
          AND (? IS NULL OR service = ?)
+         ${kind.extraSql}
        ORDER BY modified_at DESC
        LIMIT 5`,
     )
-    .all(since, service ?? null, service ?? null) as Array<{
+    .all(kind.itemType, since, service ?? null, service ?? null) as Array<{
     id: string;
     title: string;
     service: string;
