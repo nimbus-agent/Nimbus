@@ -55,6 +55,18 @@ constraint error instead of quietly doing nothing.
 `deploy_failed` therefore covers **CI-annotated deployments only**. This is stated in the condition's
 description and in every brief that proposes such a watcher — not silently absorbed.
 
+**The brief distinguishes three deployment states, not two** (design review Q1), so a Vercel user
+learns *why* no watcher was proposed instead of seeing an unexplained absence:
+
+| Service's indexed deployment items | Brief |
+|---|---|
+| carry `metadata.conclusion` | proposes the watcher |
+| exist, none carry `conclusion` | names the limit: deploy-failure watching covers CI-annotated deploys; this service's deployments record no outcome |
+| none at all | the ordinary "no deployment history" gap |
+
+Keyed on the **presence of the `conclusion` key in the indexed rows** — derived, never a hardcoded
+list of producer names, which would be a fourth surface to drift when a producer changes shape.
+
 ---
 
 ## PR B1 — two real watcher conditions
@@ -87,7 +99,17 @@ against the condition-kind table and rejects an unknown kind with `-32602`.
 
 This is deliberate scope, not creep: the table's whole purpose is to be the single answer to "which
 conditions can fire", and a creation path that bypasses it would leave that answer wrong the moment
-it shipped. Bounded to a membership check — no other change to `watcher.create` semantics.
+it shipped. Bounded to a **membership check** — no other change to `watcher.create` semantics.
+
+**Deliberately not validated: whether the filtered service currently has matching items.** A watcher
+is a forward-looking subscription; a service with no incidents *yet* is the normal case for one worth
+arming. Validation answers "can the engine ever evaluate this condition", which is statically
+knowable — not "would it match today", which is not a validity question. `watcher.validateCondition`
+is untouched: it takes `graphPredicateJson` + `sinceMs` and never receives a `conditionType`
+(`automation-rpc.ts:74-87`).
+
+**Error convention.** No repo-wide JSON-RPC error enum exists; each namespace defines its own class
+over a raw integer (`AutomationRpcError`, `AgentsRpcError`). B1 follows the file it edits.
 
 **Testing.**
 
@@ -123,8 +145,17 @@ review drag still propose nothing, rather than a contrived condition.
 `metadata.issue_type = 'Epic'`, written only by `connectors/jira-sync.ts`; `linear-sync.ts` never
 writes it and **no `linear:project` items are indexed at all**, so there is no Linear epic-shaped row
 to find. Within Jira, `metadata.parent_key` is populated only for team-managed projects, so a closed
-company-managed epic resolves to zero affected services and yields no theme — silently, by design,
-not as an error.
+company-managed epic resolves to zero affected services and yields no theme.
+
+**The empty-result diagnostic names its cause** (design review S3). The 2026-08-09 failure-mode table
+already returns a named gap rather than silence, but not *which* limitation produced it:
+
+- a Linear reference → *pre-mortem covers Jira epics only; no Linear project items are indexed*
+- a Jira epic with no `parent_key` children → *this looks like a company-managed Jira project, where
+  epic membership is not indexed; pass `--service`, or re-run once child PRs land*
+- otherwise → the existing generic gap
+
+Each names what is missing **and** what to do about it.
 
 **Surface.**
 
@@ -141,7 +172,15 @@ not as an error.
 
 - `.claude/commands/nimbus-agent-patterns.md` — its Agent Shape Invariant states that every built-in
   agent is read-only with no write tools in scope. pre-mortem writes paused watcher rows. Amend it
-  deliberately rather than leave drift for the next author.
+  deliberately rather than leave drift for the next author. The amendment is **explicit about the
+  exception's bounds** (design review S2): pre-mortem writes `watcher` rows with `enabled = 0` and
+  `premortem_watcher_proposal` rows, and nothing else. It is **not** an I2/HITL matter — I2 governs
+  `HITL_REQUIRED_BACKING` action types that leave the machine via `engine/executor.ts`, and a local
+  SQLite insert never enters that gate, exactly as `glossary`, `decisions`, `ownership` and the egress
+  ledger already write local rows without one. The safety property is `enabled = 0`, not the identity
+  of the writer: `listEnabledWatchers` filters on `enabled === 1`, so a paused row cannot fire
+  whoever inserted it. Routing the write through `watcher.create` instead would make it **less** safe
+  — that method hardcodes `enabled: 1` (`ipc/automation-rpc.ts:121`) and would arm every proposal.
 - `docs/roadmap.md` — the S1 row and the Phase 7 Wave 5 entry, which currently describe pre-mortem as
   both read-only *and* scheduling watchers.
 - `docs/cli-reference.md`, `docs/CHANGELOG.md`, `docs/architecture.md` (V53 tables + both IPC
