@@ -158,6 +158,14 @@ rather than a contrived condition.
 >    at evaluation. A real fix, a separate change, and out of scope for B2.
 >
 > Whichever is taken, the brief must not imply an epic-scoped deploy alert it cannot deliver.
+>
+> **DECIDED 2026-08-10 — option 1.** pre-mortem proposes **no** deploy-failure watcher. The
+> deploy-failure risk is still computed and reported in the brief like every other structural risk;
+> it simply proposes nothing, exactly as cycle time, size overrun and review drag already do. The
+> brief states once, plainly, that no watcher is proposed for it and why. This keeps the design's
+> standing rule — a risk with no genuine watchable condition proposes nothing rather than a
+> contrived one — and leaves option 3 available later without having shipped a misleading watcher in
+> the meantime. **`incident_opened` is therefore the only watcher kind B2 proposes.**
 
 **Jira-only, and narrower than "Jira".** Every brief states it. Discovery keys on
 `metadata.issue_type = 'Epic'`, written only by `connectors/jira-sync.ts`; `linear-sync.ts` never
