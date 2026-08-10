@@ -36,6 +36,7 @@ import {
   writeConnectorSecret,
   writePerServiceOAuthKey,
 } from "../../connectors/connector-vault.ts";
+import { runCredentialProbe } from "../../connectors/credential-probe.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -87,56 +88,100 @@ function oauthRedirectPortFromRec(rec: Record<string, unknown> | undefined): num
   return undefined;
 }
 
-function authSuccess(id: ConnectorServiceId): ConnectorRpcHit {
+type VerifiedState = "verified" | "unverified" | null;
+
+function authSuccess(id: ConnectorServiceId, verified: VerifiedState = null): ConnectorRpcHit {
   return {
     kind: "hit",
     value: {
       ok: true,
       serviceId: id,
       scopesGranted: [] as string[],
+      verified,
     },
   };
 }
 
-async function connectorAuthGithub(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
+/**
+ * Probe `creds` BEFORE anything is written, and clear a stuck `unauthenticated`
+ * health state when — and only when — the provider confirms the credential.
+ *
+ * Ordering is the contract: probing in-hand credentials before the first
+ * `writeConnectorSecret` is what makes "nothing was stored" true, and is what
+ * stops a typo'd token clobbering a working stored one. Throwing here aborts the
+ * handler before any write.
+ */
+async function verifyBeforeStore(
+  ctx: ConnectorRpcHandlerContext,
+  serviceId: ConnectorServiceId,
+  creds: Record<string, string>,
+): Promise<VerifiedState> {
+  const probe = ctx.runCredentialProbe ?? runCredentialProbe;
+  const verdict = await probe(serviceId, creds);
+  if (verdict === null) {
+    return null;
+  }
+  if (verdict.kind === "rejected") {
+    // Names the service and the status ONLY. A provider body or request URL can
+    // carry the credential or the Vault-stored base_url.
+    throw new ConnectorRpcError(
+      -32602,
+      `${serviceId} rejected the credential (HTTP ${String(verdict.httpStatus)}). Nothing was stored.`,
+    );
+  }
+  if (verdict.kind === "valid") {
+    ctx.localIndex.markConnectorReauthenticated(serviceId);
+    return "verified";
+  }
+  return "unverified";
+}
+
+async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
+  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
   const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for github");
   }
-  await writeConnectorSecret(vault, "github", "pat", token);
+  const verified = await verifyBeforeStore(ctx, "github", { pat: token });
+  await writeConnectorSecret(ctx.vault, "github", "pat", token);
   const now = Date.now();
-  const interval = defaultSyncIntervalMsForService("github");
-  localIndex.ensureConnectorSchedulerRegistration("github", interval, now);
-  const ghaInterval = defaultSyncIntervalMsForService("github_actions");
-  localIndex.ensureConnectorSchedulerRegistration("github_actions", ghaInterval, now);
-  return authSuccess("github");
+  ctx.localIndex.ensureConnectorSchedulerRegistration(
+    "github",
+    defaultSyncIntervalMsForService("github"),
+    now,
+  );
+  ctx.localIndex.ensureConnectorSchedulerRegistration(
+    "github_actions",
+    defaultSyncIntervalMsForService("github_actions"),
+    now,
+  );
+  return authSuccess("github", verified);
 }
 
-async function connectorAuthGitlab(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
+async function connectorAuthGitlab(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
+  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
   const token = extractStringField(tokenRaw);
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing personalAccessToken for gitlab");
   }
-  await writeConnectorSecret(vault, "gitlab", "pat", token);
-  const baseRaw = rec?.["apiBaseUrl"] ?? rec?.["api_base"];
-  if (typeof baseRaw === "string" && baseRaw.trim() !== "") {
-    await writeConnectorSecret(vault, "gitlab", "api_base", stripTrailingSlashes(baseRaw.trim()));
+  const baseRaw = ctx.rec?.["apiBaseUrl"] ?? ctx.rec?.["api_base"];
+  const hasCustomBase = typeof baseRaw === "string" && baseRaw.trim() !== "";
+  const normalizedBase = hasCustomBase
+    ? stripTrailingSlashes((baseRaw as string).trim())
+    : "https://gitlab.com/api/v4";
+  const verified = await verifyBeforeStore(ctx, "gitlab", {
+    pat: token,
+    api_base: normalizedBase,
+  });
+  await writeConnectorSecret(ctx.vault, "gitlab", "pat", token);
+  if (hasCustomBase) {
+    await writeConnectorSecret(ctx.vault, "gitlab", "api_base", normalizedBase);
   } else {
-    await deleteConnectorSecret(vault, "gitlab", "api_base");
+    await deleteConnectorSecret(ctx.vault, "gitlab", "api_base");
   }
   const interval = defaultSyncIntervalMsForService("gitlab");
-  localIndex.ensureConnectorSchedulerRegistration("gitlab", interval, Date.now());
-  return authSuccess("gitlab");
+  ctx.localIndex.ensureConnectorSchedulerRegistration("gitlab", interval, Date.now());
+  return authSuccess("gitlab", verified);
 }
 
 async function connectorAuthLinear(
@@ -490,12 +535,8 @@ async function connectorAuthPagerduty(
   return authSuccess("pagerduty");
 }
 
-async function connectorAuthJenkins(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const baseRaw = rec?.["apiBaseUrl"] ?? rec?.["baseUrl"];
+async function connectorAuthJenkins(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
+  const baseRaw = ctx.rec?.["apiBaseUrl"] ?? ctx.rec?.["baseUrl"];
   const base =
     typeof baseRaw === "string" && baseRaw.trim() !== ""
       ? stripTrailingSlashes(baseRaw.trim())
@@ -506,9 +547,9 @@ async function connectorAuthJenkins(
       "Jenkins requires --api-base <url> (e.g. https://ci.example/)",
     );
   }
-  const userRaw = rec?.["username"];
+  const userRaw = ctx.rec?.["username"];
   const user = extractStringField(userRaw);
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
+  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
   const token = extractStringField(tokenRaw);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Jenkins requires --username <jenkins_user>");
@@ -516,22 +557,23 @@ async function connectorAuthJenkins(
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Jenkins requires --token <api_token>");
   }
-  await writeConnectorSecret(vault, "jenkins", "base_url", base);
-  await writeConnectorSecret(vault, "jenkins", "username", user);
-  await writeConnectorSecret(vault, "jenkins", "api_token", token);
+  const verified = await verifyBeforeStore(ctx, "jenkins", {
+    base_url: base,
+    username: user,
+    api_token: token,
+  });
+  await writeConnectorSecret(ctx.vault, "jenkins", "base_url", base);
+  await writeConnectorSecret(ctx.vault, "jenkins", "username", user);
+  await writeConnectorSecret(ctx.vault, "jenkins", "api_token", token);
   const interval = defaultSyncIntervalMsForService("jenkins");
-  localIndex.ensureConnectorSchedulerRegistration("jenkins", interval, Date.now());
-  return authSuccess("jenkins");
+  ctx.localIndex.ensureConnectorSchedulerRegistration("jenkins", interval, Date.now());
+  return authSuccess("jenkins", verified);
 }
 
-async function connectorAuthBitbucket(
-  rec: Record<string, unknown> | undefined,
-  vault: NimbusVault,
-  localIndex: LocalIndex,
-): Promise<ConnectorRpcHit> {
-  const userRaw = rec?.["bitbucketUsername"] ?? rec?.["username"];
+async function connectorAuthBitbucket(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
+  const userRaw = ctx.rec?.["bitbucketUsername"] ?? ctx.rec?.["username"];
   const user = extractStringField(userRaw);
-  const tokenRaw = rec?.["personalAccessToken"] ?? rec?.["token"];
+  const tokenRaw = ctx.rec?.["personalAccessToken"] ?? ctx.rec?.["token"];
   const token = extractStringField(tokenRaw);
   if (user === "") {
     throw new ConnectorRpcError(-32602, "Missing username for bitbucket (Atlassian account)");
@@ -539,11 +581,15 @@ async function connectorAuthBitbucket(
   if (token === "") {
     throw new ConnectorRpcError(-32602, "Missing app password for bitbucket (use token field)");
   }
-  await writeConnectorSecret(vault, "bitbucket", "username", user);
-  await writeConnectorSecret(vault, "bitbucket", "app_password", token);
+  const verified = await verifyBeforeStore(ctx, "bitbucket", {
+    username: user,
+    app_password: token,
+  });
+  await writeConnectorSecret(ctx.vault, "bitbucket", "username", user);
+  await writeConnectorSecret(ctx.vault, "bitbucket", "app_password", token);
   const interval = defaultSyncIntervalMsForService("bitbucket");
-  localIndex.ensureConnectorSchedulerRegistration("bitbucket", interval, Date.now());
-  return authSuccess("bitbucket");
+  ctx.localIndex.ensureConnectorSchedulerRegistration("bitbucket", interval, Date.now());
+  return authSuccess("bitbucket", verified);
 }
 
 /**
@@ -713,12 +759,12 @@ async function connectorAuthOAuthPkce(
 type PatConnectorAuthHandler = (ctx: ConnectorRpcHandlerContext) => Promise<ConnectorRpcHit>;
 
 const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnectorAuthHandler>> = {
-  github: (c) => connectorAuthGithub(c.rec, c.vault, c.localIndex),
-  gitlab: (c) => connectorAuthGitlab(c.rec, c.vault, c.localIndex),
+  github: (c) => connectorAuthGithub(c),
+  gitlab: (c) => connectorAuthGitlab(c),
   linear: (c) => connectorAuthLinear(c.rec, c.vault, c.localIndex),
-  bitbucket: (c) => connectorAuthBitbucket(c.rec, c.vault, c.localIndex),
+  bitbucket: (c) => connectorAuthBitbucket(c),
   discord: (c) => connectorAuthDiscord(c.rec, c.vault, c.localIndex),
-  jenkins: (c) => connectorAuthJenkins(c.rec, c.vault, c.localIndex),
+  jenkins: (c) => connectorAuthJenkins(c),
   circleci: (c) => connectorAuthCircleci(c.rec, c.vault, c.localIndex),
   pagerduty: (c) => connectorAuthPagerduty(c.rec, c.vault, c.localIndex),
   kubernetes: (c) => connectorAuthKubernetes(c.rec, c.vault, c.localIndex),
@@ -737,13 +783,18 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
       missingBase:
         "Missing Jira site base URL for jira (apiBaseUrl), e.g. https://your-domain.atlassian.net",
     });
+    const verified = await verifyBeforeStore(c, "jira", {
+      base_url: creds.baseNormalized,
+      email: creds.email,
+      api_token: creds.apiToken,
+    });
     const value = await registerAtlassianApiConnectorAuth({
       vault: c.vault,
       localIndex: c.localIndex,
       serviceId: "jira",
       creds,
     });
-    return { kind: "hit", value };
+    return { kind: "hit", value: { ...value, verified } };
   },
   confluence: async (c) => {
     const creds = parseAtlassianSiteCredentials(c.rec, {

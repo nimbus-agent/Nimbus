@@ -1,8 +1,11 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import type { ProbeVerdict } from "../connectors/credential-probe.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchConnectorRpc } from "./connector-rpc.ts";
+import { handleConnectorAuth } from "./connector-rpc-handlers/auth.ts";
+import type { ConnectorRpcHandlerContext } from "./connector-rpc-handlers/context.ts";
 import { ConnectorRpcError } from "./connector-rpc-shared.ts";
 
 function makeIndex(): LocalIndex {
@@ -16,6 +19,59 @@ function makeIndex(): LocalIndex {
     [Date.now()],
   );
   return idx;
+}
+
+/** A minimal `ConnectorRpcHandlerContext`, overridable per test. */
+function baseCtx(overrides: Partial<ConnectorRpcHandlerContext> = {}): ConnectorRpcHandlerContext {
+  return {
+    rec: undefined,
+    vault: {} as unknown as NimbusVault,
+    localIndex: makeIndex(),
+    openUrl: async (_url: string): Promise<void> => {},
+    syncScheduler: undefined,
+    connectorMesh: undefined,
+    ...overrides,
+  };
+}
+
+function fakeLocalIndex(opts: { onReauth?: (id: string) => void } = {}): LocalIndex {
+  return {
+    ensureConnectorSchedulerRegistration: () => {},
+    markConnectorReauthenticated: (id: string) => opts.onReauth?.(id),
+  } as unknown as LocalIndex;
+}
+
+/** A vault whose `set` calls are recorded by key, so a test can assert what was stored. */
+function recordingVault(writes: string[]): NimbusVault {
+  return {
+    set: async (k: string) => {
+      writes.push(k);
+    },
+    get: async () => null,
+    delete: async () => {},
+    listKeys: async () => [],
+  } as unknown as NimbusVault;
+}
+
+/** Records probe and vault events into one ordered log. */
+function seqHarness() {
+  const seq: string[] = [];
+  return {
+    seq,
+    vault: {
+      set: async (k: string) => {
+        seq.push(`write:${k}`);
+      },
+      get: async () => null,
+      delete: async (k: string) => {
+        seq.push(`delete:${k}`);
+      },
+    } as unknown as NimbusVault,
+    probe: (verdict: ProbeVerdict) => async () => {
+      seq.push("probe");
+      return verdict;
+    },
+  };
 }
 
 const baseOpts = {
@@ -243,5 +299,67 @@ describe("connector.startAuth deprecated alias (S4-F2)", () => {
         params: {},
       }),
     ).rejects.toBeDefined();
+  });
+});
+
+describe("connector.auth — credential probe runs before any Vault write", () => {
+  test("a rejected credential writes NOTHING to the vault and throws", async () => {
+    const h = seqHarness();
+    await expect(
+      handleConnectorAuth({
+        ...baseCtx({ vault: h.vault }),
+        rec: { service: "github", token: "dead-pat" },
+        runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
+      }),
+    ).rejects.toThrow(/github/);
+    // The point of probing BEFORE writing: a typo'd token must not clobber a
+    // working stored credential on the way to being rejected.
+    expect(h.seq).toEqual(["probe"]);
+  });
+
+  test("on the VALID path the probe still runs before any write", async () => {
+    const h = seqHarness();
+    const reauthed: string[] = [];
+    const hit = await handleConnectorAuth({
+      ...baseCtx({
+        vault: h.vault,
+        localIndex: fakeLocalIndex({ onReauth: (id) => reauthed.push(id) }),
+      }),
+      rec: { service: "github", token: "good-pat" },
+      runCredentialProbe: h.probe({ kind: "valid" }),
+    });
+    // Ordering, not just presence: an empty-writes assertion cannot cover this
+    // path, because here the writes are supposed to happen.
+    expect(h.seq[0]).toBe("probe");
+    expect(h.seq).toContain("write:github.pat");
+    expect(reauthed).toEqual(["github"]);
+    expect((hit.value as { verified: string }).verified).toBe("verified");
+  });
+
+  test("an unreachable provider stores but does NOT clear health", async () => {
+    const writes: string[] = [];
+    const reauthed: string[] = [];
+    const hit = await handleConnectorAuth({
+      ...baseCtx({
+        vault: recordingVault(writes),
+        localIndex: fakeLocalIndex({ onReauth: (id) => reauthed.push(id) }),
+      }),
+      rec: { service: "github", token: "maybe-good" },
+      runCredentialProbe: async () => ({ kind: "unreachable" }),
+    });
+    expect(writes).toContain("github.pat");
+    // No evidence the credential works — inventing some is the defect being fixed.
+    expect(reauthed).toEqual([]);
+    expect((hit.value as { verified: string }).verified).toBe("unverified");
+  });
+
+  test("a service with no probe stores and reports verified: null", async () => {
+    const writes: string[] = [];
+    const hit = await handleConnectorAuth({
+      ...baseCtx({ vault: recordingVault(writes) }),
+      rec: { service: "pagerduty", token: "tok" },
+    });
+    expect(writes).toContain("pagerduty.api_token");
+    expect((hit.value as { verified: string | null }).verified).toBeNull();
   });
 });
