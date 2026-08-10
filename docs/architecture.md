@@ -1015,6 +1015,15 @@ Both Phase 4 clients use the **existing JSON-RPC 2.0 IPC socket** — no new Gat
 
 The watcher engine evaluates post-sync conditions and fires configured automations. Each watcher has a `condition_type`, a `condition_json` payload (service-specific filter criteria), and an optional `graph_predicate_json` that narrows evaluation using the Phase 3 relationship graph substrate.
 
+| `condition_type` | Fires on | Coverage |
+| --- | --- | --- |
+| `alert_fired` | an indexed item of type `alert` | no connector currently indexes `alert`, so this condition cannot fire today |
+| `incident_opened` | an indexed item of type `incident` | PagerDuty |
+| `deploy_failed` | an indexed item of type `deployment` whose `metadata.conclusion` is `failure` | CI-annotated deployments (`POST /v1/deployments`) only — Vercel records its outcome under `metadata.state`, and Prefect indexes deployment definitions with no outcome |
+
+`watcher.create` rejects any other `condition_type` with `-32602`, so a watcher that the engine
+could never evaluate cannot be created.
+
 #### Graph-aware watcher example (Phase 4 §2)
 
 A watcher can additionally reference the relationship graph to narrow when it
