@@ -68,6 +68,49 @@ export function insertWatcher(
   return id;
 }
 
+/**
+ * Insert only when `id` is absent, and never touch an existing row's `enabled`
+ * (or any other column). `insertWatcher` is a bare `INSERT`, so calling it
+ * twice with a content-derived id raises a primary-key constraint error —
+ * that collision is exactly the re-run case this helper exists to make safe.
+ * A naive upsert (`ON CONFLICT DO UPDATE SET enabled = excluded.enabled`)
+ * would silently re-pause a watcher the user had deliberately armed, which is
+ * the one behavior this table must never produce.
+ */
+export function insertWatcherIfAbsent(
+  db: Database,
+  row: Omit<WatcherRow, "last_checked_at" | "last_fired_at" | "graph_predicate_json"> & {
+    graph_predicate_json?: string | null;
+  },
+): boolean {
+  if (readIndexedUserVersion(db) < 8) {
+    throw new Error("Watcher schema requires v8+");
+  }
+  const existing = db.query(`SELECT 1 FROM watcher WHERE id = ?`).get(row.id);
+  if (existing !== null) {
+    return false;
+  }
+  const gpj = row.graph_predicate_json ?? null;
+  dbRun(
+    db,
+    `INSERT INTO watcher (id, name, enabled, condition_type, condition_json,
+                          action_type, action_json, created_at, graph_predicate_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.id,
+      row.name,
+      row.enabled,
+      row.condition_type,
+      row.condition_json,
+      row.action_type,
+      row.action_json,
+      row.created_at,
+      gpj,
+    ],
+  );
+  return true;
+}
+
 export function deleteWatcher(db: Database, id: string): void {
   if (readIndexedUserVersion(db) < 8) {
     return;
