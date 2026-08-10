@@ -1021,6 +1021,14 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 
 **Credential reuse — no separate `connector auth` needed.** `github_actions` / `gitlab_ci` reuse the `github` / `gitlab` credentials; `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
+**Output — the command reports only what it actually checked.** For a handful of PAT-based connectors (`github`, `gitlab`, `bitbucket`, `jira`, `jenkins`) the gateway makes one cheap identity-endpoint call before returning, so the outcome is one of:
+
+- `Verified: <service>` — the provider confirmed the credential (a 2xx from the identity check).
+- `Stored: <service> (NOT verified — could not reach the provider)`, plus a follow-up line suggesting a re-run when online — the credential was stored but the check got a non-401 failure (403, 5xx, timeout, DNS failure). It may still be valid.
+- `Stored: <service> (not verified)` — no probe is registered for that service (most PAT/OAuth connectors); the credential was stored as given and nothing was checked.
+
+A credential the provider actively **rejects** (HTTP 401) is never stored: `nimbus connector auth` throws and exits with status `1` (a user-actionable precondition — fix the token and retry). Any other failure to store (e.g. the gateway is unreachable) exits with status `2` (an operational failure). All three outcomes above — verified, unverified, and unprobed — exit `0`: the credential was stored, which is what the command was asked to do.
+
 #### Zoom OAuth setup
 
 Zoom uses 3-legged OAuth (PKCE + Basic-header client-secret). Before running `nimbus connector auth zoom`, create a Zoom app and export the client credentials:
