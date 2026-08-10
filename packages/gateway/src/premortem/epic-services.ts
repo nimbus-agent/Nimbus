@@ -46,9 +46,11 @@ export function affectedServicesForEpic(
                                        AND child_ent.external_id = child.id
          JOIN graph_relation res       ON res.to_id = child_ent.id AND res.type = 'resolves'
          JOIN graph_entity   pr        ON pr.id     = res.from_id
-        WHERE json_extract(child.metadata, '$.parent_key') = ?
+        WHERE json_valid(child.metadata)
+          AND json_extract(child.metadata, '$.parent_key') = ?
           AND child.id <> ?
           AND child.service = (SELECT service FROM item WHERE id = ?)
+          AND json_valid(pr.metadata)
           AND json_extract(pr.metadata, '$.repo') IS NOT NULL
         ORDER BY service ASC`,
     )
@@ -92,7 +94,8 @@ export function affectedServicesForEpics(
     .query(
       `SELECT epic.id AS epicItemId, json_extract(pr.metadata, '$.repo') AS service
          FROM item epic
-         JOIN item child             ON json_extract(child.metadata, '$.parent_key') = epic.external_id
+         JOIN item child             ON json_valid(child.metadata)
+                                      AND json_extract(child.metadata, '$.parent_key') = epic.external_id
                                       AND child.service = epic.service
                                       AND child.id <> epic.id
          JOIN graph_entity   child_ent ON child_ent.type = 'issue'
@@ -100,6 +103,7 @@ export function affectedServicesForEpics(
          JOIN graph_relation res       ON res.to_id = child_ent.id AND res.type = 'resolves'
          JOIN graph_entity   pr        ON pr.id     = res.from_id
         WHERE epic.id IN (${placeholders})
+          AND json_valid(pr.metadata)
           AND json_extract(pr.metadata, '$.repo') IS NOT NULL
         ORDER BY epic.id ASC, service ASC`,
     )

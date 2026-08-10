@@ -104,23 +104,21 @@ describe("selectCohort", () => {
     expect(out.members.map((m) => m.key).sort()).toEqual(["E-3", "E-4"]);
   });
 
-  test("a non-JSON metadata row anywhere in item does not break cohort selection", () => {
+  test("a same-service, non-JSON metadata row does not break childCount (json_valid guard in childCountsFor)", () => {
     const db = makeDb();
     seedEpicWithServices(db, { key: "GOOD-1", services: ["billing"], resolvedAtMs: 1_000 });
-    // An unrelated item, in a different service, with malformed JSON
-    // metadata. `childCountsFor`'s join must guard `json_extract` with
-    // `json_valid` the same way the main candidate query does, so a bad row
-    // anywhere in `item` cannot raise "malformed JSON" and take down cohort
-    // selection for every epic. (A same-service bad row is a stronger
-    // repro of the underlying raise, but it also trips the identical,
-    // pre-existing, separately-tracked unguarded pattern in
-    // `epic-services.ts`'s own child join — out of this fix's scope per the
-    // reviewer's note — so it cannot isolate this file's fix alone; see the
-    // fix report for detail.)
+    // The bad row shares the epic's SERVICE ("jira"). Only a same-service row
+    // forces SQLite to evaluate json_extract on it at all -- a
+    // different-service row is filtered out via idx_item_service before the
+    // JSON expression ever runs, so it could never prove this guard does
+    // anything. `epic-services.ts`'s own child join is now ALSO guarded (see
+    // the epic-services.ts fix landed in this same round), so this row no
+    // longer trips that function's raise first -- it isolates
+    // `childCountsFor`'s own guard.
     db.run(
       `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["other:BAD-1", "other", "issue", "BAD-1", "bad", 1, 1, "not json"],
+      ["jira:BAD-1", "jira", "issue", "BAD-1", "bad", 1, 1, "not json"],
     );
 
     const out = selectCohort(db, ["billing"], {
@@ -130,6 +128,9 @@ describe("selectCohort", () => {
     });
 
     expect(out.members.map((m) => m.key)).toEqual(["GOOD-1"]);
+    // 1: GOOD-1's own real child from `seedEpicWithServices` (services:
+    // ["billing"]) -- the bad row is excluded by the guard, not counted.
+    expect(out.members[0]?.childCount).toBe(1);
   });
 
   test("childCount reports the total number of children under the epic", () => {

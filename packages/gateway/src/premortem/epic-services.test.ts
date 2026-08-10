@@ -199,3 +199,100 @@ test("affectedServicesForEpics: honors service scoping the same way the single-e
   expect(result.get("jira:PROJ-1")).toEqual(["acme/billing-api"]);
   db.close();
 });
+
+test("a same-service, non-JSON metadata row elsewhere in item does not break affectedServicesForEpic (child-side json_valid guard)", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt, issueEnt, "resolves");
+
+  // The bad row must be WIRED INTO THE GRAPH (its own issue entity + a
+  // resolving PR) so it actually survives this query's INNER JOINs into
+  // `graph_entity`/`graph_relation` and reaches the WHERE clause's
+  // `json_extract(child.metadata, ...)`. An `item` row with no matching
+  // `graph_entity` never gets that far in THIS query shape (the child-side
+  // json_extract lives in the WHERE, not the JOIN, unlike the batch form
+  // below) -- it is eliminated by the join itself before its metadata is
+  // ever read, so an unwired row could never prove this guard does
+  // anything.
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES (?, ?, 'issue', ?, 'T', ?, 1, 1, 0)`,
+    ["jira:BAD-1", "jira", "BAD-1", "not json"],
+  );
+  const badIssueEnt = addEntity(db, "jira:BAD-1", "issue");
+  const badPrEnt = addEntity(db, "github:pr:bad", "pr", "acme/bad-service");
+  addRelation(db, badPrEnt, badIssueEnt, "resolves");
+
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  db.close();
+});
+
+test("a same-service, non-JSON metadata row elsewhere in item does not break affectedServicesForEpics (child-side json_valid guard, batch form)", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt, issueEnt, "resolves");
+
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES (?, ?, 'issue', ?, 'T', ?, 1, 1, 0)`,
+    ["jira:BAD-1", "jira", "BAD-1", "not json"],
+  );
+
+  const result = affectedServicesForEpics(db, ["jira:PROJ-1"]);
+  expect(result.get("jira:PROJ-1")).toEqual(["acme/billing-api"]);
+  db.close();
+});
+
+test("a PR entity with non-JSON metadata does not break affectedServicesForEpic (pr-side json_valid guard)", () => {
+  // `upsertGraphEntity` always JSON.stringifies (or writes NULL), so this
+  // never happens through the real write path -- it simulates corrupted
+  // data, defensively guarded the same way the child-side hop is.
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt, issueEnt, "resolves");
+
+  addItem(db, "jira:PROJ-3", "PROJ-3", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt2 = addEntity(db, "jira:PROJ-3", "issue");
+  const badPrId = "bad-pr-entity-id";
+  db.run(
+    `INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'pr', ?, ?, ?, ?)`,
+    [badPrId, "github:pr:8", "github:pr:8", "github", "not json"],
+  );
+  addRelation(db, badPrId, issueEnt2, "resolves");
+
+  expect(affectedServicesForEpic(db, "jira:PROJ-1", "PROJ-1")).toEqual(["acme/billing-api"]);
+  db.close();
+});
+
+test("a PR entity with non-JSON metadata does not break affectedServicesForEpics (pr-side json_valid guard, batch form)", () => {
+  const db = freshDb();
+  addItem(db, "jira:PROJ-1", "PROJ-1", { meta_v: 1, issue_type: "Epic" });
+
+  addItem(db, "jira:PROJ-2", "PROJ-2", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt = addEntity(db, "jira:PROJ-2", "issue");
+  const prEnt = addEntity(db, "github:pr:7", "pr", "acme/billing-api");
+  addRelation(db, prEnt, issueEnt, "resolves");
+
+  addItem(db, "jira:PROJ-3", "PROJ-3", { meta_v: 1, parent_key: "PROJ-1" });
+  const issueEnt2 = addEntity(db, "jira:PROJ-3", "issue");
+  const badPrId = "bad-pr-entity-id-batch";
+  db.run(
+    `INSERT INTO graph_entity (id, type, external_id, label, service, metadata) VALUES (?, 'pr', ?, ?, ?, ?)`,
+    [badPrId, "github:pr:8b", "github:pr:8b", "github", "not json"],
+  );
+  addRelation(db, badPrId, issueEnt2, "resolves");
+
+  const result = affectedServicesForEpics(db, ["jira:PROJ-1"]);
+  expect(result.get("jira:PROJ-1")).toEqual(["acme/billing-api"]);
+  db.close();
+});
