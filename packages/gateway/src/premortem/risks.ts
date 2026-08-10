@@ -62,7 +62,7 @@ function computeCycleTime(input: {
   if (expectationOnly) {
     return {
       kind: "cycle_time",
-      summary: `Across ${cycleTimesMs.length} comparable epics, comparable epics took a median ${medianDaysRounded} days to close.`,
+      summary: `Across ${cycleTimesMs.length} comparable epics, the median time to close was ${medianDaysRounded} days.`,
       value: medianMs,
       expectationOnly: true,
     };
@@ -71,7 +71,7 @@ function computeCycleTime(input: {
   const elapsedDays = Math.round((ageMs / DAY_MS) * 10) / 10;
   return {
     kind: "cycle_time",
-    summary: `Across ${cycleTimesMs.length} comparable epics, comparable epics took a median ${medianDaysRounded} days to close, vs ${elapsedDays} days elapsed so far.`,
+    summary: `Across ${cycleTimesMs.length} comparable epics, the median time to close was ${medianDaysRounded} days, vs ${elapsedDays} days elapsed so far.`,
     value: medianMs,
     expectationOnly: false,
   };
@@ -93,11 +93,20 @@ function computeSizeOverrun(input: {
     };
   }
 
-  const ratio = medianChildren === 0 ? 0 : input.targetChildCount / medianChildren;
+  if (medianChildren === 0) {
+    return {
+      kind: "size_overrun",
+      summary: `Across ${childCounts.length} comparable epics, every one recorded zero child items, so scope comparison cannot be measured.`,
+      value: null,
+      expectationOnly: false,
+    };
+  }
+
+  const ratio = input.targetChildCount / medianChildren;
   const ratioRounded = Math.round(ratio * 100) / 100;
   return {
     kind: "size_overrun",
-    summary: `Across ${childCounts.length} comparable epics, comparable epics had a median of ${medianChildren} child items, vs ${input.targetChildCount} for this epic.`,
+    summary: `Across ${childCounts.length} comparable epics, the median child-item count was ${medianChildren}, vs ${input.targetChildCount} for this epic.`,
     value: ratioRounded,
     expectationOnly: false,
   };
