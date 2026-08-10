@@ -55,6 +55,15 @@
 
 **Why the extra predicate lives in SQL and not in a TypeScript filter after the query:** the query ends in `LIMIT 5`. Filtering afterwards would let five successful deployments hide a failed sixth, so a `deploy_failed` watcher would miss real failures whenever a service deploys often. The predicate must narrow the rows the database returns.
 
+> **CORRECTION (applied after the whole-branch review, 2026-08-10).** This task's code and test blocks
+> originally gave `incident_opened` an empty predicate and seeded a status-less incident. That was
+> wrong: `connectors/pagerduty-sync.ts` fetches **all** statuses and stamps `modified_at` from
+> `updated_at`, so an acknowledge or a resolve would fire a condition named "opened". The blocks below
+> carry the shipped predicate — `AND json_valid(metadata) AND json_extract(metadata, '$.status') =
+> 'triggered'` — and the fixtures set `metadata: { status: "triggered" }`. Following this task as
+> written now reproduces what merged. The trade-off it buys is recorded in `docs/architecture.md`: an
+> incident indexed with a null or absent status never fires the condition at all.
+
 - [ ] **Step 1: Write the failing test for the table module**
 
 Create `packages/gateway/src/automation/watcher-condition-kinds.test.ts`:
@@ -84,7 +93,7 @@ describe("watcher-condition-kinds", () => {
 
   test("only deploy_failed carries an extra predicate, and it is json_valid-guarded", () => {
     expect(watcherConditionKind("alert_fired")?.extraSql).toBe("");
-    expect(watcherConditionKind("incident_opened")?.extraSql).toBe("");
+    expect(watcherConditionKind("incident_opened")?.extraSql).toContain("'triggered'");
     expect(watcherConditionKind("deploy_failed")?.extraSql).toContain("conclusion");
     // Pinned deliberately: without json_valid, a single non-JSON metadata row makes json_extract
     // raise and takes down evaluation for every watcher.
@@ -135,7 +144,15 @@ export const WATCHER_CONDITION_KINDS: readonly WatcherConditionKind[] = [
   // cannot currently fire. That is the pre-existing state, recorded rather than silently fixed.
   { conditionType: "alert_fired", itemType: "alert", extraSql: "" },
   // PagerDuty indexes `type: "incident"` (connectors/pagerduty-sync.ts).
-  { conditionType: "incident_opened", itemType: "incident", extraSql: "" },
+  // Narrowed to triggered-only: pagerduty-sync.ts fetches ALL statuses and stamps modified_at
+  // from updated_at, so without this an acknowledge or resolve fires a condition named "opened".
+  // Trade-off recorded in docs/architecture.md: an incident indexed with a null/absent status
+  // (the sync writes status ?? null) never fires this condition at all.
+  {
+    conditionType: "incident_opened",
+    itemType: "incident",
+    extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.status') = 'triggered'",
+  },
   // CI-annotated deployments only: `deployment/annotate.ts` writes metadata.conclusion. Vercel
   // records its outcome under metadata.state, and Prefect indexes deployment DEFINITIONS with no
   // outcome at all, so neither matches. Keyed on the presence of the conclusion value rather than
@@ -197,6 +214,7 @@ Append inside the existing `describe("watcher-engine", ...)` block in `packages/
       title: "api-gateway 500s",
       modifiedAt: t0 + 1000,
       syncedAt: t0 + 1000,
+      metadata: { status: "triggered" },
     });
 
     const bodies: string[] = [];
@@ -227,6 +245,7 @@ Append inside the existing `describe("watcher-engine", ...)` block in `packages/
       title: "other tracker",
       modifiedAt: t0 + 1000,
       syncedAt: t0 + 1000,
+      metadata: { status: "triggered" },
     });
 
     let calls = 0;
@@ -374,6 +393,7 @@ Append inside the existing `describe("watcher-engine", ...)` block in `packages/
       title: "unowned incident",
       modifiedAt: t0 + 1000,
       syncedAt: t0 + 1000,
+      metadata: { status: "triggered" },
     });
 
     let calls = 0;

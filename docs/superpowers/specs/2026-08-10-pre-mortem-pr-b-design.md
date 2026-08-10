@@ -137,9 +137,27 @@ existing row. Rules 1 (content-derived id = hash(epic item id, risk kind, servic
 (`premortem_watcher_proposal` as the deliberate-deletion tombstone) are unchanged.
 
 **The risk → condition mapping is concrete.** Incident coupling proposes an `incident_opened`
-watcher filtered to the service; deploy failure proposes a `deploy_failed` watcher filtered to the
-service, and the brief states the CI-annotated-only limit alongside it. Cycle time, size overrun and
-review drag still propose nothing, rather than a contrived condition.
+watcher filtered to the service. Cycle time, size overrun and review drag still propose nothing,
+rather than a contrived condition.
+
+> **BLOCKED — the deploy-failure watcher cannot be service-filtered yet (found during B1 review,
+> 2026-08-10).** B1 shipped `deploy_failed`, but it also established that a deployment item's
+> `item.service` is the **annotate provider slug** (`github-actions`, `gitlab`, `jenkins`,
+> `circleci`, `bitbucket`, `other`) written by `deployment/annotate.ts`, whereas
+> `watcher-engine.ts` skips any watcher whose `filter.service` does not equal the **syncable service
+> id**. The two vocabularies do not intersect, so a service-filtered `deploy_failed` watcher is
+> unreachable post-sync and only ever evaluated by startup catch-up. B2 must therefore NOT specify
+> one as originally written here. Three options, none silently chosen:
+>
+> 1. **Propose no deploy-failure watcher** until the identity mismatch is reconciled — consistent
+>    with this design's existing rule that a risk with no genuine watchable condition proposes
+>    nothing. Recommended.
+> 2. **Propose an unfiltered watcher** (`filter: {}`), which fires on any service's failed deploy.
+>    It works, but it is not epic-specific, and the brief would have to say so plainly.
+> 3. **Reconcile the vocabularies** — map provider slugs to syncable service ids at annotate time or
+>    at evaluation. A real fix, a separate change, and out of scope for B2.
+>
+> Whichever is taken, the brief must not imply an epic-scoped deploy alert it cannot deliver.
 
 **Jira-only, and narrower than "Jira".** Every brief states it. Discovery keys on
 `metadata.issue_type = 'Epic'`, written only by `connectors/jira-sync.ts`; `linear-sync.ts` never
