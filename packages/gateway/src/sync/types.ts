@@ -68,7 +68,7 @@ export interface SyncContext {
  * FETCH_ONE_TIMEOUT_MS` ≈ 15s — seconds, not minutes, and comfortably under typical reverse-proxy
  * and client patience (30–60s+). Passed as `signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS)` to
  * the connector's outbound `fetch` call; on abort the connector's existing catch already maps the
- * failure to `{ status: "not_found" }` (see `Syncable.fetchOne`'s doc below) — the caller may
+ * failure to `{ status: "not_found", reason: "unreachable" }` (see `Syncable.fetchOne`'s doc below) — the caller may
  * retry, and the periodic sync picks the item up regardless, so a timeout is a genuine miss, never
  * a hang.
  *
@@ -101,10 +101,9 @@ export type FetchMissReason =
  * genuinely absent item alike.
  *
  * `reason` is what lets that promise be kept — but it does not keep it on its
- * own, and this comment must not claim otherwise while it can still be omitted.
- * It is REQUIRED: every connector now supplies a cause, and a `not_found` site
- * that omits one is a compile error, not a silent regression to the old
- * collapsed behaviour.
+ * own, and this comment must not claim otherwise. It is REQUIRED: every
+ * connector now supplies a cause, and a `not_found` site that omits one is a
+ * compile error, not a silent regression to the old collapsed behaviour.
  */
 export type FetchOneResult =
   | { readonly status: "indexed"; readonly itemId: string }

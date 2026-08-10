@@ -611,6 +611,7 @@ describe("targetedFetch", () => {
     // one egress row is correct here — this is the FIRST provenance of rate_limited.
     test("a provider 429 answers rate_limited WITH exactly one egress row appended", async () => {
       const rows: EgressRow[] = [];
+      let fetched = false;
       const deps = depsWith({
         hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
         appendEgress: (r) => {
@@ -618,12 +619,18 @@ describe("targetedFetch", () => {
           return undefined;
         },
         syncable: {
-          fetchOne: async (): Promise<FetchOneResult> => ({ status: "rate_limited" }),
+          fetchOne: async (): Promise<FetchOneResult> => {
+            fetched = true;
+            return { status: "rate_limited" };
+          },
         },
       });
       const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
       expect(out).toEqual({ status: "rate_limited" });
       expect(rows).toHaveLength(1);
+      // Ties the row to the outbound call it claims to record — the row alone doesn't prove
+      // fetchOne actually ran.
+      expect(fetched).toBe(true);
     });
 
     // `fetchOne` deterministically never runs past the acquire timeout, so claiming egress here

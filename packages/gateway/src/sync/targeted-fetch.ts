@@ -170,15 +170,18 @@ async function acquireWithinTimeout(
  * Order of operations, all fail-closed:
  *   1. Parse the URL and pin its scheme: `https:` always proceeds; `http:` proceeds only when it
  *      is exactly a service's own configured (self-hosted) origin, never caller-chosen.
- *   2. Resolve the host against the derived fetch-host boundary. A miss is `not_configured`.
- *   3. Look up the registered connector for that service, and its `fetchOne`.
+ *   2. Resolve the host against the derived fetch-host boundary. A miss is a bare `not_configured`
+ *      — there is no service to name yet at this point.
+ *   3. Look up the registered connector for that service, and its `fetchOne`. A miss here is ALSO
+ *      `not_configured`, but — unlike step 2's — names the `service`, since the boundary already
+ *      resolved one.
  *   4. Acquire a rate-limit token from the SAME bucket the scheduler uses, polling the
  *      non-blocking `tryAcquire` (bounded by a timeout) rather than the blocking `acquire`. A
  *      timeout returns `rate_limited` and appends NOTHING — `fetchOne` deterministically never
  *      runs past this point, so there is nothing to record. NOTE `rate_limited` has a SECOND
  *      provenance: a connector's `fetchOne` returns it for a provider 429, and that one DOES
  *      carry an appended row, because the request genuinely left the machine. Both are correct
- *      for I29 — the ledger records real egress in both cases — so do not read this arm as
+ *      for I29 — the ledger records ONLY real egress in both cases — so do not read this arm as
  *      "no egress row".
  *   5. Append ONE `sync` egress row. A throw here aborts — no row, no fetch. Deliberately AFTER
  *      the acquire (not before it): appending before a rate-limit timeout would have recorded
