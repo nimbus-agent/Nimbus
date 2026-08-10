@@ -809,7 +809,7 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
       serviceId: "confluence",
       creds,
     });
-    return { kind: "hit", value };
+    return { kind: "hit", value: { ...value, verified: null } };
   },
 };
 

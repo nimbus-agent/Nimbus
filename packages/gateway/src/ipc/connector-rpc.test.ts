@@ -317,6 +317,39 @@ describe("connector.auth — credential probe runs before any Vault write", () =
     expect(h.seq).toEqual(["probe"]);
   });
 
+  test("gitlab: a rejected credential writes NOTHING — including no api_base delete", async () => {
+    const h = seqHarness();
+    await expect(
+      handleConnectorAuth({
+        ...baseCtx({ vault: h.vault }),
+        rec: { service: "gitlab", token: "x" },
+        runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
+      }),
+    ).rejects.toThrow(/gitlab/);
+    // Proves neither writeConnectorSecret(pat) NOR the api_base
+    // delete/write branch ran ahead of a non-rejecting verdict.
+    expect(h.seq).toEqual(["probe"]);
+  });
+
+  test("jenkins: a rejected credential writes NOTHING to the vault", async () => {
+    const h = seqHarness();
+    await expect(
+      handleConnectorAuth({
+        ...baseCtx({ vault: h.vault }),
+        rec: {
+          service: "jenkins",
+          token: "x",
+          username: "u",
+          apiBaseUrl: "https://ci.example.com",
+        },
+        runCredentialProbe: h.probe({ kind: "rejected", httpStatus: 401 }),
+      }),
+    ).rejects.toThrow(/jenkins/);
+    // Three writes (base_url, username, api_token) all guarded by the same
+    // pre-write probe.
+    expect(h.seq).toEqual(["probe"]);
+  });
+
   test("on the VALID path the probe still runs before any write", async () => {
     const h = seqHarness();
     const reauthed: string[] = [];

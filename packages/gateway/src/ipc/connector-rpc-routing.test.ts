@@ -352,7 +352,7 @@ describe("dispatchConnectorRpc — connector.auth ignores a caller-supplied prob
             },
           },
         }),
-      ).rejects.toThrow(/github/);
+      ).rejects.toThrow(/rejected the credential \(HTTP 401\)/);
     } finally {
       globalThis.fetch = realFetch;
     }
