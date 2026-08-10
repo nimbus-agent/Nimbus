@@ -36,6 +36,7 @@ export function discoverClosedEpics(
       `SELECT id, external_id, title, body, body_complete, metadata, modified_at
          FROM item
         WHERE service = 'jira'
+          AND json_valid(metadata)
           AND json_extract(metadata, '$.status_category') IN ('done','canceled')
           AND json_extract(metadata, '$.issue_type') = 'Epic'
           AND (modified_at > ? OR (modified_at = ? AND id > ?))

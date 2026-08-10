@@ -115,11 +115,25 @@ function computeSizeOverrun(input: {
 function computeReviewDrag(input: {
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
+  /**
+   * True when the cohort DOES have linked pull requests but none carry an
+   * opened/created timestamp — a fact only the caller (which runs the
+   * database queries) can know, since this file is deliberately
+   * database-free. Picks between two distinct unmeasurable causes: "no PRs
+   * at all" (the pre-existing message) vs. "PRs exist, but this connector
+   * doesn't index when they opened" — stating the wrong one names a cause
+   * that isn't true.
+   */
+  cohortHasPrsWithoutOpenTimestamp: boolean;
 }): Risk {
   if (input.reviewDragMedianMs === null || input.repoReviewMedianMs === null) {
+    const summary = input.cohortHasPrsWithoutOpenTimestamp
+      ? "Review drag cannot be measured: this cohort has linked pull requests, but no " +
+        "connector indexes a pull request's opened timestamp, only its merge time."
+      : "No pull requests were found for this cohort, so review drag cannot be measured.";
     return {
       kind: "review_drag",
-      summary: "No pull requests were found for this cohort, so review drag cannot be measured.",
+      summary,
       value: null,
       expectationOnly: false,
     };
@@ -138,12 +152,33 @@ function computeReviewDrag(input: {
 
 function computeIncidentCoupling(input: {
   cohort: readonly CohortCandidate[];
-  incidentCoupledCount: number;
+  /**
+   * Null means "unmeasurable", never a fabricated zero: the caller
+   * translates each cohort service (a PR repo, e.g. `acme/billing-api`)
+   * into a DORA `[ci.service.<id>]` config id before matching a deployment's
+   * `metadata.affectedService` — those are two different vocabularies, and
+   * when NOTHING translates, a literal `0` would read as "measured, and
+   * zero incidents correlated" rather than "no deployment-service mapping
+   * exists for these repos at all".
+   */
+  incidentCoupledCount: number | null;
 }): Risk {
   if (input.cohort.length === 0) {
     return {
       kind: "incident_coupling",
       summary: "No comparable epics were found, so incident coupling cannot be measured.",
+      value: null,
+      expectationOnly: false,
+    };
+  }
+
+  if (input.incidentCoupledCount === null) {
+    return {
+      kind: "incident_coupling",
+      summary:
+        "Incident coupling cannot be measured: no deployment-service mapping " +
+        "(`[metrics.dora.<id>]` / `[ci.service.<id>]`) is configured for these repos, so a " +
+        "deploy cannot be matched to a service in this cohort.",
       value: null,
       expectationOnly: false,
     };
@@ -209,7 +244,8 @@ export function computeRisks(input: {
   nowMs: number;
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
-  incidentCoupledCount: number;
+  cohortHasPrsWithoutOpenTimestamp: boolean;
+  incidentCoupledCount: number | null;
   cohortIsMixedTracker: boolean;
 }): Risk[] {
   return [
@@ -222,6 +258,7 @@ export function computeRisks(input: {
     computeReviewDrag({
       reviewDragMedianMs: input.reviewDragMedianMs,
       repoReviewMedianMs: input.repoReviewMedianMs,
+      cohortHasPrsWithoutOpenTimestamp: input.cohortHasPrsWithoutOpenTimestamp,
     }),
     computeIncidentCoupling({
       cohort: input.cohort,

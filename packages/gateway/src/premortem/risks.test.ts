@@ -25,6 +25,7 @@ const BASE = {
   nowMs: 30 * DAY,
   reviewDragMedianMs: null,
   repoReviewMedianMs: null,
+  cohortHasPrsWithoutOpenTimestamp: false,
   incidentCoupledCount: 0,
   cohortIsMixedTracker: false,
 };
@@ -132,6 +133,44 @@ describe("computeRisks", () => {
     const ic = risks.find((r) => r.kind === "incident_coupling");
     expect(ic?.summary).toMatch(/correlat/i);
     expect(ic?.summary).not.toMatch(/caused|because of/i);
+  });
+
+  test("incident coupling is a named gap, not a fabricated zero, when nothing translates to a deploy-service mapping", () => {
+    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupledCount: null });
+    const ic = risks.find((r) => r.kind === "incident_coupling");
+    expect(ic?.value).toBeNull();
+    expect(ic?.summary).not.toMatch(/^0 of/);
+    expect(ic?.summary.toLowerCase()).toContain("no deployment-service mapping");
+  });
+
+  test("incident coupling reports a real measured zero once at least one service resolves", () => {
+    const risks = computeRisks({ ...BASE, cohort: [candidate()], incidentCoupledCount: 0 });
+    const ic = risks.find((r) => r.kind === "incident_coupling");
+    expect(ic?.value).toBe(0);
+    expect(ic?.summary).toMatch(/^0 of 1/);
+  });
+
+  test("review drag names the real cause when the cohort has PRs but none carry an opened timestamp", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      cohortHasPrsWithoutOpenTimestamp: true,
+    });
+    const rd = risks.find((r) => r.kind === "review_drag");
+    expect(rd?.value).toBeNull();
+    expect(rd?.summary).not.toContain("No pull requests were found");
+    expect(rd?.summary.toLowerCase()).toContain("opened timestamp");
+  });
+
+  test("review drag keeps the 'no pull requests' message when the cohort truly has none", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      cohortHasPrsWithoutOpenTimestamp: false,
+    });
+    const rd = risks.find((r) => r.kind === "review_drag");
+    expect(rd?.value).toBeNull();
+    expect(rd?.summary).toContain("No pull requests were found for this cohort");
   });
 
   test("all five risks are always returned, in a stable order", () => {

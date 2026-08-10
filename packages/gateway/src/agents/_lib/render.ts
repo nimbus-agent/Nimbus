@@ -482,12 +482,31 @@ export function renderDecisions(brief: DecisionsBrief): string {
 }
 
 function renderPremortemRisk(r: Risk): string {
-  const prefix = r.expectationOnly ? "expectation" : r.kind.replaceAll("_", " ");
-  return `- **${prefix}**: ${r.summary}`;
+  const kindLabel = r.kind.replaceAll("_", " ");
+  const suffix = r.expectationOnly ? " (expectation)" : "";
+  return `- **${kindLabel}**${suffix}: ${r.summary}`;
 }
 
-function renderPremortemWatcher(w: WatcherProposal): string {
-  return `- ${w.service} — ${w.state.replaceAll("_", " ")}`;
+/**
+ * `w.watcherId` is the real, stable id `insertWatcherIfAbsent` wrote (or
+ * would have written) — the ONLY handle a reader can act on, so it must be
+ * printed, not just the service name. A `suppressed` proposal points at
+ * `--repropose` (the sole path back from a deliberate deletion,
+ * `clearProposalTombstones`); a live one points at `nimbus watch resume`
+ * (the watcher is created PAUSED, by design).
+ */
+function renderPremortemWatcher(w: WatcherProposal, epicRef: string): string {
+  if (w.state === "suppressed") {
+    return (
+      `- ${w.service} — suppressed (id \`${w.watcherId}\`); this watcher was deliberately ` +
+      `deleted on a previous run. Re-create it with \`nimbus pre-mortem ${epicRef} --repropose\`.`
+    );
+  }
+  const stateLabel = w.state === "created" ? "created" : "already present";
+  return (
+    `- ${w.service} — ${stateLabel} (id \`${w.watcherId}\`, paused). ` +
+    `Enable it with \`nimbus watch resume ${w.watcherId}\`.`
+  );
 }
 
 export function renderPremortem(brief: PremortemBrief): string {
@@ -521,9 +540,8 @@ export function renderPremortem(brief: PremortemBrief): string {
   }
 
   if (brief.watchers.length > 0) {
-    sections.push(
-      `\n## Watcher proposals\n\n${brief.watchers.map(renderPremortemWatcher).join("\n")}`,
-    );
+    const rows = brief.watchers.map((w) => renderPremortemWatcher(w, brief.query.epicRef));
+    sections.push(`\n## Watcher proposals\n\n${rows.join("\n")}`);
   }
 
   const gaps = renderGaps(brief.gaps);

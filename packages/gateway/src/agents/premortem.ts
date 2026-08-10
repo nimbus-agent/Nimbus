@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import type { ServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { type CohortCandidate, type CohortResult, selectCohort } from "../premortem/cohort.ts";
 import { affectedServicesForEpic } from "../premortem/epic-services.ts";
 import { computeRisks, type Risk } from "../premortem/risks.ts";
@@ -15,6 +16,16 @@ export type PremortemContext = {
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   llm?: SynthesizerLlm;
+  /**
+   * Resolved by the caller from `[metrics.dora.<id>]` / `[ci.service.<id>]`
+   * (`buildServiceIdentityResolver(loadServiceConfigsOrDegrade(...))`,
+   * mirroring `platform/assemble.ts`'s own wiring) so this module keeps no
+   * config-file dependency, matching `decisions.ts`'s `defaultMinConfidence`.
+   * Absent (or a repo that resolves to nothing) means incident coupling is
+   * reported as a named gap, never a fabricated `0` — see
+   * `countIncidentCoupledEpics`.
+   */
+  resolveServiceId?: ServiceIdentityResolver;
 };
 
 const DEFAULT_MAX_CANDIDATE_SCAN = 200;
@@ -53,25 +64,31 @@ function median(values: readonly number[]): number | null {
   return sorted.at(mid) ?? 0;
 }
 
-type ResolvedEpicRow = {
+type RawJiraItemRow = {
   id: string;
   external_id: string;
   title: string;
+  issue_type: string | null;
   created_at_ms: number | null;
 };
 
-/** Only a Jira item carrying `metadata.issue_type = 'Epic'` resolves — matching `selectCohort`'s own candidate filter. */
-function resolveEpic(db: Database, key: string): ResolvedEpicRow | null {
+/**
+ * Looks up ANY Jira item at `key`, regardless of its issue type — a single
+ * query the caller then interprets, so a genuinely-absent key ("not found")
+ * and an indexed-but-wrong-type key (e.g. a renamed or localized `issue_type`
+ * such as `Épica`) can be told apart and reported with the cause actually
+ * checked, rather than both collapsing into the same false "not found" claim.
+ */
+function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
   return db
     .query(
       `SELECT id, external_id, title,
-              json_extract(metadata, '$.created_at_ms') AS created_at_ms
+              CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.issue_type') END AS issue_type,
+              CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.created_at_ms') END AS created_at_ms
          FROM item
-        WHERE service = 'jira' AND external_id = ?
-          AND json_valid(metadata)
-          AND json_extract(metadata, '$.issue_type') = 'Epic'`,
+        WHERE service = 'jira' AND external_id = ?`,
     )
-    .get(key) as ResolvedEpicRow | null;
+    .get(key) as RawJiraItemRow | null;
 }
 
 /**
@@ -101,34 +118,16 @@ function toDurations(rows: readonly PrDurationRow[]): number[] {
 }
 
 /**
- * Median PR open→merge duration for the cohort children's own PRs.
- *
- * NEITHER GitHub, GitLab NOR Bitbucket sync (`connectors/{github,gitlab,bitbucket}-sync.ts`)
- * currently indexes a pull request's creation/opened timestamp — only its
- * merge time (`metadata.merged_at`). This queries `metadata.opened_at_ms`,
- * matching the naming PagerDuty already uses for incident open times
- * (`connectors/pagerduty-sync.ts`'s `opened_at_ms`), so review drag starts
- * working the moment any PR connector adds that field. Today no connector
- * does, so this returns `[]` and `reviewDragMedianMs`/`repoReviewMedianMs`
- * both come back `null` — `computeRisks` renders that as the "review drag
- * cannot be measured" gap, never a fabricated number.
- *
- * Reuses the SAME epic → child (`parent_key`, own-service) → `graph_entity`
- * (`issue`) → `resolves` edge → `graph_entity` (`pr`) traversal
- * `affectedServicesForEpic` established, extended one hop further from the
- * PR's graph entity to the PR's own `item` row for its timing metadata.
+ * The shared epic → child (`parent_key`, own-service) → `graph_entity`
+ * (`issue`) → `resolves` edge → `graph_entity` (`pr`) → `item` traversal
+ * `affectedServicesForEpic` established, extended one hop further to the PR's
+ * own `item` row. `repoPlaceholders` restricts to `services` (the SAME set
+ * `repoPrDurations` filters on below) so the cohort and repo populations are
+ * actually comparable, not "every PR any cohort child happens to touch, in
+ * any repo, vs. only these repos".
  */
-function cohortPrDurations(db: Database, epicItemIds: readonly string[]): number[] {
-  if (epicItemIds.length === 0) {
-    return [];
-  }
-  const placeholders = epicItemIds.map(() => "?").join(", ");
-  const rows = db
-    .query(
-      `SELECT DISTINCT pr_item.id AS id,
-              json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
-              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at
-         FROM item epic
+function cohortPrJoinSql(epicPlaceholders: string, repoPlaceholders: string): string {
+  return `FROM item epic
          JOIN item child ON json_valid(child.metadata)
                           AND json_extract(child.metadata, '$.parent_key') = epic.external_id
                           AND child.service = epic.service
@@ -138,16 +137,39 @@ function cohortPrDurations(db: Database, epicItemIds: readonly string[]): number
          JOIN graph_relation res     ON res.to_id = child_ent.id AND res.type = 'resolves'
          JOIN graph_entity pr_ent    ON pr_ent.id = res.from_id AND pr_ent.type = 'pr'
          JOIN item pr_item           ON pr_item.id = pr_ent.external_id
-        WHERE epic.id IN (${placeholders})
+        WHERE epic.id IN (${epicPlaceholders})
           AND json_valid(pr_item.metadata)
-          AND json_extract(pr_item.metadata, '$.opened_at_ms') IS NOT NULL
-          AND json_extract(pr_item.metadata, '$.merged_at') IS NOT NULL`,
-    )
-    .all(...epicItemIds) as Array<{ id: string; opened_at_ms: number; merged_at: number }>;
-  return toDurations(rows);
+          AND json_extract(pr_item.metadata, '$.repo') IN (${repoPlaceholders})`;
 }
 
-/** The repo-wide baseline over the same services, merged within the cohort's own indexed window. */
+type CohortPrTiming = { id: string; opened_at_ms: number | null; merged_at: number | null };
+
+/**
+ * Every PR linked to the cohort's own children in `services`, regardless of
+ * whether it carries timing metadata — the discriminator between "no PRs at
+ * all" and "PRs exist, but no connector recorded when they opened".
+ */
+function cohortPrTimings(
+  db: Database,
+  epicItemIds: readonly string[],
+  services: readonly string[],
+): CohortPrTiming[] {
+  if (epicItemIds.length === 0 || services.length === 0) {
+    return [];
+  }
+  const epicPlaceholders = epicItemIds.map(() => "?").join(", ");
+  const servicePlaceholders = services.map(() => "?").join(", ");
+  return db
+    .query(
+      `SELECT DISTINCT pr_item.id AS id,
+              json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
+              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at
+         ${cohortPrJoinSql(epicPlaceholders, servicePlaceholders)}`,
+    )
+    .all(...epicItemIds, ...services) as CohortPrTiming[];
+}
+
+/** The repo-wide baseline over the same services, merged within the window `reviewDragMedians` derives. */
 function repoPrDurations(
   db: Database,
   services: readonly string[],
@@ -182,22 +204,68 @@ function reviewDragMedians(
   cohort: CohortResult,
   services: readonly string[],
   nowMs: number,
-): { reviewDragMedianMs: number | null; repoReviewMedianMs: number | null } {
-  const cohortDurations = cohortPrDurations(
-    db,
-    cohort.members.map((m) => m.itemId),
+): {
+  reviewDragMedianMs: number | null;
+  repoReviewMedianMs: number | null;
+  cohortHasPrsWithoutOpenTimestamp: boolean;
+} {
+  const epicItemIds = cohort.members.map((m) => m.itemId);
+  const timings = cohortPrTimings(db, epicItemIds, services);
+  const timed = timings.filter(
+    (t): t is { id: string; opened_at_ms: number; merged_at: number } =>
+      t.opened_at_ms !== null && t.merged_at !== null,
   );
-  if (cohortDurations.length === 0) {
-    // Pass null for EITHER median when the cohort has no PRs (Task 4 contract) —
-    // there is nothing to compare a repo baseline against either.
-    return { reviewDragMedianMs: null, repoReviewMedianMs: null };
+
+  if (timed.length === 0) {
+    // Pass null for EITHER median when the cohort has no TIMED PRs — there is
+    // nothing to compare a repo baseline against either. `timings.length > 0`
+    // here means real linked PRs exist but none carry `opened_at_ms` — the
+    // discriminator `computeRisks` needs to name the actual cause, not
+    // "no pull requests were found" when pull requests plainly were.
+    return {
+      reviewDragMedianMs: null,
+      repoReviewMedianMs: null,
+      cohortHasPrsWithoutOpenTimestamp: timings.length > 0,
+    };
   }
-  const windowFromMs = cohort.oldestResolvedAtMs ?? nowMs;
+
+  // The window is derived from the COHORT'S OWN PR merge times, not from
+  // epic resolution dates: a PR merges DURING its epic's life, so a window
+  // anchored on `oldestResolvedAtMs` (the OLDEST cohort epic's own close
+  // date) systematically excludes a normally-ordered PR that merged before
+  // its OWN epic resolved — the exact defect this replaced. Anchoring on the
+  // cohort's own merge times instead guarantees they are always inside the
+  // window they are being compared against, for any resolution/merge
+  // ordering.
+  const windowFromMs = Math.min(...timed.map((t) => t.merged_at));
   const repoDurations = repoPrDurations(db, services, windowFromMs, nowMs);
   return {
-    reviewDragMedianMs: median(cohortDurations),
+    reviewDragMedianMs: median(toDurations(timed)),
     repoReviewMedianMs: median(repoDurations),
+    cohortHasPrsWithoutOpenTimestamp: false,
   };
+}
+
+/**
+ * A cohort service (a PR repo, e.g. `acme/billing-api` — `affectedServicesForEpic`'s
+ * vocabulary) is NOT the vocabulary `graph-populator.ts`'s `correlates_with`
+ * edge is keyed on: a deployment's `metadata.affectedService` is a DORA
+ * `[ci.service.<id>]` CONFIG id (`buildServiceIdentityResolver`), an
+ * independently-chosen label, not necessarily the repo's own name. Translates
+ * a repo through the SAME resolver `platform/assemble.ts` threads into the
+ * graph populator, by asking it to resolve a synthetic non-deployment item
+ * carrying `metadata.repo` (the one field `repoMetadataMatchesUrn` matches
+ * for every provider a repo URN can name). `type: "pr"` (anything but
+ * `"deployment"`) skips `deploymentBindingResolution`'s environment gate
+ * entirely — irrelevant here, since we are matching identity, not filtering
+ * deploy environments.
+ */
+function repoToConfigServiceId(
+  resolveServiceId: ServiceIdentityResolver,
+  repo: string,
+): string | null {
+  const resolution = resolveServiceId({ service: "unknown", type: "pr", metadata: { repo } });
+  return resolution.kind === "bound" ? resolution.serviceId : null;
 }
 
 /**
@@ -207,16 +275,63 @@ function reviewDragMedians(
  * `graph/graph-populator.ts`'s `syncTimelineEventGraph` already writes
  * (deployment --correlates_with--> incident, keyed on
  * `metadata.affectedService`) — no second correlation rule.
+ *
+ * Returns `null` — never a fabricated `0` — when NO cohort repo translates to
+ * a configured DORA service id: that means the join vocabulary cannot match
+ * at all, which is a different fact than "measured, and zero incidents
+ * correlated". A cohort member missing `createdAtMs` is skipped rather than
+ * given a `resolvedAtMs .. resolvedAtMs` window: a single-instant `BETWEEN`
+ * can only ever silently fail to match (or, worse, coincidentally match a
+ * deploy landing at that exact millisecond) — neither reflects a real
+ * "epic's window", so the member is treated as unmeasurable, not queried.
  */
-function countIncidentCoupledEpics(db: Database, members: readonly CohortCandidate[]): number {
+function countIncidentCoupledEpics(
+  db: Database,
+  members: readonly CohortCandidate[],
+  resolveServiceId: ServiceIdentityResolver | undefined,
+): number | null {
+  if (resolveServiceId === undefined) {
+    return null;
+  }
+
+  const repoToConfigIdCache = new Map<string, string | null>();
+  const configIdFor = (repo: string): string | null => {
+    const cached = repoToConfigIdCache.get(repo);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = repoToConfigServiceId(resolveServiceId, repo);
+    repoToConfigIdCache.set(repo, resolved);
+    return resolved;
+  };
+  const configIdsFor = (member: CohortCandidate): string[] =>
+    member.services.map(configIdFor).filter((id): id is string => id !== null);
+
+  // Whether the vocabulary can match AT ALL is a fact independent of any one
+  // member's window: a member with a resolvable service but no `createdAtMs`
+  // still proves the config maps something real, so the risk stays a
+  // measured `0` (a real "nothing correlated" fact) rather than collapsing
+  // to `null` ("nothing configured") just because that one member could not
+  // be windowed.
+  const anyServiceResolved = members.some((m) => configIdsFor(m).length > 0);
+  if (!anyServiceResolved) {
+    return null;
+  }
+
   let count = 0;
   for (const member of members) {
-    if (member.services.length === 0) {
+    // A single-instant `resolvedAtMs .. resolvedAtMs` window can only ever
+    // silently fail to match (or, worse, coincidentally match a deploy
+    // landing at that exact millisecond) — neither reflects a real "epic's
+    // window", so a member with no `createdAtMs` is skipped, not queried.
+    if (member.createdAtMs === null) {
       continue;
     }
-    const windowFrom = member.createdAtMs ?? member.resolvedAtMs;
-    const windowTo = member.resolvedAtMs;
-    const placeholders = member.services.map(() => "?").join(", ");
+    const configIds = configIdsFor(member);
+    if (configIds.length === 0) {
+      continue;
+    }
+    const placeholders = configIds.map(() => "?").join(", ");
     const row = db
       .query(
         `SELECT 1
@@ -229,7 +344,7 @@ function countIncidentCoupledEpics(db: Database, members: readonly CohortCandida
             AND json_extract(dep.metadata, '$.occurredAt') BETWEEN ? AND ?
           LIMIT 1`,
       )
-      .get(...member.services, windowFrom, windowTo);
+      .get(...configIds, member.createdAtMs, member.resolvedAtMs);
     if (row !== null) {
       count++;
     }
@@ -380,10 +495,23 @@ export async function runPremortem(
     };
   }
 
-  const epicRow = resolveEpic(ctx.db, key);
-  if (epicRow === null) {
-    throw new Error(`pre-mortem: epic '${input.epicRef}' was not found in the local Jira index`);
+  const rawRow = lookupJiraItem(ctx.db, key);
+  if (rawRow === null) {
+    throw new Error(`pre-mortem: '${input.epicRef}' was not found in the local Jira index`);
   }
+  if (rawRow.issue_type !== "Epic") {
+    // NOT "not found" — an item exists at this key. `jira-sync.ts` stores the
+    // raw Jira issue-type name verbatim (admins rename types, non-English
+    // instances localize them), so this states exactly what was checked
+    // rather than asserting a cause ("not found") that isn't true.
+    const typeDesc =
+      rawRow.issue_type === null ? "no recorded issue type" : `type \`${rawRow.issue_type}\``;
+    throw new Error(
+      `pre-mortem: '${input.epicRef}' is indexed with ${typeDesc}, not the literal Jira type ` +
+        "`Epic` pre-mortem requires (a renamed or localized type name is not recognized)",
+    );
+  }
+  const epicRow = rawRow;
   const epic: PremortemEpicView = {
     itemId: epicRow.id,
     key: epicRow.external_id,
@@ -429,13 +557,13 @@ export async function runPremortem(
           "that `--service` names match real repos.",
       });
     } else {
-      const { reviewDragMedianMs, repoReviewMedianMs } = reviewDragMedians(
+      const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsWithoutOpenTimestamp } =
+        reviewDragMedians(ctx.db, cohort, services, now);
+      const incidentCoupledCount = countIncidentCoupledEpics(
         ctx.db,
-        cohort,
-        services,
-        now,
+        cohort.members,
+        ctx.resolveServiceId,
       );
-      const incidentCoupledCount = countIncidentCoupledEpics(ctx.db, cohort.members);
 
       risks = computeRisks({
         cohort: cohort.members,
@@ -444,6 +572,7 @@ export async function runPremortem(
         nowMs: now,
         reviewDragMedianMs,
         repoReviewMedianMs,
+        cohortHasPrsWithoutOpenTimestamp,
         incidentCoupledCount,
         // Pre-mortem is Jira-only (the unconditional gap above states this),
         // so the cohort can never blend trackers with different cancel/done
@@ -456,11 +585,12 @@ export async function runPremortem(
         gaps.push({
           category: "missing_connector",
           detail:
-            "No pre-mortem themes have been extracted for these services yet — the theme " +
-            "pass may not have run, may be disabled (`[premortem].use_llm = false`), or no " +
-            "local LLM was reachable. The risk figures above are structural findings only, " +
-            "unaffected by this.",
-          remediation: "Run `nimbus premortem --refresh`, or configure a local model and re-run.",
+            "No pre-mortem themes have been extracted for these services yet. Possible " +
+            "causes: the theme pass has not run yet; `[premortem].enabled = false`; " +
+            "`[premortem].use_llm = false`; no local LLM was reachable; or every " +
+            "previously-extracted theme was later demoted once its source items left the " +
+            "index. The risk figures above are structural findings only, unaffected by this.",
+          remediation: `Run \`nimbus pre-mortem ${input.epicRef} --refresh\`, or configure a local model and re-run.`,
         });
       }
 
@@ -491,7 +621,9 @@ export async function runPremortem(
           category: "missing_relation_emit",
           detail:
             `${String(truncation.truncated)} of ${String(truncation.total)} source(s) in this ` +
-            "cohort were indexed with a truncated body.",
+            "cohort were indexed with a truncated body (`body_complete = 0`) — either migrated " +
+            "before full-body indexing and never re-synced, or a connector configured below " +
+            "`full` depth for that service; this brief does not distinguish which.",
         });
       }
     }

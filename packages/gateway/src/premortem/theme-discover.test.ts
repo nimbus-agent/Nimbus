@@ -143,6 +143,25 @@ test("a NULL body comes back as an empty string, never null", () => {
   db.close();
 });
 
+test("a non-JSON metadata row elsewhere in item does not break discoverClosedEpics (json_valid guard)", () => {
+  // `service = 'jira'` alone does not guarantee `metadata` is valid JSON — a
+  // bare `json_extract` on non-JSON TEXT raises `malformed JSON` in SQLite
+  // (the exact bug fixed twice already on this branch, in cohort.ts and
+  // epic-services.ts). This row must sit ALONGSIDE a real, discoverable epic
+  // so the guard is proven to let the good row through, not just avoid a
+  // crash on an empty result set.
+  const db = freshDb();
+  seedEpic(db, { id: "jira:GOOD", modifiedAt: 10, statusCategory: "done" });
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, body, body_complete,
+                       metadata, modified_at, synced_at, pinned)
+     VALUES ('jira:BAD', 'jira', 'issue', 'BAD', 'T', 'b', 1, 'not json', 11, 1, 0)`,
+  );
+  const found = discoverClosedEpics(db, { watermarkMs: 0, watermarkId: "", batchSize: 50 });
+  expect(found.map((e) => e.itemId)).toEqual(["jira:GOOD"]);
+  db.close();
+});
+
 test("a missing resolved_at_ms is absent, never 0", () => {
   // Same rule the ticket-depth contract set: 0 would read as 1970, and a
   // consumer must be able to tell "unresolved" from "resolved at the epoch".
