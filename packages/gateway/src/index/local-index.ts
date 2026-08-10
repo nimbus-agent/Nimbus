@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { NimbusItem } from "@nimbus-dev/sdk";
-import { getConnectorHealth } from "../connectors/health.ts";
+import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import type { ReindexDepth } from "../connectors/reindex.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import {
@@ -352,6 +352,19 @@ export class LocalIndex {
 
   ensureConnectorSchedulerRegistration(serviceId: string, intervalMs: number, now: number): void {
     upsertSchedulerRegistration(this.db, serviceId, intervalMs, now, false);
+  }
+
+  /**
+   * Clear a connector's `unauthenticated` health after its credential was
+   * re-verified against the provider.
+   *
+   * Exists because `db` is private and `connector.auth`'s handler has no other
+   * route to it — the same reason `ensureConnectorSchedulerRegistration` lives
+   * here. Call ONLY on a probe that actually returned `valid`: clearing on an
+   * unverified store would reinstate the over-claim this change removes.
+   */
+  markConnectorReauthenticated(serviceId: string): void {
+    transitionHealth(this.db, serviceId, { type: "reauthenticated" });
   }
 
   ensureGithubActionsSchedulerCompanionIfNeeded(params: {

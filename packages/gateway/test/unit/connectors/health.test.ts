@@ -101,6 +101,27 @@ describe("transitionHealth — basic transitions", () => {
     expect(snap.state).toBe("healthy");
     expect(snap.backoffAttempt).toBe(0);
   });
+
+  test("reauthenticated clears unauthenticated and the stale auth error", () => {
+    transitionHealth(db, "github", { type: "unauthenticated" });
+    expect(getConnectorHealth(db, "github").state).toBe("unauthenticated");
+
+    const snap = transitionHealth(db, "github", { type: "reauthenticated" });
+
+    expect(snap.state).toBe("healthy");
+    // The unauthenticated transition writes a hardcoded lastError (health.ts:196);
+    // leaving it behind would show a stale "token expired" next to a healthy state.
+    expect(getConnectorHealth(db, "github").lastError).toBeUndefined();
+  });
+
+  test("reauthenticated records its own history reason, not 'connector resumed'", () => {
+    transitionHealth(db, "github", { type: "unauthenticated" });
+    transitionHealth(db, "github", { type: "reauthenticated" });
+
+    const [latest] = getConnectorHealthHistory(db, "github", 1);
+    expect(latest?.toState).toBe("healthy");
+    expect(latest?.reason).toBe("credential re-verified");
+  });
 });
 
 describe("transitionHealth — skipped_offline", () => {
