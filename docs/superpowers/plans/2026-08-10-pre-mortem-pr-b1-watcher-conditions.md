@@ -80,10 +80,13 @@ describe("watcher-condition-kinds", () => {
     expect(watcherConditionKind("deploy_failed")?.itemType).toBe("deployment");
   });
 
-  test("only deploy_failed carries an extra predicate", () => {
+  test("only deploy_failed carries an extra predicate, and it is json_valid-guarded", () => {
     expect(watcherConditionKind("alert_fired")?.extraSql).toBe("");
     expect(watcherConditionKind("incident_opened")?.extraSql).toBe("");
     expect(watcherConditionKind("deploy_failed")?.extraSql).toContain("conclusion");
+    // Pinned deliberately: without json_valid, a single non-JSON metadata row makes json_extract
+    // raise and takes down evaluation for every watcher.
+    expect(watcherConditionKind("deploy_failed")?.extraSql).toContain("json_valid(metadata)");
   });
 
   test("an unknown condition type resolves to undefined and is not known", () => {
@@ -135,10 +138,22 @@ export const WATCHER_CONDITION_KINDS: readonly WatcherConditionKind[] = [
   // records its outcome under metadata.state, and Prefect indexes deployment DEFINITIONS with no
   // outcome at all, so neither matches. Keyed on the presence of the conclusion value rather than
   // on a producer name, so a new producer that adopts the same shape works without a code change.
+  //
+  // `json_valid(metadata)` is LOAD-BEARING, not defensive noise: SQLite's json_extract RAISES
+  // "malformed JSON" on a non-JSON TEXT value, and that exception would propagate out of
+  // evaluateOneWatcher through the whole evaluateWatchersAfterSync loop — killing evaluation for
+  // EVERY watcher, not just this one. (A NULL metadata is safe on its own; an empty string or
+  // plain text is not.) Every production writer stringifies today, so this guards a migration or a
+  // future writer, at the cost of one cheap call.
+  //
+  // Extending to Vercel later means matching a DIFFERENT key with a different vocabulary
+  // (metadata.state = 'ERROR'). A single extraSql string can express that as an OR, but the moment
+  // a second shape lands, prefer widening this type to hold several predicates per kind over
+  // growing one unreadable SQL string.
   {
     conditionType: "deploy_failed",
     itemType: "deployment",
-    extraSql: "AND json_extract(metadata, '$.conclusion') = 'failure'",
+    extraSql: "AND json_valid(metadata) AND json_extract(metadata, '$.conclusion') = 'failure'",
   },
 ];
 
@@ -289,6 +304,49 @@ Append inside the existing `describe("watcher-engine", ...)` block in `packages/
     });
 
     expect(calls).toBe(0);
+  });
+
+  test("a row with non-JSON metadata does not break deploy_failed evaluation", () => {
+    const db = makeDb();
+    const t0 = 5_400_000_000_000;
+    insertWatcher(db, {
+      name: "deploys",
+      enabled: 1,
+      condition_type: "deploy_failed",
+      condition_json: JSON.stringify({ filter: { service: "github_actions" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "github_actions",
+      type: "deployment",
+      externalId: "deploy-legacy",
+      title: "legacy row",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+    });
+    upsertIndexedItem(db, {
+      service: "github_actions",
+      type: "deployment",
+      externalId: "deploy-bad",
+      title: "checkout v3.0.0",
+      modifiedAt: t0 + 2000,
+      syncedAt: t0 + 2000,
+      metadata: { conclusion: "failure" },
+    });
+    // No production writer can produce this today — both item.metadata writers stringify — so it
+    // is forced directly. Without json_valid() in the predicate, json_extract raises
+    // "malformed JSON" here and the exception escapes the whole evaluation loop.
+    db.run("UPDATE item SET metadata = 'not json' WHERE external_id = ?", ["deploy-legacy"]);
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "github_actions", t0 + 3000, (_title, body) => {
+      bodies.push(body);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("checkout v3.0.0");
   });
 
   test("a graph predicate still narrows a new condition kind", () => {
@@ -488,6 +546,7 @@ Then in the `watcher.create` handler at line 114, insert the check before the `i
       rec !== undefined && typeof rec["graphPredicateJson"] === "string"
         ? rec["graphPredicateJson"]
         : null;
+    const name = requireString(rec, "name");
     const conditionType = requireString(rec, "conditionType");
     if (!isKnownWatcherConditionType(conditionType)) {
       throw new AutomationRpcError(
@@ -496,7 +555,7 @@ Then in the `watcher.create` handler at line 114, insert the check before the `i
       );
     }
     const id = insertWatcher(ctx.db, {
-      name: requireString(rec, "name"),
+      name,
       enabled: 1,
       condition_type: conditionType,
       condition_json: requireString(rec, "conditionJson"),
