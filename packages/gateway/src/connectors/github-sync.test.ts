@@ -68,7 +68,55 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/999");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
+  });
+
+  test("a 401 reports unauthorized — the expired-PAT case", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "expired-pat");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("Bad credentials", { status: 401 }))) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("a 403 reports unauthorized", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("a provider 429 surfaces as rate_limited, not a miss", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
+
+    expect(out).toEqual({ status: "rate_limited" });
+  });
+
+  test("a 500 reports upstream_error", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "pat-value");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
+
+    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
+
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
   // IMPORTANT 3: a DNS/TLS/connect failure must report not_found, not throw — the caller
@@ -84,7 +132,8 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
+    expect(JSON.stringify(out)).not.toContain("api.github.com");
   });
 
   test("reports not_found when the PAT is missing", async () => {
@@ -94,7 +143,7 @@ describeWithFetchRestore("github-sync fetchOne", () => {
 
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "no_credential" });
   });
 
   // A stalled/aborted upstream request must report not_found rather than hang the caller
@@ -114,7 +163,7 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
     expect(capturedSignal).toBeDefined();
   });
 
@@ -176,7 +225,7 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
   test("reports not_found for valid JSON that is not an object", async () => {
@@ -188,7 +237,7 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
   // CRITICAL 3: `html_url` is REMOTE-supplied and must never become the `resolve_key` — a repo
@@ -255,6 +304,6 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 });
