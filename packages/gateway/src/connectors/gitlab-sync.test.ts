@@ -125,7 +125,7 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     });
   });
 
-  test("reports not_found for a 404", async () => {
+  test("reports absent for a 404", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     globalThis.fetch = ((): Promise<Response> =>
@@ -134,10 +134,58 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/999");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "absent" });
   });
 
-  test("reports not_found when fetch itself throws (DNS/TLS/connect failure)", async () => {
+  test("reports unauthorized for a 401", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "expired-pat");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("reports unauthorized for a 403", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
+
+    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+  });
+
+  test("reports rate_limited for a 429", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
+
+    expect(out).toEqual({ status: "rate_limited" });
+  });
+
+  test("reports upstream_error for a 500", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
+
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
+  });
+
+  test("reports unreachable when fetch itself throws (DNS/TLS/connect failure)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     globalThis.fetch = ((): Promise<Response> => {
@@ -147,17 +195,18 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
+    expect(JSON.stringify(out)).not.toContain("git.corp.example");
   });
 
-  test("reports not_found when the PAT is missing", async () => {
+  test("reports no_credential when the PAT is missing", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, null);
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
 
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "no_credential" });
   });
 
   // A stalled/aborted upstream request must report not_found rather than hang the caller
@@ -165,7 +214,7 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
   // abort signal, not merely happen to survive an unrelated rejection. This fetch call is NOT
   // shared with the periodic sync (`_lib/gitlab/events.ts` / `_lib/gitlab/pipelines.ts` each make
   // their own separate fetch calls), so adding the signal here cannot affect a scheduled sync.
-  test("reports not_found and passes an abort signal when the request is aborted (timeout)", async () => {
+  test("reports unreachable and passes an abort signal when the request is aborted (timeout)", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     let capturedSignal: AbortSignal | undefined;
@@ -179,7 +228,7 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "unreachable" });
     expect(capturedSignal).toBeDefined();
   });
 
@@ -214,7 +263,7 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a malformed (non-JSON) ok response", async () => {
+  test("reports upstream_error for a malformed (non-JSON) ok response", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     globalThis.fetch = ((): Promise<Response> =>
@@ -223,10 +272,10 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found for valid JSON that is not an object", async () => {
+  test("reports upstream_error for valid JSON that is not an object", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     globalThis.fetch = ((): Promise<Response> =>
@@ -235,10 +284,10 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
-  test("reports not_found when the response body has no iid field", async () => {
+  test("reports upstream_error when the response body has no iid field", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithPat(db, "t");
     globalThis.fetch = ((): Promise<Response> =>
@@ -249,7 +298,7 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://gitlab.com/g/p/-/merge_requests/7");
 
-    expect(out).toEqual({ status: "not_found" });
+    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
 
   test("indexes a merge request under a deeply nested namespace path, and it resolves", async () => {

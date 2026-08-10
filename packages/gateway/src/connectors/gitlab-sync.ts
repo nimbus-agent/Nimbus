@@ -17,6 +17,7 @@ import {
 } from "./_lib/gitlab/events.ts";
 import { syncGitlabPipelinesForIndexedProjects } from "./_lib/gitlab/pipelines.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
@@ -93,7 +94,7 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   const { pathWithNamespace, iid: requestedIid } = parsedUrl;
   const pat = await readConnectorSecret(ctx.vault, "gitlab", "pat");
   if (pat === null || pat === "") {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "no_credential" };
   }
   const apiBase = normalisedApiBase(await readConnectorSecret(ctx.vault, "gitlab", "api_base"));
   const detailUrl = `${apiBase}/projects/${encodeURIComponent(pathWithNamespace)}/merge_requests/${requestedIid}`;
@@ -111,27 +112,27 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `api_base` — in its message. Swallow it entirely rather than let it propagate.
-    return { status: "not_found" };
+    return { status: "not_found", reason: "unreachable" };
   }
   if (!res.ok) {
-    return { status: "not_found" };
+    return fetchOneMissForResponse(res.status);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(await res.text()) as unknown;
   } catch {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   const mr = asRecord(parsed);
   if (mr === undefined) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   // The returned itemId MUST reflect the row `upsertFromMergeRequestEvent` actually wrote, which
   // keys off the API response's own `iid` field — never the raw regex capture from the caller's
   // URL, which can differ from it (leading zeros, etc.).
   const iid = numberField(mr, "iid");
   if (iid === undefined) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   const webOrigin = new URL(url).origin;
   const author = asRecord(mr["author"]);
