@@ -55,7 +55,8 @@ function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<strin
     .query(
       `SELECT epic.id AS epicItemId, COUNT(*) AS childCount
          FROM item epic
-         JOIN item child ON json_extract(child.metadata, '$.parent_key') = epic.external_id
+         JOIN item child ON json_valid(child.metadata)
+                          AND json_extract(child.metadata, '$.parent_key') = epic.external_id
                           AND child.service = epic.service
                           AND child.id <> epic.id
         WHERE epic.id IN (${placeholders})
