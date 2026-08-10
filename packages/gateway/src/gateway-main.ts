@@ -8,6 +8,7 @@ import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
 import { runAsk } from "./engine/run-ask.ts";
+import { armGatewayLifecycleDiagnostics } from "./platform/exit-diagnostics.ts";
 import { removeGatewayStateFile, writeGatewayStateFile } from "./platform/gateway-state-file.ts";
 import { createPlatformServices } from "./platform/index.ts";
 import type { SandboxRunner } from "./platform/sandbox/sandbox-runner.ts";
@@ -38,8 +39,28 @@ function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
 }
 
 export async function main(): Promise<void> {
+  // FIRST statement in main(), before any assembly work: from here on, every in-process exit —
+  // drain, process.exit(), uncaught error — leaves a record in the daily log. A death that leaves
+  // NO record was terminated from outside, which is itself the diagnosis. The scheduler does not
+  // exist yet, so the heartbeat's activity provider is resolved lazily through this box.
+  let syncActivity: (() => readonly string[]) | undefined;
+  let heartbeatExtras: (() => Readonly<Record<string, unknown>>) | undefined;
+  const lifecycle = armGatewayLifecycleDiagnostics(
+    GATEWAY_VERSION,
+    () => syncActivity?.() ?? [],
+    () => heartbeatExtras?.() ?? {},
+  );
+
   process.stdout.write("[gateway] initializing platform services\n");
   const platform = await createPlatformServices();
+  syncActivity = (): readonly string[] =>
+    platform.syncScheduler
+      .getStatus()
+      .filter((s) => s.status === "syncing")
+      .map((s) => s.serviceId);
+  heartbeatExtras = (): Readonly<Record<string, unknown>> => ({
+    embeddings: platform.embeddingReadiness().state,
+  });
   process.stdout.write("[gateway] platform services ready; wiring engine\n");
   const mcp = platform.connectorMesh;
   const dispatcherClient: McpToolListingClient = {
@@ -130,6 +151,7 @@ export async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`[gateway] ${signal} — shutting down\n`);
+    lifecycle.stop();
     try {
       platform.disposeSidecars?.();
     } catch {
