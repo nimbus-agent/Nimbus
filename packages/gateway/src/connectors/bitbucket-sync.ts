@@ -10,6 +10,7 @@ import {
   syncNoopResult,
 } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import { decodeNimbusJsonCursorPayload, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -299,7 +300,7 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   const user = await readConnectorSecret(ctx.vault, "bitbucket", "username");
   const pass = await readConnectorSecret(ctx.vault, "bitbucket", "app_password");
   if (user === null || user === "" || pass === null || pass === "") {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "no_credential" };
   }
   const repoFull = `${workspace}/${repoSlug}`;
   const detailUrl = `${API_ROOT}/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${requestedNum}`;
@@ -317,27 +318,27 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
     // A DNS/TLS/connect failure can carry the request URL in its message. Swallow it entirely
     // rather than let it propagate — mirrors gitlab-sync.ts/jenkins-sync.ts/jira-sync.ts, whose
     // fetchOne already reports not_found (never a 500) for the same offline condition.
-    return { status: "not_found" };
+    return { status: "not_found", reason: "unreachable" };
   }
   if (!res.ok) {
-    return { status: "not_found" };
+    return fetchOneMissForResponse(res.status);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(await res.text()) as unknown;
   } catch {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   const pr = asRecord(parsed);
   if (pr === undefined) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   // The returned itemId MUST reflect the row `upsertFromPullRequest` actually wrote, which keys
   // off the API response's own `id` field (normalized, e.g. `007` -> `7`) — never the raw regex
   // capture from the caller's URL, which can differ from it (leading zeros, etc.).
   const id = numberField(pr, "id");
   if (id === undefined) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "upstream_error" };
   }
   upsertFromPullRequest(ctx, repoFull, pr, Date.now(), url);
   return {

@@ -100,7 +100,7 @@ describe("targetedFetch", () => {
       syncable: {
         fetchOne: async () => {
           called = true;
-          return { status: "not_found" };
+          return { status: "not_found", reason: "absent" };
         },
       },
     });
@@ -143,13 +143,13 @@ describe("targetedFetch", () => {
     expect(rows).toHaveLength(0);
   });
 
-  test("a claimed host whose connector is not wired up in this binary is also not_configured", async () => {
+  test("a claimed host whose connector is not wired up in this binary names the resolved service", async () => {
     const deps = depsWith({
       hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
       syncableFor: () => undefined,
     });
     const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
-    expect(out).toEqual({ status: "not_configured" });
+    expect(out).toEqual({ status: "not_configured", service: "github" });
   });
 
   test("a configured service with no fetchOne answers no_targeted_fetch", async () => {
@@ -355,12 +355,12 @@ describe("targetedFetch", () => {
         syncable: {
           fetchOne: async (): Promise<FetchOneResult> => {
             calls++;
-            return { status: "not_found" };
+            return { status: "not_found", reason: "absent" };
           },
         },
       });
       const out = await targetedFetch(deps, "https://github.com/o/r/pull/1?focusedCommentId=1");
-      expect(out).toEqual({ status: "not_found" });
+      expect(out).toEqual({ status: "not_found", reason: "absent" });
       expect(calls).toBe(1);
     });
 
@@ -395,7 +395,7 @@ describe("targetedFetch", () => {
         syncable: {
           fetchOne: async () => {
             called = true;
-            return { status: "not_found" };
+            return { status: "not_found", reason: "absent" };
           },
         },
       });
@@ -531,7 +531,7 @@ describe("targetedFetch", () => {
         syncable: {
           fetchOne: async () => {
             fetched = true;
-            return { status: "not_found" };
+            return { status: "not_found", reason: "absent" };
           },
         },
       });
@@ -587,6 +587,82 @@ describe("targetedFetch", () => {
       // this is a sanity check that the fix didn't accidentally starve legitimate polling, only
       // the linear mutex backlog the old blocking-`acquire()` design created.
       expect(pollCalls).toBeGreaterThan(0);
+    });
+  });
+
+  // Task 10: `reason` is now required on `not_found`, and `rate_limited` has two distinguishable
+  // provenances that must never be conflated in the egress ledger.
+  describe("required miss reason + rate_limited provenance", () => {
+    test("the connector's reason reaches the outcome unchanged", async () => {
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        syncable: {
+          fetchOne: async (): Promise<FetchOneResult> => ({
+            status: "not_found",
+            reason: "unauthorized",
+          }),
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
+      expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
+    });
+
+    // The request DID leave the machine (fetchOne ran and the provider answered 429), so exactly
+    // one egress row is correct here — this is the FIRST provenance of rate_limited.
+    test("a provider 429 answers rate_limited WITH exactly one egress row appended", async () => {
+      const rows: EgressRow[] = [];
+      let fetched = false;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
+        syncable: {
+          fetchOne: async (): Promise<FetchOneResult> => {
+            fetched = true;
+            return { status: "rate_limited" };
+          },
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
+      expect(out).toEqual({ status: "rate_limited" });
+      expect(rows).toHaveLength(1);
+      // Ties the row to the outbound call it claims to record — the row alone doesn't prove
+      // fetchOne actually ran.
+      expect(fetched).toBe(true);
+    });
+
+    // `fetchOne` deterministically never runs past the acquire timeout, so claiming egress here
+    // would over-claim — this is the SECOND provenance of rate_limited, and it must append
+    // NOTHING, unlike the provider-429 case above.
+    test("an acquire timeout answers rate_limited with NO egress row and no fetch", async () => {
+      const rows: EgressRow[] = [];
+      let fetched = false;
+      const deps = depsWith({
+        hostMap: new Map<string, FetchableService>([["github.com", "github"]]),
+        tryAcquire: async () => false, // always saturated
+        sleep: async () => {},
+        appendEgress: (r) => {
+          rows.push(r);
+          return undefined;
+        },
+        syncable: {
+          fetchOne: async (): Promise<FetchOneResult> => {
+            fetched = true;
+            return { status: "rate_limited" };
+          },
+        },
+      });
+      const out = await targetedFetch(deps, "https://github.com/o/r/pull/1");
+      expect(out).toEqual({ status: "rate_limited" });
+      expect(rows).toEqual([]);
+      // Asserting the absent row is not enough on its own: a future change that called `fetchOne`
+      // after a failed acquire while skipping the append would still satisfy `rows == []`, and that
+      // is outbound traffic with no I29 egress row. Pin the no-call directly. The sibling
+      // provider-429 test makes the mirror-image assertion (`fetched === true` WITH one row), so the
+      // two provenances of `rate_limited` cannot quietly merge.
+      expect(fetched).toBe(false);
     });
   });
 });

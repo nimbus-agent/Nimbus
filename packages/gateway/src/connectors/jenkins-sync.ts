@@ -10,6 +10,7 @@ import {
   syncNoopResult,
 } from "../sync/types.ts";
 import { readConnectorSecret } from "./connector-vault.ts";
+import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import {
   flattenJenkinsApiJobs,
   JENKINS_JOBS_API_TREE,
@@ -383,6 +384,14 @@ function jenkinsJobNameSegmentsFromCapturedPath(capturedPath: string): string[] 
  * a `null` return here is not merely hypothetical, and MUST be treated as "nothing was written",
  * never as success: this function checks it and returns `not_found` rather than reporting
  * `indexed` for a row that does not exist.
+ *
+ * Below, `fetchOneBuild` checks the response body's shape (rejects `null`, non-object, and array
+ * JSON) AND the presence of the `number` identity field BEFORE calling
+ * `upsertJenkinsBuildRowIfNew` at all — both report `upstream_error`, distinct from this
+ * function's own `null` return. So by the time `upsertJenkinsBuildRowIfNew` is actually called,
+ * `br` is guaranteed to be a valid record with a numeric `number`, which narrows what a `null`
+ * return from it can mean here to specifically "the build exists upstream but was not new to us"
+ * (`num <= lastSeen` or `modifiedAt < floorMs`) — reported as `absent`, never `upstream_error`.
  */
 type ParsedJenkinsBuildUrl = { readonly jobFullName: string; readonly num: number };
 
@@ -433,7 +442,7 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
     token === null ||
     token.trim() === ""
   ) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "no_credential" };
   }
   const base = stripTrailingSlashes(baseRaw);
   const auth = basicAuthHeader(user.trim(), token.trim());
@@ -451,12 +460,24 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
   } catch {
     // A DNS/TLS/connect failure can carry the request URL — which embeds the Vault-stored
     // `base_url` — in its message. Swallow it entirely rather than let it propagate.
-    return { status: "not_found" };
+    return { status: "not_found", reason: "unreachable" };
   }
-  if (!bRes.ok || bRes.json === null || typeof bRes.json !== "object") {
-    return { status: "not_found" };
+  if (!bRes.ok) {
+    return fetchOneMissForResponse(bRes.status);
+  }
+  if (bRes.json === null || typeof bRes.json !== "object" || Array.isArray(bRes.json)) {
+    return { status: "not_found", reason: "upstream_error" };
   }
   const br = bRes.json as Record<string, unknown>;
+  // The returned itemId MUST reflect the row `upsertJenkinsBuildRowIfNew` actually writes, which
+  // keys off the API response's own `number` field — never the raw regex capture from the
+  // caller's URL (which can differ from it — leading zeros, etc.). Checked explicitly here,
+  // ahead of the call, so a response missing `number` is distinguishable (`upstream_error`) from
+  // a build that is genuinely already-seen/stale (`upserted === null` below, `absent`) — both
+  // otherwise return `null` from `upsertJenkinsBuildRowIfNew` and would be indistinguishable.
+  if (numberField(br, "number") === undefined) {
+    return { status: "not_found", reason: "upstream_error" };
+  }
   // Fallback `url` serves the same PURPOSE `syncJenkinsJobBuilds` uses `job.url` for — if the
   // build response itself omits its `url` field, `upsertJenkinsBuildRowIfNew` falls back to
   // whatever `job.url` was passed instead of leaving `url`/`canonicalUrl` (and therefore
@@ -476,11 +497,14 @@ async function fetchOneBuild(ctx: SyncContext, url: string): Promise<FetchOneRes
     url,
   );
   // A `null` return means NOTHING was written (see the docstring above) — the row does not exist,
-  // so this must report `not_found`, not `indexed`. The returned itemId is built from `num` on
-  // the successful result, which is the API response's own `number` field, never the raw regex
-  // capture from the caller's URL (which can differ from it — leading zeros, etc.).
+  // so this must report `not_found`. By this point `br` is already known to be a valid record
+  // with a numeric `number` (checked above), so a `null` here specifically means the build was
+  // already covered by a previous sync or predates the initial-sync depth window — genuinely
+  // `absent`, not an upstream fault. The returned itemId is built from `num` on the successful
+  // result, which is the API response's own `number` field, never the raw regex capture from the
+  // caller's URL (which can differ from it — leading zeros, etc.).
   if (upserted === null) {
-    return { status: "not_found" };
+    return { status: "not_found", reason: "absent" };
   }
   return {
     status: "indexed",

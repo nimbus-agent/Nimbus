@@ -68,7 +68,7 @@ export interface SyncContext {
  * FETCH_ONE_TIMEOUT_MS` ≈ 15s — seconds, not minutes, and comfortably under typical reverse-proxy
  * and client patience (30–60s+). Passed as `signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS)` to
  * the connector's outbound `fetch` call; on abort the connector's existing catch already maps the
- * failure to `{ status: "not_found" }` (see `Syncable.fetchOne`'s doc below) — the caller may
+ * failure to `{ status: "not_found", reason: "unreachable" }` (see `Syncable.fetchOne`'s doc below) — the caller may
  * retry, and the periodic sync picks the item up regardless, so a timeout is a genuine miss, never
  * a hang.
  *
@@ -81,12 +81,34 @@ export interface SyncContext {
 export const FETCH_ONE_TIMEOUT_MS = 10_000;
 
 /**
- * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing them is how a
- * panel ends up telling a user to check credentials that are fine.
+ * Why a targeted single-item fetch missed.
+ *
+ * A fixed enum derived from an HTTP status code and nothing else — never
+ * provider text, a URL, or an exception message, any of which can carry a
+ * credential or a Vault-stored base URL.
+ */
+export type FetchMissReason =
+  | "no_credential"
+  | "unauthorized"
+  | "absent"
+  | "unreachable"
+  | "upstream_error";
+
+/**
+ * The outcome of a TARGETED single-item fetch. Distinct arms because collapsing
+ * them is how a panel ends up telling a user to check credentials that are fine:
+ * a bare `not_found` covered a dead credential, an offline machine, and a
+ * genuinely absent item alike.
+ *
+ * `reason` is what lets that promise be kept — but it does not keep it on its
+ * own, and this comment must not claim otherwise. It is REQUIRED: every
+ * connector now supplies a cause, and a `not_found` site that omits one is a
+ * compile error, not a silent regression to the old collapsed behaviour.
  */
 export type FetchOneResult =
   | { readonly status: "indexed"; readonly itemId: string }
-  | { readonly status: "not_found" }
+  | { readonly status: "not_found"; readonly reason: FetchMissReason }
+  | { readonly status: "rate_limited" }
   | { readonly status: "unsupported_url" };
 
 export interface Syncable {
@@ -110,6 +132,18 @@ export interface Syncable {
    * (`sync/targeted-fetch.ts`) retries once, query-stripped, whenever it sees this status, and
    * that retry is safe to make ONLY because this status is known to mean "no request was made
    * yet"; returning it after a real outbound call would make the orchestrator double it.
+   *
+   * `not_found` REQUIRES a `reason: FetchMissReason` naming the cause (missing credential,
+   * unauthorized, genuinely absent, unreachable provider, or an upstream error) — see
+   * `FetchOneResult`'s doc comment above. A `not_found` with no reason is a compile error, not an
+   * option.
+   *
+   * `rate_limited` means the provider itself refused the request (e.g. an HTTP 429), NOT that the
+   * orchestrator's own rate-limit token acquisition timed out — that case never reaches this
+   * method at all. Return it only after the outbound request was actually made. Per I29, the
+   * orchestrator has already appended the egress ledger row for this call before invoking
+   * `fetchOne`, so a `rate_limited` return here does NOT mean the attempt was un-ledgered — the
+   * request genuinely left the machine.
    */
   fetchOne?(ctx: SyncContext, url: string): Promise<FetchOneResult>;
 }
