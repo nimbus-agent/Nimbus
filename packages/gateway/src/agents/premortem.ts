@@ -470,8 +470,9 @@ function pushUnconditionalGaps(gaps: GapNote[]): void {
         "— no longer applies. What still does: `deployment/annotate.ts`, the only writer of " +
         "the `metadata.conclusion` a `deploy_failed` watcher matches, inserts its `item` row " +
         "directly and creates no `deployment` graph entity, so such a watcher would match " +
-        "nothing until `nimbus index regraph` runs. The deploy-failure risk itself is still " +
-        "computed and reported above.",
+        "nothing until `nimbus index regraph` runs. Deploy failure is a watcher condition kind, " +
+        "not one of the five risks above — no deploy-failure risk is computed, so nothing is " +
+        "reported about deploy outcomes anywhere in this brief.",
     },
   );
 }

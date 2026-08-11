@@ -24,6 +24,39 @@ function makeCtx(db: Database, extras?: { configDir?: string }) {
   return { db, notify: () => {}, ...extras };
 }
 
+type Notification = { method: string; params: unknown };
+
+/**
+ * `emitBriefWithSynthesis` builds the brief fire-and-forget, so the dispatch resolves before any
+ * notification exists. POLL to a terminal notification rather than yielding a single macrotask:
+ * `runPremortem` runs epic resolution, cohort selection, five risk calculators and the watcher
+ * proposal transaction, none of which is guaranteed to finish inside one `setTimeout(0)` turn on a
+ * loaded CI runner. `test/e2e/scenarios/premortem.e2e.test.ts` polls for the same reason.
+ *
+ * Waits for `briefError` too, so an agent that THREW fails with the thrown message rather than
+ * with an indistinguishable "never emitted" after burning the full deadline.
+ */
+async function awaitBriefReady(notifications: readonly Notification[]): Promise<Notification> {
+  const deadline = performance.now() + 10_000;
+  const terminal = (): Notification | undefined =>
+    notifications.find(
+      (n) => n.method === "premortem.briefReady" || n.method === "premortem.briefError",
+    );
+  while (terminal() === undefined && performance.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const seen = terminal();
+  if (seen === undefined) {
+    throw new Error(
+      `no terminal premortem notification within 10s; got ${notifications.map((n) => n.method).join(", ") || "nothing"}`,
+    );
+  }
+  if (seen.method !== "premortem.briefReady") {
+    throw new Error(`premortem.briefError instead of briefReady: ${JSON.stringify(seen.params)}`);
+  }
+  return seen;
+}
+
 /** A target-epic-only seed: a Jira Epic item with no children — enough to resolve, not enough to cohort. */
 function seedChildlessEpic(db: Database, key: string): void {
   upsertIndexedItem(db, {
@@ -237,18 +270,60 @@ describe("dispatchAgentsRpc — agents.premortem happy paths", () => {
       },
     );
     expect(out.kind).toBe("hit");
-    // `emitBriefWithSynthesis` builds fire-and-forget; give the queue a turn.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const ready = notifications.find((n) => n.method === "premortem.briefReady");
-    if (ready === undefined) {
-      throw new Error(
-        `premortem.briefReady was never emitted; got ${notifications.map((n) => n.method).join(", ") || "nothing"}`,
-      );
-    }
+    const ready = await awaitBriefReady(notifications);
     const findings = (ready.params as { findings: PremortemBrief }).findings;
     const coupling = findings.risks.find((r) => r.kind === "incident_coupling");
     expect(coupling?.summary).toContain("1 of 1 comparable epics (100%)");
     expect(coupling?.value).toBe(1);
+  });
+
+  // `loadNimbusServiceConfigsFromConfigDir` throws outright on a malformed
+  // `[metrics.dora.*]`/`[ci.service.*]` block, and it is called BEFORE `emitPremortemBrief` — so
+  // without the try/catch in `premortemResolveServiceId`, one config typo would sink the whole
+  // brief, including the four lanes that never touch service identity. Red-proved: reverting that
+  // catch makes this reject with "missing required 'repos'" instead of delivering a brief.
+  test("a malformed [ci.service.*] block degrades to a named gap, it does not sink the brief", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-premortem-badcfg-"));
+    // `repos` is required; omitting it is one of the loader's throwing validations.
+    writeFileSync(join(dir, "nimbus.toml"), "[ci.service.billing]\n", "utf8");
+    const db = freshDb();
+    seedEpicWithServices(db, {
+      key: "PROJ-9",
+      services: ["acme/billing"],
+      resolvedAtMs: NOW - 5 * DAY_MS,
+      createdAtMs: NOW - 15 * DAY_MS,
+    });
+    seedEpicWithServices(db, {
+      key: "HIST-9",
+      services: ["acme/billing"],
+      resolvedAtMs: NOW - 40 * DAY_MS,
+      createdAtMs: NOW - 70 * DAY_MS,
+    });
+
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const out = await dispatchAgentsRpc(
+      "agents.premortem",
+      { epicRef: "PROJ-9" },
+      {
+        db,
+        notify: (method: string, params: unknown) => notifications.push({ method, params }),
+        configDir: dir,
+      },
+    );
+    expect(out.kind).toBe("hit");
+    const ready = await awaitBriefReady(notifications);
+    const findings = (ready.params as { findings: PremortemBrief }).findings;
+    // The brief is delivered whole — the other four risks are still computed…
+    expect(findings.risks.map((r) => r.kind)).toEqual([
+      "cycle_time",
+      "size_overrun",
+      "review_drag",
+      "incident_coupling",
+      "abandonment",
+    ]);
+    // …and incident coupling reports a gap rather than a fabricated 0.
+    const coupling = findings.risks.find((r) => r.kind === "incident_coupling");
+    expect(coupling?.value).toBeNull();
+    expect(coupling?.summary).toContain("cannot be measured");
   });
 });

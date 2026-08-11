@@ -535,6 +535,25 @@ export function insertWatcherIfAbsent(
 
 Watchers are created with `enabled: 0`, `condition_type: "incident_opened"`, `condition_json: JSON.stringify({ filter: { service } })`, `action_type: "notify"`, `action_json: "{}"`.
 
+> **CORRECTION (2026-08-11, found in review after the branch was written).** Two claims in the two
+> paragraphs above are wrong, and the shipped code does not follow either of them:
+>
+> 1. **The filter axis is `affectedService`, not `service`.** `filter.service` matches the
+>    `item.service` COLUMN, which for a PagerDuty incident is always the connector id `pagerduty` —
+>    so a watcher written on that axis could only ever scope to a whole connector, and was inert
+>    even once armed. `premortem/watcher-proposals.ts:134` writes
+>    `JSON.stringify({ filter: { affectedService: configServiceId } })`, matched by
+>    `automation/watcher-engine.ts` against the incident graph entity's
+>    `metadata.affectedService`. That dimension was added to the engine by PR B1 in this same
+>    branch; the plan line above predates it.
+> 2. **There is no deploy-failure RISK.** The paragraph above says "The deploy-failure risk is
+>    still computed and reported by Task 2" — Task 2's own `RiskKind` union (line 304) has no such
+>    member, and neither does the shipped `premortem/risks.ts:4-9`. The five structural risks are
+>    cycle time, size overrun, review drag, incident coupling and **abandonment**, exactly as the
+>    2026-08-09 design's Lane 3 table lists them. `deploy_failed` is a watcher CONDITION KIND that
+>    PR B1 added to the engine, never a reported risk. What the DECIDED callout actually settles is
+>    that no deploy-failure WATCHER is proposed — which remains true and is the point being made.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts

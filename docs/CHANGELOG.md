@@ -48,8 +48,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   gets no watcher at all**, named in the brief — falling back to the repo path is what produced
   the inert proposal. Proposals also no longer depend on the cohort: they are a function of the
   target's own services, so a first-of-its-kind epic still gets them.
-  **No deploy-failure watcher is proposed**, even though the deploy-failure risk is computed and
-  reported alongside the other four. The engine now supports the same scoping for `deploy_failed`,
+  **No deploy-failure watcher is proposed.** Deploy-failure is a watcher CONDITION KIND, not one
+  of the five risks above — the fifth risk is abandonment, and no deploy-failure risk is computed.
+  The engine now supports the same scoping for `deploy_failed`,
   so the old `item.service`-is-the-provider-slug reason no longer applies; what still does is that
   `deployment/annotate.ts` — the only writer of the `metadata.conclusion` that condition matches —
   inserts its `item` row directly and creates no `deployment` graph entity, so such a watcher
@@ -78,7 +79,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   write with no HITL gate is the same shape of concern preflight is excluded for. It **is** on
   Tauri's `ALLOWED_METHODS` (I7; count 104 → 105), since the renderer sits behind the I7 XSS
   threat model rather than "arbitrary network caller"; `premortem.refresh` (unchanged from PR A)
-  is not Tauri-exposed. No new invariant, no new migration — schema was V53 already.
+  is not Tauri-exposed. The completion notification is `premortem.briefReady` (error:
+  `premortem.briefError`), per the standard `<agentName>.briefReady` contract — `agents.premortem`
+  is the RPC method, not the notification. No new invariant, no new migration — schema was V53
+  already.
 - **2026-08-10 — Gateway lifecycle diagnostics: the silent-exit blind spot.** The gateway could end
   without writing a single line: its only process-level hooks were `SIGTERM`/`SIGINT`, and the only
   code that logged anything about termination was the `shutdown()` path those two signals reach.

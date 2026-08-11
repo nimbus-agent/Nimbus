@@ -692,11 +692,37 @@ function requirePremortemParams(params: unknown): PremortemInput {
  * service-identity resolver" the incident-coupling gap (Task 4) pointed at. With no `configDir` —
  * the test/embedded shape — the resolver is left unset and incident coupling reports a named gap
  * rather than a fabricated measurement.
+ *
+ * DEGRADES rather than throws. `loadNimbusServiceConfigsFromConfigDir` reads and parses
+ * `nimbus.toml` with no internal try/catch (`config/nimbus-toml.ts:1941-1965`), and rejects a
+ * malformed `[metrics.dora.*]` / `[ci.service.*]` block outright — a bad `deploy_workflow_pattern`
+ * regex, a missing `repos`, an out-of-range incident window — as does an unreadable file. Left
+ * unguarded, a single config typo would take down the WHOLE brief: this runs before
+ * `emitPremortemBrief`, so nothing would be emitted at all, and the four lanes that never touch
+ * service identity would be lost along with the one that does. Falling back to no resolver puts
+ * incident coupling on the exact path the no-`configDir` case already takes — a named gap, never a
+ * fabricated measurement — and leaves every other lane intact. The same degrade-don't-abort call
+ * was made for gateway startup in `platform/assemble.ts`'s `loadServiceConfigsOrDegrade` (M-1).
+ *
+ * The cause is written to stderr because the incident-coupling gap note cannot name it: that note
+ * is authored in `premortem/risks.ts`, which is deliberately database- and config-free and is
+ * already hedged across the two causes it CAN distinguish. Silently widening it to cover a third
+ * would state a cause that may not be true. `loadNimbusServiceConfigsFromConfigDir` warns on
+ * stderr the same way for duplicate service ids.
  */
 function premortemResolveServiceId(ctx: AgentsRpcContext) {
-  return ctx.configDir === undefined
-    ? undefined
-    : buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(ctx.configDir));
+  const { configDir } = ctx;
+  if (configDir === undefined) return undefined;
+  try {
+    return buildServiceIdentityResolver(loadNimbusServiceConfigsFromConfigDir(configDir));
+  } catch (err) {
+    process.stderr.write(
+      `agents.premortem: failed to load [metrics.dora.*]/[ci.service.*] from nimbus.toml ` +
+        `(${err instanceof Error ? err.message : String(err)}); incident coupling will report ` +
+        `an unmeasurable gap until this is fixed.\n`,
+    );
+    return undefined;
+  }
 }
 
 async function handlePremortem(

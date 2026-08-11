@@ -159,13 +159,19 @@ rather than a contrived condition.
 >
 > Whichever is taken, the brief must not imply an epic-scoped deploy alert it cannot deliver.
 >
-> **DECIDED 2026-08-10 — option 1.** pre-mortem proposes **no** deploy-failure watcher. The
-> deploy-failure risk is still computed and reported in the brief like every other structural risk;
-> it simply proposes nothing, exactly as cycle time, size overrun and review drag already do. The
-> brief states once, plainly, that no watcher is proposed for it and why. This keeps the design's
+> **DECIDED 2026-08-10 — option 1.** pre-mortem proposes **no** deploy-failure watcher. The brief
+> states once, plainly, that no watcher is proposed for it and why. This keeps the design's
 > standing rule — a risk with no genuine watchable condition proposes nothing rather than a
 > contrived one — and leaves option 3 available later without having shipped a misleading watcher in
 > the meantime. **`incident_opened` is therefore the only watcher kind B2 proposes.**
+>
+> **CORRECTION (2026-08-11).** As first written, this callout also said "the deploy-failure risk is
+> still computed and reported in the brief like every other structural risk". That is false and was
+> never true of any draft: **there is no deploy-failure risk.** The five structural risks are the
+> five the 2026-08-09 design's Lane 3 table names — cycle time, size overrun, review drag, incident
+> coupling and **abandonment** — and that is exactly what `premortem/risks.ts:4-9` ships.
+> Deploy-failure is a watcher CONDITION KIND (`deploy_failed`, added to the engine by PR B1), not a
+> risk dimension. The decision recorded above is unaffected: no deploy-failure watcher is proposed.
 
 **Jira-only, and narrower than "Jira".** Every brief states it. Discovery keys on
 `metadata.issue_type = 'Epic'`, written only by `connectors/jira-sync.ts`; `linear-sync.ts` never

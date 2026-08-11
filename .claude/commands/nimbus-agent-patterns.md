@@ -67,7 +67,7 @@ Three read-only agents that surface cross-colleague context by fanning the shipp
 
 ### Pre-mortem agent (Spine S1 — Local Brain)
 
-**`pre-mortem`** (`packages/gateway/src/agents/premortem.ts`) — IPC `agents.premortem`, CLI `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh] [--repropose]`. Four sequential lanes (not `AgentCoordinator` — each depends on the previous one's output): resolve a Jira epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics, compute five structural risks over that cohort, and read recurring blocker themes (`premortem_theme`, mined by the debounced background pass Task 1/2 shipped). Jira-only, and `parent_key`-derived cohort membership is team-managed-Jira-only — no `linear:project` items are indexed at all. Confidence tops out at 0.86, matching `glossary`/`decisions`: no connector indexes ticket comments.
+**`pre-mortem`** (`packages/gateway/src/agents/premortem.ts`) — IPC `agents.premortem`, CLI `nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh] [--repropose]`, notification `premortem.briefReady`. Four sequential lanes (not `AgentCoordinator` — each depends on the previous one's output): resolve a Jira epic to its affected services, build an IDF-weighted service-overlap cohort of closed epics, compute five structural risks over that cohort, and read recurring blocker themes (`premortem_theme`, mined by the debounced background pass Task 1/2 shipped). Jira-only, and `parent_key`-derived cohort membership is team-managed-Jira-only — no `linear:project` items are indexed at all. Confidence tops out at 0.86, matching `glossary`/`decisions`: no connector indexes ticket comments.
 
 **This is the one built-in agent that is not purely read-only — read the exception's bounds below before treating "read-only, no write tools in scope" as unconditional.**
 
@@ -132,7 +132,7 @@ ipcServer.notify(`${agentName}.briefReady`, { sessionId, brief, findings });
 ```
 
 - `brief` is **always a Markdown string**.
-- `findings` is the typed brief object (`ExpertBrief`, `CatchupBrief`, or `ImpactBrief`) — clients can render it directly or transform the Markdown further.
+- `findings` is **that agent's own typed brief object**, declared in `packages/gateway/src/agents/_lib/<agent>-types.ts` — `ExpertBrief`, `CatchupBrief`, `ImpactBrief`, `WhyBrief`, `GlossaryBrief`, `DecisionsBrief`, `OwnershipBrief`, `PremortemBrief`, and so on. This is deliberately not a closed union: adding an agent adds a type here, it does not change the contract. Clients can render it directly or transform the Markdown further. CLI-side narrowing guards (e.g. `PremortemBriefLike` in `packages/cli/src/commands/pre-mortem.ts`) are structural subsets used to validate an untyped IPC payload — they are not the gateway-side type this field carries.
 - `sessionId` ties the notification to the originating `engine.askStream` call.
 - Notification name is always `<agentName>.briefReady` — the CLI subscribes to that exact name.
 

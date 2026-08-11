@@ -72,7 +72,8 @@ function proposedWatcherId(epicItemId: string, riskKind: string, service: string
  * `deployment/annotate.ts` — the only writer of the `metadata.conclusion` that
  * condition matches — INSERTs its `item` row directly and creates no
  * `deployment` graph entity, so such a watcher matches nothing until an index
- * regraph. The deploy-failure risk is still computed and reported.
+ * regraph. Deploy failure is a watcher CONDITION KIND, not one of the five
+ * risks in `premortem/risks.ts` — there is no deploy-failure risk to report.
  *
  * Every proposed id is recorded in `premortem_watcher_proposal`, INCLUDING
  * the `already_present` case, so the tombstone stays complete across runs.

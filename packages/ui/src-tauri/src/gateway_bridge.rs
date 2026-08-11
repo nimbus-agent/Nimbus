@@ -547,9 +547,15 @@ mod tests {
 
     #[test]
     fn allowlist_premortem_brief_only() {
-        // S1 pre-mortem: the read-only brief is renderer-callable; the maintenance verb that
-        // re-derives the theme pass is not (I7). premortem.refresh has no rebuild counterpart
-        // and is LAN-forbidden, so it must not reach the renderer.
+        // S1 pre-mortem: the brief is renderer-callable; the maintenance verb that re-derives
+        // the theme pass is not (I7). premortem.refresh has no rebuild counterpart and is
+        // LAN-forbidden, so it must not reach the renderer.
+        //
+        // Unlike the sibling briefs above, agents.premortem is NOT purely read-only: it writes
+        // paused (enabled = 0) watcher rows plus their proposal tombstones into local SQLite.
+        // It qualifies under I7 all the same, because a paused row is inert until a human arms
+        // it, and a local insert never reaches the executor's HITL gate. See
+        // docs/SECURITY-INVARIANTS.md § I7.
         //
         // Named explicitly for the same reason as the decisions/ownership tests above:
         // allowlist_exact_size alone stays green if a later change swaps agents.premortem out
