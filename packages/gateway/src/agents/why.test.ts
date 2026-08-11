@@ -161,6 +161,77 @@ describe("runWhy", () => {
     ).toBe(true);
   });
 
+  test("the pull_request lane names reviewers when reviewed edges exist", async () => {
+    const db = freshDb();
+    seedWhyFixture(db, { commit: true, issue: true, pr: true, blame: { lineNo: 12 } });
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:reviewer", "Reviewer"]);
+
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "review",
+      externalId: "acme/app#412#review-500",
+      title: "Review on acme/app#412",
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId: "person:reviewer",
+      metadata: { repo: "acme/app", pr_number: 412 },
+    });
+
+    const brief = await runWhy({ ref: refAt(12) }, ctxFor(db));
+    const prFinding = brief.findings.find((f) => f.lane === "pull_request");
+
+    expect(prFinding?.detail).toContain("Reviewed by");
+    expect(brief.gaps.some((g) => g.detail.includes("`reviewed`"))).toBe(false);
+  });
+
+  test("pull_request lane: a reviewed edge that exists but doesn't resolve still yields a gap note, not silence", async () => {
+    const db = freshDb();
+    seedWhyFixture(db, { pr: true, blame: { lineNo: 42 } });
+
+    // A `reviewed` edge exists in the graph, but it targets a `pr`
+    // graph_entity with NO backing `item` row — the partial-join failure the
+    // old `detectMissingRelationEmit`-only probe couldn't see. It does not
+    // reference this PR at all, so the reviewer query for THIS PR also finds
+    // nothing: exactly the "silently empty AND no gap note" regression.
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      [
+        "ge:person:orphan-reviewer",
+        "person",
+        "person:orphan-reviewer",
+        "Orphan Reviewer",
+        "github",
+      ],
+    );
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:pr:orphan", "pr", "github:pr:orphan", "Orphan PR", "github"],
+    );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:person:orphan-reviewer",
+      "ge:pr:orphan",
+      "reviewed",
+      Date.now(),
+    ]);
+
+    const brief = await runWhy({ ref: refAt(42) }, ctxFor(db));
+
+    const prFinding = brief.findings.find((f) => f.lane === "pull_request");
+    expect(prFinding?.detail).not.toContain("Reviewed by");
+
+    const reviewedGap = brief.gaps.find(
+      (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
+    );
+    expect(reviewedGap).toBeDefined();
+    // Distinct from the "no `reviewed` edges at all" gap's detail — proves
+    // this is the resolution-aware branch, not the pre-existing zero-edges
+    // check (which a bare "edges exist / don't exist" probe would also pass
+    // for the zero-edges case, proving nothing about state (b)).
+    expect(reviewedGap?.detail).toContain("none resolve");
+  });
+
   test("ticket lane: pr → resolves → issue, endpoint-scoped", async () => {
     const db = freshDb();
     seedWhyFixture(db, { issue: true, pr: true, blame: { lineNo: 42 } });
