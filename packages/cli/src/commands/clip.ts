@@ -231,32 +231,63 @@ export async function runClipDelete(
   console.log(`Deleted ${clipCount(out.deleted)}.`);
 }
 
+/** Value of `--flag <value>`, or `undefined` when the flag is absent. */
+function flagValue(rest: readonly string[], flag: string): string | undefined {
+  const i = rest.indexOf(flag);
+  return i >= 0 ? rest[i + 1] : undefined;
+}
+
+/**
+ * Per-subcommand argument parsing, split out of `runClip`'s switch for
+ * cognitive complexity (Sonar S3776 scored it at 20). The switch is now one
+ * arm per subcommand: parse, dispatch, return.
+ */
+function parsePairArgs(rest: readonly string[]): {
+  label: string | undefined;
+  scopes: string[] | undefined;
+} {
+  const scopesRaw = flagValue(rest, "--scopes");
+  // A PRESENT but valueless (or flag-shaped) --scopes is a usage error, not "flag omitted".
+  // parseScopesFlag(undefined) reads as "the operator did not ask for scopes at all" and the
+  // gateway grants the legacy clip+briefs set — the exact silent-grant this design exists to
+  // prevent, now happening to an operator who explicitly typed --scopes.
+  if (rest.includes("--scopes") && (scopesRaw === undefined || scopesRaw.startsWith("--"))) {
+    throw new Error("Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]");
+  }
+  return { label: flagValue(rest, "--label"), scopes: parseScopesFlag(scopesRaw) };
+}
+
+function parseScopesArgs(rest: readonly string[]): {
+  label: string;
+  scopes: string[];
+} {
+  const label = rest[0];
+  const scopes = parseScopesFlag(flagValue(rest, "--set"));
+  if (label === undefined || label.startsWith("--") || scopes === undefined) {
+    throw new Error("Usage: nimbus clip scopes <label> --set <a,b>");
+  }
+  return { label, scopes };
+}
+
+function parseListArgs(rest: readonly string[]): { tag?: string; limit: number; json: boolean } {
+  const tag = flagValue(rest, "--tag");
+  return {
+    ...(tag !== undefined ? { tag } : {}),
+    limit: parseLimit(flagValue(rest, "--limit")),
+    json: rest.includes("--json"),
+  };
+}
+
 export async function runClip(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "pair": {
-      const i = rest.indexOf("--label");
-      const label = i >= 0 ? rest[i + 1] : undefined;
-      const s = rest.indexOf("--scopes");
-      const scopesRaw = s >= 0 ? rest[s + 1] : undefined;
-      // A PRESENT but valueless (or flag-shaped) --scopes is a usage error, not "flag omitted".
-      // parseScopesFlag(undefined) reads as "the operator did not ask for scopes at all" and the
-      // gateway grants the legacy clip+briefs set — the exact silent-grant this design exists to
-      // prevent, now happening to an operator who explicitly typed --scopes.
-      if (s >= 0 && (scopesRaw === undefined || scopesRaw.startsWith("--"))) {
-        throw new Error("Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]");
-      }
-      const scopes = parseScopesFlag(scopesRaw);
+      const { label, scopes } = parsePairArgs(rest);
       await withIpc((c) => runClipPair(c, label, scopes));
       return;
     }
     case "scopes": {
-      const label = rest[0];
-      const s = rest.indexOf("--set");
-      const scopes = parseScopesFlag(s >= 0 ? rest[s + 1] : undefined);
-      if (label === undefined || label.startsWith("--") || scopes === undefined) {
-        throw new Error("Usage: nimbus clip scopes <label> --set <a,b>");
-      }
+      const { label, scopes } = parseScopesArgs(rest);
       await withIpc((c) => runClipScopes(c, label, scopes));
       return;
     }
@@ -272,12 +303,7 @@ export async function runClip(args: string[]): Promise<void> {
       return;
     }
     case "list": {
-      const tagIdx = rest.indexOf("--tag");
-      const tag = tagIdx >= 0 ? rest[tagIdx + 1] : undefined;
-      const limitIdx = rest.indexOf("--limit");
-      const limit = parseLimit(limitIdx >= 0 ? rest[limitIdx + 1] : undefined);
-      const json = rest.includes("--json");
-      await withIpc((c) => runClipList(c, { ...(tag !== undefined ? { tag } : {}), limit, json }));
+      await withIpc((c) => runClipList(c, parseListArgs(rest)));
       return;
     }
     case "delete": {

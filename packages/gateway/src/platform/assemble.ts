@@ -2153,6 +2153,24 @@ function bootTargetedFetchIntoHttpSidecar(deps: {
   };
 }
 
+/**
+ * Register `stop()` for each refresher that is present.
+ *
+ * Deliberately takes the refreshers rather than pre-built closures: a caller
+ * building `() => x.stop()` for an `x` that turned out to be `undefined` would
+ * only fail at shutdown, long after the mistake.
+ */
+function pushStops(
+  sidecarStops: Array<() => void>,
+  refreshers: ReadonlyArray<{ stop: () => void } | undefined>,
+): void {
+  for (const r of refreshers) {
+    if (r !== undefined) {
+      sidecarStops.push(() => r.stop());
+    }
+  }
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -2303,16 +2321,17 @@ export async function assemblePlatformServices(
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
   });
-  sidecarStops.push(() => glossaryRefresher.stop());
-  if (decisionsRefresher !== undefined) {
-    sidecarStops.push(() => decisionsRefresher.stop());
-  }
-  if (ownershipRefresher !== undefined) {
-    sidecarStops.push(() => ownershipRefresher.stop());
-  }
-  if (premortemRefresher !== undefined) {
-    sidecarStops.push(() => premortemRefresher.stop());
-  }
+  // One `stop` per refresher that actually started. Three of the four are
+  // optional (their passes are config-gated), and the repeated
+  // `if (x !== undefined) push(...)` was a third of this function's
+  // cognitive-complexity score (Sonar S3776, 17 against a limit of 15) for no
+  // structural benefit.
+  pushStops(sidecarStops, [
+    glossaryRefresher,
+    decisionsRefresher,
+    ownershipRefresher,
+    premortemRefresher,
+  ]);
 
   await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
 

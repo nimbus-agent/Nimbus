@@ -885,6 +885,33 @@ function openI13WriteHandle(dbPath: string): Database {
   return db;
 }
 
+/**
+ * The bearer-authed GET routes, or `null` when this request is not one of them.
+ *
+ * These MUST be matched before the unauthenticated GET table in `handleGet`,
+ * which is documented "no bearer gate" — falling through to it would serve
+ * these reads with no token check at all. Returning `null` rather than a 404 is
+ * what preserves that ordering: it means "not mine", not "not found".
+ *
+ * Split out of the `fetch` handler for cognitive complexity (Sonar S3776 scored
+ * it at 17); the handler now reads as a flat sequence of route families.
+ */
+async function tryBearerAuthedGet(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  if (req.method !== "GET") return null;
+  if (url.pathname === "/v1/items/resolve") return await handleItemsResolve(req, url, db, opts);
+  const briefGet = BRIEF_GET_RE.exec(url.pathname);
+  if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
+  if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
+  const agentRun = AGENT_RUN_GET_RE.exec(url.pathname);
+  if (agentRun !== null) return await handleAgentRunGet(req, agentRun[1] as string, opts);
+  return null;
+}
+
 export function startReadOnlyHttpServer(
   dbPath: string,
   port: number,
@@ -932,18 +959,8 @@ export function startReadOnlyHttpServer(
       if (req.method === "POST" && url.pathname === "/v1/clips/related") {
         return handleClipRelated(req, db, opts);
       }
-      // GET /v1/items/resolve, GET /v1/briefs/{id}, GET /v1/agents and GET /v1/agents/runs/{id} —
-      // bearer-authed reads; intercept before the unauthenticated GET table, which is documented
-      // "no bearer gate".
-      if (req.method === "GET") {
-        if (url.pathname === "/v1/items/resolve")
-          return await handleItemsResolve(req, url, db, opts);
-        const briefGet = BRIEF_GET_RE.exec(url.pathname);
-        if (briefGet !== null) return await handleBriefGet(req, briefGet[1] as string, opts);
-        if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
-        const agentRun = AGENT_RUN_GET_RE.exec(url.pathname);
-        if (agentRun !== null) return await handleAgentRunGet(req, agentRun[1] as string, opts);
-      }
+      const authedGet = await tryBearerAuthedGet(req, url, db, opts);
+      if (authedGet !== null) return authedGet;
       // All writes (deployment POST + SCIM POST/PATCH/DELETE + policy PUT) → the single I13 dispatcher.
       if (
         req.method === "POST" ||

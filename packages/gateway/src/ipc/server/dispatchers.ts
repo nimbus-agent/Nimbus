@@ -1169,46 +1169,57 @@ async function dispatchPhase4TeamMetricsGroup(
 }
 
 /** Third group: lan → profile → index-reembed → index-rebody → index-regraph → index-demoSymbol → policy → chatops → tribal → share → egress → glossary → decisions → premortem → ownership → clip → admin. */
+/**
+ * The platform-group dispatchers, in probe order.
+ *
+ * ORDER IS THE CONTRACT and must not be reshuffled: each entry claims a method
+ * namespace and returns `phase4RpcSkipped` when the method is not its own, so
+ * the first one that recognises the method wins. Every dispatcher here owns a
+ * disjoint namespace today, which is why the order is not currently
+ * load-bearing for correctness — but nothing enforces that, so treat a
+ * reordering as a behaviour change rather than a formatting one.
+ *
+ * Uniformly typed with the 4-arg signature: the several dispatchers that ignore
+ * `clientId` are assignable to it, which is what lets this be a table at all.
+ * It replaced eighteen hand-written `const x = await try…(); if (x !== skipped)
+ * return x;` pairs — Sonar S3776 scored the result at 17 against a limit of 15,
+ * and each new namespace made it worse.
+ */
+const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
+  (ctx: ServerCtx, method: string, params: unknown, clientId: string) => Promise<unknown>
+> = [
+  tryDispatchLanRpc,
+  tryDispatchProfileRpc,
+  tryDispatchIndexReembedRpc,
+  tryDispatchIndexRebodyRpc,
+  tryDispatchIndexRegraphRpc,
+  tryDispatchIndexDemoSymbolRpc,
+  tryDispatchFilesystemRpc,
+  tryDispatchPolicyRpc,
+  tryDispatchChatopsRpc,
+  tryDispatchTribalRpc,
+  tryDispatchShareRpc,
+  tryDispatchEgressRpc,
+  tryDispatchGlossaryRpc,
+  tryDispatchDecisionsRpc,
+  tryDispatchPremortemRpc,
+  tryDispatchOwnershipRpc,
+  tryDispatchClipRpc,
+];
+
 async function dispatchPhase4PlatformGroup(
   ctx: ServerCtx,
   method: string,
   params: unknown,
   clientId: string,
 ): Promise<unknown> {
-  const lanOutcome = await tryDispatchLanRpc(ctx, method, params);
-  if (lanOutcome !== phase4RpcSkipped) return lanOutcome;
-  const profileOutcome = await tryDispatchProfileRpc(ctx, method, params);
-  if (profileOutcome !== phase4RpcSkipped) return profileOutcome;
-  const indexReembedOutcome = await tryDispatchIndexReembedRpc(ctx, method, params);
-  if (indexReembedOutcome !== phase4RpcSkipped) return indexReembedOutcome;
-  const indexRebodyOutcome = await tryDispatchIndexRebodyRpc(ctx, method, params);
-  if (indexRebodyOutcome !== phase4RpcSkipped) return indexRebodyOutcome;
-  const indexRegraphOutcome = await tryDispatchIndexRegraphRpc(ctx, method, params);
-  if (indexRegraphOutcome !== phase4RpcSkipped) return indexRegraphOutcome;
-  const indexDemoSymbolOutcome = await tryDispatchIndexDemoSymbolRpc(ctx, method, params);
-  if (indexDemoSymbolOutcome !== phase4RpcSkipped) return indexDemoSymbolOutcome;
-  const filesystemOutcome = await tryDispatchFilesystemRpc(ctx, method, params);
-  if (filesystemOutcome !== phase4RpcSkipped) return filesystemOutcome;
-  const policyOutcome = await tryDispatchPolicyRpc(ctx, method, params);
-  if (policyOutcome !== phase4RpcSkipped) return policyOutcome;
-  const chatopsOutcome = await tryDispatchChatopsRpc(ctx, method, params);
-  if (chatopsOutcome !== phase4RpcSkipped) return chatopsOutcome;
-  const tribalOutcome = await tryDispatchTribalRpc(ctx, method, params, clientId);
-  if (tribalOutcome !== phase4RpcSkipped) return tribalOutcome;
-  const shareOutcome = await tryDispatchShareRpc(ctx, method, params);
-  if (shareOutcome !== phase4RpcSkipped) return shareOutcome;
-  const egressOutcome = await tryDispatchEgressRpc(ctx, method, params, clientId);
-  if (egressOutcome !== phase4RpcSkipped) return egressOutcome;
-  const glossaryOutcome = await tryDispatchGlossaryRpc(ctx, method, params);
-  if (glossaryOutcome !== phase4RpcSkipped) return glossaryOutcome;
-  const decisionsOutcome = await tryDispatchDecisionsRpc(ctx, method, params);
-  if (decisionsOutcome !== phase4RpcSkipped) return decisionsOutcome;
-  const premortemOutcome = await tryDispatchPremortemRpc(ctx, method, params);
-  if (premortemOutcome !== phase4RpcSkipped) return premortemOutcome;
-  const ownershipOutcome = await tryDispatchOwnershipRpc(ctx, method, params);
-  if (ownershipOutcome !== phase4RpcSkipped) return ownershipOutcome;
-  const clipOutcome = await tryDispatchClipRpc(ctx, method, params);
-  if (clipOutcome !== phase4RpcSkipped) return clipOutcome;
+  for (const dispatch of PHASE4_PLATFORM_DISPATCHERS) {
+    const outcome = await dispatch(ctx, method, params, clientId);
+    if (outcome !== phase4RpcSkipped) return outcome;
+  }
+  // Admin is the terminal arm, not a table entry: its result is returned
+  // whatever it is, including `phase4RpcSkipped`, which is how the caller
+  // learns the whole group declined.
   return tryDispatchAdminRpc(ctx, method, params);
 }
 
