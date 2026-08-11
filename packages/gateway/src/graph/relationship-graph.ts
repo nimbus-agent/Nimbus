@@ -20,6 +20,7 @@ const ITEM_LINKED_ENTITY_TYPES = [
   "data_model",
   "dashboard",
   "data_quality_test",
+  "review",
 ] as const;
 
 export type ItemLinkedEntityType = (typeof ITEM_LINKED_ENTITY_TYPES)[number];

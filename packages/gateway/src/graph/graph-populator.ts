@@ -78,6 +78,7 @@ const CROSS_ITEM_RELATION_TYPES: readonly string[] = Object.freeze([
   "resolves",
   "mentions",
   "correlates_with",
+  "reviewed",
 ]);
 
 function clearRelationsTouchingEntity(db: Database, entityId: string): void {
@@ -280,6 +281,46 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
   for (const issueId of findIssueEntityIds(db, row.service, repoFull, refs)) {
     upsertGraphRelation(db, prEntityId, issueId, "resolves", now);
   }
+}
+
+/**
+ * A `review` item is one reviewer acting on one PR, so it maps to exactly one
+ * `person --reviewed--> pr` edge. Nothing is cleared here: the edge is
+ * idempotent under `upsertGraphRelation`'s `ON CONFLICT (from_id, to_id, type)`,
+ * and it is listed in CROSS_ITEM_RELATION_TYPES precisely so that no entity's
+ * re-population retires it. The consequence — a review deleted upstream leaves
+ * a stale edge — is disclosed rather than mechanised (spec 5.F).
+ *
+ * `ensureGraphEntity` (not `upsertGraphEntity`) for the PR side: a review can be
+ * populated before its PR during a `regraph` replay, and clobbering the PR's
+ * label with a synthesised one would corrupt every reader that displays it.
+ */
+function syncReviewGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+  if (row.authorId === null || row.authorId === "") {
+    return;
+  }
+  const repoFull = stringField(row.metadata, "repo");
+  const prNumber = row.metadata["pr_number"];
+  if (repoFull === undefined || repoFull === "" || typeof prNumber !== "number") {
+    return;
+  }
+
+  const prItemId = `${row.service}:${repoFull}#${String(prNumber)}`;
+  const prEntityId = ensureGraphEntity(db, {
+    type: "pr",
+    externalId: prItemId,
+    label: `${repoFull}#${String(prNumber)}`,
+    service: row.service,
+  });
+
+  const label = personDisplayName(db, row.authorId) ?? row.authorId;
+  const personEntityId = upsertGraphEntity(db, {
+    type: "person",
+    externalId: row.authorId,
+    label,
+    service: row.service,
+  });
+  upsertGraphRelation(db, personEntityId, prEntityId, "reviewed", now);
 }
 
 function syncIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
@@ -779,6 +820,10 @@ export function syncGraphFromIndexedItem(
 
   if (row.type === "pr") {
     syncPrGraph(db, row, now);
+    return;
+  }
+  if (row.type === "review") {
+    syncReviewGraph(db, row, now);
     return;
   }
   if (row.type === "issue") {
