@@ -302,6 +302,28 @@ describe("runClip (dispatcher)", () => {
     expect(out.stdout).toContain("revoke");
   });
 
+  // A flag-shaped value is the next FLAG, not a value. Before this guard each of
+  // these silently succeeded with nonsense: a device literally named "--scopes",
+  // a tag filter of "--limit", a scope list of ["--json"]. None of them are
+  // rejected by anything downstream in a way the operator could act on.
+  it.each([
+    ["pair --label swallows the next flag", ["pair", "--label", "--scopes", "clip"], /clip pair/],
+    ["pair --scopes with no value", ["pair", "--scopes"], /clip pair/],
+    ["scopes --set swallows the next flag", ["scopes", "chrome", "--set", "--json"], /clip scopes/],
+    ["list --tag swallows the next flag", ["list", "--tag", "--limit", "10"], /clip list/],
+    ["list --limit with no value", ["list", "--limit"], /clip list/],
+  ])("rejects %s", async (_case, argv, usage) => {
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runClip(argv)).rejects.toThrow(usage);
+  });
+
+  it("a bare trailing --tag is rejected, not read as 'no tag'", async () => {
+    // The worst of the set: it used to read as "flag absent" and list EVERY clip,
+    // so an operator who meant to filter got the opposite of a filter.
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
+    await expect(runClip(["list", "--tag"])).rejects.toThrow(/clip list/);
+  });
+
   it("prints usage for unknown subcommand", async () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
     await runClip(["bogus"]);

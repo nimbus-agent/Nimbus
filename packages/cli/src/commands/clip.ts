@@ -231,11 +231,38 @@ export async function runClipDelete(
   console.log(`Deleted ${clipCount(out.deleted)}.`);
 }
 
-/** Value of `--flag <value>`, or `undefined` when the flag is absent. */
-function flagValue(rest: readonly string[], flag: string): string | undefined {
+/**
+ * Value of `--flag <value>`; `undefined` when the flag is ABSENT.
+ *
+ * Throws `usage` when the flag is PRESENT but its value is missing or is itself
+ * flag-shaped. That distinction is the whole point: `rest[i + 1]` alone happily
+ * returns the NEXT FLAG as the value, so `nimbus clip pair --label --scopes clip`
+ * used to pair a device literally named `--scopes`, `nimbus clip list --tag --limit 10`
+ * filtered on the tag `--limit`, and `nimbus clip scopes chrome --set --json`
+ * sent `["--json"]` as a scope list (`parseScopesFlag` splits on commas — it does
+ * not validate scope names, so the nonsense reached the gateway and failed there
+ * with a confusing message instead of here with a usage line).
+ *
+ * A bare trailing `--tag` was worse than wrong: it read as "flag absent" and
+ * silently listed everything.
+ *
+ * All of this predates the parse-helper extraction — `main` used the same
+ * unchecked `rest[i + 1]` at each of the three call sites. Centralising the
+ * parsing is what makes one guard cover them all.
+ */
+function flagValue(rest: readonly string[], flag: string, usage: string): string | undefined {
   const i = rest.indexOf(flag);
-  return i >= 0 ? rest[i + 1] : undefined;
+  if (i < 0) return undefined;
+  const v = rest[i + 1];
+  if (v === undefined || v.startsWith("--")) {
+    throw new Error(usage);
+  }
+  return v;
 }
+
+const PAIR_USAGE = "Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]";
+const SCOPES_USAGE = "Usage: nimbus clip scopes <label> --set <a,b>";
+const LIST_USAGE = "Usage: nimbus clip list [--tag <tag>] [--limit <n>] [--json]";
 
 /**
  * Per-subcommand argument parsing, split out of `runClip`'s switch for
@@ -246,15 +273,13 @@ function parsePairArgs(rest: readonly string[]): {
   label: string | undefined;
   scopes: string[] | undefined;
 } {
-  const scopesRaw = flagValue(rest, "--scopes");
-  // A PRESENT but valueless (or flag-shaped) --scopes is a usage error, not "flag omitted".
+  // A PRESENT but valueless (or flag-shaped) --scopes is a usage error, not "flag omitted" —
+  // `flagValue` now enforces that for every flag, but the reason is sharpest here:
   // parseScopesFlag(undefined) reads as "the operator did not ask for scopes at all" and the
   // gateway grants the legacy clip+briefs set — the exact silent-grant this design exists to
   // prevent, now happening to an operator who explicitly typed --scopes.
-  if (rest.includes("--scopes") && (scopesRaw === undefined || scopesRaw.startsWith("--"))) {
-    throw new Error("Usage: nimbus clip pair [--label <device>] [--scopes <a,b>]");
-  }
-  return { label: flagValue(rest, "--label"), scopes: parseScopesFlag(scopesRaw) };
+  const scopesRaw = flagValue(rest, "--scopes", PAIR_USAGE);
+  return { label: flagValue(rest, "--label", PAIR_USAGE), scopes: parseScopesFlag(scopesRaw) };
 }
 
 function parseScopesArgs(rest: readonly string[]): {
@@ -262,18 +287,20 @@ function parseScopesArgs(rest: readonly string[]): {
   scopes: string[];
 } {
   const label = rest[0];
-  const scopes = parseScopesFlag(flagValue(rest, "--set"));
+  const scopes = parseScopesFlag(flagValue(rest, "--set", SCOPES_USAGE));
   if (label === undefined || label.startsWith("--") || scopes === undefined) {
-    throw new Error("Usage: nimbus clip scopes <label> --set <a,b>");
+    throw new Error(SCOPES_USAGE);
   }
   return { label, scopes };
 }
 
 function parseListArgs(rest: readonly string[]): { tag?: string; limit: number; json: boolean } {
-  const tag = flagValue(rest, "--tag");
+  const tag = flagValue(rest, "--tag", LIST_USAGE);
   return {
     ...(tag !== undefined ? { tag } : {}),
-    limit: parseLimit(flagValue(rest, "--limit")),
+    // `parseLimit` still absorbs a malformed NUMBER (`--limit abc` -> 50, its
+    // documented behaviour); what `flagValue` adds is rejecting a MISSING one.
+    limit: parseLimit(flagValue(rest, "--limit", LIST_USAGE)),
     json: rest.includes("--json"),
   };
 }
