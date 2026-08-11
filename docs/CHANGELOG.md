@@ -30,9 +30,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   between the two to notice. Storage shape and embedding destination are now separate questions:
   `body-caps.ts` owns `LONG_BODY_TYPES`, the explicit union of `PROSE_HEAVY_TYPES` (prose-heavy
   for routing) and the new `LOCAL_ONLY_PROSE_TYPES` (prose-shaped but pinned to local embedding).
-  The two source sets must stay disjoint — absence from `PROSE_HEAVY_TYPES` is the *whole* of the
-  privacy enforcement, so a key in both would read as "pinned local" while routing remotely — and
-  `routing.test.ts` pins that disjointness. `body-caps.test.ts` asserts the cap and the routing
+  Note the relationship precisely, because it is easy to state backwards: the two SOURCE sets —
+  `PROSE_HEAVY_TYPES` and `LOCAL_ONLY_PROSE_TYPES` — must stay **disjoint**, and `routing.test.ts`
+  pins that; `LONG_BODY_TYPES` is their **union**, so it is a superset of each and disjoint from
+  neither. Disjointness of the sources is what carries the privacy property: absence from
+  `PROSE_HEAVY_TYPES` is the *whole* of the enforcement, so a key in both would read as "pinned
+  local" while routing remotely. `body-caps.test.ts` asserts the cap and the routing
   together in one test, since each passes alone precisely when the coupling breaks.
 
   **#1005 — `wordCount` described text the index had thrown away.** `POST /v1/clips` accepts 1 MiB;
