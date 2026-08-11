@@ -200,6 +200,59 @@ function githubPrExternalId(repoFull: string, num: number): string {
   return `${repoFull}#${String(num)}`;
 }
 
+const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as const;
+
+/**
+ * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys when the incoming payload
+ * carries them — true only of the single-PR / pull-detail response, never of the events feed's
+ * `PullRequestEvent`/`PullRequestReviewEvent` payloads. `upsertIndexedItem` writes metadata with
+ * `metadata = excluded.metadata`, which REPLACES the row's metadata wholesale, so any later
+ * events-path upsert for a PR that `enrichPrDetail` already filled in would otherwise silently
+ * erase its stats — and `selectPrEnrichCandidates` would then re-queue that PR forever, since
+ * `modified_at` also just advanced, pushing it to the front of the `modified_at DESC` candidate
+ * list. Merge the four keys forward from the currently-indexed row whenever the incoming payload
+ * omits them.
+ *
+ * Accepted tradeoff: once merged forward, stats can go stale (an event bumps `modified_at`
+ * without new commit/diff counts) until the next detail fetch refreshes them. That is strictly
+ * better than losing the stats outright and re-enriching the same PR on every tick.
+ */
+function mergeForwardPrStats(
+  db: Database,
+  meta: Record<string, unknown>,
+  externalId: string,
+): Record<string, unknown> {
+  const missing = PR_STAT_KEYS.filter((k) => meta[k] === undefined);
+  if (missing.length === 0) {
+    return meta;
+  }
+  const id = itemPrimaryKey(SERVICE_ID, externalId);
+  const row = db.query("SELECT metadata FROM item WHERE id = ?").get(id) as {
+    metadata: string | null;
+  } | null;
+  if (row === null || row.metadata === null) {
+    return meta;
+  }
+  let existing: unknown;
+  try {
+    existing = JSON.parse(row.metadata) as unknown;
+  } catch {
+    return meta;
+  }
+  const existingRec = asRecord(existing);
+  if (existingRec === undefined) {
+    return meta;
+  }
+  const merged = { ...meta };
+  for (const k of missing) {
+    const v = existingRec[k];
+    if (v !== undefined) {
+      merged[k] = v;
+    }
+  }
+  return merged;
+}
+
 export function upsertPr(
   ctx: SyncContext,
   repoFull: string,
@@ -232,8 +285,12 @@ export function upsertPr(
   const modified = modifiedMsFromGithubTimestamps(pr, now);
   const user = asRecord(pr["user"]);
   const authorId = resolveGithubActorPersonId(ctx.db, user);
-  const meta = extractPrMetadataForIndex(repoFull, pr, now);
   const externalId = githubPrExternalId(repoFull, num);
+  const meta = mergeForwardPrStats(
+    ctx.db,
+    extractPrMetadataForIndex(repoFull, pr, now),
+    externalId,
+  );
   upsertIndexedItemForSync(ctx, {
     service: SERVICE_ID,
     type: "pr",
@@ -617,6 +674,29 @@ export async function enrichPrDetail(
   return enriched;
 }
 
+/**
+ * I-3: shared by both the changed-events path and the 304 (unchanged) path, so a quiet tick still
+ * drains the enrichment backlog. `selectPrEnrichCandidates` is `modified_at DESC`-ordered and
+ * `MAX_ENRICH_PER_TICK`-capped; before this helper existed, `syncGithubUserEvents` only reached
+ * `enrichPrDetail` when the events feed itself changed, so on a low-activity account most ticks
+ * returned 304 and the backlog drained at roughly zero.
+ */
+async function runPrDetailEnrichmentBestEffort(
+  ctx: SyncContext,
+  pat: string,
+  now: number,
+): Promise<void> {
+  try {
+    await enrichPrDetail(ctx, pat, now);
+  } catch (err) {
+    if (err instanceof RateLimitError) throw err; // honor backoff
+    ctx.logger.warn(
+      { service: SERVICE_ID, err: String(err) },
+      "PR detail enrichment pass failed (non-fatal)",
+    );
+  }
+}
+
 async function fetchAuthenticatedLogin(ctx: SyncContext, pat: string): Promise<string> {
   await ctx.rateLimiter.acquire("github");
   const res = await fetch(USER_URL, {
@@ -672,6 +752,10 @@ async function syncGithubUserEvents(
   bytesTransferred += text.length;
 
   if (res.status === 304) {
+    // I-3: the events feed did not change, but the enrichment backlog is independent of it —
+    // run it here too so a quiet account still drains. The cursor/return shape below is
+    // otherwise byte-identical to before this fix.
+    await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now());
     return {
       ...syncNoopResult(cursor, t0),
       cursor: encodeCursor({ etag, login }),
@@ -713,15 +797,7 @@ async function syncGithubUserEvents(
   }
 
   // Best-effort detail enrichment for fallback-titled or stats-missing PRs (existing rows + this tick's events).
-  try {
-    await enrichPrDetail(ctx, pat, now);
-  } catch (err) {
-    if (err instanceof RateLimitError) throw err; // honor backoff
-    ctx.logger.warn(
-      { service: SERVICE_ID, err: String(err) },
-      "PR detail enrichment pass failed (non-fatal)",
-    );
-  }
+  await runPrDetailEnrichmentBestEffort(ctx, pat, now);
 
   const newEtag = res.headers.get("etag");
   const nextCursor = encodeCursor({ etag: newEtag, login });

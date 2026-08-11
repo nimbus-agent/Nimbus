@@ -140,11 +140,13 @@ describe("enrichPrDetail", () => {
     expect(titleOf(db, "acme/app#7")).toBe("PR #7");
   });
 
-  // Note: a title LIKE 'PR #%' (e.g. literally starting with that text) is now always
-  // treated as fallback-shaped, even with stats present — the exact-match JS filter that
-  // used to guard against this was intentionally removed (see selectPrEnrichCandidates'
-  // docstring). This fixture uses a title that does not collide with that prefix, so it
-  // still verifies that a real title with stats already captured is left untouched.
+  // Note: `selectPrEnrichCandidates` over-selects via `title LIKE 'PR #%'` and then narrows
+  // in JS with an exact-match check (`isExactFallback`, restored after an earlier fix round —
+  // see that function's docstring): a title merely starting with "PR #" (e.g. "Revert of PR
+  // #1") that already has stats is filtered back out, while a title that IS the exact
+  // fallback ("PR #<num>") stays a candidate regardless of stats, so its real title still
+  // gets fetched. This fixture's title does not collide with the LIKE prefix, so it verifies
+  // the plain case: a real title with stats already captured is left untouched.
   test("a real title with stats already captured is not clobbered", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);
