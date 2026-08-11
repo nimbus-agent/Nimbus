@@ -62,65 +62,30 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports absent for a 404", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithCreds(db, "user", "app-pass");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
+  // Five upstream status codes, one shape: mock the status, assert the mapped
+  // result. The mapping is the whole point — a 403 must read as `unauthorized`
+  // and NOT as `absent`, or a permissions problem looks like a deleted PR.
+  // `credential` varies only to keep the expired-token narrative on the 401 row.
+  test.each([
+    [404, "app-pass", { status: "not_found", reason: "absent" }],
+    [401, "expired-app-pass", { status: "not_found", reason: "unauthorized" }],
+    [403, "app-pass", { status: "not_found", reason: "unauthorized" }],
+    [429, "app-pass", { status: "rate_limited" }],
+    [500, "app-pass", { status: "not_found", reason: "upstream_error" }],
+  ] as const)(
+    "maps upstream %i to the right fetchOne result",
+    async (code, credential, expected) => {
+      const db = createMemoryIndexDb();
+      const ctx = ctxWithCreds(db, "user", credential);
+      globalThis.fetch = ((): Promise<Response> =>
+        Promise.resolve(new Response("body", { status: code }))) as unknown as typeof fetch;
 
-    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/999");
+      const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+      const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
 
-    expect(out).toEqual({ status: "not_found", reason: "absent" });
-  });
-
-  test("reports unauthorized for a 401", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithCreds(db, "user", "expired-app-pass");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("Unauthorized", { status: 401 }))) as unknown as typeof fetch;
-
-    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
-
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("reports unauthorized for a 403", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithCreds(db, "user", "app-pass");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
-
-    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
-
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("reports rate_limited for a 429", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithCreds(db, "user", "app-pass");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
-
-    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
-
-    expect(out).toEqual({ status: "rate_limited" });
-  });
-
-  test("reports upstream_error for a 500", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithCreds(db, "user", "app-pass");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
-
-    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://bitbucket.org/w/r/pull-requests/42");
-
-    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
-  });
+      expect(out).toEqual(expected);
+    },
+  );
 
   test("reports no_credential when credentials are missing", async () => {
     const db = createMemoryIndexDb();

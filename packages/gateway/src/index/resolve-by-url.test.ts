@@ -15,24 +15,32 @@ function dbWith(rows: Array<{ id: string; key: string | null; type?: string }>):
   return db;
 }
 
-test("rung 1 — exact key matches", () => {
-  const db = dbWith([{ id: "a", key: "https://github.com/o/r/pull/1" }]);
-  const out = resolveItemByUrl(db, "https://github.com/o/r/pull/1#note");
-  expect(out).toMatchObject({ found: true, matchKind: "exact" });
-  db.close();
-});
-
-test("rung 2 — all query params dropped", () => {
-  const db = dbWith([{ id: "a", key: "https://github.com/o/r/pull/1" }]);
-  const out = resolveItemByUrl(db, "https://github.com/o/r/pull/1?tab=files");
-  expect(out).toMatchObject({ found: true, matchKind: "query_stripped" });
-  db.close();
-});
-
-test("rung 3 — trailing path segments trimmed", () => {
-  const db = dbWith([{ id: "a", key: "https://bitbucket.org/o/r/pull-requests/42" }]);
-  const out = resolveItemByUrl(db, "https://bitbucket.org/o/r/pull-requests/42/diff");
-  expect(out).toMatchObject({ found: true, matchKind: "path_trimmed" });
+// The three MATCHING rungs of the ladder share one shape: seed a key, ask with a
+// URL that only that rung can reduce to it, assert which rung answered. The
+// declining cases below stay separate — they assert a different outcome.
+test.each([
+  [
+    "1 — exact key matches",
+    "https://github.com/o/r/pull/1",
+    "https://github.com/o/r/pull/1#note",
+    "exact",
+  ],
+  [
+    "2 — all query params dropped",
+    "https://github.com/o/r/pull/1",
+    "https://github.com/o/r/pull/1?tab=files",
+    "query_stripped",
+  ],
+  [
+    "3 — trailing path segments trimmed",
+    "https://bitbucket.org/o/r/pull-requests/42",
+    "https://bitbucket.org/o/r/pull-requests/42/diff",
+    "path_trimmed",
+  ],
+])("rung %s", (_label, seededKey, askedUrl, matchKind) => {
+  const db = dbWith([{ id: "a", key: seededKey }]);
+  const out = resolveItemByUrl(db, askedUrl);
+  expect(out).toMatchObject({ found: true, matchKind });
   db.close();
 });
 

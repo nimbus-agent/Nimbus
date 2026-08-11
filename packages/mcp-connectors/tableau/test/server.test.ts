@@ -58,29 +58,19 @@ describe("tableau server", () => {
   });
 
   describe("environment variable validation", () => {
-    it("throws if TABLEAU_URL is missing", async () => {
-      delete process.env["TABLEAU_URL"];
-      const tools = captureTools();
-      await expect(tool(tools, "tableau_get")({ id: "1" })).rejects.toThrow(
-        "TABLEAU_URL is not set",
-      );
-    });
-
-    it("throws if TABLEAU_PAT_NAME is missing", async () => {
-      delete process.env["TABLEAU_PAT_NAME"];
-      const tools = captureTools();
-      await expect(tool(tools, "tableau_get")({ id: "1" })).rejects.toThrow(
-        "TABLEAU_PAT_NAME is not set",
-      );
-    });
-
-    it("throws if TABLEAU_PAT_SECRET is missing", async () => {
-      delete process.env["TABLEAU_PAT_SECRET"];
-      const tools = captureTools();
-      await expect(tool(tools, "tableau_get")({ id: "1" })).rejects.toThrow(
-        "TABLEAU_PAT_SECRET is not set",
-      );
-    });
+    // Each required variable, dropped one at a time. The error must NAME the
+    // missing variable — a generic "not configured" would leave an operator
+    // guessing which of the three they forgot.
+    it.each(["TABLEAU_URL", "TABLEAU_PAT_NAME", "TABLEAU_PAT_SECRET"])(
+      "throws if %s is missing",
+      async (varName) => {
+        delete process.env[varName];
+        const tools = captureTools();
+        await expect(tool(tools, "tableau_get")({ id: "1" })).rejects.toThrow(
+          `${varName} is not set`,
+        );
+      },
+    );
   });
 
   describe("signin errors", () => {

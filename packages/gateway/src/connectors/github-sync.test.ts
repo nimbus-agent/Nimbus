@@ -59,64 +59,27 @@ describeWithFetchRestore("github-sync fetchOne", () => {
     expect(out).toEqual({ status: "unsupported_url" });
   });
 
-  test("reports not_found for a 404", async () => {
+  // Five upstream status codes, one shape: mock the status, assert the mapped
+  // result. The mapping is the whole point — a 403 must read as `unauthorized`
+  // and NOT as `absent`, or a permissions problem looks like a deleted PR, and a
+  // 429 must surface as `rate_limited` rather than as a miss. `pat` varies only
+  // to keep the expired-token narrative on the 401 row.
+  test.each([
+    [404, "pat-value", { status: "not_found", reason: "absent" }],
+    [401, "expired-pat", { status: "not_found", reason: "unauthorized" }],
+    [403, "pat-value", { status: "not_found", reason: "unauthorized" }],
+    [429, "pat-value", { status: "rate_limited" }],
+    [500, "pat-value", { status: "not_found", reason: "upstream_error" }],
+  ] as const)("maps upstream %i to the right fetchOne result", async (code, pat, expected) => {
     const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "pat-value");
+    const ctx = ctxWithPat(db, pat);
     globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
-
-    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/999");
-
-    expect(out).toEqual({ status: "not_found", reason: "absent" });
-  });
-
-  test("a 401 reports unauthorized — the expired-PAT case", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "expired-pat");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("Bad credentials", { status: 401 }))) as unknown as typeof fetch;
-
-    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
-
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("a 403 reports unauthorized", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "pat-value");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("forbidden", { status: 403 }))) as unknown as typeof fetch;
+      Promise.resolve(new Response("body", { status: code }))) as unknown as typeof fetch;
 
     const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
     const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
 
-    expect(out).toEqual({ status: "not_found", reason: "unauthorized" });
-  });
-
-  test("a provider 429 surfaces as rate_limited, not a miss", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "pat-value");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("slow down", { status: 429 }))) as unknown as typeof fetch;
-
-    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
-
-    expect(out).toEqual({ status: "rate_limited" });
-  });
-
-  test("a 500 reports upstream_error", async () => {
-    const db = createMemoryIndexDb();
-    const ctx = ctxWithPat(db, "pat-value");
-    globalThis.fetch = ((): Promise<Response> =>
-      Promise.resolve(new Response("boom", { status: 500 }))) as unknown as typeof fetch;
-
-    const syncable = createGithubSyncable({ ensureGithubMcpRunning: async () => {} });
-    const out = await syncable.fetchOne?.(ctx, "https://github.com/o/r/pull/42");
-
-    expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
+    expect(out).toEqual(expected);
   });
 
   // IMPORTANT 3: a DNS/TLS/connect failure must report not_found, not throw — the caller

@@ -209,7 +209,36 @@ describeWithFetchRestore("jira-sync", () => {
     expect(capturedJql).toContain("updated >= -30d");
   });
 
-  test("cursor with wrong prefix is treated as null", async () => {
+  // Every way a stored cursor can be unusable, and the one thing they must all
+  // do: fall back to the INITIAL date range rather than to an empty or partial
+  // JQL. A cursor that silently degraded to "no floor" would re-scan nothing and
+  // look like a healthy incremental sync, so the assertion is the same for all
+  // of them and the cases differ only in how the cursor is malformed.
+  test.each([
+    [
+      "wrong prefix",
+      () =>
+        `bad-prefix:${Buffer.from(
+          JSON.stringify({ v: 1, floorJql: "2026/01/01 00:00" }),
+          "utf8",
+        ).toString("base64url")}`,
+    ],
+    [
+      "valid prefix but non-object payload",
+      () => encodeNimbusJsonCursor("nimbus-jra1:", ["array"]),
+    ],
+    [
+      "wrong v version",
+      () => encodeNimbusJsonCursor("nimbus-jra1:", { v: 2, floorJql: "2026/01/01 00:00" }),
+    ],
+    [
+      "non-string floorJql",
+      () => encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: 12345 }),
+    ],
+    // null floorJql is VALID and decodes cleanly — it simply means "no floor
+    // recorded yet", which lands on the same initial range.
+    ["null floorJql", () => encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: null })],
+  ])("cursor with %s falls back to the initial JQL range", async (_case, makeCursor) => {
     const { ctx } = credCtx();
     let capturedJql = "";
     globalThis.fetch = (async (
@@ -225,101 +254,7 @@ describeWithFetchRestore("jira-sync", () => {
     }) as unknown as typeof fetch;
 
     const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    // prefix "bad-prefix:" doesn't match "nimbus-jra1:"
-    const badCursor =
-      "bad-prefix:" +
-      Buffer.from(JSON.stringify({ v: 1, floorJql: "2026/01/01 00:00" }), "utf8").toString(
-        "base64url",
-      );
-    await sync.sync(ctx, badCursor);
-    expect(capturedJql).toContain("updated >= -30d");
-  });
-
-  test("cursor with valid prefix but non-object payload is treated as null", async () => {
-    const { ctx } = credCtx();
-    let capturedJql = "";
-    globalThis.fetch = (async (
-      _input: SyncTestFetchParams[0],
-      init?: SyncTestFetchParams[1],
-    ): Promise<Response> => {
-      const body =
-        init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
-      return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
-        status: 200,
-      });
-    }) as unknown as typeof fetch;
-
-    // payload is an array, not an object → branch 38
-    const cursor = encodeNimbusJsonCursor("nimbus-jra1:", ["array"]);
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await sync.sync(ctx, cursor);
-    expect(capturedJql).toContain("updated >= -30d");
-  });
-
-  test("cursor with wrong v version is treated as null", async () => {
-    const { ctx } = credCtx();
-    let capturedJql = "";
-    globalThis.fetch = (async (
-      _input: SyncTestFetchParams[0],
-      init?: SyncTestFetchParams[1],
-    ): Promise<Response> => {
-      const body =
-        init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
-      return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
-        status: 200,
-      });
-    }) as unknown as typeof fetch;
-
-    // v: 2 → wrong version branch at line 42
-    const cursor = encodeNimbusJsonCursor("nimbus-jra1:", { v: 2, floorJql: "2026/01/01 00:00" });
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await sync.sync(ctx, cursor);
-    expect(capturedJql).toContain("updated >= -30d");
-  });
-
-  test("cursor with non-string floorJql is treated as null", async () => {
-    const { ctx } = credCtx();
-    let capturedJql = "";
-    globalThis.fetch = (async (
-      _input: SyncTestFetchParams[0],
-      init?: SyncTestFetchParams[1],
-    ): Promise<Response> => {
-      const body =
-        init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
-      return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
-        status: 200,
-      });
-    }) as unknown as typeof fetch;
-
-    // floorJql is a number → line 46 branch
-    const cursor = encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: 12345 });
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await sync.sync(ctx, cursor);
-    expect(capturedJql).toContain("updated >= -30d");
-  });
-
-  test("cursor with null floorJql is treated as initial sync", async () => {
-    const { ctx } = credCtx();
-    let capturedJql = "";
-    globalThis.fetch = (async (
-      _input: SyncTestFetchParams[0],
-      init?: SyncTestFetchParams[1],
-    ): Promise<Response> => {
-      const body =
-        init?.body !== undefined && typeof init.body === "string" ? JSON.parse(init.body) : {};
-      capturedJql = typeof body.jql === "string" ? body.jql : "";
-      return new Response(JSON.stringify({ issues: [], startAt: 0, maxResults: 50, total: 0 }), {
-        status: 200,
-      });
-    }) as unknown as typeof fetch;
-
-    // floorJql is null → line 49: returns { v:1, floorJql: null } → jiraJqlFromCursor uses initial range
-    const cursor = encodeNimbusJsonCursor("nimbus-jra1:", { v: 1, floorJql: null });
-    const sync = createJiraSyncable({ ensureJiraMcpRunning: async () => {} });
-    await sync.sync(ctx, cursor);
+    await sync.sync(ctx, makeCursor());
     expect(capturedJql).toContain("updated >= -30d");
   });
 
