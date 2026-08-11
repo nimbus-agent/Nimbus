@@ -5,10 +5,13 @@ import {
   createMemoryIndexDb,
   createStubVault,
   describeWithFetchRestore,
+  EMPTY_NIMBUS_VAULT,
+  expectServiceItemCount,
   type SyncTestFetchParams,
   silentSyncContextExtras,
+  syncTestContext,
 } from "./connector-sync-test-helpers.ts";
-import { createGithubSyncable } from "./github-sync.ts";
+import { createGithubSyncable, processEvent } from "./github-sync.ts";
 
 function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | null) {
   return {
@@ -269,4 +272,100 @@ describeWithFetchRestore("github-sync fetchOne", () => {
 
     expect(out).toEqual({ status: "not_found", reason: "upstream_error" });
   });
+});
+
+function reviewEvent(): Record<string, unknown> {
+  return {
+    type: "PullRequestReviewEvent",
+    repo: { full_name: "acme/app" },
+    payload: {
+      action: "created",
+      review: {
+        id: 500,
+        state: "approved",
+        body: "LGTM",
+        html_url: "https://github.com/acme/app/pull/1#pullrequestreview-500",
+        submitted_at: "2026-08-11T10:00:00Z",
+        user: { login: "reviewer" },
+      },
+      pull_request: {
+        number: 1,
+        title: "Add rate limiter",
+        body: "",
+        html_url: "https://github.com/acme/app/pull/1",
+        user: { login: "author" },
+        state: "open",
+      },
+    },
+  };
+}
+
+test("a PullRequestReviewEvent indexes both the review and its PR", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const now = Date.now();
+
+  expect(processEvent(ctx, reviewEvent(), now)).toBe(true);
+
+  const review = db
+    .query("SELECT id, author_id, metadata FROM item WHERE service = 'github' AND type = 'review'")
+    .get() as { id: string; author_id: string | null; metadata: string };
+  expect(review.id).toBe("github:acme/app#1#review-500");
+  expect(review.author_id).not.toBeNull();
+  expect(JSON.parse(review.metadata)).toMatchObject({
+    repo: "acme/app",
+    pr_number: 1,
+    review_id: 500,
+  });
+
+  const pr = db.query("SELECT title FROM item WHERE id = 'github:acme/app#1'").get() as {
+    title: string;
+  };
+  expect(pr.title).toBe("Add rate limiter");
+  db.close();
+});
+
+test("the reviewer resolves to a different person than the PR author", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const now = Date.now();
+  processEvent(ctx, reviewEvent(), now);
+
+  const prAuthor = db.query("SELECT author_id FROM item WHERE id = 'github:acme/app#1'").get() as {
+    author_id: string;
+  };
+  const reviewer = db
+    .query("SELECT author_id FROM item WHERE id = 'github:acme/app#1#review-500'")
+    .get() as { author_id: string };
+
+  expect(reviewer.author_id).not.toBe(prAuthor.author_id);
+  db.close();
+});
+
+test("a review event missing its pull_request is skipped without throwing", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ev = {
+    type: "PullRequestReviewEvent",
+    repo: { full_name: "acme/app" },
+    payload: { action: "created", review: { id: 500, user: { login: "reviewer" } } },
+  };
+
+  expect(() => processEvent(ctx, ev, Date.now())).not.toThrow();
+  expectServiceItemCount(db, "github", 0);
+  db.close();
+});
+
+test("a review event missing its review id is skipped without throwing", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ev = {
+    type: "PullRequestReviewEvent",
+    repo: { full_name: "acme/app" },
+    payload: { action: "created", pull_request: { number: 1, title: "x", user: { login: "a" } } },
+  };
+
+  expect(() => processEvent(ctx, ev, Date.now())).not.toThrow();
+  expectServiceItemCount(db, "github", 0);
+  db.close();
 });

@@ -244,6 +244,61 @@ export function upsertPr(
   });
 }
 
+function githubReviewExternalId(repoFull: string, prNum: number, reviewId: number): string {
+  return `${repoFull}#${String(prNum)}#review-${String(reviewId)}`;
+}
+
+/**
+ * A review is indexed as its own item rather than as PR metadata: the item
+ * upsert replaces `metadata` wholesale (`index/item-store.ts`), so a later
+ * `PullRequestEvent` for the same PR would silently erase reviewer data stored
+ * there. Separate rows cannot clobber one another.
+ *
+ * The events feed is the authenticated user's own activity, so `author_id` here
+ * is always the local user — this indexes "PRs I reviewed", never "who reviewed
+ * my PRs".
+ */
+function upsertReview(
+  ctx: SyncContext,
+  repoFull: string,
+  review: Record<string, unknown>,
+  prNum: number,
+  now: number,
+): boolean {
+  const reviewId = numberField(review, "id");
+  if (reviewId === undefined) {
+    return false;
+  }
+  const user = asRecord(review["user"]);
+  const authorId = resolveGithubActorPersonId(ctx.db, user);
+  const state = stringField(review, "state");
+  const body = stringField(review, "body");
+  const submitted = stringField(review, "submitted_at");
+  const modified = submitted === undefined ? now : Date.parse(submitted);
+  const htmlUrl = stringField(review, "html_url");
+
+  upsertIndexedItemForSync(ctx, {
+    service: SERVICE_ID,
+    type: "review",
+    externalId: githubReviewExternalId(repoFull, prNum, reviewId),
+    title: `Review on ${repoFull}#${String(prNum)}`,
+    body: body ?? "",
+    url: htmlUrl ?? null,
+    canonicalUrl: htmlUrl ?? null,
+    modifiedAt: Number.isFinite(modified) ? modified : now,
+    authorId,
+    metadata: {
+      repo: repoFull,
+      pr_number: prNum,
+      review_id: reviewId,
+      state: state ?? null,
+    },
+    pinned: false,
+    syncedAt: now,
+  });
+  return true;
+}
+
 function upsertFromIssue(
   ctx: SyncContext,
   repoFull: string,
@@ -298,6 +353,28 @@ function processPullRequestPayload(
   return true;
 }
 
+function processPullRequestReviewPayload(
+  ctx: SyncContext,
+  fullName: string,
+  payload: Record<string, unknown>,
+  now: number,
+): boolean {
+  const review = asRecord(payload["review"]);
+  const pr = asRecord(payload["pull_request"]);
+  if (review === undefined || pr === undefined) {
+    return false;
+  }
+  const num = numberField(pr, "number");
+  if (num === undefined) {
+    return false;
+  }
+  // Index the PR too, so the `reviewed` edge targets a titled item rather than a
+  // stub: 14 call sites inner-join `item` on `graph_entity.external_id`, and an
+  // item-less entity is invisible to all of them.
+  upsertPr(ctx, fullName, pr, now);
+  return upsertReview(ctx, fullName, review, num, now);
+}
+
 function processIssuesPayload(
   ctx: SyncContext,
   fullName: string,
@@ -315,7 +392,7 @@ function processIssuesPayload(
   return true;
 }
 
-function processEvent(ctx: SyncContext, ev: Record<string, unknown>, now: number): boolean {
+export function processEvent(ctx: SyncContext, ev: Record<string, unknown>, now: number): boolean {
   const repo = asRecord(ev["repo"]);
   if (repo === undefined) {
     return false;
@@ -331,6 +408,9 @@ function processEvent(ctx: SyncContext, ev: Record<string, unknown>, now: number
   }
   if (type === "PullRequestEvent") {
     return processPullRequestPayload(ctx, fullName, payload, now);
+  }
+  if (type === "PullRequestReviewEvent") {
+    return processPullRequestReviewPayload(ctx, fullName, payload, now);
   }
   if (type === "IssuesEvent") {
     return processIssuesPayload(ctx, fullName, payload, now);
