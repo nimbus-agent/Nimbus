@@ -18,6 +18,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
+import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildRegistry } from "./brief-registry.ts";
 import { BriefRunController } from "./brief-run-store.ts";
@@ -29,26 +30,11 @@ const KNOWN_TOKEN = "brief-test-token-0123456789abcdef0123456789abcdef";
 const KNOWN_LABEL = "brief-test-harness";
 
 function makeInMemoryVault(tokensJson?: string): NimbusVault {
-  const store = new Map<string, string>();
-  store.set(
-    "http_api.web_clipper_tokens",
-    // Default stays the LEGACY bare-string shape on purpose: every existing test that uses this
-    // harness then proves, for free, that a pre-scopes token still works.
+  // Default stays the LEGACY bare-string shape on purpose: every existing test that uses this
+  // harness then proves, for free, that a pre-scopes token still works.
+  return createSeededTokenVault(
     tokensJson ?? JSON.stringify({ [KNOWN_LABEL]: KNOWN_TOKEN } satisfies Record<string, string>),
   );
-  return {
-    get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => {
-      store.set(k, v);
-    },
-    delete: async (k: string) => {
-      store.delete(k);
-    },
-    listKeys: async (prefix?: string) => {
-      const keys = [...store.keys()];
-      return prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix));
-    },
-  };
 }
 
 /** Kicks off synthesis fire-and-forget — same contract as `BriefsWriteSurface.startRun`. */

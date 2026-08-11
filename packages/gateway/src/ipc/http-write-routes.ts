@@ -1122,16 +1122,33 @@ async function runClipPairConfirmRoute(
  * body-supplied client id would turn the ledger row from something the gateway observed into
  * something the caller asserted about itself.
  */
-async function requireAgentAuth(
+type BearerVerdict = { label: string; scopes: readonly ApiScope[] };
+
+/**
+ * The bearer-auth prelude shared by every scoped HTTP write route.
+ *
+ * This body existed verbatim three times — `requireAgentAuth`, `requireFetchAuth`,
+ * `requireBriefAuth` — differing ONLY in which surface supplied `verifyToken`
+ * (`ctx.agents` / `ctx.fetch` / `ctx.briefs`). All four surfaces declare the same
+ * `(presented: string) => Promise<BearerVerdict | null>` shape, so the difference
+ * is a callback, not a control flow.
+ *
+ * Worth collapsing rather than tolerating: this is I13 rejection-recording, and
+ * three copies is three places to forget that the recorded `reason` must track
+ * `refusal.status` — 403 is a real scope gap, 500 is a misconfigured
+ * `HTTP_ROUTE_AUTH` entry, and logging one as the other misreports a
+ * configuration bug as an access-control event.
+ */
+async function requireBearerAuth(
   ctx: WriteRouteContext,
   route: ResolvedRoute,
   fingerprint: string,
   req: Request,
   limit: RateLimitCheck,
-): Promise<Response | { label: string; scopes: readonly ApiScope[] }> {
-  const agents = ctx.agents as AgentsWriteSurface;
+  verifyToken: (presented: string) => Promise<BearerVerdict | null>,
+): Promise<Response | BearerVerdict> {
   const presented = bearerToken(req);
-  const verdict = presented === undefined ? null : await agents.verifyToken(presented);
+  const verdict = presented === undefined ? null : await verifyToken(presented);
   if (verdict === null) {
     recordRejection(ctx, {
       actionType: route.rejectAction,
@@ -1154,6 +1171,17 @@ async function requireAgentAuth(
     return refusal;
   }
   return verdict;
+}
+
+async function requireAgentAuth(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  req: Request,
+  limit: RateLimitCheck,
+): Promise<Response | BearerVerdict> {
+  const agents = ctx.agents as AgentsWriteSurface;
+  return requireBearerAuth(ctx, route, fingerprint, req, limit, (t) => agents.verifyToken(t));
 }
 
 async function runAgentInvokeRoute(
@@ -1266,32 +1294,9 @@ async function requireFetchAuth(
   fingerprint: string,
   req: Request,
   limit: RateLimitCheck,
-): Promise<Response | { label: string; scopes: readonly ApiScope[] }> {
+): Promise<Response | BearerVerdict> {
   const fetchSurface = ctx.fetch as FetchWriteSurface;
-  const presented = bearerToken(req);
-  const verdict = presented === undefined ? null : await fetchSurface.verifyToken(presented);
-  if (verdict === null) {
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: 401,
-      reason: "unauthorized",
-    });
-    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
-  }
-  const refusal = scopeRefusal(route.key, verdict.scopes, limit);
-  if (refusal !== null) {
-    // See the twin comment in runClipIngestRoute: refusal.status is 403 (a real scope gap) or 500
-    // (a misconfigured HTTP_ROUTE_AUTH entry), and the recorded reason must match which happened.
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: refusal.status,
-      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
-    });
-    return refusal;
-  }
-  return verdict;
+  return requireBearerAuth(ctx, route, fingerprint, req, limit, (t) => fetchSurface.verifyToken(t));
 }
 
 async function runItemsFetchRoute(
@@ -1337,6 +1342,11 @@ async function runItemsFetchRoute(
   }
 }
 
+/**
+ * `Response | null` rather than the verdict: the four brief routes only need to
+ * know whether they were refused, and keeping that shape leaves their call
+ * sites (`if (denied !== null) return denied;`) unchanged.
+ */
 async function requireBriefAuth(
   ctx: WriteRouteContext,
   route: ResolvedRoute,
@@ -1345,30 +1355,10 @@ async function requireBriefAuth(
   limit: RateLimitCheck,
 ): Promise<Response | null> {
   const briefs = ctx.briefs as BriefsWriteSurface;
-  const presented = bearerToken(req);
-  const verdict = presented === undefined ? null : await briefs.verifyToken(presented);
-  if (verdict === null) {
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: 401,
-      reason: "unauthorized",
-    });
-    return jsonResponse({ error: "unauthorized" }, 401, rateLimitHeaders(limit));
-  }
-  const refusal = scopeRefusal(route.key, verdict.scopes, limit);
-  if (refusal !== null) {
-    // See the twin comment in runClipIngestRoute: refusal.status is 403 or 500, and the recorded
-    // reason must match which one actually happened.
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: refusal.status,
-      reason: refusal.status === 403 ? "insufficient_scope" : "internal_error",
-    });
-    return refusal;
-  }
-  return null;
+  const outcome = await requireBearerAuth(ctx, route, fingerprint, req, limit, (t) =>
+    briefs.verifyToken(t),
+  );
+  return outcome instanceof Response ? outcome : null;
 }
 
 function briefValidationResponse(
@@ -1477,6 +1467,45 @@ function lookupRun(
   return jsonResponse({ error: "not_found" }, 404, rateLimitHeaders(limit));
 }
 
+type BriefRunRecord = Exclude<ReturnType<typeof lookupRun>, Response>;
+
+/**
+ * Auth, resolve the run, and require it to be in `expected` state.
+ *
+ * The three brief routes that mutate a run repeated this prelude verbatim,
+ * differing only in the state they demand — `collecting` for add-source,
+ * `done` for save. Collapsing it keeps the 409 `invalid_state` rejection
+ * recorded in exactly one place; three copies is three chances for the
+ * recorded `resultCode` and the returned status to drift apart.
+ *
+ * `runBriefRunRoute` deliberately does NOT use this: a re-run is idempotent and
+ * answers 200 with the run's current state rather than 409, so it shares the
+ * auth+lookup half only.
+ */
+async function requireBriefRunInState(
+  ctx: WriteRouteContext,
+  route: ResolvedRoute,
+  fingerprint: string,
+  req: Request,
+  limit: RateLimitCheck,
+  expected: BriefRunRecord["status"],
+): Promise<Response | BriefRunRecord> {
+  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
+  if (denied !== null) return denied;
+  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
+  if (found instanceof Response) return found;
+  if (found.status !== expected) {
+    recordRejection(ctx, {
+      actionType: route.rejectAction,
+      tokenFingerprint: fingerprint,
+      resultCode: 409,
+      reason: "invalid_state",
+    });
+    return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
+  }
+  return found;
+}
+
 async function runBriefSourceRoute(
   ctx: WriteRouteContext,
   route: ResolvedRoute,
@@ -1486,19 +1515,8 @@ async function runBriefSourceRoute(
   parsed: unknown,
 ): Promise<Response> {
   const briefs = ctx.briefs as BriefsWriteSurface;
-  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
-  if (denied !== null) return denied;
-  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
+  const found = await requireBriefRunInState(ctx, route, fingerprint, req, limit, "collecting");
   if (found instanceof Response) return found;
-  if (found.status !== "collecting") {
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: 409,
-      reason: "invalid_state",
-    });
-    return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
-  }
   try {
     const input = validateSourceInput(parsed);
     const out = briefs.controller.addSource(found, input);
@@ -1579,19 +1597,8 @@ async function runBriefSaveRoute(
   req: Request,
 ): Promise<Response> {
   const briefs = ctx.briefs as BriefsWriteSurface;
-  const denied = await requireBriefAuth(ctx, route, fingerprint, req, limit);
-  if (denied !== null) return denied;
-  const found = lookupRun(ctx, route, fingerprint, route.id as string, limit);
+  const found = await requireBriefRunInState(ctx, route, fingerprint, req, limit, "done");
   if (found instanceof Response) return found;
-  if (found.status !== "done") {
-    recordRejection(ctx, {
-      actionType: route.rejectAction,
-      tokenFingerprint: fingerprint,
-      resultCode: 409,
-      reason: "invalid_state",
-    });
-    return jsonResponse({ error: "invalid_state" }, 409, rateLimitHeaders(limit));
-  }
   try {
     return jsonResponse(briefs.save(found.id), 200, rateLimitHeaders(limit));
   } catch (e) {

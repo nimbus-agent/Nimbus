@@ -16,6 +16,7 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { ReadOnlyHttpServerHandle } from "../ipc/http-server.ts";
 import { startReadOnlyHttpServer } from "../ipc/http-server.ts";
+import { createSeededTokenVault } from "../ipc/test-token-vault.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { buildAgentHttpInvoker } from "./agent-http-invoke.ts";
 import { AgentRunController, MAX_CONCURRENT_AGENT_RUNS } from "./agent-run-store.ts";
@@ -24,30 +25,15 @@ const KNOWN_TOKEN = "agent-test-token-0123456789abcdef0123456789abcd";
 const KNOWN_LABEL = "agent-test-harness";
 
 function makeInMemoryVault(tokensJson?: string): NimbusVault {
-  const store = new Map<string, string>();
-  store.set(
-    "http_api.web_clipper_tokens",
-    // The scoped form WITH `agents`, unlike the briefs harness's legacy default: every agents route
-    // is agents-scoped, so a legacy seed would 403 the positive tests for the wrong reason. The
-    // override exists so the legacy and narrow-scope cases can still be exercised explicitly.
+  // The scoped form WITH `agents`, unlike the briefs harness's legacy default: every agents route
+  // is agents-scoped, so a legacy seed would 403 the positive tests for the wrong reason. The
+  // override exists so the legacy and narrow-scope cases can still be exercised explicitly.
+  return createSeededTokenVault(
     tokensJson ??
       JSON.stringify({
         [KNOWN_LABEL]: { token: KNOWN_TOKEN, scopes: ["clip", "briefs", "agents"] },
       }),
   );
-  return {
-    get: async (k: string) => store.get(k) ?? null,
-    set: async (k: string, v: string) => {
-      store.set(k, v);
-    },
-    delete: async (k: string) => {
-      store.delete(k);
-    },
-    listKeys: async (prefix?: string) => {
-      const keys = [...store.keys()];
-      return prefix === undefined ? keys : keys.filter((k) => k.startsWith(prefix));
-    },
-  };
 }
 
 export type AgentTestServer = {

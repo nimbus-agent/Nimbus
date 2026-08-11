@@ -814,26 +814,71 @@ export async function phase3AddDbtMcp(
   );
 }
 
+/**
+ * The url-plus-one-secret connector shape, registered once.
+ *
+ * Five connectors — metabase, databricks, mlflow, dependencytrack,
+ * elasticsearch — had byte-identical bodies differing only in the service id,
+ * which vault keys hold the URL and credential, and the two env-var names. They
+ * were the single largest duplication cluster in the gateway (70 lines across 5
+ * blocks).
+ *
+ * Consolidating STRENGTHENS invariant I15 rather than weakening it. D10's static
+ * check is file-scoped — a lazy-mesh file mentioning `Record<string, ServerSpec>`
+ * must also contain `wrapServerSpec(` — so this file still satisfies it. More to
+ * the point, the intent of I15 is that no `ServerSpec` reaches the mesh
+ * unsandboxed, and a shared registrar makes that structural for this whole
+ * family: a sixth url+secret connector added through it CANNOT forget the wrap,
+ * whereas a sixth hand-written copy could.
+ *
+ * The blank-credential early return is preserved exactly: an unconfigured
+ * connector registers NO server rather than a server that would fail at spawn.
+ */
+async function addUrlAndSecretMcp<S extends ConnectorServiceId>(
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+  // Generic over the service id so `urlSecretKey`/`credentialSecretKey` stay
+  // checked against THAT service's own key union — `service: string` would
+  // typecheck a vault key that does not exist for the connector being wired.
+  cfg: {
+    service: S;
+    urlSecretKey: ConnectorSecretKeyOf<S>;
+    credentialSecretKey: ConnectorSecretKeyOf<S>;
+    urlEnvVar: string;
+    credentialEnvVar: string;
+  },
+): Promise<void> {
+  const url = (await readConnectorSecret(vault, cfg.service, cfg.urlSecretKey))?.trim() ?? "";
+  const credential =
+    (await readConnectorSecret(vault, cfg.service, cfg.credentialSecretKey))?.trim() ?? "";
+  if (url === "" || credential === "") {
+    return;
+  }
+  const host = hostnameFromUrl(url);
+  const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host]);
+  servers[cfg.service] = wrapServerSpec(
+    {
+      ...connectorSpawn(cfg.service),
+      env: extensionProcessEnv({ [cfg.urlEnvVar]: url, [cfg.credentialEnvVar]: credential }),
+    },
+    manifest,
+    sandboxCwd,
+  );
+}
+
 export async function phase3AddMetabaseMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const url = (await readConnectorSecret(vault, "metabase", "url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(vault, "metabase", "api_key"))?.trim() ?? "";
-  if (url === "" || apiKey === "") {
-    return;
-  }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("metabase", host === null ? [] : [host]);
-  servers["metabase"] = wrapServerSpec(
-    {
-      ...connectorSpawn("metabase"),
-      env: extensionProcessEnv({ METABASE_URL: url, METABASE_API_KEY: apiKey }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addUrlAndSecretMcp(vault, servers, sandboxCwd, {
+    service: "metabase",
+    urlSecretKey: "url",
+    credentialSecretKey: "api_key",
+    urlEnvVar: "METABASE_URL",
+    credentialEnvVar: "METABASE_API_KEY",
+  });
 }
 
 export async function phase3AddSnowflakeMcp(
@@ -982,21 +1027,13 @@ export async function phase3AddDatabricksMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const hostUrl = (await readConnectorSecret(vault, "databricks", "host"))?.trim() ?? "";
-  const tok = (await readConnectorSecret(vault, "databricks", "token"))?.trim() ?? "";
-  if (hostUrl === "" || tok === "") {
-    return;
-  }
-  const host = hostnameFromUrl(hostUrl);
-  const manifest = manifestWithExtraNetworkHosts("databricks", host === null ? [] : [host]);
-  servers["databricks"] = wrapServerSpec(
-    {
-      ...connectorSpawn("databricks"),
-      env: extensionProcessEnv({ DATABRICKS_HOST: hostUrl, DATABRICKS_TOKEN: tok }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addUrlAndSecretMcp(vault, servers, sandboxCwd, {
+    service: "databricks",
+    urlSecretKey: "host",
+    credentialSecretKey: "token",
+    urlEnvVar: "DATABRICKS_HOST",
+    credentialEnvVar: "DATABRICKS_TOKEN",
+  });
 }
 
 export async function phase3AddMlflowMcp(
@@ -1004,21 +1041,13 @@ export async function phase3AddMlflowMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const hostUrl = (await readConnectorSecret(vault, "mlflow", "host"))?.trim() ?? "";
-  const tok = (await readConnectorSecret(vault, "mlflow", "token"))?.trim() ?? "";
-  if (hostUrl === "" || tok === "") {
-    return;
-  }
-  const host = hostnameFromUrl(hostUrl);
-  const manifest = manifestWithExtraNetworkHosts("mlflow", host === null ? [] : [host]);
-  servers["mlflow"] = wrapServerSpec(
-    {
-      ...connectorSpawn("mlflow"),
-      env: extensionProcessEnv({ MLFLOW_HOST: hostUrl, MLFLOW_TOKEN: tok }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addUrlAndSecretMcp(vault, servers, sandboxCwd, {
+    service: "mlflow",
+    urlSecretKey: "host",
+    credentialSecretKey: "token",
+    urlEnvVar: "MLFLOW_HOST",
+    credentialEnvVar: "MLFLOW_TOKEN",
+  });
 }
 
 export async function phase3AddVercelMcp(
@@ -1262,21 +1291,13 @@ export async function phase3AddDependencytrackMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const url = (await readConnectorSecret(vault, "dependencytrack", "base_url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(vault, "dependencytrack", "api_key"))?.trim() ?? "";
-  if (url === "" || apiKey === "") {
-    return;
-  }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("dependencytrack", host === null ? [] : [host]);
-  servers["dependencytrack"] = wrapServerSpec(
-    {
-      ...connectorSpawn("dependencytrack"),
-      env: extensionProcessEnv({ DEPENDENCYTRACK_URL: url, DEPENDENCYTRACK_API_KEY: apiKey }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addUrlAndSecretMcp(vault, servers, sandboxCwd, {
+    service: "dependencytrack",
+    urlSecretKey: "base_url",
+    credentialSecretKey: "api_key",
+    urlEnvVar: "DEPENDENCYTRACK_URL",
+    credentialEnvVar: "DEPENDENCYTRACK_API_KEY",
+  });
 }
 
 export async function phase3AddElasticsearchMcp(
@@ -1284,21 +1305,13 @@ export async function phase3AddElasticsearchMcp(
   servers: Record<string, ServerSpec>,
   sandboxCwd: string,
 ): Promise<void> {
-  const url = (await readConnectorSecret(vault, "elasticsearch", "url"))?.trim() ?? "";
-  const apiKey = (await readConnectorSecret(vault, "elasticsearch", "api_key"))?.trim() ?? "";
-  if (url === "" || apiKey === "") {
-    return;
-  }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("elasticsearch", host === null ? [] : [host]);
-  servers["elasticsearch"] = wrapServerSpec(
-    {
-      ...connectorSpawn("elasticsearch"),
-      env: extensionProcessEnv({ ELASTICSEARCH_URL: url, ELASTICSEARCH_API_KEY: apiKey }),
-    },
-    manifest,
-    sandboxCwd,
-  );
+  await addUrlAndSecretMcp(vault, servers, sandboxCwd, {
+    service: "elasticsearch",
+    urlSecretKey: "url",
+    credentialSecretKey: "api_key",
+    urlEnvVar: "ELASTICSEARCH_URL",
+    credentialEnvVar: "ELASTICSEARCH_API_KEY",
+  });
 }
 
 export async function phase3AddAirflowMcp(

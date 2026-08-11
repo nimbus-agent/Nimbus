@@ -9,6 +9,7 @@ import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
 import type { DecisionsBrief, DecisionsEntry, DecisionsInput } from "./_lib/decisions-types.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
+import { decode, subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type DecisionsContext = {
@@ -27,23 +28,6 @@ export type DecisionsContext = {
 
 const DEFAULT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_LIMIT = 50;
-
-function subAgent(fn: () => unknown): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => ({ text: JSON.stringify(fn()), tokensIn: 0, tokensOut: 0 }),
-  };
-}
-
-function decode<T>(text: string | undefined, fallback: T): T {
-  if (text === undefined) return fallback;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function serviceTypeOf(db: Database, itemId: string): string {
   const r = db.query("SELECT service, type FROM item WHERE id = ?").get(itemId) as {

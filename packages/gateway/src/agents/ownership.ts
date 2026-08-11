@@ -21,6 +21,7 @@ import type {
   OwnershipInput,
   OwnershipTargetView,
 } from "./_lib/ownership-types.ts";
+import { decode, subAgent } from "./_lib/sub-agent.ts";
 import type { SynthesizerLlm } from "./_lib/synthesize.ts";
 
 export type OwnershipContext = {
@@ -31,23 +32,6 @@ export type OwnershipContext = {
   sessionId: string;
   llm?: SynthesizerLlm;
 };
-
-function subAgent(fn: () => unknown): SubTask {
-  return {
-    taskType: "agent_step",
-    prompt: "",
-    execute: async () => ({ text: JSON.stringify(fn()), tokensIn: 0, tokensOut: 0 }),
-  };
-}
-
-function decode<T>(text: string | undefined, fallback: T): T {
-  if (text === undefined) return fallback;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function toView(
   db: Database,
