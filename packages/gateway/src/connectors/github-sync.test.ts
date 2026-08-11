@@ -356,16 +356,70 @@ test("a review event missing its pull_request is skipped without throwing", () =
   db.close();
 });
 
-test("a review event missing its review id is skipped without throwing", () => {
+test("a review missing a usable id writes the PR but skips the review, and processEvent reports false", () => {
   const db = createMemoryIndexDb();
   const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
   const ev = {
     type: "PullRequestReviewEvent",
     repo: { full_name: "acme/app" },
-    payload: { action: "created", pull_request: { number: 1, title: "x", user: { login: "a" } } },
+    payload: {
+      action: "created",
+      review: { user: { login: "reviewer" } },
+      pull_request: { number: 1, title: "x", user: { login: "a" } },
+    },
   };
 
   expect(() => processEvent(ctx, ev, Date.now())).not.toThrow();
+  expect(processEvent(ctx, ev, Date.now())).toBe(false);
+
+  const pr = db.query("SELECT title FROM item WHERE id = 'github:acme/app#1'").get() as {
+    title: string;
+  } | null;
+  expect(pr).not.toBeNull();
+  const review = db.query("SELECT id FROM item WHERE service = 'github' AND type = 'review'").get();
+  expect(review).toBeNull();
+  db.close();
+});
+
+test("a review id sent as a string (not a number) writes the PR but skips the review", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ev = {
+    type: "PullRequestReviewEvent",
+    repo: { full_name: "acme/app" },
+    payload: {
+      action: "created",
+      review: { id: "500", user: { login: "reviewer" } },
+      pull_request: { number: 1, title: "x", user: { login: "a" } },
+    },
+  };
+
+  expect(processEvent(ctx, ev, Date.now())).toBe(false);
+
+  const pr = db.query("SELECT title FROM item WHERE id = 'github:acme/app#1'").get() as {
+    title: string;
+  } | null;
+  expect(pr).not.toBeNull();
+  const review = db.query("SELECT id FROM item WHERE service = 'github' AND type = 'review'").get();
+  expect(review).toBeNull();
+  db.close();
+});
+
+test("a review event whose pull_request has no usable number is skipped without throwing", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const ev = {
+    type: "PullRequestReviewEvent",
+    repo: { full_name: "acme/app" },
+    payload: {
+      action: "created",
+      review: { id: 500, user: { login: "reviewer" } },
+      pull_request: { title: "x", user: { login: "a" } },
+    },
+  };
+
+  expect(() => processEvent(ctx, ev, Date.now())).not.toThrow();
+  expect(processEvent(ctx, ev, Date.now())).toBe(false);
   expectServiceItemCount(db, "github", 0);
   db.close();
 });
