@@ -70,6 +70,7 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
   let bunListener: ReturnType<typeof Bun.listen<BunSessionData>> | undefined;
   let netServer: net.Server | undefined;
   let winSockets: Set<net.Socket> = new Set();
+  let markExpectedClose: (() => void) | undefined;
 
   function broadcastNotification(method: string, params: Record<string, unknown>): void {
     for (const session of sessions.values()) {
@@ -219,9 +220,25 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
     },
     async start(): Promise<void> {
       if (platform() === "win32") {
-        const handle = await startWin32NetServer(options.listenPath, attachSession);
+        const handle = await startWin32NetServer(options.listenPath, attachSession, (fault) => {
+          // stderr is redirected into the daily gateway log by `spawnGateway`, so this reaches the
+          // same file the reader is already looking at. Pino's shape keeps existing greps working.
+          process.stderr.write(
+            `${JSON.stringify({
+              level: 50,
+              time: Date.now(),
+              pid: process.pid,
+              name: "ipc-pipe",
+              event: `pipe_server_${fault.event}`,
+              listenPath: options.listenPath,
+              err: fault.error === undefined ? null : String(fault.error.stack ?? fault.error),
+              msg: `IPC named-pipe server ${fault.event} after listen — clients will see ENOENT`,
+            })}\n`,
+          );
+        });
         netServer = handle.netServer;
         winSockets = handle.winSockets;
+        markExpectedClose = handle.markExpectedClose;
         return;
       }
 
@@ -235,6 +252,8 @@ export function createIpcServer(options: CreateIpcServerOptions): IPCServer {
       if (netServer !== undefined) {
         const s = netServer;
         netServer = undefined;
+        markExpectedClose?.();
+        markExpectedClose = undefined;
         for (const sock of winSockets) {
           sock.destroy();
         }

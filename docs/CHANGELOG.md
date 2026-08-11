@@ -54,6 +54,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   unreachable: that verdict also covers a 403, a 429 and a 5xx, where the provider answered. All
   three still exit `0`: the credential was stored, which is what the command was asked to do.
   Documented in `docs/cli-reference.md`'s `nimbus connector auth` section.
+- **2026-08-10 — Gateway lifecycle diagnostics: the silent-exit blind spot.** The gateway could end
+  without writing a single line: its only process-level hooks were `SIGTERM`/`SIGINT`, and the only
+  code that logged anything about termination was the `shutdown()` path those two signals reach.
+  On Windows neither signal is deliverable — `process.kill(pid, "SIGTERM")`, which is exactly what
+  `nimbus stop` issues, is `TerminateProcess(handle, 1)`: measured on Windows 11, the `SIGTERM`
+  handler does not run, an `exit` handler does not run either, and the process ends with code 1 and
+  no output. So a deliberate `nimbus stop` and an unexplained death left byte-identical evidence:
+  nothing. `platform/exit-diagnostics.ts` now arms on the first statement of `main()` and writes
+  pino-shaped records with `appendFileSync` (the daily logger is `pino.destination({ sync: false })`,
+  whose buffered final write is precisely the one an abrupt exit loses): `boot`, a `heartbeat`
+  carrying uptime/rss/heap/in-flight-syncs/embedding state, `before_exit` (the event-loop-drain
+  discriminator), `process_exit` with the code and a `drained` flag, and `uncaught_exception` /
+  `unhandled_rejection` with full stacks — the last two preserving exit code 1 rather than
+  swallowing the failure. Because no in-process handler can observe `TerminateProcess`, the
+  **absence** of a `process_exit` record is itself the diagnosis: the process was killed from
+  outside, and the last heartbeat bounds when. Heartbeat interval via `NIMBUS_HEARTBEAT_MS`
+  (default 60 s, `0` disables); it is `unref`'d so it cannot mask the drain it exists to detect.
+  Two silent-failure sites found alongside and fixed: the Windows named-pipe server's only `error`
+  listener called `reject()` on an already-resolved promise, so every post-listen pipe fault was a
+  no-op that still counted as a handler; and the embedding worker had no `onerror`, so a dying
+  worker (verified: an uncaught throw in a Bun `Worker` neither crashes the parent nor prints
+  anything) left semantic search reading as `warming` for the full 600 s init window instead of
+  `unavailable`.
 - **2026-08-10 — Watcher conditions: `incident_opened` + `deploy_failed`.** The watcher engine
   previously evaluated one condition type, `alert_fired`, which matches an item type no connector
   indexes; a watcher could be created and armed and still never fire. Both new conditions come from

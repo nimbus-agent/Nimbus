@@ -225,6 +225,81 @@ describe("startWin32NetServer (cross-platform via unix socket on POSIX)", () => 
   );
 });
 
+describe("startWin32NetServer post-listen faults", () => {
+  const paths: string[] = [];
+  let tmpDir: string | undefined;
+
+  // Runs on EVERY platform: the win32 path is the one that regressed, so it must not be skipped
+  // on the only OS where it is the production code path.
+  function listenPath(): string {
+    if (platform() === "win32") {
+      const p = `\\\\.\\pipe\\nimbus-fault-${crypto.randomUUID()}`;
+      paths.push(p);
+      return p;
+    }
+    tmpDir ??= mkdtempSync(join(tmpdir(), "nimbus-fault-"));
+    return join(tmpDir, `${crypto.randomUUID()}.sock`);
+  }
+
+  afterEach(() => {
+    if (tmpDir !== undefined) {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+      tmpDir = undefined;
+    }
+  });
+
+  const attach = (): ClientSession => makeStubSession(makeStubState(), () => {});
+
+  test("an 'error' emitted AFTER listen reaches onFault instead of being swallowed", async () => {
+    // Regression: the startup listener used to stay attached, so every later error was a call to
+    // an already-resolved reject() — a no-op that still registered as an 'error' handler.
+    const faults: Array<{ event: string; message?: string }> = [];
+    const handle = await startWin32NetServer(listenPath(), attach, (f) => {
+      faults.push({
+        event: f.event,
+        ...(f.error === undefined ? {} : { message: f.error.message }),
+      });
+    });
+    try {
+      handle.netServer.emit("error", new Error("pipe went away"));
+      expect(faults).toEqual([{ event: "error", message: "pipe went away" }]);
+    } finally {
+      handle.markExpectedClose();
+      await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+    }
+  });
+
+  test("an unrequested 'close' is reported as a fault", async () => {
+    const faults: string[] = [];
+    const handle = await startWin32NetServer(listenPath(), attach, (f) => faults.push(f.event));
+    await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+    expect(faults).toEqual(["close"]);
+  });
+
+  test("markExpectedClose() suppresses the fault for a deliberate stop()", async () => {
+    const faults: string[] = [];
+    const handle = await startWin32NetServer(listenPath(), attach, (f) => faults.push(f.event));
+    handle.markExpectedClose();
+    await new Promise<void>((resolve) => handle.netServer.close(() => resolve()));
+    expect(faults).toEqual([]);
+  });
+
+  test("a bind failure still rejects start() (the startup listener is not lost)", async () => {
+    const p = listenPath();
+    const first = await startWin32NetServer(p, attach);
+    try {
+      await expect(startWin32NetServer(p, attach)).rejects.toThrow();
+    } finally {
+      first.markExpectedClose();
+      await new Promise<void>((resolve) => first.netServer.close(() => resolve()));
+    }
+  });
+});
+
 describe("startBunUnixListener (POSIX-only)", () => {
   let tmpDir: string;
   let socketPath: string;

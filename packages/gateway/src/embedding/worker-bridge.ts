@@ -118,6 +118,19 @@ class EmbeddingWorkerBridge implements EmbeddingRuntime {
       this.handleMessage(ev.data);
     };
 
+    // Without this the worker dies COMPLETELY silently: an uncaught throw inside a Bun Worker
+    // neither crashes the parent nor prints anything, so semantic search would sit in `warming`
+    // until the 600 s init timeout and read as "still downloading the model" rather than "dead".
+    this.worker.onerror = (ev: ErrorEvent): void => {
+      const reason = ev.message === "" ? "embedding worker errored" : ev.message;
+      this.logger.warn(
+        { msg: "embedding_worker_error", filename: ev.filename, lineno: ev.lineno },
+        `embedding worker error: ${reason}`,
+      );
+      this.markUnavailable(reason);
+      this.settleGate(false, new Error(reason));
+    };
+
     this.worker.postMessage({
       type: "init",
       dbPath,
