@@ -3,7 +3,7 @@
 ## Open Questions & Risks
 
 1. **GitHub Timeline API Limitations vs. Incremental Accumulation**
-   - The spec notes: "incremental accumulation works, retroactive backfill does not" due to the 30-day/300-event ceiling. 
+   - The spec notes: "incremental accumulation works, retroactive backfill does not" due to the 30-day/300-event ceiling.
    - **Question**: When a user goes OOO or shuts down Nimbus for >30 days, is there any warning or detection mechanism? If they miss the 30-day window, will Nimbus silently omit reviews that occurred during that period, leading to silent data gaps?
    - **Suggestion**: In the connector status or next-sync output, if `last_synced_at` (or equivalent sync high-water mark) is older than 30 days, log a warning or suggest triggering the search-based backfill (`nimbus index backfill --service github`).
 

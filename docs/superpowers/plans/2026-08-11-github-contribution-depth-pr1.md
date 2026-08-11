@@ -20,8 +20,11 @@ the existing enrichment pass already fetches and currently discards.
 ## Global Constraints
 
 - **No `any`.** Use `unknown` for external data. TypeScript strict mode is non-negotiable.
-- **Bound-param SQL only** (invariant I9). All writes go through `dbRun`/`dbExec` from `db/write.ts`
-  (invariant I14) — never `db.run` directly.
+- **Bound-param SQL only** (invariant I9). **Production** writes go through `dbRun`/`dbExec` from
+  `db/write.ts` (invariant I14, enforced statically by D12) — never `db.run` directly. **This binds
+  `src/` code, not tests:** the static audit scopes I14 to production sites, and the existing suite
+  seeds fixtures with `db.run(...)` (see `expert.test.ts:292`). Test code in this plan uses `db.run`
+  deliberately and must not be "corrected" to `dbRun`.
 - **Never commit on `main`.** All work lands on `dev/asafgolombek/github-contribution-depth`, which
   already exists and is checked out.
 - **No migration in this PR.** `item.type` is free-form `TEXT NOT NULL`; the `reviewed` relation type
@@ -69,11 +72,13 @@ prevent that and are not optional.
 ## Task 1: Emit `person --reviewed--> pr` from a `review` item
 
 **Files:**
+
 - Modify: `packages/gateway/src/graph/relationship-graph.ts:6-23`
 - Modify: `packages/gateway/src/graph/graph-populator.ts:77-81`, `:780`
 - Test: `packages/gateway/src/graph/graph-populator-reviews.test.ts` (create)
 
 **Interfaces:**
+
 - Consumes: `upsertGraphEntity`, `ensureGraphEntity`, `upsertGraphRelation` from
   `./relationship-graph.ts`; `IndexedItemGraphInput` from `graph-populator.ts:14`.
 - Produces: a `review` item whose `metadata` carries `{ repo: string, pr_number: number }` yields
@@ -419,10 +424,12 @@ git commit -m "feat(graph): emit person --reviewed--> pr from review items"
 ## Task 2: `expert`'s reviewer lane returns real evidence
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/expert.ts:280-288`
 - Test: `packages/gateway/src/agents/expert.test.ts`
 
 **Interfaces:**
+
 - Consumes: the `reviewed` edges Task 1 emits.
 - Produces: `subPrReviewed` returns `{ stream: ExpertEvidenceStream }` with
   `Evidence.type === "pr_reviewed"` and `weight: 0.6`.
@@ -608,10 +615,12 @@ git commit -m "feat(agents): expert surfaces PR reviewers as pr_reviewed evidenc
 ## Task 3: `why`'s pull-request lane names reviewers
 
 **Files:**
+
 - Modify: `packages/gateway/src/agents/why.ts:295-322`
 - Test: `packages/gateway/src/agents/why.test.ts`
 
 **Interfaces:**
+
 - Consumes: the `reviewed` edges Task 1 emits.
 - Produces: the `pull_request` lane's `WhyFinding.detail` names reviewers when any exist; the
   permanent `reviewed` gap note is dropped once edges exist.
@@ -748,11 +757,13 @@ git commit -m "feat(agents): why names PR reviewers in the pull_request lane"
 ## Task 4: Index `PullRequestReviewEvent` as `review` items
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/github-sync.ts:318-339` (`processEvent`), plus a new
   `upsertReview` beside `upsertPr` (`:197`)
 - Test: `packages/gateway/src/connectors/github-sync.test.ts`
 
 **Interfaces:**
+
 - Consumes: `upsertPr` (`github-sync.ts:197`), `resolveGithubActorPersonId` (`:142`),
   `upsertIndexedItemForSync` (`index/item-store.ts:208`).
 - Produces: `review` items with `metadata: { repo, pr_number, review_id, state }` — exactly the shape
@@ -992,10 +1003,12 @@ git commit -m "feat(connectors): index GitHub PR reviews as first-class items"
 ## Task 5: Capture PR size statistics
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/github-sync.ts:70-110` (`extractPrMetadataForIndex`)
 - Test: `packages/gateway/src/connectors/github-sync.test.ts`
 
 **Interfaces:**
+
 - Produces: PR `metadata` gains `additions`, `deletions`, `changed_files`, `commits` when the source
   payload carries them. Task 6's enrich predicate keys on their absence.
 
@@ -1082,10 +1095,12 @@ git commit -m "feat(connectors): capture PR additions/deletions/changed_files/co
 ## Task 6: Widen the enrichment predicate to stats-missing PRs
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/github-sync.ts:389-459`
 - Test: `packages/gateway/src/connectors/github-sync-enrich.test.ts`
 
 **Interfaces:**
+
 - Consumes: the metadata keys Task 5 writes.
 - Produces: `selectPrEnrichCandidates` (renamed from `selectFallbackPrCandidates`) selects PRs with a
   fallback title **or** missing stats, still capped at `MAX_ENRICH_PER_TICK = 10`.
@@ -1203,7 +1218,7 @@ function selectPrEnrichCandidates(db: Database, limit: number): FallbackPrCandid
 ```
 
 The old exact-title JS filter (`if (r.title !== \`PR #${String(num)}\`) continue;`) is **removed**:
-it existed to make the SQL `LIKE` precise, but a row now qualifies on either reason, and keeping it
+it existed to make the SQL`LIKE` precise, but a row now qualifies on either reason, and keeping it
 would silently drop every stats-missing PR with a real title — the exact case this task adds.
 
 `NOT json_valid(metadata)` is deliberate: a row with unparseable metadata cannot be proven to have
@@ -1288,10 +1303,12 @@ git commit -m "feat(connectors): enrich PRs missing size statistics, not just ti
 ## Task 7: Honour `retry-after` independently, and log a saturated tick
 
 **Files:**
+
 - Modify: `packages/gateway/src/connectors/github-sync.ts:366-387`, `:533-544`
 - Test: `packages/gateway/src/connectors/github-sync.test.ts`
 
 **Interfaces:**
+
 - Produces: `throwGithubRateLimitErrorIfApplicable` raises `RateLimitError` for any 403 carrying
   `retry-after`, regardless of `x-ratelimit-remaining`.
 
@@ -1417,6 +1434,7 @@ git commit -m "fix(connectors): treat a 403 with retry-after as rate limiting; l
 ## Task 8: Documentation
 
 **Files:**
+
 - Modify: `docs/CHANGELOG.md`
 - Modify: the GitHub connector page under `docs/connectors/`
 
@@ -1499,7 +1517,7 @@ and suite, so a green run must reach the end.
 The PR **title** carries the conventional-commit type, because release-please parses the squash
 subject; local commit messages are discarded on merge. Suggested title:
 
-```
+```text
 feat(connectors): index GitHub PR reviews and size statistics
 ```
 

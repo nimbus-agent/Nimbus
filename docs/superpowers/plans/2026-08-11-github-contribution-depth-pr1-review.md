@@ -9,7 +9,7 @@
 
 2. **Idempotence & Edge Survival Test Case**
    - In Task 1 Step 1, the test `"a reviewed edge survives the PR being re-populated"` is highly critical.
-   - **Suggestion**: Ensure that we verify that the relationship graph actually populates the database correctly before and after the `seedPr` (re-sync) execution. 
+   - **Suggestion**: Ensure that we verify that the relationship graph actually populates the database correctly before and after the `seedPr` (re-sync) execution.
 
 3. **`detectMissingRelationEmit` Message Matching**
    - In Task 2 and Task 3, `detectMissingRelationEmit` is invoked with a custom description: `"Reviews are indexed from the GitHub events feed — sync the connector, or run nimbus index backfill --service github for history."`.
