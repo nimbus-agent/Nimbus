@@ -40,7 +40,7 @@ const WATCHER_1 = {
   id: "w1",
   name: "PR opened",
   enabled: 1,
-  condition_type: "graph",
+  condition_type: "incident_opened",
   condition_json: "{}",
   action_type: "notify",
   action_json: "{}",
@@ -54,7 +54,7 @@ const WATCHER_2 = {
   id: "w2",
   name: "Daily digest",
   enabled: 0,
-  condition_type: "schedule",
+  condition_type: "deploy_failed",
   condition_json: "{}",
   action_type: "webhook",
   action_json: "{}",
@@ -178,18 +178,96 @@ describe("Watchers page — list", () => {
   });
 });
 
+/** The condition types the gateway engine can evaluate — see watcher-condition-kinds.ts. */
+const REAL_CONDITION_TYPES = ["alert_fired", "incident_opened", "deploy_failed"];
+
 async function openDialog() {
   stubWatcherList([]);
   renderPage();
   await waitFor(() => expect(callMock).toHaveBeenCalled());
   await userEvent.click(screen.getByRole("button", { name: /new watcher/i }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Condition type")).toBeInTheDocument();
+}
+
+/** The graph predicate is orthogonal to the condition type — it lives behind its own checkbox. */
+async function enableGraphPredicate() {
+  await userEvent.click(screen.getByLabelText("Narrow with a graph predicate"));
   expect(await screen.findByLabelText("Graph relation")).toBeInTheDocument();
 }
 
-describe("Watchers page — graph condition builder", () => {
-  it("graph condition type shows relation dropdown with candidate relations", async () => {
+describe("Watchers page — condition type", () => {
+  it("offers exactly the condition types the gateway engine can evaluate", async () => {
     await openDialog();
+    const select = screen.getByLabelText("Condition type");
+    const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    expect(values).toEqual(REAL_CONDITION_TYPES);
+  });
+
+  it("does not offer the condition types watcher.create rejects with -32602", async () => {
+    await openDialog();
+    const select = screen.getByLabelText("Condition type");
+    const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    expect(values).not.toContain("graph");
+    expect(values).not.toContain("schedule");
+    expect(values).not.toContain("metric");
+  });
+
+  it.each(REAL_CONDITION_TYPES)(
+    "sends %s verbatim as conditionType, so watcher.create accepts it",
+    async (conditionType) => {
+      // The IPC client is a fake here and cannot catch a contract mismatch, so this asserts the
+      // EXACT value crossing the boundary against the gateway's condition-kind table.
+      watcherCreateMock.mockResolvedValue({ id: "w-new" });
+      await openDialog();
+
+      await userEvent.type(screen.getByLabelText("Watcher name"), `Watch ${conditionType}`);
+      await userEvent.selectOptions(screen.getByLabelText("Condition type"), conditionType);
+      await userEvent.click(screen.getByRole("button", { name: /create/i }));
+
+      expect(watcherCreateMock).toHaveBeenCalledTimes(1);
+      const params = watcherCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params["conditionType"]).toBe(conditionType);
+      expect(REAL_CONDITION_TYPES).toContain(params["conditionType"]);
+    },
+  );
+
+  it("defaults conditionJson to a filter object the engine actually evaluates", async () => {
+    // The engine returns early when `condition_json.filter` is absent, so a bare `{}` would arm a
+    // watcher that can never fire.
+    watcherCreateMock.mockResolvedValue({ id: "w-new" });
+    await openDialog();
+
+    await userEvent.type(screen.getByLabelText("Watcher name"), "Default filter");
+    await userEvent.click(screen.getByRole("button", { name: /create/i }));
+
+    const params = watcherCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(JSON.parse(String(params["conditionJson"]))).toEqual({ filter: {} });
+  });
+
+  it("omits graphPredicateJson when the graph predicate is not enabled", async () => {
+    watcherCreateMock.mockResolvedValue({ id: "w-new" });
+    await openDialog();
+
+    await userEvent.type(screen.getByLabelText("Watcher name"), "No predicate");
+    await userEvent.click(screen.getByRole("button", { name: /create/i }));
+
+    const params = watcherCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(params).not.toHaveProperty("graphPredicateJson");
+  });
+});
+
+describe("Watchers page — graph condition builder", () => {
+  it("the graph builder is hidden until the graph predicate is enabled", async () => {
+    await openDialog();
+    expect(screen.queryByLabelText("Graph relation")).not.toBeInTheDocument();
+    await enableGraphPredicate();
+    expect(screen.getByLabelText("Graph relation")).toBeInTheDocument();
+  });
+
+  it("graph predicate shows relation dropdown with candidate relations", async () => {
+    await openDialog();
+    await enableGraphPredicate();
     const select = screen.getByLabelText("Graph relation");
     expect(select).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "owned_by" })).toBeInTheDocument();
@@ -199,20 +277,22 @@ describe("Watchers page — graph condition builder", () => {
 
   it("shows target type and target ID inputs", async () => {
     await openDialog();
+    await enableGraphPredicate();
     expect(screen.getByLabelText("Target entity type")).toBeInTheDocument();
     expect(screen.getByLabelText("Target entity ID")).toBeInTheDocument();
   });
 
-  it("switching to non-graph condition type shows raw textarea", async () => {
+  it("the condition JSON textarea stays available alongside a graph predicate", async () => {
     await openDialog();
-    await userEvent.selectOptions(screen.getByLabelText("Condition type"), "schedule");
     expect(screen.getByLabelText("Condition JSON")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Graph relation")).not.toBeInTheDocument();
+    await enableGraphPredicate();
+    expect(screen.getByLabelText("Condition JSON")).toBeInTheDocument();
   });
 
   it("validation fires after debounce and shows match count", async () => {
     watcherValidateConditionMock.mockResolvedValue({ matchCount: 7 });
     await openDialog();
+    await enableGraphPredicate();
 
     await userEvent.type(screen.getByLabelText("Target entity type"), "person");
     await userEvent.type(screen.getByLabelText("Target entity ID"), "user-42");
@@ -238,6 +318,7 @@ describe("Watchers page — graph condition builder", () => {
   it("validation shows error message on failure", async () => {
     watcherValidateConditionMock.mockRejectedValue(new Error("invalid predicate"));
     await openDialog();
+    await enableGraphPredicate();
 
     await userEvent.type(screen.getByLabelText("Target entity type"), "repo");
     await userEvent.type(screen.getByLabelText("Target entity ID"), "my-repo");
@@ -251,11 +332,13 @@ describe("Watchers page — graph condition builder", () => {
     );
   });
 
-  it("watcherCreate is called with graphPredicateJson for graph condition type", async () => {
+  it("watcherCreate carries graphPredicateJson alongside a real condition type", async () => {
     watcherCreateMock.mockResolvedValue({ id: "w-new" });
     await openDialog();
 
     await userEvent.type(screen.getByLabelText("Watcher name"), "My Graph Watcher");
+    await userEvent.selectOptions(screen.getByLabelText("Condition type"), "deploy_failed");
+    await enableGraphPredicate();
     await userEvent.type(screen.getByLabelText("Target entity type"), "person");
     await userEvent.type(screen.getByLabelText("Target entity ID"), "user-99");
     await userEvent.click(screen.getByRole("button", { name: /create/i }));
@@ -263,8 +346,7 @@ describe("Watchers page — graph condition builder", () => {
     expect(watcherCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "My Graph Watcher",
-        conditionType: "graph",
-        conditionJson: "{}",
+        conditionType: "deploy_failed",
         graphPredicateJson: JSON.stringify({
           relation: "owned_by",
           target: { type: "person", externalId: "user-99" },
@@ -276,6 +358,7 @@ describe("Watchers page — graph condition builder", () => {
   it("Create button is disabled when graph fields are incomplete", async () => {
     await openDialog();
     await userEvent.type(screen.getByLabelText("Watcher name"), "Incomplete");
+    await enableGraphPredicate();
     expect(screen.getByRole("button", { name: /create/i })).toBeDisabled();
   });
 });

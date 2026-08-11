@@ -335,4 +335,311 @@ describe("watcher-engine", () => {
     );
     expect(calls).toBe(1);
   });
+
+  test("incident_opened fires on an indexed incident", () => {
+    const db = makeDb();
+    const t0 = 1_700_000_000_000;
+    insertWatcher(db, {
+      name: "incidents",
+      enabled: 1,
+      condition_type: "incident_opened",
+      condition_json: JSON.stringify({ filter: { service: "pagerduty" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-1",
+      title: "api-gateway 500s",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      metadata: { status: "triggered" },
+    });
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "pagerduty", t0 + 2000, (_title, body) => {
+      bodies.push(body);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("api-gateway 500s");
+  });
+
+  test("incident_opened respects the service filter", () => {
+    const db = makeDb();
+    const t0 = 1_700_000_000_000;
+    insertWatcher(db, {
+      name: "incidents",
+      enabled: 1,
+      condition_type: "incident_opened",
+      condition_json: JSON.stringify({ filter: { service: "pagerduty" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "opsgenie",
+      type: "incident",
+      externalId: "OG-1",
+      title: "other tracker",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      metadata: { status: "triggered" },
+    });
+
+    let calls = 0;
+    evaluateWatchersStartupCatchUp(db, t0 + 2000, () => {
+      calls += 1;
+    });
+
+    expect(calls).toBe(0);
+  });
+
+  test("incident_opened fires on a triggered incident but not on a resolved one", () => {
+    // pagerduty-sync fetches /incidents unfiltered and sets modifiedAt from `updated_at`, so a
+    // resolution re-indexes the incident with a fresh modified_at. Only the status distinguishes
+    // an opening from a resolution.
+    const db = makeDb();
+    const t0 = 5_600_000_000_000;
+    insertWatcher(db, {
+      name: "incidents",
+      enabled: 1,
+      condition_type: "incident_opened",
+      condition_json: JSON.stringify({ filter: { service: "pagerduty" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-RESOLVED",
+      title: "checkout latency (resolved)",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      metadata: { status: "resolved" },
+    });
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "pagerduty", t0 + 2000, (_title, body) => {
+      bodies.push(body);
+    });
+    expect(bodies).toHaveLength(0);
+
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-TRIGGERED",
+      title: "checkout 500s",
+      modifiedAt: t0 + 3000,
+      syncedAt: t0 + 3000,
+      metadata: { status: "triggered" },
+    });
+
+    evaluateWatchersAfterSync(db, "pagerduty", t0 + 4000, (_title, body) => {
+      bodies.push(body);
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("checkout 500s");
+  });
+
+  test("a row with non-JSON metadata does not break incident_opened evaluation", () => {
+    const db = makeDb();
+    const t0 = 5_700_000_000_000;
+    insertWatcher(db, {
+      name: "incidents",
+      enabled: 1,
+      condition_type: "incident_opened",
+      condition_json: JSON.stringify({ filter: { service: "pagerduty" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-LEGACY",
+      title: "legacy row",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+    });
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-NEW",
+      title: "payments down",
+      modifiedAt: t0 + 2000,
+      syncedAt: t0 + 2000,
+      metadata: { status: "triggered" },
+    });
+    // Forced directly: no production writer emits non-JSON metadata. Without json_valid() the
+    // json_extract below raises and the exception escapes the whole evaluation loop.
+    db.run("UPDATE item SET metadata = 'not json' WHERE external_id = ?", ["INC-LEGACY"]);
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "pagerduty", t0 + 3000, (_title, body) => {
+      bodies.push(body);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("payments down");
+  });
+
+  test("deploy_failed fires only on a failed deployment, not a successful one", () => {
+    const db = makeDb();
+    const t0 = 1_700_000_000_000;
+    insertWatcher(db, {
+      name: "deploys",
+      enabled: 1,
+      condition_type: "deploy_failed",
+      condition_json: JSON.stringify({ filter: { service: "github-actions" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "github-actions",
+      type: "deployment",
+      externalId: "deploy-ok",
+      title: "checkout v2.1.0",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      metadata: { conclusion: "success" },
+    });
+    upsertIndexedItem(db, {
+      service: "github-actions",
+      type: "deployment",
+      externalId: "deploy-bad",
+      title: "checkout v2.1.1",
+      modifiedAt: t0 + 2000,
+      syncedAt: t0 + 2000,
+      metadata: { conclusion: "failure" },
+    });
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "github-actions", t0 + 3000, (_title, body) => {
+      bodies.push(body);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("checkout v2.1.1");
+    expect(bodies[0]).not.toContain("v2.1.0");
+  });
+
+  test("deploy_failed does not match a Vercel-shaped deployment, whose outcome is in metadata.state", () => {
+    const db = makeDb();
+    const t0 = 1_700_000_000_000;
+    insertWatcher(db, {
+      name: "deploys",
+      enabled: 1,
+      condition_type: "deploy_failed",
+      condition_json: JSON.stringify({ filter: { service: "vercel" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "vercel",
+      type: "deployment",
+      externalId: "dpl_1",
+      title: "marketing-site",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      metadata: { state: "ERROR", target: "production" },
+    });
+
+    let calls = 0;
+    evaluateWatchersAfterSync(db, "vercel", t0 + 2000, () => {
+      calls += 1;
+    });
+
+    expect(calls).toBe(0);
+  });
+
+  test("a row with non-JSON metadata does not break deploy_failed evaluation", () => {
+    const db = makeDb();
+    const t0 = 5_400_000_000_000;
+    insertWatcher(db, {
+      name: "deploys",
+      enabled: 1,
+      condition_type: "deploy_failed",
+      condition_json: JSON.stringify({ filter: { service: "github-actions" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+    });
+    upsertIndexedItem(db, {
+      service: "github-actions",
+      type: "deployment",
+      externalId: "deploy-legacy",
+      title: "legacy row",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+    });
+    upsertIndexedItem(db, {
+      service: "github-actions",
+      type: "deployment",
+      externalId: "deploy-bad",
+      title: "checkout v3.0.0",
+      modifiedAt: t0 + 2000,
+      syncedAt: t0 + 2000,
+      metadata: { conclusion: "failure" },
+    });
+    // No production writer can produce this today — both item.metadata writers stringify — so it
+    // is forced directly. Without json_valid() in the predicate, json_extract raises
+    // "malformed JSON" here and the exception escapes the whole evaluation loop.
+    db.run("UPDATE item SET metadata = 'not json' WHERE external_id = ?", ["deploy-legacy"]);
+
+    const bodies: string[] = [];
+    evaluateWatchersAfterSync(db, "github-actions", t0 + 3000, (_title, body) => {
+      bodies.push(body);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("checkout v3.0.0");
+  });
+
+  test("a graph predicate still narrows a new condition kind", () => {
+    const db = makeDb();
+    const t0 = 5_200_000_000_000;
+    insertWatcher(db, {
+      name: "incidents-owned",
+      enabled: 1,
+      condition_type: "incident_opened",
+      condition_json: JSON.stringify({ filter: { service: "pagerduty" } }),
+      action_type: "notify",
+      action_json: "{}",
+      created_at: t0,
+      graph_predicate_json: JSON.stringify({
+        relation: "owned_by",
+        target: { type: "person", externalId: "gh:absent" },
+      }),
+    });
+    upsertIndexedItem(db, {
+      service: "pagerduty",
+      type: "incident",
+      externalId: "INC-9",
+      title: "unowned incident",
+      modifiedAt: t0 + 1000,
+      syncedAt: t0 + 1000,
+      // `status: "triggered"` so the row genuinely reaches the predicate: without it the query
+      // returns nothing and the assertion below would hold for the wrong reason.
+      metadata: { status: "triggered" },
+    });
+
+    let calls = 0;
+    evaluateWatchersAfterSync(
+      db,
+      "pagerduty",
+      t0 + 2000,
+      () => {
+        calls += 1;
+      },
+      { graphConditionsEnabled: true },
+    );
+
+    expect(calls).toBe(0);
+  });
 });

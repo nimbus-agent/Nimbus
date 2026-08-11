@@ -1015,6 +1015,42 @@ Both Phase 4 clients use the **existing JSON-RPC 2.0 IPC socket** — no new Gat
 
 The watcher engine evaluates post-sync conditions and fires configured automations. Each watcher has a `condition_type`, a `condition_json` payload (service-specific filter criteria), and an optional `graph_predicate_json` that narrows evaluation using the Phase 3 relationship graph substrate.
 
+| `condition_type` | Fires on | Coverage |
+| --- | --- | --- |
+| `alert_fired` | an indexed item of type `alert` | no connector currently indexes `alert`, so this condition cannot fire today |
+| `incident_opened` | an indexed item of type `incident` whose `metadata.status` is `triggered` | PagerDuty — the status narrowing is what keeps the condition faithful to its name, because `pagerduty-sync.ts` fetches `/incidents` unfiltered and re-indexes an incident on every `updated_at` change, so an acknowledgement or a resolution otherwise looks identical to an opening |
+| `deploy_failed` | an indexed item of type `deployment` whose `metadata.conclusion` is `failure` | CI-annotated deployments (`POST /v1/deployments`) only — Vercel records its outcome under `metadata.state`, and Prefect indexes deployment definitions with no outcome |
+
+`watcher.create` rejects any other `condition_type` with `-32602`, so a watcher that the engine
+could never evaluate cannot be created.
+
+**Coverage limits of the conditions above.** A condition being evaluable is not the same as it
+firing on every qualifying event, and four gaps are known and unclosed:
+
+- **`incident_opened` misses an incident indexed without a status.** The predicate matches only an
+  incident whose indexed `metadata.status` is exactly `triggered`. `pagerduty-sync.ts` writes
+  `metadata.status = status ?? null`, so if PagerDuty's API omits `status` for a row, or returns a
+  non-string, the incident is indexed with `metadata.status = null` and this condition never fires
+  for it — not on open, not ever. Widening the predicate to also match a null status was
+  considered and rejected: that would re-admit the resolution-firing bug the `triggered` narrowing
+  above exists to fix, for precisely the rows whose state is unknown. Fail-closed here is
+  intentional.
+- **The freshness window is shared across connectors.** A watcher only sees items whose
+  `modified_at` is newer than its own `last_checked_at`, and the engine updates `last_checked_at`
+  for *every* enabled watcher after *every* successful connector sync, regardless of which service
+  the watcher filters on. With several connectors configured, an item that is indexed more than a
+  few seconds after it changed upstream can fall outside that window and never fire.
+- **`deploy_failed` reads a start-time timestamp.** It matches on `item.modified_at`, which the
+  deployment annotation path binds from `started_at_ms` and overwrites on the finishing `POST`. A
+  deploy that runs longer than one watcher tick can therefore record its failure carrying a
+  `modified_at` from when it started, which may already be behind the window above.
+- **A service-filtered `deploy_failed` watcher is effectively startup-only.** For deployments,
+  `item.service` is the annotation `provider` value (`github-actions`, `gitlab`, `jenkins`,
+  `circleci`, `bitbucket`, `other`), not a syncable service id. The engine skips a watcher whose
+  `filter.service` does not equal the id of the service that just synced, and no sync ever reports
+  those provider names — so such a watcher is only reachable via the startup catch-up pass. A
+  watcher with an empty `filter` (`{}`) is unaffected and works normally.
+
 #### Graph-aware watcher example (Phase 4 §2)
 
 A watcher can additionally reference the relationship graph to narrow when it
@@ -1022,7 +1058,7 @@ fires. For example, "alert any PagerDuty incident *owned by me*":
 
 ```json
 {
-  "condition_type": "alert_fired",
+  "condition_type": "incident_opened",
   "condition_json": { "filter": { "service": "pagerduty" } },
   "graph_predicate_json": {
     "relation": "owned_by",

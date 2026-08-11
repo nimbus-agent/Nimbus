@@ -244,7 +244,7 @@ describe("watcher.create / pause / resume / delete", () => {
       method: "watcher.create",
       params: {
         name: "alpha",
-        conditionType: "schedule",
+        conditionType: "alert_fired",
         conditionJson: "{}",
         actionType: "notify",
         actionJson: "{}",
@@ -267,7 +267,7 @@ describe("watcher.create / pause / resume / delete", () => {
       method: "watcher.create",
       params: {
         name: "alpha",
-        conditionType: "schedule",
+        conditionType: "alert_fired",
         conditionJson: "{}",
         actionType: "notify",
         actionJson: "{}",
@@ -290,7 +290,7 @@ describe("watcher.create / pause / resume / delete", () => {
       dispatchAutomationRpc({
         method: "watcher.create",
         params: {
-          conditionType: "schedule",
+          conditionType: "alert_fired",
           conditionJson: "{}",
           actionType: "notify",
           actionJson: "{}",
@@ -306,7 +306,7 @@ describe("watcher.create / pause / resume / delete", () => {
       method: "watcher.create",
       params: {
         name: "alpha",
-        conditionType: "schedule",
+        conditionType: "alert_fired",
         conditionJson: "{}",
         actionType: "notify",
         actionJson: "{}",
@@ -334,7 +334,7 @@ describe("watcher.create / pause / resume / delete", () => {
       method: "watcher.create",
       params: {
         name: "alpha",
-        conditionType: "schedule",
+        conditionType: "alert_fired",
         conditionJson: "{}",
         actionType: "notify",
         actionJson: "{}",
@@ -356,6 +356,44 @@ describe("watcher.create / pause / resume / delete", () => {
     await expect(
       dispatchAutomationRpc({ method: "watcher.delete", params: {}, db }),
     ).rejects.toThrow(AutomationRpcError);
+  });
+
+  test("create rejects a condition type the engine cannot evaluate", async () => {
+    const db = seededDb();
+    await expect(
+      dispatchAutomationRpc({
+        method: "watcher.create",
+        params: {
+          name: "bogus",
+          conditionType: "schedule",
+          conditionJson: "{}",
+          actionType: "notify",
+          actionJson: "{}",
+        },
+        db,
+      }),
+    ).rejects.toThrow(AutomationRpcError);
+
+    expect((db.query("SELECT COUNT(*) AS n FROM watcher").get() as { n: number }).n).toBe(0);
+  });
+
+  test("create accepts every supported condition type", async () => {
+    const db = seededDb();
+    for (const conditionType of ["alert_fired", "incident_opened", "deploy_failed"]) {
+      const out = await dispatchAutomationRpc({
+        method: "watcher.create",
+        params: {
+          name: `w-${conditionType}`,
+          conditionType,
+          conditionJson: "{}",
+          actionType: "notify",
+          actionJson: "{}",
+        },
+        db,
+      });
+      expect(out.kind).toBe("hit");
+    }
+    expect((db.query("SELECT COUNT(*) AS n FROM watcher").get() as { n: number }).n).toBe(3);
   });
 });
 

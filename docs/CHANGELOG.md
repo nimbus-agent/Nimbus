@@ -27,8 +27,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   boundary already resolved one before the miss (a bare host miss still has nothing to name and
   stays `{ status: "not_configured" }`). **Wire change — additive only, no new `status` arm**: old
   clients (including `nimbus-web-clipper`, which maps an unrecognized `status` to `server_error`)
-  ignore the new fields and keep working. `no_targeted_fetch` behaviour is unchanged — the 62
-  connectors with no `fetchOne` still answer it, unaffected by this PR.
+  ignore the new fields and keep working. `no_targeted_fetch` behaviour is unchanged — every
+  connector without a `fetchOne` still answers it, unaffected by this PR.
 - **2026-08-10 — `nimbus connector auth` validates a credential before storing it (no schema
   change).** A live identity-endpoint probe (`connectors/credential-probe.ts`) now runs against the
   credentials in the request BEFORE any Vault write, for five PAT-based connectors — github,
@@ -49,10 +49,24 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   re-authenticated connector would otherwise stay permanently unsynced. The CLI's unconditional
   `Signed in: <service>` — which claimed a check that never happened for most connectors — is
   retired in favor of three honest outcomes: `Verified: <service>`, `Stored: <service> (NOT
-  verified — could not reach the provider)` (with a follow-up line suggesting a re-run when
-  online), and `Stored: <service> (not verified)`. All three still exit `0`: the credential was
-  stored, which is what the command was asked to do. Documented in `docs/cli-reference.md`'s
-  `nimbus connector auth` section.
+  verified — the provider did not confirm it)` (with a follow-up line suggesting a retry), and
+  `Stored: <service> (not verified)`. The middle case deliberately does NOT claim the provider was
+  unreachable: that verdict also covers a 403, a 429 and a 5xx, where the provider answered. All
+  three still exit `0`: the credential was stored, which is what the command was asked to do.
+  Documented in `docs/cli-reference.md`'s `nimbus connector auth` section.
+- **2026-08-10 — Watcher conditions: `incident_opened` + `deploy_failed`.** The watcher engine
+  previously evaluated one condition type, `alert_fired`, which matches an item type no connector
+  indexes; a watcher could be created and armed and still never fire. Both new conditions come from
+  one condition-kind table that the engine and `watcher.create` share, so an unsupported
+  `conditionType` is now rejected at creation rather than accepted and silently ignored.
+  `incident_opened` narrows to `metadata.status = 'triggered'`, since PagerDuty re-indexes an
+  incident on acknowledgement and resolution too — the tradeoff, recorded rather than fixed, is
+  that an incident indexed with a null status (PagerDuty omitted the field, or returned a
+  non-string) never fires this condition at all. `deploy_failed` covers CI-annotated deployments
+  only, and its coverage limits are recorded in
+  [`docs/architecture.md` § Watchers](./architecture.md#watchers). The desktop Create Watcher
+  dialog now offers exactly these three condition types, with the graph predicate as an orthogonal
+  option rather than a fourth condition type. Groundwork for `nimbus pre-mortem` PR B.
 - **2026-08-09 — Pre-mortem recurring-blocker-theme extraction: schema + background pass (schema
   V53).** PR A of the S1 pre-mortem work — schema and a debounced background pass only.
   **THERE IS NO USER-FACING COMMAND IN THIS PR**: `nimbus pre-mortem`, the `agents.premortem`
