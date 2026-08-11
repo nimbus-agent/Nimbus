@@ -355,6 +355,42 @@ function jiraIssueDerivedFromFields(
  * Linear's mapper writes the SAME key names, so no consumer branches on
  * service. A field the API did not supply omits its key entirely.
  */
+/**
+ * `stringField` on a NESTED record (`fields.issuetype.name`), or `undefined`
+ * when either level is missing.
+ */
+function nestedStringField(
+  fields: Record<string, unknown>,
+  outerKey: string,
+  innerKey: string,
+): string | undefined {
+  const outer = asRecord(fields[outerKey]);
+  return outer === undefined ? undefined : stringField(outer, innerKey);
+}
+
+/**
+ * Assign only when there is something to say.
+ *
+ * These two exist because `jiraDepthMetadata` repeated the same
+ * `if (v !== undefined && v !== "")` guard eight times, which is what pushed it
+ * past the cognitive-complexity threshold (Sonar S3776, scored 17). The
+ * distinction between them is real and not cosmetic: an empty STRING is Jira
+ * saying "this field exists and is blank", which carries no information and
+ * must not be indexed as though it did — whereas a numeric 0 from `msFromIso`
+ * is a genuine epoch timestamp and must be kept.
+ */
+function putIfNonEmpty(meta: Record<string, unknown>, key: string, v: string | undefined): void {
+  if (v !== undefined && v !== "") {
+    meta[key] = v;
+  }
+}
+
+function putIfDefined(meta: Record<string, unknown>, key: string, v: number | undefined): void {
+  if (v !== undefined) {
+    meta[key] = v;
+  }
+}
+
 function jiraDepthMetadata(fields: Record<string, unknown> | undefined): Record<string, unknown> {
   const meta: Record<string, unknown> = { meta_v: TICKET_META_VERSION };
   if (fields === undefined) {
@@ -362,46 +398,27 @@ function jiraDepthMetadata(fields: Record<string, unknown> | undefined): Record<
     return meta;
   }
 
-  const issueType = asRecord(fields["issuetype"]);
-  const typeName = issueType === undefined ? undefined : stringField(issueType, "name");
-  if (typeName !== undefined && typeName !== "") {
-    meta["issue_type"] = typeName;
-  }
+  putIfNonEmpty(meta, "issue_type", nestedStringField(fields, "issuetype", "name"));
+  putIfNonEmpty(meta, "status", nestedStringField(fields, "status", "name"));
 
   const status = asRecord(fields["status"]);
-  const statusName = status === undefined ? undefined : stringField(status, "name");
-  if (statusName !== undefined && statusName !== "") {
-    meta["status"] = statusName;
-  }
   const category = status === undefined ? undefined : asRecord(status["statusCategory"]);
   const rawKey = category === undefined ? undefined : stringField(category, "key");
-  if (rawKey !== undefined && rawKey !== "") {
-    meta["status_category_raw"] = rawKey;
-  }
+  putIfNonEmpty(meta, "status_category_raw", rawKey);
+  // Unconditional, unlike every other field here: a normalized category is
+  // always derivable (`unknown` when the raw key is absent or unrecognised),
+  // and a consumer branching on it must never have to handle it being missing.
   meta["status_category"] = normalizeJiraStatusCategory(rawKey);
 
-  const created = msFromIso(stringField(fields, "created"));
-  if (created !== undefined) {
-    meta["created_at_ms"] = created;
-  }
-  const resolved = msFromIso(stringField(fields, "resolutiondate"));
-  if (resolved !== undefined) {
-    meta["resolved_at_ms"] = resolved;
-  }
-  const due = msFromIso(stringField(fields, "duedate"));
-  if (due !== undefined) {
-    meta["due_at_ms"] = due;
-  }
+  putIfDefined(meta, "created_at_ms", msFromIso(stringField(fields, "created")));
+  putIfDefined(meta, "resolved_at_ms", msFromIso(stringField(fields, "resolutiondate")));
+  putIfDefined(meta, "due_at_ms", msFromIso(stringField(fields, "duedate")));
 
   // Populated on team-managed projects only. Classic company-managed projects
   // express epic membership through a per-instance `customfield_100xx`, which
   // this connector deliberately does not chase — `parent_key` is simply absent
   // there, and epics stay identifiable via `issue_type`.
-  const parent = asRecord(fields["parent"]);
-  const parentKey = parent === undefined ? undefined : stringField(parent, "key");
-  if (parentKey !== undefined && parentKey !== "") {
-    meta["parent_key"] = parentKey;
-  }
+  putIfNonEmpty(meta, "parent_key", nestedStringField(fields, "parent", "key"));
 
   return meta;
 }

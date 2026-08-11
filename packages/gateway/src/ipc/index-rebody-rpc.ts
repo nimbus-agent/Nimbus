@@ -293,71 +293,87 @@ export function clearedWatermarkWarning(service: string): string {
 
 const rebodyRegistry = new LongRunningJobRegistry();
 
+/**
+ * Field readers for `parseRebodyParams`, split out for cognitive complexity
+ * (Sonar S3776 scored that function at 20).
+ *
+ * Each returns `undefined` for an ABSENT key and THROWS for a present-but-
+ * malformed one. That asymmetry is the entire validation policy of this
+ * endpoint and is deliberate: unlike `index.reembed`'s `limit` — which bounds a
+ * local CPU recompute and is safe to drop silently — every field here bounds
+ * real outbound API traffic. A silently-ignored typo (`limit: "3"`) would
+ * target every pending service instead of three, and a mistyped `dryRun`
+ * becoming a real run is the worst version of this failure mode. So a
+ * malformed value is a hard error, never a fallback to the default.
+ */
+function readOptionalNonEmptyString(
+  rec: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  if (!(key in rec)) return undefined;
+  const v = rec[key];
+  if (typeof v !== "string" || v === "") {
+    throw new IndexRebodyRpcError(
+      -32602,
+      `params.${key} must be a non-empty string when provided`,
+    );
+  }
+  return v;
+}
+
+/** Floored to an integer; rejects non-finite, non-positive and non-number. */
+function readOptionalPositiveInt(
+  rec: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  if (!(key in rec)) return undefined;
+  const v = rec[key];
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+    throw new IndexRebodyRpcError(
+      -32602,
+      `params.${key} must be a positive finite number when provided`,
+    );
+  }
+  return Math.floor(v);
+}
+
+function readOptionalBoolean(rec: Record<string, unknown>, key: string): boolean | undefined {
+  if (!(key in rec)) return undefined;
+  const v = rec[key];
+  if (typeof v !== "boolean") {
+    throw new IndexRebodyRpcError(-32602, `params.${key} must be a boolean when provided`);
+  }
+  return v;
+}
+
 export function parseRebodyParams(params: unknown): RebodyParams {
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new IndexRebodyRpcError(-32602, "params must be an object");
   }
   const rec = params as Record<string, unknown>;
   const out: RebodyParams = {};
-  if ("service" in rec) {
-    const service = rec["service"];
-    if (typeof service !== "string" || service === "") {
-      throw new IndexRebodyRpcError(
-        -32602,
-        "params.service must be a non-empty string when provided",
-      );
-    }
-    out.service = service;
-  }
-  if ("type" in rec) {
-    const type = rec["type"];
-    if (typeof type !== "string" || type === "") {
-      throw new IndexRebodyRpcError(-32602, "params.type must be a non-empty string when provided");
-    }
-    out.type = type;
-  }
-  if ("limit" in rec) {
-    const rawLimit = rec["limit"];
-    // Unlike index.reembed's `limit` (bounds a local CPU recompute — safe to
-    // silently drop if malformed), this `limit` bounds how many connectors
-    // get an unbounded full-account network re-walk. A silently-ignored typo
-    // here (`limit: "3"`) would target every pending service instead of
-    // three, so a malformed value is a hard error, not a fallback.
-    if (typeof rawLimit !== "number" || !Number.isFinite(rawLimit) || rawLimit <= 0) {
-      throw new IndexRebodyRpcError(
-        -32602,
-        "params.limit must be a positive finite number when provided",
-      );
-    }
-    out.limit = Math.floor(rawLimit);
-  }
-  if ("dryRun" in rec) {
-    const rawDryRun = rec["dryRun"];
-    // Same reasoning as `limit`: a mistyped `dryRun` silently becoming a real
-    // run is the worst version of this failure mode, so it is rejected
-    // rather than coerced.
-    if (typeof rawDryRun !== "boolean") {
-      throw new IndexRebodyRpcError(-32602, "params.dryRun must be a boolean when provided");
-    }
-    if (rawDryRun) {
-      out.dryRun = true;
-    }
-  }
-  if ("sinceDays" in rec) {
-    const raw = rec["sinceDays"];
-    // Same reasoning as `limit`: this bounds real outbound API traffic, so a
-    // malformed value must not silently become the connector's default window.
-    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-      throw new IndexRebodyRpcError(
-        -32602,
-        "params.sinceDays must be a positive finite number when provided",
-      );
-    }
-    out.sinceDays = Math.floor(raw);
+
+  const service = readOptionalNonEmptyString(rec, "service");
+  if (service !== undefined) out.service = service;
+
+  const type = readOptionalNonEmptyString(rec, "type");
+  if (type !== undefined) out.type = type;
+
+  const limit = readOptionalPositiveInt(rec, "limit");
+  if (limit !== undefined) out.limit = limit;
+
+  // Only a TRUE `dryRun` is recorded — `RebodyParams.dryRun` is optional and an
+  // explicit `false` means the same thing as omitting it, so writing it would
+  // add a field the rest of the pipeline would have to keep distinguishing.
+  if (readOptionalBoolean(rec, "dryRun") === true) out.dryRun = true;
+
+  const sinceDays = readOptionalPositiveInt(rec, "sinceDays");
+  if (sinceDays !== undefined) {
+    out.sinceDays = sinceDays;
     // A floor before the epoch cannot be rendered as a valid JQL date literal
     // (`jqlFloorFromMs` would emit a negative year and Jira would reject the
     // query with an opaque 400). Reject it here with a legible message instead.
-    if (Date.now() - out.sinceDays * 86_400_000 < 0) {
+    if (Date.now() - sinceDays * 86_400_000 < 0) {
       throw new IndexRebodyRpcError(
         -32602,
         "params.sinceDays reaches before 1970; pass a window that starts after the epoch",
@@ -480,6 +496,52 @@ export function resolveTargetServices(p: RebodyParams, db: Database): string[] {
   return p.limit === undefined ? all : all.slice(0, p.limit);
 }
 
+/**
+ * Clear one service's cursor and force a re-walk. `true` on success.
+ *
+ * Split out of `runRebody` for cognitive complexity (Sonar S3776 scored it at
+ * 17) — the loop around it is now just success/failure tallying.
+ *
+ * A missing `syncScheduler` counts as SUCCESS, not failure: the watermark was
+ * still cleared, which is the durable half of the operation, and the next
+ * scheduled tick performs the re-walk. Reporting it as a failure would tell an
+ * operator something went wrong when nothing did.
+ */
+async function resyncOneService(
+  service: string,
+  p: RebodyParams,
+  ctx: IndexRebodyRpcContext,
+): Promise<boolean> {
+  // Clearing the watermark BEFORE attempting the sync is deliberate: a
+  // `forceSync` rejection below (rate limit, auth) must not leave the
+  // connector permanently stuck on its old cursor. The tradeoff — a failed
+  // attempt still arms the next scheduled tick for the same re-walk — is
+  // made visible via `clearedWatermarkWarning` rather than hidden.
+  clearSchedulerCursor(ctx.db, service);
+  if (ctx.syncScheduler === undefined) {
+    return true;
+  }
+  // Armed immediately before the forced run so the connector cold-starts
+  // from the requested window instead of its own 30-day floor. Connectors
+  // that do not read `SyncContext.historyFloorMs` ignore it.
+  if (p.sinceDays !== undefined) {
+    ctx.syncScheduler.setHistoryFloor(service, Date.now() - p.sinceDays * 86_400_000);
+  }
+  try {
+    await ctx.syncScheduler.forceSync(service);
+    return true;
+  } catch (err) {
+    ctx.logger.warn(
+      {
+        service,
+        errMessage: err instanceof Error ? err.message : String(err),
+      },
+      "rebody: forceSync failed for service; watermark stays cleared for the next scheduled tick",
+    );
+    return false;
+  }
+}
+
 async function runRebody(
   p: RebodyParams,
   ctx: IndexRebodyRpcContext,
@@ -506,35 +568,11 @@ async function runRebody(
     if (signal.aborted) {
       break;
     }
-    // Clearing the watermark before attempting the sync is deliberate: a
-    // `forceSync` rejection below (rate limit, auth) must not leave the
-    // connector permanently stuck on its old cursor. The tradeoff — a failed
-    // attempt still arms the next scheduled tick for the same re-walk — is
-    // made visible via `clearedWatermarkWarning` rather than hidden.
-    clearSchedulerCursor(ctx.db, service);
-    if (ctx.syncScheduler === undefined) {
+    if (await resyncOneService(service, p, ctx)) {
       succeeded += 1;
     } else {
-      // Armed immediately before the forced run so the connector cold-starts
-      // from the requested window instead of its own 30-day floor. Connectors
-      // that do not read `SyncContext.historyFloorMs` ignore it.
-      if (p.sinceDays !== undefined) {
-        ctx.syncScheduler.setHistoryFloor(service, Date.now() - p.sinceDays * 86_400_000);
-      }
-      try {
-        await ctx.syncScheduler.forceSync(service);
-        succeeded += 1;
-      } catch (err) {
-        ctx.logger.warn(
-          {
-            service,
-            errMessage: err instanceof Error ? err.message : String(err),
-          },
-          "rebody: forceSync failed for service; watermark stays cleared for the next scheduled tick",
-        );
-        failed += 1;
-        failedServices.push(service);
-      }
+      failed += 1;
+      failedServices.push(service);
     }
     progress({ done: succeeded + failed, total: targets.length, service });
   }
