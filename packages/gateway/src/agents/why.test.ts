@@ -232,6 +232,95 @@ describe("runWhy", () => {
     expect(reviewedGap?.detail).toContain("none resolve");
   });
 
+  test("pull_request lane: a per-PR reviewed edge that doesn't resolve still yields a gap note even when a DIFFERENT PR's reviewed edge resolves cleanly", async () => {
+    const db = freshDb();
+    const t = Date.now();
+
+    // PR A — from the shared fixture, healthy: a `reviewed` edge that
+    // resolves cleanly (real person row + real reviewer graph_entity).
+    seedWhyFixture(db, { pr: true, blame: { lineNo: 42 } });
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", [
+      "person:reviewer-a",
+      "Reviewer A",
+    ]);
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "review",
+      externalId: "acme/app#412#review-1",
+      title: "Review on acme/app#412",
+      bodyPreview: "",
+      modifiedAt: t,
+      syncedAt: t,
+      authorId: "person:reviewer-a",
+      metadata: { repo: "acme/app", pr_number: 412 },
+    });
+
+    // PR B — a second, REAL pr item constructed the same way the fixture
+    // builds PR A (not a hand-rolled graph_entity row), merged via a
+    // distinct commit SHA and blamed at a distinct line so this `why`
+    // invocation resolves to PR B, not PR A.
+    const SHA_B = "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1";
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#413",
+      title: "Second PR",
+      bodyPreview: "",
+      url: "https://github.com/acme/app/pull/413",
+      modifiedAt: t,
+      syncedAt: t,
+      metadata: {
+        number: 413,
+        repo: "acme/app",
+        state: "merged",
+        draft: false,
+        merged: true,
+        merge_commit_sha: SHA_B,
+      },
+    });
+    upsertBlameLines(db, ROOT, "src/retry.ts", [
+      {
+        lineNo: 99,
+        commitSha: SHA_B,
+        authorName: "bob",
+        authorEmail: "bob@example.com",
+        authorTimeMs: 1_700_000_000_000,
+      },
+    ]);
+
+    // PR B's `reviewed` edge is broken: its `from_id` resolves to a real
+    // graph_entity row (satisfying the FK), but NOT one of type `person` —
+    // "no matching person graph_entity" — so it can never resolve through
+    // the join the reviewer query (and the probe) both use.
+    const prBRow = db
+      .query("SELECT id FROM graph_entity WHERE type = 'pr' AND external_id = ?")
+      .get("github:acme/app#413") as { id: string };
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:not-a-person", "ghost", "ghost:not-a-person", "Not A Person", "github"],
+    );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:not-a-person",
+      prBRow.id,
+      "reviewed",
+      t,
+    ]);
+
+    const brief = await runWhy({ ref: refAt(99) }, ctxFor(db));
+
+    const prFinding = brief.findings.find((f) => f.lane === "pull_request");
+    expect(prFinding?.title).toContain("413");
+    expect(prFinding?.detail).not.toContain("Reviewed by");
+
+    // The bug this test guards against: an UNSCOPED probe finds PR A's
+    // healthy `reviewed` edge and reports "all clear" globally, silencing
+    // the gap note for PR B even though PR B's own reviewers never resolve.
+    const reviewedGap = brief.gaps.find(
+      (g) => g.category === "missing_relation_emit" && g.detail.includes("reviewed"),
+    );
+    expect(reviewedGap).toBeDefined();
+  });
+
   test("ticket lane: pr → resolves → issue, endpoint-scoped", async () => {
     const db = freshDb();
     seedWhyFixture(db, { issue: true, pr: true, blame: { lineNo: 42 } });

@@ -281,25 +281,36 @@ async function subAuthorship(db: Database, lane: LaneInput): Promise<SubAgentRes
 // ---------------------------------------------------------------------------
 
 /**
- * Resolution-aware probe for the `reviewed` lane — mirrors
- * `expert.ts`'s `detectUnresolvedReviewedRelation`.
+ * Resolution-aware probe for the `reviewed` lane — mirrors the shape of
+ * `expert.ts`'s `detectUnresolvedReviewedRelation`, but scoped to a single
+ * PR: unlike `expert.ts`'s `subPrReviewed` (a free-text topic search across
+ * *all* PRs, where "does anything resolve anywhere" is the right question),
+ * `why.ts`'s `subPullRequest` lane is already scoped to one resolved
+ * `pr.entityId` — its `reviewerRows` query filters `WHERE r.to_id = ?` bound
+ * to that PR. A probe that asks "does ANY `reviewed` edge ANYWHERE resolve"
+ * would report "all clear" as soon as a *different* PR's edge resolves,
+ * silencing a real per-PR failure (a `reviewed` edge on *this* PR with a
+ * dangling `from_id` or no matching `person` graph_entity) the moment the
+ * graph holds more than one PR's review data. So this probe binds
+ * `prEntityId` into the resolution check too, matching `reviewerRows`.
  *
  * `detectMissingRelationEmit` only checks that *some* `graph_relation` row of
  * type `reviewed` exists — it does not require that row to resolve through
- * the person/pr/item join chain this lane's reviewer query needs. Without
- * this check, a `reviewed` edge whose `pr` graph_entity has no backing `item`
- * row (or whose `person` graph_entity doesn't exist) makes the reviewer query
- * return 0 rows AND makes `detectMissingRelationEmit` report "all clear" —
- * silently empty instead of explaining itself.
+ * the person/pr join chain this lane's reviewer query needs. Without this
+ * check, a `reviewed` edge on this PR whose `person` graph_entity doesn't
+ * exist makes the reviewer query return 0 rows AND makes
+ * `detectMissingRelationEmit` report "all clear" — silently empty instead of
+ * explaining itself.
  *
  * Returns:
- *   - the "no `reviewed` edges at all" gap if none exist,
- *   - a distinct "edges exist but none resolve" gap if edges exist but the
- *     join chain never completes for any of them (a real indexing gap),
- *   - `null` if at least one edge resolves — an empty reviewer list for THIS
- *     PR is then just "not reviewed yet", not a data gap.
+ *   - the "no `reviewed` edges at all" gap if none exist anywhere,
+ *   - a distinct "edges exist but none resolve on this PR" gap if edges
+ *     exist elsewhere but the join chain never completes for this PR's
+ *     `pr.entityId` specifically (a real indexing gap for this PR),
+ *   - `null` if at least one edge resolves on this PR — the real query
+ *     already surfaced the reviewer in that case.
  */
-function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
+function detectUnresolvedReviewedRelation(db: Database, prEntityId: string): GapNote | null {
   const missingEmit = detectMissingRelationEmit(
     db,
     "reviewed",
@@ -312,20 +323,18 @@ function detectUnresolvedReviewedRelation(db: Database): GapNote | null {
       `SELECT 1 AS n
          FROM graph_relation gr
          JOIN graph_entity  pe  ON pe.id = gr.from_id AND pe.type = 'person'
-         JOIN graph_entity  pre ON pre.id = gr.to_id  AND pre.type = 'pr'
-         JOIN item          i   ON i.id = pre.external_id
-        WHERE gr.type = 'reviewed'
+        WHERE gr.type = 'reviewed' AND gr.to_id = ?
         LIMIT 1`,
     )
-    .get() as { n?: number } | null;
+    .get(prEntityId) as { n?: number } | null;
   if (resolvedRow !== null) return null;
 
   return {
     category: "missing_relation_emit",
     detail:
-      "`reviewed` edges exist in the graph but none resolve to an indexed PR and reviewer — the referenced PRs or reviewers are not (yet) indexed.",
+      "`reviewed` edges exist in the graph but none resolve to a reviewer for this PR — its reviewers are not (yet) indexed.",
     remediation:
-      "Sync the GitHub connector so the reviewed PRs and their authors are indexed, then run `nimbus index backfill --service github` for history.",
+      "Sync the GitHub connector so this PR's reviewed events and their authors are indexed, then run `nimbus index backfill --service github` for history.",
   };
 }
 
@@ -379,9 +388,10 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
   };
 
   // Reviewers come from `review` items indexed off the GitHub events feed.
-  // The gap note now means "no reviews indexed yet" (or "reviewed edges exist
-  // but don't resolve to an indexed PR/reviewer") — never "unimplemented".
-  const reviewedGap = detectUnresolvedReviewedRelation(db);
+  // The gap note now means "no reviews indexed yet anywhere" or "this PR's
+  // reviewed edges don't resolve to an indexed reviewer" — never
+  // "unimplemented".
+  const reviewedGap = detectUnresolvedReviewedRelation(db, pr.entityId);
   return reviewedGap !== null ? { findings: [finding], gap: reviewedGap } : { findings: [finding] };
 }
 
