@@ -116,7 +116,7 @@ export function extractPrMetadataForIndex(
 }
 
 function eventsUrlFor(login: string): string {
-  return `https://api.github.com/users/${encodeURIComponent(login)}/events?per_page=100`;
+  return `https://api.github.com/users/${encodeURIComponent(login)}/events?per_page=${String(GITHUB_EVENTS_PAGE_SIZE)}`;
 }
 
 type GithubSyncCursorV1 = { etag: string | null; login: string | null };
@@ -449,15 +449,20 @@ function parseGithubEventsPayload(text: string): unknown[] {
   return parsed;
 }
 
-function throwGithubRateLimitErrorIfApplicable(
+export function throwGithubRateLimitErrorIfApplicable(
   ctx: SyncContext,
   res: Response,
   label: string,
 ): void {
   if (res.status === 403) {
     const remaining = res.headers.get("x-ratelimit-remaining");
-    if (remaining === "0" || remaining === null) {
-      const retryAt = retryAfterDateFromHeader(res.headers.get("retry-after"), 60);
+    const retryAfter = res.headers.get("retry-after");
+    // GitHub returns 403 OR 429 for secondary (abuse) limits, and documents
+    // `retry-after` as an independent signal: a secondary limit can arrive with
+    // primary quota still available. Keying only on `remaining === 0` misses
+    // every one of those and retries straight into the limit.
+    if (remaining === "0" || remaining === null || retryAfter !== null) {
+      const retryAt = retryAfterDateFromHeader(retryAfter, 60);
       const ms = Math.max(1000, retryAt.getTime() - Date.now());
       ctx.rateLimiter.penalise("github", ms);
       throw new RateLimitError(retryAt, `GitHub ${label}: rate limited (403)`);
@@ -479,6 +484,12 @@ interface FallbackPrCandidate {
 }
 
 const MAX_ENRICH_PER_TICK = 10;
+
+/**
+ * Single source of truth for the events feed's `per_page`, shared by `eventsUrlFor` (the request)
+ * and `syncGithubUserEvents` (the full-page saturation check) so the two can never drift.
+ */
+const GITHUB_EVENTS_PAGE_SIZE = 100;
 
 /**
  * True when `metadata` (a JSON blob) already carries a non-null `additions` field.
@@ -689,6 +700,16 @@ async function syncGithubUserEvents(
     if (processEvent(ctx, ev, now)) {
       upserted += 1;
     }
+  }
+
+  // One request per tick at per_page=100 (no pagination): a full page means the
+  // window may have overflowed between syncs, and anything older is unreachable
+  // from the events feed. Loss is silent by construction, so record it.
+  if (parsed.length >= GITHUB_EVENTS_PAGE_SIZE) {
+    ctx.logger.warn(
+      { service: SERVICE_ID, events: parsed.length },
+      "github events page was full; older events in this window may have been missed",
+    );
   }
 
   // Best-effort detail enrichment for fallback-titled or stats-missing PRs (existing rows + this tick's events).

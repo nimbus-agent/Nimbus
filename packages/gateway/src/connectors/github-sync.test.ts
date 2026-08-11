@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { resolveItemByUrl } from "../index/resolve-by-url.ts";
+import { RateLimitError } from "../sync/types.ts";
 import {
   createMemoryIndexDb,
   createStubVault,
@@ -11,7 +12,12 @@ import {
   silentSyncContextExtras,
   syncTestContext,
 } from "./connector-sync-test-helpers.ts";
-import { createGithubSyncable, extractPrMetadataForIndex, processEvent } from "./github-sync.ts";
+import {
+  createGithubSyncable,
+  extractPrMetadataForIndex,
+  processEvent,
+  throwGithubRateLimitErrorIfApplicable,
+} from "./github-sync.ts";
 
 function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | null) {
   return {
@@ -454,4 +460,28 @@ test("PR stats are absent, not null, when the payload omits them", () => {
   expect("deletions" in meta).toBe(false);
   expect("changed_files" in meta).toBe(false);
   expect("commits" in meta).toBe(false);
+});
+
+test("a 403 with retry-after is rate limiting even when remaining is non-zero", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const res = new Response("secondary rate limit", {
+    status: 403,
+    headers: { "retry-after": "60", "x-ratelimit-remaining": "4999" },
+  });
+
+  expect(() => throwGithubRateLimitErrorIfApplicable(ctx, res, "events")).toThrow(RateLimitError);
+  db.close();
+});
+
+test("a 403 with no retry-after and remaining left is not rate limiting", () => {
+  const db = createMemoryIndexDb();
+  const ctx = syncTestContext(db, EMPTY_NIMBUS_VAULT);
+  const res = new Response("forbidden", {
+    status: 403,
+    headers: { "x-ratelimit-remaining": "4999" },
+  });
+
+  expect(() => throwGithubRateLimitErrorIfApplicable(ctx, res, "events")).not.toThrow();
+  db.close();
 });
