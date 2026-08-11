@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { affectedServicesForEpics } from "./epic-services.ts";
 import { type DiscoveredEpic, discoverClosedEpics } from "./theme-discover.ts";
-import { extractThemes, type ThemeLlm } from "./theme-llm-adapter.ts";
+import { type ExtractedTheme, extractThemes, type ThemeLlm } from "./theme-llm-adapter.ts";
 import {
   demoteThemesWithNoLiveEvidence,
   pruneOrphanedEvidence,
@@ -47,6 +47,60 @@ export type PremortemPassResult = {
 // past the instructions entirely. A smaller batch means more calls to cover
 // the same corpus, bounded by `maxLlmCallsPerPass` (default 25) as before.
 const DEFAULT_BATCH_SIZE = 4;
+
+/**
+ * Fan one batch of extracted themes out into `premortem_theme` rows, returning
+ * how many rows were written.
+ *
+ * Split out of `runPremortemPass` for cognitive complexity (Sonar S3776, which
+ * scored that function at 45). The surrounding loop is a linear
+ * discover → extract → write → checkpoint sequence; this triple-nested fan-out
+ * was the one deeply branchy region in it.
+ *
+ * A theme's service is the AFFECTED service its attesting epics touched
+ * (`billing-api`), never the connector that owns the row (`jira`) — so ONE
+ * theme yields one row per affected service, each carrying only the evidence
+ * that actually touched that service.
+ */
+function writeThemeRows(
+  db: Database,
+  args: {
+    themes: readonly ExtractedTheme[];
+    byId: ReadonlyMap<string, DiscoveredEpic>;
+    servicesByEpic: ReadonlyMap<string, readonly string[]>;
+    nowMs: number;
+  },
+): number {
+  const { themes, byId, servicesByEpic, nowMs } = args;
+  let written = 0;
+  for (const t of themes) {
+    const evidenceByService = new Map<string, ThemeEvidenceInput[]>();
+    for (const id of t.sourceItemIds) {
+      const epic = byId.get(id);
+      if (epic === undefined) continue;
+      for (const service of servicesByEpic.get(id) ?? []) {
+        const list = evidenceByService.get(service) ?? [];
+        list.push({
+          itemId: id,
+          evidenceKey: id,
+          label: epic.title,
+          // Omit rather than default to 0 — `occurred_at` is nullable and
+          // 1970 is a lie.
+          ...(epic.resolvedAtMs === undefined ? {} : { occurredAt: epic.resolvedAtMs }),
+        });
+        evidenceByService.set(service, list);
+      }
+    }
+    // An epic whose services could not be resolved contributes nothing.
+    // That is correct, not a silent drop: with no service there is no key
+    // under which PR B could ever find the theme.
+    for (const [service, evidence] of evidenceByService) {
+      upsertTheme(db, { service, label: t.label, nowMs, evidence });
+      written += 1;
+    }
+  }
+  return written;
+}
 
 /**
  * discover -> extract -> reconcile, checkpointing the watermark PER BATCH.
@@ -139,34 +193,12 @@ export async function runPremortemPass(
         batch.map((e) => e.itemId),
       );
 
-      for (const t of themes) {
-        // One theme row per affected service, each carrying only the evidence
-        // that actually touched that service.
-        const evidenceByService = new Map<string, ThemeEvidenceInput[]>();
-        for (const id of t.sourceItemIds) {
-          const epic = byId.get(id);
-          if (epic === undefined) continue;
-          for (const service of servicesByEpic.get(id) ?? []) {
-            const list = evidenceByService.get(service) ?? [];
-            list.push({
-              itemId: id,
-              evidenceKey: id,
-              label: epic.title,
-              // Omit rather than default to 0 — `occurred_at` is nullable and
-              // 1970 is a lie.
-              ...(epic.resolvedAtMs === undefined ? {} : { occurredAt: epic.resolvedAtMs }),
-            });
-            evidenceByService.set(service, list);
-          }
-        }
-        // An epic whose services could not be resolved contributes nothing.
-        // That is correct, not a silent drop: with no service there is no key
-        // under which PR B could ever find the theme.
-        for (const [service, evidence] of evidenceByService) {
-          upsertTheme(db, { service, label: t.label, nowMs: opts.nowMs, evidence });
-          themesWritten += 1;
-        }
-      }
+      themesWritten += writeThemeRows(db, {
+        themes,
+        byId,
+        servicesByEpic,
+        nowMs: opts.nowMs,
+      });
     }
 
     const last = batch.at(-1);
