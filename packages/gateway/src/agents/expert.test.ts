@@ -282,6 +282,38 @@ describe("subPrReviewed", () => {
     expect(result.stream).toBeUndefined();
     db.close();
   });
+
+  test("subPrReviewed reports a distinct gap when a reviewed edge exists but its PR does not resolve to an indexed item", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:reviewer", "Reviewer"]);
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:person:reviewer", "person", "person:reviewer", "Reviewer", "github"],
+    );
+    // PR graph_entity with NO backing `item` row — this is the partial-join
+    // failure the old `detectMissingRelationEmit`-only probe couldn't see.
+    db.run(
+      "INSERT INTO graph_entity (id, type, external_id, label, service) VALUES (?, ?, ?, ?, ?)",
+      ["ge:pr:orphan", "pr", "github:pr:orphan", "Orphan PR", "github"],
+    );
+    db.run("INSERT INTO graph_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)", [
+      "ge:person:reviewer",
+      "ge:pr:orphan",
+      "reviewed",
+      now,
+    ]);
+
+    const result = await subPrReviewed(db, "anything");
+
+    expect(result.stream).toBeUndefined();
+    expect(result.gap?.category).toBe("missing_relation_emit");
+    // Distinct from the "no edges at all" gap's detail — proves this is the
+    // resolution-aware branch, not the pre-existing zero-edges check.
+    expect(result.gap?.detail).toContain("none resolve");
+    db.close();
+  });
 });
 
 /** Helper: set up a minimal non-empty DB with both sync connectors registered. */
