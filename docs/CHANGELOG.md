@@ -90,6 +90,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   this change stops future egress, it does not undo past egress. No migration, no schema change,
   no new invariant.
 
+- **2026-08-11 — GitHub connector: pull-request review depth (no schema change).** A review you
+  leave on a GitHub pull request is now indexed as its own `review` item, and the graph gains a
+  `person --reviewed--> pr` edge for it. `nimbus expert` surfaces reviewers as `pr_reviewed`
+  evidence and `nimbus why` names them in its pull-request finding; both now emit an explicit gap
+  note — instead of going silently empty — when a reviewed edge exists but does not resolve to an
+  indexed reviewer. Three limits, documented in
+  [`docs/connectors/github.md`](./connectors/github.md#pull-request-reviews): reviewing a pull
+  request indexes that pull request, including ones you did not author, since that is what lets a
+  review link to a titled PR rather than a bare id; this indexes pull requests you reviewed, never
+  who reviewed your pull requests, because the GitHub events feed reports only the authenticated
+  user's own activity; and coverage begins at first sync — the events feed exposes only a recent
+  window (GitHub caps it at 300 events / 30 days, and Nimbus reads one page of 100 per tick), so
+  reviews from before the connector was first synced are not recoverable by syncing, and a review
+  deleted upstream leaves its graph link in place. Separately, PR size stats (`additions`,
+  `deletions`, `changed_files`, `commits`) are now captured, and the enrichment pass also re-fetches
+  PRs that have a real title but no stats. A secondary-rate-limit bug is fixed alongside: a 403
+  carrying `retry-after` is now honored even when quota remains.
 - **2026-08-11 — `nimbus pre-mortem`: the thirteenth built-in agent (PR B of the S1 pre-mortem
   work).** Reads the schema + background pass PR A shipped 2026-08-09 (V53) and adds the missing
   reader: `agents.premortem`, `nimbus pre-mortem <epic-ref> [--service <name>]… [--json]
