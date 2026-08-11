@@ -141,12 +141,13 @@ describe("enrichPrDetail", () => {
   });
 
   // Note: `selectPrEnrichCandidates` over-selects via `title LIKE 'PR #%'` and then narrows
-  // in JS with an exact-match check (`isExactFallback`, restored after an earlier fix round —
-  // see that function's docstring): a title merely starting with "PR #" (e.g. "Revert of PR
-  // #1") that already has stats is filtered back out, while a title that IS the exact
-  // fallback ("PR #<num>") stays a candidate regardless of stats, so its real title still
-  // gets fetched. This fixture's title does not collide with the LIKE prefix, so it verifies
-  // the plain case: a real title with stats already captured is left untouched.
+  // in JS with an exact-match check (`isExactFallback` — see that function's docstring): a
+  // title merely starting with "PR #" (e.g. "PR #142 fix bug") that already has stats is
+  // filtered back out, while a title that IS the exact fallback ("PR #<num>") stays a
+  // candidate regardless of stats, so its real title still gets fetched. This fixture's
+  // title ("Revert of PR #1") does not start with "PR #" at all, so it never collides with
+  // the LIKE prefix in the first place — it verifies the plain case: a real title with stats
+  // already captured is left untouched.
   test("a real title with stats already captured is not clobbered", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxFor(db);

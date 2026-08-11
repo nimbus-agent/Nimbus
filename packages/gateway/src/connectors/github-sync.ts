@@ -216,6 +216,23 @@ const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as c
  * Accepted tradeoff: once merged forward, stats can go stale (an event bumps `modified_at`
  * without new commit/diff counts) until the next detail fetch refreshes them. That is strictly
  * better than losing the stats outright and re-enriching the same PR on every tick.
+ *
+ * Scope, deliberately: this merges forward the four `PR_STAT_KEYS` only. `mergeable`,
+ * `mergeable_state`, and `mergeable_state_fetched_at_ms` are subject to the same wholesale
+ * `metadata = excluded.metadata` replacement and are NOT merged forward here — left as-is
+ * because no re-queue loop results: `shouldRefreshMergeableState` currently has no production
+ * caller, so nothing re-derives or re-fetches `mergeable_state` off the back of a cleared value.
+ * Not an oversight; revisit together if `shouldRefreshMergeableState` ever gets wired up.
+ *
+ * Open question (unverified): `extractPrMetadataForIndex`'s own docstring and
+ * `selectPrEnrichCandidates`'s docstring both assert the GitHub events feed omits `title` on
+ * `PullRequestEvent` payloads. If that holds, an events-path `upsertPr` call for an
+ * already-enriched PR falls back to the id-only `PR #<num>` title (see `upsertPr`), which is a
+ * plain field on the `item` row, not something this function merges forward. `title LIKE
+ * 'PR #%'` would then re-match, and `selectPrEnrichCandidates`'s exact-fallback arm re-queues
+ * the row regardless of stats — so this stats merge-forward would close only one of the
+ * selector's two arms, not both. This could not be confirmed from GitHub's published docs and
+ * needs verification against the live API before anyone treats it as fixed either way.
  */
 function mergeForwardPrStats(
   db: Database,

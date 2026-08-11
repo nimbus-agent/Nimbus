@@ -391,8 +391,10 @@ async function subPullRequest(db: Database, lane: LaneInput): Promise<SubAgentRe
   const openedBy =
     authorRow !== null ? `Opened by ${authorRow.label}` : "PR author not resolved in the graph.";
   // A total truncated silently is a lie by omission — name the cut, don't
-  // hide it (mirrors the `+N more` pattern the `decisions`/`glossary` agents
-  // already use for truncated lists).
+  // hide it. Discloses the overflow inline as ", and N more", the same
+  // truncation-disclosure format `packages/cli/src/commands/glossary.ts` uses
+  // when rendering a truncated list (the `decisions` agent instead discloses
+  // truncation via a separate gap note).
   const reviewerList =
     reviewerRows.map((r) => r.label).join(", ") +
     (reviewerOverflow > 0 ? `, and ${String(reviewerOverflow)} more` : "");

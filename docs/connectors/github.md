@@ -23,11 +23,14 @@ Three limits are worth knowing:
   author. This is what lets a review link to a titled PR rather than a bare id.
 - This indexes **pull requests you reviewed**, not **who reviewed your pull
   requests** — the GitHub events feed reports your own activity.
-- The sync fetches one un-paginated page of 100 events per tick from the events
-  feed. This is not only a first-sync/backfill limitation: a burst of more than
-  100 events between **any** two ordinary ticks — not just before the first
-  sync — silently drops the overflow, exactly as it would before the connector
-  had ever synced. The connector logs a saturation warning whenever a full page
-  comes back, on every tick that fills the page, not only the first. There is
-  no history-recovery command today — syncing more often is the only mitigation.
-  A review deleted upstream also leaves its graph link in place.
+- The events feed exposes only a recent window of activity, so reviews left
+  before the connector was first synced are not recoverable by syncing at
+  all. This is a separate limit from the per-tick page cap below — a
+  different cause, and syncing more often does not help it.
+- The sync also fetches one un-paginated page of 100 events per tick from the
+  events feed. A burst of more than 100 events between **any** two ticks —
+  not only before the first sync — silently drops the overflow; the
+  connector logs a saturation warning whenever a full page comes back. There
+  is no history-recovery command today — syncing more often reduces exposure
+  to this cap but does not eliminate it. A review deleted upstream also
+  leaves its graph link in place.
