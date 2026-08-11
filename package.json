@@ -18,7 +18,7 @@
     "linkify-it": "5.0.2",
     "hono": "4.12.34",
     "@hono/node-server": "2.0.12",
-    "@mastra/core": "1.56.0",
+    "@mastra/core": "1.57.0",
     "@mastra/mcp": "1.15.1",
     "undici": "7.29.0",
     "ip-address": "10.3.1",
