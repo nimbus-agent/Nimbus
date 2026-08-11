@@ -1013,7 +1013,9 @@ Both Phase 4 clients use the **existing JSON-RPC 2.0 IPC socket** — no new Gat
 
 ### Watchers
 
-The watcher engine evaluates post-sync conditions and fires configured automations. Each watcher has a `condition_type`, a `condition_json` payload (service-specific filter criteria), and an optional `graph_predicate_json` that narrows evaluation using the Phase 3 relationship graph substrate.
+The watcher engine evaluates post-sync conditions and fires configured automations. Each watcher has a `condition_type`, a `condition_json` payload carrying an optional `filter`, and an optional `graph_predicate_json` that narrows evaluation using the Phase 3 relationship graph substrate.
+
+`filter` has two independent dimensions, easy to conflate and conflated by an earlier version of this doc: `filter.service` matches the indexed item's `item.service` column — the syncable connector id (`pagerduty`, or a deployment's CI-provider slug like `github-actions`) — while `filter.affectedService` matches `graph_entity.metadata.affectedService`, the DORA `[ci.service.<id>]` / `[metrics.dora.<id>]` config id the event is actually *about*, written by `graph/graph-populator.ts`'s `syncTimelineEventGraph` for `incident` and `deployment` graph entities. The two compose (a watcher may set both; both must match), and only a `condition_type` whose kind carries a timeline entity — `incident_opened` and `deploy_failed` — supports `filter.affectedService`; see `watcher.create`'s validation below.
 
 | `condition_type` | Fires on | Coverage |
 | --- | --- | --- |
@@ -1022,10 +1024,16 @@ The watcher engine evaluates post-sync conditions and fires configured automatio
 | `deploy_failed` | an indexed item of type `deployment` whose `metadata.conclusion` is `failure` | CI-annotated deployments (`POST /v1/deployments`) only — Vercel records its outcome under `metadata.state`, and Prefect indexes deployment definitions with no outcome |
 
 `watcher.create` rejects any other `condition_type` with `-32602`, so a watcher that the engine
-could never evaluate cannot be created.
+could never evaluate cannot be created. It also rejects a `condition_json` that declares a
+`filter.affectedService` on a `condition_type` whose kind has no timeline graph entity to match
+it against — `alert_fired` today, since `incident_opened` and `deploy_failed` both support the
+filter. The check (`ipc/automation-rpc.ts`'s `declaresAffectedServiceFilter`) is a narrow,
+purpose-built parse, not a general `condition_json` validator: unparseable JSON, a non-object
+`filter`, or a non-string `affectedService` all leave the pre-existing, more permissive behavior
+unchanged.
 
 **Coverage limits of the conditions above.** A condition being evaluable is not the same as it
-firing on every qualifying event, and four gaps are known and unclosed:
+firing on every qualifying event, and five gaps are known and unclosed:
 
 - **`incident_opened` misses an incident indexed without a status.** The predicate matches only an
   incident whose indexed `metadata.status` is exactly `triggered`. `pagerduty-sync.ts` writes
@@ -1050,6 +1058,13 @@ firing on every qualifying event, and four gaps are known and unclosed:
   `filter.service` does not equal the id of the service that just synced, and no sync ever reports
   those provider names — so such a watcher is only reachable via the startup catch-up pass. A
   watcher with an empty `filter` (`{}`) is unaffected and works normally.
+- **`deploy_failed`'s `filter.affectedService` currently matches nothing.** The engine supports
+  the filter — `syncTimelineEventGraph` writes `metadata.affectedService` for `deployment`
+  entities exactly as it does for `incident` ones — but the data does not exist yet:
+  `deployment/annotate.ts`, the sole writer of the `metadata.conclusion` this condition matches,
+  `INSERT`s its `item` row directly and never calls the graph populator, so no `deployment` graph
+  entity is created at annotation time. Such a watcher only starts matching after
+  `nimbus index regraph` runs, and nothing runs that automatically.
 
 #### Graph-aware watcher example (Phase 4 §2)
 
@@ -1445,13 +1460,21 @@ const streamReq: JSONRPCRequest = {
 //   proposing, so a deliberately-deleted watcher is re-created (paused) rather than staying
 //   `suppressed`; never a global clear.
 //   **No deploy-failure watcher is ever proposed**, even though the deploy-failure risk is
-//   computed and reported: a deployment item's `item.service` is the annotate provider slug
-//   (e.g. `github-actions`), while the watcher engine matches syncable service ids, so a
-//   service-filtered deploy-failure watcher could never fire. Reconciling the two vocabularies
-//   is a separate, undone change.
-//   **Review drag cannot currently be measured for most repos**: no connector indexes a pull
-//   request's OPENED timestamp (only `merged_at`), so the brief reports a named gap rather than
-//   a fabricated figure wherever that data is missing.
+//   computed and reported: the watcher engine now scopes a `deploy_failed` watcher by
+//   `filter.affectedService` (matched against `graph_entity.metadata.affectedService`), the
+//   same dimension the incident proposals use, so the old "wrong vocabulary" reason no longer
+//   applies. What still blocks it is that no `deployment` graph entity exists to match against:
+//   `deployment/annotate.ts:187-195`, the only writer of the `metadata.conclusion` a
+//   `deploy_failed` watcher matches, `INSERT`s its `item` row directly and never calls the graph
+//   populator; the other two `type: "deployment"` writers record no `conclusion` at all
+//   (`vercel-deployment-mapping.ts:88` writes `metadata.state` instead; `prefect-deployment-mapping.ts:116`
+//   indexes deployment definitions with no outcome), and `github-actions-sync.ts:136` writes
+//   `conclusion` on a `ci_run` item, which `deploy_failed` does not match. `nimbus index regraph`
+//   would populate the entity, but nothing runs it automatically.
+//   **Review drag cannot currently be measured for any repo**: no connector writes
+//   `opened_at_ms` on a `pr` item — the only writer of that field anywhere in the tree is
+//   `pagerduty-sync.ts:68`, and it writes it on an `incident`, not a `pr` — so the brief reports
+//   a named gap rather than a fabricated figure for every repo, not most.
 //   **Incident coupling** translates a cohort repo to a DORA `[ci.service.<id>]` config id via
 //   the injected `ServiceIdentityResolver`, denominates its rate on `measured` (cohort members
 //   actually queried — a resolvable service AND a usable window), never on the full cohort, and
